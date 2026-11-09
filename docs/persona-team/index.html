@@ -1,0 +1,1265 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Persona team for global orchestrator sessions | Concept Dossier</title>
+<style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+<style>
+  nav.contents { margin: 24px 0 36px; font: 0.82rem/1.8 var(--article-sans); }
+  .diagram text { font-family: var(--article-sans); }
+  .diagram .zone { fill: none; stroke: var(--article-line); stroke-width: 1.5; stroke-dasharray: 6 4; }
+  .diagram .zone-label { fill: var(--article-faint); font-size: 13px; font-weight: 750; letter-spacing: 0.06em; text-transform: uppercase; }
+  .diagram .node { fill: var(--article-surface); stroke: var(--article-line); }
+  .diagram .focus { fill: var(--article-link-soft); stroke: var(--article-link); }
+  .diagram .ext { fill: var(--article-surface-strong); stroke: var(--article-line); }
+  .diagram .gap { fill: var(--article-warn-soft); stroke: var(--article-warn); }
+  .diagram .hot { fill: var(--article-bad-soft); stroke: var(--article-bad); }
+  .diagram .label { fill: var(--article-ink); font-size: 15px; font-weight: 650; }
+  .diagram .sub { fill: var(--article-muted); font-size: 12.5px; }
+  .diagram .edge-label { fill: var(--article-link); font-size: 12px; font-weight: 650; }
+  .diagram .edge { fill: none; stroke: var(--article-link); stroke-width: 2; }
+  .diagram .edge-muted { fill: none; stroke: var(--article-faint); stroke-width: 1.6; stroke-dasharray: 5 4; }
+  .diagram .divider { stroke: var(--article-line); stroke-width: 1; }
+  .diagram .arrowhead { fill: var(--article-link); }
+  .diagram .arrowhead-muted { fill: var(--article-faint); }
+  .decision { margin: 24px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font: 0.9rem/1.6 var(--article-sans); }
+  .decision h3 { margin: 0 0 8px; }
+  .decision p { margin-bottom: 8px; }
+
+  /* Static mockups. They reuse the article tokens; nothing here is a new colour system. */
+  .mockup { margin-top: 30px; margin-bottom: 30px; font-family: var(--article-sans); }
+  .mock-frame { overflow: hidden; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-paper); font-size: 0.82rem; line-height: 1.5; }
+  .mock-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 16px; border-bottom: 1px solid var(--article-line); background: var(--article-surface); }
+  .mock-bar b { font-size: 0.92rem; }
+  .mock-bar .spacer { flex: 1; }
+  .mock-body { padding: 16px; }
+  .mock-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .mock-cols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; }
+  .mock-card { min-width: 0; padding: 12px 14px; border: 1px solid var(--article-line); border-radius: 9px; background: var(--article-surface); }
+  .mock-card h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 0.9rem; }
+  .mock-card p { margin: 0 0 6px; color: var(--article-muted); font-size: 0.78rem; }
+  .mock-card.paused { background: var(--article-paper); }
+  .mock-card.alert { border-color: color-mix(in srgb, var(--article-bad) 35%, var(--article-line)); background: var(--article-bad-soft); }
+  .mock-section-title { margin: 18px 0 8px; color: var(--article-faint); font-size: 0.7rem; font-weight: 750; letter-spacing: 0.1em; text-transform: uppercase; }
+  .mock-section-title:first-child { margin-top: 0; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; min-height: 20px; padding: 1px 8px; border: 1px solid var(--article-line); border-radius: 999px; background: var(--article-paper); color: var(--article-muted); font-size: 0.7rem; font-weight: 650; white-space: nowrap; }
+  .chip.good { border-color: transparent; background: var(--article-good-soft); color: var(--article-good); }
+  .chip.warn { border-color: transparent; background: var(--article-warn-soft); color: var(--article-warn); }
+  .chip.bad { border-color: transparent; background: var(--article-bad-soft); color: var(--article-bad); }
+  .chip.accent { border-color: transparent; background: var(--article-link-soft); color: var(--article-link); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--article-faint); }
+  .dot.good { background: var(--article-good); }
+  .dot.warn { background: var(--article-warn); }
+  .dot.bad { background: var(--article-bad); }
+  .imp { display: inline-flex; align-items: center; justify-content: center; min-width: 2.3em; height: 1.65em; padding: 0 6px; border-radius: 6px; background: var(--article-surface-strong); color: var(--article-ink); font: 750 0.78rem/1 var(--article-sans); font-variant-numeric: tabular-nums; }
+  .imp.crit { background: var(--article-bad-soft); color: var(--article-bad); }
+  .imp.hi { background: var(--article-warn-soft); color: var(--article-warn); }
+  .imp.big { min-width: 2.6em; height: 2.2em; font-size: 1.1rem; }
+  .meter { position: relative; height: 6px; margin: 4px 0 2px; border-radius: 999px; background: var(--article-surface-strong); }
+  .meter > span { position: absolute; inset: 0 auto 0 0; border-radius: 999px; background: var(--article-link); }
+  .meter.warn > span { background: var(--article-warn); }
+  .kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 12px; margin: 0; font-size: 0.78rem; }
+  .kv dt { color: var(--article-faint); }
+  .kv dd { margin: 0; color: var(--article-ink); font-variant-numeric: tabular-nums; }
+  .mock-list { margin: 0; padding: 0; list-style: none; }
+  .mock-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: start; margin: 0; padding: 9px 0; border-bottom: 1px solid var(--article-line); }
+  .mock-list li:last-child { border-bottom: 0; }
+  .mock-list li + li { margin-top: 0; }
+  .mock-list small { display: block; color: var(--article-muted); font-size: 0.74rem; }
+  .mock-list time { color: var(--article-faint); font-size: 0.72rem; white-space: nowrap; }
+  .mock-tabs { display: flex; gap: 18px; padding: 0 16px; border-bottom: 1px solid var(--article-line); font-size: 0.8rem; }
+  .mock-tabs span { padding: 9px 0; color: var(--article-muted); }
+  .mock-tabs span[aria-current] { color: var(--article-ink); font-weight: 700; box-shadow: inset 0 -2px 0 var(--article-link); }
+  .btn { display: inline-flex; align-items: center; min-height: 26px; padding: 2px 10px; border: 1px solid var(--article-line); border-radius: 7px; background: var(--article-paper); color: var(--article-ink); font-size: 0.74rem; font-weight: 650; }
+  .btn.primary { border-color: var(--article-link); background: var(--article-link); color: var(--article-paper); }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+  .stat { padding: 8px 10px; border: 1px solid var(--article-line); border-radius: 8px; background: var(--article-paper); }
+  .stat b { display: block; font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--article-faint); font-size: 0.7rem; }
+  .mock-note { margin-top: 8px; color: var(--article-faint); font-size: 0.74rem; }
+
+  /* Magazine issue mockup: serif display type from the article tokens. */
+  .mag { padding: 26px 30px 30px; background: var(--article-paper); }
+  .mag-masthead { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 6px 16px; padding-bottom: 10px; border-bottom: 3px double var(--article-ink); }
+  .mag-title { margin: 0; font: 700 clamp(2rem, 5vw, 3.1rem)/1 var(--article-serif); letter-spacing: -0.02em; }
+  .mag-issue { color: var(--article-muted); font-size: 0.74rem; text-align: right; }
+  .mag-strap { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 18px; color: var(--article-faint); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; }
+  .mag-front { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 22px; margin-top: 18px; padding-bottom: 18px; border-bottom: 1px solid var(--article-line); }
+  .mag-lead h3 { margin: 6px 0 8px; font: 700 1.7rem/1.15 var(--article-serif); }
+  .mag-lead p { margin: 0 0 10px; font: 0.98rem/1.6 var(--article-serif); color: var(--article-ink); }
+  .mag-kicker { color: var(--article-faint); font-size: 0.68rem; font-weight: 750; letter-spacing: 0.12em; text-transform: uppercase; }
+  .mag-side { display: grid; gap: 12px; align-content: start; }
+  .mag-side article { padding-bottom: 10px; border-bottom: 1px solid var(--article-line); }
+  .mag-side article:last-child { border-bottom: 0; }
+  .mag-side h4 { margin: 4px 0; font: 700 1.02rem/1.25 var(--article-serif); }
+  .mag-side p { margin: 0; color: var(--article-muted); font: 0.84rem/1.5 var(--article-serif); }
+  .mag-sections { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin-top: 18px; }
+  .mag-sections section h5 { margin: 0 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--article-ink); font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; }
+  .mag-sections ol { margin: 0; padding: 0; list-style: none; }
+  .mag-sections li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; margin: 0 0 9px; font: 0.86rem/1.45 var(--article-serif); }
+  .mag-sections li + li { margin-top: 0; }
+  .mag-band { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 20px; margin-top: 18px; padding-top: 16px; border-top: 3px double var(--article-ink); }
+  .mag-band h5 { margin: 0 0 8px; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; }
+  .mag-decisions { margin: 0; padding: 12px 14px; border-radius: 8px; background: var(--article-warn-soft); list-style: none; }
+  .mag-decisions li { margin: 0 0 8px; font-size: 0.84rem; }
+  .mag-numbers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .mag-numbers div { padding: 8px 0; border-top: 1px solid var(--article-line); }
+  .mag-numbers b { display: block; font: 700 1.5rem/1.1 var(--article-serif); font-variant-numeric: tabular-nums; }
+  .mag-numbers span { color: var(--article-muted); font-size: 0.72rem; }
+
+  /* Slide mockups: one forced light and one forced dark token set, copied from the article theme. */
+  .slides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .slide-theme-light { --article-paper: #fcfcfb; --article-surface: #f2f1ee; --article-surface-strong: #e9e8e3; --article-ink: #151515; --article-muted: #5f5e59; --article-faint: #7c7a74; --article-line: #d8d6cf; --article-link: #1f67b2; --article-link-soft: #eaf1fb; --article-good: #18753a; --article-good-soft: #eaf4ea; --article-warn: #8b6100; --article-warn-soft: #f8f0dd; --article-bad: #b72f2f; --article-bad-soft: #fbecec; color-scheme: light; }
+  .slide-theme-dark { --article-paper: #1a1a19; --article-surface: #232322; --article-surface-strong: #2c2c2a; --article-ink: #f7f7f4; --article-muted: #c3c2b7; --article-faint: #9d9c94; --article-line: #3d3d3a; --article-link: #78aef0; --article-link-soft: #1e2a3a; --article-good: #67b867; --article-good-soft: #1f2f1f; --article-warn: #d9a63f; --article-warn-soft: #33301e; --article-bad: #e66767; --article-bad-soft: #382222; color-scheme: dark; }
+  .slide { position: relative; display: flex; flex-direction: column; aspect-ratio: 16 / 9; overflow: hidden; padding: 5% 6%; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-paper); color: var(--article-ink); font-family: var(--article-sans); }
+  .slide .slide-kicker { color: var(--article-faint); font-size: 0.6rem; font-weight: 750; letter-spacing: 0.12em; text-transform: uppercase; }
+  .slide h4 { margin: 4px 0 10px; font: 700 1.25rem/1.15 var(--article-serif); }
+  .slide ul { margin: 0; padding: 0; list-style: none; font-size: 0.72rem; line-height: 1.45; }
+  .slide li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; margin: 0 0 6px; }
+  .slide li + li { margin-top: 0; }
+  .slide .slide-foot { margin-top: auto; display: flex; justify-content: space-between; color: var(--article-faint); font-size: 0.56rem; }
+  .slide .bars { display: grid; gap: 6px; font-size: 0.64rem; }
+  .slide .bars div { display: grid; grid-template-columns: 7.5em minmax(0, 1fr) 3em; gap: 8px; align-items: center; }
+  .slide .bars i { display: block; height: 9px; border-radius: 3px; background: var(--article-link); }
+  .slide .bars i.warn { background: var(--article-warn); }
+  .slide .bars em { color: var(--article-muted); font-style: normal; text-align: right; font-variant-numeric: tabular-nums; }
+  .slide .theme-tag { position: absolute; top: 8px; right: 10px; padding: 1px 7px; border: 1px solid var(--article-line); border-radius: 999px; background: var(--article-surface); color: var(--article-muted); font-size: 0.56rem; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; }
+
+  @media (max-width: 860px) {
+    .mock-cols, .mag-front, .mag-band, .slides { grid-template-columns: 1fr; }
+    .mag-sections { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body><main class="article">
+<header class="page"><p class="kicker">Concept Dossier · AGT-3573 · 9 November 2026</p>
+<h1>Persona team for global orchestrator sessions</h1>
+<p class="lede">Global orchestrator sessions already look at the whole installation, but they all look at it in the same way. This Dossier turns them into a team of personas. Each persona watches one aspect, such as security, operations, design or product. Each has a charter, a character sheet with honest stats, a budget and a reporting obligation, and its own feed and page. Manager roles decide within bounds. A weekly magazine ranks everything by an importance number, and a presenter turns the results into slides.</p>
+<div class="meta"><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>Source</b> AGT-3573</span><span><b>Builds on</b> AGT-3020, AGT-3462, AGT-3018, AGT-3459, AGT-3353, AGT-3177, AGT-2800</span><span><b>Scope</b> Persona definition, stats, budgets, scheduling, reports, managers, magazine, importance, presentations, safety, evaluation, starter catalogue, operations watch</span></div></header>
+<nav class="contents" aria-label="Contents"><a href="#scope">Scope</a> · <a href="#current-state">What exists</a> · <a href="#roles">Roles</a> · <a href="#definition">Persona definition</a> · <a href="#stats">Stats</a> · <a href="#budgets">Budgets</a> · <a href="#scheduling">Activation and scheduling</a> · <a href="#reporting">Reports and outputs</a> · <a href="#managers">Manager roles</a> · <a href="#importance">Importance numbers</a> · <a href="#magazine">Magazine</a> · <a href="#presentations">Presentations</a> · <a href="#operations-watch">Operations watch</a> · <a href="#safety">Safety</a> · <a href="#evaluation">Evaluation</a> · <a href="#catalogue">Starter catalogue</a> · <a href="#mockups">Mockups</a> · <a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#evidence">Evidence</a> · <a href="#open-decisions">Open decisions</a> · <a href="#plan">Phased plan</a> · <a href="#cards">Cards</a> · <a href="#implementation">Implementation</a></nav>
+
+<section id="scope"><h2>Scope</h2>
+<p>On 9 November 2026 the owner asked for global orchestrator sessions that look at the system as a team, each from a different angle. The request names a catalogue of personas the owner can activate, stats like a role-playing character, budgets like a game (tokens, topics and similar), a configurable reporting obligation, one feed and one management page per persona, manager roles that decide, a magazine that combines all reports, an importance number on every item, and a persona that turns results into presentations.</p>
+<p>A follow-up on the same day adds operations. The security posture of the installation and its backups are important aspects and must be part of the concept. That morning the live networked installation had no scheduled backup at all. The backup commands and the <a href="../operations/setup/studio-backup-restore.md">backup and restore runbook</a> exist, but nothing was scheduled; only the workspace repository is pushed. Separate cards now build the backup schedule and a security view on the Operations page. This Dossier defines how a persona watches and reports those facts. It does not build them again.</p>
+<p>This is a concept. It changes no product code. It defines the persona descriptor, the stats, budget and importance rules, where personas run and how they stay inside the security model, the reports, feed, page, magazine and deck, and a starter catalogue. It then cuts the work into cards that can be promoted one at a time.</p>
+<div class="callout" data-tone="accent"><h3>In one paragraph</h3>
+<p>A persona is a versioned descriptor: charter, aspect, scope, owner-set attributes, allowed operations, model class, cadence, budget and report template. The owner activates it on a Team page. Activation creates a persona principal with standing grants for a small set of persona operations. The Watcher's existing sweep schedules persona occurrences. The occurrences run as short sessions on runner hosts, never in the API container. Each one reads a bounded grounds pack, returns typed items (findings, proposals, decision requests, report lines), and the platform validates them and scores their importance from stated impact, urgency and confidence. Typed facts set floors, so a missing backup or an expired credential always ranks high. Items go to the Agent Message Bus and the persona's feed. Proposals go into Dossiers through the scout's append path. Two manager personas may prioritise, move cards between Backlog and Ready, and rebalance budgets within grants, and everything else stays with the owner. A weekly magazine issue and a presenter deck are composed from the same scored items.</p></div>
+</section>
+
+<section id="current-state"><h2>What exists</h2>
+<p>Most of the machinery a persona needs is already built or decided. The persona team is mainly a new composition of these parts, plus a descriptor, a scoring rule and three reading surfaces.</p>
+<table>
+<thead><tr><th>Building block</th><th>State on 9 November 2026</th><th>What the persona team takes from it</th></tr></thead>
+<tbody>
+<tr><td><a href="../orchestrator-improvement-scout/index.html">Improvement scout</a> (AGT-3020)</td><td>Decision pending</td><td>The closest existing persona. It is a named periodic Watcher profile with a daily 14-day pass, a weekly 90-day pass and a subceiling inside the Watcher contingent. It publishes attributed, append-only Dossier revisions and uses per-operator read cursors. The persona team keeps its scheduling, its proposal lifecycle (dedupe by fingerprint, rejection suppression, defer) and its promotion path. The scout becomes the first catalogue entry, the <em>Improvement scout</em>, rather than a separate mechanism.</td></tr>
+<tr><td><a href="../operations/observation/index.html">Observation</a> (AGT-2800, Watcher AGT-W15)</td><td>Decision pending; W1 and W2 delivered</td><td><code>WatcherHostedService</code> runs a five-minute sweep behind <code>Watcher:Enabled</code> (off by default). It keeps restart-safe, fingerprint-deduplicated cases from five detector classes and proposes cards into Preparation with the <code>watcher-proposal</code> tag. Its weekly contingent is 100 calls, one million tokens and 40 proposals. It defines autonomy classes A0 to A3. Personas use the sweep as their only scheduler and read Watcher cases as grounds.</td></tr>
+<tr><td><a href="../orchestrator-rule-core/index.html">Orchestrator rule core</a> (AGT-3018, AGT-W73)</td><td>Decided</td><td>A strong model chooses typed actions from immutable <code>DecisionGroundsV1</code>. The action union is closed (<code>observe | prepare | defer | continue | adapt | checkpoint | retry | halt | ask</code>). Mechanical checks run at dispatch, and every call writes an <code>OrchestratorDecisionReceiptV1</code> with model, tokens and cost. A persona occurrence is a new profile of the same shape, with its own grounds variant and output schema.</td></tr>
+<tr><td><a href="../operator-agent-level/index.html">Operator agent level</a> (AGT-3462)</td><td>Decision pending; OP-1 to OP-9 delivered</td><td>Roles and identities (owner, in-app chat, operator agent, runners, review hosts). The SSE decision stream (<code>/api/operator/decisions/stream</code>) with event types such as <code>batch.red</code>, <code>escalation.opened</code>, <code>quota.exhausted</code> and <code>quota.fallback-active</code>. The attention lease with revision checks, the append-only operator log and <code>studio-op</code>. Persona triggers subscribe to the same event types, and manager writes use the attention lease.</td></tr>
+<tr><td><a href="../security-model/index.html">Security model</a> (AGT-3353) and series</td><td>Decision pending; SM-1, 2, 3, 4, 5, 8, 9, 11 delivered</td><td>The <code>operator-agent</code> principal with sessions and the actor <code>operator-agent:&lt;id&gt;/session:&lt;sid&gt;</code> with <code>delegatedBy</code>. The hash-chained audit. The kill switch <em>End all operator access</em>. <code>OperatorOperationCatalog</code> with tiers T0 Observe, T1 Routine (standing grant), T2 High risk (owner approval with step-up) and T3 Break-glass. Standing grants last 7 days by default and at most 30. Instruction-source headers. The rule that untrusted content can propose but never authorize. Personas get their own principal kind on this model and a handful of catalogued operations.</td></tr>
+<tr><td><a href="../model-selection-and-fallback/index.html">Model selection and fallback</a> (AGT-3459)</td><td>Files say decision pending; MS-1 to MS-8 delivered</td><td><code>ModelSelectionService</code> with the pure <code>ModelSelectionPlanner</code>, consumer classes, capability classes <code>light</code>, <code>balanced</code> and <code>frontier</code>, and outcomes <code>primary | fallback | wait | throttle | refused</code>. Reviews fall back only within their capability class (D4). Personas become one more consumer class and follow the same rule.</td></tr>
+<tr><td><a href="../concepts/workspace-quotas.md">Workspace and project quotas</a> (AGT-3177)</td><td>Delivered</td><td><code>QuotaLimits(ModelTokensPerWeek, ComputeCoreHoursPerWeek, HostingSlots)</code> with warning at 80 % and blocked at 100 %. Weeks start Monday 00:00 UTC, and admission is a check, not a reservation. The persona pool is a share of the workspace model-token limit.</td></tr>
+<tr><td><a href="../run-budget-per-card/index.html">Run budget per card</a> and the capacity view (AGT-3485)</td><td>Decided and absorbed into AGT-W73; capacity view delivered as <code>GET /api/operator/capacity</code></td><td>Budget exhaustion becomes an <code>ask</code> and a hold, not a new stepped budget. Capacity per host and active fallbacks are inputs for persona admission.</td></tr>
+<tr><td>Agent Message Bus (<code>agent-participant.schema.json</code>, <code>agent-message.schema.json</code>)</td><td>Delivered schema</td><td>Participant kinds <code>User</code>, <code>Orchestrator</code>, <code>Supervisor</code>, <code>CodingAgent</code>, <code>SupportingAgent</code>, <code>SystemReview</code>, <code>Runtime</code> and <code>External</code>. Message kinds include <code>observation</code>, <code>question</code>, <code>decision</code>, <code>advisory</code>, <code>artifact</code>, <code>token-usage</code> and <code>lifecycle</code>, with severity <code>Info | Warn | High</code>. Messages are stored in <code>logs/bus/&lt;project&gt;|_workspace/&lt;date&gt;.jsonl</code>. The bus is an observability spine and never moves a card. The persona feed is a projection over it. (<code>docs/task-server-bus/</code> is the separate engine-to-runner steering bus.)</td></tr>
+<tr><td>Orchestrator chat sessions (<a href="../concepts/orchestrator-chat.md">orchestrator-chat.md</a>)</td><td>Delivered</td><td>Context keys <code>global</code>, <code>project:</code>, <code>workbench:</code> and <code>task:</code>. Session storage under <code>.metadata/orchestrator-sessions/</code>. At most 4 active turns. The owner can talk to a persona through a new context key <code>persona:&lt;id&gt;</code>, without giving the chat any of the persona's grants.</td></tr>
+<tr><td>Dossiers and promotion</td><td>Delivered</td><td><code>workbench.json</code> with <code>implementationTasks</code>, and <code>GET/POST /api/tasks/{jobId}/promote-concept</code> (<code>ConceptPromotionService</code>), which creates cards in Preparation. Persona proposals become Dossier revisions and draft slices on this path.</td></tr>
+<tr><td>Backups and the security posture</td><td>Commands exist; the schedule and the Operations security view are being built by separate cards</td><td><code>backup.sh</code> and <code>backup.sh status</code>, <code>install-backup-timer.sh</code> (systemd <code>agent-studio-backup.timer</code>, daily 03:15 by default), <code>restore.sh</code>, <code>secret-key.sh id</code>, and <code>task-server backup full | verify-full | restore-full</code>. The credential inventory marks credentials expiring within 14 days. The control plane audit chain has a verification route. The Operations persona reads these facts and does not re-implement them.</td></tr>
+<tr><td>Review aspects</td><td>Delivered</td><td>requirement-fit, code-quality, documentation, tests and visual. They judge one delivery. Personas judge the system over time. A persona may cite aspect findings as evidence, but it never reruns a review.</td></tr>
+</tbody></table>
+<p class="dim">What is missing: a descriptor that names an aspect, a scope and a budget; a principal per persona; a scoring rule that is the same for every item; one surface that shows the team; and a period summary that ranks across aspects. These are the subject of this Dossier.</p>
+</section>
+
+<section id="roles"><h2>Roles</h2>
+<p>The team adds two levels between the owner and the platform: manager personas, which decide within grants, and aspect personas, which observe and propose. The owner keeps every decision that is not explicitly granted. The platform keeps scheduling, admission, scoring and publication, so a persona cannot rank its own work, raise its own budget or skip the audit.</p>
+<figure class="media-breakout" id="figure-roles"><svg class="diagram" viewBox="0 0 1120 580" role="img" aria-labelledby="roles-title roles-desc"><title id="roles-title">Roles in the persona team</title><desc id="roles-desc">Four bands from top to bottom. The owner activates personas, funds the pool, renews grants and decides everything high risk, and reads the Team page, the magazine and decks; the in-app chat can ask a persona but holds no grants. Two manager personas, Chief of staff and Budget steward, decide within standing grants. Ten aspect personas observe and propose: security officer, operations warden, reliability engineer, quality lead, design lead, product manager, cost controller, documentation editor, improvement scout and presenter. The platform schedules through the Watcher sweep, admits against budget and quota, selects the model centrally, enforces grants and audit, runs sessions on runner hosts, and publishes to the message bus, feeds and Dossiers.</desc>
+<defs><marker id="arr-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="zone" x="20" y="16" width="1080" height="104" rx="12"/><text class="zone-label" x="36" y="38">Owner</text>
+<rect class="focus" x="40" y="48" width="330" height="58" rx="9"/><text class="label" x="56" y="72">Owner</text><text class="sub" x="56" y="93">activates, funds the pool, renews grants, decides T2</text>
+<rect class="node" x="395" y="48" width="330" height="58" rx="9"/><text class="label" x="411" y="72">Team page, magazine, decks</text><text class="sub" x="411" y="93">reads by importance, answers decision requests</text>
+<rect class="ext" x="750" y="48" width="330" height="58" rx="9"/><text class="label" x="766" y="72">In-app chat · persona:&lt;id&gt;</text><text class="sub" x="766" y="93">asks a persona; the chat holds no persona grant</text>
+
+<rect class="zone" x="20" y="140" width="1080" height="96" rx="12"/><text class="zone-label" x="36" y="162">Managers · T1 under standing grants</text>
+<rect class="focus" x="180" y="170" width="360" height="54" rx="9"/><text class="label" x="196" y="193">Chief of staff</text><text class="sub" x="196" y="213">prioritises, Backlog ↔ Ready, accepts within bounds</text>
+<rect class="focus" x="580" y="170" width="360" height="54" rx="9"/><text class="label" x="596" y="193">Budget steward</text><text class="sub" x="596" y="213">rebalances allowances inside the pool</text>
+
+<rect class="zone" x="20" y="256" width="1080" height="146" rx="12"/><text class="zone-label" x="36" y="278">Aspect personas · observe and propose</text>
+<g>
+<rect class="node" x="40" y="290" width="196" height="44" rx="8"/><text class="label" x="54" y="317">Security officer</text>
+<rect class="gap" x="250" y="290" width="196" height="44" rx="8"/><text class="label" x="264" y="317">Operations warden</text>
+<rect class="node" x="460" y="290" width="196" height="44" rx="8"/><text class="label" x="474" y="317">Reliability engineer</text>
+<rect class="node" x="670" y="290" width="196" height="44" rx="8"/><text class="label" x="684" y="317">Quality lead</text>
+<rect class="node" x="880" y="290" width="200" height="44" rx="8"/><text class="label" x="894" y="317">Design lead</text>
+<rect class="node" x="40" y="344" width="196" height="44" rx="8"/><text class="label" x="54" y="371">Product manager</text>
+<rect class="node" x="250" y="344" width="196" height="44" rx="8"/><text class="label" x="264" y="371">Cost controller</text>
+<rect class="node" x="460" y="344" width="196" height="44" rx="8"/><text class="label" x="474" y="371">Documentation editor</text>
+<rect class="node" x="670" y="344" width="196" height="44" rx="8"/><text class="label" x="684" y="371">Improvement scout</text>
+<rect class="focus" x="880" y="344" width="200" height="44" rx="8"/><text class="label" x="894" y="371">Presenter</text>
+</g>
+
+<rect class="zone" x="20" y="422" width="1080" height="140" rx="12"/><text class="zone-label" x="36" y="444">Platform · owns scheduling, admission, scoring, publication</text>
+<rect class="ext" x="40" y="456" width="164" height="90" rx="8"/><text class="label" x="52" y="480">Watcher sweep</text><text class="sub" x="52" y="500">cadence, triggers,</text><text class="sub" x="52" y="518">coalescing</text>
+<rect class="ext" x="214" y="456" width="164" height="90" rx="8"/><text class="label" x="226" y="480">Budget, quota</text><text class="sub" x="226" y="500">pool from AGT-3177,</text><text class="sub" x="226" y="518">no-call receipts</text>
+<rect class="ext" x="388" y="456" width="164" height="90" rx="8"/><text class="label" x="400" y="480">Model selection</text><text class="sub" x="400" y="500">consumer persona,</text><text class="sub" x="400" y="518">same-class fallback</text>
+<rect class="ext" x="562" y="456" width="164" height="90" rx="8"/><text class="label" x="574" y="480">Grants, audit</text><text class="sub" x="574" y="500">catalogue, tiers,</text><text class="sub" x="574" y="518">kill switch</text>
+<rect class="ext" x="736" y="456" width="164" height="90" rx="8"/><text class="label" x="748" y="480">Runner hosts</text><text class="sub" x="748" y="500">short persona</text><text class="sub" x="748" y="518">sessions, read-only</text>
+<rect class="ext" x="910" y="456" width="170" height="90" rx="8"/><text class="label" x="922" y="480">Bus, feeds, Dossiers</text><text class="sub" x="922" y="500">scored items,</text><text class="sub" x="922" y="518">issues, decks</text>
+
+<path class="edge" d="M355,106 L355,166" marker-end="url(#arr-r)"/><text class="edge-label" x="364" y="134">grants, approvals</text>
+<path class="edge" d="M560,224 L560,286" marker-end="url(#arr-r)"/><text class="edge-label" x="570" y="252">priorities, allowances</text>
+<path class="edge" d="M995,456 L995,406" marker-end="url(#arr-r)"/><text class="edge-label" x="1004" y="417">grounds in</text>
+<path class="edge-muted" d="M140,404 L140,452" marker-end="url(#arr-r)"/><text class="edge-label" x="150" y="417">typed items out</text>
+<path class="edge-muted" d="M720,170 L720,110" marker-end="url(#arr-r)"/><text class="edge-label" x="730" y="134">decision requests</text>
+</svg>
+<figcaption>Proposed roles. The operations warden is highlighted because it carries the 9 November follow-up. Managers sit above aspect personas only in authority, not in data access: they read the same scored items, never more raw content.</figcaption></figure>
+<div class="callout" data-tone="accent"><h3>What always stays with the owner</h3>
+<ul>
+<li>Activating, deactivating and retiring personas, and every charter change of a manager.</li>
+<li>The size of the persona pool, any quota override, and a manager's own budget.</li>
+<li>Issuing and renewing standing grants, each with a fresh step-up.</li>
+<li>Every T2 operation: secrets, exposure, deletes, history rewrites, gate bypass, key rotation, host enrollment, access and grant changes.</li>
+<li>Accepting a card out of Human review, decision cards, production promotion and the answer to a decision request.</li>
+<li>Lowering an importance number below a fact floor. The owner may only acknowledge the item, with a reason and an expiry.</li>
+</ul></div>
+</section>
+
+<section id="definition"><h2>Persona definition</h2>
+<p>A persona is a descriptor plus an activation. The descriptor says what the persona is and is shipped in a versioned catalogue. The activation says how this workspace runs it: attributes, budget, scope narrowing and grants. Keeping the two apart lets the catalogue improve without silently changing a running persona. The workspace adopts a new catalogue revision as an explicit step, and the persona page shows the difference.</p>
+<table>
+<thead><tr><th>Field</th><th>Meaning</th><th>Enforced by</th></tr></thead>
+<tbody>
+<tr><td><code>id</code>, <code>title</code>, <code>aspect</code>, <code>kind</code></td><td>Stable key, display name, one of the aspects (security, operations, reliability, quality, design, product, cost, documentation, improvement, presentation, management), and <code>persona</code>, <code>presenter</code> or <code>manager</code>.</td><td>Schema</td></tr>
+<tr><td><code>charter</code></td><td>Up to 600 characters: what to watch, what good looks like, and what the persona must not do. The charter becomes part of the system prompt. It is not authority.</td><td>Schema length, revision digest</td></tr>
+<tr><td><code>scope</code></td><td>Projects (<code>*</code> or a list), areas (named source families such as <code>operations.backups</code>, <code>review.aspects</code>, <code>frontend.visual</code>) and excluded paths.</td><td>Grounds builder and grant scope</td></tr>
+<tr><td><code>attributes</code></td><td>Owner-set stats: focus weights, autonomy, risk appetite, thoroughness, signal threshold (see <a href="#stats">Stats</a>).</td><td>Grounds builder, validator</td></tr>
+<tr><td><code>operations</code></td><td>The persona operations it may call, from the operation catalogue. An aspect persona gets observe and publish operations only. A manager also gets named T1 board operations.</td><td><code>OperatorOperationCatalog</code> and standing grants</td></tr>
+<tr><td><code>model</code></td><td>Capability class (<code>balanced</code> or <code>frontier</code>) and thinking level. The choice is resolved by <code>ModelSelectionService</code> for consumer class <code>persona</code>, never pinned in the descriptor.</td><td>Model selection</td></tr>
+<tr><td><code>cadence</code>, <code>triggers</code></td><td>Report period, analysis window, due time, and event triggers from the decision stream and fact sources.</td><td>Watcher sweep</td></tr>
+<tr><td><code>budget</code></td><td>Default allowance per week: tokens, sessions, published proposals, draft cards, minutes per session.</td><td>Budget ledger</td></tr>
+<tr><td><code>report</code></td><td>Template id, maximum items and words, mandatory sections.</td><td>Validator</td></tr>
+<tr><td><code>floors</code></td><td>Fact rules that set a minimum importance, for example "no good backup for 48 hours" sets 90. Floors are catalogue content, and only a catalogue revision changes them.</td><td>Importance service</td></tr>
+</tbody></table>
+<pre><code>{
+  "schemaVersion": 1,
+  "id": "operations-warden",
+  "revision": "2026.11.1",
+  "title": "Operations warden",
+  "aspect": "operations",
+  "kind": "persona",
+  "charter": "Keep the installation recoverable and its security posture current. Watch backups, restore tests, off-host copies, key escrow, credential age, second factor coverage, exposure, TLS and patch level. Report gaps with evidence. Never change a setting, run a backup or touch a secret yourself.",
+  "scope": { "projects": ["*"], "areas": ["operations.backups", "operations.security", "access.credentials", "hosts.patch-level", "audit.chain"] },
+  "attributes": { "focus": { "backups": 40, "credentials": 25, "exposure": 20, "patch-level": 15 }, "autonomy": "A1", "riskAppetite": "low", "thoroughness": 4, "signalThreshold": 30 },
+  "operations": ["observe", "persona.item.publish", "persona.report.publish", "persona.proposal.draft", "persona.decision.request"],
+  "model": { "capabilityClass": "balanced", "thinking": "high" },
+  "cadence": { "report": "P1D", "dueAtLocal": "06:30", "window": "P7D" },
+  "triggers": ["backup.missed", "backup.failed", "credential.expiring", "credential.expired", "deploy.completed", "audit.chain-broken"],
+  "budget": { "tokensPerWeek": 140000, "sessionsPerWeek": 10, "proposalsPerWeek": 4, "draftCardsPerWeek": 2, "minutesPerSession": 15 },
+  "report": { "template": "operations-v1", "maxItems": 8, "maxWords": 450 },
+  "floors": ["backup.none-scheduled:95", "backup.last-good-age&gt;48h:90", "credential.expired:95", "restore-test.age&gt;35d:70", "escrow.unconfirmed:85"]
+}</code></pre>
+<h3>Catalogue and versions</h3>
+<p>Built-in descriptors live in the product repository next to the other policy files, as <code>backend/Policies/personas/&lt;id&gt;.persona.json</code>, validated by <code>docs/app/schemas/persona.schema.json</code>. Each one carries a <code>revision</code>, and a catalogue test rejects a changed file whose revision did not move. A workspace may fork a descriptor into a custom persona. The fork is stored by the application under the workspace metadata with its own revision chain and is written only through <code>/api/workspaces/{id}/personas</code>, never by hand. Every activation records the descriptor revision and digest it runs. Occurrence receipts carry that digest, so stats can be split by charter revision (see <a href="#evaluation">Evaluation</a>).</p>
+<h3>Activation and deactivation</h3>
+<p>The owner activates a persona on the Team page. The dialog shows charter, scope, attributes, budget, operations and the grants it will issue, then asks for a step-up, because activation issues standing grants. Activation creates or re-enables the persona principal, issues one T1 grant for its persona operations within its scope, and puts the first occurrence in shadow mode. In shadow mode the persona publishes only to its own feed, not to the magazine, for one report period. Pause stops scheduling and keeps the grants. Deactivate revokes the grants, ends open sessions and keeps the history; it needs no step-up, like the kill switch. Retire archives the persona and its feed read-only.</p>
+</section>
+
+<section id="stats"><h2>Stats</h2>
+<p>The character sheet has two halves. The owner sets the <em>attributes</em>, and each one changes a concrete parameter. The platform derives the <em>record</em> from receipts and item outcomes, and nobody can type a value into it. A stat that changes nothing, or that the persona can inflate, does not belong on the sheet.</p>
+<h3>Attributes the owner sets</h3>
+<table>
+<thead><tr><th>Attribute</th><th>Values</th><th>What it changes</th></tr></thead>
+<tbody>
+<tr><td>Focus</td><td>Weights per area, summing to 100</td><td>The share of the grounds pack each area gets, and the share of report items. An area at 0 is out of scope.</td></tr>
+<tr><td>Autonomy</td><td>A0 observe, A1 propose, A2 decide within grants (managers only)</td><td>Which persona operations are granted. A0 publishes findings and reports only. A1 adds Dossier drafts, draft cards and decision requests. A2 adds the named manager operations.</td></tr>
+<tr><td>Risk appetite</td><td>low, medium, high</td><td>How far a proposal may reach. Low allows only reversible changes inside one area. Medium allows cross-area changes. High also allows structural proposals, such as replacing a component. The owner decides each proposal either way.</td></tr>
+<tr><td>Thoroughness</td><td>1 to 5</td><td>Evidence references per finding (2 to 10), thinking level within the capability class, and whether a weekly investigation session is allowed (4 and up).</td></tr>
+<tr><td>Signal threshold</td><td>0 to 100</td><td>The minimum importance an item needs before it appears in a report. Floors ignore the threshold, so a missing backup is never filtered out.</td></tr>
+</tbody></table>
+<h3>Record the platform derives</h3>
+<p>Every number shows its window (30 days by default, plus lifetime) and its denominator. Below five decided items the sheet shows "too few decisions" instead of a rate.</p>
+<table>
+<thead><tr><th>Stat</th><th>Definition</th></tr></thead>
+<tbody>
+<tr><td>Findings raised, accepted, rejected, duplicate, open</td><td>Counts of the persona's items by lifecycle state. Duplicate means the deduplicator merged the item into an existing owner.</td></tr>
+<tr><td>Acceptance rate</td><td>Accepted ÷ (accepted + rejected). Open and duplicate items do not count.</td></tr>
+<tr><td>Cards and how they ended</td><td>Cards promoted from the persona's proposals: completed, still open, rejected in review, archived without delivery.</td></tr>
+<tr><td>Tokens and cost</td><td>Measured from occurrence receipts. Cost is shown as priced plus "price unknown", never as an assumed zero.</td></tr>
+<tr><td>Cost per accepted finding</td><td>Priced cost of the window ÷ accepted findings. It is hidden when either part is incomplete.</td></tr>
+<tr><td>Response time</td><td>Median and 90th percentile from trigger to published item.</td></tr>
+<tr><td>Punctuality</td><td>Reports delivered on time ÷ reports due.</td></tr>
+<tr><td>Calibration</td><td>Mean absolute change that managers and the owner made to the persona's importance numbers. Lower is better.</td></tr>
+<tr><td>Misses</td><td>Incidents in the persona's scope that someone else found first, within its window (see <a href="#evaluation">Evaluation</a>).</td></tr>
+</tbody></table>
+<h3>Rank and experience</h3>
+<p>Experience is the sum of the importance of accepted items, with a 90-day half-life, so it reflects current usefulness and not age. Rank has three steps: <b>Probation</b> for the first four weeks or until ten items are decided, <b>Member</b>, and <b>Senior</b> once acceptance stays at 60 % or more and calibration at 10 points or less over 90 days. Rank unlocks nothing by itself. It makes the persona <em>eligible</em> for a higher autonomy or a larger allowance, and the owner still grants it. A persona that drops below 30 % acceptance over at least ten decided items falls back to Probation, and the Team page suggests a review.</p>
+</section>
+
+<section id="budgets"><h2>Budgets</h2>
+<p>Persona work is the lowest-priority consumer in the installation. It must never take capacity a card needs, and it must stop before the workspace hits its limit. Budgets therefore nest: the persona pool is a share of the workspace model-token limit, and every allowance is a share of the pool.</p>
+<table>
+<thead><tr><th>Budget</th><th>Default</th><th>Rule</th></tr></thead>
+<tbody>
+<tr><td>Persona pool</td><td>10 % of <code>ModelTokensPerWeek</code>; 1.2 million tokens per week when the workspace has no limit</td><td>An owner setting per workspace. The pool counts against the AGT-3177 limit like any other use, and personas cannot use quota overrides.</td></tr>
+<tr><td>Allowance per persona</td><td>Catalogue default, about 60,000 to 160,000 tokens per week</td><td>The sum of allowances is at most the pool, and the Team page shows the reconciliation (R3). Unallocated pool stays unused.</td></tr>
+<tr><td>Sessions per week</td><td>7 to 10 digest sessions, plus at most 1 investigation session</td><td>A trigger that arrives inside the coalescing window uses the next due session instead of adding one.</td></tr>
+<tr><td>Minutes per session</td><td>5 for digest, 15 for investigation</td><td>A wall-clock limit enforced by the runner. When it is reached, the session ends with a partial result and a receipt.</td></tr>
+<tr><td>Proposals and draft cards per week</td><td>2 to 5 proposals, 1 to 3 draft cards</td><td>Counted at publication. Duplicates merged into an existing owner do not count.</td></tr>
+<tr><td>Topics</td><td>The scope areas and focus weights</td><td>Areas outside the scope are not in the grounds, so the model cannot spend tokens on them.</td></tr>
+</tbody></table>
+<h3>When a budget is used up</h3>
+<ul>
+<li><b>Persona allowance exhausted.</b> The Watcher writes a no-call receipt for every due occurrence until the week resets. The next report is a <em>stub</em> composed without a model. It states the exhaustion, lists the unread triggers and repeats the open items with their current importance. A manager may move unused allowance from another persona; the owner may raise it.</li>
+<li><b>Floors still fire.</b> A fact rule with a floor of 70 or more, such as a missing backup or an expired credential, still produces an item, also without a model: the title, evidence links and importance come from the typed fact. The operations warden is never silent about a missing backup because it ran out of tokens.</li>
+<li><b>Pool exhausted.</b> Every persona behaves as if its own allowance were exhausted. The magazine still appears, as a stub issue.</li>
+</ul>
+<h3>Interaction with quota and fallback</h3>
+<ul>
+<li>Personas use consumer class <code>persona</code> in <code>ModelSelectionService</code>. Like reviews (AGT-3459 D4), a fallback stays inside the persona's capability class. If no model of that class is available, the answer is <code>wait</code>, and the occurrence is deferred, not downgraded.</li>
+<li>When the workspace quota reaches warning (80 %), personas pause, except for model-free floor items. Card work is affected later or not at all. When it reaches blocked (100 %), personas stop.</li>
+<li>A <code>quota.fallback-active</code> event for a subscription that personas use defers persona occurrences on that subscription until the selection returns to primary. The cost controller reports it.</li>
+<li>Usage is written to the token ledger with consumer <code>persona:&lt;id&gt;</code>, so the workspace quota snapshot lists personas among the largest consumers when they are.</li>
+</ul>
+</section>
+
+<section id="scheduling"><h2>Activation and scheduling</h2>
+<p>There is one scheduler. On every five-minute sweep the Watcher checks which persona occurrences are due, the same way it already checks the improvement scout. An occurrence is keyed by workspace, persona, window end and descriptor revision, so a restart or a duplicate trigger yields one occurrence.</p>
+<figure class="media-breakout" id="figure-flow"><svg class="diagram" viewBox="0 0 1120 400" role="img" aria-labelledby="flow-title flow-desc"><title id="flow-title">Life of a persona occurrence</title><desc id="flow-desc">Top row: a cadence or an event trigger makes an occurrence due in the Watcher sweep, which coalesces duplicates. Admission checks the persona allowance, the pool, the workspace quota, concurrency and the live grant; if refused, a no-call receipt is written and fact floors still publish model-free items. The grounds builder assembles a bounded pack from in-scope sources. Bottom row: a short session runs on a runner host, returns typed items, which are validated for schema, references and scope, scored for importance from factors and floors, and published to the message bus and the persona feed, to Dossier drafts and to decision requests. The magazine and the presenter read the scored items.</desc>
+<defs><marker id="arr-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker><marker id="arr-fm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead-muted" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="node" x="30" y="40" width="190" height="96" rx="9"/><text class="label" x="46" y="66">1 Trigger</text><text class="sub" x="46" y="88">cadence, decision stream</text><text class="sub" x="46" y="106">events, fact changes</text>
+<rect class="ext" x="250" y="40" width="190" height="96" rx="9"/><text class="label" x="266" y="66">2 Due</text><text class="sub" x="266" y="88">Watcher sweep, key and</text><text class="sub" x="266" y="106">coalescing window</text>
+<rect class="focus" x="470" y="40" width="190" height="96" rx="9"/><text class="label" x="486" y="66">3 Admission</text><text class="sub" x="486" y="88">allowance, pool, quota,</text><text class="sub" x="486" y="106">concurrency, grant</text>
+<rect class="ext" x="690" y="40" width="190" height="96" rx="9"/><text class="label" x="706" y="66">4 Grounds</text><text class="sub" x="706" y="88">bounded pack, scope,</text><text class="sub" x="706" y="106">no raw sessions</text>
+<rect class="gap" x="910" y="40" width="180" height="96" rx="9"/><text class="label" x="926" y="66">Refused</text><text class="sub" x="926" y="88">no-call receipt;</text><text class="sub" x="926" y="106">floors still publish</text>
+<rect class="node" x="30" y="240" width="190" height="96" rx="9"/><text class="label" x="46" y="266">5 Session</text><text class="sub" x="46" y="288">runner host, persona</text><text class="sub" x="46" y="306">principal, time box</text>
+<rect class="focus" x="250" y="240" width="190" height="96" rx="9"/><text class="label" x="266" y="266">6 Validate</text><text class="sub" x="266" y="288">schema, refs resolve,</text><text class="sub" x="266" y="306">scope, limits, dedupe</text>
+<rect class="focus" x="470" y="240" width="190" height="96" rx="9"/><text class="label" x="486" y="266">7 Score</text><text class="sub" x="486" y="288">impact × urgency ×</text><text class="sub" x="486" y="306">confidence, floors</text>
+<rect class="ext" x="690" y="240" width="190" height="96" rx="9"/><text class="label" x="706" y="266">8 Publish</text><text class="sub" x="706" y="288">bus and feed, Dossier</text><text class="sub" x="706" y="306">draft, decision request</text>
+<rect class="node" x="910" y="240" width="180" height="96" rx="9"/><text class="label" x="926" y="266">9 Read</text><text class="sub" x="926" y="288">managers, magazine,</text><text class="sub" x="926" y="306">presenter, owner</text>
+<path class="edge" d="M220,88 L246,88" marker-end="url(#arr-f)"/>
+<path class="edge" d="M440,88 L466,88" marker-end="url(#arr-f)"/>
+<path class="edge" d="M660,88 L686,88" marker-end="url(#arr-f)"/>
+<path class="edge-muted" d="M565,40 L565,20 L1000,20 L1000,36" marker-end="url(#arr-fm)"/><text class="edge-label" x="740" y="15">refused</text>
+<path class="edge" d="M785,136 L785,180 L125,180 L125,236" marker-end="url(#arr-f)"/><text class="edge-label" x="140" y="172">pack and prompt version</text>
+<path class="edge" d="M220,288 L246,288" marker-end="url(#arr-f)"/>
+<path class="edge" d="M440,288 L466,288" marker-end="url(#arr-f)"/>
+<path class="edge" d="M660,288 L686,288" marker-end="url(#arr-f)"/>
+<path class="edge" d="M880,288 L906,288" marker-end="url(#arr-f)"/>
+<path class="edge-muted" d="M1000,136 L1000,200 L565,200 L565,236" marker-end="url(#arr-fm)"/><text class="edge-label" x="760" y="218">model-free floor items</text>
+<text class="sub" x="30" y="376">Every step writes to the occurrence receipt (OrchestratorDecisionReceiptV1 shape): grounds digest, descriptor revision, model, tokens, cost or unknown price, outcome.</text>
+</svg>
+<figcaption>Proposed occurrence flow. Steps 2, 3, 6, 7 and 8 are platform code. Only step 5 involves a model, and its output is data until step 6 accepts it.</figcaption></figure>
+<h3>Triggers</h3>
+<table>
+<thead><tr><th>Trigger</th><th>Source</th><th>Default subscribers</th></tr></thead>
+<tbody>
+<tr><td>Cadence</td><td>Descriptor <code>cadence</code>, local due time</td><td>All personas</td></tr>
+<tr><td>Deploy completed or rolled back</td><td>Environment deploy reports</td><td>Reliability, operations warden, design lead (visual)</td></tr>
+<tr><td>Red batch, isolation</td><td><code>batch.red</code>, <code>batch.isolating</code></td><td>Reliability, quality lead</td></tr>
+<tr><td>Escalation opened</td><td><code>escalation.opened</code></td><td>Reliability, improvement scout</td></tr>
+<tr><td>Quota thresholds</td><td><code>quota.exhausted</code>, <code>quota.fallback-active</code>, workspace warning at 80 %</td><td>Cost controller</td></tr>
+<tr><td>Backup missed or failed, restore test due</td><td>Backup status facts (separate backup card)</td><td>Operations warden</td></tr>
+<tr><td>Credential expiring or expired, audit chain broken</td><td>Credential inventory (14-day mark), audit verification</td><td>Operations warden, security officer</td></tr>
+<tr><td>Magazine issue published</td><td>Magazine composer</td><td>Presenter, chief of staff</td></tr>
+</tbody></table>
+<p>An event trigger brings the next due occurrence forward. Within a coalescing window (6 hours by default, 1 hour for a floor of 90 or more) further events join that occurrence instead of starting another. Event-triggered occurrences use the normal allowance.</p>
+<h3>Concurrency and placement</h3>
+<ul>
+<li>At most one open occurrence per persona, and at most two persona occurrences per workspace at a time (owner setting, 1 to 4).</li>
+<li>A persona occurrence takes a runner slot only when the host has an idle slot and no Ready card in a project that host serves is waiting. Card work always wins, and a persona occurrence never preempts a run.</li>
+<li>Occurrences run on runner hosts, never in the API container. The Studio host's spawn guard stays as it is. A <em>digest</em> session is one bounded model call on the grounds pack. An <em>investigation</em> session is a time-boxed CLI session in a fresh read-only checkout of in-scope repositories, with no repository write token, no deploy credential and MCP disabled.</li>
+<li>Each occurrence runs as a session of the persona principal (<a href="#safety">Safety</a>), so the decision stream, the audit and the kill switch see it like any operator session.</li>
+</ul>
+</section>
+
+<section id="reporting"><h2>Reports and outputs</h2>
+<p>A persona produces four kinds of item. All share one envelope, <code>PersonaItemV1</code>: id, persona, kind, title of at most 120 characters, body of at most 1,200 characters, evidence references, scope, importance factors and the resulting score, fingerprint, lifecycle state and history.</p>
+<table>
+<thead><tr><th>Kind</th><th>Contents</th><th>Lifecycle</th></tr></thead>
+<tbody>
+<tr><td>Finding</td><td>An observed fact with evidence, a measured value or window, competing explanations and confidence.</td><td>open → accepted | rejected | duplicate | resolved</td></tr>
+<tr><td>Proposal</td><td>A suggested change with its effect estimate and basis, home Dossier and section, and a draft slice (title and prompt) when it is card-shaped.</td><td>draft → accepted (promoted) | rejected | deferred</td></tr>
+<tr><td>Decision request</td><td>A question with two to four options, a recommended option, a deadline and the consequence of no answer, which is always "nothing changes".</td><td>open → answered | expired</td></tr>
+<tr><td>Report</td><td>The period summary: ordered lines that reference the items above, plus coverage (which sources were read, which were missing) and budget use.</td><td>published, immutable</td></tr>
+</tbody></table>
+<h3>Reporting obligation</h3>
+<p>The obligation is part of the activation. The owner sets the period (daily, twice a week, weekly), the due time, the template, the maximum items and words, and whether a "no change" report is allowed. A no-change report must still list its coverage, because silence without coverage reads as "all clear" when it may mean "not looked". A missed report is itself shown: the Team page marks the persona overdue, and the magazine's colophon lists it. Templates are short and fixed:</p>
+<pre><code>operations-v1
+  1. Headline (one sentence, the highest-importance item)
+  2. Backups: schedule, last good, restore test, off-host, escrow
+  3. Security posture: exposure, TLS, credentials, second factor, patch level, audit
+  4. New and changed items (importance, title, evidence)
+  5. Decisions needed
+  6. Coverage and budget (sources read, sources missing, tokens, sessions)</code></pre>
+<h3>Feed</h3>
+<p>Every item, report, lifecycle event (session started, ended, refused, budget exhausted) and decision is a message on the Agent Message Bus. A new participant kind <code>Persona</code> with id <code>persona:&lt;id&gt;</code> is added to <code>agent-participant.schema.json</code>, an additive change. Items use message kinds <code>observation</code> (finding), <code>advisory</code> (proposal and report), <code>question</code> (decision request), <code>decision</code> (an answer or a manager action), <code>artifact</code> (issue or deck), <code>lifecycle</code> and <code>token-usage</code>. Bus severity is derived from importance: <code>High</code> from 70 up, <code>Warn</code> from 40 up, otherwise <code>Info</code>. The full <code>PersonaItemV1</code> travels in <code>payload</code>. The bus stays an observability spine. Item lifecycle state lives in the application-owned persona store, and the feed is a projection of both.</p>
+<figure class="media-breakout" id="figure-data"><svg class="diagram" viewBox="0 0 1120 360" role="img" aria-labelledby="data-title data-desc"><title id="data-title">Persona data</title><desc id="data-desc">A catalogue descriptor, versioned in the product repository, is activated per workspace. The activation holds attributes, allowance and scope, and owns a persona principal with standing grants. Each occurrence writes a receipt and produces items: findings, proposals, decision requests and report lines, each with importance factors, score, floor and history. Reports group items per period. Magazine issues rank items across personas. Decks reference issue items. The stats projection and the budget ledger are computed from receipts and item outcomes.</desc>
+<defs><marker id="arr-d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="ext" x="30" y="30" width="200" height="80" rx="9"/><text class="label" x="46" y="56">Descriptor</text><text class="sub" x="46" y="77">catalogue, revision,</text><text class="sub" x="46" y="95">digest, floors</text>
+<rect class="focus" x="270" y="30" width="200" height="80" rx="9"/><text class="label" x="286" y="56">Activation</text><text class="sub" x="286" y="77">attributes, allowance,</text><text class="sub" x="286" y="95">scope, state</text>
+<rect class="node" x="510" y="30" width="200" height="80" rx="9"/><text class="label" x="526" y="56">Principal, grants</text><text class="sub" x="526" y="77">persona:&lt;id&gt;, T1 set,</text><text class="sub" x="526" y="95">7 to 30 days</text>
+<rect class="node" x="270" y="150" width="200" height="80" rx="9"/><text class="label" x="286" y="176">Occurrence receipt</text><text class="sub" x="286" y="197">grounds digest, model,</text><text class="sub" x="286" y="215">tokens, cost, outcome</text>
+<rect class="focus" x="510" y="150" width="200" height="80" rx="9"/><text class="label" x="526" y="176">PersonaItemV1</text><text class="sub" x="526" y="197">kind, factors, score,</text><text class="sub" x="526" y="215">floor, lifecycle</text>
+<rect class="node" x="750" y="150" width="160" height="80" rx="9"/><text class="label" x="766" y="176">Report</text><text class="sub" x="766" y="197">period, lines,</text><text class="sub" x="766" y="215">coverage</text>
+<rect class="node" x="940" y="150" width="150" height="80" rx="9"/><text class="label" x="956" y="176">Issue</text><text class="sub" x="956" y="197">ranked across</text><text class="sub" x="956" y="215">personas</text>
+<rect class="node" x="940" y="270" width="150" height="70" rx="9"/><text class="label" x="956" y="296">Deck</text><text class="sub" x="956" y="317">slides cite items</text>
+<rect class="ext" x="30" y="270" width="200" height="70" rx="9"/><text class="label" x="46" y="296">Budget ledger</text><text class="sub" x="46" y="317">allowance, use, pool</text>
+<rect class="ext" x="270" y="270" width="200" height="70" rx="9"/><text class="label" x="286" y="296">Stats projection</text><text class="sub" x="286" y="317">record, rank, value</text>
+<rect class="ext" x="510" y="270" width="200" height="70" rx="9"/><text class="label" x="526" y="296">Bus messages</text><text class="sub" x="526" y="317">participant Persona</text>
+<path class="edge" d="M230,70 L266,70" marker-end="url(#arr-d)"/>
+<path class="edge" d="M470,70 L506,70" marker-end="url(#arr-d)"/>
+<path class="edge" d="M370,110 L370,146" marker-end="url(#arr-d)"/>
+<path class="edge" d="M470,190 L506,190" marker-end="url(#arr-d)"/>
+<path class="edge" d="M710,190 L746,190" marker-end="url(#arr-d)"/>
+<path class="edge" d="M910,190 L936,190" marker-end="url(#arr-d)"/>
+<path class="edge" d="M1015,230 L1015,266" marker-end="url(#arr-d)"/>
+<path class="edge" d="M610,230 L610,266" marker-end="url(#arr-d)"/>
+<path class="edge" d="M300,230 L300,250 L130,250 L130,266" marker-end="url(#arr-d)"/>
+<path class="edge" d="M560,230 L560,250 L400,250 L400,266" marker-end="url(#arr-d)"/>
+</svg>
+<figcaption>Proposed data. The descriptor is repository content. Activation, receipts, items, reports, issues, decks, stats and the ledger are application-owned state under the workspace metadata, written only through the API. Bus messages are the append-only observability copy.</figcaption></figure>
+<h3>Management page</h3>
+<p>Each persona has a page at <code>#/workspace/team/&lt;id&gt;</code> with tabs <b>Feed</b>, <b>Reports</b>, <b>Proposals</b>, <b>Sheet</b>, <b>Budget</b>, <b>Charter</b> and <b>History</b>. The header carries the controls Run now, Pause or Resume, Deactivate and Ask (opens the in-app chat with context <code>persona:&lt;id&gt;</code>). The Team page at <code>#/workspace/team</code> shows every persona as a card with state, rank, allowance use, last report, overdue state and its highest open importance, and the pool reconciliation at the top. Both are admin surfaces: flat, full-bleed, one grid for comparable entries (R2, R7).</p>
+<p>Proposals reuse the scout's lifecycle unchanged: deduplication by fingerprint and scope against open cards, Watcher proposals and earlier items; rejection suppression until material new evidence; deferral with a review date; promotion through <code>promote-concept</code> with Dossier key, item id and occurrence id as provenance. Dossier writes reuse the scout's attributed append API (scout slice IS-S2), with the persona as the actor.</p>
+</section>
+
+<section id="managers"><h2>Manager roles</h2>
+<p>A manager is a persona with <code>kind: manager</code> and autonomy A2. It reads the scored items of the team, never raw repository or card content, and decides inside named T1 operations under a standing grant. Every decision is a typed action that the platform validates against hard bounds before dispatch, as in the rule core. The catalogue starts with two managers.</p>
+<table>
+<thead><tr><th>Manager</th><th>May decide (T1, under grant)</th><th>Bounds</th></tr></thead>
+<tbody>
+<tr><td>Chief of staff</td><td>Order the proposal queue. Adjust importance by up to ±15, with a reason. Move cards between Backlog and Ready (<code>card.requeue</code>). Accept a proposal into Preparation through promote-concept (<code>persona.proposal.accept</code>). Expire stale decision requests into the magazine's decisions box.</td><td>At most 5 lane moves and 3 promotions per day. Only cards that came from persona proposals or carry the <code>watcher-proposal</code> tag. Never into Progress or Human review, never past a running card, and always with the attention lease and revision check. Never above a floor or below it.</td></tr>
+<tr><td>Budget steward</td><td>Move unused allowance between personas (<code>persona.budget.rebalance</code>). Pause a persona whose allowance burns faster than its value (<code>persona.pause</code>).</td><td>At most ±25 % of a persona's allowance per week. Never raises the pool. Never changes its own or the chief of staff's allowance. Never pauses the operations warden while a floor item of 90 or more is open.</td></tr>
+</tbody></table>
+<ul>
+<li><b>Escalation.</b> A manager escalates by a decision request to the owner. Without an answer nothing changes, and the request rises in the magazine by age (urgency grows with waiting time).</li>
+<li><b>Undo.</b> Every manager action is reversible from the persona page or the card for 24 hours with one click (R6), and the reversal is a recorded owner decision that counts against the manager's calibration.</li>
+<li><b>Audit.</b> Every action is written with the actor <code>persona:&lt;id&gt;/session:&lt;sid&gt;</code> and <code>delegatedBy: human:&lt;owner&gt;</code> to the control plane audit, to the card timeline and to the manager's feed, with the grant id that admitted it.</li>
+<li><b>Conflict with the owner and the operator agent.</b> Managers hold the attention lease like the operator agent. The owner always wins, and a lease held by the owner or the operator agent refuses the manager's write.</li>
+</ul>
+</section>
+
+<section id="importance"><h2>Importance numbers</h2>
+<p>Every item carries an integer importance from 0 to 100. A persona does not type the number. It states three factors, and the platform computes the score, applies floors and records every change.</p>
+<table>
+<thead><tr><th>Factor</th><th>Scale</th><th>Anchors</th></tr></thead>
+<tbody>
+<tr><td>Impact</td><td>1 to 5</td><td>1 cosmetic · 2 friction for one person · 3 a project slowed or wrong output · 4 the installation slowed, money or work at risk · 5 data loss, security breach, outage, unrecoverable state</td></tr>
+<tr><td>Urgency</td><td>1 to 5</td><td>1 within a quarter · 2 within a month · 3 within a week · 4 within a day · 5 happening now or overdue</td></tr>
+<tr><td>Confidence</td><td>0.0 to 1.0</td><td>From evidence: at least two resolving references and a measured value give at most 1.0. One reference gives at most 0.7. Inference without a measured value gives at most 0.5.</td></tr>
+</tbody></table>
+<pre><code>importance = round( 100 × (impact × urgency) / 25 × (0.5 + 0.5 × confidence) )
+importance = max(importance, floor)        floor from the persona's fact rules, else 0
+importance = clamp(importance + managerAdjustment, floor, 100)    adjustment within ±15</code></pre>
+<p>Examples: impact 5, urgency 5 and confidence 1.0 give 100. Impact 4, urgency 3 and confidence 0.8 give 43. Impact 2, urgency 2 and confidence 0.6 give 13. Urgency is recomputed on every sweep for open items, from the deadline or the age, so a decision request that waits rises without anyone editing it.</p>
+<table>
+<thead><tr><th>Band</th><th>Range</th><th>Treatment</th></tr></thead>
+<tbody>
+<tr><td>Critical</td><td>90 to 100</td><td>Acute tone in feeds and on the Team page while it is open. A candidate for the magazine lead. Appears in the decision stream as a persona event.</td></tr>
+<tr><td>High</td><td>70 to 89</td><td>Front page or the top of its section. Bus severity <code>High</code>.</td></tr>
+<tr><td>Medium</td><td>40 to 69</td><td>Section body.</td></tr>
+<tr><td>Low</td><td>0 to 39</td><td>Collapsed under "Also noted". Kept out of decks.</td></tr>
+</tbody></table>
+<p>Who may change a score: the persona by restating factors in a later occurrence; a manager by an adjustment of up to ±15 with a reason; the owner to any value at or above the floor. Nobody lowers a score below its floor. The owner may <em>acknowledge</em> a floor item with a reason and an expiry of at most 14 days, which moves it out of the front page into a quiet "Acknowledged" list until the expiry, without lowering its number. Resolved and rejected items lose acute treatment immediately (R4). Feeds, the Team page, the magazine and decks sort by importance, then by age.</p>
+</section>
+
+<section id="magazine"><h2>Magazine</h2>
+<p>The magazine is the team's weekly paper. One issue per week appears on Monday at 07:00 in the workspace time zone, after the weekly occurrences have reported. An optional daily brief carries only the front page. The issue is composed from scored items by deterministic layout rules. One editor call per issue, under the presenter's allowance, writes the lead paragraph and the section teasers from item titles and bodies, and every sentence must cite an item id. When the budget is used up, the issue appears with item titles only.</p>
+<table>
+<thead><tr><th>Part</th><th>Content and rule</th></tr></thead>
+<tbody>
+<tr><td>Masthead</td><td>Name (default "Studio Weekly"), issue number, period, publication time, and the coverage line (how many personas reported).</td></tr>
+<tr><td>Front page</td><td>The lead is the highest open item of the period. Three or four side stories follow by importance, at most two from one persona. A Critical item always reaches the front page.</td></tr>
+<tr><td>Decisions needed</td><td>Every open decision request and every proposal waiting for the owner, by importance, with the recommended option and the deadline.</td></tr>
+<tr><td>Sections</td><td>One per aspect, in the order of their highest item: items with importance, one-line teaser and link.</td></tr>
+<tr><td>Operations watch</td><td>A fixed panel from the operations warden: backup age, restore test age, off-host copy, escrow, expiring credentials, second factor coverage and patch lag, each with its state and importance.</td></tr>
+<tr><td>Trends and numbers</td><td>Small multiples over eight weeks: items raised and accepted, cost per accepted finding, budget use, cards delivered from proposals. The totals equal the sum of the visible personas (R3).</td></tr>
+<tr><td>Corrections and colophon</td><td>Items retracted or rejected since the last issue, personas that missed their report, and the stub notice when a budget ran out.</td></tr>
+</tbody></table>
+<p>Issues appear under <code>#/workspace/team/magazine</code> and on the Team page, which keeps the newest three. Each issue is immutable once published. A correction is an entry in the next issue, not an edit. Export is a self-contained HTML file in the house article layout with both themes, plus print styles for PDF. Sending is off by default. When the owner enables it, the message carries only the masthead, the front page titles with their importance numbers and a link that requires sign-in, so no finding text leaves the instance by mail.</p>
+</section>
+
+<section id="presentations"><h2>Presentations</h2>
+<p>The presenter is a persona with <code>kind: presenter</code>. It turns the latest issue into a deck: weekly for the owner (seven slides), and monthly as a review deck covering four issues (ten to twelve slides). A deck is structured data, <code>deck.json</code>. Each slide has a layout (title, ranked list, decision list, trend, numbers, operations watch) and blocks that reference item ids and stats fields. The Studio renders it at 16:9 with style guide tokens in both themes. A validator refuses a slide with a number that has no source field, or a claim without an item id.</p>
+<ul>
+<li><b>Selection.</b> Items with importance of 40 or more, at most three per slide, Critical items first, one slide per aspect only if it has an item of 70 or more. Decisions needed always get a slide. Trends need at least four weeks of data.</li>
+<li><b>Audience.</b> The owner by default. A "stakeholder" variant leaves out item bodies, costs and host names. It is still shared only by the owner.</li>
+<li><b>Format.</b> Viewed in the Studio under the issue. Exported as self-contained HTML (one slide per screen, arrow keys, print to PDF). PPTX export is a later option.</li>
+<li><b>Budget.</b> One model call per deck for slide titles and speaker notes. Layout and numbers are deterministic.</li>
+</ul>
+</section>
+
+<section id="operations-watch"><h2>Operations watch</h2>
+<p>The owner's follow-up makes the security posture of the installation and its backups a first-class aspect. The catalogue gives it to a dedicated persona, the <b>operations warden</b>, instead of widening the reliability engineer. The two watch different things. Reliability watches the flow of work: runs, escalations, batches, latency. The warden watches whether the installation could survive a loss and whether its doors are shut. The warden's checks are mostly deterministic facts with hard floors, its sources are different, and its failure mode, a silent gap, is the one the 9 November situation showed.</p>
+<div class="callout" data-tone="bad"><h3>Calibration case, 9 November 2026</h3>
+<p>The live networked installation had no scheduled backup. <code>backup.sh</code>, <code>install-backup-timer.sh</code> and the runbook existed, but the systemd timer was never installed, so the newest backup age was "none". Only the workspace repository was pushed to its remote. The security overview describes a weekly scratch restore as part of the stage 0 baseline, so the documentation described a posture the installation did not have. With the warden active, the first daily occurrence would publish <i>No scheduled backup on the networked installation</i> at importance 97 (impact 5, urgency 5, confidence 0.94, floor 95). That makes it the magazine lead and a Critical item on the Team page, even with the warden's budget used up.</p></div>
+<h3>What the warden watches</h3>
+<p>The warden reads a typed snapshot, <code>OpsPostureFactsV1</code>. Each fact has an id, a value, the time it was observed, its source and a freshness limit. The separate backup and Operations security view cards produce these facts for their own surfaces. The warden consumes the same facts and builds no check of its own. A fact that is missing or older than its freshness limit is itself an item: "cannot see backup status" is a finding at floor 70, never a clean result.</p>
+<table>
+<thead><tr><th>Area</th><th>Fact</th><th>Source (existing or from the separate cards)</th><th>Floor</th></tr></thead>
+<tbody>
+<tr><td rowspan="7">Backups</td><td>A schedule is installed and enabled</td><td><code>agent-studio-backup.timer</code> and <code>agent-task-server-backup.timer</code> state; <code>STUDIO_BACKUP_DESTINATION</code> set (empty means "Backups are off")</td><td>95 if none</td></tr>
+<tr><td>Age of the last good backup of instance state</td><td><code>backup.sh status</code>: newest archive with a matching <code>.sha256</code>; <code>task-server backup verify-full</code></td><td>90 above 48 h, 70 above 26 h</td></tr>
+<tr><td>Coverage: workspace, task storage, <code>.metadata</code>, access state, sealed secret store, <code>refs/agent-studio/*</code> bundles, hosted volumes</td><td>Archive manifest; hosted volume backup records</td><td>80 for an uncovered required part</td></tr>
+<tr><td>Age of the last successful restore test</td><td>Scratch restore result through <code>restore.sh</code> into a throwaway stack with sign-in proof, and the <code>website.restore.signin</code> pass or fail signal where the website baseline publishes it. The CI restore test proves the code, not this installation's archives.</td><td>70 above 35 days, 85 if never</td></tr>
+<tr><td>Off-host copy</td><td>Destination host differs from the Studio host (SSH <code>rrsync -wo</code> or a mounted write-only target), with the last transfer time</td><td>85 if on the same host</td></tr>
+<tr><td>Key escrow for the secret store and the backup identity</td><td>Fingerprint from <code>secret-key.sh id</code> and the age recipients, compared with the owner's escrow record (date and fingerprint, never the key)</td><td>85 if unconfirmed or mismatched</td></tr>
+<tr><td>Documented posture matches observed posture</td><td>Claims in the security overview and runbook (for example a weekly scratch restore) against the facts above</td><td>60, or the floor of the underlying fact</td></tr>
+<tr><td rowspan="8">Security posture</td><td>Exposed endpoints and firewall</td><td>Listening ports and firewall rules per host through <code>host.inspect</code> (T0); edge routes</td><td>80 for an unexpected public port</td></tr>
+<tr><td>TLS and origin protection</td><td>Certificate expiry from the edge; the access provider's <code>/verify</code> in front of every path; HSTS present</td><td>95 if expired, 80 below 14 days, 90 if the origin is reachable without the access layer</td></tr>
+<tr><td>Credential and token age and expiry</td><td>Credential inventory (metadata only), API tokens, runner credentials (30 days), standing grants, operator sessions</td><td>95 if expired and still referenced, 80 below 7 days, 60 below 14 days, 70 for no expiry</td></tr>
+<tr><td>Second factor coverage</td><td>Owners and operators with TOTP or WebAuthn enrolled</td><td>85 for any owner without a second factor</td></tr>
+<tr><td>Patch level of hosts, images and CLIs</td><td>OS updates pending per host, image digest age against the pinned reference, CLI versions (Watcher drift detector)</td><td>75 for a pending security update older than 7 days</td></tr>
+<tr><td>Audit anomalies</td><td>Control plane audit chain verification (<code>POST /api/auth/audit/verify</code>), refusal spikes (<code>grant-required</code>, <code>approval-required</code>, <code>operation-not-catalogued</code>), kill switch drills</td><td>95 for a broken chain</td></tr>
+<tr><td>Open security cards and findings</td><td>Project security panels and cards tagged security, by age and severity</td><td>75 for a High finding open more than 7 days</td></tr>
+<tr><td>Break-glass windows</td><td>Open or recently closed break-glass windows without a review card</td><td>80</td></tr>
+</tbody></table>
+<h3>How the warden reports</h3>
+<ul>
+<li>A daily report at 06:30 with template <code>operations-v1</code>, and event occurrences for <code>backup.missed</code>, <code>backup.failed</code>, <code>credential.expiring</code>, <code>credential.expired</code>, <code>audit.chain-broken</code> and completed deploys.</li>
+<li>Each failing fact becomes one finding with a stable fingerprint (<code>ops:&lt;fact id&gt;:&lt;scope&gt;</code>), so a backup that stays missing is one item whose urgency and age grow, not a new item every day.</li>
+<li>Fixes are proposals into the owning Dossier or runbook, for example "Install the backup timer with the documented default schedule". The warden never runs a backup, installs a timer, rotates a key or reads a secret value. Those are owner actions or T2 operations.</li>
+<li>The magazine's Operations watch panel and the warden's sheet show the same fact rows. The Operations page's security view links to the warden's feed, and the warden links back to the fact on that page, so there is one truth and two readings.</li>
+</ul>
+</section>
+
+<section id="safety"><h2>Safety</h2>
+<p>Personas read untrusted content all day: cards, diffs, repository files, logs and review findings written by other agents. The design assumes that some of that content will try to instruct them. Authority therefore never comes from what a persona read. It comes from the owner's activation, the grants and the platform's validators.</p>
+<table>
+<thead><tr><th>Threat or need</th><th>Control</th></tr></thead>
+<tbody>
+<tr><td>Least privilege</td><td>One principal per persona, kind <code>persona</code> on the operator-agent model (id <code>opa_persona_*</code>), with an actor <code>persona:&lt;id&gt;/session:&lt;sid&gt;</code> and <code>delegatedBy</code> the activating owner. Its standing grant names only its persona operations and its project scope. Occurrence sessions last at most 30 minutes and are bound to one occurrence id. Grants follow the SM-4 lifetimes (7 days by default, at most 30). The Team page offers one "Renew team grants" step-up that renews every active persona at once, which doubles as the monthly review.</td></tr>
+<tr><td>New catalogued operations</td><td>T0: <code>observe</code>. T1 for every persona: <code>persona.item.publish</code>, <code>persona.report.publish</code>, <code>persona.proposal.draft</code> (Dossier revision and draft slice, append only), <code>persona.decision.request</code>. T1 for managers only: <code>persona.proposal.accept</code>, <code>persona.importance.adjust</code>, <code>persona.budget.rebalance</code>, <code>persona.pause</code>, plus the existing <code>card.requeue</code>. Changing the catalogue stays T2 (<code>catalogue.change</code>).</td></tr>
+<tr><td>Prompt injection from cards and repositories</td><td>Content is data: it can propose, never authorize. Every request carries <code>X-Operator-Instruction-Source</code>. Aspect persona grants allow untrusted sources only for their own publish operations, which write into their feed and drafts, never onto the board. Output is schema-validated, length-limited, and every reference must resolve to an in-scope artifact. Managers run in separate sessions whose grounds contain typed item fields (kind, factors, score, persona, fingerprint, links), not raw bodies, and their actions pass hard bounds.</td></tr>
+<tr><td>Scope and data boundaries</td><td>The grounds builder includes only in-scope projects and areas. Secret values never enter a pack; the warden sees credential metadata only. Investigation checkouts are read-only, without repository write tokens, deploy credentials, CLI logins of other projects or MCP. A persona may not read another workspace.</td></tr>
+<tr><td>Kill switch</td><td>Per persona: Pause and Deactivate. Per team: "Stop all personas" on the Team page, which revokes persona grants and ends sessions within 60 seconds and needs no step-up. Installation-wide: SM-2 <em>End all operator access</em> covers persona principals, because they are operator-agent principals.</td></tr>
+<tr><td>Rate and cost caps</td><td>Enforced by the platform, not the prompt: tokens and minutes per session, allowance per week, the pool, the per-host-day cap of the rule core, and the grant's hourly rate (default 10 per hour). Every cap writes a receipt when it refuses.</td></tr>
+<tr><td>Self-dealing</td><td>A persona cannot score its own items (the platform computes the score), cannot change its own budget, rank or charter, and a manager cannot rebalance its own allowance or accept a proposal it drafted.</td></tr>
+</tbody></table>
+</section>
+
+<section id="evaluation"><h2>Evaluation</h2>
+<p>The owner needs one answer per persona: is it worth its budget? The <b>Value</b> panel on each sheet and the monthly team review in the magazine answer it from the record.</p>
+<ul>
+<li><b>Value per budget.</b> The importance-weighted sum of accepted items per 100,000 tokens, next to cost per accepted finding and the team median.</li>
+<li><b>Owner rating.</b> One "Useful" or "Not useful" click per report, optional. It is shown as a count, not blended into the score.</li>
+<li><b>Noise.</b> Rejected plus duplicate items ÷ raised items.</li>
+<li><b>Misses.</b> An incident card or Critical item in the persona's scope that another source raised first, within the persona's window, counts as a miss. Misses are listed by name, because a cheap persona that misses the important thing is not cheap.</li>
+<li><b>Outcomes.</b> Cards promoted from the persona's proposals and how they ended.</li>
+</ul>
+<p>Rules that make the platform suggest a change, which the owner then decides: a new persona stays in Probation for four weeks. Acceptance below 30 % over at least ten decided items, or cost per accepted finding above three times the team median for two consecutive months, suggests Pause and a charter review. Two or more misses of 70 or more in a month suggest a scope or focus change. A persona with no accepted item for eight weeks suggests retirement.</p>
+<p>To improve a persona, the owner edits the charter or attributes, which creates a new activation revision. Stats are split by revision for the next four weeks, so the sheet shows before and after side by side. Retiring archives the persona, its feed and its stats read-only, and revokes its principal.</p>
+</section>
+
+<section id="catalogue"><h2>Starter catalogue</h2>
+<p>Eight aspect personas, the presenter and two managers. The improvement scout (AGT-3020) joins as a ninth aspect persona when its slices land, with its decided cadence, so there is one mechanism. Until then it keeps its 110,000-token subceiling inside the Watcher contingent. Budgets are weekly allowances inside the default pool. The eleven defaults sum to 1,110,000 tokens, leaving 90,000 of the 1.2 million default pool unallocated. Only the operations warden and the cost controller start active. The others start in the catalogue, ready to activate.</p>
+<table>
+<thead><tr><th>Persona</th><th>Charter</th><th>Default attributes</th><th>Budget per week</th><th>Cadence and triggers</th><th>Report</th></tr></thead>
+<tbody>
+<tr><td><b>Operations warden</b><br><span class="dim">operations</span></td><td>Keep the installation recoverable and its doors shut: backups, restore tests, off-host copies, escrow, exposure, TLS, credentials, second factor, patch level, audit.</td><td>Focus backups 40, credentials 25, exposure 20, patch 15 · A1 · risk low · thoroughness 4 · threshold 30</td><td>140k tokens, 10 sessions, 4 proposals, 2 cards</td><td>Daily 06:30, 7-day window · backup, credential, audit and deploy events</td><td><code>operations-v1</code>, 8 items, 450 words</td></tr>
+<tr><td><b>Security officer</b><br><span class="dim">security</span></td><td>Find security weaknesses in what the team builds: code, dependencies, permissions, review security findings, injection paths in prompts and tools.</td><td>Focus code 40, dependencies 25, permissions 20, prompts 15 · A1 · risk low · thoroughness 4 · threshold 35</td><td>160k, 7 + 1 investigation, 4 proposals, 2 cards</td><td>Daily digest, weekly investigation · merges to develop, credential events</td><td><code>security-v1</code>, 8 items, 450 words</td></tr>
+<tr><td><b>Reliability engineer</b><br><span class="dim">reliability</span></td><td>Keep work flowing: run failures, escalations, red batches, stalls, drive-to-conclusion cases, latency and load of runners and the API, including performance.</td><td>Focus runs 35, batches 25, latency 25, hosts 15 · A1 · risk medium · thoroughness 3 · threshold 35</td><td>140k, 10 sessions, 4 proposals, 2 cards</td><td>Daily · <code>batch.red</code>, <code>escalation.opened</code>, <code>backend.stalled</code>, deploys</td><td><code>reliability-v1</code>, 8 items, 400 words</td></tr>
+<tr><td><b>Quality lead</b><br><span class="dim">quality</span></td><td>Watch the quality of delivered work over time: review churn, aspect findings that recur, test gaps, flaky tests, evidence strength.</td><td>Focus review 35, tests 35, evidence 30 · A1 · risk medium · thoroughness 3 · threshold 40</td><td>120k, 7 sessions, 3 proposals, 2 cards</td><td>Twice a week · red batches, repeated review rounds</td><td><code>quality-v1</code>, 6 items, 350 words</td></tr>
+<tr><td><b>Design lead</b><br><span class="dim">design</span></td><td>Keep the product coherent: style guide hard rules, both themes, visual evidence of delivered UI, drift between surfaces.</td><td>Focus hard rules 40, themes 25, consistency 35 · A1 · risk medium · thoroughness 3 · threshold 40</td><td>120k, 3 + 1 investigation, 3 proposals, 2 cards</td><td>Weekly Friday · UI merges, visual review findings</td><td><code>design-v1</code>, 6 items, 350 words</td></tr>
+<tr><td><b>Product manager</b><br><span class="dim">product</span></td><td>Connect work to goals: roadmap fit, open decisions that block work, Dossiers waiting for a decision, cards without a clear outcome.</td><td>Focus decisions 40, roadmap 35, backlog 25 · A1 · risk high · thoroughness 3 · threshold 40</td><td>100k, 2 sessions, 3 proposals, 1 card</td><td>Weekly Thursday · Dossier status changes</td><td><code>product-v1</code>, 6 items, 400 words</td></tr>
+<tr><td><b>Cost controller</b><br><span class="dim">cost</span></td><td>Make spending visible and proportionate: quota draw, fallback use, cost per delivered card, persona value per budget.</td><td>Focus quota 35, cost per card 35, personas 30 · A0 · risk low · thoroughness 2 · threshold 30</td><td>60k, 7 sessions, 2 proposals, 0 cards</td><td>Daily · quota thresholds, fallback events</td><td><code>cost-v1</code>, 6 items, 300 words</td></tr>
+<tr><td><b>Documentation editor</b><br><span class="dim">documentation</span></td><td>Keep docs true: drift between documented and observed behaviour, broken links, missing rows in the docs index, stale designated topics.</td><td>Focus drift 50, links 25, index 25 · A1 · risk low · thoroughness 3 · threshold 35</td><td>80k, 2 sessions, 3 proposals, 2 cards</td><td>Weekly Wednesday · merges touching <code>docs/</code></td><td><code>docs-v1</code>, 6 items, 300 words</td></tr>
+<tr><td><b>Presenter</b><br><span class="dim">presentation</span></td><td>Turn each issue into a clear deck for the owner. Never add a claim the items do not carry.</td><td>A0 · thoroughness 2</td><td>60k, 5 sessions (decks, editor calls)</td><td>After each issue, monthly review deck</td><td>Deck of 7 or 10 to 12 slides</td></tr>
+<tr><td><b>Chief of staff</b><br><span class="dim">manager</span></td><td>Turn the team's output into an ordered queue. Prioritise, move persona cards between Backlog and Ready, accept within bounds, escalate the rest.</td><td>A2 · risk low · thoroughness 3</td><td>100k, 7 sessions</td><td>Daily 08:00 · issue published, Critical items</td><td><code>manager-v1</code>: decisions taken, escalated, reversed</td></tr>
+<tr><td><b>Budget steward</b><br><span class="dim">manager</span></td><td>Keep the pool spent where it returns value. Rebalance allowances weekly within bounds, pause the wasteful, never starve the warden.</td><td>A2 · risk low · thoroughness 2</td><td>30k, 1 session</td><td>Weekly Sunday 20:00 · pool at 80 %</td><td><code>manager-v1</code></td></tr>
+</tbody></table>
+</section>
+
+<section id="mockups"><h2>Mockups</h2>
+<p>The mockups below are static HTML in the article tokens. They show an illustrative later week, after the plan's phase 4, with eight personas and two managers active. The operations items use the real 9 November backup gap to show how it would rank. They are not captures of the product. The Studio surfaces would use <code>--studio-*</code> tokens and the shared components (<code>app-status-indicator</code>, <code>appPendingButton</code>, <code>app-loading-surface</code>). Status is encoded by tint, chip or dot, never by a left bar.</p>
+
+<h3>Team page</h3>
+<figure class="mockup media-breakout" id="mock-team">
+<div class="mock-frame" role="img" aria-label="Team page mockup: pool reconciliation at the top, then one card per persona with state, rank, budget use and highest open importance; the operations warden card is tinted because it holds a Critical item.">
+<div class="mock-bar"><b>Team</b><span class="chip">Workspace · Agent Studio</span><span class="chip">Week 46 · 9 to 15 Nov</span><span class="spacer"></span><span class="btn">Renew team grants</span><span class="btn">Stop all personas</span><span class="btn primary">Activate persona</span></div>
+<div class="mock-body">
+<div class="mock-cols" style="margin-bottom:14px">
+<div class="mock-card"><h4>Persona pool</h4><div class="meter"><span style="width:32%"></span></div><p>379k used of 1,200k this week (32 %) · 1,030k allocated to 10 activated personas, one of them paused · 170k unallocated · counts against the workspace limit of 12M model tokens per week</p></div>
+<div class="mock-card"><h4>Latest issue</h4><p><a href="#mock-magazine">Studio Weekly 45</a> · 2 to 8 Nov · 31 items · 4 decisions needed · deck ready</p></div>
+</div>
+<p class="mock-section-title">Aspect personas</p>
+<div class="mock-grid">
+<div class="mock-card alert"><h4><span class="dot bad"></span>Operations warden</h4><p>Active · Member · report 06:30 today</p><p><span class="imp crit">97</span> No scheduled backup on the networked installation</p><div class="meter"><span style="width:54%"></span></div><p>86k of 160k · 6 of 10 sessions · 5 open items</p></div>
+<div class="mock-card"><h4><span class="dot good"></span>Security officer</h4><p>Active · Probation · report 07:10 today</p><p><span class="imp hi">74</span> Runner credential without expiry still in use</p><div class="meter"><span style="width:33%"></span></div><p>52k of 160k · 4 of 8 sessions · 4 open items</p></div>
+<div class="mock-card"><h4><span class="dot good"></span>Reliability engineer</h4><p>Active · Senior · report 07:00 today</p><p><span class="imp">68</span> Batch isolation hit Demo Platform three times</p><div class="meter"><span style="width:51%"></span></div><p>71k of 140k · 6 of 10 sessions · 3 open items</p></div>
+<div class="mock-card"><h4><span class="dot warn"></span>Quality lead</h4><p>Active · Member · <span class="chip warn">Report overdue 1 day</span></p><p><span class="imp">52</span> Requirement-fit findings recur after reissue</p><div class="meter"><span style="width:33%"></span></div><p>40k of 120k · 3 of 7 sessions · 3 open items</p></div>
+<div class="mock-card paused"><h4><span class="dot"></span>Design lead</h4><p>Paused by Budget steward · 8 Nov · Member</p><p><span class="imp">41</span> Dark theme contrast drift on two panels</p><div class="meter"><span style="width:18%"></span></div><p>18k of 100k · 1 of 4 sessions · 2 open items</p></div>
+<div class="mock-card"><h4><span class="dot good"></span>Product manager</h4><p>Active · Member · report Thu 12 Nov</p><p><span class="imp">63</span> Three Dossiers wait for a decision over 14 days</p><div class="meter"><span style="width:22%"></span></div><p>22k of 100k · 1 of 2 sessions · 3 open items</p></div>
+<div class="mock-card"><h4><span class="dot good"></span>Cost controller</h4><p>Active · Member · report 06:45 today</p><p><span class="imp">58</span> Review fallback active for 31 hours last week</p><div class="meter"><span style="width:32%"></span></div><p>19k of 60k · 5 of 7 sessions · 2 open items</p></div>
+<div class="mock-card paused"><h4><span class="dot"></span>Documentation editor</h4><p>In catalogue · not active</p><p>Default 80k per week · weekly Wednesday</p><p><span class="btn">Activate</span></p></div>
+</div>
+<p class="mock-section-title">Presenter and managers</p>
+<div class="mock-grid">
+<div class="mock-card"><h4><span class="dot good"></span>Presenter</h4><p>Active · deck for issue 45 ready · 7 slides</p><div class="meter"><span style="width:40%"></span></div><p>24k of 60k · 2 of 5 sessions</p></div>
+<div class="mock-card"><h4><span class="dot good"></span>Chief of staff</h4><p>Active · today 3 of 5 moves, 1 of 3 promotions · 1 escalation</p><div class="meter"><span style="width:41%"></span></div><p>41k of 100k · 3 of 7 sessions</p></div>
+<div class="mock-card"><h4><span class="dot good"></span>Budget steward</h4><p>Active · moved 20k from Design lead to Operations warden on 8 Nov</p><div class="meter"><span style="width:20%"></span></div><p>6k of 30k · 1 of 1 session</p></div>
+</div>
+<p class="mock-note">Allocated 160 + 160 + 140 + 120 + 100 + 100 + 60 + 60 + 100 + 30 = 1,030k; used 86 + 52 + 71 + 40 + 18 + 22 + 19 + 24 + 41 + 6 = 379k. The inactive documentation editor holds no allowance.</p>
+</div></div>
+<figcaption>Proposed Team page at <code>#/workspace/team</code>. The tinted card is the only acute one, because it holds an open Critical item. The paused and inactive cards are quiet. Pool totals equal the visible cards (R3).</figcaption>
+</figure>
+
+<h3>Character sheet</h3>
+<figure class="mockup media-breakout" id="mock-sheet">
+<div class="mock-frame" role="img" aria-label="Character sheet mockup for the operations warden: identity and rank, owner-set attributes with what each changes, a 30-day record with denominators, and a value panel.">
+<div class="mock-bar"><b>Operations warden</b><span class="chip accent">Member · 1,240 XP</span><span class="chip">operations</span><span class="chip">revision 2026.11.1</span><span class="spacer"></span><span class="chip">principal opa_persona_ops-warden</span><span class="chip">grant sgr_…7f2 · expires 16 Nov</span></div>
+<div class="mock-tabs"><span>Feed</span><span>Reports</span><span>Proposals</span><span aria-current="page">Sheet</span><span>Budget</span><span>Charter</span><span>History</span></div>
+<div class="mock-body"><div class="mock-cols">
+<div>
+<p class="mock-section-title">Attributes · set by the owner</p>
+<div class="mock-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+<div class="mock-card"><h4>Focus</h4><dl class="kv"><dt>Backups</dt><dd>40</dd><dt>Credentials</dt><dd>25</dd><dt>Exposure</dt><dd>20</dd><dt>Patch level</dt><dd>15</dd></dl><p style="margin-top:6px">Share of grounds and report items</p></div>
+<div class="mock-card"><h4>Autonomy · A1 propose</h4><p>Publishes findings, reports, Dossier drafts, draft cards and decision requests. No board moves.</p><h4 style="margin-top:8px">Risk appetite · low</h4><p>Reversible, single-area proposals only</p></div>
+<div class="mock-card"><h4>Thoroughness · 4 of 5</h4><div class="meter"><span style="width:80%"></span></div><p>Up to 8 evidence refs, thinking high, one investigation per week</p></div>
+<div class="mock-card"><h4>Signal threshold · 30</h4><div class="meter"><span style="width:30%"></span></div><p>Items below 30 stay in the feed only. Floors ignore the threshold.</p></div>
+</div>
+<p class="mock-section-title">Record · last 30 days · derived</p>
+<div class="stat-grid">
+<div class="stat"><b>23</b><span>raised</span></div>
+<div class="stat"><b>14</b><span>accepted</span></div>
+<div class="stat"><b>3</b><span>rejected</span></div>
+<div class="stat"><b>4</b><span>duplicate</span></div>
+<div class="stat"><b>2</b><span>open</span></div>
+<div class="stat"><b>82 %</b><span>acceptance · 14 of 17</span></div>
+<div class="stat"><b>5</b><span>cards · 3 done, 1 open, 1 rejected</span></div>
+<div class="stat"><b>7 min</b><span>median response · p90 31 min</span></div>
+<div class="stat"><b>29 of 30</b><span>reports on time</span></div>
+<div class="stat"><b>4.2</b><span>calibration · mean change</span></div>
+<div class="stat"><b>0</b><span>misses</span></div>
+<div class="stat"><b>412k</b><span>tokens · 31 sessions</span></div>
+</div>
+</div>
+<div>
+<p class="mock-section-title">Value</p>
+<div class="mock-card"><dl class="kv"><dt>Priced cost</dt><dd>$3.10 · 2 sessions price unknown</dd><dt>Per accepted finding</dt><dd>$0.22 · team median $0.41</dd><dt>Value per 100k tokens</dt><dd>267 · team median 140</dd><dt>Owner rating</dt><dd>9 useful · 1 not useful</dd><dt>Noise</dt><dd>30 % · 7 of 23</dd></dl></div>
+<p class="mock-section-title">Rank</p>
+<div class="mock-card"><p>Active since 1 Oct, Member since 29 Oct. Senior needs acceptance of 60 % or more and calibration of 10 or less over 90 days. Now at 39 of 90 days.</p><p>Eligible for: larger allowance. Not eligible for: A2.</p></div>
+<p class="mock-section-title">By charter revision</p>
+<div class="mock-card"><dl class="kv"><dt>2026.10.2</dt><dd>acceptance 64 % · 11 decided · lifetime</dd><dt>2026.11.1</dt><dd>acceptance 83 % · 6 decided · since 2 Nov</dd></dl></div>
+</div>
+</div></div></div>
+<figcaption>Proposed character sheet. Attributes name what they change. The record shows denominators and a value comparison against the team median. Rank shows what it makes the persona eligible for, not what it unlocks.</figcaption>
+</figure>
+
+<h3>Feed and management page</h3>
+<figure class="mockup media-breakout" id="mock-feed">
+<div class="mock-frame" role="img" aria-label="Persona feed and management page mockup for the operations warden: controls in the header, items sorted by importance with kind, evidence, state and time, and a side panel with budget use, next occurrence and grant.">
+<div class="mock-bar"><b>Operations warden</b><span class="chip good">Active</span><span class="chip">Daily 06:30</span><span class="spacer"></span><span class="btn">Ask</span><span class="btn">Run now</span><span class="btn">Pause</span><span class="btn">Deactivate</span></div>
+<div class="mock-tabs"><span aria-current="page">Feed</span><span>Reports</span><span>Proposals · 2</span><span>Sheet</span><span>Budget</span><span>Charter</span><span>History</span></div>
+<div class="mock-body"><div class="mock-cols">
+<div>
+<p class="mock-section-title">Sort · <b>Importance</b> · Time &nbsp; Filter · open items and today's events</p>
+<ul class="mock-list">
+<li><span class="imp crit">97</span><span><b>No scheduled backup on the networked installation</b><small>Finding · <code>agent-studio-backup.timer</code> not installed, <code>STUDIO_BACKUP_DESTINATION</code> empty, no archive on record · impact 5, urgency 5, confidence 0.94, floor 95 · open, day 1</small></span><time>09 Nov 06:31</time></li>
+<li><span class="imp hi">85</span><span><b>No restore test on record for this installation</b><small>Finding · no scratch restore result; the CI restore test covers code only · floor 85 · open</small></span><time>09 Nov 06:31</time></li>
+<li><span class="imp hi">85</span><span><b>No off-host copy configured</b><small>Finding · no destination, so no copy leaves the Studio host · floor 85 · open</small></span><time>09 Nov 06:31</time></li>
+<li><span class="imp hi">85</span><span><b>Secret store key escrow not confirmed</b><small>Finding · fingerprint from <code>secret-key.sh id</code> has no escrow record · floor 85 · open</small></span><time>09 Nov 06:31</time></li>
+<li><span class="imp hi">80</span><span><b>Runner credential for runner-02 expires in 6 days</b><small>Finding · credential inventory, metadata only · floor 80 · open</small></span><time>09 Nov 06:31</time></li>
+<li><span class="imp hi">76</span><span><b>Choose the backup schedule</b><small>Decision request · A daily 03:15, the documented default (recommended) · B daily 01:00 before the nightly batch · no answer: nothing changes · due 11 Nov</small></span><time>09 Nov 06:32</time></li>
+<li><span class="imp">61</span><span><b>Install the backup timer and record the first restore test</b><small>Proposal · home: backup scheduling card and runbook · draft slice ready · deduplicated against the open backup card, evidence appended there</small></span><time>09 Nov 06:32</time></li>
+<li><span class="imp">22</span><span><b>Two image updates pending, no security fix among them</b><small>Finding · below threshold, shown because the filter includes today</small></span><time>09 Nov 06:31</time></li>
+<li><span class="dot"></span><span><b>Session ended</b><small>Lifecycle · digest · 9.8k tokens · 2 min 41 s · model selected by central selection, primary</small></span><time>09 Nov 06:32</time></li>
+</ul>
+</div>
+<div>
+<p class="mock-section-title">Budget this week</p>
+<div class="mock-card"><dl class="kv"><dt>Tokens</dt><dd>86k of 160k</dd></dl><div class="meter"><span style="width:54%"></span></div><dl class="kv"><dt>Sessions</dt><dd>6 of 10</dd><dt>Proposals</dt><dd>2 of 4</dd><dt>Draft cards</dt><dd>1 of 2</dd><dt>Resets</dt><dd>Mon 16 Nov 00:00 UTC</dd></dl></div>
+<p class="mock-section-title">Next</p>
+<div class="mock-card"><dl class="kv"><dt>Occurrence</dt><dd>10 Nov 06:30 · daily</dd><dt>Triggers armed</dt><dd>backup, credential, audit, deploy</dd><dt>Coalescing</dt><dd>1 h for floors ≥ 90</dd></dl></div>
+<p class="mock-section-title">Authority</p>
+<div class="mock-card"><dl class="kv"><dt>Grant</dt><dd>sgr_…7f2 · T1 · 4 operations</dd><dt>Scope</dt><dd>workspace · all projects</dd><dt>Expires</dt><dd>16 Nov · renew with team</dd><dt>Rate</dt><dd>3 of 10 this hour</dd></dl></div>
+</div>
+</div></div></div>
+<figcaption>Proposed persona page at <code>#/workspace/team/operations-warden</code>, Feed tab. Items sort by importance. Each one shows its factors or floor, so the number can be checked. A decision request states what happens without an answer.</figcaption>
+</figure>
+
+<h3>Magazine issue</h3>
+<figure class="mockup media-breakout" id="mock-magazine">
+<div class="mock-frame" role="img" aria-label="Magazine issue mockup, Studio Weekly issue 45: a masthead, a lead story at importance 97 about the missing backup schedule, four side stories, sections per aspect with importance numbers, a decisions needed box, an operations watch panel, numbers of the week and a colophon.">
+<div class="mag">
+<div class="mag-masthead"><p class="mag-title">Studio Weekly</p><div class="mag-issue">Issue 45 · 2 to 8 November 2026<br>Published Monday 9 November, 07:00</div>
+<div class="mag-strap"><span>7 of 8 personas reported</span><span>31 items</span><span>4 decisions needed</span><span>Sorted by importance</span></div></div>
+<div class="mag-front">
+<article class="mag-lead"><span class="mag-kicker">Operations warden · Critical</span>
+<h3><span class="imp crit big">97</span> No backup has ever been scheduled on the networked installation</h3>
+<p>The backup commands and the runbook exist, but the timer was never installed and no destination is set. Instance state, configuration and the sealed secret store exist only on the Studio host. Only the workspace repository is pushed. The security overview describes a weekly scratch restore that this installation has never run.</p>
+<p class="dim">Proposal: install the timer with the documented 03:15 default and record a first restore test. Decision needed by 11 November. Evidence: timer state, empty destination, no archive on record.</p></article>
+<div class="mag-side">
+<article><span class="mag-kicker">Operations warden</span><h4><span class="imp hi">85</span> No restore test on record</h4><p>CI proves the restore code. Nothing proves this installation's archives.</p></article>
+<article><span class="mag-kicker">Security officer</span><h4><span class="imp hi">74</span> Runner credential without expiry still in use</h4><p>Enrolled before the 30-day binding. Rotate to adopt the default.</p></article>
+<article><span class="mag-kicker">Reliability engineer</span><h4><span class="imp">68</span> Batch isolation hit Demo Platform three times</h4><p>The same test class failed each time. A quarantine proposal is in the Dossier.</p></article>
+<article><span class="mag-kicker">Product manager</span><h4><span class="imp">63</span> Three Dossiers have waited 14 days for a decision</h4><p>Two of them block cards in Backlog.</p></article>
+</div></div>
+<div class="mag-sections">
+<section><h5>Operations · 8</h5><ol><li><span class="imp crit">97</span><span>No backup schedule</span></li><li><span class="imp hi">85</span><span>No restore test</span></li><li><span class="imp hi">85</span><span>No off-host copy</span></li><li><span class="imp hi">85</span><span>No escrow record for the secret store key</span></li><li><span class="imp hi">80</span><span>Runner credential expires in 6 days</span></li><li><span class="dim">+ 3 more, 22 to 48</span></li></ol></section>
+<section><h5>Security · 7</h5><ol><li><span class="imp hi">74</span><span>Credential without expiry</span></li><li><span class="imp">52</span><span>Prompt file reads card text as instruction</span></li><li><span class="imp">31</span><span>Dependency advisory, not reachable</span></li><li><span class="dim">+ 4 more, 12 to 29</span></li></ol></section>
+<section><h5>Reliability · 6</h5><ol><li><span class="imp">68</span><span>Batch isolation repeated</span></li><li><span class="imp">47</span><span>Review queue p95 wait up 40 %</span></li><li><span class="dim">+ 4 more, 15 to 38</span></li></ol></section>
+<section><h5>Product · 4</h5><ol><li><span class="imp">63</span><span>Dossiers waiting for a decision</span></li><li><span class="imp">40</span><span>Two cards without a stated outcome</span></li><li><span class="dim">+ 2 more, 18 and 25</span></li></ol></section>
+<section><h5>Cost · 3</h5><ol><li><span class="imp">58</span><span>Review fallback active 31 hours</span></li><li><span class="imp">35</span><span>Cost per card up 12 %</span></li><li><span class="dim">+ 1 more, 14</span></li></ol></section>
+<section><h5>Quality · 3</h5><ol><li><span class="imp">52</span><span>Requirement-fit findings recur</span></li><li><span class="imp">44</span><span>Flaky spec in the board suite</span></li><li><span class="dim">+ 1 more, 20</span></li></ol></section>
+</div>
+<div class="mag-band">
+<div><h5>Decisions needed · 4</h5><ol class="mag-decisions">
+<li><span class="imp hi">76</span> Backup schedule: daily 03:15, recommended, or 01:00 · Operations warden · by 11 Nov</li>
+<li><span class="imp">66</span> Cap review rounds at three for persona cards? · Chief of staff · by 13 Nov</li>
+<li><span class="imp">58</span> Raise the persona pool from 10 % to 12 %? · Budget steward · by 15 Nov</li>
+<li><span class="imp">45</span> Decide or archive the three waiting Dossiers · Product manager · by 16 Nov</li>
+</ol></div>
+<div><h5>Operations watch</h5>
+<ul class="mock-list">
+<li><span class="dot bad"></span><span>Backups: no schedule, no archive on record</span><span class="imp crit">97</span></li>
+<li><span class="dot bad"></span><span>Restore test: never</span><span class="imp hi">85</span></li>
+<li><span class="dot bad"></span><span>Off-host copy and key escrow: none</span><span class="imp hi">85</span></li>
+<li><span class="dot warn"></span><span>Credentials: 1 expires within 7 days</span><span class="imp hi">80</span></li>
+<li><span class="dot good"></span><span>TLS 61 days · second factor every owner · audit chain verified 05:00</span><span class="dim">ok</span></li>
+</ul></div>
+</div>
+<div class="mag-band">
+<div><h5>Numbers of the week</h5><div class="mag-numbers"><div><b>31</b><span>items raised · 18 accepted</span></div><div><b>402k</b><span>tokens of 1,030k allocated</span></div><div><b>$0.41</b><span>per accepted finding</span></div></div></div>
+<div><h5>Colophon and corrections</h5><p class="dim" style="margin:0;font-size:0.8rem">Quality lead missed its Thursday report. Design lead has been paused since 6 November and is not counted. The cost controller retracted "fallback active for 40 hours" because of a meter gap; the corrected value is 31 hours. Section counts sum to the 31 items in the strap.</p></div>
+</div>
+</div></div>
+<figcaption>Proposed issue layout, illustrative content. The lead and the Operations watch use the real 9 November backup gap. Every number in a story is an item importance, and every section count sums to the strap. History and settled items are not on the front page.</figcaption>
+</figure>
+
+<h3>Two slides of a generated deck</h3>
+<figure class="mockup media-breakout" id="mock-slides">
+<div class="slides">
+<div class="slide slide-theme-light" role="img" aria-label="Slide 2 of 7 in the light theme: This week in five items, a ranked list with importance numbers 97, 85, 74, 68 and 63."><span class="theme-tag">Light</span>
+<span class="slide-kicker">Studio Weekly 45 · the five that matter</span><h4>This week in five items</h4>
+<ul><li><span class="imp crit">97</span><span>No backup has ever been scheduled on the networked installation</span></li><li><span class="imp hi">85</span><span>No restore test on record for this installation</span></li><li><span class="imp hi">74</span><span>Runner credential without expiry still in use</span></li><li><span class="imp">68</span><span>Batch isolation hit Demo Platform three times</span></li><li><span class="imp">63</span><span>Three Dossiers have waited 14 days for a decision</span></li></ul>
+<div class="slide-foot"><span>Sources: items 45-o1, 45-o2, 45-s1, 45-r1, 45-p1</span><span>2 / 7</span></div></div>
+<div class="slide slide-theme-dark" role="img" aria-label="The same slide in the dark theme."><span class="theme-tag">Dark</span>
+<span class="slide-kicker">Studio Weekly 45 · the five that matter</span><h4>This week in five items</h4>
+<ul><li><span class="imp crit">97</span><span>No backup has ever been scheduled on the networked installation</span></li><li><span class="imp hi">85</span><span>No restore test on record for this installation</span></li><li><span class="imp hi">74</span><span>Runner credential without expiry still in use</span></li><li><span class="imp">68</span><span>Batch isolation hit Demo Platform three times</span></li><li><span class="imp">63</span><span>Three Dossiers have waited 14 days for a decision</span></li></ul>
+<div class="slide-foot"><span>Sources: items 45-o1, 45-o2, 45-s1, 45-r1, 45-p1</span><span>2 / 7</span></div></div>
+<div class="slide slide-theme-light" role="img" aria-label="Slide 5 of 7 in the light theme: value per 100,000 tokens over four weeks by persona, horizontal bars from 267 for the operations warden down to 88 for the product manager, with the design lead paused."><span class="theme-tag">Light</span>
+<span class="slide-kicker">Team value · weeks 42 to 45</span><h4>Where the pool returns value</h4>
+<div class="bars"><div><span>Ops warden</span><i style="width:100%"></i><em>267</em></div><div><span>Reliability</span><i style="width:70%"></i><em>188</em></div><div><span>Security</span><i style="width:57%"></i><em>151</em></div><div><span>Cost</span><i style="width:52%"></i><em>140</em></div><div><span>Quality</span><i class="warn" style="width:36%"></i><em>96</em></div><div><span>Product</span><i class="warn" style="width:33%"></i><em>88</em></div></div>
+<div class="slide-foot"><span>Accepted importance per 100k tokens · team median 140 · design lead paused · source: stats.valuePer100k</span><span>5 / 7</span></div></div>
+<div class="slide slide-theme-dark" role="img" aria-label="The same value slide in the dark theme."><span class="theme-tag">Dark</span>
+<span class="slide-kicker">Team value · weeks 42 to 45</span><h4>Where the pool returns value</h4>
+<div class="bars"><div><span>Ops warden</span><i style="width:100%"></i><em>267</em></div><div><span>Reliability</span><i style="width:70%"></i><em>188</em></div><div><span>Security</span><i style="width:57%"></i><em>151</em></div><div><span>Cost</span><i style="width:52%"></i><em>140</em></div><div><span>Quality</span><i class="warn" style="width:36%"></i><em>96</em></div><div><span>Product</span><i class="warn" style="width:33%"></i><em>88</em></div></div>
+<div class="slide-foot"><span>Accepted importance per 100k tokens · team median 140 · design lead paused · source: stats.valuePer100k</span><span>5 / 7</span></div></div>
+</div>
+<figcaption>Proposed deck slides, each in light and dark. Every value carries its source item or stats field. In the Studio these slides map the article roles onto style guide tokens: paper → <code>--studio-bg-surface</code>, ink → <code>--studio-text-primary</code>, muted → <code>--studio-text-secondary</code>, line → <code>--studio-border</code>, accent bars → <code>--studio-accent-3</code>, warning bars → <code>--studio-accent-warn</code>, Critical → <code>--studio-accent-6</code>. Bars below the team median use the warning tone, and the bar lengths are proportional to the values.</figcaption>
+</figure>
+</section>
+
+<section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives"><h2>Alternatives</h2>
+<p>For each decision, the credible options and their main trade-off. The recommended option is marked and argued in the next section.</p>
+
+<h3>PT-D1 · What a persona is and where the catalogue lives</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Prompt-only skills</h3><p>One skill file per aspect, run on demand as a <code>SupportingAgent</code>.</p><p class="dim">Fast to write. But it has no budget, scope, grant or versioned identity, so it cannot be scheduled, measured or stopped as a unit.</p></article>
+<article class="variant"><h3>B. Versioned descriptor in the product catalogue plus a workspace activation (recommended)</h3><p><code>backend/Policies/personas/*.persona.json</code> with a schema and revisions, and activations, forks and attributes as application-owned workspace state written through the API.</p><p class="dim">Reviewable in Git, comparable across installations, and the owner's tuning never edits product files. It needs a schema, an API and a catalogue test.</p></article>
+<article class="variant"><h3>C. Settings records only</h3><p>Personas are created and edited only in the UI.</p><p class="dim">Flexible, but there are no shared defaults, no review of charter changes and no upgrade path when the catalogue improves.</p></article>
+<article class="variant"><h3>D. Files in each project repository</h3><p>Each project declares its personas.</p><p class="dim">Personas look across projects, so a per-project file is the wrong home, and repository content is untrusted input.</p></article>
+</div>
+
+<h3>PT-D2 · Stats</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Game attributes as flavour</h3><p>Strength, wisdom, charisma, chosen freely.</p><p class="dim">Fun, but dishonest: the numbers change nothing and measure nothing.</p></article>
+<article class="variant"><h3>B. Measured record only</h3><p>No owner-set attributes, only derived stats.</p><p class="dim">Honest, but the owner cannot steer a persona except by rewriting its charter.</p></article>
+<article class="variant"><h3>C. Owner-set attributes with named effects plus a derived record and an earned rank (recommended)</h3><p>Focus, autonomy, risk appetite, thoroughness and signal threshold change concrete parameters. The record comes from receipts with denominators. Rank only makes the persona eligible for more.</p><p class="dim">Keeps the game feel and stays honest. It needs a stats projection and a rank rule.</p></article>
+</div>
+
+<h3>PT-D3 · Budgets</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Share the Watcher contingent</h3><p>All personas draw from the existing 100-call, one-million-token weekly contingent.</p><p class="dim">No new budget concept, but one noisy persona starves the others and the Watcher's own detectors.</p></article>
+<article class="variant"><h3>B. Persona pool as a share of the workspace token limit, with an allowance per persona (recommended)</h3><p>A pool of 10 % by default, allowances summing to at most the pool, and limits on sessions, proposals, draft cards and minutes.</p><p class="dim">Clear ownership of spend and a lever for managers. It needs a small ledger.</p></article>
+<article class="variant"><h3>C. A slice of each CLI subscription</h3><p>Budgets per subscription and provider.</p><p class="dim">Mirrors billing, but it fights central model selection, which picks the subscription.</p></article>
+</div>
+
+<h3>PT-D4 · Where personas run and how they are scheduled</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Hosted service in the API container</h3><p>Like the Watcher's own analysis call.</p><p class="dim">Simple, but it puts model sessions and repository reads next to the control plane, which the spawn guard forbids for good reason.</p></article>
+<article class="variant"><h3>B. Short sessions of a persona principal on runner hosts, scheduled by the Watcher sweep (recommended)</h3><p>Digest calls by default, time-boxed read-only investigations by attribute, at most two at a time, card work first.</p><p class="dim">Reuses runner isolation, the audit, the kill switch and the one scheduler. It needs a persona lease type on runners.</p></article>
+<article class="variant"><h3>C. Extra CLI sessions on the owner's machine</h3><p>Personas as more operator agents.</p><p class="dim">Works today by hand, but stops when the laptop sleeps, and its usage falls outside Studio's budgets.</p></article>
+</div>
+
+<h3>PT-D5 · Reports, feed and page</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Free-text reports in Dossiers</h3><p>Each persona appends prose.</p><p class="dim">Readable, but nothing can be ranked, deduplicated or counted.</p></article>
+<article class="variant"><h3>B. Typed items on the Agent Message Bus plus an application store, with a configurable obligation and template (recommended)</h3><p>A <code>PersonaItemV1</code> envelope, participant kind <code>Persona</code>, a feed projection, and a page per persona.</p><p class="dim">One record for feed, magazine, deck and stats. It needs an additive schema change.</p></article>
+<article class="variant"><h3>C. A new persona event stream</h3><p>A dedicated store and API.</p><p class="dim">Duplicates the bus and the Watcher's case store.</p></article>
+</div>
+
+<h3>PT-D6 · Manager roles</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. No managers</h3><p>The owner orders and moves everything.</p><p class="dim">Safest. The owner becomes the bottleneck the team was meant to remove.</p></article>
+<article class="variant"><h3>B. Advisory managers</h3><p>Managers rank and recommend only.</p><p class="dim">Safe and useful, but every move still needs the owner.</p></article>
+<article class="variant"><h3>C. Bounded T1 decision rights under standing grants (recommended)</h3><p>A chief of staff and a budget steward with daily limits, the attention lease, 24-hour undo and owner-only T2.</p><p class="dim">Real relief within explicit bounds. Needs new catalogued operations and validators.</p></article>
+</div>
+
+<h3>PT-D7 · Magazine</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. A digest list</h3><p>One sorted list of items per week.</p><p class="dim">Cheap, but nothing tells the reader what matters first, and aspects blur.</p></article>
+<article class="variant"><h3>B. A weekly issue in magazine layout, composed deterministically with one editor call, in the Studio with HTML and PDF export, and sending off by default (recommended)</h3><p>Front page, decisions, sections, operations watch, numbers, corrections.</p><p class="dim">Readable at a glance and reproducible. Layout rules and an export are needed.</p></article>
+<article class="variant"><h3>C. A model-written issue</h3><p>A model writes the whole issue from all reports.</p><p class="dim">Fluent, but expensive and not reproducible, and it can invent emphasis or numbers.</p></article>
+</div>
+
+<h3>PT-D8 · Importance numbers</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Severity labels</h3><p>Info, Warn, High as today on the bus.</p><p class="dim">Too coarse to sort a week's 30 items, and each persona inflates differently.</p></article>
+<article class="variant"><h3>B. A 0 to 100 score computed from impact, urgency and confidence, with fact floors, bounded manager adjustment and owner acknowledgement (recommended)</h3><p>The same formula for every persona. Floors for missing backups and expired credentials.</p><p class="dim">Comparable across aspects and hard to game. The anchors need calibration.</p></article>
+<article class="variant"><h3>C. The model assigns a score</h3><p>The persona types the number.</p><p class="dim">Simple, but uncalibrated and open to inflation and injection.</p></article>
+</div>
+
+<h3>PT-D9 · Presentations</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Export the magazine as slides</h3><p>One slide per section.</p><p class="dim">No new persona, but no selection or story either.</p></article>
+<article class="variant"><h3>B. A presenter persona with structured <code>deck.json</code>, rendered with style guide tokens in both themes, exported as HTML and PDF (recommended)</h3><p>Weekly 7-slide and monthly review decks, chosen by importance, with every number sourced.</p><p class="dim">Readable and checkable. Needs a renderer and a validator.</p></article>
+<article class="variant"><h3>C. Generate PPTX files</h3><p>Office files from the start.</p><p class="dim">Familiar to share, but it brings a second visual system and a heavy dependency. Keep it as a later export.</p></article>
+</div>
+
+<h3>PT-D10 · Safety model</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Run under the owner's session or the operator agent's token</h3><p>No new identity.</p><p class="dim">One injected persona could act with the owner's rights, and the audit cannot tell personas apart.</p></article>
+<article class="variant"><h3>B. A principal per persona on the operator-agent model, persona operations catalogued, untrusted content limited to the persona's own publication (recommended)</h3><p>Grants per persona, managers on typed fields, a team stop and the SM-2 switch.</p><p class="dim">Least privilege with existing machinery.</p></article>
+<article class="variant"><h3>C. Pure read-only personas</h3><p>No writes at all. The platform copies their output.</p><p class="dim">Safe, but managers are impossible and publication becomes an unaudited side channel.</p></article>
+</div>
+
+<h3>PT-D11 · Evaluation</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Owner judgement only</h3><p>The owner reads and decides.</p><p class="dim">No data to compare personas.</p></article>
+<article class="variant"><h3>B. A value panel, misses, owner rating, rule-based review suggestions and before/after by charter revision (recommended)</h3><p>The platform suggests and the owner decides.</p><p class="dim">Explains cost against outcome. Needs miss attribution.</p></article>
+<article class="variant"><h3>C. Automatic retirement</h3><p>Personas below a threshold retire themselves.</p><p class="dim">Removes a decision that belongs to the owner, and a quiet month is not proof of no value.</p></article>
+</div>
+
+<h3>PT-D12 · Starter catalogue and the operations aspect</h3>
+<div class="variant-grid">
+<article class="variant"><h3>A. Give the reliability engineer the operations charter</h3><p>One persona for flow and installation posture.</p><p class="dim">Fewer personas, but different sources, floors and cadence in one charter. Backups would compete with red batches for the same focus weights.</p></article>
+<article class="variant"><h3>B. Eight aspect personas including a dedicated operations warden, plus the presenter and two managers; the scout joins later (recommended)</h3><p>Only the warden and the cost controller start active.</p><p class="dim">Covers the owner's examples and the follow-up. Starts small.</p></article>
+<article class="variant"><h3>C. Start with all personas active</h3><p>Everything on from day one.</p><p class="dim">No baseline, and the most noise in the first weeks.</p></article>
+</div>
+</section>
+
+<section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation"><h2>Recommendation</h2>
+<div class="callout" data-tone="accent"><h3>Recommended default</h3>
+<p>Build the persona team as one more composition of what exists, not as a new engine. Use one descriptor, one principal per persona, one scheduler (the Watcher sweep), one scoring rule, one item envelope on the Agent Message Bus, and three reading surfaces: the Team page, the persona page and the magazine with its deck. Start with the operations warden in shadow mode, because the 9 November backup gap is exactly the silent failure this team should catch, and the warden's checks are mostly deterministic facts.</p></div>
+<table>
+<thead><tr><th>Decision</th><th>Recommended option</th><th>Most important reason</th></tr></thead>
+<tbody>
+<tr><td>PT-D1 Persona definition</td><td>B: a versioned descriptor in <code>backend/Policies/personas/</code> plus a workspace activation through the API. Owner activation with step-up, shadow mode for the first period, deactivation without step-up.</td><td>Charter changes are reviewable and the owner's tuning never edits product files.</td></tr>
+<tr><td>PT-D2 Stats</td><td>C: owner-set attributes with named effects, a derived record with denominators, and a rank that only grants eligibility.</td><td>Honest numbers that still read like a character sheet.</td></tr>
+<tr><td>PT-D3 Budgets</td><td>B: a persona pool of 10 % of the weekly token limit (1.2 million tokens without a limit) and an allowance per persona. Stub reports on exhaustion, model-free floor items, pause at 80 % workspace use, same-class fallback or wait.</td><td>Persona spend is visible and capped, and it never competes with cards.</td></tr>
+<tr><td>PT-D4 Activation and scheduling</td><td>B: persona principal sessions on runner hosts, scheduled by the Watcher sweep with coalescing, at most two at a time, card work first.</td><td>Reuses isolation, audit and the kill switch, and keeps the API container clean.</td></tr>
+<tr><td>PT-D5 Reports and outputs</td><td>B: typed <code>PersonaItemV1</code> items, participant kind <code>Persona</code> on the bus, a configurable obligation with fixed templates, and a page per persona.</td><td>One record feeds the feed, magazine, deck and stats.</td></tr>
+<tr><td>PT-D6 Manager roles</td><td>C: a chief of staff and a budget steward with bounded T1 rights, the attention lease, 24-hour undo, and the owner for everything T2.</td><td>Relieves the owner without widening what an agent may do alone.</td></tr>
+<tr><td>PT-D7 Magazine</td><td>B: a weekly issue on Monday at 07:00, deterministic layout plus one editor call, viewed in the Studio, exported as HTML and PDF, sending off by default.</td><td>The owner sees the most important items first, reproducibly.</td></tr>
+<tr><td>PT-D8 Importance</td><td>B: a 0 to 100 score from impact × urgency × confidence, fact floors, manager adjustment of ±15, and owner acknowledgement instead of lowering below a floor.</td><td>Comparable across aspects, and a missing backup or expired credential cannot sink.</td></tr>
+<tr><td>PT-D9 Presentations</td><td>B: a presenter persona with <code>deck.json</code>, weekly and monthly decks, style guide tokens in both themes, HTML and PDF export.</td><td>Decks stay sourced and in one visual system.</td></tr>
+<tr><td>PT-D10 Safety</td><td>B: a principal per persona with catalogued persona operations, untrusted content limited to the persona's own publication, managers on typed fields, and team stop plus SM-2.</td><td>Least privilege with the existing security model.</td></tr>
+<tr><td>PT-D11 Evaluation</td><td>B: a value panel, misses, owner rating, review suggestions, and before/after by charter revision. The owner decides.</td><td>Cost is always shown next to outcome.</td></tr>
+<tr><td>PT-D12 Starter catalogue</td><td>B: eight aspect personas with a dedicated operations warden, the presenter and two managers. The warden and the cost controller start active, and the scout joins later.</td><td>Covers the owner's examples and the follow-up, and starts with the highest-value pair.</td></tr>
+</tbody></table>
+</section>
+
+<section id="evidence" data-concept-section="evidence" data-document-section="evidence"><h2>Evidence</h2>
+<p>Evidence is classified as observed (read in the repository at commit <code>2beb60947</code>, which already contains current <code>develop</code>, or captured from a fresh isolated demo stack built from it on 9 November 2026), inferred, or proposed. The captures come from <code>scripts/worktree-test-stack.sh up --demo --with-frontend</code>: the ADR-0056 pinned demo workspace (Demo App, Demo Platform), an isolated temporary workspace on dynamic ports, and a temporary Playwright spec in the <code>visual-evidence</code> project. That spec waited for each surface, captured element crops at device scale 2 in both themes, failed on page errors, and was removed after capture. The messages in the agent activity and workspace activity captures were produced live by the demo backend after boot. They contain no real project data.</p>
+
+<figure class="evidence-figure media-breakout" id="ev-bus">
+<div class="evidence-captures">
+<div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/agent-activity-bus-participants-light--demo.png" alt="Demo App project, Agent activity view titled Observability: Communication on the Agent Message Bus for this project, read-only. Filters for range, participant, kind, severity, task, run, CLI and skill; tiles for messages, interventions, errors, severities, tokens and silent gaps; a timeline by participant with orchestrator:global-watcher and supervisor:Demo App; and a participant by kind matrix with advisory and decision counts."><span class="figure-annotation">Participants, kinds, severities</span></div>
+<div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/agent-activity-bus-participants-dark--demo.png" alt="The same Agent activity view in the dark theme with the same participants and counts."></div>
+</div>
+<figcaption><span class="figure-claim"><b>Evidence.</b> The project's Agent activity view already reads the Agent Message Bus by participant, kind and severity. It lists the global Watcher (<code>orchestrator:global-watcher</code>) as a participant next to the project supervisor. A persona is one more participant, and its feed is a filtered projection of the same bus.</span>
+<span class="figure-as-of"><span><b>Light:</b> captured <time datetime="2026-11-09">9 November 2026</time> from a fresh isolated demo stack built from commit 2beb60947 (ADR-0056 pinned seed, <code>#/projects/demo-app/agent-activity</code>). Element crop of the panel's upper 640 CSS pixels.</span><span><b>Dark:</b> captured <time datetime="2026-11-09">9 November 2026</time>, same stack, route and crop.</span></span></figcaption>
+</figure>
+
+<figure class="evidence-figure media-breakout" id="ev-feed">
+<div class="evidence-captures">
+<div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/workspace-activity-chronological-light--demo.png" alt="Activity across projects, workspace scope, newest first. A credentials notice, a line Global orchestrator · No session booted, event class filters with counts, four alert rows at 11:06 AM and a detail pane. The footnote reads All activity is chronological."><span class="figure-annotation">Ordered by time, not importance</span></div>
+<div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/workspace-activity-chronological-dark--demo.png" alt="The same workspace activity view in the dark theme."></div>
+</div>
+<figcaption><span class="figure-claim"><b>Evidence.</b> The workspace activity feed is ordered newest first and states "All activity is chronological". Rows carry an event class but no importance, and the global orchestrator shows "No session booted". Nothing on this surface ranks items across aspects, which is the gap the importance number and the magazine fill.</span>
+<span class="figure-as-of"><span><b>Light:</b> captured <time datetime="2026-11-09">9 November 2026</time> from the same demo stack (<code>#/feed</code>), crop of the main area without the explorer.</span><span><b>Dark:</b> captured <time datetime="2026-11-09">9 November 2026</time>, same stack, route and crop.</span></span></figcaption>
+</figure>
+
+<figure class="evidence-figure media-breakout" id="ev-quota">
+<div class="evidence-captures">
+<div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/workspace-quota-three-weekly-limits-light--demo.png" alt="Settings, Workspaces, Workspace quota disclosure opened: No limit, current UTC week ends 2026-11-16, zero tokens, core hours and running environments used, and three empty fields Tokens per week, Core hours per week and Hosting slots with Save quota."><span class="figure-annotation">Three limits, no consumer share</span></div>
+<div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/workspace-quota-three-weekly-limits-dark--demo.png" alt="The same workspace quota editor in the dark theme."></div>
+</div>
+<figcaption><span class="figure-claim"><b>Evidence.</b> The workspace quota editor offers exactly three weekly limits (tokens, core hours, hosting slots) and shows "No limit" when they are empty. There is no share per consumer. The persona pool therefore needs its own setting, and a fallback size for workspaces without a limit.</span>
+<span class="figure-as-of"><span><b>Light:</b> captured <time datetime="2026-11-09">9 November 2026</time> from the same demo stack (<code>#/workspace/settings/workspaces</code>, Workspace quota opened), element crop of the disclosure.</span><span><b>Dark:</b> captured <time datetime="2026-11-09">9 November 2026</time>, same stack and crop.</span></span></figcaption>
+</figure>
+
+<div class="evidence-list">
+<a class="evidence" href="#scope"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>No scheduled backup on 9 November</b><small>Owner statement of 9 November 2026 (task follow-up): the live networked installation had no scheduled backup, and only the workspace repository was pushed. Repository: <code>deploy/compose/monolith-networked/backup.sh</code>, <code>install-backup-timer.sh</code> (systemd <code>agent-studio-backup.timer</code>, daily 03:15), <code>docs/operations/setup/studio-backup-restore.md</code> (empty <code>STUDIO_BACKUP_DESTINATION</code> means "Backups are off"; the secret store key is not in the archive, only its fingerprint), <code>deploy/systemd/agent-task-server-backup.timer</code>, <code>task-server/TaskServerCommandLine.cs</code> (<code>backup full | verify-full | restore-full</code>).</small></span></a>
+<a class="evidence" href="#operations-watch"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Documented posture claims a weekly restore</b><small><code>docs/operations/security/overview.md</code>, stage 0 baseline: "A weekly scratch restore proves that the recovered state accepts a full Owner or Operator sign-in", with the <code>website.restore.signin</code> signal. The credential inventory marks credentials expiring within 14 days, and the audit chain has <code>POST /api/auth/audit/verify</code>.</small></span></a>
+<a class="evidence" href="#current-state"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Grants, tiers and kill switch exist</b><small><code>backend/Features/Security/Iam/OperatorPolicy/OperatorOperationCatalog.cs</code>; overview sections SM-1, SM-2, SM-4 and SM-5: tiers T0 to T3, standing grants of 7 to 30 days at 10 to 120 requests per hour, refusals <code>grant-required</code> and <code>approval-required</code>, the instruction-source header, and <em>End all operator access</em> within 60 seconds.</small></span></a>
+<a class="evidence" href="#current-state"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>One scheduler and one proposal path already exist</b><small><code>backend/Features/Watcher/WatcherHostedService.cs</code> (five-minute sweep, <code>Watcher:Enabled</code>); the scout Dossier's daily and weekly profile and append API; <code>backend/Features/Pipeline/ConceptPromotionService.cs</code> and <code>/api/tasks/{jobId}/promote-concept</code>.</small></span></a>
+<a class="evidence" href="#budgets"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Quota and selection contracts</b><small><code>docs/concepts/workspace-quotas.md</code> (<code>ModelTokensPerWeek</code>, warning 80 %, blocked 100 %, check, not reservation); model selection Dossier D4 (review fallbacks stay in class) and outcomes <code>primary | fallback | wait | throttle | refused</code>; <code>backend/Features/Operator/Capacity/OperatorCapacityEndpoints.cs</code>.</small></span></a>
+<a class="evidence" href="#reporting"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Bus schema has no persona kind</b><small><code>docs/app/schemas/agent-participant.schema.json</code> kinds: User, Orchestrator, Supervisor, CodingAgent, SupportingAgent, SystemReview, Runtime, External. <code>agent-message.schema.json</code> kinds and severities <code>Info | Warn | High</code>. Participants are descriptive and own no lifecycle authority.</small></span></a>
+<a class="evidence" href="#importance"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Severity alone cannot rank a week</b><small>Three severities for about 30 items a week leave ties in every band, and each producer chooses its own level. A computed score with shared anchors is the smallest change that makes items from different personas comparable.</small></span></a>
+<a class="evidence" href="#operations-watch"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>A watcher with floors would have caught the gap</b><small>The missing timer, the empty destination and the absent archive are typed facts that need no model. A floor of 95 would have put the gap on the first front page and kept it there, even with an exhausted budget.</small></span></a>
+<a class="evidence" href="#cards"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Twelve implementation cards</b><small>PT-1 to PT-12 below, each with bounded acceptance criteria and dependencies.</small></span></a>
+</div>
+</section>
+
+<section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions"><h2>Open decisions</h2>
+<p>Each decision has a recommended working option. A promoted card uses it unless a recorded owner decision selects another.</p>
+<div class="decision"><h3>PT-D1 · Persona definition and catalogue</h3><p>Options: prompt-only skills; versioned descriptor plus workspace activation; settings records only; files per project.</p><p><b>Recommended:</b> B. <code>backend/Policies/personas/*.persona.json</code> with <code>persona.schema.json</code> and revisions; activations and forks through <code>/api/workspaces/{id}/personas</code>; activation with step-up and one shadow period.</p></div>
+<div class="decision"><h3>PT-D2 · Stats</h3><p>Options: flavour attributes; measured record only; attributes with effects plus record and earned rank.</p><p><b>Recommended:</b> C. Focus, autonomy, risk appetite, thoroughness and signal threshold; a derived record with denominators; Probation, Member and Senior as eligibility only.</p></div>
+<div class="decision"><h3>PT-D3 · Budgets</h3><p>Options: share the Watcher contingent; persona pool with allowances; per-subscription slices.</p><p><b>Recommended:</b> B. A pool of 10 % of <code>ModelTokensPerWeek</code> (1.2 million without a limit), allowances, session, proposal, card and minute limits, stub reports and model-free floor items on exhaustion, pause at workspace warning, same-class fallback or wait.</p></div>
+<div class="decision"><h3>PT-D4 · Activation and scheduling</h3><p>Options: API container; persona principal sessions on runner hosts; owner machine.</p><p><b>Recommended:</b> B. The Watcher sweep schedules with coalescing; at most one occurrence per persona and two per workspace; idle slots only; digest by default, investigation by attribute.</p></div>
+<div class="decision"><h3>PT-D5 · Reports, feed and page</h3><p>Options: free text in Dossiers; typed items on the bus plus a store; a new event stream.</p><p><b>Recommended:</b> B. <code>PersonaItemV1</code>, participant kind <code>Persona</code>, a configurable obligation with fixed templates, the Team page and a persona page.</p></div>
+<div class="decision"><h3>PT-D6 · Manager roles</h3><p>Options: none; advisory; bounded T1 rights.</p><p><b>Recommended:</b> C. A chief of staff and a budget steward with the bounds in <a href="#managers">Manager roles</a>; everything T2 and the owner list stay with the owner.</p></div>
+<div class="decision"><h3>PT-D7 · Magazine</h3><p>Options: digest list; weekly issue with deterministic layout; fully model-written issue.</p><p><b>Recommended:</b> B. Studio Weekly on Monday at 07:00, optional daily brief, HTML and PDF export, sending off by default and then titles and numbers only.</p></div>
+<div class="decision"><h3>PT-D8 · Importance numbers</h3><p>Options: severity labels; a computed score with floors; a model-typed score.</p><p><b>Recommended:</b> B. <code>round(100 × impact × urgency / 25 × (0.5 + 0.5 × confidence))</code>, fact floors, ±15 manager adjustment, owner acknowledgement up to 14 days.</p></div>
+<div class="decision"><h3>PT-D9 · Presentations</h3><p>Options: magazine export; presenter persona with <code>deck.json</code>; PPTX first.</p><p><b>Recommended:</b> B. Weekly 7-slide and monthly 10 to 12-slide decks, both themes, HTML and PDF; PPTX later.</p></div>
+<div class="decision"><h3>PT-D10 · Safety</h3><p>Options: owner or operator identity; a principal per persona; read-only personas.</p><p><b>Recommended:</b> B. <code>opa_persona_*</code> principals, catalogued persona operations, sessions of at most 30 minutes, untrusted content only for own publication, team stop and SM-2.</p></div>
+<div class="decision"><h3>PT-D11 · Evaluation</h3><p>Options: owner judgement; value panel with suggestions; automatic retirement.</p><p><b>Recommended:</b> B. Value per 100k tokens, cost per accepted finding, misses, owner rating, suggestions by rule, before/after by revision.</p></div>
+<div class="decision"><h3>PT-D12 · Starter catalogue and the operations aspect</h3><p>Options: reliability takes operations; eight personas with a dedicated warden; everything active at once.</p><p><b>Recommended:</b> B. The catalogue in <a href="#catalogue">Starter catalogue</a>; the warden and the cost controller start active.</p></div>
+<p class="dim">Facts to confirm when the first slices land, not blockers: the default pool share (10 %) against the real weekly token use of the installation, and whether the website baseline's <code>website.restore.signin</code> signal is published on the networked installation or only planned.</p>
+</section>
+
+<section id="plan"><h2>Phased plan</h2>
+<table>
+<thead><tr><th>Phase</th><th>Goal</th><th>Cards</th><th>Exit criterion</th></tr></thead>
+<tbody>
+<tr><td>0 · Contracts</td><td>The descriptor, item envelope, principal and operations exist. Nothing runs.</td><td>PT-1, PT-2</td><td>Activating a persona issues one grant, and Stop all personas revokes it within 60 seconds.</td></tr>
+<tr><td>1 · First persona in shadow</td><td>The operations warden runs daily on runner hosts with budgets and importance scoring, and publishes to its feed only.</td><td>PT-3, PT-4, PT-5</td><td>Replaying the 9 November state yields one item at 97 with model-free fallback, and two weeks of shadow output without a duplicate item.</td></tr>
+<tr><td>2 · Visible team</td><td>The Team page, persona pages and the character sheet. The warden and the cost controller go live.</td><td>PT-6, PT-7</td><td>Pool totals reconcile on screen. Light and dark captures pass review.</td></tr>
+<tr><td>3 · Magazine and deck</td><td>A weekly issue and the presenter's deck.</td><td>PT-8, PT-9</td><td>Two consecutive issues compose deterministically from the same items, and every deck number resolves to a source.</td></tr>
+<tr><td>4 · Managers</td><td>The chief of staff and the budget steward with bounded rights.</td><td>PT-10</td><td>Every bound refuses with a receipt in tests, and undo restores the card state.</td></tr>
+<tr><td>5 · Whole team and evaluation</td><td>The remaining catalogue personas, the value panel and the review loop.</td><td>PT-11, PT-12</td><td>Each persona has four weeks of record. The first monthly team review appears in the magazine.</td></tr>
+</tbody></table>
+</section>
+
+<section id="cards"><h2>Cards</h2>
+<p>Twelve independently reviewable slices, defined as <code>implementationTasks</code> in <code>workbench.json</code> with a bounded <code>acceptanceScope</code> each. Their prompts name entry points, what to deliver, what is out of scope, and acceptance. They follow the phased plan. PT-5 consumes, and does not duplicate, the separate cards that schedule backups and add the security view to the Operations page.</p>
+<table>
+<thead><tr><th>Card</th><th>Title</th><th>Decisions</th><th>Depends on</th><th>Acceptance</th></tr></thead>
+<tbody>
+<tr><td><b>PT-1</b></td><td>Persona descriptor, starter catalogue and workspace activation API</td><td>PT-D1, PT-D12</td><td>none</td><td>Every starter descriptor validates and the revision test fails on an unversioned change; Activation without step-up answers 403 step-up-required; with step-up it records revision, digest and shadow state; Deactivation and pause need no step-up and are audited; A fork is independent of later catalogue revisions until the Owner adopts one.</td></tr>
+<tr><td><b>PT-2</b></td><td>Persona principals, catalogued persona operations and team stop</td><td>PT-D10, PT-D6</td><td>PT-1</td><td>Every new operation has exactly one tier and passes the catalogue inventory test; A persona session calling card.requeue without a manager grant gets 403 grant-required; stop-all refuses every persona call within 60 seconds and is audited; A publish call with instruction source repository-file is admitted, the same source on a manager operation is refused.</td></tr>
+<tr><td><b>PT-3</b></td><td>Persona scheduling, admission and budget ledger</td><td>PT-D3, PT-D4</td><td>PT-1, PT-2</td><td>A restart or a duplicate trigger yields one occurrence per key; At 80 % workspace use, persona occurrences are refused with a receipt while card admission is unchanged; A fallback outside the persona capability class is never selected; the occurrence waits; Ledger totals reconcile with occurrence receipts for a replayed week.</td></tr>
+<tr><td><b>PT-4</b></td><td>Persona occurrence, item validation and importance scoring</td><td>PT-D4, PT-D5, PT-D8</td><td>PT-3</td><td>A response with an unresolvable reference or out-of-scope project is rejected with a failed receipt; The score formula reproduces the Dossier&#x27;s three worked examples and never drops below a floor; A repeated finding with the same fingerprint updates one item instead of creating a second; An exhausted allowance yields a stub report and still publishes a floor item of 70 or more without a model call.</td></tr>
+<tr><td><b>PT-5</b></td><td>Operations warden: posture facts, floors and shadow run</td><td>PT-D12, PT-D8</td><td>PT-4; consumes the separate backup scheduling and Operations security view cards</td><td>The 9 November replay yields exactly one backup item at 97 and keeps one item across seven daily runs while urgency grows; An expired credential still referenced yields 95; a stale fact source yields a 70 visibility finding; No grounds pack or item contains a secret value; Proposals for fixes deduplicate onto the open backup card instead of creating a new one.</td></tr>
+<tr><td><b>PT-6</b></td><td>Team page and persona management page</td><td>PT-D5, PT-D3</td><td>PT-1, PT-3, PT-4</td><td>Pool totals equal the sum of the visible persona cards; Stop all personas paints optimistically and rolls back on failure (R6); A resolved Critical item loses acute styling immediately; Playwright light and dark captures of both pages are saved to results.</td></tr>
+<tr><td><b>PT-7</b></td><td>Character sheet: attributes and derived record</td><td>PT-D2, PT-D11</td><td>PT-4, PT-6</td><td>Every rate shows its denominator and hides below five decided items; Rank changes never change grants or allowances by themselves; Stats split by activation revision; Light and dark captures saved.</td></tr>
+<tr><td><b>PT-8</b></td><td>Magazine issue composer, viewer and export</td><td>PT-D7, PT-D8</td><td>PT-4, PT-6</td><td>Composing twice from the same items yields byte-identical layout data; Section counts sum to the strap total (R3); An editor sentence without an item id is rejected; Exported HTML renders in light and dark and prints to PDF.</td></tr>
+<tr><td><b>PT-9</b></td><td>Presenter persona and deck renderer</td><td>PT-D9</td><td>PT-8</td><td>Every number on every slide resolves to a stats field or item; Light and dark renders pass a contrast check; Stakeholder variant contains no host names or costs; Playwright captures of two slides in both themes saved.</td></tr>
+<tr><td><b>PT-10</b></td><td>Manager roles: chief of staff and budget steward</td><td>PT-D6, PT-D10</td><td>PT-2, PT-4, PT-6</td><td>Each bound has a test that refuses with a receipt; An Owner-held attention lease refuses the manager write; Undo restores lane and revision and counts against calibration; No manager grounds pack contains an item body.</td></tr>
+<tr><td><b>PT-11</b></td><td>Evaluation: value panel, misses and review suggestions</td><td>PT-D11</td><td>PT-7, PT-8</td><td>Each suggestion rule has a fixture that triggers it and one that does not; Misses link to the item or card that was first; Ratings never change scores or ranks; Retire archives feed and stats read-only and revokes the principal.</td></tr>
+<tr><td><b>PT-12</b></td><td>Remaining starter personas with templates and shadow periods</td><td>PT-D12, PT-D5</td><td>PT-5, PT-6, PT-8</td><td>Each persona produces a valid report in shadow with coverage listed; No persona reads outside its scope in a scope test; The scout runs once per due window after migration, never twice; Allowances of the activated set stay within the pool.</td></tr>
+</tbody></table>
+</section>
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2>Implementation</h2>
+    <p>Delivery slices append their current implementation status here. Decision content above remains unchanged. Each <code>workbench.json</code> <code>implementationTasks</code> entry is one independently reviewable slice with a bounded <code>acceptanceScope</code>.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

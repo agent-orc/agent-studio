@@ -1,0 +1,20 @@
+@if (visible()) {
+  <div class="ready-wait"
+       role="group"
+       data-testid="ready-wait-split"
+       [attr.data-total]="total()"
+       [attr.aria-label]="'Waiting: ' + summary()">
+    <span class="ready-wait__lead" aria-hidden="true">Waiting</span>
+    @for (bucket of buckets(); track bucket.kind + ':' + bucket.code) {
+      <span class="ready-wait__bucket"
+            tabindex="0"
+            [attr.data-testid]="'ready-wait-bucket-' + bucket.kind + '-' + bucket.code"
+            [attr.data-kind]="bucket.kind"
+            [attr.data-count]="bucket.count"
+            [appTooltip]="tooltip(bucket)">
+        <span class="ready-wait__dot" aria-hidden="true"></span>
+        <span class="ready-wait__count">{{ bucket.count }}</span>&ngsp;<span class="ready-wait__label">{{ bucket.label }}</span>
+      </span>
+    }
+  </div>
+}

@@ -118,6 +118,38 @@ be reporting noise rather than a standstill.
   card renders that shared component instead of its own partial inline copy, so
   one record has one rendering on the card and in the detail header.
 
+## Runner wait reasons (AGT-3579)
+
+A pickup hold is a fact about the card. The runner also declines to pick
+pickup-eligible cards for reasons of its own, and those used to reach the UI
+only as the free-text `lastPickReason`. `ProjectRunnerStatus` now carries them
+as typed facts next to `occupiedSlots` and `maxParallelism`:
+
+- `pickupGate` (`code`, `detail`): the gate that ended the last tick before any
+  candidate was evaluated: `manual-mode`, `paused`, `breaker-cooldown`,
+  `pending-mode`, `test-subject`, `build-profile`, or `slots-full`. A project
+  placed on a remote runner records no gate; remote dispatch states its holds.
+- `pickupSkips[]` (`jobId`, `code`, `detail`): candidates the last pass skipped
+  with `load-throttle`, `provider-limit`, `quota-defer`, or `parallel-conflict`.
+  Empty while a gate is set, because a closed gate evaluates no candidate.
+
+The `detail` sentences carry no per-sample numbers, so an unchanged wait keeps
+the board body stable. `TaskLiveStatusProjection.RunnerQueueFor` copies the gate,
+else the card's skip, onto `liveStatus.queue` as `reasonCode` and `reason`, for
+pickup candidates only (cards in `queuedJobIds`). A held card keeps its hold.
+
+`frontend/src/app/models/ready-wait-reason.ts` gives each Ready card exactly one
+reason: a blocked dependency, then any other hold, then the runner reason, else
+`queued`. Two surfaces read it:
+
+- **Ready lane header**: `<app-ready-wait-split>` shows the waiting count split
+  by reason (for example `1 dependency gate · 3 manual mode`). Every card counts
+  once, so the split sums to the lane count (R3). It renders only when at least
+  one card waits for a named reason.
+- **Card live status line**: a runner reason replaces the bare slot wait, for
+  example `Skipped · quota defer · position 2`, with the runner's sentence as
+  the detail line.
+
 ## Regression coverage
 
 - `backend.Tests/WaitsOnEvaluatorTests.cs` - archived and unreleased is blocked
@@ -132,3 +164,8 @@ be reporting noise rather than a standstill.
 - `frontend/src/app/components/pickup-hold/pickup-hold.component.spec.ts`,
   `.../remote-dispatch-rejection/remote-dispatch-rejection.component.spec.ts`,
   `frontend/e2e/board/pickup-hold-visibility.spec.ts` (both themes).
+- AGT-3579: `backend.Tests/RunnerPickupWaitReasonTests.cs` (mode and slot gates,
+  quota, load and provider skips, gate precedence), `ready-wait-reason.spec.ts`,
+  `ready-wait-split.component.spec.ts`, and
+  `frontend/e2e/board/ready-runner-wait-reasons.spec.ts` (manual mode, full
+  slots, quota defer; both themes).

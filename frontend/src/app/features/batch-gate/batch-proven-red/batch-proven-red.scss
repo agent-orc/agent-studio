@@ -1,0 +1,20 @@
+.batch-proven-red { display: grid; gap: var(--studio-spacing-2); min-width: 0; }
+.batch-proven-red p { margin: 0; overflow-wrap: anywhere; }
+.batch-proven-red__tests { display: grid; gap: var(--studio-spacing-2); margin: 0; padding: 0; list-style: none; }
+.batch-proven-red__test { display: block; overflow-wrap: anywhere; font-weight: 600; }
+.batch-proven-red__excerpt {
+  margin: var(--studio-spacing-1) 0 0;
+  padding: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-action-radius-sm);
+  background: var(--studio-bg-surface);
+  color: var(--studio-fg-muted);
+  font-size: .75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.batch-proven-red__evidence { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--studio-spacing-2); }
+.batch-proven-red__evidence a { color: var(--studio-accent); }
+.batch-proven-red__evidence a:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+.batch-proven-red__evidence code { color: var(--studio-fg-muted); font-size: .75rem; overflow-wrap: anywhere; }
+.batch-proven-red__run { color: var(--studio-fg-muted); font-size: .75rem; overflow-wrap: anywhere; }

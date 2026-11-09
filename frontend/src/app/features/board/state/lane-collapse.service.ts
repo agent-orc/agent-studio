@@ -1,6 +1,12 @@
 import { Injectable, signal } from '@angular/core';
 
 /**
+ * AGT-3590: below tablet width the studio board shows one container at a
+ * time. 720 px is the phone breakpoint the studio shell and header share.
+ */
+export const BOARD_SINGLE_GROUP_QUERY = '(width < 720px)';
+
+/**
  * Board feature service for per-lane collapse state and container focus.
  * Per-lane collapse remains a customization for individual job columns;
  * top-level Backlog / Active / Done containers do not have their own
@@ -13,6 +19,23 @@ export class LaneCollapseService {
   );
 
   readonly focusedContainer = signal<string | null>(null);
+
+  /** True below tablet width, where the board shows one container at a time. */
+  readonly singleGroupLayout = signal(false);
+
+  /**
+   * Container picked in the narrow-board switcher. Kept apart from
+   * `focusedContainer` so a phone pick does not leave the wide board focused.
+   */
+  readonly singleGroupChoice = signal<string | null>(null);
+
+  constructor() {
+    const media = typeof matchMedia === 'function' ? matchMedia(BOARD_SINGLE_GROUP_QUERY) : null;
+    if (!media) return;
+    this.singleGroupLayout.set(media.matches);
+    // Root service: the listener lives as long as the application.
+    media.addEventListener('change', (event) => this.singleGroupLayout.set(event.matches));
+  }
 
   // ---------- per-lane collapse ----------
 
@@ -67,6 +90,23 @@ export class LaneCollapseService {
 
   clearContainerFocus(): void {
     this.focusedContainer.set(null);
+  }
+
+  /**
+   * The container the board shows alone, or null when every container shows.
+   * Below tablet width one container always shows: the switcher pick, else
+   * the wide-board focus, else the first container. A pick whose container
+   * is gone (for example an emptied Delivery group) falls back the same way.
+   */
+  boardFocus(allContainerIds: readonly string[]): string | null {
+    if (!this.singleGroupLayout()) return this.focusedContainer();
+    const pick = [this.singleGroupChoice(), this.focusedContainer()]
+      .find((id) => id !== null && allContainerIds.includes(id));
+    return pick ?? allContainerIds[0] ?? null;
+  }
+
+  selectSingleGroup(id: string): void {
+    this.singleGroupChoice.set(id);
   }
 }
 
