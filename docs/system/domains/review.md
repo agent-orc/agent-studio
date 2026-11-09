@@ -1,5 +1,13 @@
 # Review Domain Map
 
+Acceptance checks the first-parent line after a delivery's verified tree. A
+server-authored document-key discovery commit is gate-neutral only when its
+first-parent diff changes existing `docs/**/workbench.json` descriptors solely
+by adding `key`. New managed commits carry an operation trailer; legacy
+commits require the Agent Studio author and committer identity. Acceptance
+records the inspected commit SHA in the card's
+completion evidence. Every other later commit still needs a passed gate.
+
 Version: 2026-11-05
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
@@ -1160,14 +1168,18 @@ that verdict.
 
 **Missing test reports.** A test-failures baseline must report at least one
 completed test, even when it exits zero. The review host retries a baseline
-with no parseable result once and records both attempts. If it still has no
-result, it settles as `ReviewInfra/BaselineUnavailable` and names the captured
+with no parseable result once, before saving the dependency cache, and records
+both attempts. If it still has no result, it settles as
+`ReviewInfra/BaselineUnavailable` and names the captured
 stdout artifact path. A delivery run that exits zero without a test result is
 also retried once. If its retry still has no result, it settles as
 `ReviewInfra/TestReportUnavailable`, unless the delivery changed test
 configuration, the runner or reporter, or added, removed, or renamed a spec. In
 that case the missing report is a product finding that cites the changed setup
-path. The result parser accepts Vitest's `Test Files N passed` summary as well
+path. A report retry with a missing declared dependency directory settles as
+`ReviewInfra/DependencyDirectoryMissing` and names the review harness defect;
+it does not charge the card. The result parser accepts Vitest's
+`Test Files N passed` summary as well
 as its `Tests N passed` summary. If Angular finished bundling but Vitest did not
 report a run, the infrastructure summary says so and points to the captured
 stdout artifact.

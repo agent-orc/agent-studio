@@ -4,6 +4,10 @@
   display: block;
 }
 
+.pbc__repository {
+  margin-top: var(--studio-spacing-3);
+}
+
 .pbc {
   display: grid;
   gap: var(--studio-spacing-4);

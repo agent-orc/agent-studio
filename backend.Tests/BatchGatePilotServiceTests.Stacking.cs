@@ -7,7 +7,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGatePilotStackingTests : BatchGatePilotServiceTests
 {
     private void EnableStacking(WebApplicationFactory<Program> factory)
     {

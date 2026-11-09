@@ -5,6 +5,7 @@
     <button type="button" (click)="load(projectName())">Refresh</button>
   </header>
   @if (error(); as message) { <p role="alert">{{ message }}</p> }
+  <app-backup-status-panel />
   @if (snapshot(); as state) {
     @if (!state.environments.length) { <p>No application environments are configured.</p> }
     @for (row of state.environments; track row.environment.id) {

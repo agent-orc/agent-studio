@@ -50,6 +50,7 @@ import type { SteeringInfo } from '../../../../components/steering-detail';
 import { buildMergeSignal, type MergeSignalView } from '../../../board';
 import type { TaskTimelineEvent } from '../../../task-timeline';
 import type { RunRecord } from '../../../run-timeline';
+import { parkReasonSentence, resolveParkCause } from '../../../../models/parked-blocker-presentation';
 
 /** One open gate point, rendered as a checklist row. */
 export interface EscalationGateItem {
@@ -304,10 +305,23 @@ export interface EscalationSummaryView {
   reissues: EscalationReissue[];
   /** Structured, bounded banner copy. Never derived from Markdown bodies. */
   essence: EscalationEssence;
-  /** Current parked attempt, when a run began after the preceding park. */
+  /** Current parked attempt, only when that attempt caused the park. */
   latestAttempt: string | null;
 }
 
+/**
+ * Without a recorded cause, a park this long after the run ended is not
+ * treated as the run's outcome (a later audit or sweep parked it).
+ */
+const RUN_PARK_WINDOW_MS = 15 * 60_000;
+
+/**
+ * "Latest attempt ended <time> and parked this card." - only when that attempt
+ * caused the park (AGT-3586). The recorded cause decides: an acceptance audit
+ * three months after the run is not the run's outcome. A park without a
+ * recorded cause counts only when it follows the run end closely. The reason
+ * itself is not repeated here; the park panel above states it once.
+ */
 export function latestParkedAttempt(
   info: TaskInfo,
   timeline: readonly TaskTimelineEvent[],
@@ -331,9 +345,11 @@ export function latestParkedAttempt(
   if (!parked) return null;
   const parkedAt = Date.parse(parked.parkedAt);
   if (!Number.isFinite(parkedAt) || parkedAt < startedAt) return null;
+  const origin = resolveParkCause(parked, timeline).origin;
+  if (origin !== 'run' && origin !== 'unknown') return null;
+  if (origin === 'unknown' && parkedAt - finishedAt > RUN_PARK_WINDOW_MS) return null;
   const endedAt = new Date(finishedAt).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
-  const reason = parked.reason?.trim() || parked.conditionDescription?.trim() || 'Reason not recorded';
-  return `Latest attempt ended ${endedAt}: ${reason}`;
+  return `Latest attempt ended ${endedAt} and parked this card.`;
 }
 
 /** Inputs the host feeds in from the existing polled / fetched signals. */
@@ -714,7 +730,7 @@ export function buildEscalationSummaryView(inputs: EscalationSummaryInputs): Esc
   const reason = inputs.steering?.reason?.trim() || null;
   const reviewProjection = inputs.info.reviewProjection ?? null;
   return {
-    escalation: deriveEscalationClass(inputs),
+    escalation: withoutParkedReason(deriveEscalationClass(inputs), inputs),
     reason,
     cause: causeOf(inputs.steering),
     gateItems: items,
@@ -734,6 +750,22 @@ export function buildEscalationSummaryView(inputs: EscalationSummaryInputs): Esc
       steering: inputs.steering,
     }),
   };
+}
+
+/**
+ * The park panel above already states the park reason (AGT-3586); the give-up
+ * banner keeps its category and drops a reason that only repeats it.
+ */
+function withoutParkedReason(
+  escalation: EscalationClassView | null,
+  inputs: Pick<EscalationSummaryInputs, 'info' | 'timeline'>,
+): EscalationClassView | null {
+  const park = inputs.info.parkedBlocker;
+  if (!escalation?.reason || !park) return escalation;
+  const cause = resolveParkCause(park, inputs.timeline);
+  return parkReasonSentence(park.reason, cause) === parkReasonSentence(escalation.reason, cause)
+    ? { ...escalation, reason: null }
+    : escalation;
 }
 
 /** Pull the `Cause` context row out of the steering info, when present. */
