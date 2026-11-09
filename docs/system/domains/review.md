@@ -1161,16 +1161,26 @@ that verdict.
 **Missing test reports.** A test-failures baseline must report at least one
 completed test, even when it exits zero. The review host retries a baseline
 with no parseable result once and records both attempts. If it still has no
-result, it settles as `ReviewInfra/BaselineUnavailable` and names the captured
-stdout artifact path. A delivery run that exits zero without a test result is
-also retried once. If its retry still has no result, it settles as
+result, it settles as `ReviewInfra/BaselineUnavailable` and names the expected
+report path (or the captured stdout artifact for console-only reporters). A
+delivery run that exits zero without a test result is also retried once. An
+explicit missing-file diagnostic from the frontend wrapper follows the same
+path even when the wrapper exits nonzero. If its retry still has
+no result, it settles as
 `ReviewInfra/TestReportUnavailable`, unless the delivery changed test
 configuration, the runner or reporter, or added, removed, or renamed a spec. In
 that case the missing report is a product finding that cites the changed setup
 path. The result parser accepts Vitest's `Test Files N passed` summary as well
 as its `Tests N passed` summary. If Angular finished bundling but Vitest did not
 report a run, the infrastructure summary says so and points to the captured
-stdout artifact.
+stdout artifact. The frontend `test:ci` command writes a JSON report to a
+unique temporary file for each run. Its wrapper waits for Angular to exit,
+checks that the file contains completed tests, and prints a parseable summary.
+If Angular exits without the file, the wrapper names its path and exits nonzero;
+review still applies the missing-report retry and classification rule. The
+generated spec basename is below the filesystem filename limit; the former
+frontend command configured only a console reporter, so it had no independent
+report to inspect when that console summary was absent.
 
 **Red baseline on cached state (AGT-3430).** A baseline that ran on a
 dependency-cache hit, or a baseline result reused from the baseline result

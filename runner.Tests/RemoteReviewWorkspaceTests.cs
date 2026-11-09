@@ -2000,11 +2000,15 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal)));
     }
 
-    [Fact]
-    public async Task Candidate_missing_report_without_setup_change_is_review_infrastructure()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    public async Task Candidate_missing_report_without_setup_change_is_review_infrastructure(int exitCode)
     {
         var (_, subjectSha) = await SeedSubjectBranchAsync();
-        var command = BaselineCommand("exit 0", reportPassingTest: false);
+        var command = BaselineCommand(exitCode == 0 ? "exit 0" :
+            "printf 'Vitest completed without a readable report at /tmp/review-vite/report.json: ENOENT\\n' >&2; exit 2",
+            reportPassingTest: false);
         var (workspace, _) = Workspace("attempt-candidate-report-missing", subjectSha, [command], 26222,
             resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
         await workspace.PrepareAsync(null!, default);
@@ -2012,6 +2016,9 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             () => workspace.ExecutePlanAsync(default));
         Assert.Equal(ReviewTestReportPolicy.MissingReportClassification, exception.Classification);
         Assert.Contains("report path:", exception.Message, StringComparison.Ordinal);
+        if (exitCode == 2)
+            Assert.Contains("report path: /tmp/review-vite/report.json", exception.Message,
+                StringComparison.Ordinal);
         Assert.Equal(2, exception.Evidence!.Commands.Count(item =>
             item.WorkspaceRole.StartsWith("candidate", StringComparison.Ordinal)));
     }

@@ -765,7 +765,8 @@ public sealed class RemoteReviewWorkspace
 
             if (!ReviewCommandKinds.IsAgent(command.ExecutionKind)
                 && execution.Signal is null
-                && execution.Process.ExitCode == 0
+                && (execution.Process.ExitCode == 0
+                    || ReviewTestReportPolicy.HasExplicitMissingReport(execution.Process))
                 && ReviewTestReportPolicy.Missing(command, execution.Process))
             {
                 commands.Add(await AddCommandEvidenceAsync(
@@ -793,7 +794,9 @@ public sealed class RemoteReviewWorkspace
                         ? ReviewTestReportPolicy.SetupChangeReason(diff.StdOut.Split(
                             ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
                         : null;
-                    var reportPath = Path.Combine(ArtifactPath, ArtifactName("candidate", command.StepId, "stdout"));
+                    var reportPath = ReviewTestReportPolicy.MissingReportPath(
+                        execution.Process,
+                        Path.Combine(ArtifactPath, ArtifactName("candidate", command.StepId, "stdout")));
                     var summary = $"Review test step '{command.StepId}' exited {execution.Process.ExitCode} " +
                         $"without a parseable test report after one retry; " +
                         $"{ReviewTestReportPolicy.MissingPhase(execution.Process)}; report path: {reportPath}.";
@@ -2289,7 +2292,7 @@ public sealed class RemoteReviewWorkspace
             var unavailable = BaselineUnavailable(
                 UnrunBaselineSummary(command, execution.Process) +
                 $"; {ReviewTestReportPolicy.MissingPhase(execution.Process)}" +
-                $"; report path: {Path.Combine(ArtifactPath, ArtifactName(workspaceRole + "-report-retry", command.StepId, "stdout"))}",
+                $"; report path: {ReviewTestReportPolicy.MissingReportPath(execution.Process, Path.Combine(ArtifactPath, ArtifactName(workspaceRole + "-report-retry", command.StepId, "stdout")))}",
                 baselineSha,
                 command);
             throw await InfrastructureFailureAsync(
