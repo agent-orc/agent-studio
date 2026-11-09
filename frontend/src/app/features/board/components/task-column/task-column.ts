@@ -36,6 +36,7 @@ import { lanePresentation } from '../../../../models/lane-presentation';
 import { laneSortStrategyMeta, isManualStrategy } from '../../../../services/lane-sort.util';
 import { deriveStalledTaskState } from '../../../../services/run-activity.util';
 import { PostProcessingSummaryComponent } from '../post-processing-summary/post-processing-summary.component';
+import { ReadyWaitSplitComponent } from '../ready-wait-split/ready-wait-split.component';
 import { BoardDragStateService } from '../../state/board-drag-state.service';
 import { isUnpullableDependencyHold } from './pullable-task.util';
 import { BatchLaneIndicatorComponent } from '../../../batch-gate/batch-lane-indicator/batch-lane-indicator';
@@ -57,6 +58,7 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
     TooltipDirective,
     InfoButtonComponent,
     PostProcessingSummaryComponent,
+    ReadyWaitSplitComponent,
     BatchLaneIndicatorComponent,
   ],
   // Signal inputs let OnPush skip unchanged lanes during board polling.
@@ -346,9 +348,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   });
 
   cliIconFor(cli: string): string {
-    if (cli === 'claude' || cli === 'codex' || cli === 'gemini') {
-      return cliTypeIcon(cli);
-    }
+    if (cli === 'claude' || cli === 'codex' || cli === 'gemini') return cliTypeIcon(cli);
     return '🤖';
   }
 

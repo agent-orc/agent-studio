@@ -28,6 +28,22 @@ public static class LocalCredentialInventory
         IReadOnlyList<RunnerCapabilitySnapshotDto> Hosts,
         IReadOnlyList<HostGitAccess> HostGit);
 
+    /// <summary>Reads every local source and projects them; the Credentials page and the security view share it.</summary>
+    public static async Task<CredentialInventoryDto> ReadAsync(GitHubAppBroker broker, GitHubAppHostKeys hostKeys,
+        ISecretProvider secrets, AccessSecurityStore security, AgentStudio.Runner.V1ReviewExecutorRegistry hosts,
+        AgentStudio.Clients.ClientIdentityStore clients, DateTime now, CancellationToken ct)
+        => Project(new Sources(
+            await broker.StatusAsync(false, ct),
+            hostKeys.List(),
+            await secrets.ListAsync(null, ct),
+            security.ListRunners(),
+            hosts.ListCapabilitySnapshots(),
+            clients.ListAll()
+                .Where(client => client.RunnerGitStatus is not null && client.Kind != AgentStudio.Shared.ClientIdentityKind.Retired)
+                .Select(client => new HostGitAccess(
+                    client.Id, client.RunnerGitStatus!, client.RunnerGitDetail, client.RunnerGitCheckedAt))
+                .ToArray()), now);
+
     public static CredentialInventoryDto Project(Sources sources, DateTime now)
     {
         var items = new List<CredentialInventoryItemDto>();

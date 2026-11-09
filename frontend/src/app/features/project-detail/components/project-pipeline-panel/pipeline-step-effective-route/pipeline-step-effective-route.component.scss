@@ -1,0 +1,46 @@
+// The host is a grid child of the row summary: one full-width line under the
+// step name, so the contradiction reads without opening the row.
+:host {
+  display: none;
+  grid-column: 3 / -1;
+  min-width: 0;
+}
+
+:host(.is-shown) {
+  display: block;
+}
+
+.effective {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-1) var(--studio-spacing-2);
+  min-width: 0;
+  font-size: var(--studio-card-meta-size);
+  color: var(--studio-fg-muted);
+}
+
+.effective__configured {
+  color: var(--studio-fg-dim);
+}
+
+.effective__rule {
+  color: var(--studio-fg-strong);
+  font-weight: 600;
+}
+
+.effective__reason {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.effective__reason--missing {
+  color: var(--studio-fg-dim);
+  font-style: italic;
+}
+
+@media (max-width: 720px) {
+  :host {
+    grid-column: 1 / -1;
+  }
+}
