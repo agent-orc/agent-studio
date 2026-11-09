@@ -9,6 +9,9 @@ legacy networked backend keeps its own runbook in
 [networked-task-server.md](./networked-task-server.md); its cookies, `enr.*`
 codes and `/api/auth/*` routes are a different contract and do not work
 against the standalone Studio BFF.
+The legacy monolith `/api/auth/bootstrap` profile does not issue an installation
+recovery code. The `recoveryCode` below belongs only to the standalone Task
+Server profile.
 
 `X-Client-Id` and `X-Actor-Id` are attribution hints only. They never
 authenticate anything and are ignored by every route on this page.

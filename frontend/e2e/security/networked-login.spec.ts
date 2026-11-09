@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import * as path from 'node:path';
+import { setTheme } from '../helpers/theme';
 
 const screenshotDir = path.join(process.env.JOB_RESULTS_DIR ?? path.resolve(__dirname, '..', '..', '..', 'results'), 'security');
 
@@ -85,8 +86,8 @@ test('standalone owner form uses the armed code only while bootstrap is open', a
     if (bootstrapAttempts === 1) {
       expect(route.request().postDataJSON()).toMatchObject({ bootstrapCode: 'wrong-code' });
       await route.fulfill({
-        status: 401, contentType: 'application/json',
-        body: JSON.stringify({ message: 'The installer owner code is invalid.' }),
+        status: 400, contentType: 'application/json',
+        body: JSON.stringify({ message: 'Check the owner details and try again.', errors: { bootstrapCode: ['A valid installer owner code is required.'] } }),
       });
       return;
     }
@@ -102,11 +103,30 @@ test('standalone owner form uses the armed code only while bootstrap is open', a
 
   await page.goto('/', { waitUntil: 'commit', timeout: 60_000 });
   await expect(page.getByRole('heading', { name: 'Create the first owner' })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText('Use 12 to 128 characters. Do not include your username.')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Installer guide' })).toHaveAttribute('href', /install\.md$/);
+  await page.setViewportSize({ width: 1280, height: 960 });
+  await setTheme(page, 'light');
+  mkdirSync(screenshotDir, { recursive: true });
+  await page.screenshot({ path: path.join(screenshotDir, 'first-owner-light.png'), fullPage: true });
+  await setTheme(page, 'dark');
+  await page.screenshot({ path: path.join(screenshotDir, 'first-owner-dark.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 720 });
+  await page.getByRole('button', { name: 'Create owner' }).scrollIntoViewIfNeeded();
+  await expect(page.getByRole('button', { name: 'Create owner' })).toBeInViewport();
+  await page.setViewportSize({ width: 390, height: 960 });
+  await page.screenshot({ path: path.join(screenshotDir, 'first-owner-390-dark.png'), fullPage: true });
+  await expect(page.locator('body')).toHaveJSProperty('scrollWidth', 390);
   await page.getByLabel('Username').fill('owner');
-  await page.getByLabel('Installer owner code').fill('wrong-code');
-  await page.getByLabel('Password').fill('owner password long enough');
+  await page.getByLabel('Password').fill('owner');
   await page.getByRole('button', { name: 'Create owner' }).click();
-  await expect(page.getByRole('alert')).toHaveText('The installer owner code is invalid.');
+  await expect(page.getByText('Password must be 12 to 128 characters.')).toBeVisible();
+  await expect(page.getByText('Password must not contain the username.')).toBeVisible();
+  expect(bootstrapAttempts).toBe(0);
+  await page.getByLabel('Installer owner code').fill('wrong-code');
+  await page.getByLabel('Password').fill('correct horse battery staple');
+  await page.getByRole('button', { name: 'Create owner' }).click();
+  await expect(page.getByText('A valid installer owner code is required.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Create the first owner' })).toBeVisible();
   await page.getByLabel('Installer owner code').fill('installer-code');
   await page.getByRole('button', { name: 'Create owner' }).click();

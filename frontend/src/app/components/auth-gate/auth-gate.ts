@@ -26,12 +26,30 @@ export class AuthGateComponent {
   readonly recoveryCodes = signal<string[]>([]);
   readonly submitting = signal(false);
   readonly error = signal('');
+  readonly bootstrapErrors = signal<Partial<Record<string, string[]>>>({});
 
   submit(): void {
     const status = this.auth.status();
     if (status?.secondFactorEnrollmentRequired && !status.user?.mustChangePassword) {
       this.confirmTotp();
       return;
+    }
+    this.error.set('');
+    this.bootstrapErrors.set({});
+    if (status?.bootstrapRequired && !this.inviteToken) {
+      const errors: Record<string, string[]> = {};
+      const username = this.username.trim();
+      if (!/^[\p{L}\p{N}._-]{3,64}$/u.test(username))
+        errors['username'] = ['Username must be 3 to 64 letters, digits, dots, underscores, or hyphens.'];
+      const passwordErrors: string[] = [];
+      if (this.password.length < 12 || this.password.length > 128)
+        passwordErrors.push('Password must be 12 to 128 characters.');
+      if (username && this.password.toLowerCase().includes(username.toLowerCase()))
+        passwordErrors.push('Password must not contain the username.');
+      if (passwordErrors.length) errors['password'] = passwordErrors;
+      if (status.bootstrapCodeRequired && !this.bootstrapCode.trim())
+        errors['bootstrapCode'] = ['Installer owner code is required.'];
+      if (Object.keys(errors).length) { this.bootstrapErrors.set(errors); return; }
     }
     this.submitting.set(true);
     this.error.set('');
@@ -48,6 +66,8 @@ export class AuthGateComponent {
         this.password = ''; this.newPassword = ''; this.bootstrapCode = ''; this.secondFactorCode = ''; this.submitting.set(false);
       },
       error: (error: HttpErrorResponse) => {
+        if (status?.bootstrapRequired && error?.error?.errors)
+          this.bootstrapErrors.set(error.error.errors);
         this.error.set(error?.error?.message ?? 'Sign-in failed.');
         this.submitting.set(false);
       },
