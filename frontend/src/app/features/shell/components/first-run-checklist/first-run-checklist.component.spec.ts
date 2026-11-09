@@ -94,15 +94,31 @@ describe('FirstRunChecklistComponent probes', () => {
     fixture.destroy();
   });
 
-  it('explains that the networked first-run journey needs the Task Server on a monolith', () => {
+  it('reads monolith owner enrollment from auth status when installation is absent', () => {
     const fixture = TestBed.createComponent(FirstRunChecklistComponent);
     fixture.detectChanges();
     http.expectOne('/api/v1/installation').flush({}, { status: 404, statusText: 'Not Found' });
+    http.expectOne('/api/auth/status').flush(authStatus());
     http.expectOne('/api/v1/projects').flush({}, { status: 404, statusText: 'Not Found' });
     fixture.detectChanges();
-    expect(fixture.nativeElement.querySelector('[data-testid="first-run-task-server-unavailable"]')?.textContent)
-      .toContain('running without a Task Server connection');
+    const banner = fixture.nativeElement.querySelector('[data-testid="first-run-task-server-unavailable"]') as HTMLElement;
+    expect(banner.textContent).toContain('supports owner sign-in and second-factor enrollment');
+    expect(banner.querySelector('a')?.getAttribute('href')).toContain('task-server-topology.md');
+    expect(fixture.nativeElement.querySelector('[data-testid="first-run-owner"]')?.getAttribute('data-state')).toBe('ready');
+    expect(fixture.componentInstance.ownerReady()).toBe(true);
+    fixture.destroy();
+  });
+
+  it('keeps the monolith owner pending until auth status verifies enrollment and session', () => {
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    http.expectOne('/api/v1/installation').flush({}, { status: 404, statusText: 'Not Found' });
+    http.expectOne('/api/auth/status').flush({ ...authStatus(), authenticated: false });
+    http.expectOne('/api/v1/projects').flush([]);
+    fixture.detectChanges();
     expect(fixture.componentInstance.ownerReady()).toBe(false);
+    expect(fixture.nativeElement.querySelector('[data-testid="first-run-owner"]')?.textContent)
+      .not.toContain('Installation identity is unavailable');
     fixture.destroy();
   });
 

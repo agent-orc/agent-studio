@@ -2,7 +2,7 @@
   <header class="first-run__head">
     <div>
       <h2 id="first-run-title">First-run checklist</h2>
-      <p>Follow each step to the first integrated card. Status comes from the Task Server and fresh host probes.</p>
+      <p>Follow each step to the first integrated card. Status comes from the installation and fresh host probes.</p>
     </div>
     <button type="button" data-testid="first-run-refresh" [disabled]="loading()" (click)="reload()">
       {{ loading() ? 'Checking…' : 'Refresh' }}
@@ -11,7 +11,12 @@
 
   @if (taskServerUnavailable()) {
     <p role="alert" data-testid="first-run-task-server-unavailable">
-      The networked first-run checklist needs a Task Server. This Studio is running without a Task Server connection, so installation, host enrollment, and repository setup are unavailable.
+      @if (monolithWithoutTaskServer()) {
+        This networked monolith supports owner sign-in and second-factor enrollment. The remaining Task Server checklist steps, including host enrollment and repository setup, need an attached Task Server.
+        <a href="https://github.com/agent-orc/agent-studio/blob/main/docs/concepts/platform-architecture/task-server-topology.md" target="_blank" rel="noopener noreferrer">Read the Task Server topology</a>.
+      } @else {
+        Task Server installation status is unavailable. Refresh after the Task Server reconnects.
+      }
     </p>
   }
 
@@ -19,7 +24,7 @@
     <li data-testid="first-run-owner" [attr.data-state]="ownerReady() ? 'ready' : 'pending'">
       <span class="first-run__number">1</span>
       <div><h3>Owner account</h3>
-        <p>{{ ownerReady() ? 'Owner account and signed-in session verified.' : identity().error ? 'Installation identity is unavailable. Refresh after the Task Server reconnects.' : 'Create the owner account with the one-time installer code in the sign-in screen.' }}</p></div>
+        <p>{{ ownerReady() ? 'Owner account and signed-in session verified.' : identity().error && !monolithWithoutTaskServer() ? 'Installation identity is unavailable. Refresh after the Task Server reconnects.' : 'Create the owner account with the one-time installer code in the sign-in screen.' }}</p></div>
       <app-status-indicator class="first-run__state" [tone]="ownerReady() ? 'success' : 'neutral'"
         [label]="ownerReady() ? 'Verified' : 'Pending'" testId="first-run-step-state" />
     </li>
