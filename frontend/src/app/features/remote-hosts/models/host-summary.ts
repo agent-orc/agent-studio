@@ -14,7 +14,7 @@ export interface HostSummaryCounts {
   retired: number;
   /** Machine rows tagged "Not enrolled"; they also count once in their status bucket. */
   notEnrolled: number;
-  /** Role rows plus gate worker rows. */
+  /** Role sub-rows, including a gate worker listed under its runner machine. */
   roles: number;
 }
 
@@ -37,7 +37,8 @@ export function groupNotEnrolled(group: PhysicalHostGroup, now: number): boolean
 /**
  * Header tallies of the Hosts list (R3): each machine row lands in exactly the
  * bucket of the status label it shows, so the buckets add up to the machine
- * rows. A gate worker without a runner machine renders its own "Online" row.
+ * rows. A gate worker on a runner machine renders a role sub-row; one without
+ * a runner machine renders only its own "Online" machine row, so it adds no role.
  */
 export function summarizeHostRows(
   groups: readonly PhysicalHostGroup[],
@@ -54,8 +55,10 @@ export function summarizeHostRows(
     counts.roles += group.roles.length;
   }
   for (const gate of gates) {
-    counts.roles++;
-    if (groups.some(group => group.name === gate.name)) continue;
+    if (groups.some(group => group.name === gate.name)) {
+      counts.roles++;
+      continue;
+    }
     counts.machines++;
     counts.reporting++;
   }

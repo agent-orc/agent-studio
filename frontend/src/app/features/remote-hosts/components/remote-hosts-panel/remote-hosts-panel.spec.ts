@@ -120,6 +120,33 @@ describe('RemoteHostsPanelComponent', () => {
     fixture.destroy();
   });
 
+  it('counts a gate worker as a role only when it has a role row under its machine (R3)', async () => {
+    await TestBed.configureTestingModule({
+      imports: [RemoteHostsPanelComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const service = TestBed.inject(RemoteHostsService);
+    const fixture = TestBed.createComponent(RemoteHostsPanelComponent);
+    fixture.detectChanges();
+    const base = { role: 'remote' as const, address: null, os: 'Linux', lastHeartbeatAt: null, uptimeLabel: null,
+      capabilities: [], cliQuotas: [], stats: null, liveDataState: 'ready' as const };
+    service.hosts.set([{ ...base, id: 'runner-a', name: 'runner-a', clientId: 'runner-a', status: 'online' }]);
+    const gate = { slots: 2, busy: 1, processorCount: 4, lastHeartbeat: '2026-11-09T14:00:00Z', currentRun: null };
+    fixture.componentInstance.environment.set({
+      controlHost: 'control', installationId: null, mode: null, routes: null, gateHost: null, gateSlots: null,
+      engine: { state: 'running', lastContact: null, engineId: null },
+      gateWorkers: [{ ...gate, id: 'gate-on-runner', name: 'runner-a' }, { ...gate, id: 'gate-alone', name: 'gate-box' }],
+    });
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    const count = (key: string) => Number(el.querySelector(`[data-testid="remote-hosts-summary-${key}"] strong`)?.textContent);
+    expect(count('machines')).toBe(el.querySelectorAll('[data-testid="remote-host-primary-row"]').length);
+    expect(count('machines')).toBe(2);
+    expect(count('roles')).toBe(el.querySelectorAll('.host-list__row--role').length);
+    expect(count('roles')).toBe(2);
+    fixture.destroy();
+  });
+
   it('mounts a machine list and selected detail with setup and add actions', async () => {
     await TestBed.configureTestingModule({
       imports: [RemoteHostsPanelComponent],
