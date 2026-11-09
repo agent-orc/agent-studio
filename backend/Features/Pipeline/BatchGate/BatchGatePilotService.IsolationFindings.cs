@@ -93,16 +93,20 @@ public sealed partial class BatchGatePilotService
                 Record(unknown[0], "proven-red", Evidence(child.Manifest));
         }
 
-        void Record(BatchGateSubject member, string status, string evidence)
+        void Record(BatchGateSubject member, string status,
+            (string Path, string BatchId, string? RunId) evidence)
             => _store.RecordIsolationFinding(new BatchGateIsolationFinding(
                 parent.Scope.Project, parent.BatchId, member.TaskKey, member.RunAttempt,
-                member.ResultSha, parent.BaseSha, status, evidence, _time.GetUtcNow()));
+                member.ResultSha, parent.BaseSha, status, evidence.Path, _time.GetUtcNow(),
+                evidence.BatchId, evidence.RunId));
 
-        string Evidence(BatchGateManifest child)
+        // AGT-3577: the run that decided the status, so the UI shows its failed tests.
+        (string Path, string BatchId, string? RunId) Evidence(BatchGateManifest child)
         {
             var run = _store.ListRuns(child.BatchId).LastOrDefault();
-            return run is null ? string.Empty
-                : _store.ReadVerdict(child.BatchId, run.BatchRunId)?.EvidencePath ?? string.Empty;
+            return run is null ? (string.Empty, child.BatchId, null)
+                : (_store.ReadVerdict(child.BatchId, run.BatchRunId)?.EvidencePath ?? string.Empty,
+                    child.BatchId, run.BatchRunId);
         }
     }
 

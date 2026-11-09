@@ -1,0 +1,16 @@
+@if (view(); as v) {
+  <span class="effective"
+        [attr.data-testid]="'pipeline-step-effective-' + stepId()"
+        [attr.data-rule]="v.rule">
+    <app-status-indicator [compact]="true"
+                          [tone]="v.tone"
+                          [label]="v.lead + ' ' + v.route"
+                          [detail]="v.detail"
+                          [testId]="'pipeline-step-effective-route-' + stepId()" />
+    <span class="effective__configured">configured {{ v.configured }}</span>
+    <span class="effective__rule" [attr.data-testid]="'pipeline-step-effective-rule-' + stepId()">{{ v.ruleLabel }}</span>
+    <span class="effective__reason"
+          [class.effective__reason--missing]="!v.reasonRecorded"
+          [attr.data-testid]="'pipeline-step-effective-reason-' + stepId()">{{ v.reason }}</span>
+  </span>
+}

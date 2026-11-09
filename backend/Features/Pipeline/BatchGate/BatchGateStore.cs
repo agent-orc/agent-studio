@@ -117,10 +117,16 @@ public sealed record BatchGateFallbackSuiteFact(
     public int Suites => PerTaskGateRuns + PublishGateRuns;
 }
 
+/// <summary>
+/// One member's isolation outcome under a red parent batch. AGT-3577:
+/// <see cref="ProvingBatchId"/> and <see cref="ProvingRunId"/> name the child
+/// batch run whose verdict decided the status; records written before AGT-3577
+/// carry null and the state route resolves them from the evidence path.
+/// </summary>
 public sealed record BatchGateIsolationFinding(
     string Project, string ParentBatchId, string TaskKey, string RunAttempt,
     string ResultSha, string BaseSha, string Status, string EvidencePath,
-    DateTimeOffset RecordedAtUtc);
+    DateTimeOffset RecordedAtUtc, string? ProvingBatchId = null, string? ProvingRunId = null);
 
 /// <summary>Immutable first candidate outcome for an original batch manifest.</summary>
 public sealed record BatchFirstCandidateFact(
@@ -214,6 +220,28 @@ public sealed partial class BatchGateStore
             ? Directory.EnumerateFiles(folder, "*.json").Select(Read<BatchGateIsolationFinding>)
                 .OrderBy(finding => finding.RecordedAtUtc).ToArray()
             : [];
+    }
+
+    /// <summary>
+    /// AGT-3577: the evidence file of the newest isolation finding of a member
+    /// under a parent batch, or null. Only a file inside the batch store is
+    /// returned, so a recorded path can never expose another file.
+    /// </summary>
+    public string? IsolationEvidencePath(string project, string parentBatchId, string taskKey)
+    {
+        var finding = ListIsolationFindings(project).LastOrDefault(item =>
+            item.ParentBatchId == parentBatchId && item.TaskKey == taskKey
+            && item.EvidencePath.Length > 0);
+        return finding is null ? null : StoredEvidenceFile(finding.EvidencePath);
+    }
+
+    /// <summary>The full path when <paramref name="evidencePath"/> is an existing file inside the batch store, else null.</summary>
+    public string? StoredEvidenceFile(string evidencePath)
+    {
+        if (string.IsNullOrWhiteSpace(evidencePath) || !Path.IsPathRooted(evidencePath)) return null;
+        var root = Path.GetFullPath(_root) + Path.DirectorySeparatorChar;
+        var path = Path.GetFullPath(evidencePath);
+        return path.StartsWith(root, StringComparison.Ordinal) && File.Exists(path) ? path : null;
     }
 
     public BatchGateStore(string? root = null)
@@ -476,25 +504,45 @@ public sealed partial class BatchGateStore
         if (windowDays is < 1 or > 90) throw new ArgumentOutOfRangeException(nameof(windowDays));
         lock (_failureRankingLock)
         {
-            if (!_failureRanking.TryGetValue(project, out var projection))
-            {
-                projection = new FailureRankingProjection();
-                foreach (var fact in ListExecutions(project).Where(fact => fact.BatchId is not null))
-                    AppendFailureEvidence(projection, fact);
-                _failureRanking[project] = projection;
-            }
-            else if (projection.UnreadableFacts.Count > 0)
-            {
-                var retry = projection.UnreadableFacts.ToArray();
-                projection.UnreadableFacts.Clear();
-                foreach (var fact in retry) AppendFailureEvidence(projection, fact);
-            }
+            var projection = FailureProjection(project);
             projection.Failures.RemoveAll(failure => failure.AtUtc < now.AddDays(-90));
             return new BatchTestFailureReport(project, windowDays,
                 BatchGateFailureRanking.Rank(projection.Failures, now, windowDays),
                 projection.UnreadableFacts.Count(fact => fact.CompletedAtUtc >= now.AddDays(-windowDays)
                     && fact.CompletedAtUtc <= now));
         }
+    }
+
+    /// <summary>
+    /// AGT-3577: the failed tests of one batch run, read from the same cached
+    /// projection as the failed-test ranking. It leaves unreadable evidence to
+    /// the ranking's retry, so the polled state route reads no evidence file
+    /// once the projection exists.
+    /// </summary>
+    public IReadOnlyList<BatchTestFailure> RunFailures(string project, string batchId, string batchRunId)
+    {
+        lock (_failureRankingLock)
+            return FailureProjection(project, retryUnreadable: false).Failures
+                .Where(failure => failure.BatchId == batchId && failure.RunId == batchRunId).ToArray();
+    }
+
+    // Callers hold _failureRankingLock.
+    private FailureRankingProjection FailureProjection(string project, bool retryUnreadable = true)
+    {
+        if (!_failureRanking.TryGetValue(project, out var projection))
+        {
+            projection = new FailureRankingProjection();
+            foreach (var fact in ListExecutions(project).Where(fact => fact.BatchId is not null))
+                AppendFailureEvidence(projection, fact);
+            _failureRanking[project] = projection;
+        }
+        else if (retryUnreadable && projection.UnreadableFacts.Count > 0)
+        {
+            var retry = projection.UnreadableFacts.ToArray();
+            projection.UnreadableFacts.Clear();
+            foreach (var fact in retry) AppendFailureEvidence(projection, fact);
+        }
+        return projection;
     }
 
     private void AppendFailureEvidence(FailureRankingProjection projection, BatchGateExecutionFact fact)

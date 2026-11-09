@@ -1765,8 +1765,22 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         AssertLane(a.Key, TaskStates.HumanReview);
         using var state = JsonDocument.Parse(await client.GetStringAsync(
             $"/api/projects/{ProjectName}/batch-gate/state"));
-        Assert.Contains(state.RootElement.GetProperty("isolationFindings").EnumerateArray(),
+        var culprit = Assert.Single(state.RootElement.GetProperty("isolationFindings").EnumerateArray(),
             finding => finding.GetProperty("status").GetString() == "proven-red");
+        // AGT-3577: the finding names the child run that proved it and opens its evidence.
+        var proving = culprit.GetProperty("provingBatchId").GetString();
+        Assert.Contains(store.ListManifests(), manifest => manifest.BatchId == proving
+            && manifest.ParentBatchId == culprit.GetProperty("parentBatchId").GetString()
+            && manifest.Members.Any(member => member.TaskKey == b.Key));
+        Assert.Contains(store.ListRuns(proving!), run =>
+            run.BatchRunId == culprit.GetProperty("provingRunId").GetString());
+        Assert.True(culprit.GetProperty("evidenceAvailable").GetBoolean());
+        using var evidence = await client.GetAsync(
+            $"/api/projects/{ProjectName}/batch-gate/isolation-evidence?parentBatchId="
+            + Uri.EscapeDataString(culprit.GetProperty("parentBatchId").GetString()!)
+            + "&taskKey=" + Uri.EscapeDataString(b.Key));
+        Assert.Equal(System.Net.HttpStatusCode.OK, evidence.StatusCode);
+        Assert.StartsWith("text/plain", evidence.Content.Headers.ContentType?.ToString());
         using var report = JsonDocument.Parse(await client.GetStringAsync(
             $"/api/projects/{ProjectName}/batch-gate/report"));
         Assert.Contains(report.RootElement.GetProperty("isolationFindings").EnumerateArray(),

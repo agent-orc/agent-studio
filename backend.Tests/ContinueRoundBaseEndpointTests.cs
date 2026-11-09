@@ -140,6 +140,74 @@ public sealed class ContinueRoundBaseEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.Accepted, after.StatusCode);
     }
 
+    /// <summary>
+    /// AGT-3582: the task detail's Continue form shows the run base before the
+    /// operator sends the round. The preview names the base the round would
+    /// get and writes nothing.
+    /// </summary>
+    [Fact]
+    public async Task Base_preview_names_the_latest_result_ref_and_leaves_the_card_unchanged()
+    {
+        var (resultRef, sha) = SeedReviewedCard("AGT-PREVIEW", TaskStates.Completed);
+        await using var factory = BuildFactory();
+        using var client = Client(factory);
+
+        var response = await client.GetAsync(Route("AGT-PREVIEW", "continue/base"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var resolved = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("base");
+        Assert.Equal(resultRef, resolved.GetProperty("ref").GetString());
+        Assert.Equal(sha, resolved.GetProperty("sha").GetString());
+        Assert.Equal("latest-result", resolved.GetProperty("source").GetString());
+        var folder = Path.Combine(WatchPath, TaskStates.Completed, "AGT-PREVIEW");
+        Assert.True(Directory.Exists(folder), "the preview leaves the card in its lane");
+        Assert.Null(ContinuationBaseStore.Read(folder));
+        Assert.False(File.Exists(Path.Combine(folder, "pending-intent.json")));
+    }
+
+    [Fact]
+    public async Task Base_preview_is_null_for_a_card_without_a_result_ref()
+    {
+        var folder = Path.Combine(WatchPath, TaskStates.HumanReview, "AGT-NOREF");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["id"] = "AGT-NOREF", ["title"] = "AGT-NOREF", ["state"] = TaskStates.HumanReview, ["order"] = 1,
+        }));
+        File.WriteAllText(Path.Combine(folder, "prompt.md"), "# AGT-NOREF\n");
+        await using var factory = BuildFactory();
+        using var client = Client(factory);
+
+        var response = await client.GetAsync(Route("AGT-NOREF", "continue/base"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("base").ValueKind);
+    }
+
+    /// <summary>
+    /// AGT-3582: the failure check answers with the refusal text the failure
+    /// continuation would answer, so the task detail hides the action and the
+    /// operator never meets the 409.
+    /// </summary>
+    [Fact]
+    public async Task Failure_check_names_the_refusal_without_continuing()
+    {
+        SeedReviewedCard("AGT-NOFAIL", TaskStates.Backlog);
+        await using var factory = BuildFactory();
+        using var client = Client(factory);
+
+        var response = await client.GetAsync(Route("AGT-NOFAIL", "failure/continue"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(body.GetProperty("available").GetBoolean());
+        Assert.Equal("A failure continuation requires a delivered task.", body.GetProperty("reason").GetString());
+        var folder = Path.Combine(WatchPath, TaskStates.Backlog, "AGT-NOFAIL");
+        Assert.True(Directory.Exists(folder), "the check leaves the card in its lane");
+        Assert.False(File.Exists(Path.Combine(folder, "pending-intent.json")));
+    }
+
     private static async Task AssertIsolationRefusalAsync(HttpResponseMessage response, string flight)
     {
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);

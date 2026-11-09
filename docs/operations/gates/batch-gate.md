@@ -105,8 +105,9 @@ for cancelled stacked batches; if the cancelled gate has no completion fact,
 the run start to cancellation interval is the estimate. These are spent host
 minutes, not a projected delay saved.
 
-To pilot, set the project's batch gate `stacking` field to `"1"` through the
-batch gate settings API and keep at least two gate slots. During the first
+To pilot, set the project's batch gate `stacking` field to `"1"` (Project
+settings, Batch verification, Stacked batches: One successor, or the batch gate
+settings API) and keep at least two gate slots. During the first
 hours, watch those four counters, the batch predecessor links, slot occupancy,
 stale-base cancellations, and published cards per hour. Set `stacking` back
 to `"off"` to stop forming speculative successors; already formed or running
@@ -301,6 +302,20 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   first on the same base. Restart reconstruction uses these findings and the
   closed child verdicts. The state route and report expose the findings as
   `proven-red`, `proven-green`, and `superseded`.
+- Isolation in the UI (AGT-3577). Each finding names the child batch run that
+  decided it (`provingBatchId`, `provingRunId`). On the state route a
+  proven-red finding also carries that run's `failures` (test name and error
+  excerpt, from the cached failed-test projection) and `evidenceAvailable`.
+  `GET /api/projects/{project}/batch-gate/isolation-evidence?parentBatchId=&taskKey=`
+  (project read) returns the evidence file of the member's newest finding, and
+  only a file inside the batch store. The batch panel lists each member of a
+  red batch as proven red, proven green, superseded or not yet isolated; the
+  proven-red member shows its failing tests, excerpts and evidence link. The
+  culprit card's Batch verification section says "Proven red in `<batch>`".
+  The lane indicator shows `Batch <id> isolating` while a child of a red batch
+  is active, then `Batch <id> red` with the proven-red members until a newer
+  batch publishes. "Create fix card" is offered for every ranked failed test;
+  a non-suspect test opens "Fix failing test" instead of "Fix flaky test".
 - While a red batch isolates (latest phase `Red`), continue, steer and requeue
   of a member that the isolation still holds are refused with
   `409 batch-isolation-active` naming the flight (AGT-3483). Eject stays the
