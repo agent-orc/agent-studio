@@ -1000,16 +1000,16 @@ test('council reaction links the targeted follow-up round and renders in both th
     totalTokens: 191000, estimatedApiCostUsd: 1.42, priceKnown: true,
     councilReaction: {
       createdAt: '2026-07-11T22:15:01Z', reviewFileName: 'code-review-grade-2026-07-11T22-15-00Z.md',
-      grade: 'B', disposition: 'Reissue', summary: 'Fix 2 review finding(s) in the next round.',
+      grade: 'B', disposition: 'reissue', summary: 'Fix 2 review finding(s) in the next round.',
       startsNewRound: true, targetJobId: JOB_ID, targetRunAttempt: 2,
       assessments: [
         {
           finding: 'Dark-theme colors are incorrect; fix them and provide both-theme screenshots.',
-          action: 'FixNextRound', reason: 'Concrete review deficiency; provide focused evidence.',
+          action: 'fixNextRound', reason: 'Concrete review deficiency; provide focused evidence.',
         },
         {
           finding: 'Upload rejection lacks focused test evidence; add the missing regression test.',
-          action: 'FixNextRound', reason: 'Concrete review deficiency; provide focused evidence.',
+          action: 'fixNextRound', reason: 'Concrete review deficiency; provide focused evidence.',
         },
       ],
     },
