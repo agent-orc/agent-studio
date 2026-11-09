@@ -34,12 +34,51 @@ export interface ParkedRecallView {
   heldFor: string | null;
 }
 
+/**
+ * Who parked a card, chosen from the recorded lane-change cause (AGT-3586).
+ * `unknown` makes no claim: an older marker without a cause, or a cause no
+ * entry below describes.
+ */
+export type ParkOrigin =
+  | 'run'
+  | 'acceptance-audit'
+  | 'review-loop-budget'
+  | 'review-gate'
+  | 'stall-intervention'
+  | 'operator'
+  | 'unknown';
+
+/** One suggested step, tied to lane buttons by their triage action ids. */
+export interface ParkNextStep {
+  /** Buttons that take this step; the first one the lane offers is named. */
+  actionIds: readonly string[];
+  /** Completes "Use <button> ...", e.g. `to deliver the work again`. */
+  purpose: string;
+}
+
+/** The park copy chosen from the recorded cause. */
+export interface ParkCauseView {
+  origin: ParkOrigin;
+  cause: string | null;
+  causeDetail: string | null;
+  /** Badge label; null keeps the blocker-type label. */
+  label: string | null;
+  /** Sentence subject naming who parked the card; null when unknown. */
+  parkedBy: string | null;
+  /** Steps in order of preference; the host keeps the ones its lane offers. */
+  nextSteps: readonly ParkNextStep[];
+}
+
 /** Everything the detail panel and the board chip render for a parked card. */
 export interface ParkedBlockerView {
   /** Raw park category, for `data-` attributes and tests. */
   blockerType: string;
-  /** Human label for the park category. */
+  /** Human label for the park category, or for the cause that parked the card. */
   blockerLabel: string;
+  /** Who parked the card and what to do next, chosen from the recorded cause. */
+  cause: ParkCauseView;
+  /** The park reason as one sentence, without a slug prefix. */
+  reason: string;
   /** This park waits for a person's choice rather than for a fix. */
   isDecision: boolean;
   /** The question, when the parking run stated one. */
@@ -92,6 +131,194 @@ const RECALL_LABELS: Record<string, { label: string; tone: ParkedRecallTone }> =
 
 /** Stated when the parking run left neither a question nor a reason. */
 export const UNSTATED_QUESTION = 'the parking run recorded no question';
+
+/** Stated when a park carries no readable reason. */
+export const UNSTATED_REASON = 'No reason was recorded for this park.';
+
+const REISSUE = ['reissue-escalated', 'send-back-to-ready'] as const;
+const ACCEPT = ['accept-escalated', 'mark-done'] as const;
+const ABORT = ['discard-escalated'] as const;
+
+/** Escalation categories a run outcome produces: the run itself parked the card. */
+const RUN_DETAILS = new Set([
+  'agent-blocked', 'agent-needs-input', 'needs-human-input', 'needs-input-escalate', 'human-decision-needed',
+  'steer-unanswered', 'no-completion-signal', 'noop-escalate', 'remote-outcome-unknown',
+  'provider-rejected-request', 'external-completion-blocked', 'unverified-delivery', 'watchdog-kill',
+  'permission-blocked', 'environment-blocker', 'auto-failure-park', 'failure-intervention', 'pickup-zombie',
+  'empty-fast-exit', 'infra-crash', 'context-overflow', 'model-invalid', 'quota-exhausted', 'cli-launch-failed',
+  'auth-refresh-failed', 'inconclusive-with-results', 'agent-git-violation',
+]);
+
+/** Review gates that rejected a delivery after the run ended. */
+const REVIEW_GATE_DETAILS = new Set([
+  'completion-gate', 'evidence-gate', 'solution-quality-gate', 'code-review-council', 'concept-review-failed',
+  'lint-scss-double-fail', 'post-processing-failure', 'auto-review-escalation', 'ui-iteration-cap',
+]);
+const REVIEW_GATE_PREFIXES = ['aspect-verdict-', 'build-test-gate-'];
+
+/** Spent automatic round budgets (card round budget, reissue loop breaker). */
+const LOOP_BUDGET_DETAILS = new Set(['card-round-budget', 'reissue-budget-exhausted', 'empty-followup-diff']);
+
+/** Watchdogs that parked a card because its queue stalled. */
+const STALL_DETAILS = new Set(['gate-capacity']);
+
+/** Lane-change causes a person's move records. */
+const OPERATOR_CAUSES = new Set(['operator-decision', 'operator-move', 'operator-requeue', 'escalation-requeue']);
+
+/**
+ * The park copy for a recorded lane-change cause. The cause, not the reason
+ * text, decides who the copy says parked the card: before AGT-3586 an
+ * acceptance-audit park read "The parking run stated no question".
+ */
+export function parkCauseView(cause: string | null | undefined, causeDetail: string | null | undefined): ParkCauseView {
+  const id = cause?.trim().toLowerCase() || null;
+  const detail = causeDetail?.trim().toLowerCase() || null;
+  const base = { cause: id, causeDetail: detail };
+  if (id === 'acceptance-integration-failed') {
+    return {
+      ...base,
+      origin: 'acceptance-audit',
+      label: 'Acceptance audit',
+      parkedBy: 'The acceptance audit',
+      nextSteps: [
+        { actionIds: REISSUE, purpose: 'to build and deliver the work again' },
+        { actionIds: ABORT, purpose: 'if the work is no longer needed' },
+      ],
+    };
+  }
+  if (id === 'escalated' && detail) {
+    if (LOOP_BUDGET_DETAILS.has(detail)) {
+      return {
+        ...base,
+        origin: 'review-loop-budget',
+        label: 'Review loop budget',
+        parkedBy: 'The review loop',
+        nextSteps: [
+          { actionIds: REISSUE, purpose: 'to allow another round' },
+          { actionIds: ACCEPT, purpose: 'to take the current delivery' },
+        ],
+      };
+    }
+    if (STALL_DETAILS.has(detail)) {
+      // The gate-queue release panel owns this park's action.
+      return { ...base, origin: 'stall-intervention', label: 'Gate queue stall', parkedBy: 'The gate queue watchdog', nextSteps: [] };
+    }
+    if (REVIEW_GATE_DETAILS.has(detail) || REVIEW_GATE_PREFIXES.some(prefix => detail.startsWith(prefix))) {
+      return {
+        ...base,
+        origin: 'review-gate',
+        label: null,
+        parkedBy: 'A review gate',
+        nextSteps: [
+          { actionIds: REISSUE, purpose: 'to address the findings in a new round' },
+          { actionIds: ACCEPT, purpose: 'to accept the delivery as it is' },
+        ],
+      };
+    }
+    if (RUN_DETAILS.has(detail)) return { ...base, origin: 'run', label: null, parkedBy: 'The latest run', nextSteps: [] };
+  }
+  if (id && OPERATOR_CAUSES.has(id)) return { ...base, origin: 'operator', label: null, parkedBy: 'An operator', nextSteps: [] };
+  return { ...base, origin: 'unknown', label: null, parkedBy: null, nextSteps: [] };
+}
+
+/** Structural slice of a task timeline row, so this model stays feature-free. */
+export interface ParkTimelineEvent {
+  ts: string;
+  kind: string;
+  details?: Record<string, string> | null;
+}
+
+/**
+ * The cause of a park whose marker predates the recorded cause: the newest
+ * lane change into the parked lane at or before the park instant.
+ */
+export function parkCauseFromTimeline(
+  park: Pick<ParkedBlockerStatus, 'parkedAt' | 'lane'>,
+  events: readonly ParkTimelineEvent[],
+): { cause: string; causeDetail: string | null } | null {
+  const parkedMs = Date.parse(park.parkedAt);
+  // The marker is written just after the ledger row; allow a little skew.
+  const limit = Number.isFinite(parkedMs) ? parkedMs + 60_000 : Number.POSITIVE_INFINITY;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.kind !== 'lane_changed' || !(Date.parse(event.ts) <= limit)) continue;
+    if (park.lane && event.details?.['to'] && event.details['to'] !== park.lane) continue;
+    const cause = event.details?.['cause']?.trim();
+    return cause ? { cause, causeDetail: event.details?.['causeDetail']?.trim() || null } : null;
+  }
+  return null;
+}
+
+/** The recorded cause, else the one on the lane-change row that parked the card. */
+export function resolveParkCause(
+  park: ParkedBlockerStatus,
+  events: readonly ParkTimelineEvent[] = [],
+): ParkCauseView {
+  if (park.cause?.trim()) return parkCauseView(park.cause, park.causeDetail);
+  const fromTimeline = parkCauseFromTimeline(park, events);
+  return parkCauseView(fromTimeline?.cause, fromTimeline?.causeDetail);
+}
+
+const SLUG = /^[a-z0-9]+(?:[-_][a-z0-9]+)+$/;
+
+/**
+ * The park reason as one sentence. A `[category]` or `category:` prefix is
+ * dropped: the cause already names it, and a slug is not a sentence. A reason
+ * that is only slugs (the `cause: detail` fallback) reads as unrecorded.
+ *
+ * The acceptance audit used to write `<category>: <instruction>`, and the
+ * instruction ("rerun the gate") named no button the lane offers. That legacy
+ * shape is replaced by the fact the category stands for.
+ */
+export function parkReasonSentence(reason: string | null | undefined, cause: ParkCauseView): string {
+  let text = reason?.trim() ?? '';
+  const bracket = /^\[([^\]]+)\]\s*/.exec(text);
+  if (bracket) {
+    text = text.slice(bracket[0].length);
+  } else {
+    const colon = /^([A-Za-z0-9_-]+):\s+/.exec(text);
+    const head = colon?.[1].toLowerCase();
+    if (colon && head && (SLUG.test(head) || head === cause.causeDetail || head === cause.cause)) {
+      // The legacy audit shape: `<category>: <instruction>`.
+      if (cause.origin === 'acceptance-audit' && head === cause.causeDetail) return acceptanceAuditFact(head);
+      text = text.slice(colon[0].length);
+    }
+  }
+  text = text.trim();
+  if (!text || SLUG.test(text) || /^[a-z0-9-]+: [a-z0-9-]+$/.test(text)) return UNSTATED_REASON;
+  text = text.charAt(0).toUpperCase() + text.slice(1);
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+function acceptanceAuditFact(category: string): string {
+  if (category === 'missing-delivery') {
+    return 'No delivery branch was found for this card, so its work cannot be integrated.';
+  }
+  return 'The delivery could not be integrated.';
+}
+
+/**
+ * "Use Continue (reissue) to deliver the work again, or Abort if the work is
+ * no longer needed." Only buttons in `offered` are named, so the suggestion
+ * never points at a control the lane lacks. Null when none is offered.
+ */
+export function parkNextStepSentence(
+  steps: readonly ParkNextStep[],
+  offered: readonly { id: string; label: string }[],
+): string | null {
+  const clauses: string[] = [];
+  const used = new Set<string>();
+  for (const step of steps) {
+    const button = step.actionIds
+      .map(id => offered.find(action => action.id === id))
+      .find(action => !!action && !used.has(action.id));
+    if (!button) continue;
+    used.add(button.id);
+    clauses.push(`${button.label} ${step.purpose}`);
+  }
+  if (clauses.length === 0) return null;
+  return `Use ${clauses.join(', or ')}.`;
+}
 
 /** Title-case an unknown slug so a new park category still reads cleanly. */
 export function parkedBlockerLabel(blockerType: string): string {
@@ -166,15 +393,21 @@ export function parkedSecondsAt(park: ParkedBlockerStatus, nowMs: number): numbe
   return park.parkedForSeconds ?? 0;
 }
 
-/** Build the full view, or null when the card is not parked. */
+/**
+ * Build the full view, or null when the card is not parked. `timeline` lets a
+ * park whose marker predates the recorded cause take it from the ledger.
+ */
 export function buildParkedBlockerView(
   info: Pick<TaskInfo, 'parkedBlocker'>,
   nowMs = Date.now(),
+  timeline: readonly ParkTimelineEvent[] = [],
 ): ParkedBlockerView | null {
   const park = info.parkedBlocker;
   if (!park) return null;
 
-  const blockerLabel = parkedBlockerLabel(park.blockerType);
+  const cause = resolveParkCause(park, timeline);
+  const reason = parkReasonSentence(park.reason, cause);
+  const blockerLabel = cause.label ?? parkedBlockerLabel(park.blockerType);
   const parkedFor = parkedForLabel(parkedSecondsAt(park, nowMs));
   const question = park.decision?.question?.trim() || null;
   const questionId = park.decision?.questionId?.trim() || null;
@@ -182,6 +415,8 @@ export function buildParkedBlockerView(
   return {
     blockerType: park.blockerType,
     blockerLabel,
+    cause,
+    reason,
     isDecision: park.requiresDecisionCard,
     question,
     questionId,
@@ -197,7 +432,7 @@ export function buildParkedBlockerView(
     recall: recallView(park),
     openItems: parkedOpenItems(park),
     chipLabel: `${park.requiresDecisionCard ? 'Waiting on you' : 'Parked'} · ${parkedFor}`,
-    chipTooltip: `${blockerLabel}, parked for ${parkedFor}. ${question || park.reason?.trim() || UNSTATED_QUESTION}`,
+    chipTooltip: `${blockerLabel}, parked for ${parkedFor}. ${question || reason}`,
   };
 }
 

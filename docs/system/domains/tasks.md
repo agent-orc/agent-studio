@@ -1310,6 +1310,10 @@ site or derived from the lane pair for a human actor) and `details.causeDetail`
 when one was supplied; otherwise it falls back to `cause: causeDetail` (or
 whichever of the two is present) so the marker's `reason` field is never empty
 even when the lane-transition site only passed the taxonomy fields (AGT-2838).
+The marker also records the resolved cause and its qualifier as `cause` and
+`causeDetail`, so the park copy says who parked the card (for example the
+acceptance audit) instead of presenting the latest run as the parking run, and
+states the reason once (AGT-3586).
 
 A park whose run ended without a terminal sentinel carries its reason through the
 move, so the marker is never written with an empty `reason` and its `blockerType`

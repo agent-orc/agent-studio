@@ -205,4 +205,23 @@ public sealed class DeliveryLanePolicyTests
         }
         finally { Directory.Delete(folder, recursive: true); }
     }
+
+    // AGT-3586: an acceptance park states the fact once, as a sentence. The
+    // category travels as the transition detail; the next step is offered by
+    // the lane buttons, not by an instruction to "rerun the gate".
+    [Fact]
+    public void AcceptanceParkReason_IsOneSentenceWithoutSlugOrInstruction()
+    {
+        var missing = DeliveryChainReconciler.IntegrationParkReason("missing-delivery", null);
+        Assert.Equal("No delivery branch was found for this card, so its work cannot be integrated.", missing);
+
+        var failed = DeliveryChainReconciler.IntegrationParkReason("integration-failed", new TaskIntegrationStatus
+        {
+            Failure = new TaskIntegrationFailure { Reason = "Merge conflict in src/app.ts." },
+        });
+        Assert.Equal("The delivery could not be integrated: Merge conflict in src/app.ts.", failed);
+        Assert.Equal("The delivery could not be integrated.",
+            DeliveryChainReconciler.IntegrationParkReason("integration-failed", null));
+        Assert.DoesNotContain("rerun", missing + failed);
+    }
 }

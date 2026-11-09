@@ -26,13 +26,44 @@ describe('latestParkedAttempt', () => {
     { ts: '2026-10-06T04:22:53Z', kind: 'agent_run_finished', actor: 'agent', summary: 'Run failed', details: { status: 'failed' } },
   ];
 
-  it('shows the fresh parked attempt and its current reason', () => {
+  it('shows the fresh parked attempt without repeating the park reason', () => {
     expect(latestParkedAttempt(info({
       state: '5e-escalated',
       parkedBlocker: { parkedAt: '2026-10-06T04:22:54Z', reason: 'Push protection rejected the branch.' },
     } as Partial<TaskInfo>), timeline)).toBe(
-      'Latest attempt ended 2026-10-06 04:22 UTC: Push protection rejected the branch.',
+      'Latest attempt ended 2026-10-06 04:22 UTC and parked this card.',
     );
+  });
+
+  // AGT-3586 (F11): DEMO-6 joined a three-month-old run end with today's
+  // acceptance-audit reason. The attempt did not cause that park.
+  it('omits the attempt when the recorded cause is not the run', () => {
+    expect(latestParkedAttempt(info({
+      state: '5e-escalated',
+      parkedBlocker: {
+        parkedAt: '2026-10-06T04:22:54Z',
+        reason: 'missing-delivery: Recover the delivery, resolve the integration failure and rerun the gate.',
+        cause: 'acceptance-integration-failed',
+        causeDetail: 'missing-delivery',
+      },
+    } as Partial<TaskInfo>), timeline)).toBeNull();
+  });
+
+  it('keeps the attempt when the run outcome parked the card, however late the park landed', () => {
+    expect(latestParkedAttempt(info({
+      state: '5e-escalated',
+      parkedBlocker: {
+        parkedAt: '2026-10-06T06:00:00Z', reason: '[agent-blocked] Needs credentials.',
+        cause: 'escalated', causeDetail: 'agent-blocked',
+      },
+    } as Partial<TaskInfo>), timeline)).toBe('Latest attempt ended 2026-10-06 04:22 UTC and parked this card.');
+  });
+
+  it('without a recorded cause, omits a park that came long after the run ended', () => {
+    expect(latestParkedAttempt(info({
+      state: '5e-escalated',
+      parkedBlocker: { parkedAt: '2026-11-09T08:23:00Z', reason: 'Parked much later.' },
+    } as Partial<TaskInfo>), timeline)).toBeNull();
   });
 
   it('uses the latest run record when the remote attempt has no task-ledger run events', () => {
@@ -597,6 +628,25 @@ describe('deriveEscalationClass', () => {
     expect(cls?.kind).toBe('gave-up');
     expect(cls?.category).toBe('infra-crash');
     expect(cls?.reason).toBe('aspect runner died');
+  });
+
+  // AGT-3586: the park panel above states the reason; the banner keeps its category.
+  it('drops a give-up reason the park panel already states', () => {
+    const view = buildEscalationSummaryView({
+      info: info({
+        orchestratorVerdict: 'escalate',
+        parkedBlocker: {
+          parkedAt: '2026-10-06T04:22:54Z', reason: '[infra-crash] process died at exit -1.',
+          cause: 'escalated', causeDetail: 'infra-crash',
+        } as TaskInfo['parkedBlocker'],
+      }),
+      statusMarkdown: '# Status\n- Category: infra-crash\n- Reason: process died at exit -1.',
+      reviewEvidence: [],
+      codeReviews: [],
+      timeline: [],
+      ...noSteer,
+    });
+    expect(view.escalation).toMatchObject({ kind: 'gave-up', categoryLabel: 'Infra crash', reason: null });
   });
 
   it('treats an escalate verdict with no give-up category as a logical NeedsReview', () => {
