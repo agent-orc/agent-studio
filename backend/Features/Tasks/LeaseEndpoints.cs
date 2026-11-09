@@ -1383,7 +1383,7 @@ public static class LeaseEndpoints
                     ? $"claim:{taskKey}:{req.RunnerId.Trim()}:{Guid.NewGuid():N}"
                     : req.IdempotencyKey.Trim();
                 var briefVersion = BriefVersionStore.ReadOrCreate(candidate.FolderPath);
-                runSpec = runSpec with { BriefVersion = briefVersion, TaskTitle = candidate.Title };
+                runSpec = runSpec with { BriefVersion = briefVersion };
                 var acquire = leases.TryAcquire(new RunLeaseAcquireRequest(
                     taskKey, req.RunnerId.Trim(), req.RunnerName.Trim(), req.Hostname,
                     req.Pid, req.BackendName, req.RequestedTtlSeconds,
@@ -3445,7 +3445,8 @@ public static class LeaseEndpoints
             settings.ResolveContextMode(task.ProjectName, cliType, task.ContextMode).Mode,
             modeFraming,
             RunTimeoutSeconds: operatorLimit ?? emergency.Item1,
-            RunTimeoutSource: operatorLimit is null ? emergency.Item2 : "operator");
+            RunTimeoutSource: operatorLimit is null ? emergency.Item2 : "operator",
+            TaskTitle: task.Title);
     }
 
     internal static string? BuildModeFraming(
