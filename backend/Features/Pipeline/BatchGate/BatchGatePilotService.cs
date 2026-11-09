@@ -3474,9 +3474,24 @@ public sealed partial class BatchGatePilotService
         string? sha, long fence, string? reason = null,
         string? runId = null, long? refFence = null)
     {
+        var causingMember = phase == BatchPhase.Abandoned
+            ? manifest.Members.FirstOrDefault(member =>
+                _store.HasEject(manifest.Scope.Project, member.TaskKey)
+                || reason?.Contains(member.TaskKey, StringComparison.Ordinal) == true
+                || _store.ListPending().FirstOrDefault(item =>
+                    item.Subject.TaskKey == member.TaskKey
+                    && item.Subject.RunAttempt == member.RunAttempt) is { } pending
+                    && !Refresh(pending).Subject.CurrentGeneration)
+            : null;
+        var withdrawal = causingMember is null ? null : _store.ListWithdrawals(manifest.BatchId)
+            .Where(item => item.TaskKey == causingMember.TaskKey)
+            .OrderBy(item => item.AtUtc).LastOrDefault();
+        if (withdrawal is not null)
+            reason = $"{reason}; {withdrawal.Actor} withdrew {withdrawal.TaskKey}: {withdrawal.Reason}";
         _store.AppendState(new BatchGateState(manifest.BatchId,
             manifest.MembershipDigest, phase, sha, fence, _time.GetUtcNow(),
-            reason, runId, refFence));
+            reason, runId, refFence,
+            CausedByTaskKey: causingMember?.TaskKey));
         if ((phase is BatchPhase.Red or BatchPhase.Abandoned or BatchPhase.Paused)
             && _stackGateCancellations.TryGetValue(manifest.BatchId, out var cancellation))
         {

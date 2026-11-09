@@ -189,3 +189,42 @@ describe('BoardMutationsService Ready queue edge (AGT-3588)', () => {
     expect(taskService['reorderJobs']).not.toHaveBeenCalled();
   });
 });
+
+describe('BoardMutationsService active batch move', () => {
+  it('shows the refusal and retries only after explicit withdrawal confirmation', async () => {
+    const job = { id: 'AGT-3609', taskKey: 'AGT-3609', title: 'Batch member',
+      watchPath: '/project', state: '4-auto-review' } as TaskInfo;
+    const refusal = { status: 409, error: { error: 'active-batch-member',
+      message: 'AGT-3609 belongs to batch b06a726b (running). Other members: AGT-3574.' } };
+    const moveJob = vi.fn()
+      .mockReturnValueOnce(throwError(() => refusal))
+      .mockReturnValueOnce(of({}));
+    let accept!: (value: boolean) => void;
+    const confirm = vi.fn(() => new Promise<boolean>(resolve => { accept = resolve; }));
+    const errorDialog = { show: vi.fn() };
+    const tasks = { jobs: signal([job]), moveJob, error: signal(''),
+      applyOptimisticMove: vi.fn(() => ({ fromLane: [], toLane: [] })),
+      revertOptimisticMove: vi.fn(), beginOptimisticPersist: vi.fn(),
+      endOptimisticPersist: vi.fn() };
+    TestBed.configureTestingModule({ providers: [
+      provideZonelessChangeDetection(), BoardMutationsService, NotificationService,
+      { provide: TaskService, useValue: tasks },
+      { provide: ErrorDialogService, useValue: errorDialog },
+      { provide: ConfirmDialogService, useValue: { confirm } },
+      { provide: TaskSelectionService, useValue: { selected: signal(null) } },
+      { provide: UndoController, useValue: { offerLaneRevert: vi.fn(), cancelActive: vi.fn() } },
+    ] });
+    TestBed.inject(BoardMutationsService).moveJob({ jobId: job.id,
+      watchPath: job.watchPath, targetState: '0-backlog' });
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
+      message: refusal.error.message, eyebrow: 'Confirm withdrawal', confirmLabel: 'Withdraw and move',
+    }));
+    expect(moveJob).toHaveBeenCalledTimes(1);
+    expect(errorDialog.show).not.toHaveBeenCalled();
+    accept(true);
+    await Promise.resolve();
+    expect(moveJob).toHaveBeenCalledTimes(2);
+    expect(moveJob).toHaveBeenLastCalledWith(job.id, '0-backlog', job.watchPath, undefined,
+      expect.stringContaining('withdrew'), false, 'revoke', true);
+  });
+});

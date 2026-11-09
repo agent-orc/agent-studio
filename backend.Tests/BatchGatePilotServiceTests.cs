@@ -31,6 +31,89 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed partial class BatchGatePilotServiceTests : IDisposable
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Operator_move_refuses_running_batch_member_without_changing_batch(bool put)
+    {
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-MOVE-GUARD-A", "docs/move-guard-a.md");
+        var other = SeedMember(factory, "DOC-MOVE-GUARD-B", "docs/move-guard-b.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var batch = ClosePendingBatch(factory);
+        store.AppendState(new BatchGateState(batch.BatchId, batch.MembershipDigest,
+            BatchPhase.Running, member.ResultSha, 1, _clock));
+
+        var request = new MoveJobRequest { TargetState = TaskStates.Backlog };
+        using var response = put
+            ? await client.PutAsJsonAsync($"/api/tasks/{member.Key}/state", request)
+            : await client.PostAsJsonAsync($"/api/tasks/{member.Key}/move", request);
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("active-batch-member", body.RootElement.GetProperty("error").GetString());
+        Assert.Contains(batch.BatchId, body.RootElement.GetProperty("message").GetString());
+        Assert.Contains(other.Key, body.RootElement.GetProperty("message").GetString());
+        AssertPhase(store, batch.BatchId, BatchPhase.Running);
+        AssertLane(member.Key, TaskStates.AutoReview);
+    }
+
+    [Fact]
+    public async Task Operator_withdraw_records_both_audits_and_abandonment_cause()
+    {
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-WITHDRAW-A", "docs/withdraw-a.md");
+        var other = SeedMember(factory, "DOC-WITHDRAW-B", "docs/withdraw-b.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var batch = ClosePendingBatch(factory);
+        const string reason = "Operator moved this card back for another edit.";
+
+        using var response = await client.PostAsJsonAsync($"/api/tasks/{member.Key}/move",
+            new MoveJobRequest { TargetState = TaskStates.Backlog,
+                WithdrawFromBatch = true, Reason = reason });
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        AssertLane(member.Key, TaskStates.Backlog);
+        var audit = Assert.Single(store.ListWithdrawals(batch.BatchId));
+        Assert.Equal(member.Key, audit.TaskKey);
+        Assert.Equal(reason, audit.Reason);
+        Assert.False(string.IsNullOrWhiteSpace(audit.Actor));
+        Assert.True(store.HasCloseNow(ProjectName));
+        Assert.Contains(factory.Services.GetRequiredService<TimelineLog>().ReadAll(
+            Path.Combine(_watchPath, TaskStates.Backlog, member.Key)),
+            item => item.Kind == TimelineEventKinds.BatchWithdrawn && item.Summary.Contains(batch.BatchId));
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+        var abandoned = AssertPhase(store, batch.BatchId, BatchPhase.Abandoned);
+        Assert.Equal(member.Key, abandoned.CausedByTaskKey);
+        Assert.Contains(reason, abandoned.Reason);
+        Assert.NotEqual(batch.BatchId, Ownership(other.Key)?.BatchId);
+        using var state = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/{ProjectName}/batch-gate/state"));
+        var recorded = state.RootElement.GetProperty("batches").EnumerateArray()
+            .Single(item => item.GetProperty("batchId").GetString() == batch.BatchId);
+        Assert.Equal(member.Key, recorded.GetProperty("causedByTaskKey").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(recorded.GetProperty("phaseReason").GetString()));
+    }
+
+    [Fact]
+    public async Task Operator_move_keeps_pending_unbatched_member_movable()
+    {
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-PENDING-MOVE", "docs/pending-move.md");
+        using var response = await client.PutAsJsonAsync($"/api/tasks/{member.Key}/state",
+            new MoveJobRequest { TargetState = TaskStates.Backlog });
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        AssertLane(member.Key, TaskStates.Backlog);
+        Assert.Empty(factory.Services.GetRequiredService<BatchGateStore>().ListManifests());
+    }
     private const string ProjectName = "batch-pilot";
     private const string RepositoryId = "batch-pilot-repo";
     private const string ReviewRunnerId = "batch-review-runner";

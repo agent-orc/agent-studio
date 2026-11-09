@@ -117,6 +117,7 @@ public static class BatchGateStateSnapshotReader
                 manifest.StackedOnBatchId,
                 phase = phase.Phase.ToString().ToLowerInvariant(),
                 phaseReason = phase.Reason,
+                causedByTaskKey = phase.CausedByTaskKey,
                 baseMoveToSha = phase.BaseMoveToSha,
                 baseMoveOutcome = phase.BaseMoveOutcome,
                 successorBatchId = phase.SuccessorBatchId,

@@ -1,5 +1,5 @@
 @if (state(); as confirm) {
-  <app-dialog [eyebrow]="confirm.kind === 'danger' ? 'Confirm delete' : 'Please confirm'"
+  <app-dialog [eyebrow]="confirm.eyebrow ?? (confirm.kind === 'danger' ? 'Confirm delete' : 'Please confirm')"
               [title]="confirm.title"
               role="alertdialog"
               [kind]="confirm.kind === 'danger' ? 'danger' : 'primary'"
