@@ -333,6 +333,7 @@
 /api/secrets/audit	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/secrets/workspace/	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/secrets/workspace/{name}	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/security/posture	free	-	-	-
 /api/supervisor/{project}/meta-cycle	free	-	-	-
 /api/supervisor/{project}/observation	free	-	-	-
 /api/supervisor/{project}/recent-events	free	-	-	-
