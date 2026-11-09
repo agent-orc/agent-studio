@@ -48,7 +48,7 @@ test('a full playthrough passes every step and writes the report with evidence',
 
   assert.equal(report.status, 'passed', failures(report));
   assert.deepEqual(report.steps.map(row => row.id), [
-    'sign-in-owner', 'project', 'leftovers', 'invite', 'wish', 'delivery', 'feedback', 'accept', 'release', 'refusals',
+    'sign-in-owner', 'project', 'live', 'leftovers', 'invite', 'wish', 'delivery', 'feedback', 'accept', 'release', 'refusals',
     'retire-card', 'disable-people', 'remove-project-url', 'delete-people']);
   assert.deepEqual(report.people.map(person => [person.id, person.role, person.productionApproval]),
     [['pm', 'Product', false], ['designer', 'Product', false], ['manager', 'Product', true]]);
@@ -103,9 +103,11 @@ test('a full playthrough passes every step and writes the report with evidence',
   assert.ok(step(report, 'feedback').usage.modelTokens > 0);
   assert.ok(report.totals.modelTokens >= step(report, 'delivery').usage.modelTokens + step(report, 'feedback').usage.modelTokens);
 
-  // Teardown disables the people, removes their bindings and the added Project URL; deletion is a visible gap.
-  assert.equal(report.teardownStatus, 'skipped');
+  // Teardown disables the people, removes their bindings and the added Project URL; deletion is a visible
+  // known gap that does not fail the cleanup.
+  assert.equal(report.teardownStatus, 'passed');
   assert.equal(step(report, 'delete-people').status, 'skipped');
+  assert.equal(step(report, 'delete-people').knownGap, true);
   assert.match(step(report, 'delete-people').reason, /no route that deletes a user/);
   for (const person of report.people) assert.equal(studio.users.find(user => user.username === person.login).disabled, true);
   assert.deepEqual(studio.bindings, []);
@@ -192,11 +194,17 @@ test('a reachable credential route fails step 6 and names it', async t => {
   assert.equal(report.refusals.filter(row => !row.refused).length, 3);
 });
 
-test('a project that is not live stops setup with the lifecycle prerequisite', async t => {
+test('a project that is not live fails setup but still plays the invitations and refusals', async t => {
   const { report } = await play(t, { projectLive: false });
-  assert.equal(step(report, 'project').status, 'failed');
-  assert.match(step(report, 'project').reason, /Production does not run healthy/);
-  assert.equal(step(report, 'invite').status, 'skipped');
+  assert.equal(report.status, 'failed');
+  assert.equal(step(report, 'project').status, 'passed');
+  assert.equal(step(report, 'live').status, 'failed');
+  assert.match(step(report, 'live').reason, /Production does not run healthy/);
+  assert.equal(step(report, 'invite').status, 'passed', failures(report));
+  assert.equal(step(report, 'refusals').status, 'passed', failures(report));
+  for (const id of ['wish', 'delivery', 'feedback', 'accept', 'release']) assert.equal(step(report, id).status, 'skipped', id);
+  assert.match(step(report, 'wish').reason, /Needs step "live"/);
+  assert.equal(report.teardownStatus, 'passed');
 });
 
 test('a sign-in that is not the Owner stops at setup with the reason', async t => {
@@ -235,6 +243,9 @@ test('teardown only disables what an earlier run left, archives its open card an
   assert.equal(studio.project.urls.length, 1);
   const cleanup = await play(t, {}, { clock, studio, extra: ['--teardown', 'only'] });
   assert.deepEqual(cleanup.report.steps.map(row => row.id), ['retire-card', 'disable-people', 'remove-project-url', 'delete-people']);
+  // A successful cleanup is the verdict of a teardown-only run, so the command exits 0.
+  assert.equal(cleanup.report.status, 'passed', JSON.stringify(cleanup.report.steps, null, 2));
+  assert.equal(cleanup.report.teardownStatus, 'passed');
   assert.equal(step(cleanup.report, 'disable-people').evidence.disabled.length, 3);
   assert.ok(studio.users.filter(user => user.role === 'contributor').every(user => user.disabled));
   const open = [...studio.tasks.values()][0];
@@ -243,6 +254,25 @@ test('teardown only disables what an earlier run left, archives its open card an
   assert.equal(open.preview.status, 'removed');
   assert.deepEqual(step(cleanup.report, 'remove-project-url').evidence.removed, ['url-1']);
   assert.deepEqual(studio.project.urls, []);
+});
+
+test('a teardown-only run reports its cleanup as the verdict', () => {
+  const row = (id, phase, status, extra = {}) => ({ id, title: id, phase, actor: null, status, startedAtUtc: '2026-11-09T08:00:00.000Z',
+    endedAtUtc: '2026-11-09T08:00:01.000Z', durationSeconds: 1, evidence: {}, screenshots: [], usage: null, ...extra });
+  const report = steps => buildReport({
+    scenario: { id: 'product', description: 'Product' },
+    run: { runId: 'r', studioOrigin: 'https://s.test', platform: 'v1', project: 'P',
+      startedAtUtc: '2026-11-09T08:00:00.000Z', endedAtUtc: '2026-11-09T08:00:02.000Z', durationSeconds: 2 },
+    steps,
+  });
+  const gap = row('delete-people', 'teardown', 'skipped', { knownGap: true });
+  assert.equal(report([row('disable-people', 'teardown', 'passed'), gap]).status, 'passed');
+  assert.equal(report([row('disable-people', 'teardown', 'failed'), gap]).status, 'failed');
+  assert.equal(report([row('disable-people', 'teardown', 'skipped'), gap]).status, 'skipped');
+  // A teardown-only run whose start failed records a setup row, which decides the verdict.
+  assert.equal(report([row('start', 'setup', 'failed')]).status, 'failed');
+  assert.equal(report([]).status, 'failed');
+  assert.equal(report([]).teardownStatus, 'not-run');
 });
 
 test('configuration refuses passwords and tokens outside the sign-in file', async t => {

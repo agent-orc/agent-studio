@@ -13,6 +13,9 @@ export const REPORT_SCHEMA_VERSION = 1;
 
 /** Builds the report object; pure so tests can check it without the disk. */
 export function buildReport({ scenario, run, steps, people = [], feedback = null, refusals = [] }) {
+  const playthrough = steps.filter(step => step.phase !== 'teardown');
+  const cleanup = steps.filter(step => step.phase === 'teardown');
+  const teardownStatus = cleanup.length ? overallStatus(cleanup) : 'not-run';
   return {
     schemaVersion: REPORT_SCHEMA_VERSION,
     scenario: scenario.id,
@@ -25,9 +28,9 @@ export function buildReport({ scenario, run, steps, people = [], feedback = null
     endedAtUtc: run.endedAtUtc,
     durationSeconds: run.durationSeconds,
     // The playthrough verdict covers setup and the scenario; cleanup is reported on its own.
-    status: overallStatus(steps.filter(step => step.phase !== 'teardown')),
-    teardownStatus: steps.some(step => step.phase === 'teardown')
-      ? overallStatus(steps.filter(step => step.phase === 'teardown')) : 'not-run',
+    // A teardown-only run has no playthrough, so its cleanup is the verdict.
+    status: playthrough.length || !cleanup.length ? overallStatus(playthrough) : teardownStatus,
+    teardownStatus,
     people,
     totals: sumUsage(steps),
     feedback,
@@ -60,7 +63,7 @@ export async function writeReport(directory, report, secrets = []) {
 export function renderHtml(report) {
   const rows = report.steps.map(step => `<tr class="status-${escape(step.status)}">
 <th scope="row">${escape(step.title)}<br><small>${escape(step.phase)}${step.actor ? `, ${escape(step.actor)}` : ''}</small></th>
-<td><span class="badge">${escape(step.status)}</span></td>
+<td><span class="badge">${escape(step.status)}</span>${step.knownGap ? '<br><small>known gap</small>' : ''}</td>
 <td>${escape(time(step.startedAtUtc))}</td>
 <td class="num">${step.durationSeconds}</td>
 <td class="num">${step.usage ? step.usage.modelTokens : ''}</td>

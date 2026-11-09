@@ -29,7 +29,10 @@ const RESET_BUTTON = '^reset$|reset';
 export function setupSteps() {
   return [
     { id: 'sign-in-owner', phase: 'setup', actor: 'Owner', title: 'Sign in the Owner through the API', run: signInOwner },
-    { id: 'project', phase: 'setup', actor: 'Owner', title: 'Find Click Counter live on stage and production', needs: ['sign-in-owner'], run: findProject },
+    { id: 'project', phase: 'setup', actor: 'Owner', title: 'Find Click Counter', needs: ['sign-in-owner'], run: findProject },
+    // Kept apart from "project" so an installation without the live website still
+    // plays the invitations and refusals; only steps 2 to 5 need the website.
+    { id: 'live', phase: 'setup', actor: 'Owner', title: 'Find Click Counter live on stage and production', needs: ['project'], run: findLiveWebsite },
     { id: 'leftovers', phase: 'setup', actor: 'Owner', title: 'Disable people and archive cards an earlier run left', needs: ['project'], run: removeLeftovers },
   ];
 }
@@ -37,7 +40,7 @@ export function setupSteps() {
 export function scenarioSteps() {
   return [
     { id: 'invite', actor: 'Owner', title: '1. The Owner invites three people with the Product role', needs: ['leftovers'], run: invitePeople },
-    { id: 'wish', actor: 'Product manager', title: '2. The product manager asks for the change in the product chat', needs: ['invite'], run: writeWish },
+    { id: 'wish', actor: 'Product manager', title: '2. The product manager asks for the change in the product chat', needs: ['invite', 'live'], run: writeWish },
     { id: 'delivery', actor: 'Product manager', title: '3. Coding, review and gates run; the card preview shows before and after', needs: ['wish'], run: awaitDelivery },
     { id: 'feedback', actor: 'Designer', title: '4. The designer marks the reset button; the fix round updates the preview', needs: ['delivery'], run: sendFeedback },
     { id: 'accept', actor: 'Product manager', title: '5a. The product manager accepts the preview', needs: ['feedback'], run: acceptPreview },
@@ -51,7 +54,7 @@ export function teardownSteps() {
     { id: 'retire-card', phase: 'teardown', always: true, title: 'Archive an unfinished scenario card and wait for its preview to go', run: retireCard },
     { id: 'disable-people', phase: 'teardown', always: true, title: 'Disable the invited people and remove their bindings', run: disablePeople },
     { id: 'remove-project-url', phase: 'teardown', always: true, title: 'Remove the Project URL the scenario added', run: removeProjectUrl },
-    { id: 'delete-people', phase: 'teardown', always: true, title: 'Delete the invited people', run: deletePeople },
+    { id: 'delete-people', phase: 'teardown', always: true, knownGap: true, title: 'Delete the invited people', run: deletePeople },
   ];
 }
 
@@ -74,7 +77,14 @@ async function findProject(ctx, record) {
   state.workspaceId = workspace?.id ?? project.workspaceId ?? null;
   record.note('projectId', project.id);
   record.note('workspaceId', state.workspaceId);
+  state.initialCardIds = (await owner.tasks(project.id)).map(card => card.id);
+  record.note('cardsBefore', state.initialCardIds.length);
+}
 
+async function findLiveWebsite(ctx, record) {
+  const { owner, state } = ctx;
+  const project = await scenarioProject(ctx);
+  expect(project, `The project "${state.project.name}" is gone.`);
   const view = await owner.environments(project.displayName).catch(() => null);
   const stage = environment(view, 'stage');
   const production = environment(view, 'production');
@@ -99,8 +109,6 @@ async function findProject(ctx, record) {
     state.projectUrlId = added.id;
     record.note('projectUrl', `${added.id} "${PROJECT_URL_LABEL}" (added)`);
   }
-  state.initialCardIds = (await owner.tasks(project.id)).map(card => card.id);
-  record.note('cardsBefore', state.initialCardIds.length);
 }
 
 async function removeLeftovers(ctx, record) {

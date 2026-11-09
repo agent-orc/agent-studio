@@ -25,7 +25,21 @@ node scripts/release/product-scenario.mjs \
 `JOB_RESULTS_DIR`, else to `artifacts/product-scenario`. Exit code 0 means the
 playthrough passed, 1 that a step failed or was skipped, and 2 a usage error.
 `--teardown never` keeps the invited people for inspection; `--teardown only`
-cleans up what an earlier run left.
+cleans up what an earlier run left. A teardown-only run has no playthrough, so
+its cleanup steps decide the verdict and a clean teardown exits 0.
+
+### Local demo installation
+
+`scripts/release/product-scenario/local-demo.sh [scenario options]` plays the
+scenario once against an isolated networked Studio on free loopback ports. It
+creates a scratch workspace with a "Click Counter" Git project, starts the
+backend from this checkout (`api.sh`, worktree test mode) and the prebuilt
+frontend, bootstraps an Owner with a second factor
+(`product-scenario/local-owner.mjs`, generated password and installer code,
+sign-in file mode 600), runs the scenario, and removes everything on exit.
+Build the solution and the frontend first. The local installation has no
+deploy host, so the setup step "live" fails and steps 2 to 5 are skipped;
+steps 1 and 6 and the teardown run for real.
 
 The sign-in file is the Owner's, in the format the lifecycle scenario uses:
 `{"login": "...", "password": "...", "totpSecret"?: "<base32>"}` with mode
@@ -52,7 +66,8 @@ two make the same refused requests through the API.
 | Step | Person | What the script does | Passes when |
 |---|---|---|---|
 | Setup: Owner | Owner | `POST /api/auth/login` with the sign-in file | The user is the Owner |
-| Setup: project | Owner | Finds Click Counter and its stage and production. Adds a Project URL "Stage (product scenario)" at the stage address unless one exists | Production runs healthy |
+| Setup: project | Owner | Finds Click Counter and its cards | The project exists |
+| Setup: live | Owner | Reads stage and production. Adds a Project URL "Stage (product scenario)" at the stage address unless one exists | Production runs healthy |
 | Setup: leftovers | Owner | Disables enabled `<prefix>-*` users, removes their bindings, archives an open card with the wish title | |
 | 1 | Owner | `POST /api/auth/invitations` (role `contributor`, the project) for each person. Each person opens the `/?invite=` link and chooses a password ("Join project"). Then `PUT /api/auth/users/{id}` with `productionApprovalProjects` for the manager | `GET /api/auth/users` shows the role, the project, and the approval only on the manager |
 | 2 | Product manager | Opens the Project URL with the product controls and sends the wish to the product chat (`observedSurface: "URL preview"`). Answers both questions (where, example) and reviews the proposal. Confirms with "Create this change" | Two questions were asked, the proposal shows a token estimate, no card existed before the confirmation, and then the card exists |
@@ -62,6 +77,9 @@ two make the same refused requests through the API.
 | 5b | Manager | Waits for the release with the card on stage. The product manager tries to approve production, then the manager approves (`POST .../environments/promotions/approve`) | The product manager gets 403. Production runs the stage digest, healthy |
 | 6 | Designer | Credential inventory, secrets, execution hosts, and project settings, for all three people; opens the credentials and environment settings pages | Every request answers 403 |
 | Teardown | Owner | Archives an unfinished scenario card and waits for its preview to go. Disables the people, removes their bindings and the scenario's Project URL | No scenario person can sign in |
+
+Step 2 needs both "invite" and "live"; steps 1 and 6 need only the project, so
+an installation without the live website still records them.
 
 ## Report
 
@@ -81,14 +99,41 @@ such as refused preview feedback, is listed there too. Screenshots are in
 Studio has no route that deletes a user, so each run invites new logins with
 the run id. Setup and teardown disable earlier `<prefix>-*` users and remove
 their bindings. The teardown step "Delete the invited people" is recorded as
-skipped with the logins. Disabled users accumulate until a card adds deletion.
+skipped with the logins. Disabled users accumulate until a card adds deletion. The step is marked as a
+known gap: it stays visible in the report but does not decide the teardown
+verdict.
 The accepted card stays on the board as the product's history. Its preview is
 removed after integration.
 
+## Live run on a local demo installation (9 November 2026)
+
+`local-demo.sh` played the scenario once against a fresh networked Studio from
+this checkout (card AGT-3183 results, `product-scenario-live/`). Setup found
+Click Counter, but "live" failed: the installation has no deploy host, so the
+project declares no stage and production, and steps 2 to 5 were skipped.
+Step 1 passed: the Owner invited the three people with the Product role, each
+joined through the one-time link in Chromium, and only the manager holds the
+production approval. Step 6 passed: all 12 requests (credential inventory,
+secrets, execution hosts, project settings, for each person) answered 403.
+Teardown passed: the people are disabled and their bindings removed. A second
+local run with `--teardown never` followed by `--teardown only` exited 0 for
+the cleanup.
+
+The browser screenshots of that run show three Product-role defects that the
+fake Studio cannot show:
+
+- Every page a Product person opens shows the modal "Failed to load runner
+  status": `GET /api/v1/studio/runner/status` answers `403 role-denied`.
+- The explorer of a Product person shows "No projects loaded", although the
+  person holds a binding on Click Counter.
+- Settings lists Credentials, Secrets, and Environment with "Add host" for a
+  Product person; the API refuses them, the navigation does not hide them.
+
 ## Known gaps (from reading the code, 9 November 2026)
 
-No live run has been recorded yet. Reading the code predicts these failures,
-each recorded with its evidence by the step named below:
+A run against an installation with the live website has not been recorded.
+Reading the code predicts these failures in steps 2 to 5, each recorded with
+its evidence by the step named below:
 
 - Step 4: the Product allowlist (`ContributorAccessPolicy.Allows`) admits
   `POST /api/tasks/{id}/preview-comments`, but not

@@ -35,6 +35,8 @@ export async function openBrowser({ studioUrl, reportDir, chromium }) {
   const shotDir = path.join(reportDir, 'screenshots');
   await mkdir(shotDir, { recursive: true });
   const studio = new URL(studioUrl);
+  // A loopback Studio (local-demo.sh) has a per-run certificate; no network sits in between.
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(studio.hostname);
   const pages = new Map();
   let counter = 0;
 
@@ -47,7 +49,7 @@ export async function openBrowser({ studioUrl, reportDir, chromium }) {
 
   async function personPage(person) {
     if (pages.has(person)) return pages.get(person);
-    const context = await browser.newContext({ viewport: VIEWPORT });
+    const context = await browser.newContext({ viewport: VIEWPORT, ignoreHTTPSErrors: loopback });
     const page = await context.newPage();
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultTimeout(ELEMENT_TIMEOUT_MS);

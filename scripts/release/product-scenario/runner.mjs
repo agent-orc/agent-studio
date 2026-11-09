@@ -20,9 +20,11 @@ export function quotaDelta(before, after) {
 }
 
 /**
- * Executes `steps` ({ id, title, phase?, needs?, always?, run(context, record) })
+ * Executes `steps` ({ id, title, phase?, needs?, always?, knownGap?, run(context, record) })
  * one by one. A step with `always` runs even when its needs did not pass;
- * teardown uses it so a failed run still removes the users it invited.
+ * teardown uses it so a failed run still removes the users it invited. A
+ * `knownGap` step records a missing Studio capability: its row stays in the
+ * report, but its skip does not decide the verdict.
  * `readQuota` returns the workspace quota snapshot or null; it is read around
  * each step so the report shows the quota use per step.
  */
@@ -37,6 +39,7 @@ export async function runSteps(steps, { context, clock, readQuota = async () => 
         id: step.id, title: step.title, phase: step.phase ?? 'scenario', actor: step.actor ?? null,
         status: STEP_STATUS.SKIPPED, startedAtUtc: startedAt.toISOString(), endedAtUtc: startedAt.toISOString(),
         durationSeconds: 0, reason: `Needs step "${blocking}", which did not pass.`, evidence: {}, screenshots: [], usage: null,
+        ...(step.knownGap ? { knownGap: true } : {}),
       };
       outcome.set(step.id, row.status);
       results.push(row);
@@ -61,6 +64,7 @@ export async function runSteps(steps, { context, clock, readQuota = async () => 
       startedAtUtc: startedAt.toISOString(), endedAtUtc: endedAt.toISOString(),
       durationSeconds: round((endedAt - startedAt) / 1000, 2),
       ...(reason ? { reason } : {}),
+      ...(step.knownGap ? { knownGap: true } : {}),
       evidence: record.evidence, screenshots: record.screenshots, usage: quotaDelta(quotaBefore, quotaAfter),
     };
     outcome.set(step.id, status);
@@ -70,11 +74,14 @@ export async function runSteps(steps, { context, clock, readQuota = async () => 
   return results;
 }
 
-/** The overall verdict: failed when any step failed, skipped when one was skipped. */
+/**
+ * The overall verdict: failed when any step failed, skipped when one was
+ * skipped. A skipped known-gap row is reported but does not count.
+ */
 export function overallStatus(results) {
   if (results.length === 0) return STEP_STATUS.FAILED;
   if (results.some(row => row.status === STEP_STATUS.FAILED)) return STEP_STATUS.FAILED;
-  if (results.some(row => row.status === STEP_STATUS.SKIPPED)) return STEP_STATUS.SKIPPED;
+  if (results.some(row => row.status === STEP_STATUS.SKIPPED && !row.knownGap)) return STEP_STATUS.SKIPPED;
   return STEP_STATUS.PASSED;
 }
 
