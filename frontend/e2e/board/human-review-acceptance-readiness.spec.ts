@@ -135,8 +135,8 @@ function grouped(humanReview: unknown[]) {
 
 interface Calls {
   readiness: string[][];
-  batch: Array<{ jobId: string; targetState: string }[]>;
-  continued: Array<{ url: string; body: { prompt: string; baseRef?: string; reason?: string } }>;
+  batch: { jobId: string; targetState: string }[][];
+  continued: { url: string; body: { prompt: string; baseRef?: string; reason?: string } }[];
 }
 
 async function installRoutes(page: Page, fixtures: Fixture[], refuseOnAccept: string[] = []): Promise<Calls> {
@@ -345,9 +345,48 @@ test.describe('Human Review acceptance readiness', () => {
     }
   });
 
+  test('captures the grouped lane as one readable sheet per theme', async ({ page, context }) => {
+    // The lane is one 312 px column several screens tall, so a lane capture
+    // shrinks past reading size. Capture the bar and each readiness group at
+    // native size, then lay them out in columns on a blank page. The tall
+    // viewport lets the lane's own scroll area hold the largest group whole.
+    await page.setViewportSize({ width: 1280, height: 2400 });
+    await installRoutes(page, FIXTURES);
+    await openBoard(page);
+    const lane = page.getByTestId('lane-5-human-review');
+    const groups = lane.locator('[data-testid^="review-subsection-"]');
+    await expect(groups).toHaveCount(7);
+    const sheet = await context.newPage();
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await dismissDevErrorDialog(page);
+      const background = await lane.evaluate((element) => {
+        for (let node: Element | null = element; node; node = node.parentElement) {
+          const color = getComputedStyle(node).backgroundColor;
+          if (color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') return color;
+        }
+        return 'Canvas';
+      });
+      const tiles = [await page.getByTestId('acceptance-readiness-bar').screenshot()];
+      for (const group of await groups.all()) {
+        await group.scrollIntoViewIfNeeded();
+        await expect(group).toBeInViewport({ ratio: 1 });
+        tiles.push(await group.screenshot());
+      }
+      await sheet.setViewportSize({ width: 1340, height: 600 });
+      await sheet.setContent(`<body style="margin:0;padding:12px;background:${background}">
+        <div style="column-count:4;column-gap:12px">${tiles.map((tile) =>
+          `<img style="display:block;max-width:100%;margin-bottom:12px;break-inside:avoid" src="data:image/png;base64,${tile.toString('base64')}">`).join('')}
+        </div></body>`);
+      await sheet.waitForFunction(() => [...document.images].every((image) => image.complete));
+      await sheet.screenshot({ path: path.join(RESULTS_DIR, `human-review-readiness--grouped--${theme}--1280.png`), fullPage: true });
+    }
+    await sheet.close();
+  });
+
   test('the 41-card lane of 9 November reads 15 ready and accepts exactly those', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
-    const classes: Array<[Readiness, number]> = [
+    const classes: [Readiness, number][] = [
       ['ready', 15], ['review-concerns', 9], ['integrated-unverified', 4], ['verdict-stale', 3],
       ['no-content-verdict', 2], ['waiting-deploy', 5], ['owner-decision', 3],
     ];

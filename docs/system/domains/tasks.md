@@ -1517,8 +1517,9 @@ rationale: [the completion contract](../../concepts/task-integration-and-merge-w
 `POST /api/tasks/acceptance-readiness` answers, for each named Human Review
 card (or every Human Review card of `project`), what its acceptance would
 answer now. `TaskTransitionService.PreviewCompletion` runs the admission checks
-of a Human Review to Completed move without an override, in the order
-`MoveAsync` runs them: decision guard, run-attempt lineage, content verdict,
+of a Human Review to Completed move without an override through the same
+`AdmitTransition` method that `MoveAsync` calls, so the checks and their order
+are one implementation: decision guard, run-attempt lineage, content verdict,
 batch-gate release, integration and gate verification, completion contract,
 and claim binding. It moves nothing and writes nothing. It does not report an
 unusable settlement, and it neither records nor repairs a batch containment, so
