@@ -326,7 +326,7 @@ AGENT_STUDIO_RELEASE_URL="http://127.0.0.1:$http_port" sh "$release_root/install
   --agent-cli codex \
   --runner-name agent-runner-01-e2e \
   --non-interactive \
-  >"$control_output"
+  >"$control_output" 2>&1
 
 if [[ "${SETUP_E2E_CONTROL_ONLY:-0}" == 1 ]]; then
   rm -f -- "$control_output"
@@ -344,10 +344,17 @@ fi
   echo "Control Plane management token is not owner-only." >&2
   exit 4
 }
+mapfile -t owner_code_paths < <(sed -n \
+  's/^\[agent-orchestrator\] Owner bootstrap code: \(.*\) (read it on this host to claim the first owner account)\.$/\1/p' \
+  "$control_output")
+[[ "${#owner_code_paths[@]}" == 1 && -f "${owner_code_paths[0]}" ]] || {
+  echo "Control Plane install did not log one readable owner code path." >&2
+  exit 4
+}
 python3 "$repo_root/scripts/release/installation-first-use.py" \
   --server-url "$base_url" \
   --studio-token-file "$orchestrator_config/studio.token" \
-  --owner-code-file "$orchestrator_config/owner_bootstrap_code" \
+  --owner-code-file "${owner_code_paths[0]}" \
   --owner-session-file "$owner_session_file" \
   --repository-url "$SCENARIO_GIT_REMOTE" \
   >"$runtime_root/first-use.log"
