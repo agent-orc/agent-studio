@@ -300,6 +300,12 @@ public class ProjectRunner
     // runner_slot_admission timeline event so the UI can show the pick
     // decision + slot occupancy. Pure observability; never gates execution.
     private string? _lastPickReason;
+    // AGT-3579: why the runner is not picking, recorded where the tick decides
+    // it. The gate is the early return of the last tick; the skips are the
+    // candidates the last pickup pass passed over. Both are replaced whole, so
+    // a status read never sees a half-built list. Pure observability.
+    private RunnerPickupWait? _pickupGate;
+    private IReadOnlyList<RunnerPickupSkip> _pickupSkips = [];
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _pendingPickReasons = new(StringComparer.Ordinal);
     // AGT-2055: last emitted pre-launch quota decision per job, so a card that
     // waits/throttles across many pickup ticks records ONE timeline + feed
@@ -1353,7 +1359,9 @@ public class ProjectRunner
             BreakerTripCount = _globalBreakerTripCount,
             MaxParallelism = ParallelSlotPolicy.ClampMax(_projectSettings.Get(ProjectName).MaxParallelism),
             OccupiedSlots = _activeRuns.Count,
-            LastPickReason = _lastPickReason
+            LastPickReason = _lastPickReason,
+            PickupGate = _pickupGate,
+            PickupSkips = _pickupGate is null ? _pickupSkips : []
         };
     }
 
@@ -1405,16 +1413,30 @@ public class ProjectRunner
         // the surface Playwright is observing stays live, but we structurally
         // refuse to claim work here. Explicit POST /api/tasks/{id}/start still
         // routes through RunCliAsync directly and is allowed.
-        if (_role == RunnerRole.TestSubject) return;
+        if (_role == RunnerRole.TestSubject)
+        {
+            _pickupGate = new RunnerPickupWait(RunnerPickupWaitCodes.TestSubject,
+                "This backend is the test-subject seat and never picks automatically.");
+            return;
+        }
 
         TryAutoResumeGlobalBreaker();
 
-        if (_mode is "manual" or "paused") return;
+        if (_mode is "manual" or "paused")
+        {
+            _pickupGate = ModeGate();
+            return;
+        }
 
         // A deferred switch to manual/paused closes admission immediately.
         // Runs active at request time keep going, but no new auto-pick may
         // refill a slot and move the flip point further into the future.
-        if (!DeferredModePickupPolicy.AllowsAutoPickup(_pendingMode)) return;
+        if (!DeferredModePickupPolicy.AllowsAutoPickup(_pendingMode))
+        {
+            _pickupGate = new RunnerPickupWait(RunnerPickupWaitCodes.PendingMode,
+                $"A switch to {_pendingMode} is pending, so auto-pickup takes no new card.");
+            return;
+        }
 
         // Placement decides who may claim; the live mode gate above decides
         // whether pickup is automatic. Explicit user starts remain available.
@@ -1424,6 +1446,9 @@ public class ProjectRunner
             _logger.LogDebug(
                 "remote-pickup-owned project={Project} runner={Runner}; local auto-pickup skipped",
                 ProjectName, ProjectExecutionPolicy.ResolveExecutionLocation(pickupSettings));
+            // Remote dispatch owns these cards and states its own holds.
+            _pickupGate = null;
+            _pickupSkips = [];
             return;
         }
 
@@ -1442,12 +1467,21 @@ public class ProjectRunner
                 _logger.LogInformation(
                     "[build-profile] auto-pickup gated for {Project}: {Reason}", ProjectName, buildGate.Reason);
             }
+            _pickupGate = new RunnerPickupWait(RunnerPickupWaitCodes.BuildProfile, buildGate.Reason);
             return;
         }
         _lastBuildGateBlockReason = null;
 
         var slotMax = SlotMax();
-        if (_processing || !_activeRuns.HasFreeSlot(slotMax)) return;
+        if (!_activeRuns.HasFreeSlot(slotMax))
+        {
+            _pickupGate = new RunnerPickupWait(RunnerPickupWaitCodes.SlotsFull,
+                $"All {slotMax} runner slot{(slotMax == 1 ? " is" : "s are")} occupied.");
+            return;
+        }
+        // A manual start is mid-launch; keep the previous wait facts.
+        if (_processing) return;
+        _pickupGate = null;
 
         // Pickup gating ends here. The picker below considers 3-progress and
         // 2-ready only; jobs sitting in 1-preparation, 1a-orchestrator-prep,
@@ -1532,10 +1566,11 @@ public class ProjectRunner
         RelocateStrayHumanDecisionCards();
         PrunePlacementWarnings();
         var skippedForConflict = new List<string>();
+        var skips = new List<RunnerPickupSkip>();
 
         foreach (var candidate in ListPickupCandidatesInDisplayedOrder())
         {
-            if (_mode is "manual" or "paused") return null;
+            if (_mode is "manual" or "paused") return PublishPickupSkips(skips, null);
             if (candidate.Info == null) continue;
             if (excludedJobIds.Contains(candidate.Info.Id)) continue;
 
@@ -1575,6 +1610,8 @@ public class ProjectRunner
             {
                 EmitLoadThrottleDecision(candidate.Info, _loadThrottle.Current);
                 _lastPickReason = $"load-throttle: {candidate.Info.Id}: {_loadThrottle.Current.Reason}";
+                skips.Add(new RunnerPickupSkip(candidate.Info.Id, RunnerPickupWaitCodes.LoadThrottle,
+                    "Host CPU stayed above the saturation threshold, so the runner adds no new run until it falls."));
                 continue;
             }
 
@@ -1595,6 +1632,8 @@ public class ProjectRunner
             {
                 _lastPickReason =
                     $"provider-limited: {candidate.Info.Id}: {providerLimit.CliType} until {providerLimit.LimitedUntil:O}";
+                skips.Add(new RunnerPickupSkip(candidate.Info.Id, RunnerPickupWaitCodes.ProviderLimit,
+                    $"The {providerLimit.CliType} account is limited until {providerLimit.LimitedUntil:O}."));
                 if (_providerLimits.TryBeginRecoveryProbe(providerLimit.CliType, DateTime.UtcNow))
                     _ = ProbeProviderRecoveryAsync(providerLimit);
                 continue;
@@ -1604,6 +1643,8 @@ public class ProjectRunner
             {
                 _ = RefreshQuotaAfterResetAsync(candidate.Info, dueWait.CliType);
                 _lastPickReason = $"quota-reset-refresh: {candidate.Info.Id}: reset reached; refreshing {dueWait.CliType}";
+                skips.Add(new RunnerPickupSkip(candidate.Info.Id, RunnerPickupWaitCodes.QuotaDefer,
+                    $"The {dueWait.CliType} quota reset is reached; the runner refreshes it before the next admission."));
                 _logger.LogInformation(
                     "[taskboard] quota reset reached for {Job} on {Project}; refreshing {Cli} before the next admission decision",
                     candidate.Info.Id, ProjectName, dueWait.CliType);
@@ -1617,6 +1658,7 @@ public class ProjectRunner
                 else ClearQuotaWait(candidate.Info);
                 EmitQuotaAdmissionDecision(candidate.Info, qplan);
                 _lastPickReason = $"quota-defer: {candidate.Info.Id}: {qplan.Reason}";
+                skips.Add(new RunnerPickupSkip(candidate.Info.Id, RunnerPickupWaitCodes.QuotaDefer, qplan.Reason));
                 _logger.LogInformation(
                     "[taskboard] quota admission gate deferring {Job} on {Project}: {Reason}",
                     candidate.Info.Id, ProjectName, qplan.Reason);
@@ -1631,6 +1673,7 @@ public class ProjectRunner
                     var reason = $"{candidate.Info.Id}: {adm.Reason}";
                     skippedForConflict.Add(reason);
                     _lastPickReason = $"parallel-conflict-skip: {reason}";
+                    skips.Add(new RunnerPickupSkip(candidate.Info.Id, RunnerPickupWaitCodes.ParallelConflict, adm.Reason));
                     _logger.LogInformation(
                         "[taskboard] skipping visible pickup candidate {Job} on {Project}: {Reason}",
                         candidate.Info.Id, ProjectName, adm.Reason);
@@ -1642,16 +1685,36 @@ public class ProjectRunner
                     : $"{adm.Reason}; skipped earlier conflicting candidate(s): {string.Join("; ", skippedForConflict)}";
                 _lastPickReason = pickReason;
                 _pendingPickReasons[candidate.Info.Id] = pickReason;
-                return candidate.Info;
+                return PublishPickupSkips(skips, candidate.Info);
             }
 
             var firstPickReason = $"display-order: {candidate.State} {candidate.Info.Id}";
             _lastPickReason = firstPickReason;
             _pendingPickReasons[candidate.Info.Id] = firstPickReason;
-            return candidate.Info;
+            return PublishPickupSkips(skips, candidate.Info);
         }
 
-        return null;
+        return PublishPickupSkips(skips, null);
+    }
+
+    /// <summary>AGT-3579: replaces the skip list whole, so a status read never sees a half-built pass.</summary>
+    private TaskInfo? PublishPickupSkips(List<RunnerPickupSkip> skips, TaskInfo? picked)
+    {
+        _pickupSkips = skips;
+        return picked;
+    }
+
+    /// <summary>AGT-3579: the mode gate in the words the lane mode chip uses.</summary>
+    private RunnerPickupWait ModeGate()
+    {
+        if (_globalBreakerCooldownUntil is { } until)
+            return new RunnerPickupWait(RunnerPickupWaitCodes.BreakerCooldown,
+                $"Auto-pickup is cooling down after a circuit-breaker trip and resumes at {until:O}.");
+        return _mode == "paused"
+            ? new RunnerPickupWait(RunnerPickupWaitCodes.Paused,
+                "The runner is paused; no card is picked until auto-pickup is enabled again.")
+            : new RunnerPickupWait(RunnerPickupWaitCodes.ManualMode,
+                "Auto-pickup is off; start the card or switch the project to auto.");
     }
 
     public Task<RunOutcome> StartJobManualAsync(string jobId, CancellationToken ct)

@@ -6,6 +6,7 @@ import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { formatRunningLabel, StatusBarComponent } from './status-bar';
 import { TaskService } from '../../../../services/task.service';
+import type { TaskInfo } from '../../../../models/task.model';
 
 describe('formatRunningLabel', () => {
   it.each([
@@ -132,5 +133,54 @@ describe('StatusBarComponent CLI repair note', () => {
     expect(note?.textContent).toContain('CLI broken since');
     expect(note?.getAttribute('data-signal-tone')).toBe('mismatch');
     expect(note?.querySelector('[aria-label="CLI broken"]')).not.toBeNull();
+  });
+});
+
+// AGT-3589 (walkthrough F14): the footer read "review idle" while Post
+// Processing held ten cards, because it counted the auto-review queue.
+describe('StatusBarComponent review entry', () => {
+  it('counts the Post Processing cards that wait for review', async () => {
+    await TestBed.configureTestingModule({
+      imports: [StatusBarComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(StatusBarComponent);
+    const service = TestBed.inject(TaskService);
+    const waiting = Array.from({ length: 10 }, (_, index) => ({
+      id: `DEMO-${index + 1}`, taskKey: `DEMO-${index + 1}`, title: 'Demo', state: '4-auto-review',
+      liveStatus: { attempt: 1, activeStep: null, nextSteps: [], queue: null, latestEventAt: null },
+    })) as unknown as TaskInfo[];
+    service.grouped.update(grouped => ({ ...grouped, autoReview: waiting }));
+
+    fixture.detectChanges();
+
+    const review = fixture.nativeElement.querySelector('[data-testid="status-bar-review"]') as HTMLElement;
+    expect(review.textContent).toContain('review 0 · 10 waiting');
+    expect(review.textContent).not.toContain('review idle');
+    expect(fixture.componentInstance.reviewAttention()).toBe(true);
+    expect(fixture.componentInstance.reviewTooltip()).toContain(
+      'Post Processing holds 10 cards: 10 waiting for review, 0 under review.');
+  });
+
+  it('stays idle when Post Processing is empty', async () => {
+    await TestBed.configureTestingModule({
+      imports: [StatusBarComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(StatusBarComponent);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="status-bar-review"]')?.textContent)
+      .toContain('review idle');
   });
 });

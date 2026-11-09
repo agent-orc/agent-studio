@@ -2,6 +2,7 @@ import { Injectable, signal, inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse, HttpHeaders, HttpParams } from '@angular/common/http';
 import { Subject, catchError, finalize, map, switchMap, tap, throwError, timer, type Observable } from 'rxjs';
 import { isGitFactsWarming, retryWhileWarming } from '../utils/git-facts-warming';
+import { sortLaneLikeBoard } from './lane-sort.util';
 import type { TaskCore, TaskResource, ResourceName } from '../models/task-core.model';
 import type {
   ArchivedTasksResponse,
@@ -31,7 +32,9 @@ import type {
   ContextUsageSnapshot,
   CliType,
   ContinueMode,
+  ContinueRoundBase,
   ContinueTaskResponse,
+  FailureContinuationCheck,
   ProjectSnapshot,
   PromoteToCodingResponse,
   CreateRegistryProjectRequest,
@@ -48,6 +51,7 @@ import type {
   DecisionActionResponse,
 } from '../models/task.model';
 import { TaskState } from '../models/task.model';
+import type { CouncilFindingAction, CouncilReactionDisposition } from '../models/council-review.model';
 import type { ClaudeSessionResponse } from '../features/claude';
 import type { CliModelCatalog, CliCompletionContract, CliUsageReport, ModelMigrationCatalog } from '../features/cli';
 import type { GitFileChange, GitStatus, TaskCommitDetail, TaskProvenanceView } from '../features/git';
@@ -134,7 +138,7 @@ export interface CodeReviewListEntry {
 
 export interface CouncilFindingAssessment {
   finding: string;
-  action: 'FixNextRound' | 'Accept' | 'Escalate';
+  action: CouncilFindingAction;
   reason: string;
 }
 
@@ -142,7 +146,7 @@ export interface CouncilReviewReaction {
   createdAt: string;
   reviewFileName: string;
   grade: string;
-  disposition: 'Accept' | 'Reissue' | 'Escalate';
+  disposition: CouncilReactionDisposition;
   summary: string;
   assessments: CouncilFindingAssessment[];
   startsNewRound: boolean;
@@ -667,6 +671,12 @@ export class TaskService {
    * "where did this card sit before I moved it" so the revert can put it
    * back at the same slot via `moveJob(..., targetIndex)`.
    */
+  /** Current board order of one lane, as painted (optimistic moves included). */
+  laneJobs(state: string): readonly TaskInfo[] {
+    const lane = STATE_TO_LANE[state];
+    return lane ? this.grouped()[lane] ?? [] : [];
+  }
+
   findLaneIndex(jobId: string, watchPath: string, state: string): number {
     const lane = STATE_TO_LANE[state];
     if (!lane) return -1;
@@ -983,6 +993,22 @@ export class TaskService {
     return this.http.post<{ status: 'started' | 'queued' | 'saved'; stage: string; taskKey: string; savedReason: string | null }>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/failure/continue`,
       {},
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /** AGT-3582: whether the card has a delivery failure to continue, by the POST's own guard. */
+  checkFailureContinuation(jobId: string, watchPath?: string) {
+    return this.http.get<FailureContinuationCheck>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/failure/continue`,
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /** AGT-3582: the run base a continue round would start from, read only; null keeps today's checkout. */
+  getContinueRoundBase(jobId: string, watchPath?: string) {
+    return this.http.get<{ base: ContinueRoundBase | null }>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/continue/base`,
       this.withWatchPath(watchPath),
     );
   }
@@ -3172,8 +3198,8 @@ export class TaskService {
    * Insert-or-update a single task in the local `jobs` + `grouped` signals,
    * keyed by `watchPath::id`. Removes the row from whatever lane currently
    * holds it and re-inserts it into the lane for its `state`, ordered by the
-   * card's `order` field so the position matches what the grouped endpoint
-   * would return. Idempotent.
+   * same per-project lane strategy as the grouped endpoint (AGT-3587), so a
+   * push never reorders unrelated cards across projects. Idempotent.
    */
   private upsertJobLocal(info: TaskInfo): void {
     if (!info || !info.id) return;
@@ -3202,9 +3228,7 @@ export class TaskService {
       if (filtered.length !== list.length) next[k] = filtered;
     }
     if (lane) {
-      next[lane] = [...(next[lane] ?? []), info].sort(
-        (a, b) => (a.order ?? 0) - (b.order ?? 0),
-      );
+      next[lane] = sortLaneLikeBoard([...(next[lane] ?? []), info], info.state, this.laneSortStrategies());
     }
     this.grouped.set(next);
     this.taskEventSubject.next({ kind: 'upserted', info });
