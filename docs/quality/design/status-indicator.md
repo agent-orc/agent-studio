@@ -113,6 +113,7 @@ fall back to `neutral`.
 | Environment | host and role heartbeat, readiness, provider login, credentials, capability health, Git push, checkpoints, engine, gate, map | `hostStatusIndicatorTone`, `hostReadinessTone`, `providerAuthTone`, `credentialIndicatorTone`, `environmentHealthTone`, `repositoryAccessTone`; live loading → running. |
 | Access | user, enrollment code, enrolled host, service account | Active, Used → success; Invited, Open → info; Disabled, Revoked, Expired or revoked → neutral. |
 | Updates | update state, deploy history | ok → success; behind → warning; running → running; failed → danger (the text says "Last update failed"); history degraded or aborted → warning. |
+| Operations > Security | finding severity, credential, user, host release and audit states (`operations-security.model.ts`) | critical, high → danger; medium → warning; low → info; info → neutral. Active, working, up to date, verified → success; expiring, never expires, no recovery codes, behind → warning; missing, unexpected access, failed, no second factor → danger; expired, revoked, disabled, not visible to the API → neutral. |
 | First-run checklist | each step, provider probe, device login, Git setup | Verified → success; Pending → neutral; `providerAuthTone`, `deviceLoginTone`, `gitSetupTone`. |
 
 ## When to use it, and when not

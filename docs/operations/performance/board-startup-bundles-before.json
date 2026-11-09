@@ -1,0 +1,589 @@
+{
+  "note": "Chrome CDP Network.loadingFinished encodedDataLength (gzip wire bytes including HTTP overhead); raw bytes from production build files at 433f34c. Requests assigned to the phase of Network.requestWillBeSent.",
+  "phases": {
+    "board-first-load": {
+      "count": 104,
+      "rawBytes": 3720554,
+      "transferredBytes": 1009750,
+      "chunks": [
+        {
+          "file": "chunk-LJMFSHF6.js",
+          "rawBytes": 868141,
+          "transferredBytes": 210690
+        },
+        {
+          "file": "main-HMFO2GFP.js",
+          "rawBytes": 732765,
+          "transferredBytes": 179853
+        },
+        {
+          "file": "chunk-RJMADNBW.js",
+          "rawBytes": 344433,
+          "transferredBytes": 85681
+        },
+        {
+          "file": "chunk-SQHSM5GZ.js",
+          "rawBytes": 187815,
+          "transferredBytes": 62738
+        },
+        {
+          "file": "chunk-MPPGJ3Y5.js",
+          "rawBytes": 124008,
+          "transferredBytes": 41336
+        },
+        {
+          "file": "chunk-XCX4525L.js",
+          "rawBytes": 155871,
+          "transferredBytes": 41083
+        },
+        {
+          "file": "chunk-IXLKXEN7.js",
+          "rawBytes": 94965,
+          "transferredBytes": 32167
+        },
+        {
+          "file": "chunk-RQGUNTN3.js",
+          "rawBytes": 106554,
+          "transferredBytes": 26598
+        },
+        {
+          "file": "chunk-Q63DHI5I.js",
+          "rawBytes": 95601,
+          "transferredBytes": 24062
+        },
+        {
+          "file": "chunk-MUJGSNUO.js",
+          "rawBytes": 100160,
+          "transferredBytes": 23161
+        },
+        {
+          "file": "chunk-5R2GOCRW.js",
+          "rawBytes": 82254,
+          "transferredBytes": 22070
+        },
+        {
+          "file": "chunk-5HNXOVUZ.js",
+          "rawBytes": 86672,
+          "transferredBytes": 21525
+        },
+        {
+          "file": "chunk-LJX6V7EG.js",
+          "rawBytes": 59365,
+          "transferredBytes": 19479
+        },
+        {
+          "file": "styles-7VRAU5XI.css",
+          "rawBytes": 110788,
+          "transferredBytes": 17477
+        },
+        {
+          "file": "chunk-D3FK5DU4.js",
+          "rawBytes": 78936,
+          "transferredBytes": 16154
+        },
+        {
+          "file": "chunk-JYQUQV6L.js",
+          "rawBytes": 35139,
+          "transferredBytes": 10036
+        },
+        {
+          "file": "chunk-BH3CUVJ5.js",
+          "rawBytes": 33278,
+          "transferredBytes": 9882
+        },
+        {
+          "file": "chunk-45D3FYR4.js",
+          "rawBytes": 39321,
+          "transferredBytes": 9109
+        },
+        {
+          "file": "chunk-M25NV2MO.js",
+          "rawBytes": 28939,
+          "transferredBytes": 9053
+        },
+        {
+          "file": "chunk-5ZQ2NN77.js",
+          "rawBytes": 20666,
+          "transferredBytes": 8594
+        },
+        {
+          "file": "chunk-6ZFDYTGZ.js",
+          "rawBytes": 30264,
+          "transferredBytes": 8135
+        },
+        {
+          "file": "chunk-3TOJYSAF.js",
+          "rawBytes": 18632,
+          "transferredBytes": 6151
+        },
+        {
+          "file": "chunk-JKSNMHZ2.js",
+          "rawBytes": 14287,
+          "transferredBytes": 4943
+        },
+        {
+          "file": "chunk-HW5LVFUE.js",
+          "rawBytes": 14685,
+          "transferredBytes": 4681
+        },
+        {
+          "file": "chunk-AL5R52JI.js",
+          "rawBytes": 15961,
+          "transferredBytes": 4599
+        },
+        {
+          "file": "chunk-UROBHATP.js",
+          "rawBytes": 10419,
+          "transferredBytes": 4540
+        },
+        {
+          "file": "chunk-6JOHLQOE.js",
+          "rawBytes": 11233,
+          "transferredBytes": 4299
+        },
+        {
+          "file": "chunk-6WPNHWVD.js",
+          "rawBytes": 13456,
+          "transferredBytes": 3988
+        },
+        {
+          "file": "chunk-D66ERJ5N.js",
+          "rawBytes": 11504,
+          "transferredBytes": 3981
+        },
+        {
+          "file": "chunk-IXCUG545.js",
+          "rawBytes": 11651,
+          "transferredBytes": 3451
+        },
+        {
+          "file": "chunk-YNPGEPCH.js",
+          "rawBytes": 7727,
+          "transferredBytes": 3293
+        },
+        {
+          "file": "chunk-JHBOOFFH.js",
+          "rawBytes": 8633,
+          "transferredBytes": 3118
+        },
+        {
+          "file": "chunk-VRVICCOI.js",
+          "rawBytes": 7865,
+          "transferredBytes": 3104
+        },
+        {
+          "file": "chunk-YF6C6GN7.js",
+          "rawBytes": 10816,
+          "transferredBytes": 3028
+        },
+        {
+          "file": "chunk-24BM2BHB.js",
+          "rawBytes": 6462,
+          "transferredBytes": 2841
+        },
+        {
+          "file": "chunk-CA3ZE54K.js",
+          "rawBytes": 5609,
+          "transferredBytes": 2395
+        },
+        {
+          "file": "chunk-JXGL53B3.js",
+          "rawBytes": 4455,
+          "transferredBytes": 2085
+        },
+        {
+          "file": "chunk-DFX5M7NJ.js",
+          "rawBytes": 3973,
+          "transferredBytes": 2011
+        },
+        {
+          "file": "chunk-V5OR34GA.js",
+          "rawBytes": 4084,
+          "transferredBytes": 1827
+        },
+        {
+          "file": "chunk-DAE3OWL6.js",
+          "rawBytes": 4023,
+          "transferredBytes": 1797
+        },
+        {
+          "file": "chunk-VK4M7YDM.js",
+          "rawBytes": 3150,
+          "transferredBytes": 1796
+        },
+        {
+          "file": "chunk-AC6FAVZB.js",
+          "rawBytes": 4215,
+          "transferredBytes": 1782
+        },
+        {
+          "file": "chunk-3MSJWXWH.js",
+          "rawBytes": 3750,
+          "transferredBytes": 1781
+        },
+        {
+          "file": "chunk-6O5GX4TK.js",
+          "rawBytes": 4203,
+          "transferredBytes": 1709
+        },
+        {
+          "file": "chunk-GVRFK6LX.js",
+          "rawBytes": 3454,
+          "transferredBytes": 1708
+        },
+        {
+          "file": "chunk-QIR7Q4SN.js",
+          "rawBytes": 4562,
+          "transferredBytes": 1646
+        },
+        {
+          "file": "chunk-JTZHKPWM.js",
+          "rawBytes": 3308,
+          "transferredBytes": 1641
+        },
+        {
+          "file": "chunk-YD7VDWEC.js",
+          "rawBytes": 5970,
+          "transferredBytes": 1603
+        },
+        {
+          "file": "chunk-67QYSEA5.js",
+          "rawBytes": 3998,
+          "transferredBytes": 1554
+        },
+        {
+          "file": "chunk-2R3KGWXB.js",
+          "rawBytes": 3566,
+          "transferredBytes": 1553
+        },
+        {
+          "file": "chunk-MGQHXA2I.js",
+          "rawBytes": 2812,
+          "transferredBytes": 1546
+        },
+        {
+          "file": "chunk-BWO62LAJ.js",
+          "rawBytes": 3889,
+          "transferredBytes": 1542
+        },
+        {
+          "file": "chunk-P6FAWXTK.js",
+          "rawBytes": 2953,
+          "transferredBytes": 1519
+        },
+        {
+          "file": "chunk-ZSAW46KZ.js",
+          "rawBytes": 3347,
+          "transferredBytes": 1493
+        },
+        {
+          "file": "chunk-GWUAAG2Y.js",
+          "rawBytes": 4323,
+          "transferredBytes": 1407
+        },
+        {
+          "file": "chunk-SLEOS6M3.js",
+          "rawBytes": 2892,
+          "transferredBytes": 1356
+        },
+        {
+          "file": "chunk-FLFLNANJ.js",
+          "rawBytes": 2483,
+          "transferredBytes": 1338
+        },
+        {
+          "file": "chunk-NPWWKHQV.js",
+          "rawBytes": 2731,
+          "transferredBytes": 1334
+        },
+        {
+          "file": "chunk-QLK6JME7.js",
+          "rawBytes": 2730,
+          "transferredBytes": 1301
+        },
+        {
+          "file": "chunk-DFMMI6OY.js",
+          "rawBytes": 3202,
+          "transferredBytes": 1294
+        },
+        {
+          "file": "chunk-YAX2QF5O.js",
+          "rawBytes": 2443,
+          "transferredBytes": 1268
+        },
+        {
+          "file": "chunk-MDBMOVOJ.js",
+          "rawBytes": 1774,
+          "transferredBytes": 1119
+        },
+        {
+          "file": "chunk-A33YD77N.js",
+          "rawBytes": 2070,
+          "transferredBytes": 1094
+        },
+        {
+          "file": "chunk-G3TJWT6B.js",
+          "rawBytes": 1797,
+          "transferredBytes": 1088
+        },
+        {
+          "file": "chunk-TLAJUVIK.js",
+          "rawBytes": 1761,
+          "transferredBytes": 1064
+        },
+        {
+          "file": "chunk-FLLSPKM6.js",
+          "rawBytes": 1846,
+          "transferredBytes": 1054
+        },
+        {
+          "file": "chunk-UROVZHDJ.js",
+          "rawBytes": 1747,
+          "transferredBytes": 1049
+        },
+        {
+          "file": "chunk-665QOC7H.js",
+          "rawBytes": 1893,
+          "transferredBytes": 1000
+        },
+        {
+          "file": "chunk-7MIRN2F6.js",
+          "rawBytes": 1476,
+          "transferredBytes": 976
+        },
+        {
+          "file": "chunk-NOUG4JPR.js",
+          "rawBytes": 1606,
+          "transferredBytes": 970
+        },
+        {
+          "file": "chunk-NDHDLNR5.js",
+          "rawBytes": 1788,
+          "transferredBytes": 958
+        },
+        {
+          "file": "chunk-MV4EBGPZ.js",
+          "rawBytes": 1445,
+          "transferredBytes": 956
+        },
+        {
+          "file": "chunk-OZZ6PZAA.js",
+          "rawBytes": 1401,
+          "transferredBytes": 904
+        },
+        {
+          "file": "chunk-55GY6K5S.js",
+          "rawBytes": 1356,
+          "transferredBytes": 896
+        },
+        {
+          "file": "chunk-PXWHDDZF.js",
+          "rawBytes": 1088,
+          "transferredBytes": 895
+        },
+        {
+          "file": "chunk-Q4YBIS54.js",
+          "rawBytes": 1353,
+          "transferredBytes": 893
+        },
+        {
+          "file": "chunk-EVNJQ45T.js",
+          "rawBytes": 1512,
+          "transferredBytes": 888
+        },
+        {
+          "file": "chunk-2YDB5PRF.js",
+          "rawBytes": 1209,
+          "transferredBytes": 883
+        },
+        {
+          "file": "chunk-VR3E7DJ5.js",
+          "rawBytes": 1198,
+          "transferredBytes": 883
+        },
+        {
+          "file": "chunk-2KBLKWBX.js",
+          "rawBytes": 1430,
+          "transferredBytes": 871
+        },
+        {
+          "file": "chunk-LE32J7RH.js",
+          "rawBytes": 1851,
+          "transferredBytes": 849
+        },
+        {
+          "file": "chunk-2RZHRPYS.js",
+          "rawBytes": 1204,
+          "transferredBytes": 848
+        },
+        {
+          "file": "chunk-53JGTRHU.js",
+          "rawBytes": 1037,
+          "transferredBytes": 834
+        },
+        {
+          "file": "chunk-26CUULKS.js",
+          "rawBytes": 998,
+          "transferredBytes": 788
+        },
+        {
+          "file": "chunk-TXNPN6DF.js",
+          "rawBytes": 1348,
+          "transferredBytes": 780
+        },
+        {
+          "file": "chunk-OTJRIXUW.js",
+          "rawBytes": 1047,
+          "transferredBytes": 740
+        },
+        {
+          "file": "chunk-62QRSOAP.js",
+          "rawBytes": 794,
+          "transferredBytes": 727
+        },
+        {
+          "file": "chunk-NFUCPZXS.js",
+          "rawBytes": 829,
+          "transferredBytes": 718
+        },
+        {
+          "file": "chunk-RJ6HRHZS.js",
+          "rawBytes": 824,
+          "transferredBytes": 681
+        },
+        {
+          "file": "chunk-7JN4HK7T.js",
+          "rawBytes": 667,
+          "transferredBytes": 588
+        },
+        {
+          "file": "chunk-NKGZMMKB.js",
+          "rawBytes": 470,
+          "transferredBytes": 584
+        },
+        {
+          "file": "chunk-QBABZF3O.js",
+          "rawBytes": 537,
+          "transferredBytes": 556
+        },
+        {
+          "file": "chunk-CB4YWJEC.js",
+          "rawBytes": 407,
+          "transferredBytes": 538
+        },
+        {
+          "file": "chunk-2Z6FC5CL.js",
+          "rawBytes": 404,
+          "transferredBytes": 532
+        },
+        {
+          "file": "chunk-3BKNHDKM.js",
+          "rawBytes": 498,
+          "transferredBytes": 525
+        },
+        {
+          "file": "chunk-S6OXS67S.js",
+          "rawBytes": 458,
+          "transferredBytes": 512
+        },
+        {
+          "file": "chunk-6LV6ZNYR.js",
+          "rawBytes": 398,
+          "transferredBytes": 508
+        },
+        {
+          "file": "chunk-EKQYCEAH.js",
+          "rawBytes": 440,
+          "transferredBytes": 496
+        },
+        {
+          "file": "chunk-UARZIO6X.js",
+          "rawBytes": 335,
+          "transferredBytes": 484
+        },
+        {
+          "file": "chunk-YNTLLOQZ.js",
+          "rawBytes": 304,
+          "transferredBytes": 474
+        },
+        {
+          "file": "chunk-2EYRF4V3.js",
+          "rawBytes": 304,
+          "transferredBytes": 405
+        },
+        {
+          "file": "chunk-6U7A5BQ5.js",
+          "rawBytes": 149,
+          "transferredBytes": 364
+        },
+        {
+          "file": "chunk-MABXFAYI.js",
+          "rawBytes": 110,
+          "transferredBytes": 346
+        },
+        {
+          "file": "chunk-QKLOGG6Y.js",
+          "rawBytes": 0,
+          "transferredBytes": 246
+        }
+      ]
+    },
+    "detail-first-open": {
+      "count": 10,
+      "rawBytes": 1006700,
+      "transferredBytes": 253515,
+      "chunks": [
+        {
+          "file": "chunk-WMSEUTO7.js",
+          "rawBytes": 776391,
+          "transferredBytes": 187347
+        },
+        {
+          "file": "chunk-7XAKAVFX.js",
+          "rawBytes": 108363,
+          "transferredBytes": 27207
+        },
+        {
+          "file": "chunk-N4K3ODLP.js",
+          "rawBytes": 44445,
+          "transferredBytes": 13363
+        },
+        {
+          "file": "chunk-54HT446B.js",
+          "rawBytes": 38808,
+          "transferredBytes": 10978
+        },
+        {
+          "file": "chunk-TLVH2TGC.js",
+          "rawBytes": 16710,
+          "transferredBytes": 5632
+        },
+        {
+          "file": "chunk-FC5KYGZW.js",
+          "rawBytes": 14875,
+          "transferredBytes": 4983
+        },
+        {
+          "file": "chunk-3T2VIN2K.js",
+          "rawBytes": 4120,
+          "transferredBytes": 1831
+        },
+        {
+          "file": "chunk-RI5YC6EX.js",
+          "rawBytes": 1725,
+          "transferredBytes": 1069
+        },
+        {
+          "file": "chunk-6VFMUD4A.js",
+          "rawBytes": 917,
+          "transferredBytes": 624
+        },
+        {
+          "file": "chunk-V2WUY4MQ.js",
+          "rawBytes": 346,
+          "transferredBytes": 481
+        }
+      ]
+    }
+  }
+}

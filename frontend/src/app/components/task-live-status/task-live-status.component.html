@@ -6,6 +6,7 @@
            data-testid="task-live-status"
            [attr.data-live-tone]="live.tone"
            [attr.data-attempt]="live.attempt"
+           [attr.data-wait-reason]="live.waitReason ?? null"
            aria-live="polite">
     <div class="task-live__current" data-testid="task-live-current">
       <span class="task-live__label">Current</span>

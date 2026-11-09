@@ -29,7 +29,11 @@ namespace AgentStudio.Tests;
 /// <see cref="GitProcessOnReadRequestException"/>. The scenarios additionally
 /// assert that every observed route is declared by its scenario, that routes
 /// the census marks <c>measured-zero</c> start no Git, and that every frozen
-/// exception route is exercised. Set <c>GIT_READ_CENSUS_OUT</c> to a file to
+/// exception route is exercised. The census hosts boot quietly
+/// (<see cref="GitReadCensusHost.QuietBoot"/>, AGT-3567): without the one-time
+/// repair sweeps and the run-liveness adoption, so each of the 26 host starts
+/// scans the board once instead of three times. Neither starts a request.
+/// Set <c>GIT_READ_CENSUS_OUT</c> to a file to
 /// append one JSON line of evidence per request (method, route template,
 /// scenario, spawns, commands, owner, removal slice).</para>
 /// </summary>
@@ -52,7 +56,7 @@ public sealed class GitReadSpawnCensusTests(GitFactsBoardFixture board, ITestOut
     {
         var scenario = GitReadSpawnScenarios.All.Single(candidate => candidate.Name == name);
         GitService.InvalidateToplevelCache();
-        await using var host = new GitReadCensusHost(board);
+        await using var host = new GitReadCensusHost(board, settings: GitReadCensusHost.QuietBoot);
         await scenario.Run(host);
         GitReadCensusEvidence.Append(scenario, host.Records);
 
@@ -449,6 +453,20 @@ public sealed class GitReadCensusHost : IAsyncDisposable
             ?? GitFactsBoardFixture.ProjectName;
     }
 
+    /// <summary>
+    /// Boots without the one-time repair, backfill and report sweeps of
+    /// <c>Program</c> and without the run-liveness boot adoption, which
+    /// demoted the board's in-progress cards on the first host and scanned
+    /// the board raw on every later one (AGT-3567). The hosted services are
+    /// removed anyway, so no runner can own a run here. The index boot and
+    /// crash recovery still run.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string?> QuietBoot = new Dictionary<string, string?>
+    {
+        ["Startup:RepairSweeps"] = "false",
+        ["Runner:RunLiveness:Enabled"] = "false",
+    };
+
     public GitFactsBoardFixture Board { get; }
     public IServiceProvider Services => _factory.Services;
     public HttpClient Client => _client;
@@ -469,7 +487,7 @@ public sealed class GitReadCensusHost : IAsyncDisposable
     public async Task GetCold(string url)
     {
         GitService.InvalidateToplevelCache();
-        await using var fresh = new GitReadCensusHost(Board);
+        await using var fresh = new GitReadCensusHost(Board, settings: QuietBoot);
         await fresh.Get(url);
         await fresh.Get(url);
         foreach (var record in fresh.Records) _observer.Records.Enqueue(record);

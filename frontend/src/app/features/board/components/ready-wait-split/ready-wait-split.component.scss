@@ -1,0 +1,50 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+
+// A quiet second header line: the reasons are context, not alarms (R4).
+.ready-wait {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-1) var(--studio-spacing-2);
+  margin-top: var(--studio-spacing-1);
+  color: var(--studio-fg-muted);
+  font-size: var(--studio-lane-header-secondary-size);
+  line-height: 1.3;
+}
+
+.ready-wait__lead {
+  color: var(--studio-fg-dim);
+}
+
+.ready-wait__bucket {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  white-space: nowrap;
+  cursor: help;
+  border-radius: var(--studio-action-radius-sm);
+
+  &:focus-visible {
+    outline: 2px solid var(--studio-accent);
+    outline-offset: 2px;
+  }
+}
+
+.ready-wait__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--studio-status-neutral);
+  flex: 0 0 auto;
+}
+
+.ready-wait__bucket[data-kind='hold'] .ready-wait__dot { background: var(--studio-status-warning); }
+.ready-wait__bucket[data-kind='runner'] .ready-wait__dot { background: var(--studio-status-info); }
+
+.ready-wait__count {
+  color: var(--studio-fg);
+  font-variant-numeric: tabular-nums;
+}
