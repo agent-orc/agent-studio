@@ -38,3 +38,25 @@ describe('CliAdminPanelComponent (smoke)', () => {
     expect(fixture.componentInstance).toBeTruthy();
   });
 });
+
+// AGT-3589: the CLI Usage sheet was removed; the empty state points at the
+// footer usage entry that replaced it.
+describe('CliAdminPanelComponent usage caps empty state', () => {
+  it('points at the footer usage entry, not the removed CLI Usage panel', async () => {
+    await TestBed.configureTestingModule({
+      imports: [CliAdminPanelComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(CliAdminPanelComponent);
+    fixture.detectChanges();
+
+    const empty = fixture.nativeElement.querySelector('[data-testid="cli-admin-caps-empty"]');
+    expect(empty?.textContent).toContain('Open a usage entry in the footer');
+    expect(empty?.textContent).not.toContain('CLI Usage panel');
+  });
+});
