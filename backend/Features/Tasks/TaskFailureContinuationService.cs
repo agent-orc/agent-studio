@@ -59,27 +59,9 @@ public sealed class TaskFailureContinuationService
         IReadOnlyDictionary<string, string>? extraDetails = null)
     {
         ArgumentNullException.ThrowIfNull(job);
-        if (job.State is not (TaskStates.HumanReview or TaskStates.Escalated or TaskStates.AutoReview
-                              or TaskStates.Completed or TaskStates.Archive))
-            return Refused(409, "A failure continuation requires a delivered task.");
-
-        var status = _integration.BuildLookup([job]).GetValueOrDefault(job.TaskKey);
-        if (status?.ReachUnavailable == true)
-            return Refused(409, "Git reach is unavailable. Re-check integration before continuing.");
-        if (status?.Status == IntegrationStatuses.Integrated)
-            return Refused(409, "The current delivery is already integrated.");
-        var steps = _pipeline.Read(job.FolderPath)?.Steps;
-        var subject = ReviewSubjectStore.Read(job.FolderPath);
-        var failed = CurrentFailureStep(steps, status, subject);
-        if (status?.Status == IntegrationStatuses.NoBranch && failed is null)
-            return Refused(409, "This task has no delivery failure to continue.");
-        if (status?.Failure is not null && failed is null)
-            return Refused(409, "The recorded failure belongs to an earlier delivery. Re-check the task.");
-        if (status is null && failed is null)
-            return Refused(409, "Failure evidence is unavailable. Re-check the task.");
-        if (status?.Failure is null && failed is null && status?.Status != IntegrationStatuses.Pending
-            && status?.Status != IntegrationStatuses.Partial && status?.Status != IntegrationStatuses.MergedLocally)
-            return Refused(409, "The current delivery has no failure to continue.");
+        var check = Evaluate(job, () => _integration.BuildLookup([job]).GetValueOrDefault(job.TaskKey));
+        if (check.Refusal is not null) return Refused(409, check.Refusal);
+        var (status, steps, subject, failed) = (check.Status, check.Steps, check.Subject, check.Failed);
 
         var currentFailure = status?.Failure is { } projectedFailure
             && failed?.StepId == projectedFailure.Stage ? projectedFailure : null;
@@ -117,6 +99,52 @@ public sealed class TaskFailureContinuationService
         {
             return Refused(ex.Status, ex.Message);
         }
+    }
+
+    /// <summary>
+    /// The refusal <see cref="ContinueAsync"/> would answer for this card, or
+    /// null when the card has a current delivery failure to continue. Reads
+    /// only: the caller hands in the published integration status, because a
+    /// read request serves published facts and starts no git process. The
+    /// task detail asks it before it offers the action (AGT-3582).
+    /// </summary>
+    public string? Check(TaskInfo job, TaskIntegrationStatus? publishedStatus)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        return Evaluate(job, () => publishedStatus).Refusal;
+    }
+
+    private sealed record FailureCheck(
+        string? Refusal,
+        TaskIntegrationStatus? Status = null,
+        IReadOnlyList<PipelineStepExecution>? Steps = null,
+        ReviewSubjectRecord? Subject = null,
+        PipelineStepExecution? Failed = null);
+
+    private FailureCheck Evaluate(TaskInfo job, Func<TaskIntegrationStatus?> readStatus)
+    {
+        if (job.State is not (TaskStates.HumanReview or TaskStates.Escalated or TaskStates.AutoReview
+                              or TaskStates.Completed or TaskStates.Archive))
+            return new("A failure continuation requires a delivered task.");
+
+        var status = readStatus();
+        if (status?.ReachUnavailable == true)
+            return new("Git reach is unavailable. Re-check integration before continuing.");
+        if (status?.Status == IntegrationStatuses.Integrated)
+            return new("The current delivery is already integrated.");
+        var steps = _pipeline.Read(job.FolderPath)?.Steps;
+        var subject = ReviewSubjectStore.Read(job.FolderPath);
+        var failed = CurrentFailureStep(steps, status, subject);
+        if (status?.Status == IntegrationStatuses.NoBranch && failed is null)
+            return new("This task has no delivery failure to continue.");
+        if (status?.Failure is not null && failed is null)
+            return new("The recorded failure belongs to an earlier delivery. Re-check the task.");
+        if (status is null && failed is null)
+            return new("Failure evidence is unavailable. Re-check the task.");
+        if (status?.Failure is null && failed is null && status?.Status != IntegrationStatuses.Pending
+            && status?.Status != IntegrationStatuses.Partial && status?.Status != IntegrationStatuses.MergedLocally)
+            return new("The current delivery has no failure to continue.");
+        return new(null, status, steps, subject, failed);
     }
 
     internal static PipelineStepExecution? CurrentFailureStep(
