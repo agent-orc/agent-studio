@@ -579,6 +579,12 @@ test.describe('task detail mobile layout', () => {
 
 for (const theme of ['light', 'dark'] as const) {
 test(`AGT-3543 gallery uses original images and large placeholders in ${theme}`, async ({ page }) => {
+  const largeImageRequests: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.endsWith('/results/gallery-review-dark.png')) {
+      largeImageRequests.push(request.url());
+    }
+  });
   await page.addInitScript((selectedTheme) => {
     localStorage.setItem('atp.flag.nextGenChat', '1');
     localStorage.setItem('atp.studio.theme', selectedTheme);
@@ -598,6 +604,7 @@ test(`AGT-3543 gallery uses original images and large placeholders in ${theme}`,
   await expect(image).toHaveAttribute('height', '900');
   await expect(gallery.getByTestId('artifact-gallery-large-placeholder')).toHaveText(/2\.5 MB/);
   await expect(tiles.last().locator('img')).toHaveCount(0);
+  await expect(page.locator('[data-testid="conversation-artifact-image-img"]')).toHaveCount(0);
   const before = await tiles.first().boundingBox();
   await image.evaluate((element: HTMLImageElement) => element.decode());
   const after = await tiles.first().boundingBox();
@@ -611,9 +618,11 @@ test(`AGT-3543 gallery uses original images and large placeholders in ${theme}`,
       await page.screenshot({ path: path.join(SHOTS_DIR, `AGT-3543--card-detail-gallery-${theme}-390-large--after--mocked.png`) });
     }
   }
+  expect(largeImageRequests).toHaveLength(0);
   await tiles.last().click();
   await expect(page.getByTestId('media-lightbox-position')).toHaveText('Image 8 / 8');
   await expect(page.getByTestId('media-lightbox-image')).toHaveAttribute('src', /\/results\/.*\.png/);
+  await expect.poll(() => largeImageRequests.length).toBeGreaterThan(0);
 });
 }
 

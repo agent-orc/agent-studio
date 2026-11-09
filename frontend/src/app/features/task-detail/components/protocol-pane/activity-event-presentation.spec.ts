@@ -49,7 +49,7 @@ describe('presentActivityEvents', () => {
     expect((result[0] as ToolBurstEvent).artifacts).toEqual(['results/archive.zip']);
     expect(result[1]).toMatchObject({
       kind: 'artifact.image', caption: 'results/playwright / dark.png',
-      url: '/api/tasks/AGT-2088/screenshot?path=playwright%2Fdark.png&watchPath=watch',
+      url: null,
       artifactPresentation: {
         kind: 'image',
         url: '/api/tasks/AGT-2088/screenshot?path=playwright%2Fdark.png&watchPath=watch',
@@ -92,6 +92,8 @@ describe('presentActivityEvents', () => {
     const presentations = result.slice(1).map((event) =>
       (event as unknown as { artifactPresentation: { kind: string } }).artifactPresentation.kind);
     expect(presentations).toEqual(['image', 'image', 'diff', 'markdown', 'json', 'html']);
+    expect(result.slice(1).every((event) =>
+      (event as unknown as { url: string | null }).url === null)).toBe(true);
     expect((result[6] as unknown as { artifactPresentation: { url: string } }).artifactPresentation.url)
       .toBe('/api/tasks/AGT-2558/results/report.html?watchPath=%2Fworkspace');
     expect(new Set(result.slice(1).map((event) =>

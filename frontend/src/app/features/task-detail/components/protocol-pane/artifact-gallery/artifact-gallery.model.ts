@@ -202,10 +202,10 @@ export function groupPresentedArtifacts(
         : artifactFromImageEvent(candidate, jobId, watchPath);
       output[start + runIndex] = {
         ...candidate,
-        // The library row is hidden by the host directive, but the browser can
-        // begin fetching it before that DOM pass. Bind only the original URL here;
-        // the gallery metadata retains the full source for the lightbox.
-        url: artifact.kind === 'image' ? artifact.url : null,
+        // The library renders its image before the host can hide the row.
+        // Keep the source only in the gallery presentation so hidden rows never
+        // start an original-image request ahead of the size check.
+        url: null,
         artifactPresentation: artifact,
         artifactGroupId: groupId,
       } as PresentedArtifactEvent;

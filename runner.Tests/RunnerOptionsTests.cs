@@ -166,11 +166,12 @@ public class RunnerOptionsTests
     [Trait("Category", "Guard")]
     public void Test_process_state_root_is_under_its_temporary_home()
     {
-        var (options, _, _, _) = RunnerTestOptions.Parse(["--poll"]);
-        var (second, _, _, _) = RunnerTestOptions.Parse(["--poll"]);
+        var (options, _, _, _) = RunnerTestOptions.Parse(["--poll", "--server", "http://127.0.0.1:5030"]);
+        var (second, _, _, _) = RunnerTestOptions.Parse(["--poll", "--server", "http://127.0.0.1:5030"]);
         Assert.StartsWith(Path.GetFullPath(Path.GetTempPath()), Path.GetFullPath(options.StateDir));
         Assert.NotEqual(options.StateDir, second.StateDir);
-        Assert.Throws<InvalidOperationException>(() => RunnerOptions.Parse(["--poll"]));
+        Assert.Throws<InvalidOperationException>(() => RunnerOptions.Parse(
+            ["--poll", "--server", "http://127.0.0.1:5030"]));
     }
 
     [Fact]
