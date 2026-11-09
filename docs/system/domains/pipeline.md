@@ -437,6 +437,8 @@ the panel marks its ranking incomplete until a matching gate run ID, tested SHA,
 completion timestamp, and failure inventory are readable. Older execution facts
 use their batch run ID when no evidence gate run ID was recorded. An unidentified
 record remains pending because a nearby completion time cannot prove ownership.
+When several records match one execution, a completed record takes precedence
+over later partial snapshots.
 Error excerpts come only from the named test's output block. A test is a flaky suspect
 only when it failed in three batches with pairwise disjoint member sets. The
 operator can open a prefilled bug card in the normal creation dialog. The dialog
