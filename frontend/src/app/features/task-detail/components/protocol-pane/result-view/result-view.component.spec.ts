@@ -351,4 +351,12 @@ describe('ResultViewComponent', () => {
     const legacy = await build(detail(HEAD_ONLY), verdict());
     expect((legacy.nativeElement as HTMLElement).querySelector('[data-testid="result-inconsistencies"]')).toBeNull();
   });
+
+  it('keeps resolved assessment warnings out of an accepted Result', async () => {
+    const current = detail(HEAD_ONLY);
+    const accepted = { ...current, info: { ...current.info, state: '6-completed' },
+      summaryAssessment: assessment() } as TaskDetail;
+    const fixture = await build(accepted, verdict({ status: 'succeeded', label: 'Accepted' }));
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="result-inconsistencies"]')).toBeNull();
+  });
 });

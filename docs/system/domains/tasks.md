@@ -1385,10 +1385,14 @@ before changing lanes if no generated Result is available. If that write fails,
 the card remains in its source lane. Admission refusals and no-op moves do not write
 `status.md`, `current-result.json`, or Result history. An engine decision
 refreshes its scaffold at most once during the accepted move. The service never
-replaces a real Result. Backend startup runs
-the same idempotent repair over missing Results in `5-human-review`,
-`6-completed`, and `7-archive`; repaired files are marked as operator
-backfills.
+replaces a real Result.
+When an accepted move finds a scaffold and Result history contains a generated
+summary, it restores the latest real summary instead of refreshing lane-only
+scaffold prose. The displaced scaffold remains in Result history.
+Backend startup runs the same idempotent repair over missing Results in
+`5-human-review`, `6-completed`, and `7-archive`; repaired missing files are
+marked as operator backfills. It also restores the last generated Result for
+an already Accepted card whose current file is still a scaffold.
 
 ## Completion contract (AGT-2817)
 
