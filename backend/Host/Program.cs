@@ -472,7 +472,6 @@ builder.Services.AddSingleton<OrchestratorConfigService>();
 builder.Services.AddSingleton<WorkspaceManagementService>();
 builder.Services.AddSingleton<TaskScannerService>();
 builder.Services.AddMemoryCache(options => options.SizeLimit = 64 * 1024 * 1024);
-builder.Services.AddSingleton<ArtifactThumbnailService>();
 builder.Services.AddSingleton<AgentStudio.Shared.ITaskScanner>(sp => sp.GetRequiredService<TaskScannerService>());
 builder.Services.AddSingleton<CliOutputLogMaintenanceService>();
 // F45a: workspace / project registries + jobKey resolver. Additive layer;

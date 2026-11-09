@@ -800,7 +800,7 @@ test.describe('Task-detail multi-commit chain', () => {
     // Default layout is side-by-side (pressed). The combined diff must be
     // rendered for the toolbar toggle to be present.
     await expect(page.getByTestId('git-diff')).toContainText('aggregated across all commits', { timeout: 5_000 });
-    const unified = page.getByTestId('git-diff-mode-toggle');
+    const unified = page.getByTestId('git-unified-option');
     const sideBySide = page.getByTestId('git-side-by-side-option');
     await expect(unified).toBeVisible();
     await expect(sideBySide).toHaveAttribute('aria-pressed', 'true');

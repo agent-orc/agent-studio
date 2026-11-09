@@ -487,14 +487,24 @@ the exact-SHA review checkout. The visual prompt receives those paths, the
 authoritative diff, the hard visual rules, and the relevant admin design rules.
 After screenshots take priority over before screenshots at both the remote
 100-image cap and the local eight-image attachment cap. Both caps count only
-decoded images, so unavailable or invalid artifacts cannot crowd out a later
-valid after screenshot. Each artifact read and decode is isolated, so a failed
-remote artifact cannot stop later images from loading.
+images with valid bounded headers, so unavailable or invalid artifacts cannot
+crowd out a later valid after screenshot. Each artifact read is isolated, so a
+failed remote artifact cannot stop later images from loading.
 The prompt lists readable image paths first, then up to eight artifact failure
 details and a count of further failures, so corrupt artifacts cannot bury a
 valid screenshot path in the review context.
-An artifact must decode as the image format named by its extension before it
-uses an image slot; matching size and digest alone do not prove readability.
+An artifact must have a PNG, JPEG, or WebP header matching its extension before
+it uses an image slot; matching size and digest alone do not prove the header is
+valid. The server does not decode pixels, so later image viewing can still
+reject damaged payloads.
+Name delivered screenshots under `results/` by surface, stage, viewport width,
+and theme, for example `bars/before-1920-light.png` and
+`bars/after-1920-light.png`. Use the same suffix for matching before and after
+views. A `before` path segment or filename marker (`before-`, `-before`, or
+equivalent underscore or dot separators) marks baseline evidence. An unmarked
+image counts as an after view. At least one readable after image is required;
+include both light and dark themes and a narrow viewport when those surfaces
+change.
 It opens each screenshot, compares matching before and after views, and checks
 layout, spacing, separation, alignment, clipping, and contrast across available
 themes and widths. A visual concern or block cites both the screenshot and the
@@ -1147,6 +1157,20 @@ that verdict.
 | Clean repeat green without history, or required evidence unavailable | `unclassified-first-occurrence` | no |
 | Clean repeat green, baseline red on cached state, clean baseline repeat green | `DependencyCacheDefect` or `BaselineResultCacheDefect` | no |
 | Reviewer block without evidence against a changed path | `concern` | no |
+
+**Missing test reports.** A test-failures baseline must report at least one
+completed test, even when it exits zero. The review host retries a baseline
+with no parseable result once and records both attempts. If it still has no
+result, it settles as `ReviewInfra/BaselineUnavailable` and names the captured
+stdout artifact path. A delivery run that exits zero without a test result is
+also retried once. If its retry still has no result, it settles as
+`ReviewInfra/TestReportUnavailable`, unless the delivery changed test
+configuration, the runner or reporter, or added, removed, or renamed a spec. In
+that case the missing report is a product finding that cites the changed setup
+path. The result parser accepts Vitest's `Test Files N passed` summary as well
+as its `Tests N passed` summary. If Angular finished bundling but Vitest did not
+report a run, the infrastructure summary says so and points to the captured
+stdout artifact.
 
 **Red baseline on cached state (AGT-3430).** A baseline that ran on a
 dependency-cache hit, or a baseline result reused from the baseline result

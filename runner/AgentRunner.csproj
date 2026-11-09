@@ -55,7 +55,6 @@
     -->
     <PackageReference Include="CodingAgentRunner" Version="[0.7.0]" />
     <PackageReference Include="Porta.Pty" Version="1.0.7" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.2.0" />
   </ItemGroup>
 
 </Project>

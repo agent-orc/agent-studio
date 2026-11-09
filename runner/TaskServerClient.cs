@@ -1412,6 +1412,21 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         return (await response.Content.ReadFromJsonAsync<Contract.DeviceLoginRunnerStateDto>(Json, ct))?.State;
     }
 
+    /// <summary>
+    /// The Owner's pasted Claude authorization code. The server hands it out once; null until the
+    /// Owner submits it. The caller writes it to the CLI and never logs it.
+    /// </summary>
+    public async Task<string?> TakeDeviceLoginCodeAsync(string handle, CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/{Uri.EscapeDataString(handle)}/code",
+            new { }, Json, ct);
+        if (response.StatusCode == HttpStatusCode.NoContent) return null;
+        response.EnsureSuccessStatusCode();
+        if (response.Content.Headers.ContentLength == 0) return null;
+        return (await response.Content.ReadFromJsonAsync<Contract.DeviceLoginCodeDto>(Json, ct))?.Code;
+    }
+
     public async Task CompleteDeviceLoginAsync(string handle,
         Contract.DeviceLoginCompletionRequest completion, CancellationToken ct)
         => await PostJsonWithoutResponseAsync(

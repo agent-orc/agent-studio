@@ -112,6 +112,7 @@ public sealed class HostRouteClassificationTests : IDisposable
         new("POST", "/api/v1/runners/{}/cli-update/result", Monolith.TaskServerOnly),
         new("POST", "/api/v1/runners/{}/device-login/claim", Monolith.RunnerScope),
         new("GET", "/api/v1/runners/{}/device-login/{}", Monolith.RunnerScope),
+        new("POST", "/api/v1/runners/{}/device-login/{}/code", Monolith.RunnerScope),
         new("POST", "/api/v1/runners/{}/device-login/{}/completion", Monolith.RunnerScope),
         new("POST", "/api/v1/runners/{}/device-login/{}/instructions", Monolith.RunnerScope),
         new("POST", "/api/v1/runners/{}/git-setups/claim", Monolith.RunnerScope),

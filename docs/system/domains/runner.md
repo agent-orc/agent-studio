@@ -181,8 +181,23 @@ checklist cancels a queued or running session. A runner on that host claims the
 command through its outbound Task Server channel, holds a local provider login
 lock and starts `codex login --device-auth` or `claude setup-token` in its own
 service account through `DeviceLoginExecutor`, the only device-login launcher.
-The child gets a closed stdin pipe. The runner reports the URL and code without
-logging child output. While the CLI runs, the runner reads the session state
+Codex gets a closed stdin pipe. The runner reports the URL and code without
+logging child output. The URL must come from the provider's sign-in origin:
+`auth.openai.com` or `login.openai.com` for Codex; `claude.com` and
+`platform.claude.com` (Claude Code 2.x) or `claude.ai` and
+`console.anthropic.com` (earlier releases) for Claude. One list,
+`DeviceLoginSessions.ProviderOrigin`, serves the runner and the server.
+Headless `claude setup-token` waits for the authorization code its callback
+page shows (AGT-3243). After the runner publishes a Claude URL, the session
+reports `codeState: awaiting`. The Owner signs in, pastes the code into the
+first-run checklist, and the browser posts it once with its session key
+(`POST /api/v1/management/device-logins/{handle}/code`). The server keeps it
+only in memory and hands it once to the claiming runner
+(`POST /api/v1/runners/{runnerId}/device-login/{handle}/code`), which writes it
+to the CLI's stdin and then closes stdin. The code is never logged, audited,
+echoed in a response or written to disk; cancel, timeout and completion drop a
+code no runner took. A code the CLI refuses ends the session with
+"Claude did not accept the authorization code." While the CLI runs, the runner reads the session state
 every 2 seconds (`GET /api/v1/runners/{runnerId}/device-login/{handle}`, state
 only). A Studio cancel, a Task Server timeout or a failed instruction publish
 stops the process tree, accepts no credential and reports `failed`; on runner
