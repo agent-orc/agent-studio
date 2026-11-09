@@ -210,6 +210,9 @@ Three things describe one project and should be decided in the same sitting. Ski
    /api/projects/{project}/build-profile` (`buildCmds` / `testCmds`); those
    commands are the override and take precedence over the derivation. See
    [onboard-a-project.md](./onboard-a-project.md) for the build-profile fields.
+   Project Settings can also detect the checkout stack and preview a schema 2
+   `.agent-studio/project.yml`, its prepare script, and the build, test, and lint
+   commands before creating a proposal card to add the files to the repository.
 
 ## 4. Run your first task
 
