@@ -12,6 +12,12 @@
     @if (confirm.detail) {
       <p class="app-dialog__detail" data-testid="confirm-dialog-detail">{{ confirm.detail }}</p>
     }
+    @if (confirm.items; as items) {
+      <ul class="app-dialog__items" data-testid="confirm-dialog-items" tabindex="0"
+          [attr.aria-label]="items.length + ' items'" (keydown)="containListKeys($event)">
+        @for (item of items; track $index) { <li data-testid="confirm-dialog-item">{{ item }}</li> }
+      </ul>
+    }
     @if (confirm.requireTypedValues) {
       <label class="app-dialog__typed">
         @if (confirm.requireTypedPrompt) {

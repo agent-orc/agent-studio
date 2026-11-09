@@ -207,6 +207,60 @@ describe('OrchestratorFeedComponent · decision override buttons', () => {
   });
 });
 
+describe('OrchestratorFeedComponent · escalation bursts (AGT-3585)', () => {
+  const stall = (key: string, second: number): OrchestratorLogEntry => ({
+    ts: `2026-11-09T09:23:${String(second).padStart(2, '0')}Z`,
+    kind: 'alert',
+    topic: 'stall-intervention',
+    summary: `AI Operator escalated auto-review:${key}: Card had no active Auto Review owner.`,
+    project: 'demo-project',
+    watchPath: '/tmp/demo',
+    jobId: key.toLowerCase(),
+  });
+
+  it('shows a burst as one counted row whose members and detail add up (R3)', async () => {
+    await TestBed.configureTestingModule({
+      imports: [OrchestratorFeedComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    TestBed.inject(ProjectLookupService).setWorkspaces(registryWorkspaces());
+    const fixture = TestBed.createComponent(OrchestratorFeedComponent);
+    fixture.componentRef.setInput('projectName', 'demo-project');
+    fixture.detectChanges();
+    fixture.componentInstance.refresh();
+    TestBed.inject(HttpTestingController)
+      .expectOne((r) => r.url.includes('/api/runner/orchestrator-feed'))
+      .flush({ entries: [stall('DEMO-3', 3), stall('DEMO-2', 2), stall('DEMO-1', 1), {
+        ts: '2026-11-09T09:22:00Z', kind: 'decision', topic: 'reissue', summary: 'Reissued DEMO-9', jobId: 'demo-9',
+        project: 'demo-project',
+      }] });
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    const burst = root.querySelector<HTMLButtonElement>('[data-testid="orchestrator-feed-burst"]')!;
+    expect(burst.getAttribute('aria-expanded')).toBe('false');
+    expect(root.querySelector('[data-testid="orchestrator-feed-burst-count"]')?.textContent?.trim()).toBe('3 cards');
+    expect(root.querySelector('[data-testid="orchestrator-feed-burst-label"]')?.textContent?.trim())
+      .toBe('AI Operator escalated auto-review: Card had no active Auto Review owner.');
+    expect(root.querySelectorAll('[data-testid="orchestrator-feed-entry"]')).toHaveLength(1);
+
+    burst.click();
+    fixture.detectChanges();
+    expect(burst.getAttribute('aria-expanded')).toBe('true');
+    expect(root.querySelectorAll('[data-testid="orchestrator-feed-burst-members"] [data-testid="orchestrator-feed-entry"]'))
+      .toHaveLength(3);
+    expect(root.querySelector('[data-testid="orchestrator-burst-card-count"]')?.textContent?.trim()).toBe('3');
+    expect(root.querySelectorAll('[data-testid="orchestrator-burst-card"]')).toHaveLength(3);
+    expect(root.querySelector('[data-testid="bulk-lane-actions-reason"]')?.textContent)
+      .toContain('3 of these cards are no longer on the board');
+
+    burst.click();
+    fixture.detectChanges();
+    expect(root.querySelector('[data-testid="orchestrator-feed-burst-members"]')).toBeNull();
+    expect(root.querySelector('[data-testid="orchestrator-burst-detail"]')).toBeNull();
+  });
+});
+
 function registryWorkspaces(): RegistryWorkspaceListItem[] {
   const project = (displayName: string, shortCode: string, sortOrder: number) => ({
     sourceType: 'local-folder' as const,

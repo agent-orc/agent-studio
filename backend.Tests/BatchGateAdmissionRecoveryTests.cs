@@ -9,7 +9,7 @@ using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Tests;
 
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGateAdmissionRecoveryTests : BatchGatePilotServiceTests
 {
     [Fact]
     public async Task Carried_passed_agent_aspect_is_admitted_to_batch()

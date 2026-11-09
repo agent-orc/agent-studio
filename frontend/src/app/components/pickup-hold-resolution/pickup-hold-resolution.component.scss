@@ -1,0 +1,78 @@
+:host {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  min-width: 0;
+}
+
+.hold-way__label {
+  color: var(--studio-fg);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.hold-way__detail,
+.hold-way__notice {
+  margin: 0;
+  color: var(--studio-hold-muted-fg);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.hold-way__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-1) var(--studio-spacing-2);
+}
+
+.hold-way__button,
+.hold-way__link,
+.hold-way__select {
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-button-radius);
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+.hold-way__button {
+  justify-self: start;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.hold-way__link {
+  color: var(--studio-accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.hold-way__button:hover:not(:disabled),
+.hold-way__link:hover {
+  background: var(--studio-bg-hover);
+}
+
+.hold-way__button:focus-visible,
+.hold-way__link:focus-visible,
+.hold-way__select:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 1px;
+}
+
+.hold-way__button:disabled {
+  cursor: progress;
+  opacity: 0.65;
+}
+
+.hold-way__select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.hold-way__error {
+  margin: 0;
+  color: var(--studio-danger);
+  font-size: 11px;
+}

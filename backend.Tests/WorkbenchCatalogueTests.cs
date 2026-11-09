@@ -682,6 +682,8 @@ public sealed class WorkbenchCatalogueTests : IDisposable
         Assert.Equal("PRO-W1", item.Key);
         Assert.NotEqual(before, after);
         Assert.Equal("chore(workbench): assign document keys", RunGit("log", "-1", "--format=%s").Trim());
+        Assert.Contains(ManagedRepositoryMutationService.DocumentKeyCommitTrailer,
+            RunGit("log", "-1", "--format=%B"));
         Assert.Equal(string.Empty, RunGit("status", "--porcelain"));
         Assert.True(pushQueue.Reader.TryRead(out var push));
         Assert.Equal(after, push!.Sha);

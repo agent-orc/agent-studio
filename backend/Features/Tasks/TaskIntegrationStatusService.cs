@@ -235,17 +235,35 @@ public sealed class TaskIntegrationStatusService
                 publications.Add(batchGate);
                 if (crossesMappedTree) mappedBatchGate = batchGate;
             }
+            var neutralCommits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var decision = IntegrationPublicationGatePolicy.Check(verification.Sha!, tip!,
                 laterCommits, publications);
+            var laterByCommit = laterCommits.ToDictionary(item => item.Sha,
+                item => item.ParentSha, StringComparer.OrdinalIgnoreCase);
+            while (!decision.Verified && decision.MissingTree is { } missing
+                && laterByCommit.TryGetValue(missing, out var parent)
+                && _git.IsManagedDocumentKeyCommit(root, missing, parent))
+            {
+                neutralCommits.Add(missing);
+                decision = IntegrationPublicationGatePolicy.Check(verification.Sha!, tip!,
+                    laterCommits, publications, neutralCommits);
+            }
             if (!decision.Verified)
                 return status with { Verification = UnverifiedAcceptance(tip,
                     $"The later publication {decision.MissingTree} has no passed gate on the first-parent integration line.") };
+            var neutralEvidence = neutralCommits.Count == 0 ? string.Empty
+                : $" Gate-neutral document-key commits: {string.Join(", ", neutralCommits.Order(StringComparer.OrdinalIgnoreCase))}.";
             if (mappedBatchGate is not null)
                 return status with { Verification = verification with
                 {
-                    Reason = $"{verification.Reason} {mappedBatchGate.Gate} verified published tree {mappedBatchGate.TreeSha}.",
+                    Reason = $"{verification.Reason} {mappedBatchGate.Gate} verified published tree {mappedBatchGate.TreeSha}.{neutralEvidence}",
+                    GateNeutralCommits = neutralCommits.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
                 } };
-            return status;
+            return neutralCommits.Count == 0 ? status : status with { Verification = verification with
+            {
+                Reason = $"{verification.Reason}{neutralEvidence}",
+                GateNeutralCommits = neutralCommits.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+            } };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException
             or System.Text.Json.JsonException)

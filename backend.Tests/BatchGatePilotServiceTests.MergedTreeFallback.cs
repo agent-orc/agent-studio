@@ -11,7 +11,7 @@ namespace AgentStudio.Tests;
 /// current integration tip, a conflict goes back to the agent without a gate,
 /// and the publish step reuses the verdict while the tip has not moved.
 /// </summary>
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGatePilotMergedTreeFallbackTests : BatchGatePilotServiceTests
 {
     [Fact]
     public async Task Per_task_fallback_tests_the_delivery_merged_onto_the_current_tip()
@@ -249,10 +249,13 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Equal("escalated", fact.Outcome);
         Assert.Equal(2, fact.Suites);
     }
+}
 
+public abstract partial class BatchGatePilotServiceTests
+{
     // A member queued while the batch was on, then routed to the per-task
     // gate because the project turned the batch off.
-    private SeededMember SeedFallbackMember(WebApplicationFactory<Program> factory, string key, string file)
+    private protected SeededMember SeedFallbackMember(WebApplicationFactory<Program> factory, string key, string file)
     {
         EnableBatchGate(factory, closeSize: 4);
         var member = SeedMember(factory, key, file);
@@ -262,13 +265,13 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     // Build commands make the merge into develop run its own gate.
-    private static void RequireMergeGate(WebApplicationFactory<Program> factory)
+    private protected static void RequireMergeGate(WebApplicationFactory<Program> factory)
         => factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
             .SetBuildProfile(ProjectName, new BuildProfile { BuildCmds = ["cd ."] });
 
     // The fixture runs no push worker: publish the gated merge, then let the
     // next tick release the card through its containment record.
-    private async Task PublishAndTickAsync(WebApplicationFactory<Program> factory,
+    private protected async Task PublishAndTickAsync(WebApplicationFactory<Program> factory,
         BatchGatePilotService pilot, string taskKey)
     {
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
@@ -281,7 +284,7 @@ public sealed partial class BatchGatePilotServiceTests
         await pilot.TickAsync(CancellationToken.None);
     }
 
-    private void PushToOriginDevelop(string file, string content)
+    private protected void PushToOriginDevelop(string file, string content)
     {
         var restore = Git(_repo, "rev-parse", "HEAD");
         Git(_repo, "fetch", "-q", "origin");

@@ -16,7 +16,7 @@ namespace AgentStudio.Tests;
 /// never ran, so the card stays in Auto Review and its request returns to the
 /// batch queue. The test clock drives the stall episode and its event times.
 /// </summary>
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGateQueueStallTests : BatchGatePilotServiceTests
 {
     [Fact]
     public void Shared_gate_queue_backlog_prefers_a_batch_across_projects_and_live_waiters()
@@ -489,17 +489,20 @@ public sealed partial class BatchGatePilotServiceTests
         await pilot.TickAsync(CancellationToken.None);
         Assert.Null(pilot.QueueStalls.OpenEpisode(ProjectName));
     }
+}
 
-    private static readonly JsonSerializerOptions QueueStallJson = new(JsonSerializerDefaults.Web);
+public abstract partial class BatchGatePilotServiceTests
+{
+    private protected static readonly JsonSerializerOptions QueueStallJson = new(JsonSerializerDefaults.Web);
 
-    private static void RecoverGateOutcomes(WebApplicationFactory<Program> factory)
+    private protected static void RecoverGateOutcomes(WebApplicationFactory<Program> factory)
     {
         var recovery = factory.Services.GetRequiredService<MonolithOrchestrationRecoveryService>();
         recovery.RecoverOnce();
         recovery.RecoverShadowOutcomes();
     }
 
-    private async Task PublishIntegrationBranchAsync(WebApplicationFactory<Program> factory, string taskKey)
+    private protected async Task PublishIntegrationBranchAsync(WebApplicationFactory<Program> factory, string taskKey)
     {
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
         scanner.InvalidateCache();
@@ -511,7 +514,7 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     /// <summary>The escalation the per-task fallback wrote before AGT-3219.</summary>
-    private async Task ParkAsLegacyFallback(WebApplicationFactory<Program> factory,
+    private protected async Task ParkAsLegacyFallback(WebApplicationFactory<Program> factory,
         SeededMember member, BuildTestGateResult gate, bool compact = false)
     {
         var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(member.Key, _watchPath)!;
@@ -530,7 +533,7 @@ public sealed partial class BatchGatePilotServiceTests
         factory.Services.GetRequiredService<TaskScannerService>().InvalidateCache();
     }
 
-    private ReviewAttemptDto PassReview(AttemptAuthorityService authority, SeededMember member)
+    private protected ReviewAttemptDto PassReview(AttemptAuthorityService authority, SeededMember member)
     {
         var claimed = authority.ClaimReview(member.ReviewAttemptId, "review-executor", "review-host",
             600, "claim-" + member.Key);
@@ -544,7 +547,7 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     /// <summary>The production failure of 17.10.2026: the request never reached a slot.</summary>
-    private static BuildTestGateResult QueueOverrun()
+    private protected static BuildTestGateResult QueueOverrun()
         => new(BuildTestGateVerdict.Fail, null, 0, "",
             "machine build/test gate queue wait violated machine-gate-queue budget "
             + "(limit=9327000ms, consumed=9327018ms, phase=queue)", false, false)

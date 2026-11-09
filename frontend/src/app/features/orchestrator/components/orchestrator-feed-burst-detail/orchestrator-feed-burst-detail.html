@@ -1,0 +1,36 @@
+@if (burst(); as burst) {
+  <div class="burst-detail" data-testid="orchestrator-burst-detail">
+    <header class="burst-detail__head">
+      <span class="burst-detail__kind">{{ kindLabel(burst.kind) }}</span>
+      <span class="burst-detail__topic">{{ burst.topic }}</span>
+    </header>
+    <h3 class="burst-detail__title">{{ burst.label }}</h3>
+    <dl class="burst-detail__meta">
+      <div><dt>Cards</dt><dd data-testid="orchestrator-burst-card-count">{{ cards().length }}</dd></div>
+      <div><dt>First</dt><dd>{{ formatTime(burst.oldestTs) }}</dd></div>
+      <div><dt>Last</dt><dd>{{ formatTime(burst.newestTs) }}</dd></div>
+      <div><dt>Projects</dt><dd>{{ burst.projects.join(', ') }}</dd></div>
+    </dl>
+    <section class="burst-detail__section" aria-label="Act on all cards">
+      <h4>Act on all cards</h4>
+      <app-bulk-lane-actions [tasks]="onBoard()" [missing]="missing()" [showReason]="true" />
+    </section>
+    <section class="burst-detail__section" aria-label="Cards in this group">
+      <h4>Cards</h4>
+      <ul class="burst-detail__cards" data-testid="orchestrator-burst-cards">
+        @for (card of cards(); track card.key) {
+          <li class="burst-detail__card" data-testid="orchestrator-burst-card">
+            @if (card.entry.watchPath) {
+              <button type="button" class="burst-detail__card-link" (click)="openTaskRequest.emit(card.entry)"
+                      [attr.aria-label]="'Open task ' + card.entry.jobId">{{ cardKey(card) }}</button>
+            } @else {
+              <span class="burst-detail__card-id">{{ card.entry.jobId }}</span>
+            }
+            <span class="burst-detail__card-title">{{ card.task?.title || card.entry.jobId }}</span>
+            <span class="burst-detail__card-lane" data-testid="orchestrator-burst-card-lane">{{ laneOf(card) }}</span>
+          </li>
+        }
+      </ul>
+    </section>
+  </div>
+}
