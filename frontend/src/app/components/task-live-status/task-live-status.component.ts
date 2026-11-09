@@ -4,6 +4,7 @@ import { TaskState } from '../../models/task.model';
 import { NowTickService } from '../../services/now-tick.service';
 import { deriveActiveTaskRun, isTaskRunActive, resolveRunActivityKind } from '../../services/run-activity.util';
 import { PickupHoldComponent } from '../pickup-hold/pickup-hold.component';
+import { runnerWaitCode, runnerWaitHeadline } from '../../models/ready-wait-reason';
 
 export type TaskLiveStatusVariant = 'card' | 'detail';
 type LiveTone = 'active' | 'waiting' | 'idle' | 'stalled';
@@ -14,9 +15,12 @@ interface LiveStatusView {
   detail: string | null;
   next: string[];
   attempt: number;
+  /** AGT-3579: runner reason code when the runner is not picking this card. */
+  waitReason?: string;
 }
 
 const STALE_AFTER_MS = 10 * 60 * 1000;
+const FUTURE_SKEW_TOLERANCE_MS = 60 * 1000;
 
 @Component({
   selector: 'app-task-live-status',
@@ -132,6 +136,21 @@ export class TaskLiveStatusComponent {
       };
     }
 
+    // AGT-3579: the runner recorded why it is not picking this card (mode,
+    // slots, quota defer, load throttle, provider limit). The sentence is the
+    // runner's own; the headline names the reason the lane header counts.
+    const runnerReason = runnerWaitCode(status.queue);
+    if (status.queue && runnerReason) {
+      return {
+        tone: 'waiting',
+        headline: runnerWaitHeadline(runnerReason, status.queue.position),
+        detail: status.queue.reason || activityDetail(task, status.latestEventAt, this.now()),
+        next,
+        attempt: status.attempt,
+        waitReason: runnerReason,
+      };
+    }
+
     if (status.queue) {
       const queueName = status.queue.kind === 'review' ? 'review slot' : 'runner slot';
       const headline = status.queue.position != null
@@ -167,7 +186,7 @@ export class TaskLiveStatusComponent {
     }
 
     const latestAt = latestActivityAt(task, status.latestEventAt);
-    const idleMs = latestAt === null ? null : Math.max(0, this.now() - latestAt);
+    const idleMs = latestAt === null ? null : this.now() - latestAt;
     const activeLane = task.state === TaskState.Progress
       || task.state === TaskState.AutoReview;
     const stalled = activeLane && idleMs !== null && idleMs >= STALE_AFTER_MS;
@@ -189,8 +208,8 @@ export class TaskLiveStatusComponent {
         ? `No activity for ${elapsed(idleMs!)} · possible hang`
         : noActiveRun
           ? 'No active run'
-          : task.state === TaskState.Preparation ? 'Preparing' : 'Between steps',
-      detail: idleMs === null ? 'No recorded activity time' : `Last activity ${elapsed(idleMs)} ago`,
+          : idleHeadline(task.state),
+      detail: activityDetail(task, status.latestEventAt, this.now()) ?? 'No recorded activity time',
       next,
       attempt: status.attempt,
     };
@@ -234,6 +253,20 @@ function holdHeadline(mechanism: string): string {
   }
 }
 
+/**
+ * AGT-3589: an idle card says what it waits for. "Between steps" named no
+ * wait at all and read as work in flight on a Post Processing card nothing
+ * was reviewing.
+ */
+function idleHeadline(state: string): string {
+  switch (state) {
+    case TaskState.Preparation: return 'Preparing';
+    case TaskState.Ready: return 'Waiting for a runner';
+    case TaskState.AutoReview: return 'Waiting for review';
+    default: return 'Waiting for the next step';
+  }
+}
+
 function timestamp(value: string | null | undefined): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
@@ -255,9 +288,22 @@ function latestActivityAt(task: TaskInfo, projected: string | null | undefined):
   return values.length === 0 ? null : Math.max(...values);
 }
 
+/**
+ * AGT-3589: a stamp ahead of this browser's clock (server clock skew, a
+ * pinned demo clock) used to clamp to "0s ago", which claims activity that
+ * did not happen. Past the tolerance the real stamp is shown instead.
+ */
 function activityDetail(task: TaskInfo, projected: string | null | undefined, now: number): string | null {
   const latest = latestActivityAt(task, projected);
-  return latest === null ? null : `Last activity ${elapsed(Math.max(0, now - latest))} ago`;
+  if (latest === null) return null;
+  if (latest - now > FUTURE_SKEW_TOLERANCE_MS) return `Last activity ${dateTime(latest)}`;
+  return `Last activity ${elapsed(Math.max(0, now - latest))} ago`;
+}
+
+function dateTime(epochMs: number): string {
+  return new Date(epochMs).toLocaleString('en-US', {
+    day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+  });
 }
 
 function elapsed(milliseconds: number): string {

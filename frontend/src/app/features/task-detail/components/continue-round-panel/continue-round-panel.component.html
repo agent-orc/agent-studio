@@ -1,0 +1,71 @@
+@if (applies()) {
+  <section class="round" data-testid="continue-round-panel" aria-label="Continue this card">
+    <div class="round__head">
+      <strong class="round__title">Continue this card</strong>
+      @if (!open()) {
+        <button type="button" class="round__button" data-testid="continue-round-open" (click)="openForm()">Continue with a follow-up</button>
+      }
+    </div>
+    @if (open()) {
+      <div class="round__form" data-testid="continue-round-form">
+        <app-segmented-control
+          [options]="modeOptions"
+          [value]="mode()"
+          [disabled]="busy()"
+          ariaLabel="Round mode"
+          (valueChange)="mode.set($event)" />
+
+        <label class="round__label" for="continue-round-prompt-{{ job().id }}">Follow-up for the agent</label>
+        <textarea
+          id="continue-round-prompt-{{ job().id }}"
+          class="round__input"
+          data-testid="continue-round-prompt"
+          rows="4"
+          placeholder="What the agent should do next"
+          [value]="prompt()"
+          [disabled]="busy()"
+          (input)="onPromptInput($event)"></textarea>
+
+        <label class="round__label" for="continue-round-reason-{{ job().id }}">Reason</label>
+        <input
+          id="continue-round-reason-{{ job().id }}"
+          class="round__input"
+          data-testid="continue-round-reason"
+          type="text"
+          required
+          placeholder="One sentence for the run trigger and the timeline"
+          [value]="reason()"
+          [disabled]="busy()"
+          (input)="onReasonInput($event)" />
+
+        <span class="round__label">Run base</span>
+        <p class="round__base" data-testid="continue-round-base">
+          @switch (baseRead().state) {
+            @case ('loading') { Reading the run base… }
+            @case ('error') { The run base could not be read. Studio decides it when the round is sent. }
+            @default {
+              @if (base(); as base) {
+                <code data-testid="continue-round-base-ref">{{ base.ref }}</code>
+                at <code class="round__sha" data-testid="continue-round-base-sha">{{ shortSha(base.sha) }}</code>,
+                the {{ baseSource(base) }}.
+              } @else {
+                No recorded result ref. The round keeps the current checkout.
+              }
+            }
+          }
+        </p>
+
+        @if (error(); as message) {
+          <p class="round__error" data-testid="continue-round-error" role="alert">{{ message }}</p>
+        }
+        <div class="round__actions">
+          <button type="button" class="round__button round__button--primary" data-testid="continue-round-submit"
+            [disabled]="!canSubmit()" [appPendingButton]="busy()" pendingLabel="Sending…"
+            (click)="submit()">Send round</button>
+          <button type="button" class="round__button round__button--ghost" data-testid="continue-round-cancel"
+            [disabled]="busy()" (click)="cancel()">Cancel</button>
+        </div>
+      </div>
+    }
+  </section>
+}

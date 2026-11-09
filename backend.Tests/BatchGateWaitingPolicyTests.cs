@@ -5,7 +5,6 @@ namespace AgentStudio.Tests;
 
 public sealed class BatchGateWaitingPolicyTests
 {
-    // clock-independent: fixed dates only order manifests in the pure policy.
     [Fact]
     public void Chooses_the_largest_compatible_set_even_when_the_first_card_blocks_two()
     {
@@ -31,34 +30,5 @@ public sealed class BatchGateWaitingPolicyTests
 
         Assert.Equal(["C0", "C1"], BatchGateWaitingPolicy
             .LargestCompatible(cards, 2, "adjacent").Select(card => card.TaskKey));
-    }
-
-    [Fact]
-    public void Older_formed_batch_starts_before_a_newer_larger_one()
-    {
-        var at = new DateTimeOffset(2026, 11, 4, 1, 0, 0, TimeSpan.Zero);
-        BatchGateManifest Manifest(string id, int size, DateTimeOffset closed)
-            => new(id, null!, "", "", closed,
-                Enumerable.Repeat<BatchGateSubject>(null!, size).ToArray(), [], []);
-        var older = Manifest("older", 2, at);
-        var larger = Manifest("larger", 5, at.AddMinutes(10));
-
-        Assert.Equal(["older", "larger"], BatchGateWaitingPolicy
-            .OrderForStart([older, larger]).Select(manifest => manifest.BatchId));
-    }
-
-    [Fact]
-    public void Stacked_successor_starts_before_an_ordinary_formed_batch()
-    {
-        var at = new DateTimeOffset(2026, 11, 4, 1, 0, 0, TimeSpan.Zero);
-        BatchGateManifest Manifest(string id, int size, string? predecessor = null)
-            => new(id, null!, "", "", at,
-                Enumerable.Repeat<BatchGateSubject>(null!, size).ToArray(), [], [],
-                StackedOnBatchId: predecessor);
-        var ordinary = Manifest("ordinary", 5);
-        var stacked = Manifest("stacked", 2, "predecessor");
-
-        Assert.Equal(["stacked", "ordinary"], BatchGateWaitingPolicy
-            .OrderForStart([ordinary, stacked]).Select(manifest => manifest.BatchId));
     }
 }

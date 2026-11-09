@@ -193,6 +193,7 @@
         "src/app/features/access/components/access-operator-activity/access-operator-activity.component.scss",
         "src/app/features/remote-hosts/components/execution-infrastructure/execution-infrastructure.scss",
         "src/app/components/status-indicator/status-indicator.component.scss",
+        "src/app/features/board/components/ready-wait-split/ready-wait-split.component.scss",
         "src/app/components/tag-chips/tag-chips.component.scss",
         "src/app/components/tag-filters/tag-filters.component.scss",
         "src/app/components/tag-proposals/tag-proposals.component.scss",
@@ -337,7 +338,8 @@
         "src/app/features/project-detail/components/quality-studio-panel/quality-studio-panel.component.scss",
         "src/app/features/project-detail/components/quality-studio-connection-settings/quality-studio-connection-settings.component.scss",
         "src/app/features/board/components/lane-card-window/lane-card-window.scss",
-        "src/app/features/board/components/task-column/_task-column-drop-zone.scss"
+        "src/app/features/board/components/task-column/_task-column-drop-zone.scss",
+        "src/app/features/board/components/board-group-switcher/board-group-switcher.scss"
       ],
       "rules": {
         "color-no-hex": null,

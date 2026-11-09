@@ -85,6 +85,12 @@ bash scripts/worktree-test-stack.sh down
   could pull in shared projects), `up` refuses unless
   `ATP_WORKTREE_TEST_ALLOW_LOCAL_CONFIG=1` is set as an explicit acknowledgement.
 - `down` only removes a workspace path that matches `*atp-worktree-test-*`.
+- Quota probes are off (AGT-3593). With `ATP_WORKTREE_TEST_BACKEND=1`, the
+  `public-demo-readonly` profile, or `Quota:Mode=demo`, `QuotaService` never
+  spawns the host's CLIs and never reads a quota cache file. It serves the
+  pinned demo snapshot from `DemoQuotaSnapshots` (fixed percentages, current
+  timestamps), so captures show the footer quota without exposing the runner
+  host's real subscription usage.
 
 ## Verifying
 
