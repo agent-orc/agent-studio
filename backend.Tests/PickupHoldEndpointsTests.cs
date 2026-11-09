@@ -110,6 +110,48 @@ public sealed class PickupHoldEndpointsTests : IClassFixture<PickupHoldEndpoints
         Assert.Equal("capability-mismatch", rejection.GetProperty("code").GetString());
     }
 
+    /// <summary>
+    /// AGT-3580: "Re-offer the card" is a typed API action, not a sentence. The
+    /// route it names clears the recorded refusal, so the hold disappears and the
+    /// next dispatch tick offers the card again.
+    /// </summary>
+    [Fact]
+    public async Task RetryDispatch_ClearsTheRecordedRefusal()
+    {
+        WriteJob(_appWatch, TaskStates.Ready, "installer-one-executable", "AGT-2738",
+            rejection: """
+            {"code":"capability-mismatch","runnerId":"agent-runner-01","runnerName":"agent-runner-01",
+             "reason":"missing","rejectedAtUtc":"2026-09-06T19:47:45Z"}
+            """);
+        using var client = _host.CreateClient();
+        using (var before = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/grouped")))
+        {
+            var resolution = FindCard(before.RootElement.GetProperty("ready"), "installer-one-executable")
+                .GetProperty("pickupHold").GetProperty("resolutions").EnumerateArray()
+                .Single(item => item.GetProperty("kind").GetString() == PickupHoldResolutionKinds.RetryDispatch);
+            Assert.Equal(RemedyApiActions.ClearDispatchRejection,
+                resolution.GetProperty("action").GetProperty("target").GetString());
+        }
+
+        async Task<HttpResponseMessage> Clear(string card)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Delete,
+                $"/api/tasks/{card}/dispatch-rejection?watchPath={Uri.EscapeDataString(_appWatch)}");
+            request.Headers.Add("X-Client-Id", "local-default");
+            return await client.SendAsync(request);
+        }
+        using var response = await Clear("AGT-2738");
+        response.EnsureSuccessStatusCode();
+        using var missing = await Clear("no-such-card");
+
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, missing.StatusCode);
+        Assert.DoesNotContain("remoteDispatchRejection", File.ReadAllText(
+            Path.Combine(_appWatch, TaskStates.Ready, "installer-one-executable", "task.json")));
+        using var after = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/grouped"));
+        var card = FindCard(after.RootElement.GetProperty("ready"), "installer-one-executable");
+        Assert.True(!card.TryGetProperty("pickupHold", out var hold) || hold.ValueKind == JsonValueKind.Null);
+    }
+
     [Fact]
     public async Task PickupEligibleCard_CarriesNoHold()
     {
@@ -249,7 +291,11 @@ public sealed class PickupHoldLocalCodingDenialTests : IClassFixture<PickupHoldL
         Assert.Contains("local agent execution is disabled", hold.GetProperty("reason").GetString());
         var resolution = Assert.Single(hold.GetProperty("resolutions").EnumerateArray());
         Assert.Equal(PickupHoldResolutionKinds.RouteToRemoteRunner, resolution.GetProperty("kind").GetString());
-        Assert.Contains("PUT /api/projects/hold-app/execution-runner", resolution.GetProperty("detail").GetString());
+        Assert.DoesNotContain("/api/", resolution.GetProperty("detail").GetString());
+        var action = resolution.GetProperty("action");
+        Assert.Equal(RemedyActionKinds.Api, action.GetProperty("kind").GetString());
+        Assert.Equal(RemedyApiActions.SetExecutionRunner, action.GetProperty("target").GetString());
+        Assert.Equal("hold-app", action.GetProperty("project").GetString());
 
         using var grouped = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/grouped"));
         var card = PickupHoldEndpointsTests.FindCard(grouped.RootElement.GetProperty("ready"), "local-coding");

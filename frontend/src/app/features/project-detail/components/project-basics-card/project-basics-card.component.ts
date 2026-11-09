@@ -19,6 +19,7 @@ import { TaskService } from '../../../../services/task.service';
 // Service-only direct import avoids the Project Hub <-> shell component cycle.
 import { WorkspaceManagerService } from '../../../shell/state/workspace-manager.service';
 import { ProjectOverlaysService } from '../../state/project-overlays.service';
+import { ProjectRepositoryCardComponent } from '../project-repository-card/project-repository-card';
 
 interface CheckoutStatus {
   status: string;
@@ -32,7 +33,7 @@ interface CheckoutStatus {
 @Component({
   selector: 'app-project-basics-card',
   standalone: true,
-  imports: [ProjectBasicsFormComponent, PendingButtonDirective],
+  imports: [ProjectBasicsFormComponent, PendingButtonDirective, ProjectRepositoryCardComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-basics-card.component.html',
   styleUrl: './project-basics-card.component.scss',

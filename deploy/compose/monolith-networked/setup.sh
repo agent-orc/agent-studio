@@ -66,6 +66,10 @@ fi
 # that a copy of the data never carries the key that opens its secrets.
 key_file="${STUDIO_SECRETS_KEY_FILE:-$PWD/keys/secrets.kek}"
 host_ca_dir="${STUDIO_HOST_CA_DIR:-$PWD/keys/host-ca}"
+# The backup key encrypts every scheduled backup (AGT-3574). Like the secret
+# store key it lives outside the data directory and is escrowed by the owner.
+backup_key_dir="${STUDIO_BACKUP_KEY_DIR:-$PWD/keys/backup}"
+backup_target_dir="$PWD/backup-target"
 case "$key_file" in /*) ;; *) echo 'STUDIO_SECRETS_KEY_FILE must be absolute' >&2; exit 2;; esac
 case "$key_file" in *[!0-9A-Za-z._/-]*) echo 'STUDIO_SECRETS_KEY_FILE contains unsupported characters' >&2; exit 2;; esac
 case "${key_file%/}/" in "${data_dir%/}"/*) echo 'STUDIO_SECRETS_KEY_FILE must lie outside the data directory' >&2; exit 2;; esac
@@ -73,9 +77,12 @@ if [ -e .env ]; then echo '.env already exists; keep its owner code and edit the
 case "$host_ca_dir" in /*) ;; *) echo 'STUDIO_HOST_CA_DIR must be absolute' >&2; exit 2;; esac
 case "$host_ca_dir" in *[!0-9A-Za-z._/-]*) echo 'STUDIO_HOST_CA_DIR contains unsupported characters' >&2; exit 2;; esac
 case "${host_ca_dir%/}/" in "${data_dir%/}"/*) echo 'STUDIO_HOST_CA_DIR must lie outside the data directory' >&2; exit 2;; esac
-mkdir -p "$data_dir/workspace" "$data_dir/projects" "$data_dir/home/.local/share" "$data_dir/api-tmp" "$data_dir/host-certificates" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config" "$data_dir/origin-pull"
+case "$backup_key_dir" in /*) ;; *) echo 'STUDIO_BACKUP_KEY_DIR must be absolute' >&2; exit 2;; esac
+case "$backup_key_dir" in *[!0-9A-Za-z._/-]*) echo 'STUDIO_BACKUP_KEY_DIR contains unsupported characters' >&2; exit 2;; esac
+case "${backup_key_dir%/}/" in "${data_dir%/}"/*) echo 'STUDIO_BACKUP_KEY_DIR must lie outside the data directory' >&2; exit 2;; esac
+mkdir -p "$data_dir/workspace" "$data_dir/projects" "$data_dir/home/.local/share" "$data_dir/api-tmp" "$data_dir/host-certificates" "$data_dir/backups" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config" "$data_dir/origin-pull"
 chmod 711 "$data_dir"
-chmod 700 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home" "$data_dir/api-tmp" "$data_dir/host-certificates"
+chmod 700 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home" "$data_dir/api-tmp" "$data_dir/host-certificates" "$data_dir/backups"
 chmod 700 "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config"
 chmod 755 "$data_dir/origin-pull"
 if [ ! -d "$data_dir/workspace/.git" ]; then
@@ -101,11 +108,19 @@ if [ ! -e "$host_ca_dir/ca" ]; then
 fi
 chmod 700 "$host_ca_dir"
 chmod 600 "$host_ca_dir/ca"
-if [ "$(id -u)" -eq 0 ]; then
-  chown -R 10001:10001 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home" "$data_dir/api-tmp" "$data_dir/host-certificates" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config" "$host_ca_dir" "$key_file"
+if [ -e "$backup_key_dir/backup.key" ]; then
+  echo "Keeping the existing backup key $backup_key_dir/backup.key." >&2
 else
-  docker run --rm --user 0 -v "$data_dir:/site" -v "$key_dir:/keys" -v "$host_ca_dir:/host-ca" --entrypoint sh "caddy@sha256:$STUDIO_EDGE_DIGEST" -c \
-    'chown -R 10001:10001 /site/workspace /site/projects /site/home /site/api-tmp /site/host-certificates /site/caddy-data /site/caddy-config /site/frontend-data /site/frontend-config /host-ca "/keys/$1"' \
+  (umask 077 && mkdir -p "$backup_key_dir" && openssl rand -base64 32 > "$backup_key_dir/backup.key")
+fi
+chmod 700 "$backup_key_dir"
+chmod 600 "$backup_key_dir/backup.key"
+(umask 077 && mkdir -p "$backup_target_dir")
+if [ "$(id -u)" -eq 0 ]; then
+  chown -R 10001:10001 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home" "$data_dir/api-tmp" "$data_dir/host-certificates" "$data_dir/backups" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/frontend-data" "$data_dir/frontend-config" "$host_ca_dir" "$key_file" "$backup_key_dir" "$backup_target_dir"
+else
+  docker run --rm --user 0 -v "$data_dir:/site" -v "$key_dir:/keys" -v "$host_ca_dir:/host-ca" -v "$backup_key_dir:/backup-key" -v "$backup_target_dir:/backup-target" --entrypoint sh "caddy@sha256:$STUDIO_EDGE_DIGEST" -c \
+    'chown -R 10001:10001 /site/workspace /site/projects /site/home /site/api-tmp /site/host-certificates /site/backups /site/caddy-data /site/caddy-config /site/frontend-data /site/frontend-config /host-ca "/keys/$1" /backup-key /backup-target' \
     sh "$(basename "$key_file")"
 fi
 code="$(openssl rand -hex 24)"
@@ -122,6 +137,8 @@ STUDIO_CADDYFILE=./Caddyfile.$edge
 STUDIO_CLOUDFLARE_ALLOW_DIRECT=$allow_direct
 STUDIO_PUBLIC_CLOUDFLARE_EDGE=$public_edge
 STUDIO_RESTART_POLICY=$restart_policy
+STUDIO_BACKUP_KEY_DIR=$backup_key_dir
+STUDIO_BACKUP_TARGET=none
 STUDIO_BACKUP_DESTINATION=
 STUDIO_API_DIGEST=$STUDIO_API_DIGEST
 STUDIO_WEB_DIGEST=$STUDIO_WEB_DIGEST
@@ -133,7 +150,8 @@ STUDIO_ACCESS_MFA_ENFORCED=true
 EOF
 printf 'Installer owner code: %s\nStore it until the first owner signs in. It is accepted once.\n' "$code"
 printf 'Secret store key: %s\nCopy it to a safe place outside the data backups; a restore needs it.\n' "$key_file"
-echo 'Backups are off until STUDIO_BACKUP_DESTINATION is set; see docs/operations/setup/studio-backup-restore.md.'
+printf 'Backup key: %s\nThe API backs up every 6 hours with it; escrow a copy apart from the backups and the secret store key.\n' "$backup_key_dir/backup.key"
+echo 'Backups stay on this host until an off-host target (STUDIO_BACKUP_TARGET) is set; see docs/operations/setup/studio-backup-restore.md.'
 if [ "$edge" = cloudflare ]; then
   echo 'Cloudflare mode: create an A record only (no AAAA) and set SSL/TLS mode Full (strict).'
   echo 'Install the account-specific origin-pull CA and Docker firewall before starting the stack.'

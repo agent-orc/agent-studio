@@ -1,3 +1,4 @@
+using AgentStudio.Shared;
 using AgentStudio.TaskServer.Contracts.GitHubApp;
 
 namespace AgentStudio.Readiness;
@@ -9,6 +10,10 @@ namespace AgentStudio.Readiness;
 /// visibility, state written into the container layer, missing integration
 /// lanes in fresh clones, an unset integration branch, stale locks. Each check
 /// here names the gap, what it breaks, and the exact step that closes it.
+/// <para>AGT-3580: the remedy is prose. A fix Studio can make itself carries a
+/// typed <see cref="RemedyAction"/> (the owning project setting or surface); a
+/// fix that needs a shell carries its command separately, which the UI shows
+/// only as a copyable detail.</para>
 /// </summary>
 public static class ServerReadinessPolicy
 {
@@ -52,12 +57,17 @@ public static class ServerReadinessPolicy
     }
 
     private static ReadinessCheck Line(string id, string title, string scope, string? subject,
-        string state, string meaning, string? remedy = null)
-        => new(id, title, scope, subject, state, meaning, state == ReadinessStates.Pass ? null : remedy);
+        string state, string meaning, string? remedy = null, string? command = null, RemedyAction? action = null,
+        ReadinessConfigEntry? configEntry = null)
+        => state == ReadinessStates.Pass
+            ? new(id, title, scope, subject, state, meaning, null)
+            : new(id, title, scope, subject, state, meaning, remedy, command, action, configEntry);
 
-    private static string IdentityRemedy()
-        => "In the stack directory run: docker compose exec api git config --global user.name "
-           + $"\"{ImageGitUserName}\" && docker compose exec api git config --global user.email \"{ImageGitUserEmail}\"";
+    private const string IdentityRemedy = "Set the Git identity of the service user in the API container, from the stack directory.";
+
+    private static string IdentityCommand()
+        => $"docker compose exec api git config --global user.name \"{ImageGitUserName}\" "
+           + $"&& docker compose exec api git config --global user.email \"{ImageGitUserEmail}\"";
 
     public static ReadinessCheck GitIdentity(GitIdentityFact fact)
     {
@@ -66,7 +76,8 @@ public static class ServerReadinessPolicy
         if (fact.Error is { } error)
             return Line(id, title, ReadinessScopes.Server, null, ReadinessStates.Unknown,
                 $"Git did not answer when asked for user.name and user.email: {error}",
-                "Check that Git runs in the API container: docker compose exec api git --version");
+                "Check that Git runs in the API container.",
+                "docker compose exec api git --version");
         var missing = new[]
         {
             string.IsNullOrWhiteSpace(fact.Name) ? "user.name" : null,
@@ -77,7 +88,7 @@ public static class ServerReadinessPolicy
                 $"Git has no {string.Join(" and no ", missing)} for the service user, so every commit that takes "
                 + "its identity from the Git configuration (direct merges, bound-index commits) fails with "
                 + "\"Committer identity unknown\".",
-                IdentityRemedy());
+                IdentityRemedy, IdentityCommand());
         var origin = string.Equals(fact.NameOrigin, fact.EmailOrigin, StringComparison.Ordinal)
             ? DescribeOrigin(fact.NameOrigin)
             : $"{DescribeOrigin(fact.NameOrigin)} and {DescribeOrigin(fact.EmailOrigin)}";
@@ -96,11 +107,12 @@ public static class ServerReadinessPolicy
     {
         const string id = "committer-identity";
         const string title = "Committer identity (git commit-tree probe)";
-        var manual = "Run the probe by hand and fix what it prints: docker compose exec api sh -c "
-                     + $"'cd \"$(mktemp -d)\" && git init -q && git commit-tree {EmptyTree} -m probe'";
+        const string manual = "Run the probe by hand in the API container and fix what it prints.";
+        var probe = "docker compose exec api sh -c "
+                    + $"'cd \"$(mktemp -d)\" && git init -q && git commit-tree {EmptyTree} -m probe'";
         if (!fact.Ran)
             return Line(id, title, ReadinessScopes.Server, null, ReadinessStates.Unknown,
-                $"The probe could not run: {fact.Output ?? "no scratch repository"}.", manual);
+                $"The probe could not run: {fact.Output ?? "no scratch repository"}.", manual, probe);
         if (fact.Succeeded)
             return Line(id, title, ReadinessScopes.Server, null, ReadinessStates.Pass,
                 "A probe commit in a scratch repository succeeded, so merges and artifact commits can record a committer.");
@@ -111,7 +123,8 @@ public static class ServerReadinessPolicy
                 || text.Contains("empty ident", StringComparison.OrdinalIgnoreCase));
         return Line(id, title, ReadinessScopes.Server, null, ReadinessStates.Fail,
             $"git commit-tree failed in a scratch repository ({output}). Direct merges and artifact commits fail the same way.",
-            identity ? IdentityRemedy() : manual);
+            identity ? IdentityRemedy : manual,
+            identity ? IdentityCommand() : probe);
     }
 
     private static string? FirstLine(string? text)
@@ -124,23 +137,32 @@ public static class ServerReadinessPolicy
         const string id = "data-volume";
         const string title = "Data folder on the data volume";
         subject ??= fact.Name;
-        var mount = $"Mount it from the data directory: add \"- ${{STUDIO_DATA_DIR}}/{fact.HostFolder}:{fact.Path}\" under "
-                    + "services.api.volumes in compose.override.yaml";
+        const string mount = "Mount it from the data directory: add the volume line below under services.api.volumes "
+                             + "in compose.override.yaml";
+        // The volume line is YAML for the compose file, not a shell step: it
+        // travels as a config entry; the command holds only what is run.
+        var volume = new ReadinessConfigEntry("compose.override.yaml", "services.api.volumes",
+            $"- ${{STUDIO_DATA_DIR}}/{fact.HostFolder}:{fact.Path}");
+        const string recreate = "docker compose up -d";
         if (!fact.Exists)
             return Line(id, title, scope, subject, ReadinessStates.Fail,
                 $"{fact.Path} does not exist, so Studio cannot keep its {fact.Name} data.",
-                mount + ", create that folder owned by UID 10001, and run docker compose up -d.");
+                mount + ", create that folder owned by UID 10001, and recreate the stack.",
+                $"sudo install -d -o 10001 -g 10001 \"$STUDIO_DATA_DIR/{fact.HostFolder}\"\n{recreate}",
+                configEntry: volume);
         if (!runsInContainer)
             return Line(id, title, scope, subject, ReadinessStates.Pass,
                 $"{fact.Path} is on the host file system; Studio does not run in a container.");
         if (fact.MountTableError is { } error)
             return Line(id, title, scope, subject, ReadinessStates.Unknown,
                 $"The mount table could not be read ({error}), so it is unknown whether {fact.Path} survives a container rebuild.",
-                "Check the mounts by hand: docker compose exec api cat /proc/self/mountinfo");
+                "Check the mounts of the API container by hand.",
+                "docker compose exec api cat /proc/self/mountinfo");
         if (fact.MountPoint is null or "/")
             return Line(id, title, scope, subject, ReadinessStates.Fail,
                 $"{fact.Path} is inside the container layer: whatever Studio writes there is lost when the container is recreated.",
-                mount + " and run docker compose up -d.");
+                mount + " and recreate the stack.",
+                recreate, configEntry: volume);
         return Line(id, title, scope, subject, ReadinessStates.Pass,
             $"{fact.Path} is on the mount {fact.MountPoint} ({fact.FileSystemType ?? "unknown type"}), outside the container layer.");
     }
@@ -154,8 +176,8 @@ public static class ServerReadinessPolicy
                 $"Studio created and removed a probe file in {fact.Path}.")
             : Line(id, title, ReadinessScopes.Server, fact.Name, ReadinessStates.Fail,
                 $"Studio cannot write to {fact.Path} ({fact.Error ?? "unknown error"}), so cards, sessions and evidence there cannot be saved.",
-                $"Give the host folder behind {fact.Path} to the service user: sudo chown -R 10001:10001 "
-                + $"\"$STUDIO_DATA_DIR/{fact.Name}\", then docker compose restart api.");
+                $"Give the host folder behind {fact.Path} to the service user (UID 10001), then restart the API container.",
+                $"sudo chown -R 10001:10001 \"$STUDIO_DATA_DIR/{fact.Name}\" && docker compose restart api");
     }
 
     public static ReadinessCheck GitLocks(string scope, string subject, IReadOnlyList<GitLockFact> locks)
@@ -170,7 +192,8 @@ public static class ServerReadinessPolicy
         return Line(id, title, scope, subject, ReadinessStates.Warn,
             $"{stale.Length} Git lock file(s) older than {StaleLockAge.TotalMinutes:0} minutes, the oldest {Age(stale[0].Age)}: "
             + $"{string.Join(", ", stale.Select(item => item.Path))}. Git writes in this repository fail while they exist.",
-            $"Make sure no git process runs in the repository (ps -ef | grep git), then remove them: rm -f {files}");
+            "Make sure no git process runs in the repository, then remove the stale lock files.",
+            $"ps -ef | grep git\nrm -f {files}");
     }
 
     private static string Quote(string path) => path.Contains(' ') ? $"\"{path}\"" : path;
@@ -193,10 +216,12 @@ public static class ServerReadinessPolicy
                     $"The last gate could not reach SSH gate host {fact.SshHost}"
                     + (fact.LastFailureAt is { } failed ? $" ({Age(now - failed)} ago)" : "")
                     + ", so build gates cannot run and integration waits.",
-                    $"Run {probe} in the stack directory and fix the key, host key or address it reports."),
+                    "Run the SSH probe in the stack directory and fix the key, host key or address it reports.",
+                    probe),
                 _ => Line(id, title, ReadinessScopes.Server, fact.SshHost, ReadinessStates.Unknown,
                     $"No gate reached SSH gate host {fact.SshHost} in the last 5 minutes, so reachability is not proven yet.",
-                    $"The next gate proves it; to check now run {probe} in the stack directory."),
+                    "The next gate proves it; to check now, run the SSH probe in the stack directory.",
+                    probe),
             };
         }
         if (fact.PullWorkers.Count > 0)
@@ -211,7 +236,7 @@ public static class ServerReadinessPolicy
             "No gate worker is configured: no pull worker registered and RemoteGate:SshHost is not set, "
             + "so build gates run on this server or not at all.",
             "Start a pull gate worker against this server, or set RemoteGate__SshHost and RemoteGate__WorkerPath "
-            + "for the api service and run docker compose up -d.");
+            + "for the api service and recreate the stack.");
     }
 
     public static IEnumerable<ReadinessCheck> ExecutionHosts(ExecutionHostsFact fact, DateTimeOffset now)
@@ -223,9 +248,11 @@ public static class ServerReadinessPolicy
             yield return Line(id, title, ReadinessScopes.Host, null, ReadinessStates.Warn,
                 "No execution host is enrolled, so no card can run on a remote host"
                 + (fact.PendingEnrollments > 0 ? $"; {fact.PendingEnrollments} enrolment code(s) are issued but not redeemed." : "."),
-                "Create an enrolment under Execution Hosts and run the enrolment command it shows on the host.");
+                "Create an enrolment under Execution Hosts and run the enrolment command it shows on the host.",
+                action: RemedyAction.Route(RemedyRoutes.ExecutionHosts));
             yield break;
         }
+        var hosts = RemedyAction.Route(RemedyRoutes.ExecutionHosts);
         foreach (var host in fact.Hosts.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase))
         {
             var repoint = $"On {host.Name}, check that the runner service runs and its RUNNER_SERVER_URL points at this server, "
@@ -233,7 +260,8 @@ public static class ServerReadinessPolicy
             if (host.LastSeenAt is not { } seen)
             {
                 yield return Line(id, title, ReadinessScopes.Host, host.Name, ReadinessStates.Fail,
-                    $"Enrolled {host.EnrolledAt:yyyy-MM-dd} but has never contacted this server.", repoint);
+                    $"Enrolled {host.EnrolledAt:yyyy-MM-dd} but has never contacted this server.", repoint,
+                    action: hosts);
                 continue;
             }
             var age = now - new DateTimeOffset(DateTime.SpecifyKind(seen, DateTimeKind.Utc));
@@ -241,7 +269,7 @@ public static class ServerReadinessPolicy
                 ? Line(id, title, ReadinessScopes.Host, host.Name, ReadinessStates.Pass,
                     $"Enrolled and last seen {Age(age)} ago.")
                 : Line(id, title, ReadinessScopes.Host, host.Name, ReadinessStates.Fail,
-                    $"Enrolled, but not seen for {Age(age)}: it claims no cards.", repoint);
+                    $"Enrolled, but not seen for {Age(age)}: it claims no cards.", repoint, action: hosts);
         }
     }
 
@@ -258,8 +286,8 @@ public static class ServerReadinessPolicy
             _ => Line(id, title, ReadinessScopes.Project, project.Name, ReadinessStates.Warn,
                 "Not recorded. Remote Review then treats the repository as public and clones it without credentials, "
                 + "which fails for a private repository.",
-                $"Record it: PUT /api/projects/{Uri.EscapeDataString(project.Name)}/repository-visibility with "
-                + "{\"visibility\":\"private\"} or {\"visibility\":\"public\"}."),
+                "Record it as private or public in the project's repository visibility setting.",
+                action: RemedyAction.Setting(ProjectSettingKeys.RepositoryVisibility, project.Name)),
         };
     }
 
@@ -267,14 +295,17 @@ public static class ServerReadinessPolicy
     {
         const string id = "app-coverage";
         const string title = "GitHub App coverage";
+        var github = RemedyAction.Route(RemedyRoutes.GitHubSettings);
         if (!app.Connected)
             return Line(id, title, ReadinessScopes.Project, project, ReadinessStates.Warn,
                 "No GitHub App is connected, so hosts reach this repository only with credentials configured on them.",
-                "Connect the App under Settings > GitHub, or keep a credential for this repository on every host.");
+                "Connect the App under Settings > GitHub, or keep a credential for this repository on every host.",
+                action: github);
         if (!app.Coverage.TryGetValue(project, out var coverage))
             return Line(id, title, ReadinessScopes.Project, project, ReadinessStates.Unknown,
                 $"The App status lists no coverage for this project{(app.Problem is { } problem ? $" ({problem})" : "")}.",
-                "Open Settings > GitHub and refresh the App status, then Recheck.");
+                "Open Settings > GitHub and refresh the App status, then Recheck.",
+                action: github);
         var repository = coverage.RepositoryUrl ?? "the repository";
         return coverage.State switch
         {
@@ -284,16 +315,19 @@ public static class ServerReadinessPolicy
                 $"{repository} is not on github.com; the App does not apply."),
             GitHubAppCoverageStates.NotInstalled => Line(id, title, ReadinessScopes.Project, project, ReadinessStates.Fail,
                 $"The App is not installed on {repository}, so hosts get no token for it and clones and pushes fail.",
-                "Install the App on this repository" + (app.InstallUrl is { } url ? $": {url}" : " under Settings > GitHub") + ", then Recheck."),
+                "Install the App on this repository" + (app.InstallUrl is { } url ? $": {url}" : " under Settings > GitHub") + ", then Recheck.",
+                action: github),
             GitHubAppCoverageStates.NotAdopted => Line(id, title, ReadinessScopes.Project, project, ReadinessStates.Fail,
                 $"An App installation reaches {repository}, but this Studio has not adopted it, so it issues no token for it.",
-                "Adopt the installation under Settings > GitHub, then Recheck."),
+                "Adopt the installation under Settings > GitHub, then Recheck.",
+                action: github),
             GitHubAppCoverageStates.NoRepositoryUrl => Line(id, title, ReadinessScopes.Project, project, ReadinessStates.Warn,
                 "The project registers no repository URL, so neither the App nor Remote Review can find the repository.",
                 "Add the repository URL as the project's \"Repository\" link, then Recheck."),
             _ => Line(id, title, ReadinessScopes.Project, project, ReadinessStates.Unknown,
                 $"GitHub could not be asked about {repository}{(coverage.Detail is { } detail ? $": {detail}" : ".")}",
-                "Recheck in a few minutes; if it stays unknown, check the App connection under Settings > GitHub."),
+                "Recheck in a few minutes; if it stays unknown, check the App connection under Settings > GitHub.",
+                action: github),
         };
     }
 
@@ -304,29 +338,32 @@ public static class ServerReadinessPolicy
         const string title = "Integration branch set";
         var path = project.RepositoryPath;
         var refs = project.Refs;
-        ReadinessCheck Fail(string meaning, string remedy)
-            => Line(id, title, ReadinessScopes.Project, project.Name, ReadinessStates.Fail, meaning, remedy);
+        var setting = RemedyAction.Setting(ProjectSettingKeys.IntegrationBranch, project.Name);
+        ReadinessCheck Fail(string meaning, string remedy, string? command = null, RemedyAction? action = null)
+            => Line(id, title, ReadinessScopes.Project, project.Name, ReadinessStates.Fail, meaning, remedy, command, action);
         if (!refs.CheckoutExists)
             return (Fail($"The checkout {path} does not exist, so no card of this project can run or integrate.",
-                $"Clone the repository there: git clone <repository URL> {Quote(path)}, then Recheck."), null);
+                "Clone the repository there, then Recheck.",
+                $"git clone <repository URL> {Quote(path)}"), null);
         if (!refs.IsGitCheckout)
             return (Fail($"{path} is not a Git checkout.",
-                $"Replace it with a clone of the repository: git clone <repository URL> {Quote(path)}, then Recheck."), null);
+                "Replace it with a clone of the repository, then Recheck.",
+                $"git clone <repository URL> {Quote(path)}"), null);
         if (refs.Error is { } error)
             return (Line(id, title, ReadinessScopes.Project, project.Name, ReadinessStates.Unknown,
                 $"Git could not list the refs of {path}: {error}",
-                $"Run git -C {Quote(path)} for-each-ref refs/remotes/origin and fix the error it prints."), null);
+                "List the refs by hand and fix the error Git prints.",
+                $"git -C {Quote(path)} for-each-ref refs/remotes/origin"), null);
         var configured = string.IsNullOrWhiteSpace(project.ConfiguredIntegrationBranch)
             ? null : project.ConfiguredIntegrationBranch.Trim();
         var branch = configured ?? refs.OriginHead;
-        var setIt = $"PUT /api/projects/{Uri.EscapeDataString(project.Name)}/integration-branch with {{\"branch\":\"<branch>\"}}";
         if (branch is null)
-            return (Fail(refs.HasOrigin
-                    ? "No integration branch is set and origin/HEAD is unknown in this checkout, so integration has no target branch."
-                    : "No integration branch is set and the checkout has no origin remote to take it from.",
-                refs.HasOrigin
-                    ? $"Run git -C {Quote(path)} remote set-head origin --auto, or set it: {setIt}."
-                    : $"Set it: {setIt}."), null);
+            return (refs.HasOrigin
+                ? Fail("No integration branch is set and origin/HEAD is unknown in this checkout, so integration has no target branch.",
+                    "Set the integration branch in the project setting, or let Git record origin/HEAD in the checkout.",
+                    $"git -C {Quote(path)} remote set-head origin --auto", setting)
+                : Fail("No integration branch is set and the checkout has no origin remote to take it from.",
+                    "Set the integration branch in the project setting.", action: setting), null);
         var source = configured is null ? "from origin/HEAD" : "set for the project";
         if (refs.HasOrigin)
         {
@@ -334,13 +371,15 @@ public static class ServerReadinessPolicy
                 ? (Line(id, title, ReadinessScopes.Project, project.Name, ReadinessStates.Pass,
                     $"Integrates into {branch} ({source}); origin/{branch} is present."), branch)
                 : (Fail($"The integration branch {branch} ({source}) has no origin/{branch} in this checkout, so every integration fails.",
-                    $"Run git -C {Quote(path)} fetch origin {branch}; if the branch has another name, set it: {setIt}."), null);
+                    "Fetch the branch into the checkout; if the branch has another name, set it in the project setting.",
+                    $"git -C {Quote(path)} fetch origin {branch}", setting), null);
         }
         return refs.Refs.Contains($"refs/heads/{branch}")
             ? (Line(id, title, ReadinessScopes.Project, project.Name, ReadinessStates.Pass,
                 $"Integrates into the local branch {branch} ({source}); the checkout has no origin remote."), branch)
             : (Fail($"The integration branch {branch} ({source}) does not exist in this checkout.",
-                $"Create it (git -C {Quote(path)} branch {branch}) or set the right one: {setIt}."), null);
+                "Create the branch in the checkout, or set the right one in the project setting.",
+                $"git -C {Quote(path)} branch {branch}", setting), null);
     }
 
     public static ReadinessCheck IntegrationLane(ProjectReadinessFact project, string branch)
@@ -354,7 +393,8 @@ public static class ServerReadinessPolicy
         return Line(id, title, ReadinessScopes.Project, project.Name, ReadinessStates.Warn,
             $"The integration lane {lane} is missing, as in a fresh clone. The first integration has to seed it, "
             + $"and fails the card when {source} is not available at that moment.",
-            $"Seed it from the published branch: git -C {Quote(project.RepositoryPath)} update-ref {lane} {source}");
+            "Seed it from the published branch.",
+            $"git -C {Quote(project.RepositoryPath)} update-ref {lane} {source}");
     }
 
     public static string Age(TimeSpan age)

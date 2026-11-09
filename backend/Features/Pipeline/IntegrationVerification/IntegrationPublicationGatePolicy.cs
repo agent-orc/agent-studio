@@ -17,7 +17,8 @@ public static class IntegrationPublicationGatePolicy
     /// </summary>
     public static Decision Check(string verifiedTree, string currentTree,
         IReadOnlyList<FirstParentCommit> laterCommits,
-        IReadOnlyCollection<Publication> publications)
+        IReadOnlyCollection<Publication> publications,
+        IReadOnlySet<string>? gateNeutralCommits = null)
     {
         if (string.Equals(verifiedTree, currentTree, StringComparison.OrdinalIgnoreCase))
             return new Decision(true);
@@ -41,6 +42,11 @@ public static class IntegrationPublicationGatePolicy
         for (var index = 0; index < laterCommits.Count;)
         {
             var sha = laterCommits[index].Sha;
+            if (gateNeutralCommits?.Contains(sha) == true)
+            {
+                index++;
+                continue;
+            }
             if (!byTree.TryGetValue(sha, out var publication))
                 return new Decision(false, sha);
             if (string.Equals(publication.BaseSha, verifiedTree, StringComparison.OrdinalIgnoreCase))
