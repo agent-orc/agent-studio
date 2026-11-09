@@ -19,7 +19,7 @@ const card = '[data-testid="task-card"], [data-testid="job-card"]';
 async function openDemo(page: Page, id: string): Promise<void> {
   await page.clock.setFixedTime('2026-08-09T13:00:00.000Z');
   await page.goto('/');
-  await page.addStyleTag({ content: 'body::before,.dev-banner,[data-testid="dev-banner"],[role="tooltip"]{display:none!important}[data-testid="status-bar"] .statusbar__quota{visibility:hidden!important}' });
+  await page.addStyleTag({ content: 'body::before,.dev-banner,[data-testid="dev-banner"],[role="tooltip"]{display:none!important}' });
   const picker = page.getByTestId('studio-project-picker-trigger');
   await expect(picker).toBeVisible({ timeout: 20_000 });
   await picker.click();
