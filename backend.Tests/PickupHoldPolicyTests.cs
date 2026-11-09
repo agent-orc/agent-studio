@@ -36,8 +36,7 @@ public class PickupHoldPolicyTests
         Assert.Contains("app", hold.Reason);
         Assert.Contains("local", hold.Reason);
         Assert.Equal(PickupHoldResolutionKinds.RouteToRemoteRunner, Assert.Single(hold.Resolutions).Kind);
-        Assert.Contains("PUT /api/projects/app/execution-runner", hold.Resolutions[0].Detail);
-        Assert.Contains("remote-01", hold.Resolutions[0].Detail);
+        Assert.Contains("Project Settings", hold.Resolutions[0].Detail);
     }
 
     [Fact]

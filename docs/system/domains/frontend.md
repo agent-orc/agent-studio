@@ -207,10 +207,13 @@ deploy-run and integration-verification changes; board reads do not walk git.
 Lane headers open the project's Deploy area, and board search and filters narrow
 the delivery cards.
 
-The project execution assignment card warns when automatic pickup is placed
-at `local` and the settings projection reports `localCodingAdmitted: false`.
+The project execution assignment card warns when execution is placed at
+`local` and the settings projection reports `localCodingAdmitted: false`.
 Ready cards show the corresponding `execution-placement` pickup hold and a
-copyable `PUT /api/projects/{projectName}/execution-runner` resolution.
+button that opens Project Settings at Execution location. The onboarding dialog
+reads `GET /api/projects/execution-capability` before a first project exists;
+when local coding is disabled, it requires a runner for a source-backed project
+and labels Local as board and orchestration only.
 
 ## Global Search
 

@@ -33,7 +33,7 @@
                         class="pickup-hold__decision"
                         [disabled]="mutationPending()"
                         [attr.data-testid]="'pickup-hold-decision-' + resolution.kind"
-                        (click)="applyResolution(resolution)">{{ resolution.label }}</button>
+                        (click)="applyResolution(resolution)">{{ resolution.kind === 'route-to-remote-runner' ? 'Open Project Settings' : resolution.label }}</button>
               } @else {
                 <span class="pickup-hold__item-label">{{ resolution.label }}</span>
               }

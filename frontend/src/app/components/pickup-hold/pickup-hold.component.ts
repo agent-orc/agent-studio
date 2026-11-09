@@ -1,7 +1,8 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Injector, computed, inject, input, signal } from '@angular/core';
 import type { PickupHoldResolution, PickupHoldStatus, TaskInfo } from '../../models/task.model';
 import { pickupHoldMechanismLabel, titleCaseToken } from '../../models/ready-wait-reason';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
+import { FeatureFlagsService } from '../../services/feature-flags.service';
 import { NowTickService } from '../../services/now-tick.service';
 import { TaskService } from '../../services/task.service';
 import type { Observable } from 'rxjs';
@@ -51,7 +52,7 @@ export const PICKUP_HOLD_RESOLUTION_ACTIONABILITY: Readonly<
   'assign-agent': 'non-actionable',
   'pass-intake': 'non-actionable',
   'decide-escalation': 'non-actionable',
-  'route-to-remote-runner': 'non-actionable',
+  'route-to-remote-runner': 'handled',
 };
 
 /**
@@ -79,6 +80,8 @@ export const PICKUP_HOLD_RESOLUTION_ACTIONABILITY: Readonly<
 export class PickupHoldComponent {
   private readonly tasks = inject(TaskService, { optional: true });
   private readonly remoteHosts = inject(RemoteHostsService, { optional: true });
+  private readonly injector = inject(Injector);
+  private readonly featureFlags = inject(FeatureFlagsService);
   private readonly now = inject(NowTickService).now;
   readonly task = input.required<TaskInfo>();
   readonly variant = input<PickupHoldVariant>('card');
@@ -160,17 +163,34 @@ export class PickupHoldComponent {
       case 'drop-dependency':
       case 'repoint-dependency': return Boolean(target);
       case 'archive-waiting-card': return true;
+      case 'route-to-remote-runner': return true;
       default: return false;
     }
   }
 
   applyResolution(resolution: PickupHoldResolution): void {
     if (this.mutationPending() || !this.canApplyResolution(resolution)) return;
+    const task = this.task();
+    if (resolution.kind === 'route-to-remote-runner') {
+      if (this.featureFlags.vsCodeLayout()) {
+        void import('../../features/studio-shell').then(({ StudioTabStateService }) => {
+          this.injector.get(StudioTabStateService)
+            .open({ kind: 'hub', projectName: task.projectName, section: 'settings' });
+          this.focusExecutionLocation();
+        });
+      } else {
+        void import('../../features/project-detail').then(({ ProjectOverlaysService }) => {
+          this.injector.get(ProjectOverlaysService)
+            .openProjectShell(task.projectName, 'settings', [{ name: task.projectName }]);
+          this.focusExecutionLocation();
+        });
+      }
+      return;
+    }
     if (!this.tasks) {
       this.mutationError.set('The dependency decision service is unavailable.');
       return;
     }
-    const task = this.task();
     const target = resolution.targetKey?.trim();
     const source = resolution.sourceKey?.trim();
     if (resolution.kind === 'drop-cycle-edge' && source && target) {
@@ -201,6 +221,16 @@ export class PickupHoldComponent {
       this.runMutation(this.tasks.moveJob(
         task.id, '7-archive', task.watchPath, undefined,
         'Operator archived a card with an unsatisfiable dependency.'));
+    }
+  }
+
+  private focusExecutionLocation(attempts = 180): void {
+    const card = document.querySelector<HTMLElement>('[data-testid="project-execution-card"]');
+    if (card) {
+      card.scrollIntoView({ block: 'start' });
+      card.focus({ preventScroll: true });
+    } else if (attempts > 0) {
+      requestAnimationFrame(() => this.focusExecutionLocation(attempts - 1));
     }
   }
 

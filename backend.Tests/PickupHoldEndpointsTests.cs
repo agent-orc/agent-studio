@@ -240,6 +240,9 @@ public sealed class PickupHoldLocalCodingDenialTests : IClassFixture<PickupHoldL
         }
 
         using var client = _host.CreateClient();
+        using var capability = JsonDocument.Parse(
+            await client.GetStringAsync("/api/projects/execution-capability"));
+        Assert.False(capability.RootElement.GetProperty("localCodingAdmitted").GetBoolean());
         var watchPath = Uri.EscapeDataString(_appWatch);
         using var detail = JsonDocument.Parse(
             await client.GetStringAsync($"/api/tasks/local-coding?watchPath={watchPath}"));
@@ -249,7 +252,7 @@ public sealed class PickupHoldLocalCodingDenialTests : IClassFixture<PickupHoldL
         Assert.Contains("local agent execution is disabled", hold.GetProperty("reason").GetString());
         var resolution = Assert.Single(hold.GetProperty("resolutions").EnumerateArray());
         Assert.Equal(PickupHoldResolutionKinds.RouteToRemoteRunner, resolution.GetProperty("kind").GetString());
-        Assert.Contains("PUT /api/projects/hold-app/execution-runner", resolution.GetProperty("detail").GetString());
+        Assert.Contains("Project Settings", resolution.GetProperty("detail").GetString());
 
         using var grouped = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/grouped"));
         var card = PickupHoldEndpointsTests.FindCard(grouped.RootElement.GetProperty("ready"), "local-coding");

@@ -6,6 +6,9 @@ import type { PickupHoldStatus, TaskInfo } from '../../models/task.model';
 import { NowTickService } from '../../services/now-tick.service';
 import { TaskService } from '../../services/task.service';
 import { RemoteHostsService, type RemoteHost } from '../../features/remote-hosts';
+import { ProjectOverlaysService } from '../../features/project-detail';
+import { StudioTabStateService } from '../../features/studio-shell';
+import { FeatureFlagsService } from '../../services/feature-flags.service';
 import {
   PICKUP_HOLD_RESOLUTION_ACTIONABILITY,
   PICKUP_HOLD_RESOLUTION_KINDS,
@@ -93,8 +96,14 @@ describe('PickupHoldComponent', () => {
     editTaskWaitsOn: vi.fn(),
     moveJob: vi.fn(),
   };
+  const openProjectShell = vi.fn();
+  const openTab = vi.fn();
+  const vsCodeLayout = signal(false);
 
   beforeEach(async () => {
+    openProjectShell.mockReset();
+    openTab.mockReset();
+    vsCodeLayout.set(false);
     taskService.editTaskWaitsOn.mockReset();
     taskService.editTaskWaitsOn.mockReturnValue(of({
       waitsOn: [], changed: true, cycleResolved: true, message: 'The cycle is resolved.',
@@ -108,6 +117,9 @@ describe('PickupHoldComponent', () => {
         { provide: TaskService, useValue: taskService },
         { provide: NowTickService, useValue: { now } },
         { provide: RemoteHostsService, useValue: { hosts } },
+        { provide: ProjectOverlaysService, useValue: { openProjectShell } },
+        { provide: StudioTabStateService, useValue: { open: openTab } },
+        { provide: FeatureFlagsService, useValue: { vsCodeLayout } },
       ],
     }).compileComponents();
     now.set(NOW);
@@ -139,7 +151,7 @@ describe('PickupHoldComponent', () => {
       .toContain('not claiming: load 5.5 per core above 4.0 for 12 min');
   });
 
-  it('names a local execution placement hold and its remote routing resolution', () => {
+  it('opens Project Settings from a local execution placement hold in both layouts', async () => {
     const root = render({
       classification: 'unsatisfiable',
       mechanism: 'execution-placement',
@@ -149,16 +161,24 @@ describe('PickupHoldComponent', () => {
       unsatisfiable: true,
       resolutions: [{
         kind: 'route-to-remote-runner',
-        label: 'Route to a remote runner',
-        detail: 'PUT /api/projects/demo/execution-runner {"executionLocation":"runner-01"}',
+        label: 'Choose an execution runner',
+        detail: 'Open Project Settings and choose an available runner under Execution location.',
       }],
     }, 'detail');
 
     expect(root.querySelector('[data-testid="pickup-hold-mechanism"]')?.textContent)
       .toContain('Execution placement');
     expect(root.querySelector('[data-resolution-kind="route-to-remote-runner"]')?.textContent)
-      .toContain('PUT /api/projects/demo/execution-runner');
-    expect(root.querySelector('[data-resolution-kind="route-to-remote-runner"] button')).toBeNull();
+      .toContain('Open Project Settings');
+    const button = root.querySelector<HTMLButtonElement>('[data-resolution-kind="route-to-remote-runner"] button');
+    expect(button).not.toBeNull();
+    button?.click();
+    await vi.waitFor(() => expect(openProjectShell)
+      .toHaveBeenCalledWith('demo', 'settings', [{ name: 'demo' }]));
+    vsCodeLayout.set(true);
+    button?.click();
+    await vi.waitFor(() => expect(openTab)
+      .toHaveBeenCalledWith({ kind: 'hub', projectName: 'demo', section: 'settings' }));
   });
 
   it('says an archived gate cannot clear by itself, and how long it has been held', () => {
@@ -215,6 +235,7 @@ describe('PickupHoldComponent', () => {
       'drop-cycle-edge',
       'drop-dependency',
       'repoint-dependency',
+      'route-to-remote-runner',
     ]);
   });
 

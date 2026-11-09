@@ -257,17 +257,14 @@ public static class PickupHoldPolicy
             && !facts.AllowsLocalCoding
             && (facts.DenyAllLocalRuns || AgentStudio.Runner.WorktreeRunPolicy.RequiresWorktree(task.Mode)))
         {
-            var destination = string.IsNullOrWhiteSpace(facts.SuggestedRemoteRunnerId)
-                ? "<runner-id>"
-                : facts.SuggestedRemoteRunnerId;
             return Hold(
                 PickupHoldMechanisms.ExecutionPlacement,
                 $"Project {task.ProjectName} is placed at local execution, but local agent execution is disabled on this orchestrator.",
                 laneEntry, facts.NowUtc, unsatisfiable: true,
                 new PickupHoldResolution(
                     PickupHoldResolutionKinds.RouteToRemoteRunner,
-                    "Route to a remote runner",
-                    $"PUT /api/projects/{Uri.EscapeDataString(task.ProjectName)}/execution-runner {{\"executionLocation\":\"{destination}\"}}"));
+                    "Choose an execution runner",
+                    "Open Project Settings and choose an available runner under Execution location."));
         }
 
         // Dated from the refusal, not from the lane entry: that is the moment the

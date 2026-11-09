@@ -474,6 +474,7 @@ public static class RoutePermissionCatalog
             "publish/automation", "urls", "urls/**", "ownership-mappings/**", "pipeline-definition/**");
 
         // --- Project reads -------------------------------------------------
+        Add("GET", IamPermissions.WorkspaceRead, "/api/projects/execution-capability");
         Add("GET", IamPermissions.ProjectRead,
             "/api/projects/{}/review-packages",
             "/api/projects/{}/review-packages/formation",

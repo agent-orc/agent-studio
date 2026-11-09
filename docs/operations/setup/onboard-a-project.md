@@ -17,13 +17,17 @@ Choose:
 - An optional local Git checkout path, CLI working directory, repository URL,
   or any useful combination of them.
 - A default coding CLI/model and project colour. Both can be changed later.
-- An optional execution runner. Onboard the host first if it is not listed yet.
+- An execution runner for coding. Onboard the host first if it is not listed yet.
 
-For a local runner, the repository path must be an existing absolute Git
-checkout on the backend host. The working directory must also exist and may be
-the checkout itself or a subdirectory. For a remote runner whose checkout is
-not visible on the backend host, omit both local paths and provide the
-repository URL. The selected remote host resolves its own checkout.
+The repository path must be an existing absolute Git checkout on the backend
+host when supplied. The working directory must also exist and may be the
+checkout itself or a subdirectory. These paths register the source; they do
+not make the orchestrator a coding host. Start a runner beside the checkout
+through **Workspace Settings → Execution Hosts → Set up agent host**
+([host walkthrough](./linux-runner-host.md#product-onboarding-from-execution-hosts)).
+The runner needs access to the Git origin and Task Server. For a remote runner
+whose checkout is not visible on the backend host, omit both local paths and
+provide the repository URL; the selected host resolves its own checkout.
 
 ## UI workflow
 
@@ -34,7 +38,9 @@ repository URL. The selected remote host resolves its own checkout.
 4. Under **Code location**, enter the local checkout, CLI working directory,
    and/or HTTP(S) repository URL.
 5. Under **Default coding agent**, select the default CLI/model, then choose
-   the local host or an onboarded runner under **Execution location**.
+   an onboarded runner under **Execution location**. When local coding is
+   disabled, **Local** supports the board and orchestration only. The dialog
+   requires a runner for a project with a source checkout.
 6. Choose **Create project**.
 
 There is no project-source selection or Project Sources administration step.
@@ -122,8 +128,8 @@ The server performs these steps in one onboarding workflow:
 7. Persists the project colour and default coding CLI/model.
 8. Adds the project to the scanner and filesystem watcher from the registry,
    without adding a `WatchPaths` setting.
-9. Creates a live local runner immediately when the local working directory
-   exists, or persists the selected remote-runner assignment.
+9. Persists the selected runner assignment. A local working directory alone
+   does not enable coding on the orchestrator.
 
 The board refresh after creation reads the same registry-backed source, so the new empty project is visible immediately.
 
