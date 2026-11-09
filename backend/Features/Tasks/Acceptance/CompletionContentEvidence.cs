@@ -49,6 +49,17 @@ public static class CompletionContentEvidence
                     .Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
                     ?? [];
                 var skipped = report?.SkippedAspects?.Select(item => item.Aspect).ToArray() ?? [];
+                // Report cards get no remote review: the lightweight pipeline
+                // reviews the delivered report on this server and binds the
+                // verdict to the run it reviewed (AGT-3565).
+                if (review is null && TaskModes.IsReportOnly(task.Mode)
+                    && ReadLocal(task.FolderPath, required) is { } local
+                    && string.Equals(local.RunAttemptId, run.AttemptId, StringComparison.Ordinal))
+                    return new CompletionContentFacts(
+                        task.Mode, current, run.BriefVersion, local.BriefVersion,
+                        required, local.Status, local.Ran, [],
+                        ContentSummary: local.Summary,
+                        EvidenceChecked: local.EvidenceChecked);
                 return new CompletionContentFacts(
                     task.Mode, current, run.BriefVersion,
                     report?.BriefSha256 ?? review?.Subject.Plan?.BriefSha256,
@@ -56,43 +67,68 @@ public static class CompletionContentEvidence
                     ContentSummary: content?.Summary,
                     EvidenceChecked: content?.EvidenceChecked,
                     Missing: content?.Missing,
-                    Settlement: Settlement(run.AttemptId, projection.CurrentReviewAttempt, review, read));
+                    Settlement: review is null && TaskModes.IsReportOnly(task.Mode)
+                        ? new(null, CompletionSettlementProblem.NoReportReview, null)
+                        : Settlement(run.AttemptId, projection.CurrentReviewAttempt, review, read));
             }
         }
 
         // The local review runner stamps its brief context with its verdict.
         // Old loose aspect files have no lineage and cannot establish a pass.
-        var contextPath = Path.Combine(task.FolderPath, LocalContextFile);
-        if (File.Exists(contextPath))
-        {
-            try
-            {
-                using var context = JsonDocument.Parse(File.ReadAllText(contextPath));
-                var version = context.RootElement.GetProperty("briefVersion").GetString();
-                var contentPath = Path.Combine(task.FolderPath, $"aspect-{required}.json");
-                if (File.Exists(contentPath))
-                {
-                    using var document = JsonDocument.Parse(File.ReadAllText(contentPath));
-                    var root = document.RootElement;
-                    var ran = Directory.GetFiles(task.FolderPath, "aspect-*.json")
-                        .Select(Path.GetFileNameWithoutExtension)
-                        .Where(name => name is not null)
-                        .Select(name => name!["aspect-".Length..])
-                        .ToArray();
-                    return new(task.Mode, current, version, version, required,
-                        root.GetProperty("status").GetString(), ran,
-                        ["not recorded for local review"],
-                        ContentSummary: root.TryGetProperty("summary", out var summary) ? summary.GetString() : null,
-                        EvidenceChecked: root.TryGetProperty("evidenceChecked", out var checkedValue) ? checkedValue.GetString() : null);
-                }
-            }
-            catch (Exception ex) when (ex is IOException or JsonException or KeyNotFoundException)
-            {
-                // Malformed evidence is treated as absent, never as a pass.
-                SilentCatch.Note(ex, "CompletionContentEvidence: malformed local content review evidence");
-            }
-        }
+        if (ReadLocal(task.FolderPath, required) is { } evidence)
+            return new(task.Mode, current, evidence.BriefVersion, evidence.BriefVersion, required,
+                evidence.Status, evidence.Ran, ["not recorded for local review"],
+                ContentSummary: evidence.Summary,
+                EvidenceChecked: evidence.EvidenceChecked);
         return new(task.Mode, current, null, null, required, null, [], []);
+    }
+
+    /// <summary>
+    /// Writes the lineage of a local content verdict. A report review names
+    /// the run attempt it reviewed, so a verdict for an older run never
+    /// counts for a newer delivery.
+    /// </summary>
+    public static void WriteLocalContext(string folder, string? briefVersion, string? runAttemptId, DateTime reviewedAt)
+        => File.WriteAllText(Path.Combine(folder, LocalContextFile),
+            JsonSerializer.Serialize(new { briefVersion, runAttemptId, reviewedAt }));
+
+    private sealed record LocalContent(
+        string? BriefVersion,
+        string? RunAttemptId,
+        string? Status,
+        IReadOnlyList<string> Ran,
+        string? Summary,
+        string? EvidenceChecked);
+
+    private static LocalContent? ReadLocal(string folder, string required)
+    {
+        var contextPath = Path.Combine(folder, LocalContextFile);
+        var contentPath = Path.Combine(folder, $"aspect-{required}.json");
+        if (!File.Exists(contextPath) || !File.Exists(contentPath)) return null;
+        try
+        {
+            using var context = JsonDocument.Parse(File.ReadAllText(contextPath));
+            var version = context.RootElement.GetProperty("briefVersion").GetString();
+            var runAttemptId = context.RootElement.TryGetProperty("runAttemptId", out var runValue)
+                && runValue.ValueKind == JsonValueKind.String ? runValue.GetString() : null;
+            using var document = JsonDocument.Parse(File.ReadAllText(contentPath));
+            var root = document.RootElement;
+            var ran = Directory.GetFiles(folder, "aspect-*.json")
+                .Select(Path.GetFileNameWithoutExtension)
+                .Where(name => name is not null)
+                .Select(name => name!["aspect-".Length..])
+                .ToArray();
+            return new LocalContent(version, runAttemptId,
+                root.GetProperty("status").GetString(), ran,
+                root.TryGetProperty("summary", out var summary) ? summary.GetString() : null,
+                root.TryGetProperty("evidenceChecked", out var checkedValue) ? checkedValue.GetString() : null);
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or KeyNotFoundException or InvalidOperationException)
+        {
+            // Malformed evidence is treated as absent, never as a pass.
+            SilentCatch.Note(ex, "CompletionContentEvidence: malformed local content review evidence");
+            return null;
+        }
     }
 
     /// <summary>

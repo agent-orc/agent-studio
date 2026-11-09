@@ -29,10 +29,13 @@ public sealed record CompletionSettlementProblem(string? ReviewAttemptId, string
     public const string ReviewNotSettled = "review-not-settled";
     public const string JournalMissing = "settlement-missing";
     public const string JournalRepair = "settlement-repair";
+    /// <summary>A report card whose current run has no report review yet (AGT-3565).</summary>
+    public const string NoReportReview = "no-report-review";
 
     public string Describe() => Kind switch
     {
         NoReview => "the current run has no review",
+        NoReportReview => "the report of the current run has not been reviewed; run Review results",
         ReviewForOtherRun => $"the current review {ReviewAttemptId} belongs to another run",
         ReviewNotSettled => $"the current review {ReviewAttemptId} has not settled",
         JournalMissing => $"the settlement of review {ReviewAttemptId} is missing",

@@ -1208,6 +1208,7 @@ if (!publicDemoExecutionProfile)
 // Forwarded into ProjectRunner via TaskRunnerService; default-OFF per project.
 builder.Services.AddSingleton<AgentStudio.Runner.PostAbortReviewStepService>();
 builder.Services.AddSingleton<AutoReviewStatusSnapshot>();
+builder.Services.AddSingleton<ReportContentReviewService>();
 builder.Services.AddSingleton<ReviewDecisionOrchestrator>();
 // Keep the review and delivery workers available for runtime profile rollback.
 if (!publicDemoExecutionProfile)
