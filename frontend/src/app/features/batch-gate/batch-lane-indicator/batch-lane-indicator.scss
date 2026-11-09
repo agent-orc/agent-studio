@@ -15,4 +15,9 @@
   text-overflow: ellipsis;
   margin-top: var(--studio-spacing-1);
 }
+.batch-lane-indicator[data-batch-alert='red'] {
+  border-color: color-mix(in srgb, var(--studio-status-danger) 45%, var(--studio-border));
+  background: color-mix(in srgb, var(--studio-status-danger) 6%, var(--studio-bg-elevated));
+  color: var(--studio-fg);
+}
 .batch-lane-indicator:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }

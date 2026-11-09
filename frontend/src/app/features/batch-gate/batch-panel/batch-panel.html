@@ -46,12 +46,17 @@
                     <a [href]="'#batch-' + id" (click)="$event.preventDefault(); openBatch(id)">{{ id }}</a>
                   }
                 </p>
-                @if (test.flakySuspect) {
-                  <button type="button" [attr.aria-label]="'Create fix card for ' + test.testName"
-                    [disabled]="openingFix() !== null" [appPendingButton]="openingFix() === test.testName"
-                    pendingLabel="Opening fix card…"
-                    (click)="createFixCard(test)">Create fix card</button>
-                }
+                <ul class="batch-panel__failure-runs" aria-label="Latest failed runs" data-testid="batch-failure-runs">
+                  @for (failure of test.failures.slice(0, 5); track failure.batchId + '/' + failure.runId) {
+                    <li>{{ failure.batchId }} · run {{ failure.runId }} · members {{ failure.members.join(', ') || 'unknown' }}
+                      @if (provenBy(failure); as culprits) { · <strong>proved {{ culprits }} red</strong> }
+                    </li>
+                  }
+                </ul>
+                <button type="button" [attr.aria-label]="'Create fix card for ' + test.testName"
+                  [disabled]="openingFix() !== null" [appPendingButton]="openingFix() === test.testName"
+                  pendingLabel="Opening fix card…"
+                  (click)="createFixCard(test)">Create fix card</button>
               </li>
             }</ol>
           } @else if (!report.pendingEvidenceRuns) { <p>No failed tests in this window.</p> }
@@ -124,6 +129,7 @@
                 </ul>
               }
               <p>Members: @for (member of batch.members; track member.taskKey) { <span>{{ member.taskKey }} ({{ replayLabel(member.replay) }}{{ member.released ? ', released' : '' }}) </span> }</p>
+              @if (isolationRows(batch); as rows) { <app-batch-isolation [project]="project()" [batchId]="batch.batchId" [rows]="rows" /> }
               <p>Base {{ batch.baseSha }} · Candidate {{ batch.candidateSha ?? 'not created' }}
                 @if (publishedSha(batch.publication); as sha) { · Published {{ sha }} }
               </p>

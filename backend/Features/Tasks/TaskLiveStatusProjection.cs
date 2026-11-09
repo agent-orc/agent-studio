@@ -162,9 +162,8 @@ public sealed class TaskLiveStatusProjection(
         if (job.State == TaskStates.Ready
             && runnerStatus.TryGetValue(job.ProjectName, out var project))
         {
-            var index = project.QueuedJobIds.FindIndex(id =>
-                string.Equals(id, job.Id, StringComparison.OrdinalIgnoreCase));
-            if (index >= 0) return new TaskLiveQueue { Kind = "runner", Position = index + 1 };
+            var runnerQueue = RunnerQueueFor(job.Id, project);
+            if (runnerQueue is not null) return runnerQueue;
         }
 
         if (job.State == TaskStates.AutoReview)
@@ -187,6 +186,26 @@ public sealed class TaskLiveStatusProjection(
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The runner queue line of a Ready card. Only a pickup candidate (a card
+    /// in <see cref="ProjectRunnerStatus.QueuedJobIds"/>) gets one; a held card
+    /// states its hold instead. AGT-3579: the runner gate outranks a candidate
+    /// skip, because while the gate is closed no candidate is evaluated.
+    /// </summary>
+    internal static TaskLiveQueue? RunnerQueueFor(string jobId, ProjectRunnerStatus project)
+    {
+        var index = project.QueuedJobIds.FindIndex(id =>
+            string.Equals(id, jobId, StringComparison.OrdinalIgnoreCase));
+        if (index < 0) return null;
+
+        var queue = new TaskLiveQueue { Kind = "runner", Position = index + 1 };
+        if (project.PickupGate is { } gate)
+            return queue with { ReasonCode = gate.Code, Reason = gate.Detail };
+        var skip = project.PickupSkips.FirstOrDefault(item =>
+            string.Equals(item.JobId, jobId, StringComparison.OrdinalIgnoreCase));
+        return skip is null ? queue : queue with { ReasonCode = skip.Code, Reason = skip.Detail };
     }
 
     /// <summary>

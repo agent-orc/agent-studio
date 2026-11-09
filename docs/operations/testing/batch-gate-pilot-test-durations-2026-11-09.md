@@ -161,6 +161,16 @@ Two candidates were measured and not adopted:
    `EngineApplierContractGuardTests` still reads
    `BatchGatePilotServiceTests.ApplierContractCases`.
 
+Merging `develop` after the measurements brought in AGT-3562's
+`BatchGatePilotServiceTests.FlightLiveness.cs`, written as a partial of the
+former sealed class. It is now the topic class
+`BatchGatePilotFlightLivenessTests` (two tests, bodies unchanged), making 23
+sealed classes. Its private helper `ConfigureOneFlightPerPair` stays in that
+class because no other class uses it. One run of the 23 classes with the
+gate's settings on the merged build (15:59, load 33.1 at start, 15.9 at end,
+mean 31.9) passed all 236 tests in 164.4 s wall time; its largest class was
+`BatchGatePilotFormationTests` at 107.5 s and the new class took 39.9 s.
+
 Options considered for the split and not taken: nested test classes (the
 shard planner does not see nested classes, so all of them would run in the
 complement shard), and one shared host for several tests (it would break test

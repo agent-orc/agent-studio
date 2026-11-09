@@ -791,6 +791,20 @@ public sealed class TaskIndexCache
     /// reference edges. Replace that card in the published board generation
     /// after publishing the core fact, without a workspace disk walk.
     /// </summary>
+    public void PublishRoutingFromFolder(string folder, Func<TaskInfo?> read)
+    {
+        lock (_corePublicationLock)
+        {
+            var info = read();
+            if (info is null)
+            {
+                Invalidate(InvalidationSource.Mutation, changedPath: Path.Combine(folder, "task.json"));
+                return;
+            }
+            PublishRoutingMutation(info);
+        }
+    }
+
     public void PublishRoutingMutation(TaskInfo info)
     {
         lock (_corePublicationLock)

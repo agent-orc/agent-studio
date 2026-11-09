@@ -87,6 +87,71 @@ public sealed class TaskRoutingMutationPerformanceTests : IDisposable
     }
 
     [Fact]
+    public async Task ConcurrentRoutingWrites_PublishTheLastDurableCardToBoardAndDetail()
+    {
+        var watchPath = Path.Combine(_root, "concurrent-project");
+        var folder = Path.Combine(watchPath, TaskStates.Ready, "routing");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"),
+            """{"id":"routing","title":"Routing","state":"2-ready","order":10,"cliType":"codex","model":"gpt-5.5","thinkingLevel":"high"}""");
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root,
+            ["WatchPaths:0:Name"] = "concurrent-project",
+            ["WatchPaths:0:Path"] = watchPath,
+            ["WatchPaths:0:RootPath"] = watchPath,
+        }).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var scans = 0;
+        var cache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config, () =>
+        {
+            Interlocked.Increment(ref scans);
+            return scanner.ScanAllJobsRaw();
+        });
+        scanner.SetIndexCache(cache);
+        var original = Assert.Single(scanner.ScanAllJobs());
+        var initialGeneration = cache.Generation;
+        var writer = new BlockingWriter();
+        var mutations = new TaskMutationService(scanner,
+            new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
+            new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
+            new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
+            NullLogger<TaskMutationService>.Instance, fileWriter: writer);
+        using var git = GitProcessTelemetry.BeginRequest("routing-concurrent-test", NullLogger.Instance);
+
+        var first = Task.Run(() => mutations.SetJobThinkingLevel("routing", "medium", watchPath));
+        try
+        {
+            Assert.True(writer.Entered.Wait(TimeSpan.FromSeconds(10)));
+            var second = Task.Run(() => mutations.SetJobCliType("routing", "claude", watchPath));
+            writer.Release.Set();
+            Assert.True(await first);
+            Assert.True(await second);
+        }
+        finally { writer.Release.Set(); }
+
+        var board = Assert.Single(scanner.ScanAllJobs());
+        var detail = cache.GetDetailFacts("routing", watchPath).Info;
+        var core = cache.GetCore("routing", watchPath).Record;
+        Assert.NotNull(detail);
+        Assert.NotNull(core);
+        Assert.Equal("claude", board.CliType);
+        Assert.Equal(board.CliType, detail.CliType);
+        Assert.Equal(board.CliType, core.CliType);
+        Assert.Equal(board.ThinkingLevel, detail.ThinkingLevel);
+        Assert.Equal(board.ThinkingLevel, core.ThinkingLevel);
+        using var persisted = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "task.json")));
+        Assert.Equal(persisted.RootElement.GetProperty("cliType").GetString(), board.CliType);
+        Assert.Equal(persisted.RootElement.GetProperty("thinkingLevel").GetString(), board.ThinkingLevel);
+        Assert.Equal(TaskGitSignature.For(original), TaskGitSignature.For(board));
+        Assert.Equal(initialGeneration + 2, cache.Generation);
+        Assert.Equal(1, scans);
+        Assert.Equal(2, writer.Replacements);
+        Assert.Equal(0, GitProcessTelemetry.CurrentTally()?.Spawns);
+    }
+
+    [Fact]
     public void CreateJob_PublishesIntoWarmBoardWithoutAnotherWorkspaceScan()
     {
         var watchPath = Path.Combine(_root, "create-project");
@@ -260,6 +325,26 @@ public sealed class TaskRoutingMutationPerformanceTests : IDisposable
         {
             Replacements++;
             _writer.ReplaceExisting(path, content);
+        }
+    }
+
+    private sealed class BlockingWriter : IAtomicJsonFileWriter
+    {
+        private readonly AtomicJsonFileWriter _writer = new();
+        private int _replacements;
+        public int Replacements => Volatile.Read(ref _replacements);
+        public ManualResetEventSlim Entered { get; } = new();
+        public ManualResetEventSlim Release { get; } = new();
+        public void Write(string path, string content) => _writer.Write(path, content);
+        public void ReplaceExisting(string path, string content)
+        {
+            _writer.ReplaceExisting(path, content);
+            if (Interlocked.Increment(ref _replacements) == 1)
+            {
+                Entered.Set();
+                if (!Release.Wait(TimeSpan.FromSeconds(10)))
+                    throw new TimeoutException("First routing write was not released");
+            }
         }
     }
 }
