@@ -27,7 +27,7 @@ import {
   BoardDragStateService,
   BoardMutationsService,
   CreateTaskFormService,
-  DeliverySectionComponent,
+  DeliverySectionComponent, BoardGroupSwitcherComponent, DELIVERY_GROUP_ID,
   buildFocusLanes,
   buildLaneGroups,
   buildProjectTokenChip,
@@ -170,7 +170,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
 @Component({
   selector: 'app-root',
   imports: [
-    DeliverySectionComponent,
+    DeliverySectionComponent, BoardGroupSwitcherComponent,
     TaskColumnComponent,
     ScrollMemoryDirective,
     TaskDetailComponent,
@@ -567,6 +567,26 @@ export class App implements OnInit, OnDestroy {
   readonly laneGroups = computed<BoardLaneGroup[]>(
     () => buildLaneGroups(this.displayGrouped(), this.boardDrag.active()),
   );
+
+  /**
+   * AGT-3590: below tablet width the studio board shows one container at a
+   * time, picked in the group switcher. `studioBoardFocus` is the container
+   * shown alone (null: all of them); on wide boards it is the container focus.
+   */
+  readonly singleGroupBoard = this.laneCollapse.singleGroupLayout;
+  readonly deliveryGroupId = DELIVERY_GROUP_ID;
+  private readonly deliverySection = viewChild(DeliverySectionComponent);
+  readonly visibleDeliveryGroup = computed(() => {
+    const section = this.deliverySection();
+    return section?.visible() ? section.group() : null;
+  });
+  readonly studioBoardFocus = computed(() => this.laneCollapse.boardFocus([
+    ...this.laneGroups().map((g) => g.id),
+    ...(this.visibleDeliveryGroup() ? [DELIVERY_GROUP_ID] : []),
+  ]));
+  selectBoardGroup(id: string): void {
+    this.laneCollapse.selectSingleGroup(id);
+  }
   // Copilot removed: no CLI exposes the inline path/token config card, so the
   // error-dialog "Open CLI config" affordance is permanently disabled.
   readonly selectedJobUsesCopilot = computed(() => false);

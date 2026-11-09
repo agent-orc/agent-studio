@@ -338,7 +338,8 @@
         "src/app/features/project-detail/components/quality-studio-panel/quality-studio-panel.component.scss",
         "src/app/features/project-detail/components/quality-studio-connection-settings/quality-studio-connection-settings.component.scss",
         "src/app/features/board/components/lane-card-window/lane-card-window.scss",
-        "src/app/features/board/components/task-column/_task-column-drop-zone.scss"
+        "src/app/features/board/components/task-column/_task-column-drop-zone.scss",
+        "src/app/features/board/components/board-group-switcher/board-group-switcher.scss"
       ],
       "rules": {
         "color-no-hex": null,
