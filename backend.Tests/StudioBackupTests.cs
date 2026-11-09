@@ -451,6 +451,8 @@ public sealed class StudioBackupTests : IDisposable
 
         Directory.CreateDirectory(Path.Combine(_fixture.Workspace, "Ready"));
         File.WriteAllText(Path.Combine(_fixture.Workspace, ".security-access.json"), "{\"users\":[]}");
+        CheckoutFileFixture.Git(_fixture.Workspace, "init", "-q", "-b", "main");
+        Commit(_fixture.Workspace, "cards");
         var sshKey = Path.Combine(_fixture.Home, ".ssh", "id_ed25519");
         Directory.CreateDirectory(Path.GetDirectoryName(sshKey)!);
         File.WriteAllText(sshKey, "fixture key");
@@ -464,9 +466,10 @@ public sealed class StudioBackupTests : IDisposable
         var record = await service.CreateAsync("test", CancellationToken.None);
         Assert.Equal("verified", (await service.VerifyAsync(null, "test", CancellationToken.None)).Outcome);
 
-        // The new host: empty data directories, the archive, the escrowed keys and the remote.
+        // The new host: the data directories setup.sh lays out, the archive, the escrowed keys and the remote.
         var host = Path.Combine(_fixture.Root, "new-host");
         var targets = new[] { "workspace", "home", "projects" }.ToDictionary(name => name, name => Path.Combine(host, name));
+        LayOutSetupDataDirectory(host);
         var archive = Path.Combine(_fixture.Root, "fetched", record.FileName);
         Directory.CreateDirectory(Path.GetDirectoryName(archive)!);
         File.Copy(_fixture.Catalog.ArchivePath(record.Id), archive);
@@ -486,6 +489,10 @@ public sealed class StudioBackupTests : IDisposable
 
         Assert.Equal("{\"users\":[]}", File.ReadAllText(Path.Combine(targets["workspace"], ".security-access.json")));
         Assert.True(Directory.Exists(Path.Combine(targets["workspace"], "Ready")));
+        // The archived workspace repository replaces the one setup.sh initialized.
+        Assert.Equal("cards", CheckoutFileFixture.Git(targets["workspace"], "log", "-1", "--format=%s").Trim());
+        Assert.Equal("1", CheckoutFileFixture.Git(targets["workspace"], "rev-list", "--all", "--count").Trim());
+        Assert.False(File.Exists(Path.Combine(targets["workspace"], ".gitignore")));
         Assert.Equal("fixture key", File.ReadAllText(Path.Combine(targets["home"], ".ssh", "id_ed25519")));
         if (!OperatingSystem.IsWindows())
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite,
@@ -507,6 +514,39 @@ public sealed class StudioBackupTests : IDisposable
         Assert.Equal(1, again);
         Assert.Contains("restore-target-not-empty", error.ToString());
         Assert.True(File.Exists(Path.Combine(targets["workspace"], ".security-access.json")));
+    }
+
+    [Theory]
+    [InlineData("extra-file")]
+    [InlineData("second-commit")]
+    [InlineData("edited-gitignore")]
+    public async Task Restore_refuses_a_setup_workspace_that_holds_more_than_the_installer_commit(string change)
+    {
+        var record = await _fixture.Service(_clock, null).CreateAsync("test", CancellationToken.None);
+        var host = Path.Combine(_fixture.Root, "new-host");
+        var workspace = LayOutSetupDataDirectory(host);
+        Assert.True(BackupRestore.IsSetupWorkspace(workspace));
+        switch (change)
+        {
+            case "extra-file":
+                File.WriteAllText(Path.Combine(workspace, "card.md"), "kept");
+                break;
+            case "second-commit":
+                Commit(workspace, "operator work");
+                break;
+            case "edited-gitignore":
+                File.AppendAllText(Path.Combine(workspace, ".gitignore"), "/drafts/\n");
+                break;
+        }
+        var error = new StringWriter();
+
+        Assert.Equal(1, StudioBackupCommand.Run(
+            ["restore", "--key", _fixture.KeyFile, "--archive", _fixture.Catalog.ArchivePath(record.Id),
+             "--target", "workspace=" + workspace, "--target", "home=" + Path.Combine(host, "home")],
+            new StringWriter(), error));
+        Assert.Contains("restore-target-not-empty", error.ToString());
+        Assert.True(File.Exists(Path.Combine(workspace, ".gitignore")));
+        Assert.True(Directory.Exists(Path.Combine(workspace, ".git")));
     }
 
     [Fact]
@@ -557,6 +597,22 @@ public sealed class StudioBackupTests : IDisposable
     [InlineData("git@github.com:org/repo.git", "git@github.com:org/repo.git")]
     public void Recorded_origins_carry_no_credentials(string url, string expected)
         => Assert.Equal(expected, BackupCheckouts.StripCredentials(url));
+
+    /// <summary>The data directories and workspace repository that setup.sh creates on a new host.</summary>
+    private static string LayOutSetupDataDirectory(string host)
+    {
+        var workspace = Path.Combine(host, "workspace");
+        Directory.CreateDirectory(workspace);
+        Directory.CreateDirectory(Path.Combine(host, "projects"));
+        Directory.CreateDirectory(Path.Combine(host, "home", ".local", "share"));
+        CheckoutFileFixture.Git(workspace, "init", "-q", "-b", "main");
+        File.WriteAllText(Path.Combine(workspace, ".gitignore"), "/.security/\n");
+        CheckoutFileFixture.Git(workspace, "add", ".gitignore");
+        CheckoutFileFixture.Git(workspace, "-c", "user.name=Studio Installer", "-c", "user.email=installer@studio.invalid",
+            "-c", "commit.gpgsign=false", "commit", "-qm", "Initialize Studio workspace");
+        File.AppendAllText(Path.Combine(workspace, ".git", "info", "exclude"), "/.security/\n");
+        return workspace;
+    }
 
     private static void Commit(string repository, string message)
     {

@@ -15,10 +15,11 @@ public sealed record BackupRestoreResult(
     IReadOnlyList<string> SkippedSources);
 
 /// <summary>
-/// Puts a backup back onto an empty host. Every destination must be empty or
-/// missing. The manifest comes first, so checkouts are cloned before any file
-/// is written; a failed clone stops the restore with nothing restored. Every
-/// file is checked against the hash list at the end of the archive; on any
+/// Puts a backup back onto an empty host. Every destination must be empty,
+/// missing, or the fresh workspace repository from <c>setup.sh</c>. The
+/// manifest comes first, so checkouts are cloned before any file is written;
+/// a failed clone stops the restore with nothing restored. Every file is
+/// checked against the hash list at the end of the archive; on any
 /// failure the destinations are emptied again, so a restore never leaves a
 /// half-restored installation behind.
 /// </summary>
@@ -30,10 +31,18 @@ public static class BackupRestore
             pair => pair.Key, pair => Path.GetFullPath(pair.Value), StringComparer.Ordinal);
         var candidates = destinations.ToList();
         if (plan.EverySourceUnder is { } stagingRoot) candidates.Add(new("staging", Path.GetFullPath(stagingRoot)));
+        var setupWorkspaces = new List<string>();
         foreach (var (name, directory) in candidates)
-            if (HoldsFiles(directory))
-                throw new BackupException("restore-target-not-empty",
-                    $"The restore target for {name} ({directory}) is not empty; restore only into an empty installation.");
+        {
+            if (!HoldsFiles(directory)) continue;
+            if (IsSetupWorkspace(directory))
+            {
+                setupWorkspaces.Add(directory);
+                continue;
+            }
+            throw new BackupException("restore-target-not-empty",
+                $"The restore target for {name} ({directory}) is not empty; restore only into an empty installation.");
+        }
 
         var skipped = new List<string>();
         var checkouts = new Dictionary<string, BackupCheckout>(StringComparer.Ordinal);
@@ -48,6 +57,8 @@ public static class BackupRestore
             var (manifest, contents) = BackupArchive.Read(archive, key,
                 onManifest: manifest =>
                 {
+                    // The key opened the archive: the archived workspace and its repository replace setup.sh's.
+                    foreach (var directory in setupWorkspaces) Empty(directory);
                     foreach (var source in manifest.Sources.Where(source => source.Present))
                         if (!destinations.ContainsKey(source.Name) && plan.EverySourceUnder is { } under)
                             destinations[source.Name] = Path.GetFullPath(Path.Combine(under, source.Name));
@@ -145,6 +156,28 @@ public static class BackupRestore
         => Directory.Exists(directory)
            && Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.AllDirectories)
                .Any(entry => !Directory.Exists(entry) || (File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0);
+
+    /// <summary>
+    /// The workspace <c>setup.sh</c> lays out for a new host: a Git repository
+    /// with at most the installer's single commit of <c>.gitignore</c>, a
+    /// clean working tree, and nothing else. It holds no installation data, so
+    /// a restore replaces it.
+    /// </summary>
+    internal static bool IsSetupWorkspace(string directory)
+    {
+        var entries = Directory.EnumerateFileSystemEntries(directory).Select(Path.GetFileName).ToArray();
+        if (!entries.All(entry => entry is ".git" or ".gitignore")) return false;
+        var git = Path.Combine(directory, ".git");
+        if (!Directory.Exists(git) || (File.GetAttributes(git) & FileAttributes.ReparsePoint) != 0) return false;
+        var commits = BackupCheckouts.Git(directory, ["rev-list", "--all", "--count"]);
+        if (!commits.Success || !int.TryParse(commits.StandardOutput.Trim(), out var count) || count > 1) return false;
+        var status = BackupCheckouts.Git(directory, ["status", "--porcelain", "--ignored"]);
+        if (!status.Success || status.StandardOutput.Trim().Length > 0) return false;
+        if (count == 0) return true;
+        var tracked = BackupCheckouts.Git(directory, ["ls-tree", "-r", "--name-only", "HEAD"]);
+        return tracked.Success
+               && tracked.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries).All(path => path == ".gitignore");
+    }
 
     private static void Empty(string directory)
     {

@@ -25,17 +25,20 @@ case "${1:-}" in
 esac
 
 # Restore only into the state setup.sh leaves: a workspace that holds just the
-# installer's single commit and no project data.
-if [ -n "$(find /data/workspace -mindepth 1 -maxdepth 1 ! -name .git -print -quit)" ]; then
+# installer's single commit of .gitignore and no project data.
+if [ -n "$(find /data/workspace -mindepth 1 -maxdepth 1 ! -name .git ! -name .gitignore -print -quit)" ]; then
   fail 'the workspace is not empty; restore needs a fresh stack from setup.sh that has not been started'
 fi
 if [ -d /data/workspace/.git ] && [ "$(git -C /data/workspace rev-list --all --count 2>/dev/null || echo 0)" -gt 1 ]; then
   fail 'the workspace repository has history; restore needs a fresh stack from setup.sh'
 fi
+if [ -e /data/workspace/.gitignore ] && [ -n "$(git -C /data/workspace status --porcelain 2>/dev/null || echo changed)" ]; then
+  fail 'the workspace has changes; restore needs a fresh stack from setup.sh'
+fi
 if [ -n "$(find /data/projects -mindepth 1 -maxdepth 1 -print -quit)" ]; then
   fail 'the projects directory is not empty; restore needs a fresh stack from setup.sh'
 fi
-rm -rf /data/workspace/.git
+rm -rf /data/workspace/.git /data/workspace/.gitignore
 
 staging=projects/.studio-restore
 # --no-overwrite-dir keeps owner and mode of the mounted roots from setup.sh.
