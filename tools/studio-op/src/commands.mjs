@@ -352,7 +352,8 @@ export const COMMANDS = {
       const view = await ctx.client.request('GET', '/api/security/posture');
       const summary = view.summary ?? {};
       const shown = (view.findings ?? []).filter(finding => !options.soon || finding.actionSoon);
-      return { data: view, text: lines(
+      // --soon narrows the findings in both outputs; the summary keeps the installation-wide counts.
+      return { data: { ...view, findings: shown, soonOnly: Boolean(options.soon) }, text: lines(
         `Security: ${summary.total ?? 0} entries (${summary.critical ?? 0} critical, ${summary.high ?? 0} high, ${summary.medium ?? 0} medium, ${summary.low ?? 0} low, ${summary.info ?? 0} info); ${summary.actionSoon ?? 0} need action soon.`,
         shown.length === 0 ? (options.soon ? 'Nothing needs action soon.' : 'No security entries.') : null,
         shown.map(finding => `#${finding.rank} ${finding.severity} ${finding.score} ${finding.area}: ${finding.title}${finding.actionSoon ? ' [action soon]' : ''}${finding.dueAt ? ` (due ${finding.dueAt})` : ''}`),

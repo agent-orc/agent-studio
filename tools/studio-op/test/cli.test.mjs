@@ -153,6 +153,15 @@ test('security lists ranked entries and narrows to what needs action soon', asyn
   const soon = await run(['security', '--soon'], { home });
   assert.equal(soon.code, 0, soon.stderr);
   assert.doesNotMatch(soon.stdout, /never expires/);
+  const allJson = await run(['security', '--json'], { home });
+  assert.equal(allJson.code, 0, allJson.stderr);
+  assert.equal(allJson.json.soonOnly, false);
+  assert.deepEqual(allJson.json.findings.map(finding => finding.rank), [1, 2]);
+  const soonJson = await run(['security', '--soon', '--json'], { home });
+  assert.equal(soonJson.code, 0, soonJson.stderr);
+  assert.equal(soonJson.json.soonOnly, true);
+  assert.deepEqual(soonJson.json.findings.map(finding => finding.id), ['second-factor:u1'], '--soon narrows the JSON findings');
+  assert.equal(soonJson.json.summary.total, 2, 'the summary keeps the installation-wide counts');
   assert.ok(studio.requests.some(request => request.method === 'GET' && request.path === '/api/security/posture'));
 });
 
