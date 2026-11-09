@@ -24,6 +24,9 @@ public static class CompletionContentEvidence
     }
 
     public static CompletionContentFacts Read(TaskInfo task, AttemptAuthorityService? authority)
+        => ReadVerdict(task, authority) with { MissingReport = ReportDeliverable.MissingRequiredReport(task) };
+
+    private static CompletionContentFacts ReadVerdict(TaskInfo task, AttemptAuthorityService? authority)
     {
         var current = BriefVersionStore.ReadCurrent(task.FolderPath);
         var required = TaskModes.IsConcept(task.Mode) ? "concept-fit" : "requirement-fit";

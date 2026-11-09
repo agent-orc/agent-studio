@@ -2385,9 +2385,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             ? null
             : _pipelineLog!.EnterAttempt(current.FolderPath, pipelineRecord.Attempt);
         var isResearch = TaskModes.Normalize(current.Mode) == TaskModes.Research;
-        var primaryReport = Path.Combine(current.FolderPath, "results", "report.html");
         var hasPrimaryResult = isResearch
-            ? HasPrimaryResearchHtml(primaryReport)
+            ? ReportDeliverable.HasResearchReport(current.FolderPath)
             : HasResultsArtifacts(current.FolderPath);
         var failedSummary = pipelineRecord?.Steps.FirstOrDefault(step =>
             step.StepId == PipelineCatalogue.SummaryAssessmentStepId
@@ -2423,7 +2422,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var priorReissues = CountPriorReissues(workspace, entry.Name, current.Id);
             var maxReissues = ConfiguredMaxReissues(entry.Name);
             var requiredArtifact = isResearch
-                ? "a valid HTML document at results/report.html"
+                ? ReportDeliverable.ResearchRequirement
                 : "a primary artifact under results/";
             var gate = new CompletionGate.Decision
             {
@@ -2468,21 +2467,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             new OrchestratorDecisionVerdict(OrchestratorDecisionAction.AcceptAsDone, reason),
             cliBinary);
         _statusSnapshot.RecordAccept();
-    }
-
-    private static bool HasPrimaryResearchHtml(string path)
-    {
-        if (!File.Exists(path)) return false;
-        try
-        {
-            var content = File.ReadAllText(path);
-            return content.Contains("<html", StringComparison.OrdinalIgnoreCase)
-                && content.Contains("</html>", StringComparison.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     private async Task ProcessDoneAsync(

@@ -2763,7 +2763,10 @@ operator changes cause the step to fail before its writer runs.
   the run attempt and brief it reviewed (`content-review-context.json`), so a
   verdict for an older run never counts. Human review receives the report
   whatever the verdict; completion refuses anything but `pass` unless the
-  operator overrides with a written reason. A card whose run finished without
+  operator overrides with a written reason. A research card completes only
+  while `results/report.html` is a complete HTML document (`ReportDeliverable`):
+  without it the review does not run, Review results is refused, and completion
+  is refused even with an override or an earlier `pass`. A card whose run finished without
   the verdict lists the step in `onDemand.runnableStepIds` of
   `GET /api/tasks/{id}/pipeline`; the Review results action
   (`POST /api/tasks/{id}/review-results`) runs only that step for a card in

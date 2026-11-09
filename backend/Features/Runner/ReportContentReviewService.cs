@@ -80,6 +80,8 @@ public sealed class ReportContentReviewService
             return "Review results applies to planning and research cards.";
         if (task.State is not (TaskStates.HumanReview or TaskStates.Escalated))
             return $"Review results runs on a card in {TaskStates.HumanReview} or {TaskStates.Escalated}, not {task.State}.";
+        if (ReportDeliverable.MissingRequiredReport(task) is { } report)
+            return $"The card has no required report: {report}. Review results reviews a delivered report and never completes a card without it.";
         if (!ResultsInventory.HasActiveArtifacts(task.FolderPath))
             return "The card has no delivered result under results/.";
         if (!IsMissing(task))
@@ -120,6 +122,8 @@ public sealed class ReportContentReviewService
     {
         if (!TaskModes.IsReportOnly(task.Mode))
             return new(false, null, "Only planning and research cards have a report review.");
+        if (ReportDeliverable.MissingRequiredReport(task) is { } missing)
+            return new(false, null, $"The required report is missing: {missing}.");
 
         var settings = PipelineTypeSettings.ForTask(_projectSettings?.Get(project), task);
         var step = PipelineCatalogue.ReadOnly.Post.Single(item => item.Id == PipelineCatalogue.RequirementFitStepId);
@@ -198,7 +202,7 @@ public sealed class ReportContentReviewService
     internal static string RenderEvidence(string folder)
     {
         var inventory = ResultsInventory.RenderForReview(folder);
-        var reportPath = Path.Combine(folder, "results", "report.html");
+        var reportPath = ReportDeliverable.ResearchReportFile(folder);
         if (!File.Exists(reportPath)) return inventory;
         string text;
         try

@@ -141,6 +141,53 @@ public sealed class ReportContentReviewTests : IDisposable
         Assert.Empty(_calls);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("# Lease renewal\n\nFindings in Markdown, not the HTML report.\n")]
+    public async Task Review_results_refuses_a_research_card_without_its_report(string? report)
+    {
+        var (task, _) = RemoteResearchCard();
+        var path = Path.Combine(task.FolderPath, "results", "report.html");
+        File.Delete(path);
+        if (report is not null) File.WriteAllText(path, report);
+        File.WriteAllText(Path.Combine(task.FolderPath, "results", "notes.md"), "Draft notes.");
+        var service = Service("pass");
+
+        var late = await service.RunLateAsync(task, "PROJ-FIXTURE", CancellationToken.None);
+        var pipeline = await service.RunAsync(task, "PROJ-FIXTURE", CancellationToken.None);
+
+        Assert.False(late.Ran);
+        Assert.Contains("no required report: a valid HTML document at results/report.html", late.Reason);
+        Assert.False(pipeline.Ran);
+        Assert.Empty(_calls);
+        var decision = CompletionContentPolicy.Decide(CompletionContentEvidence.Read(task, _authority));
+        Assert.False(decision.Accepted);
+        Assert.Contains("the required report is missing", decision.Message);
+    }
+
+    [Fact]
+    public async Task Pass_verdict_does_not_complete_a_research_card_whose_report_is_gone()
+    {
+        var (task, _) = RemoteResearchCard();
+        await Service("pass").RunLateAsync(task, "PROJ-FIXTURE", CancellationToken.None);
+        File.Delete(Path.Combine(task.FolderPath, "results", "report.html"));
+
+        var facts = CompletionContentEvidence.Read(task, _authority);
+        var decision = CompletionContentPolicy.Decide(facts);
+        var overridden = CompletionContentPolicy.Decide(facts with
+        {
+            OperatorOverride = true,
+            OverrideReason = "Operator accepts the research findings.",
+        });
+
+        Assert.Equal("pass", facts.ContentStatus);
+        Assert.Equal(ReportDeliverable.ResearchRequirement, facts.MissingReport);
+        Assert.False(decision.Accepted);
+        Assert.Contains("the required report is missing (a valid HTML document at results/report.html)", decision.Message);
+        Assert.False(overridden.Accepted);
+        Assert.Contains("An override cannot replace the missing report.", overridden.Message);
+    }
+
     [Fact]
     public void Report_text_drops_markup_scripts_and_styles()
     {

@@ -226,6 +226,63 @@ public sealed class TaskPipelineEndpointTests : IDisposable
     [Fact]
     public async Task ReviewResults_RunsOnlyTheMissingReportReview()
     {
+        var job = WriteResearchCardWithoutReview(withReport: true);
+        var aspectCalls = new List<string>();
+        await using var factory = ReviewResultsFactory(aspectCalls);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var query = $"?watchPath={Uri.EscapeDataString(_watchPath)}";
+
+        Assert.Equal([PipelineCatalogue.RequirementFitStepId], await RunnableSteps(client, query));
+        var refused = await client.PostAsync(
+            $"/api/tasks/pipeline-capabilities/review-results{query}", JsonContent.Create(new { }));
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, refused.StatusCode);
+
+        var response = await client.PostAsync(
+            $"/api/tasks/research-without-review/review-results{query}", JsonContent.Create(new { }));
+
+        response.EnsureSuccessStatusCode();
+        using var body = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        Assert.True(body.RootElement.GetProperty("ran").GetBoolean());
+        Assert.Equal("pass", body.RootElement.GetProperty("status").GetString());
+        Assert.Equal(["requirement-fit"], aspectCalls);
+        Assert.True(Directory.Exists(job));
+        Assert.Empty(await RunnableSteps(client, query));
+        var again = await client.PostAsync(
+            $"/api/tasks/research-without-review/review-results{query}", JsonContent.Create(new { }));
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, again.StatusCode);
+        Assert.Single(aspectCalls);
+    }
+
+    /// <summary>
+    /// AGT-3565 review: a research card that delivered other files but not its
+    /// report is not offered Review results, and the route refuses it, so a
+    /// late pass verdict can never back the completion of a card without its
+    /// report.
+    /// </summary>
+    [Fact]
+    public async Task ReviewResults_RefusesAResearchCardWithoutItsReport()
+    {
+        WriteResearchCardWithoutReview(withReport: false);
+        var aspectCalls = new List<string>();
+        await using var factory = ReviewResultsFactory(aspectCalls);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var query = $"?watchPath={Uri.EscapeDataString(_watchPath)}";
+
+        Assert.Empty(await RunnableSteps(client, query));
+        var refused = await client.PostAsync(
+            $"/api/tasks/research-without-review/review-results{query}", JsonContent.Create(new { }));
+
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, refused.StatusCode);
+        using var body = await JsonDocument.ParseAsync(await refused.Content.ReadAsStreamAsync());
+        Assert.Contains("a valid HTML document at results/report.html",
+            body.RootElement.GetProperty("error").GetString());
+        Assert.Empty(aspectCalls);
+    }
+
+    private string WriteResearchCardWithoutReview(bool withReport)
+    {
         var job = Path.Combine(_watchPath, TaskStates.HumanReview, "research-without-review");
         Directory.CreateDirectory(Path.Combine(job, "results"));
         File.WriteAllText(Path.Combine(job, "task.json"), JsonSerializer.Serialize(new
@@ -238,12 +295,18 @@ public sealed class TaskPipelineEndpointTests : IDisposable
             mode = TaskModes.Research,
         }));
         File.WriteAllText(Path.Combine(job, "prompt.md"), "# Research\n\nName the renewal interval.\n");
-        File.WriteAllText(Path.Combine(job, "results", "report.html"),
-            "<html><body><p>The renewal interval is 30 seconds.</p></body></html>");
+        if (withReport)
+            File.WriteAllText(Path.Combine(job, "results", "report.html"),
+                "<html><body><p>The renewal interval is 30 seconds.</p></body></html>");
+        else
+            File.WriteAllText(Path.Combine(job, "results", "notes.md"), "Draft notes without the report.\n");
         BriefVersionStore.ReadOrCreate(job);
         CompletionContentEvidence.StampLocalRun(job);
-        var aspectCalls = new List<string>();
-        await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        return job;
+    }
+
+    private WebApplicationFactory<Program> ReviewResultsFactory(List<string> aspectCalls)
+        => new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
@@ -271,30 +334,6 @@ public sealed class TaskPipelineEndpointTests : IDisposable
                 return aspects;
             }));
         });
-        using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-        var query = $"?watchPath={Uri.EscapeDataString(_watchPath)}";
-
-        Assert.Equal([PipelineCatalogue.RequirementFitStepId], await RunnableSteps(client, query));
-        var refused = await client.PostAsync(
-            $"/api/tasks/pipeline-capabilities/review-results{query}", JsonContent.Create(new { }));
-        Assert.Equal(System.Net.HttpStatusCode.Conflict, refused.StatusCode);
-
-        var response = await client.PostAsync(
-            $"/api/tasks/research-without-review/review-results{query}", JsonContent.Create(new { }));
-
-        response.EnsureSuccessStatusCode();
-        using var body = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
-        Assert.True(body.RootElement.GetProperty("ran").GetBoolean());
-        Assert.Equal("pass", body.RootElement.GetProperty("status").GetString());
-        Assert.Equal(["requirement-fit"], aspectCalls);
-        Assert.True(Directory.Exists(job));
-        Assert.Empty(await RunnableSteps(client, query));
-        var again = await client.PostAsync(
-            $"/api/tasks/research-without-review/review-results{query}", JsonContent.Create(new { }));
-        Assert.Equal(System.Net.HttpStatusCode.Conflict, again.StatusCode);
-        Assert.Single(aspectCalls);
-    }
 
     private static async Task<string[]> RunnableSteps(HttpClient client, string query)
     {

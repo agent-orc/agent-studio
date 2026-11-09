@@ -15,7 +15,8 @@ public sealed record CompletionContentFacts(
     string? ContentSummary = null,
     string? EvidenceChecked = null,
     string? Missing = null,
-    CompletionSettlementProblem? Settlement = null);
+    CompletionSettlementProblem? Settlement = null,
+    string? MissingReport = null);
 
 /// <summary>
 /// Why no settled remote review report backs the content check (AGT-3467):
@@ -85,8 +86,17 @@ public static class CompletionContentPolicy
         else if (!Same(facts.ReviewBriefVersion, facts.CurrentBriefVersion))
             gaps.Add($"content verdict was for brief {Label(facts.ReviewBriefVersion)}, current {Label(facts.CurrentBriefVersion)}");
 
+        // AGT-3565: a research card delivers its report. A verdict, also a
+        // pass, never stands in for it, and neither does an operator override.
+        if (facts.MissingReport is { } report)
+            gaps.Insert(0, $"the required report is missing ({report})");
+
         if (gaps.Count == 0) return new(true, false, "Content review passed for the current brief.");
         var message = "Completion refused: " + string.Join("; ", gaps) + ".";
+        if (facts.MissingReport is not null)
+            return new(false, false, facts.OperatorOverride
+                ? message + " An override cannot replace the missing report."
+                : message);
         if (!facts.OperatorOverride) return new(false, false, message);
         if (!CompletionContractPolicy.IsUsableReason(facts.OverrideReason?.Trim()))
             return new(false, false, message + " An override needs a written reason of at least 8 characters.");
