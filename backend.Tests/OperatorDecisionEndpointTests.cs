@@ -66,6 +66,9 @@ public sealed class OperatorDecisionEndpointTests : IDisposable
             "claude", Now(factory), Now(factory).AddHours(1), "rate limited", true));
         using var alpha = BearerClient(factory, Token(factory, "alpha reader", StudioRoles.Viewer, "alpha"));
         using var owner = Client(factory, Login(factory));
+        // The hosted loop's startup read can predate the provider limit and
+        // stays fresh for one sweep interval; a sweep reads the sources again.
+        await Sweep(factory);
 
         var all = await Attention(owner);
         var scoped = await Attention(alpha);
