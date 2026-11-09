@@ -1,0 +1,253 @@
+{
+  "schemaVersion": 1,
+  "id": "luhmann-systems-theory",
+  "title": "Agent Studio read through Niklas Luhmann",
+  "summary": "A long-form theory Dossier that reads every major part of Agent Studio through Niklas Luhmann's systems theory: the system of recorded decisions and its environment, meaning and reduction, first- and second-order observation with blind spots and re-entry, expectations and double contingency, structural coupling and the person form, codes and programmes, organisation and decision (premises, positions, uncertainty absorption, membership), formal and informal organisation and useful illegality, tokens and attention, trust, risk and danger, the magazine as the system's mass media against the news selectors, self-description, memory and forgetting, and Dossiers and the Wiki as a slip box. It separates theory, reading and limit, rates each analogy, adds a glossary with German terms, four diagrams and light and dark captures of the board, a review verdict and the Wiki, and derives fifteen design principles carried by existing persona and operator cards plus nine draft slices (LS-1 to LS-9) across eight decisions.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-11-09T14:00:00Z",
+  "sourceTaskKeys": [
+    "AGT-3606"
+  ],
+  "relatedTaskKeys": [
+    "AGT-3573",
+    "AGT-3462",
+    "AGT-3020",
+    "AGT-3353",
+    "AGT-3459",
+    "AGT-3177",
+    "AGT-3487",
+    "AGT-3488",
+    "AGT-3594",
+    "AGT-3595",
+    "AGT-3596",
+    "AGT-3597",
+    "AGT-3598",
+    "AGT-3599",
+    "AGT-3600",
+    "AGT-3601",
+    "AGT-3602",
+    "AGT-3603",
+    "AGT-3604",
+    "AGT-3605"
+  ],
+  "tags": [
+    "theory",
+    "luhmann",
+    "organisation",
+    "observation",
+    "personas",
+    "magazine",
+    "trust",
+    "risk",
+    "memory",
+    "wiki"
+  ],
+  "openDecisions": [
+    {
+      "id": "LT-D1",
+      "question": "What status the theory reading has",
+      "recommendation": "B: a lens with fifteen principles carried by cards; product vocabulary unchanged.",
+      "rejectedOption": "Essay only; theory vocabulary in product."
+    },
+    {
+      "id": "LT-D2",
+      "question": "Codes, coverage and programmes in review",
+      "recommendation": "B: coverage beside every verdict, no pass with missing required material, programme revision on verdicts, codes unchanged, inventory.",
+      "rejectedOption": "Keep as is; a fourth verdict value."
+    },
+    {
+      "id": "LT-D3",
+      "question": "Observing observers and reopening absorbed uncertainty",
+      "recommendation": "B: cross-observer misses in the scout and a capped weekly re-review sample of accepted cards.",
+      "rejectedOption": "Per-persona misses only; full re-review with raw evidence."
+    },
+    {
+      "id": "LT-D4",
+      "question": "Magazine, persistent dangers and the owner's attention",
+      "recommendation": "C: PT-8 plus still-open register, two reserved slots, weekly attention allowance of five decision requests, risk line on protection requests.",
+      "rejectedOption": "Newest first; PT-8 unchanged."
+    },
+    {
+      "id": "LT-D5",
+      "question": "Formalising informal practice",
+      "recommendation": "C: safety rules at once, owner-held recorded deviation, monthly operator-log review that proposes rules.",
+      "rejectedOption": "Formalise everything now; leave informal."
+    },
+    {
+      "id": "LT-D6",
+      "question": "Forgetting",
+      "recommendation": "C: one retention and forgetting inventory with a guard test.",
+      "rejectedOption": "Keep everything; per-feature rules only."
+    },
+    {
+      "id": "LT-D7",
+      "question": "The knowledge base as a slip box",
+      "recommendation": "B: 'Linked from' lists for Wiki pages and Dossiers from a backlink index.",
+      "rejectedOption": "Folder tree only; atomic notes migration."
+    },
+    {
+      "id": "LT-D8",
+      "question": "Model changes as personnel changes",
+      "recommendation": "B: persona records split by resolved model route with personnel-change history.",
+      "rejectedOption": "Leave model changes implicit."
+    }
+  ],
+  "implementationTasks": [
+    {
+      "id": "LS-1",
+      "title": "LS-1 · Coverage beside every review aspect verdict",
+      "section": "cards",
+      "decisionId": "LT-D2",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LS-1",
+        "criteria": [
+          "An aspect whose required material is missing never yields pass, proven by one test per aspect",
+          "Every new aspect verdict record carries observed and missing material",
+          "AspectStatus keeps exactly pass, concerns and block, and lane decisions for complete material are unchanged in existing tests",
+          "The review view shows the coverage line in light and dark captures"
+        ]
+      },
+      "promptMarkdown": "# Coverage beside every review aspect verdict\n\nSource: docs/luhmann-systems-theory/index.html (AGT-3606), decision LT-D2, principle P4. Read that Dossier's sections Observation, Codes, Alternatives LT-D2, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/system/domains/review.md and docs/system/domains/pipeline.md (review/aspect evidence contract). Use the Dossier's recommended option unless a recorded owner decision selects another, and record in results/status.md which option you implemented. Persona slice keys (PT-n) map to AGT-3594 to AGT-3605 by assumption; confirm against card titles before depending on them.\n\nDependencies: none.\n\nEntry points: backend/Features/Runner/AspectVerdict.cs, backend/Features/Runner/ReviewDecisionOrchestrator.cs, the aspect runners for requirement-fit / concept-fit, code-quality, documentation-impact, tests-and-evidence and visual-review, the review evidence view in the frontend task detail (Code Reviews tab).\n\n## Deliver\n1. Declare per aspect the material it requires (for example branch diff, results inventory, screenshots for visual changes) in one versioned policy next to the aspect configuration.\n2. Record on every aspect verdict a coverage object: observed material and missing required material.\n3. When required material is missing, never settle `pass`: use the existing `Inconclusive` path where that settlement supports it, otherwise `concerns` with the typed reason `not-observed:<material>`. Do not add a value to `AspectStatus`.\n4. Show a one-line coverage statement beside the verdict chip in the review view.\n\n## Out of scope\nNew verdict values; changes to round budgets or lane rules; re-running historic reviews.\n\n## Acceptance\n- An aspect whose required material is missing never yields pass, proven by one test per aspect\n- Every new aspect verdict record carries observed and missing material\n- AspectStatus keeps exactly pass, concerns and block, and lane decisions for complete material are unchanged in existing tests\n- The review view shows the coverage line in light and dark captures\n\nUse the central design tokens and shared components for any UI; capture light and dark Playwright screenshots into the task results for every visible change. Keep repository text in English and without em dashes. When adding a document under docs/, add one row to docs/start/README.md."
+    },
+    {
+      "id": "LS-2",
+      "title": "LS-2 · Codes and programmes inventory with programme revision on verdicts",
+      "section": "cards",
+      "decisionId": "LT-D2",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LS-2",
+        "criteria": [
+          "The inventory lists every code-bearing step named in the Dossier and every lane in TaskStates.All as normative or cognitive",
+          "Every new aspect verdict records its programme revision",
+          "The guard test fails on an added verdict value without an inventory row and passes on the current code",
+          "docs/start/README.md has one row for the new contract page"
+        ]
+      },
+      "promptMarkdown": "# Codes and programmes inventory with programme revision on verdicts\n\nSource: docs/luhmann-systems-theory/index.html (AGT-3606), decision LT-D2, principle P3. Read that Dossier's sections Expectations, Codes, Organisation, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/system/contracts/runtime-prompts.md and docs/system/contracts/orchestration-decisions.md. Use the Dossier's recommended option unless a recorded owner decision selects another, and record in results/status.md which option you implemented. Persona slice keys (PT-n) map to AGT-3594 to AGT-3605 by assumption; confirm against card titles before depending on them.\n\nDependencies: none.\n\nEntry points: backend/Features/Runner/AspectVerdict.cs, contracts/TaskServer.Contracts/TaskStates.cs, the runtime prompt registry, backend/Features/Pipeline/BatchGate/, docs/system/contracts/.\n\n## Deliver\n1. Add docs/system/contracts/codes-and-programmes.md: every code-bearing step (aspect verdicts, batch gate, quota status, acceptance rail, importance floors once built) with its values, the programmes that assign them, and whether its receipts record the programme revision; and every lane expectation marked normative (with its disappointment signal, for example progress.idle-with-ready) or cognitive (with its learning path).\n2. If aspect verdict records do not yet carry the runtime prompt revision or digest that produced them, add it.\n3. Add a guard test that fails when AspectStatus or the batch gate result gains a value that has no row in the inventory.\n\n## Out of scope\nChanging any code or programme; UI work.\n\n## Acceptance\n- The inventory lists every code-bearing step named in the Dossier and every lane in TaskStates.All as normative or cognitive\n- Every new aspect verdict records its programme revision\n- The guard test fails on an added verdict value without an inventory row and passes on the current code\n- docs/start/README.md has one row for the new contract page\n\nUse the central design tokens and shared components for any UI; capture light and dark Playwright screenshots into the task results for every visible change. Keep repository text in English and without em dashes. When adding a document under docs/, add one row to docs/start/README.md."
+    },
+    {
+      "id": "LS-3",
+      "title": "LS-3 · Cross-observer misses in the improvement scout",
+      "section": "cards",
+      "decisionId": "LT-D3",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LS-3",
+        "criteria": [
+          "Each attributed incident names a holding observer and a first finder, or states that attribution is unknown",
+          "A fixture with a reopened completed card yields one requirement-fit miss",
+          "Rates hide below five decided incidents, as in the persona sheet",
+          "No observer setting changes because of the signal"
+        ]
+      },
+      "promptMarkdown": "# Cross-observer misses in the improvement scout\n\nSource: docs/luhmann-systems-theory/index.html (AGT-3606), decision LT-D3, principle P5. Read that Dossier's sections Observation, Codes (persona distinctions), Alternatives LT-D3, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/orchestrator-improvement-scout/index.html (AGT-3020) and docs/persona-team/index.html (AGT-3573, Evaluation). Use the Dossier's recommended option unless a recorded owner decision selects another, and record in results/status.md which option you implemented. Persona slice keys (PT-n) map to AGT-3594 to AGT-3605 by assumption; confirm against card titles before depending on them.\n\nDependencies: PT-11 (AGT-3604, assumed) and scout slice IS-S5.\n\nEntry points: The scout signal catalogue and aggregate builders, the persona evaluation (misses) from PT-11, review aspect receipts, lane transition records.\n\n## Deliver\n1. Add a weekly scout signal 'found first elsewhere': for escalations, red batches, Critical persona items and cards reopened after completion, name the observer whose scope held the incident and the observer that raised it first. Review aspects count as observers (a completed card reopened for a defect its requirement-fit passed is a requirement-fit miss).\n2. Aggregate misses per observer with denominators over 14 and 90 days.\n3. Add an optional `outsideDistinction` list to persona charters that the report coverage repeats.\n\n## Out of scope\nChanging review policy or persona scopes automatically; per-persona misses already delivered by PT-11.\n\n## Acceptance\n- Each attributed incident names a holding observer and a first finder, or states that attribution is unknown\n- A fixture with a reopened completed card yields one requirement-fit miss\n- Rates hide below five decided incidents, as in the persona sheet\n- No observer setting changes because of the signal\n\nUse the central design tokens and shared components for any UI; capture light and dark Playwright screenshots into the task results for every visible change. Keep repository text in English and without em dashes. When adding a document under docs/, add one row to docs/start/README.md."
+    },
+    {
+      "id": "LS-4",
+      "title": "LS-4 · Sampled re-review of accepted cards",
+      "section": "cards",
+      "decisionId": "LT-D3",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LS-4",
+        "criteria": [
+          "The sample respects both caps and is reproducible from its seed",
+          "A disagreement produces exactly one finding linking both verdicts and the accepted tree",
+          "No lane changes because of the sample, proven by a test",
+          "Exhausting the token cap writes a no-call receipt instead of a review"
+        ]
+      },
+      "promptMarkdown": "# Sampled re-review of accepted cards\n\nSource: docs/luhmann-systems-theory/index.html (AGT-3606), decision LT-D3, principle P7. Read that Dossier's sections Organisation (uncertainty absorption), Alternatives LT-D3, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/system/domains/review.md and docs/orchestrator-improvement-scout/index.html. Use the Dossier's recommended option unless a recorded owner decision selects another, and record in results/status.md which option you implemented. Persona slice keys (PT-n) map to AGT-3594 to AGT-3605 by assumption; confirm against card titles before depending on them.\n\nDependencies: scout slice IS-S3 (proposal lifecycle).\n\nEntry points: The Watcher sweep (backend/Features/Watcher/WatcherHostedService.cs), central model selection, the requirement-fit / concept-fit aspect runner, the scout proposal path.\n\n## Deliver\n1. Each week select, with a recorded seed, up to two cards per project and at most six per workspace that were accepted 14 days earlier.\n2. Run a fresh requirement-fit (or concept-fit) review through central model selection on the accepted tree, capped at 60,000 tokens per workspace-week, counted inside the persona pool when it exists and otherwise inside the Watcher contingent.\n3. A disagreement with the original verdict becomes a finding with both verdicts linked; agreement is recorded. Publish the weekly agreement rate with its denominator.\n\n## Out of scope\nMoving, reopening or reverting any card; re-reviewing every card.\n\n## Acceptance\n- The sample respects both caps and is reproducible from its seed\n- A disagreement produces exactly one finding linking both verdicts and the accepted tree\n- No lane changes because of the sample, proven by a test\n- Exhausting the token cap writes a no-call receipt instead of a review\n\nUse the central design tokens and shared components for any UI; capture light and dark Playwright screenshots into the task results for every visible change. Keep repository text in English and without em dashes. When adding a document under docs/, add one row to docs/start/README.md."
+    },
+    {
+      "id": "LS-5",
+      "title": "LS-5 · Still-open register, reserved slots and attention allowance in the magazine",
+      "section": "cards",
+      "decisionId": "LT-D4",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LS-5",
+        "criteria": [
+          "Replaying a backup gap open for 21 days keeps it on the front page with its age in every issue",
+          "Section counts, register count and strap still reconcile (sum of visible children)",
+          "Decision requests beyond the allowance appear below the box in importance order",
+          "Protection decision requests show the risk line; light and dark captures saved"
+        ]
+      },
+      "promptMarkdown": "# Still-open register, reserved slots and attention allowance in the magazine\n\nSource: docs/luhmann-systems-theory/index.html (AGT-3606), decision LT-D4, principle P10, P12, P13. Read that Dossier's sections Tokens budgets and attention, Risk and danger, The magazine as mass media, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/persona-team/index.html (Magazine, Importance numbers). Use the Dossier's recommended option unless a recorded owner decision selects another, and record in results/status.md which option you implemented. Persona slice keys (PT-n) map to AGT-3594 to AGT-3605 by assumption; confirm against card titles before depending on them.\n\nDependencies: PT-8 (AGT-3601, assumed).\n\nEntry points: The magazine composer and viewer from PT-8, the persona item store and importance service from PT-4.\n\n## Deliver\n1. Add a 'Still open' register to each issue: every open item of importance 40 or more open longer than 14 days, ordered by age, with age in days.\n2. Reserve up to two front-page side-story slots for items of 70 or more open longer than 14 days; Critical items keep their existing guarantee.\n3. Add a weekly attention allowance (default 5, owner setting) for the decisions-needed box; further decision requests list below it by importance and count toward the colophon.\n4. Every decision request whose subject is missing protection (a floor fact) carries a line stating what stays at risk without an answer.\n\n## Out of scope\nChanging the importance formula or floors; new personas.\n\n## Acceptance\n- Replaying a backup gap open for 21 days keeps it on the front page with its age in every issue\n- Section counts, register count and strap still reconcile (sum of visible children)\n- Decision requests beyond the allowance appear below the box in importance order\n- Protection decision requests show the risk line; light and dark captures saved\n\nUse the central design tokens and shared components for any UI; capture light and dark Playwright screenshots into the task results for every visible change. Keep repository text in English and without em dashes. When adding a document under docs/, add one row to docs/start/README.md."
+    },
+    {
+      "id": "LS-6",
+      "title": "LS-6 · Monthly informal practice review from the operator log",
+      "section": "cards",
+      "decisionId": "LT-D5",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LS-6",
+        "criteria": [
+          "The report lists every take-over, override and break-glass window of the month with links",
+          "A fixture with three similar 'did' entries yields one proposal; two yield none",
+          "Duplicate proposals for the same pattern append evidence instead of creating a second",
+          "No setting, rule or grant changes because of the report"
+        ]
+      },
+      "promptMarkdown": "# Monthly informal practice review from the operator log\n\nSource: docs/luhmann-systems-theory/index.html (AGT-3606), decision LT-D5, principle P9. Read that Dossier's sections Formal and informal organisation, Alternatives LT-D5, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/operator-agent-level/index.html and docs/operations/operator-api.md (operator log). Use the Dossier's recommended option unless a recorded owner decision selects another, and record in results/status.md which option you implemented. Persona slice keys (PT-n) map to AGT-3594 to AGT-3605 by assumption; confirm against card titles before depending on them.\n\nDependencies: OP-7 (AGT-3487, delivered) and scout slice IS-S2 (attributed append API).\n\nEntry points: GET /api/operator/log, the control plane audit (take-overs, T2 overrides, break-glass windows), the scout append path.\n\n## Deliver\n1. Once a month build a report: recurring operator-log patterns (the same kind and normalised action on the same target class three or more times in 30 days), watcher take-overs, T2 overrides and break-glass windows, each with counts and links.\n2. For each recurring pattern, draft at most one proposal into the operator-agent-level Dossier through the attributed append path, stating the rule it would formalise and where it would be enforced (server, CLI or skill).\n3. Nothing is formalised automatically.\n\n## Out of scope\nChanging operator rules; reading CLI session transcripts.\n\n## Acceptance\n- The report lists every take-over, override and break-glass window of the month with links\n- A fixture with three similar 'did' entries yields one proposal; two yield none\n- Duplicate proposals for the same pattern append evidence instead of creating a second\n- No setting, rule or grant changes because of the report\n\nUse the central design tokens and shared components for any UI; capture light and dark Playwright screenshots into the task results for every visible change. Keep repository text in English and without em dashes. When adding a document under docs/, add one row to docs/start/README.md."
+    },
+    {
+      "id": "LS-7",
+      "title": "LS-7 · Retention and forgetting inventory with a guard",
+      "section": "cards",
+      "decisionId": "LT-D6",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LS-7",
+        "criteria": [
+          "Every matching configuration key on develop has a row",
+          "The guard fails on a new matching key without a row and passes on the current code",
+          "Each row names a code location that exists",
+          "docs/start/README.md has one row for the page"
+        ]
+      },
+      "promptMarkdown": "# Retention and forgetting inventory with a guard\n\nSource: docs/luhmann-systems-theory/index.html (AGT-3606), decision LT-D6, principle P14. Read that Dossier's sections Time, memory and forgetting, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/system/contracts/README.md and docs/operations/operator-api.md. Use the Dossier's recommended option unless a recorded owner decision selects another, and record in results/status.md which option you implemented. Persona slice keys (PT-n) map to AGT-3594 to AGT-3605 by assumption; confirm against card titles before depending on them.\n\nDependencies: none.\n\nEntry points: appsettings*.json, Options classes under backend/Features/, the operator decision log retention, persona and scout decay rules once built, docs/system/contracts/.\n\n## Deliver\n1. Add docs/system/contracts/retention-and-forgetting.md listing every retention, decay, expiry and closure rule: what is forgotten, the rule, the default, the owner setting if any, and the code location.\n2. Add a guard test that scans configuration keys and Options properties whose names contain Retention, HalfLife, Ttl or ExpiryDays and fails when one has no row.\n3. Add one row to docs/start/README.md.\n\n## Out of scope\nChanging any retention value.\n\n## Acceptance\n- Every matching configuration key on develop has a row\n- The guard fails on a new matching key without a row and passes on the current code\n- Each row names a code location that exists\n- docs/start/README.md has one row for the page\n\nUse the central design tokens and shared components for any UI; capture light and dark Playwright screenshots into the task results for every visible change. Keep repository text in English and without em dashes. When adding a document under docs/, add one row to docs/start/README.md."
+    },
+    {
+      "id": "LS-8",
+      "title": "LS-8 · 'Linked from' lists for Wiki pages and Dossiers",
+      "section": "cards",
+      "decisionId": "LT-D7",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LS-8",
+        "criteria": [
+          "A test proves the backlink index is the exact inverse of the outgoing-link extraction on the pinned demo docs",
+          "The index refreshes when the tree revision changes",
+          "The Wiki rail and the Dossier header show incoming links in light and dark captures",
+          "Pages without incoming links show a quiet empty state, not an error"
+        ]
+      },
+      "promptMarkdown": "# 'Linked from' lists for Wiki pages and Dossiers\n\nSource: docs/luhmann-systems-theory/index.html (AGT-3606), decision LT-D7, principle P15. Read that Dossier's sections The slip box, then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/system/contracts/wiki-tree.md and docs/system/domains/frontend.md. Use the Dossier's recommended option unless a recorded owner decision selects another, and record in results/status.md which option you implemented. Persona slice keys (PT-n) map to AGT-3594 to AGT-3605 by assumption; confirm against card titles before depending on them.\n\nDependencies: none.\n\nEntry points: frontend/src/app/features/project-detail/components/project-wiki-section/wiki-linked-elements/ (extractWikiLinkedElements), backend/Features/Docs/ProjectDocsEndpoints.cs, the Dossier header in workbench-viewer.\n\n## Deliver\n1. Build a server-side backlink index per project from the same link kinds the Wiki already extracts (doc, anchor, task), cached by tree revision, exposed as GET /api/projects/{projectName}/wiki/backlinks?page=<relative-path>.\n2. Show a 'Linked from' list under 'Linked elements' in the Wiki context rail, and an incoming-link count with the list in the Dossier header.\n3. Document the route in wiki-tree.md.\n\n## Out of scope\nChanging the folder tree, page ordering or link syntax; semantic suggestions.\n\n## Acceptance\n- A test proves the backlink index is the exact inverse of the outgoing-link extraction on the pinned demo docs\n- The index refreshes when the tree revision changes\n- The Wiki rail and the Dossier header show incoming links in light and dark captures\n- Pages without incoming links show a quiet empty state, not an error\n\nUse the central design tokens and shared components for any UI; capture light and dark Playwright screenshots into the task results for every visible change. Keep repository text in English and without em dashes. When adding a document under docs/, add one row to docs/start/README.md."
+    },
+    {
+      "id": "LS-9",
+      "title": "LS-9 · Persona records split by resolved model route",
+      "section": "cards",
+      "decisionId": "LT-D8",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "LS-9",
+        "criteria": [
+          "Every occurrence receipt carries the resolved route",
+          "Stats split by revision and model, with denominators, and hide below five decided items",
+          "A model change writes exactly one personnel-change entry",
+          "The sheet shows before and after in light and dark captures"
+        ]
+      },
+      "promptMarkdown": "# Persona records split by resolved model route\n\nSource: docs/luhmann-systems-theory/index.html (AGT-3606), decision LT-D8, principle P6, P8. Read that Dossier's sections Coupling and the owner, Organisation and decision (personnel), then AGENTS.md, docs/start/contribution-and-style-guide.html and docs/persona-team/index.html (Stats, Evaluation) and docs/model-selection-and-fallback/index.html. Use the Dossier's recommended option unless a recorded owner decision selects another, and record in results/status.md which option you implemented. Persona slice keys (PT-n) map to AGT-3594 to AGT-3605 by assumption; confirm against card titles before depending on them.\n\nDependencies: PT-7 (AGT-3600, assumed) and AGT-3459 central model selection.\n\nEntry points: Persona occurrence receipts, the stats projection and character sheet from PT-7, ModelSelectionService outcomes.\n\n## Deliver\n1. Record the resolved model route (capability class, model id, primary or fallback) on every persona occurrence receipt.\n2. Split the derived record by charter revision and by resolved model, as PT-7 already splits by revision.\n3. Write one 'personnel change' history entry when the resolved primary model behind a persona changes, and show before and after on the sheet for four weeks.\n\n## Out of scope\nChanging model selection policy; fallbacks outside the capability class.\n\n## Acceptance\n- Every occurrence receipt carries the resolved route\n- Stats split by revision and model, with denominators, and hide below five decided items\n- A model change writes exactly one personnel-change entry\n- The sheet shows before and after in light and dark captures\n\nUse the central design tokens and shared components for any UI; capture light and dark Playwright screenshots into the task results for every visible change. Keep repository text in English and without em dashes. When adding a document under docs/, add one row to docs/start/README.md."
+    }
+  ]
+}
