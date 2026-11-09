@@ -1,0 +1,13 @@
+@if (sent()) {
+  <p class="code-entry__sent" data-testid="device-login-code-sent">Code sent to the host. Waiting for {{ providerLabel() }} to confirm the sign-in.</p>
+} @else if (codeState() === 'awaiting') {
+  <div class="code-entry" data-testid="device-login-code-entry">
+    <p>After you sign in, {{ providerLabel() }} shows an authorization code. Paste it here. Studio hands it once to this host and does not keep it.</p>
+    <label>Authorization code
+      <input data-testid="device-login-auth-code" type="text" autocomplete="off" spellcheck="false"
+        [value]="code()" (input)="code.set($any($event.target).value)" (keydown.enter)="submit()" /></label>
+    <button type="button" data-testid="device-login-auth-code-submit"
+      [disabled]="!code().trim() || submitting()" (click)="submit()">Send code to host</button>
+    @if (error()) { <p role="alert">{{ error() }}</p> }
+  </div>
+}

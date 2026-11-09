@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
 import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { copyTextToClipboard } from '../../../../../services/clipboard.util';
@@ -24,8 +25,42 @@ export class ArtifactGalleryComponent {
   readonly artifacts = input.required<readonly ConversationArtifact[]>();
 
   private readonly lightbox = inject(MediaLightboxService);
+  private readonly http = inject(HttpClient);
   private readonly previewState = inject(ArtifactGalleryState);
   private readonly copyStates = signal<ReadonlyMap<string, 'idle' | 'copied' | 'failed'>>(new Map());
+  private readonly imageMetadata = signal<ReadonlyMap<string, { sizeBytes: number; width: number | null; height: number | null }>>(new Map());
+  private readonly loadedMetadataUrl = signal<string | null>(null);
+  private readonly metadataUrl = computed(() => {
+    const first = this.artifacts().find((artifact) => artifact.kind === 'image' && artifact.url.includes('/api/tasks/'));
+    if (!first) return null;
+    const source = new URL(first.url, 'http://localhost');
+    const match = source.pathname.match(/^\/api\/tasks\/([^/]+)\//);
+    if (!match) return null;
+    const watchPath = source.searchParams.get('watchPath');
+    const query = watchPath ? `?watchPath=${encodeURIComponent(watchPath)}` : '';
+    return `/api/tasks/${match[1]}/screenshots${query}`;
+  });
+  readonly metadataPending = computed(() => this.metadataUrl() !== null && this.loadedMetadataUrl() !== this.metadataUrl());
+
+  constructor() {
+    effect((onCleanup) => {
+      const url = this.metadataUrl();
+      if (!url) return;
+      const request = this.http.get<{ screenshots: { relativePath: string; sizeBytes: number; width: number | null; height: number | null }[] }>(
+        url,
+      ).subscribe({
+        next: (response) => {
+          this.imageMetadata.set(new Map(response.screenshots.map((item) => [item.relativePath, item])));
+          this.loadedMetadataUrl.set(url);
+        },
+        error: () => {
+          this.imageMetadata.set(new Map());
+          this.loadedMetadataUrl.set(url);
+        },
+      });
+      onCleanup(() => request.unsubscribe());
+    });
+  }
 
   readonly images = computed(() => this.artifacts().filter((artifact) => artifact.kind === 'image'));
   readonly documents = computed(() => this.artifacts().filter((artifact) => artifact.kind !== 'image'));
@@ -38,6 +73,17 @@ export class ArtifactGalleryComponent {
     ].filter(Boolean);
     return `Artifacts · ${parts.join(' · ')}`;
   });
+
+  metadataFor(artifact: ConversationArtifact): { sizeBytes: number; width: number; height: number } {
+    const item = this.imageMetadata().get(artifact.path);
+    return { sizeBytes: item?.sizeBytes ?? 0, width: item?.width ?? 360, height: item?.height ?? 225 };
+  }
+
+  isLarge(artifact: ConversationArtifact): boolean { return this.metadataFor(artifact).sizeBytes > 2_000_000; }
+
+  fileSize(artifact: ConversationArtifact): string {
+    return `${(this.metadataFor(artifact).sizeBytes / 1_000_000).toFixed(1)} MB`;
+  }
 
   openImage(selected: ConversationArtifact): void {
     const images = this.images();

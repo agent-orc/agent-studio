@@ -169,6 +169,18 @@ public sealed class AiOperatorDecisionTests : IDisposable
             AiOperatorDeciders.DeliveryChain, "delivery:card",
             DeliveryChain: new DeliveryChainOperatorFacts(state, integrating, integrated, fatal, stale, limit))).Effect);
 
+    [Theory]
+    [InlineData("5-human-review", false, false, AiOperatorEffects.QueueMergeRound)]
+    [InlineData("4-auto-review", false, false, AiOperatorEffects.QueueMergeRound)]
+    [InlineData("6-completed", true, false, AiOperatorEffects.QueueMergeRound)]
+    [InlineData("6-completed", true, true, AiOperatorEffects.None)]
+    public void Stale_delivery_conflict_queues_a_merge_round_with_reopen_limit(
+        string state, bool stale, bool limit, string effect)
+        => Assert.Equal(effect, AiOperatorDecisionPolicy.Decide(new AiOperatorDecisionPayload(
+            AiOperatorDeciders.DeliveryChain, "delivery:card",
+            DeliveryChain: new DeliveryChainOperatorFacts(state, state == TaskStates.AutoReview, false, true,
+                stale, limit, RecoverableConflict: true))).Effect);
+
     [Fact]
     public void Acceptance_rail_records_a_held_recoverable_conflict_as_A0_and_escalates_an_exhausted_budget()
     {

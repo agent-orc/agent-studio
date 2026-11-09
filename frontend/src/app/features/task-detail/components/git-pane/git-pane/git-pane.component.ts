@@ -52,8 +52,8 @@ import { TaskCommitRoundsComponent } from '../task-commit-rounds/task-commit-rou
   styleUrls: ['./git-pane.component.scss']
 })
 export class GitPaneComponent {
-  readonly previewOptions = [{ value: 'diff', label: 'Diff', testid: 'git-diff-option' }, { value: 'preview', label: 'Preview', testid: 'git-preview-toggle' }] as const;
-  readonly diffViewOptions = [{ value: 'line-by-line', label: 'Unified', testid: 'git-diff-mode-toggle' }, { value: 'side-by-side', label: 'Side-by-side', testid: 'git-side-by-side-option' }] as const;
+  readonly previewOptions = [{ value: 'diff', label: 'Diff', testid: 'git-diff-option' }, { value: 'preview', label: 'Preview', testid: 'git-preview-option' }] as const;
+  readonly diffViewOptions = [{ value: 'line-by-line', label: 'Unified', testid: 'git-unified-option' }, { value: 'side-by-side', label: 'Side-by-side', testid: 'git-side-by-side-option' }] as const;
   /** Whether this pane is currently the maximized one. */
   readonly maximized = input(false);
   /** Flex weight to apply when not maximized. */

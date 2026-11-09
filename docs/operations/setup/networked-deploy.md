@@ -92,9 +92,14 @@ bash deploy/networked/deploy.sh deploy "$commit" --manifest "$manifest" --journa
 
 Dry run validates the manifest and prints the plan without invoking a build,
 SSH, API, or journal command. The live run refuses an existing journal. It
-checks OP-6 preflight, formed batches, and running gates before the plan and
-again after draining and immediately before the server switch. The server health check observes
-the running image revision before the engine and hosts change. The plan must
+creates the first snapshot in that new journal from the containers already
+running under the configured Compose project labels. No earlier deploy journal
+or gate setting is needed. Missing or empty gate values in the old API are
+recorded as null for rollback.
+The live run checks OP-6 preflight, formed batches, and running gates before
+the plan, after draining, and immediately before the server switch. The server
+health check observes the running image revision before the engine and hosts
+change. The plan must
 stay within its expiry. Every step writes start/end UTC times, duration,
 status, and failure text into one owner-only JSON journal. The `steps` array
 supplies the deploy duration table. Keep the journal for recovery.

@@ -51,7 +51,7 @@ internal sealed class DeliveryVerificationIndex(TimeProvider clock,
                 state.Version++;
             }
 
-            var (generation, changes) = IntegrationVerificationStore.ChangesSince(state.SeenGeneration);
+            var (generation, changes, gap) = IntegrationVerificationStore.ChangesSince(state.SeenGeneration);
             foreach (var change in changes)
             {
                 if (!state.Cards.ContainsKey(change.Folder)) continue;
@@ -60,7 +60,7 @@ internal sealed class DeliveryVerificationIndex(TimeProvider clock,
             }
             state.SeenGeneration = generation;
 
-            if (clock.GetUtcNow() >= state.NextReconciliation)
+            if (gap || clock.GetUtcNow() >= state.NextReconciliation)
             {
                 foreach (var folder in currentFolders)
                 {

@@ -50,11 +50,38 @@ export function syntheticBoard(size: number, crossLaneSource = false) {
 
 export async function installSyntheticBoard(page: Page, size: number, crossLaneSource = false) {
   const { jobs, grouped } = syntheticBoard(size, crossLaneSource);
+  // The generated board also runs against the frontend-only mocked server.
+  // Answer unrelated shell requests so they cannot open backend-error dialogs.
+  await page.route('**/api/**', route => route.fulfill({ json: [] }));
   await page.addInitScript(() => {
     localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
       v: 1, tabs: [{ kind: 'board', projectName: '__all__' }], activeKey: 'board:__all__',
     }));
   });
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({ json: {
+    profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+  } }));
+  await page.route('**/api/auth/status', route => route.fulfill({ json: {
+    profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+  } }));
+  await page.route('**/api/v1/studio/runner/status', route => route.fulfill({ json: { projects: {} } }));
+  await page.route('**/api/environment', route => route.fulfill({ json: {
+    devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false },
+  } }));
+  await page.route('**/api/workspaces/*/quota/admission', route => route.fulfill({ json: {
+    workspaceId: 'WS-SYNTH',
+    workspace: { projectId: null, project: null, status: 'ok', message: null,
+      overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false },
+    projects: [],
+  } }));
+  await page.route('**/api/usage/cockpit**', route => route.fulfill({ json: {
+    workspaceId: 'WS-SYNTH', clis: [], cost: null,
+  } }));
+  await page.route('**/api/v1/projects', route => route.fulfill({ json: [{
+    id: 'PROJ-SYNTH', displayName: projectName, archived: false,
+  }] }));
+  await page.route('**/api/tasks/archive**', route => route.fulfill({ json: { items: [], total: 0 } }));
+  await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({ json: { items: [] } }));
   await page.route('**/api/watch-paths**', route => route.fulfill({ json: [{
     name: projectName, path: watchPath, rootPath: watchPath, repositoryPath: watchPath,
   }] }));

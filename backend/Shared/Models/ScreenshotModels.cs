@@ -18,6 +18,10 @@ public record TaskScreenshot
     public string RelativePath { get; init; } = "";
     /// <summary>Routable URL that serves this file (sub-path aware).</summary>
     public string Url { get; init; } = "";
+    /// <summary>Original file size and dimensions read from its bounded header.</summary>
+    public long SizeBytes { get; init; }
+    public int? Width { get; init; }
+    public int? Height { get; init; }
     /// <summary>Short human caption, typically the Playwright spec name or parent folder.</summary>
     public string Caption { get; init; } = "";
     /// <summary>One of <c>passed</c>, <c>failed</c>, <c>skipped</c>, <c>unknown</c>, or null when no harvest index applies.</summary>

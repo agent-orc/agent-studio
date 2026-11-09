@@ -431,9 +431,13 @@ and updates the in-memory projection when it records a new execution. Later
 requests rank the cached observations without rescanning evidence. The
 response counts batches, runs, distinct member sets, first and latest failure,
 the latest error excerpt, per-run failure facts, and whether a flaky rerun
-passed. Missing evidence is queued for retry without interrupting execution
-recording; the response counts pending evidence runs so the panel marks its
-ranking incomplete until those files become readable. A test is a flaky suspect
+passed. Missing, malformed, or incomplete evidence is queued for retry without
+interrupting execution recording; the response counts pending evidence runs so
+the panel marks its ranking incomplete until a matching gate run ID, tested SHA,
+completion timestamp, and failure inventory are readable. Older execution facts
+use their batch run ID when no evidence gate run ID was recorded. An unidentified
+record remains pending because a nearby completion time cannot prove ownership.
+Error excerpts come only from the named test's output block. A test is a flaky suspect
 only when it failed in three batches with pairwise disjoint member sets. The
 operator can open a prefilled bug card in the normal creation dialog. The dialog
 applies central model routing and requires submission to create it.
@@ -568,7 +572,11 @@ replacement snapshot with the largest compatible membership up to
 formed snapshot. A lone card past its deadline waits for a partner while the
 project gate is busy. If a formed batch cannot accept it because of size or
 file overlap, it takes the per-task fallback. When the lease frees, the pilot
-starts the largest formed batch.
+starts the largest formed batch. Each tick revisits durable formed manifests
+before planning. A manifest without an in-memory flight starts, re-forms on a
+moved base, or retires with a recorded reason if a member is no longer pending.
+Overdue pending members appear in the state plan or its exclusion reason; an
+expired plan cannot remain `idle` while they wait.
 With `overlap: separate`, cards touching a selected member's file wait for a
 different batch. The state response includes each batch's `exclusions` with
 the rule and conflicting file paths, and `formationReason` explains why a

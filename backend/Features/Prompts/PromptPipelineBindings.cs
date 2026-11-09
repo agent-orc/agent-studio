@@ -14,6 +14,7 @@ public static class PromptPipelineBindings
             ["aspect-code-quality"] = "review-aspect-code-quality.md",
             ["aspect-documentation-impact"] = "review-aspect-documentation-impact.md",
             ["aspect-tests-and-evidence"] = "review-aspect-tests-and-evidence.md",
+            ["aspect-visual-review"] = "review-aspect-visual-review.md",
             ["post-deep-review"] = "review-aspect-deep-review.md",
             ["aspect-cross-card-consistency"] = "review-aspect-cross-card-consistency.md",
             [PipelineCatalogue.RemoteConceptFitStepId] = "review-aspect-concept-fit.md",
