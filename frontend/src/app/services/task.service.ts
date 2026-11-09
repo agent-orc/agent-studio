@@ -31,7 +31,9 @@ import type {
   ContextUsageSnapshot,
   CliType,
   ContinueMode,
+  ContinueRoundBase,
   ContinueTaskResponse,
+  FailureContinuationCheck,
   ProjectSnapshot,
   PromoteToCodingResponse,
   CreateRegistryProjectRequest,
@@ -983,6 +985,22 @@ export class TaskService {
     return this.http.post<{ status: 'started' | 'queued' | 'saved'; stage: string; taskKey: string; savedReason: string | null }>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/failure/continue`,
       {},
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /** AGT-3582: whether the card has a delivery failure to continue, by the POST's own guard. */
+  checkFailureContinuation(jobId: string, watchPath?: string) {
+    return this.http.get<FailureContinuationCheck>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/failure/continue`,
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /** AGT-3582: the run base a continue round would start from, read only; null keeps today's checkout. */
+  getContinueRoundBase(jobId: string, watchPath?: string) {
+    return this.http.get<{ base: ContinueRoundBase | null }>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/continue/base`,
       this.withWatchPath(watchPath),
     );
   }

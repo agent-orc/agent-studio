@@ -1245,6 +1245,25 @@ export interface ContinueTaskResponse {
   status: 'started' | 'queued' | 'saved';
   execution?: CliExecution | null;
   queued?: ContinueTaskQueuedInfo | null;
+  /** AGT-3483: the result ref a queued round starts from; absent when it keeps today's checkout. */
+  base?: ContinueRoundBase | null;
+}
+
+/**
+ * Mirrors backend `ContinueRoundBaseInfo` (AGT-3483). `source` is
+ * `latest-result`, `explicit`, `review-fix-round` or `existing`.
+ */
+export interface ContinueRoundBase {
+  ref: string;
+  sha: string;
+  source: string;
+  resultAttemptId?: string | null;
+}
+
+/** `GET /api/tasks/{id}/failure/continue` (AGT-3582): the failure continuation guard, read only. */
+export interface FailureContinuationCheck {
+  available: boolean;
+  reason: string | null;
 }
 
 export interface ContinueTaskQueuedInfo {
