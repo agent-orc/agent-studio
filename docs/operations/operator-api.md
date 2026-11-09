@@ -48,7 +48,13 @@ names the card, source CLI and model, target CLI and model, reason, and the
 central model selection `settingKey` and `settingHref`. `waitingCards[]` names
 the card, reset time, reason, and its effective wait policy (`enabled`,
 `thresholdMinutes`, `scope`). `modelRoutingPins[]` lists explicit project
-consumer and pipeline-step pins, including pin mode.
+consumer and pipeline-step pins, including pin mode. `queuedCards[]` lists
+each Ready card whose next local pickup would not run its configured route,
+as the model selection service answers that question now: `outcome`
+(`fallback`, `wait`, or `throttle`), the configured and target CLI, model and
+thinking level, the `reason`, and `nextResetAt` (when a wait asks again or a
+fallback may return). The forecast is a selection preview and writes no
+selection ledger entry. The usage detail's Capacity section renders this list.
 
 The route accepts an operator or viewer token with `project.read`. Card
 fallbacks, waits, and pins are limited to projects it can read. A principal
