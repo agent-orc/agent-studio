@@ -254,6 +254,11 @@ public static class ProjectSettingsEndpoints
         // Per-project preferences (auto-commit on/off today). Read-all returns a
         // flat map keyed by project name so the header can render every toggle
         // in one shot without N round-trips.
+        // Onboarding needs this before a first project exists, so it cannot
+        // infer local admission from a row in the per-project settings map.
+        app.MapGet("/api/projects/execution-capability", (TaskRunnerService runner) =>
+            Results.Ok(new { localCodingAdmitted = runner.AllowsLocalCoding }));
+
         app.MapGet("/api/projects/settings", (
             HttpContext context,
             ProjectSettingsService settings,
@@ -295,6 +300,8 @@ public static class ProjectSettingsEndpoints
                     // pair only matters once it is raised above 1.
                     maxParallelism = kv.Value.MaxParallelism < 1 ? 1 : kv.Value.MaxParallelism,
                     integrationBranch = kv.Value.IntegrationBranch,
+                    // AGT-3580: the readiness remedy opens this setting, so the page has to show it.
+                    repositoryVisibility = kv.Value.RepositoryVisibility,
                     integrationStrategy = IntegrationStrategies.Normalize(kv.Value.IntegrationStrategy),
                     // AGT-2839: raw override (null = inherit) plus the resolved
                     // value the merge gate actually applies.

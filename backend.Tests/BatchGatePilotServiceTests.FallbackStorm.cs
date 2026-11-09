@@ -14,7 +14,7 @@ namespace AgentStudio.Tests;
 /// abandoned, four of its six members and then most newly reviewed cards took
 /// per-task gates, and 13 gates ran on a host with five slots.
 /// </summary>
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGatePilotFallbackStormTests : BatchGatePilotServiceTests
 {
     [Fact]
     public async Task Close_now_below_minimum_keeps_the_policy_reason_in_the_plan()
@@ -204,15 +204,18 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Equal(0, pilot.PerTaskGatesRunning);
         Assert.Equal(0, pilot.PerTaskGatesWaiting);
     }
+}
 
-    private static void OccupyGateSlots(WebApplicationFactory<Program> factory, int total)
+public abstract partial class BatchGatePilotServiceTests
+{
+    private protected static void OccupyGateSlots(WebApplicationFactory<Program> factory, int total)
     {
         var slots = factory.Services.GetRequiredService<GateSlotUsageTracker>();
         for (var slot = 0; slot < total; slot++)
             slots.Acquired($"foreign-{slot}", total);
     }
 
-    private static void InterlockedMax(ref int target, int value)
+    private protected static void InterlockedMax(ref int target, int value)
     {
         for (var current = Volatile.Read(ref target); value > current; current = Volatile.Read(ref target))
             if (Interlocked.CompareExchange(ref target, value, current) == current) return;

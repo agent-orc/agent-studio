@@ -36,7 +36,7 @@ an agent CLI, first tasks, and troubleshooting.
 | [hosted-wiki-publication.md](./hosted-wiki-publication.md) | Publishing the accepted documentation revision to the hosted Wiki: published-revision rules, freshness SLO, read-only fetch credentials, scheduled and forced triggers, atomic promotion, typed deployment failures, and the rehearsed rollback drill. |
 | [docker-compose-connector-gap.md](./docker-compose-connector-gap.md) | Option C decision and the remaining Connector route-coverage limit for the one-box deployment. |
 | [move-studio-to-server.md](./move-studio-to-server.md) | Move Studio from Stable on the workstation to the networked monolith stack on the server with one script: inventory, rehearsal, apply, and rollback. |
-| [studio-backup-restore.md](./studio-backup-restore.md) | Turn on encrypted off-host backups of the networked website stack, keep the secret store key copy, restore into an empty stack, and run the restore drill. |
+| [studio-backup-restore.md](./studio-backup-restore.md) | Scheduled encrypted backups of the networked website stack, their off-host copy and Operations page state, escrow of the backup and secret store keys, restore onto a new host, and the optional host-level timer. |
 
 ## Related references
 

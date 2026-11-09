@@ -6,17 +6,20 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+public abstract partial class BatchGatePilotServiceTests
+{
+    private protected const string FailedTestCommand = "dotnet test Product.Tests.csproj --no-build --filter Category!=MachineBound";
+    private protected const string FailedTest = "Product.Tests.Architecture.LayeringTests.Features_do_not_reference_hosts";
+}
+
 /// <summary>
 /// AGT-3433: the base check of a red batch candidate. Measured on 2 November
 /// 2026 (batch 0d54bfe1): a guard violation stopped the candidate after 2.5
 /// minutes, then the full suite ran on the base for 3,599,828 ms although the
 /// base was the tip a batch had just published plus one documentation commit.
 /// </summary>
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGatePilotBaseCheckTests : BatchGatePilotServiceTests
 {
-    private const string FailedTestCommand = "dotnet test Product.Tests.csproj --no-build --filter Category!=MachineBound";
-    private const string FailedTest = "Product.Tests.Architecture.LayeringTests.Features_do_not_reference_hosts";
-
     [Fact]
     public async Task Published_batch_tip_as_base_needs_no_base_gate()
     {
@@ -222,8 +225,11 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Equal("pre-existing-base-red", verdict.Classification);
         Assert.Equal(BatchGateBaseCheckSources.FullSuite, verdict.BaseCheck);
     }
+}
 
-    private async Task<BatchGatePublication> PublishFirstBatchAsync(WebApplicationFactory<Program> factory)
+public abstract partial class BatchGatePilotServiceTests
+{
+    private protected async Task<BatchGatePublication> PublishFirstBatchAsync(WebApplicationFactory<Program> factory)
     {
         SeedMember(factory, "DOC-FIRST-" + Guid.NewGuid().ToString("N")[..6], "docs/first.md");
         _gate.Batch = request => Green(request.ExpectedSha);
@@ -235,7 +241,7 @@ public sealed partial class BatchGatePilotServiceTests
         return publication;
     }
 
-    private static BatchGateRunVerdict SecondPrimaryVerdict(BatchGateStore store, string baseSha)
+    private protected static BatchGateRunVerdict SecondPrimaryVerdict(BatchGateStore store, string baseSha)
     {
         var manifest = Assert.Single(store.ListManifests(), item =>
             item.ParentBatchId is null && item.BaseSha == baseSha);
@@ -243,7 +249,7 @@ public sealed partial class BatchGatePilotServiceTests
         return store.ReadVerdict(manifest.BatchId, run.BatchRunId)!;
     }
 
-    private static BuildTestGateResult GuardRed(string? sha)
+    private protected static BuildTestGateResult GuardRed(string? sha)
         => Red(sha) with
         {
             Reason = "guard violation, full suite not run: dotnet test failed",
@@ -251,7 +257,7 @@ public sealed partial class BatchGatePilotServiceTests
             FailedStepKind = VerifyCommandKind.Test,
         };
 
-    private static BuildTestGateResult TestRed(string? sha)
+    private protected static BuildTestGateResult TestRed(string? sha)
         => Red(sha) with
         {
             FailedStepKind = VerifyCommandKind.Test,

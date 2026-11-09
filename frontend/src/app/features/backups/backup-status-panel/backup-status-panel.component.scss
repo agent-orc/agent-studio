@@ -1,0 +1,99 @@
+.backup-status {
+  display: grid;
+  gap: var(--studio-spacing-3);
+  padding-block: var(--studio-spacing-4);
+  font-variant-numeric: tabular-nums;
+}
+
+.backup-status h3,
+.backup-status p {
+  margin: 0;
+}
+
+.backup-status__head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--studio-spacing-4);
+}
+
+.backup-status__head > div {
+  display: grid;
+  gap: var(--studio-spacing-1);
+}
+
+.backup-status__head p,
+.backup-status dt,
+.backup-status small {
+  color: var(--studio-text-secondary);
+}
+
+.backup-status__refresh {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: 1px solid var(--studio-border);
+  border-radius: 6px;
+  background: var(--studio-surface);
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+}
+
+.backup-status__refresh:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 2px;
+}
+
+.backup-status__warnings {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.backup-status__metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--studio-spacing-3);
+  margin: 0;
+}
+
+.backup-status__metrics > div {
+  display: grid;
+  align-content: start;
+  gap: var(--studio-spacing-1);
+}
+
+.backup-status dd {
+  display: grid;
+  justify-items: start;
+  gap: var(--studio-spacing-1);
+  margin: 0;
+  font-weight: 650;
+}
+
+.backup-status dd small {
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.backup-status__table-wrap {
+  overflow-x: auto;
+}
+
+.backup-status table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.backup-status th,
+.backup-status td {
+  text-align: left;
+  font-weight: 400;
+  padding: var(--studio-spacing-2);
+  border-bottom: 1px solid var(--studio-border);
+}
+
+.backup-status thead th {
+  color: var(--studio-text-secondary);
+}

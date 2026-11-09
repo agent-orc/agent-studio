@@ -35,8 +35,9 @@ for cancelled stacked batches; if the cancelled gate has no completion fact,
 the run start to cancellation interval is the estimate. These are spent host
 minutes, not a projected delay saved.
 
-To pilot, set the project's batch gate `stacking` field to `"1"` through the
-batch gate settings API and keep at least two gate slots. During the first
+To pilot, set the project's batch gate `stacking` field to `"1"` (Project
+settings, Batch verification, Stacked batches: One successor, or the batch gate
+settings API) and keep at least two gate slots. During the first
 hours, watch those four counters, the batch predecessor links, slot occupancy,
 stale-base cancellations, and published cards per hour. Set `stacking` back
 to `"off"` to stop forming speculative successors; already formed or running
@@ -167,7 +168,9 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   <n> minutes`, each member's timeline records
   `batch-flight-lease-deadline`, and the next formed batch starts first. The
   cancelled batch is retried after it. On 2 November 2026 only an API
-  restart freed such a slot.
+  restart freed such a slot. Until the detached flight exits, the batch gate
+  state lists it under `detachedFlights` (batch, start, detach time, deadline,
+  reason), and a flight wait does not wait for it.
 - AGT-3562: a flight that completes or fails (its batch ran a gate, or left
   the formed phase other than by retirement before replay) starts the next
   eligible formed batch of its project at once, instead of on the next hosted

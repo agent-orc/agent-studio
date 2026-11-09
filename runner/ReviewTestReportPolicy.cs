@@ -1,5 +1,7 @@
 using AgentStudio.TaskServer.Contracts;
 
+using System.Text.RegularExpressions;
+
 namespace AgentRunner;
 
 /// <summary>Test output is evidence only when it names a completed test run.</summary>
@@ -24,6 +26,19 @@ internal static partial class ReviewTestReportPolicy
             ? "Vitest started but did not report a completed test"
             : "Angular bundle completed but Vitest did not report a run";
     }
+
+    internal static string MissingReportPath(ProcessResult result, string consoleArtifactPath)
+    {
+        var match = VitestReportPath().Match(result.StdOut + "\n" + result.StdErr);
+        return match.Success ? match.Groups["path"].Value.TrimEnd(':') : consoleArtifactPath;
+    }
+
+    internal static bool HasExplicitMissingReport(ProcessResult result)
+        => VitestReportPath().IsMatch(result.StdOut + "\n" + result.StdErr);
+
+    [GeneratedRegex(@"Vitest completed without (?:a readable report at|test results in) (?<path>\S+)",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex VitestReportPath();
 
     internal static string? SetupChangeReason(IReadOnlyList<string> nameStatusLines)
     {
