@@ -215,6 +215,38 @@ Three things describe one project and should be decided in the same sitting. Ski
    `.agent-studio/project.yml`, its prepare script, and the build, test, and lint
    commands before creating a proposal card to add the files to the repository.
 
+### Declare repository checks
+
+When discovery cannot derive checks, commit `.agent-studio/project.yml` and
+the executable `.agent-studio/prepare` script. This is the minimal custom
+definition; create the named test script and make it run real checks:
+
+```yaml
+schemaVersion: 1
+stack: [custom]
+commands:
+  prepare: .agent-studio/prepare
+  test:
+    - ./scripts/test.sh
+```
+
+The prepare script starts with `#!/bin/sh` and `set -eu`. For a different
+stack, use the same YAML and substitute the stack and test command below:
+
+| Stack | `stack` | Test list entry | Prepare script setup |
+|---|---|---|---|
+| .NET | `[dotnet]` | `dotnet test App.sln --no-build` | `dotnet restore App.sln`; add `commands.build: [dotnet build App.sln]` |
+| Node built-in runner | `[node]` | `node --test` | `npm ci` |
+| Jest or Vitest | `[node]` | `npm test` | `npm ci` |
+| Python | `[python]` | `python -m pytest` | `python -m pip install -e .` |
+| Go | `[go]` | `go test ./...` | `go mod download` |
+| Make | `[make]` | `make test` | Install what the Makefile requires, if anything. |
+
+Review accepts a successful test command exit as evidence even without a
+parsed summary. See [accepted test output and stack examples](./onboard-a-project.md#test-command-output-in-review)
+for the recognized .NET, TAP, Jest, and Vitest summaries and successful
+exit-status evidence for pytest, Go, Make, and custom scripts.
+
 ## 4. Run your first task
 
 Full walkthrough, including what to queue and what to watch for: [your-first-task.md](./your-first-task.md). Short version:

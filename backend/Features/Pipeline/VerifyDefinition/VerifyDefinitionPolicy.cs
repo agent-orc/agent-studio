@@ -151,6 +151,11 @@ public static class VerifyDefinitionPolicy
         text.Append(example.PrepareScript);
         text.AppendLf("```");
         text.AppendLf();
+        text.AppendLf("Create any script named by `commands.test` and make it run real checks. "
+                      + "A successful command exit is review evidence even when its output has no parsed test summary. "
+                      + "Parsed summaries also support failure-name comparison against the baseline. "
+                      + "See [accepted test output and stack examples](docs/operations/setup/onboard-a-project.md#test-command-output-in-review).");
+        text.AppendLf();
         text.Append("A repository that has no checks on purpose declares that with a valid project.yml "
                     + "whose build, test and lint lists are empty.");
         return text.ToString();
