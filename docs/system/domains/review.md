@@ -388,6 +388,12 @@ its own receipt. After a successful intervention, the watchdog waits another
 threshold interval before intervening again. It can advance from review recovery
 to batch recovery in the same visit. If the same recovery leaves the card
 ownerless again, it escalates the card with the reason.
+The threshold starts at the latest ownership change, including a review terminal,
+a batch state event, or a recovery intervention, rather than at lane entry. A
+current-delivery infrastructure failure with no scheduled retry gets one through
+the existing authority scheduler while its two-retry budget remains. A scheduled
+retry counts as an owner. Once the budget is spent, escalation names the review
+classification and summary.
 
 When the delivery-chain reconciler finds a stale acceptance or integration
 verdict, it returns the card to Auto Review and requests a fresh review at
@@ -893,11 +899,11 @@ attempt rises, bounded by the cap.
 A `ReviewInfra` outcome (`AspectTimeout`, `ToolUnavailable`, `BaselineUnavailable`,
 a workspace failure, ...) does not mint its linked retry attempt in the same
 instant as the failure report. `AttemptAuthorityService.ScheduleReviewInfrastructureRetry`
-records a due time instead: bounded backoff of 1, 3, then 9 minutes, indexed by
+records a due time instead: bounded backoff of 1 then 3 minutes, indexed by
 how many linked retries the chain has already spent
 (`AttemptAuthorityService.ReviewInfrastructureRetryBackoff`). The card timeline
 gets a `review_infrastructure_retry_scheduled` entry naming the retry number,
-the budget of three, the delay, and the failure reason at schedule time; the
+the budget of two, the delay, and the failure reason at schedule time; the
 card stays in `4-auto-review` with no successor to claim until the delay
 elapses. `ReviewInfrastructureRetryScheduler`, a background service, polls
 `AttemptAuthorityService.DueReviewInfrastructureRetries` and mints the
@@ -1026,7 +1032,7 @@ phase. After exhaustion the post-processing queue stops re-enqueuing it and
 shows the specific stop reason; the integration reconciler still watches it.
 An unreadable retry file loses its backoff rather than exhausting a delivery.
 
-Once `AttemptAuthorityService.ReviewInfrastructureRetryBudget` (three) linked
+Once `AttemptAuthorityService.ReviewInfrastructureRetryBudget` (two) linked
 retries have all failed, no further retry is scheduled and the card is parked
 in `5e-escalated` with a named reason exactly as before this change - the
 budget-exhaustion and repeat-diagnosis behavior in
@@ -1578,7 +1584,7 @@ usually exists only under `refs/remotes/origin` in the Studio checkout.
   `Schedule_review_infrastructure_retry_uses_widening_backoff_and_stops_at_the_cap`)
   and `backend.Tests/RemoteRunnerEndToEndTests.cs`
   (`Monolith_v1_review_plane_schedules_a_named_retry_for_a_fake_aspect_timeout_without_an_operator_move`):
-  the backoff schedule, the three-retry cap, and the
+  the backoff schedule, the two-retry cap, and the
   `review_infrastructure_retry_scheduled` timeline entry.
 - `backend/Features/Runner/ReviewVerifyReusePolicy.cs`,
   `runner/ReviewVerifyResultCache.cs`, `backend.Tests/ReviewVerifyReusePolicyTests.cs`

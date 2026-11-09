@@ -385,6 +385,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-review-infrastructure-stranding">
+          <td>2026-11-09</td>
+          <td><code>AGT-3178</code>, <code>AGT-3183</code>, <code>AGT-3403</code>, <code>AGT-3501</code>, <code>AGT-3533</code>, <code>AGT-3558</code><br><span class="small">review-infrastructure-stranding (fix <code>AGT-3608</code>)</span></td>
+          <td>Reviews ran for about 1.5 to 2.5 hours, then ended with infrastructure failure. The next watchdog sweep moved each card from Auto Review to Escalated. Terminal at discovery: Escalated, with a misleading claim that no delivery or review existed.</td>
+          <td>The watchdog measured age from lane entry and treated a failed current review as unrecoverable. The normal retry was scheduled later in report handling, so an interrupted settlement could leave no scheduled successor.</td>
+          <td>The review terminal starts a fresh ownerless interval. After its threshold, an unscheduled current-delivery infrastructure failure receives a bounded retry through the authority scheduler. The third failed attempt escalates with its classification and summary.</td>
+        </tr>
         <tr id="case-report-summary-stalled-review">
           <td>2026-11-05</td>
           <td><code>AGT-3496</code>, <code>AGT-3506</code>, <code>AGT-3511</code>, <code>AGT-3512</code>, <code>AGT-3515</code><br><span class="small">report-summary-stalled-review (fix <code>AGT-3547</code>)</span></td>

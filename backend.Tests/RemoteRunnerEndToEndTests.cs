@@ -6902,7 +6902,7 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
                 System.Globalization.CultureInfo.InvariantCulture),
             scheduled.GetProperty("details").GetProperty("retryBudget").GetString());
         var summary = scheduled.GetProperty("summary").GetString()!;
-        Assert.Contains("review infrastructure retry 1/3 scheduled in 1m", summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("review infrastructure retry 1/2 scheduled in 1m", summary, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(classification, summary, StringComparison.Ordinal);
         Assert.Contains("killed on its timeout", summary, StringComparison.Ordinal);
 

@@ -60,7 +60,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             _configuration.GetValue<int?>("AutoReviewStranding:ThresholdMinutes") ?? 30, 1, 1440));
         var now = DateTime.UtcNow;
         var pending = _batches.ListPending();
-        var activeBatchMembers = _batches.ListManifests()
+        var manifests = _batches.ListManifests();
+        var activeBatchMembers = manifests
             .Where(manifest => IsActiveManifest(_batches, manifest))
             .SelectMany(manifest => manifest.Members.Select(member =>
                 BatchMemberKey(member)))
@@ -81,7 +82,17 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 var previous = interventions.Where(item => item.WriteKey.StartsWith(writePrefix, StringComparison.Ordinal)
                     && item.Status == StallInterventionStatuses.Verified).ToArray();
                 var latest = previous.LastOrDefault();
-                var facts = new AutoReviewStrandingFacts(now - card.EnteredLaneAt, threshold,
+                var lastBatchEvent = run is null ? null : manifests
+                    .Where(manifest => manifest.Scope.Project == card.ProjectName
+                        && manifest.Members.Any(member => IsSubjectForDelivery(member, card.ProjectName, key, run)))
+                    .Select(manifest => Directory.Exists(Path.Combine(_batches.BatchDirectory(manifest.BatchId), "state"))
+                        ? (DateTime?)_batches.LatestState(manifest.BatchId).RecordedAtUtc.UtcDateTime : null)
+                    .Max();
+                var withoutOwner = TimeWithoutOwner(now, card.EnteredLaneAt, run, currentReview,
+                    lastBatchEvent, latest?.DecidedAtUtc);
+                var infraFailure = currentReview is
+                    { State: AttemptLifecycleState.Failed, Outcome: ReviewTerminalOutcome.InfrastructureFailure };
+                var facts = new AutoReviewStrandingFacts(withoutOwner, threshold,
                     _pipeline.Read(card.FolderPath)?.Steps.Any(step => step.Status == PipelineStepStatus.Running) == true
                         || IntegrationGateJournal.Read(card.FolderPath) is not null,
                     currentReview?.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased,
@@ -89,7 +100,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                         run, currentReview?.AttemptId))
                         || run is not null && activeBatchMembers.Contains(
                             BatchMemberKey(card.ProjectName, key, run.AttemptId, run.ResultSha)),
-                    card.PendingIntent is not null,
+                    card.PendingIntent is not null
+                        || CauseWaitMarker.TryRead(card.FolderPath, _logger) is { Probe: false },
                     _queue.PositionOf(card.ProjectName, card.Id) is not null,
                     TaskModes.IsReportOnly(card.Mode),
                     run is { State: AttemptLifecycleState.Completed, ResultEnvelope: not null },
@@ -97,7 +109,10 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     currentReview is { Outcome: ReviewTerminalOutcome.Pass },
                     latest is null ? null : now - latest.DecidedAtUtc,
                     previous.Any(item => item.Action == AutoReviewStrandingAction.StartStep.ToString()),
-                    previous.Any(item => item.Action == AutoReviewStrandingAction.ReenterBatch.ToString()));
+                    previous.Any(item => item.Action == AutoReviewStrandingAction.ReenterBatch.ToString()),
+                    infraFailure,
+                    infraFailure && _authority.HasReviewInfrastructureRetryBudget(currentReview!.AttemptId),
+                    infraFailure && _authority.HasScheduledReviewInfrastructureRetry(currentReview!.AttemptId));
                 var action = MonolithTransitionAdapter.AutoReviewStranding(facts);
                 if (action == AutoReviewStrandingAction.Leave) continue;
                 // A batch can form after the pass snapshot. Recheck before any
@@ -105,6 +120,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 if (IsBatchMember(_batches, card.ProjectName, key, run, currentReview?.AttemptId)) continue;
                 var writeKey = NextWriteKey(writePrefix, interventions);
                 var repeated = action == AutoReviewStrandingAction.Escalate
+                    && !facts.InfrastructureFailure
                     && (facts.StartedStepBefore || facts.ReenteredBatchBefore);
                 var (done, deferred, detail) = repeated
                     ? (false, false, "The previous automatic recovery did not keep an owner for this card.")
@@ -119,7 +135,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     if (IsBatchMember(_batches, card.ProjectName, key, run, currentReview?.AttemptId)) continue;
                     var parked = await _escalation.EscalateAsync(card.Id, card.WatchPath,
                         card.ProjectName, HumanReviewEscalationCategories.Environmental,
-                        $"Auto Review had no active owner for {facts.InLane.TotalMinutes:0} minutes. {detail}",
+                        $"Auto Review had no active owner for {facts.WithoutOwner.TotalMinutes:0} minutes. {detail}",
                         ct, expectedSourceState: TaskStates.AutoReview);
                     done = parked.Status == MoveJobStatus.Success;
                     escalated = done;
@@ -185,12 +201,37 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 || string.Equals(review.TestedResultSha, run.ResultSha, StringComparison.OrdinalIgnoreCase))
             ? review : null;
 
+    internal static TimeSpan TimeWithoutOwner(DateTime now, DateTime enteredLaneAt,
+        RunAttemptDto? run, ReviewAttemptDto? review, DateTime? lastBatchEvent,
+        DateTime? lastIntervention)
+    {
+        var lastOwnerChange = new[] { enteredLaneAt, run?.TerminalAt, review?.TerminalAt,
+                lastBatchEvent, lastIntervention }
+            .OfType<DateTime>().Max();
+        return now > lastOwnerChange ? now - lastOwnerChange : TimeSpan.Zero;
+    }
+
     private async Task<(bool Done, bool Deferred, string Detail)> InterveneAsync(TaskInfo card,
         AutoReviewStrandingAction action, ReviewAttemptDto? review, RunAttemptDto? run,
         CancellationToken ct)
     {
         if (action == AutoReviewStrandingAction.StartStep)
         {
+            if (review is { State: AttemptLifecycleState.Failed,
+                    Outcome: ReviewTerminalOutcome.InfrastructureFailure })
+            {
+                var current = _authority.GetTaskProjection(CardKey(card));
+                if (current.CurrentReviewAttempt?.AttemptId != review.AttemptId
+                    || ReviewForCurrentDelivery(current.CurrentReviewAttempt, current.CurrentRunAttempt) is null
+                    || _authority.HasScheduledReviewInfrastructureRetry(review.AttemptId))
+                    return (false, true, "The review retry is already owned or the delivery changed.");
+                var reason = ReviewFailureDetail(review);
+                var scheduled = _authority.ScheduleReviewInfrastructureRetry(review.AttemptId, reason);
+                if (!scheduled.Accepted)
+                    return (false, true, "The review retry state changed during recovery.");
+                return (true, false,
+                    $"Scheduled infrastructure retry {scheduled.RetryNumber}/{scheduled.RetryBudget}: {reason}");
+            }
             var started = TaskModes.IsReportOnly(card.Mode)
                 ? _transitions.RequeueAutoReviewPostProcessing(card, "auto-review-stranding")
                 : CreateReview(card, review, run, "auto-review-stranding");
@@ -238,8 +279,15 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             }
             return (false, false, "The passed review has no resumable integration or batch entry.");
         }
-        return (false, false, "There is no completed delivery or review step to recover.");
+        return (false, false, review is { Outcome: ReviewTerminalOutcome.InfrastructureFailure }
+            ? $"Infrastructure retry limit reached. {ReviewFailureDetail(review)}"
+            : "There is no completed delivery or review step to recover.");
     }
+
+    internal static string ReviewFailureDetail(ReviewAttemptDto review)
+        => $"{ReviewAttemptChainEntry.ClassificationLabel(review.Outcome, review.FailureClassification)}: "
+            + (string.IsNullOrWhiteSpace(review.TerminalReason)
+                ? "No review summary was recorded." : review.TerminalReason);
 
     internal static bool ReviewMatchesCurrentRun(ReviewAttemptDto? review, RunAttemptDto? run)
         => review is not null && run is not null
