@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-11-05
+Version: 2026-11-09
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -949,7 +949,12 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
 - The guarded delivery chain is workspace-wide by default. `DeliveryChain:Guarded`
   can be set to `false` only during migration to the former badge-only behavior.
   A coding card stays in `4-auto-review` with phase `integrating` until the
-  published result is integrated, then enters Human Review. Missing code
+  published result is integrated, then enters Human Review. The promotion is
+  recorded as cause `promoted` with detail `delivery-integrated`, and no lane
+  change carries the `integrating` phase into the next lane (AGT-3621). The
+  accepted-integration backstop finishes only an interrupted operator
+  acceptance; it clears a promotion's leftover phase instead of accepting the
+  card, and a stale-verdict park on an integrated card is not shown. Missing code
   delivery, conflict, gate failure, and unrecoverable error go to escalation
   with a category and recovery action. A pull-request project's approval stays
   on the pull request while the card waits in Auto Review; Human Review starts

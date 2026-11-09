@@ -159,7 +159,8 @@ public sealed class TaskTransitionService
         bool acceptOlderBriefDelivery = false,
         bool engineDecisionRequeue = false,
         AgentStudio.Runner.ContinuationBaseRecord? engineContinuationBase = null,
-        bool operatorDecisionPark = false)
+        bool operatorDecisionPark = false,
+        string? automaticAcceptanceBy = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return new MoveJobOutcome(MoveJobStatus.NotFound);
@@ -547,7 +548,14 @@ public sealed class TaskTransitionService
         // it landed. A refused move restores the claim the card had before.
         var stampedCompletionClaim = boundCompletionClaim is null
             ? null
-            : boundCompletionClaim with { RecordedAtUtc = _time.GetUtcNow().UtcDateTime };
+            : boundCompletionClaim with
+            {
+                RecordedAtUtc = _time.GetUtcNow().UtcDateTime,
+                // AGT-3621: only a system actor accepts automatically.
+                AcceptedAutomaticallyBy = TimelineActors.IsHuman(cause) || string.IsNullOrWhiteSpace(automaticAcceptanceBy)
+                    ? null
+                    : automaticAcceptanceBy.Trim(),
+            };
         var completionClaimStaged = stampedCompletionClaim is not null
             && _mutations.SetCompletionClaimOnFolder(info.FolderPath, stampedCompletionClaim);
         var acceptanceWrite = operatorAcceptance is null

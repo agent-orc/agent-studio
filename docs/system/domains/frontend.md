@@ -1,6 +1,6 @@
 # Frontend Domain Map
 
-Version: 2026-11-05
+Version: 2026-11-09
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
@@ -570,7 +570,9 @@ occur. It is not a claim about tunnel transfer time.
   Ordinary task selection reads the bounded `/core` projection first and paints
   identity, lane, pins, execution, status, prompt, and recent events before
   independent detail resources begin. Two documents load after core paint;
-  usage follows the rich view, Git waits for its pane, and Activity loads its
+  usage follows the rich view, Git waits for its pane (except the provenance
+  read a Human Review card's Accept needs, which Accept awaits for at most
+  8 s, AGT-3621), and Activity loads its
   plan and output on selection. Review evidence and history wait for explicit
   tabs. Neighbor core lookahead starts after the first 1.6 seconds. The event
   ledger starts when Timeline first
