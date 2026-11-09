@@ -28,6 +28,7 @@ jobs:
         run: |
           python3 scripts/release/installation-scenarios.test.py
           python3 scripts/release/test-installation-card.py
+          node --test scripts/release/lifecycle-scenario/test/*.test.mjs
       - name: Build release-shaped candidate assets
         run: |
           set -euo pipefail

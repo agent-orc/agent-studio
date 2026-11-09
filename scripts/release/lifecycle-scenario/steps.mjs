@@ -311,6 +311,8 @@ async function lowerQuota(ctx, record) {
 async function stopEnvironments(ctx, record) {
   await ensureSignedIn(ctx);
   const { api, config } = ctx;
+  const { own } = await ownedScope(ctx);
+  if (!own.length) { record.note('stopRequests', []); return; }
   const stopped = await stopAll(ctx, config.project);
   record.note('stopRequests', stopped);
   if (!stopped.length) return;
@@ -324,11 +326,12 @@ async function stopEnvironments(ctx, record) {
 
 async function removeProject(ctx, record) {
   await ensureSignedIn(ctx);
-  const { api, config } = ctx;
-  const projects = (await api.projects()).filter(project => project.displayName === config.project);
-  for (const project of projects) await api.deleteProject(project.id);
-  record.note('removed', projects.map(project => project.id));
-  const left = (await api.projects()).filter(project => project.displayName === config.project);
+  const { api } = ctx;
+  const { own } = await ownedScope(ctx);
+  for (const project of own) await api.deleteProject(project.id);
+  record.note('removed', own.map(project => project.id));
+  const ids = new Set(own.map(project => project.id));
+  const left = (await api.projects()).filter(project => ids.has(project.id));
   expect(left.length === 0, 'The project is still listed after removal.');
 }
 
@@ -343,7 +346,7 @@ async function removeRepository(ctx) {
 async function removeWorkspace(ctx, record) {
   await ensureSignedIn(ctx);
   const { api, config } = ctx;
-  const workspace = (await api.workspaces()).find(ws => ws.displayName === config.workspace);
+  const { workspace } = await ownedScope(ctx);
   if (workspace) await api.deleteWorkspace(workspace.id);
   record.note('removed', workspace?.id ?? null);
   const left = (await api.workspaces()).some(ws => ws.displayName === config.workspace);
@@ -351,6 +354,22 @@ async function removeWorkspace(ctx, record) {
 }
 
 // ----- shared -----
+
+// Teardown removes only what lives in the scenario's own workspace. Project
+// names are unique across Studio, so a same-named project in another workspace
+// (the reason setup refused to run) belongs to someone else. A workspace that
+// holds other projects is not the scenario's either; teardown leaves it whole.
+async function ownedScope(ctx) {
+  const { api, config } = ctx;
+  const workspace = (await api.workspaces()).find(ws => ws.displayName === config.workspace);
+  if (!workspace) return { workspace: null, own: [] };
+  const foreign = (workspace.projects ?? []).filter(project => project.displayName !== config.project);
+  if (foreign.length) {
+    throw new StepSkipped(`Workspace "${config.workspace}" holds other projects; teardown leaves it untouched.`,
+      { workspace: workspace.id, projects: foreign.map(project => project.displayName) });
+  }
+  return { workspace, own: (workspace.projects ?? []).filter(project => project.displayName === config.project) };
+}
 
 async function signIn(ctx) {
   const { credentials } = ctx;

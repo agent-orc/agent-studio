@@ -104,6 +104,7 @@ jobs:
           sh scripts/release/linux-install-script.test.sh
           python3 scripts/release/installation-scenarios.test.py
           python3 scripts/release/test-installation-card.py
+          node --test scripts/release/lifecycle-scenario/test/*.test.mjs
           python3 -m unittest discover \
             -s deploy/agent-host/tests \
             -p 'test_*.py'

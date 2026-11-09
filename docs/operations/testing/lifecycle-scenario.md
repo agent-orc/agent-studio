@@ -27,6 +27,9 @@ node scripts/release/lifecycle-scenario.mjs \
 playthrough passed, 1 that a step failed or was skipped, and 2 a usage error.
 `--teardown never` keeps everything for inspection; `--teardown only` removes
 what an earlier run left.
+Teardown touches only the scenario workspace: a same-named project in another
+workspace is left alone, and a scenario workspace that holds other projects is
+left whole with the teardown steps recorded as skipped.
 
 The sign-in file holds `{"login": "...", "password": "..."}` and, when the
 Owner enrolled an authenticator, `"totpSecret": "<base32>"`. It must have mode
@@ -69,7 +72,7 @@ timed-out step with the condition it waited for.
 | 7a | A seeded card removes `health.txt`; it passes the gates and stage; the user approves it | Production health fails, production rolls back to the previous digest, Studio opens a failure card |
 | 7b | A fix card restores `health.txt` with a test; stage, approval, production | Production runs the fix and `/health.txt` answers 200 |
 | 8 | Lowers the token limit to the tokens already used | Status is warning or blocked, admission refuses new work, the Studio header shows the warning |
-| Teardown | Stops stage and production, removes project and workspace | Nothing named for the scenario remains |
+| Teardown | Stops stage and production, removes project and workspace | Nothing the scenario owns remains in its workspace |
 
 Stage checks the page; production also checks `/health.txt`. Stage and
 production run the same digest, so this stricter production health contract
@@ -108,5 +111,6 @@ the deletion.
 whole journey against an in-process fake Studio with a fake clock and a fake
 browser. It covers the happy path, reruns, teardown only, a red review, a
 failed stage, a chat that needs a confirmation, an authenticator, a non-Owner,
-the configuration guards, and the report. `npm --prefix frontend run lint`
-runs it as `lint:lifecycle-scenario`.
+the configuration guards, teardown scope, and the report. The release
+workflow and the nightly installation workflow run it next to the installer
+scenario checks.

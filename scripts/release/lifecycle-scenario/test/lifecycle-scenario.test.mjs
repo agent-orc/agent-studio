@@ -170,6 +170,63 @@ test('teardown only removes what an earlier run left behind', async t => {
   assert.ok(!studio.workspaces.some(ws => ws.displayName === 'Department demo'));
 });
 
+// A project the scenario did not create, with a running production environment.
+function seedForeignProject(studio, workspace, displayName) {
+  if (!studio.workspaces.some(ws => ws.id === workspace.id)) studio.workspaces.push(workspace);
+  const running = { deployedArtifact: 'ghcr.io/other/app@sha256:' + 'a'.repeat(64), health: 'healthy', history: [] };
+  studio.projects.push({
+    id: 'PROJ-900', displayName, shortCode: 'OT', workspaceId: workspace.id, repositoryUrl: 'https://github.com/other/app',
+    cardCount: 0, declared: true, healthFile: true, releases: [], promotions: [], failureCards: [],
+    environments: { stage: { ...running, history: [] }, production: { ...running, history: [] } },
+  });
+}
+
+const touches = (studio, project) => studio.requests.filter(request => request.method !== 'GET'
+  && (request.path.includes(encodeURIComponent(project.displayName)) || request.path.includes(project.id)));
+
+test('teardown after a refused setup leaves a same-named project in another workspace alone', async t => {
+  const clock = fakeClock();
+  const studio = await startFakeStudio({ clock });
+  t.after(() => studio.close());
+  seedForeignProject(studio, { id: 'ws-other', displayName: 'Other team' }, 'Click Counter');
+  const directory = await scratch(t);
+  const file = await signInFile(directory, { login: studio.login, password: studio.password });
+  const report = await playScenario(parseConfig(argv(studio, file, path.join(directory, 'report')), {}),
+    { clock, browserFactory: fakeBrowserFactory(studio) });
+
+  assert.equal(step(report, 'workspace').status, 'failed');
+  assert.match(step(report, 'workspace').reason, /already exists in workspace "Other team"/);
+  assert.deepEqual(step(report, 'stop-environments').evidence.stopRequests, []);
+  assert.deepEqual(step(report, 'remove-project').evidence.removed, []);
+  const foreign = studio.projects.find(item => item.id === 'PROJ-900');
+  assert.ok(foreign, 'the other workspace\'s project was deleted');
+  assert.equal(foreign.environments.production.health, 'healthy');
+  assert.deepEqual(touches(studio, foreign), []);
+});
+
+test('teardown leaves the scenario workspace whole when it holds another project', async t => {
+  const clock = fakeClock();
+  const studio = await startFakeStudio({ clock });
+  t.after(() => studio.close());
+  seedForeignProject(studio, { id: 'ws-demo', displayName: 'Department demo' }, 'Ledger');
+  const directory = await scratch(t);
+  const file = await signInFile(directory, { login: studio.login, password: studio.password });
+  const report = await playScenario(parseConfig(argv(studio, file, path.join(directory, 'report')), {}),
+    { clock, browserFactory: fakeBrowserFactory(studio) });
+
+  assert.equal(step(report, 'workspace').status, 'failed');
+  for (const id of ['stop-environments', 'remove-project', 'remove-workspace']) {
+    assert.equal(step(report, id).status, 'skipped', id);
+    assert.match(step(report, id).reason, /holds other projects; teardown leaves it untouched/);
+  }
+  const foreign = studio.projects.find(item => item.id === 'PROJ-900');
+  assert.ok(foreign);
+  assert.equal(foreign.environments.production.health, 'healthy');
+  assert.ok(studio.workspaces.some(ws => ws.id === 'ws-demo'));
+  assert.deepEqual(touches(studio, foreign), []);
+  assert.ok(!studio.requests.some(request => request.method === 'DELETE' && request.path.startsWith('/api/workspaces/')));
+});
+
 test('a red review stops the journey with the reasons, skips what depends on it, and still tears down', async t => {
   const { report, studio } = await play(t, { redReviewTitles: ['History of the last ten values'] });
   assert.equal(report.status, 'failed');
