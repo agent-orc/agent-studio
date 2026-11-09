@@ -105,6 +105,7 @@ test('every working-set command answers with JSON and exit 0', async () => {
     ['create', '--ready', '--project', 'Demo App', '--title', 'Follow-up from triage', '--prompt-file', promptFile],
     ['title', 'DEMO-4', 'Repaired title'],
     ['capacity'],
+    ['security'],
     ['routing'],
     ['routing', 'set-step', '--step', 'remote-review', '--cli', 'codex', '--model', 'demo-model', '--all'],
     ['preflight', 'restart'],
@@ -140,6 +141,19 @@ test('the human-readable output is redacted as well', async () => {
     assert.equal(result.code, 0, result.stderr);
     assert.ok(result.stdout.length > 0);
   }
+});
+
+test('security lists ranked entries and narrows to what needs action soon', async () => {
+  const home = makeHome();
+  const all = await run(['security'], { home });
+  assert.equal(all.code, 0, all.stderr);
+  assert.match(all.stdout, /2 entries \(1 critical, 0 high, 1 medium, 0 low, 0 info\); 1 need action soon\./);
+  assert.match(all.stdout, /#1 critical 95 second-factor: Owner has no second factor \[action soon\]/);
+  assert.match(all.stdout, /#2 medium 50 credentials: API token ci never expires/);
+  const soon = await run(['security', '--soon'], { home });
+  assert.equal(soon.code, 0, soon.stderr);
+  assert.doesNotMatch(soon.stdout, /never expires/);
+  assert.ok(studio.requests.some(request => request.method === 'GET' && request.path === '/api/security/posture'));
 });
 
 test('accept refuses red and missing evidence and accepts a green card', async () => {

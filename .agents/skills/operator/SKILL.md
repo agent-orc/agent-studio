@@ -215,6 +215,12 @@ A gated merge waits to reach origin, and nothing else integrates meanwhile.
   under isolation.
 - Title repair: `studio-op title <card> "<new title>"`.
 - Capacity: `studio-op capacity` (quota per CLI, fallbacks, waits, pins).
+- Security: `studio-op security` lists the installation's security entries
+  ranked by severity (expiring tokens and sign-ins, users without a second
+  factor, hosts or CLIs behind, audit anomalies, open security cards);
+  `--soon` keeps what needs action within 14 days. It only reads: report an
+  entry to the Owner, because credentials, second factors and the kill switch
+  stay with the Owner.
 - Review step models: `studio-op routing` shows the central model selection
   policy and pins; `studio-op routing set-step --step <step id> --cli <cli> --model <model> --all`
   changes one step for every readable project through its model selection step

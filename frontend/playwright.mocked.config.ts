@@ -22,6 +22,7 @@ export default defineConfig({
       '**/task-detail/pipeline-column-headers.spec.ts',
       '**/system/semantic-contrast.spec.ts',
       '**/project/project-deploy-area.spec.ts',
+      '**/project/operations-security.spec.ts',
       '**/workspace/deployment-dashboard.spec.ts',
       '**/workspace/structure-view.spec.ts',
       '**/project/project-deploy-area.spec.ts',

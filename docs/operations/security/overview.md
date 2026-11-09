@@ -297,7 +297,7 @@ through its groups. Code: `backend/Features/Security/Iam/`.
 | Owner | workspace | every permission; break-glass role, the only one with `access.read`, `access.manage`, and `workspace.administer` |
 | Admin | workspace, project | settings, operation, production deploy and approval, `secrets.write` |
 | Developer | workspace, project, environment | cards, runs, chats, documents, non-production deploys |
-| Operator agent (`operator-agent`) | workspace, project; service accounts only | the operator surface: reads, cards, runs, batch gate, review step models (`project.pipeline.write`), installation operation reads, stage deploys |
+| Operator agent (`operator-agent`) | workspace, project; service accounts only | the operator surface: reads, cards, runs, batch gate, review step models (`project.pipeline.write`), installation operation reads, stage deploys, the security view (`security.posture.read`) |
 | Product (`contributor`) | project | cards and chat, narrowed further by the Product allowlist |
 | Viewer | workspace, project, environment | reads, secret metadata included |
 | Approver | workspace, project, environment | `environment.production.deploy.approve` and reads |
@@ -1269,6 +1269,38 @@ Dossier's guardrails in code:
   and tests, nothing blocks and no decision is open (OA-D5); the lane move then
   still passes the server's integration check.
 - It has no Git, SSH or host execution command.
+
+### Installation security view (AGT-3575)
+
+The Operations page has a Security section, and operator agents read the same
+answer from `GET /api/security/posture`. The route declares
+`security.posture.read`, a workspace permission held by the Owner and the
+`operator-agent` role only; Admin, Developer, Viewer, and Product users and
+tokens get 403, and the page then hides the section. The route lies outside
+`/api/auth/*` and `/api/v1/*`, so an operator session reaches it as a T0
+observe read. The public demo does not map it. Code:
+`backend/Features/Security/Posture/`.
+
+The answer is metadata only: no secret value, token hash or prefix, TOTP
+secret, or recovery code. It has these fact sources:
+
+| Source | What it reads |
+|---|---|
+| Exposure | profile, HTTPS requirement, `Security:PublicCloudflareEdge`, trusted proxy count, the sign-in client address health, and every route open to anonymous callers. The edge access layer, origin-pull authentication, and host firewall are not visible to the API and are reported as such; `check-edge-config.sh` checks them on the host. |
+| Credentials | API tokens and Access-area service-account tokens (holder, role, scope, creation, expiry, last use, state), operator agents with live sessions, and the credential inventory (GitHub App, App installations, host tokens and keys, secrets, runner credentials, provider sign-ins). With a standalone Task Server the inventory comes from it. |
+| Second factor | each user's TOTP, passkey, and recovery code counts; Owner and Operator must have a factor. The local profile has no sign-in and raises no entry. |
+| Versions | the server build identity, and per runner host its operating system, agent host release against the server (`HostReleaseDriftPolicy`), installed CLIs against the required version, and the container images the host reports. |
+| Audit | chain verification, off-host forwarding, open audit alerts, refused bearer requests and refused secret writes of the last 7 days (grouped by actor), kill switch uses and drills, and break-glass windows. |
+| Security cards | open cards (not Completed or Archive) tagged `security`. |
+
+Every finding has a score from 0 to 100 and a rank by score, then due date.
+Severity follows the score: 90 critical, 70 high, 40 medium, 20 low, below
+that info. `actionSoon` marks what turns acute within 14 days, for example a
+token or provider sign-in that expires within 14 days (70 to 84 by days left,
+90 within a day), a host CLI below the required version (74), or a user
+without a second factor (Owner 95, Operator 85, others 60). A token without
+expiry scores 50, an expiry within 30 days 40. A source that does not answer
+is named as unavailable instead of read as empty.
 
 ## Audit and credential handling
 
