@@ -10,6 +10,11 @@ export default defineConfig({
     maxWorkers: 4,
     fileParallelism: true,
     isolate: false,
+    // Angular's ng test command does not forward Vitest's --sequence.shuffle
+    // option. These settings provide the same seeded ordering for gate checks.
+    sequence: process.env['FRONTEND_TEST_SHUFFLE'] === '1'
+      ? { shuffle: true, seed: Number(process.env['FRONTEND_TEST_SEED'] ?? Date.now()) }
+      : undefined,
     coverage: {
       provider: 'v8',
       reportsDirectory: '../coverage/frontend',

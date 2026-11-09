@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
@@ -9,6 +9,12 @@ import type { RegistryProjectSummary, RegistryWorkspaceListItem, TaskInfo } from
 import { TaskService } from '../../services/task.service';
 import { StudioTabStateService } from './services/studio-tab-state.service';
 import { projectIdentity } from '../../services/project-identity.util';
+
+beforeEach(async () => {
+  // Individual specs must not depend on the smoke test running first to
+  // resolve the component's external template and styles.
+  await TestBed.configureTestingModule({ imports: [StudioShellComponent] }).compileComponents();
+});
 
 // AGT-2035: the workspace-delete gating helpers (`canDeleteWorkspace` /
 // `workspaceDeleteTooltip`) moved to WorkspaceManagementComponent; their unit

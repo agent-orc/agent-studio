@@ -8,6 +8,7 @@
     "src/**/*.spec.ts",
     "src/test-locale.ts",
     "src/test-lazy-imports.ts",
+    "src/test-dom-prototype-guard.ts",
     "src/**/*.d.ts"
   ]
 }

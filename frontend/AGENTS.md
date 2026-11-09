@@ -409,6 +409,10 @@ Regression coverage is acceptance-level (DOM render via `TestBed`) in the librar
 
 `npm test` runs Vitest via `@angular/build:unit-test` (Angular 21's first-party runner). All `src/**/*.spec.ts` are picked up; `e2e/` is Playwright-only and not part of `npm test`.
 
+Angular's test command does not forward Vitest's `--sequence.shuffle` flag. To
+exercise the same seeded shuffle with the normal worker settings, run
+`FRONTEND_TEST_SHUFFLE=1 FRONTEND_TEST_SEED=<integer> npm run test:ci`.
+
 **Smoke tests** (Cycle 11c). Every standalone component has a generated `<name>.spec.ts` that mounts the component with the standard provider stack (`provideZonelessChangeDetection`, `provideHttpClient` + `provideHttpClientTesting`, `provideRouter([])`) and checks the constructor + `inject()` wiring + decorator metadata don't throw. They DO NOT exercise the full render path — `detectChanges()` is wrapped in try/catch so a missing required input or per-component service stub surfaces as a console note instead of a red test. Re-generate after adding components: `node scripts/generate-smoke-specs.mjs` (skips files that already have a `.spec.ts`).
 
 When you need a real render-path test, hand-tune the spec: seed the required `input.required<...>()` defaults via `fixture.componentRef.setInput(name, value)` and add any per-component service stubs to `providers`. Two specs are currently `it.skip` for that reason (`git-pane`, `protocol-pane`) — they need stubs for `GitPaneService` / `ClaudeSessionPollService`.
