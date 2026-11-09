@@ -208,6 +208,8 @@ The task-detail header carries a lane `<select>` (studio shell: `data-testid="st
 
 When you add a new manual-target lane or a new move affordance, route it through `ORCHESTRATOR_CONTROLLED_LANES` / `studioLaneOptions` rather than re-deriving the exclusion list inline, so the two surfaces stay in lockstep.
 
+**Board card menu (AGT-3588).** The card context menu (`buildCardCtxMenuItems`) lists every lane in `MANUAL_MOVE_LANES` by name (`Move to Ready`), never relative "forward/back" rows. `manualMoveSkipsExecution` (`triage-actions.model.ts`) drops Human review and Accepted for a card in a pre-execution lane, because that move would skip the run. Ready cards also get Move to top / Move to bottom. These reorder the card inside its own project's queue (`ready-queue-order.ts`), paint first, and offer Undo.
+
 **Pager position is stable across a lane move.** The Prev/Next pager iterates a snapshot captured on detail entry (`LanePagerService`), not the live lane. Moving the current task out of its lane shrinks that snapshot by one and auto-advances to the next captured slug in the *original* lane — the `X / N` context does not jump to the destination lane. See `advanceAfterMutation` / `removeAndAdvance`.
 
 Regression coverage (run with `PW_TARGET=stable`):

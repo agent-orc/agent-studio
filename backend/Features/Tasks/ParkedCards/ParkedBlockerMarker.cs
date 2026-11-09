@@ -88,6 +88,8 @@ public static class ParkedBlockerMarker
             record.LastEvaluation?.Detail ?? "No recall sweep has evaluated this blocker yet.")
         {
             Lane = record.Lane,
+            Cause = record.Cause,
+            CauseDetail = record.CauseDetail,
             Decision = ToDecisionStatus(record.Decision),
             NeedsInputFile = record.NeedsInputFile,
             EvaluationAgeSeconds = evaluatedAt is null

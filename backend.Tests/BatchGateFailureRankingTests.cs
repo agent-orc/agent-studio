@@ -383,6 +383,30 @@ public sealed class BatchGateFailureRankingTests
     }
 
     [Fact]
+    public void Later_partial_records_do_not_hide_completed_evidence_for_the_same_execution()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var evidence = Path.Combine(root, "gate-evidence.jsonl");
+        try
+        {
+            File.WriteAllText(evidence,
+                """{"GateRunId":"one-run","TestedSha":"sha","GateCompletedAtUtc":"2026-11-05T12:00:00Z","RecordedFailedTests":["Right.Test"]}""" + "\n" +
+                """{"GateRunId":"one-run","TestedSha":"sha","RecordedFailedTests":[]}""" + "\n" +
+                """{"GateRunId":"one-run","TestedSha":"sha","GateCompletedAtUtc":"2026-11-05T12:00:00Z"}""" + "\n");
+            var store = new BatchGateStore(root);
+            store.RecordExecution(new BatchGateExecutionFact("Project", "one", "one-run", "sha", "fail", "host",
+                Now, Now, 0, 0, evidence, MemberKeys: ["AGT-1"]));
+
+            var report = store.FailedTestRanking("Project", Now);
+            Assert.Equal(0, report.PendingEvidenceRuns);
+            Assert.Equal("Right.Test", Assert.Single(report.Tests).TestName);
+            Assert.Equal("one-run", Assert.Single(Assert.Single(report.Tests).Failures).RunId);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public void Unidentified_nearby_run_cannot_fill_a_missing_execution()
     {
         var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));

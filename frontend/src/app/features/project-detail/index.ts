@@ -29,6 +29,7 @@ export { UxuiPanelComponent } from './components/uxui-panel/uxui-panel.component
 export { ProjectObservabilityPanelComponent } from './components/project-observability/project-observability-panel.component';
 export { ProjectProductRuntimePanelComponent } from './components/project-product-runtime/project-product-runtime-panel.component';
 export { ApiStallPanelComponent } from './components/api-stall-panel/api-stall-panel.component';
+export { OperationsSecurityComponent } from './components/operations-security/operations-security';
 export { ProjectPipelinePanelComponent } from './components/project-pipeline-panel/project-pipeline-panel.component';
 export { ProjectTestRunsPanelComponent } from './components/project-test-runs-panel/project-test-runs-panel';
 export { QualityStudioPanelComponent } from './components/quality-studio-panel/quality-studio-panel.component';

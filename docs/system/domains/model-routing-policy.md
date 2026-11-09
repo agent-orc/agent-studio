@@ -105,6 +105,18 @@ instead of a fixed `primary`. Consumer keys include `coding`, `review-aspect`,
 | `PUT /api/projects/{projectName}/pipeline-step` | The existing step body with `pipelineType`, `stepId`, optional `cliType`, `model`, `thinkingLevel`, and `pinMode` (default `preference`), alongside the other step settings. | The existing step response gains `modelSelectionOverrides`. A model or CLI selection writes the matching step override; clearing both removes it. The compatibility step fields remain readable. |
 | `PUT /api/tasks/{jobId}/model`, `/thinking-level`, `/cli-type` | Respectively `{ "model": ..., "pinMode": "preference" }`, `{ "thinkingLevel": ..., "pinMode": "preference" }`, and `{ "cliType": ..., "pinMode": "preference", "useOwnSession": ... }`. `pinMode` may be omitted and then defaults to `preference`. | `200 OK` for a saved card pin, `404` when the card is absent; invalid pin modes return `400`. The CLI route also validates `cliType`. These pins affect later attempts, not a running CLI session. |
 
+The project Pipeline page reads `GET /api/model-selection/effective` for its
+project and pipeline type (AGT-3581). When the effective CLI or model of an
+LLM step differs from the configured one shown on the row, the row adds one
+line with the effective route, the configured route, the rule, and the reason;
+a null reason reads "reason not recorded". The aspect review group offers
+"Apply to all aspect steps", which writes the selected route as the step
+override of each aspect step of that project and type through
+`PUT /api/projects/{projectName}/pipeline-step`, and "Apply to all projects",
+which sets the `primary` of the workspace `review-aspect` consumer policy.
+Explicit step pins and project overrides still take precedence over that
+primary.
+
 The project override map is `ModelSelectionOverrides[consumerClass]`, with
 optional `byPipelineType[pipelineType]` and `byStep[stepId]` entries. Each entry
 may supply `primary`, ordered `fallbacks`, and `pinMode`.

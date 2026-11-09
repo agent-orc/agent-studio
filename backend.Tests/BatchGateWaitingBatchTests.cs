@@ -4,7 +4,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGateWaitingBatchTests : BatchGatePilotServiceTests
 {
     [Fact]
     [Trait("Category", "MachineBound")]
@@ -180,8 +180,11 @@ public sealed partial class BatchGatePilotServiceTests
             release.TrySetResult();
         }
     }
+}
 
-    private static void ConfigureThresholdWaiting(
+public abstract partial class BatchGatePilotServiceTests
+{
+    private protected static void ConfigureThresholdWaiting(
         Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> factory)
     {
         var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();

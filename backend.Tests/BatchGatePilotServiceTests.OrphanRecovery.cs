@@ -7,7 +7,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGatePilotOrphanRecoveryTests : BatchGatePilotServiceTests
 {
     [Fact]
     public async Task Tick_recovers_a_formed_manifest_missing_from_the_pilots_flights()
@@ -59,7 +59,7 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     [Fact]
-    public async Task Tick_starts_an_older_formed_batch_before_a_later_larger_batch()
+    public async Task Tick_starts_a_formed_batch_past_its_maximum_wait_before_a_later_larger_batch()
     {
         using var factory = BuildFactory();
         _ = factory.CreateClient();
@@ -70,7 +70,9 @@ public sealed partial class BatchGatePilotServiceTests
             SeedMember(factory, "CODE-OLD-B", "src/old-b.cs"),
         };
         var older = ClosePendingBatch(factory);
-        _clock = _clock.AddSeconds(1);
+        // AGT-3562: within the maximum wait the larger batch starts first; past
+        // it the older batch starts regardless of size.
+        _clock = _clock.AddMinutes(Settings(factory).MaximumWaitMinutes + 1);
         var newerMembers = new[]
         {
             SeedMember(factory, "CODE-NEW-A", "src/new-a.cs"),
@@ -111,15 +113,12 @@ public sealed partial class BatchGatePilotServiceTests
             release.TrySetResult();
             await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
         }
-        await pilot.TickAsync(CancellationToken.None);
-        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
 
+        // The finished flight started the newer batch at once; it re-formed on
+        // the moved base and its successor started at once as well.
         var successor = Assert.Single(store.ListManifests(), item =>
             item.ReformedFromBatchId == newer.BatchId);
         AssertPhase(store, newer.BatchId, BatchPhase.Abandoned);
-        AssertPhase(store, successor.BatchId, BatchPhase.Formed);
-        await pilot.TickAsync(CancellationToken.None);
-        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
 
         AssertPhase(store, older.BatchId, BatchPhase.Published);
         AssertPhase(store, successor.BatchId, BatchPhase.Published);

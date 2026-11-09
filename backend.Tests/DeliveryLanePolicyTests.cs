@@ -205,4 +205,54 @@ public sealed class DeliveryLanePolicyTests
         }
         finally { Directory.Delete(folder, recursive: true); }
     }
+
+    // AGT-3586: an acceptance park states the fact once, as a sentence. The
+    // category travels as the transition detail; the next step is offered by
+    // the lane buttons, not by an instruction to "rerun the gate".
+    [Fact]
+    public void AcceptanceParkReason_IsOneSentenceWithoutSlugOrInstruction()
+    {
+        var missing = DeliveryChainReconciler.IntegrationParkReason("missing-delivery", null);
+        Assert.Equal("No delivery branch was found for this card, so its work cannot be integrated.", missing);
+
+        var failed = DeliveryChainReconciler.IntegrationParkReason("integration-failed", new TaskIntegrationStatus
+        {
+            Failure = new TaskIntegrationFailure { Reason = "Merge conflict in src/app.ts." },
+        });
+        Assert.Equal("The delivery could not be integrated: Merge conflict in src/app.ts.", failed);
+        Assert.Equal("The delivery could not be integrated.",
+            DeliveryChainReconciler.IntegrationParkReason("integration-failed", null));
+        Assert.DoesNotContain("rerun", missing + failed);
+    }
+
+    // AGT-3586 review: the recorded failure detail is never discarded, also
+    // on a missing-delivery park, and the sentence always ends.
+    [Fact]
+    public void AcceptanceParkReason_KeepsTheRecordedFailureDetail()
+    {
+        var status = new TaskIntegrationStatus
+        {
+            Failure = new TaskIntegrationFailure { Reason = "Branch agent/AGT-1 was deleted on origin" },
+        };
+        Assert.Equal(
+            "No delivery branch was found for this card, so its work cannot be integrated: "
+            + "Branch agent/AGT-1 was deleted on origin.",
+            DeliveryChainReconciler.IntegrationParkReason("missing-delivery", status));
+        Assert.Equal("The delivery could not be integrated: Branch agent/AGT-1 was deleted on origin.",
+            DeliveryChainReconciler.IntegrationParkReason("merge-conflict", status));
+    }
+
+    // AGT-3586 review: a nonfatal (stale verdict) park states its fact too,
+    // not the old "Integrate the current delivery and repeat review." order.
+    [Fact]
+    public void StaleVerdictParkReason_IsAFactNotTheOldInstruction()
+    {
+        var stale = DeliveryChainReconciler.IntegrationParkReason("delivery-verdict-stale", new TaskIntegrationStatus
+        {
+            Failure = new TaskIntegrationFailure { Reason = "Merge conflict in an older delivery." },
+        });
+        Assert.Equal("The review verdict no longer matches the current delivery, so it cannot be accepted.", stale);
+        Assert.DoesNotContain("repeat review", stale);
+        Assert.DoesNotContain("delivery-verdict-stale", stale);
+    }
 }

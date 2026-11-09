@@ -1,0 +1,32 @@
+<div class="bulk" data-testid="aspect-model-bulk-apply">
+  <span class="bulk__label">Model for all aspect steps</span>
+  <app-cli-model-selector
+    [cliType]="selection()?.cliType ?? null"
+    [model]="selection()?.model ?? null"
+    [thinkingLevel]="selection()?.thinkingLevel ?? null"
+    [disabled]="busy() !== null"
+    disabledReason="A bulk model change is in progress."
+    eyebrow="Aspect review steps"
+    triggerTestid="aspect-model-bulk-agent"
+    pickerTestidPrefix="aspect-model-bulk-agent-picker"
+    (commit)="onSelect($event)" />
+  <span class="bulk__actions">
+    <button type="button" class="bulk__action bulk__action--primary"
+            data-testid="aspect-model-apply-steps"
+            [disabled]="!selection() || modelSteps().length === 0 || busy() !== null"
+            [attr.aria-busy]="busy() === 'steps'"
+            [appTooltip]="'Write this route as the step override of every aspect step in this project and pipeline type.'"
+            (click)="applyToAllSteps()">{{ busy() === 'steps' ? 'Applying…' : 'Apply to all aspect steps' }}</button>
+    <button type="button" class="bulk__action bulk__action--secondary"
+            data-testid="aspect-model-apply-projects"
+            [disabled]="!selection() || busy() !== null"
+            [attr.aria-busy]="busy() === 'projects'"
+            [appTooltip]="'Set this route as the workspace review-aspect consumer policy. Projects and steps with their own override keep it.'"
+            (click)="applyToAllProjects()">{{ busy() === 'projects' ? 'Applying…' : 'Apply to all projects' }}</button>
+  </span>
+  @if (message(); as m) {
+    <span class="bulk__message" role="status"
+          [class.bulk__message--error]="m.tone === 'error'"
+          data-testid="aspect-model-bulk-message">{{ m.text }}</span>
+  }
+</div>
