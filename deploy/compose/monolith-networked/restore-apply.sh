@@ -25,17 +25,36 @@ case "${1:-}" in
 esac
 
 # Restore only into the state setup.sh leaves: a workspace that holds just the
-# installer's single commit and no project data.
-if [ -n "$(find /data/workspace -mindepth 1 -maxdepth 1 ! -name .git -print -quit)" ]; then
+# installer's single commit of .gitignore and no project data.
+if [ -n "$(find /data/workspace -mindepth 1 -maxdepth 1 ! -name .git ! -name .gitignore -print -quit)" ]; then
   fail 'the workspace is not empty; restore needs a fresh stack from setup.sh that has not been started'
 fi
 if [ -d /data/workspace/.git ] && [ "$(git -C /data/workspace rev-list --all --count 2>/dev/null || echo 0)" -gt 1 ]; then
   fail 'the workspace repository has history; restore needs a fresh stack from setup.sh'
 fi
+if [ -e /data/workspace/.gitignore ] && [ -n "$(git -C /data/workspace status --porcelain 2>/dev/null || echo changed)" ]; then
+  fail 'the workspace has changes; restore needs a fresh stack from setup.sh'
+fi
 if [ -n "$(find /data/projects -mindepth 1 -maxdepth 1 -print -quit)" ]; then
   fail 'the projects directory is not empty; restore needs a fresh stack from setup.sh'
 fi
-rm -rf /data/workspace/.git
+# The archived workspace and its repository replace setup.sh's. Keep them
+# aside until the restore succeeds; a failed restore empties the targets and
+# puts them back, so restore.sh can run again on the same stack.
+setup_held="$(mktemp -d)"
+for entry in .git .gitignore; do
+  if [ -e "/data/workspace/$entry" ]; then mv "/data/workspace/$entry" "$setup_held/"; fi
+done
+finish() {
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    find /data/workspace /data/projects -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+    cp -a "$setup_held/." /data/workspace/
+    log 'restore failed; the workspace and projects directory are back to the state setup.sh left'
+  fi
+  rm -rf "$setup_held"
+}
+trap finish EXIT
 
 staging=projects/.studio-restore
 # --no-overwrite-dir keeps owner and mode of the mounted roots from setup.sh.

@@ -3130,6 +3130,101 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Acceptance_BatchPublicationFollowedByManagedDocumentKeyCommit_IsAccepted(
+        bool useManagedTrailer)
+    {
+        var (deps, keySha) = PublishVerifiedDescriptorAndKey(useManagedTrailer: useManagedTrailer);
+
+        var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Contains(keySha, completed.CompletionClaim?.Evidence);
+        Assert.Contains("Gate-neutral document-key commits", completed.CompletionClaim?.Evidence);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Acceptance_DocumentKeyCommitWithOtherChangeOrLaterUngatedCommit_IsRefused(
+        bool otherChangeInKeyCommit)
+    {
+        var (deps, keySha) = PublishVerifiedDescriptorAndKey(otherChangeInKeyCommit);
+        var missingGateSha = otherChangeInKeyCommit ? keySha : PublishLaterCommit("ungated-after-key.txt");
+
+        var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+
+        Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
+        Assert.Contains("integrated-unverified", refused.Message);
+        Assert.Contains(missingGateSha, refused.Message);
+    }
+
+    [Fact]
+    public async Task Acceptance_DocumentKeyCommitChangingAnotherDescriptorField_IsRefused()
+    {
+        var (deps, keySha) = PublishVerifiedDescriptorAndKey(alterTitle: true);
+
+        var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+
+        Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
+        Assert.Contains(keySha, refused.Message);
+    }
+
+    private (Deps Deps, string KeySha) PublishVerifiedDescriptorAndKey(
+        bool otherChange = false, bool useManagedTrailer = false, bool alterTitle = false)
+    {
+        const string path = "docs/acceptance-dossier/workbench.json";
+        var deliverySha = PublishDelivery(path,
+            """
+            {"schemaVersion":1,"id":"acceptance-dossier","title":"Before"}
+            """ + "\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var batchSha = PublishLaterCommit("batch-publication.txt");
+        var batches = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
+        WriteBatchEvidence(batches, "descriptor-batch", deliverySha, batchSha);
+        var deps = Build(deliverySha, batchGates: batches);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        IntegrationVerificationStore.Write(card.FolderPath, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = deliverySha,
+            IntegrationBranch = "develop",
+            DeliveryShas = [deliverySha],
+            Evidence = IntegrationVerificationEvidence.MergeGate,
+            GateVerdict = nameof(BuildTestGateVerdict.Ok),
+            Reason = "The batch gate passed on the published delivery tree.",
+        });
+
+        RunGit(_repo, "checkout", "-q", "-B", "document-keys", "origin/develop");
+        File.WriteAllText(Path.Combine(_repo, path),
+            $$"""
+            {
+              "schemaVersion": 1,
+              "id": "acceptance-dossier",
+              "title": "{{(alterTitle ? "After" : "Before")}}",
+              "key": "FIX-W1"
+            }
+            """ + "\n");
+        if (otherChange) File.WriteAllText(Path.Combine(_repo, "other.txt"), "ungated\n");
+        RunGit(_repo, "add", "-A");
+        var message = "chore(workbench): assign document keys"
+            + (useManagedTrailer ? "\n\n" + ManagedRepositoryMutationService.DocumentKeyCommitTrailer : "");
+        if (useManagedTrailer)
+            RunGit(_repo, "commit", "-q", "-m", message);
+        else
+            RunGit(_repo, "-c", "user.name=Agent Studio",
+                "-c", "user.email=agent-studio@users.noreply.github.com",
+                "commit", "-q", "-m", message);
+        var keySha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        return (deps, keySha);
+    }
+
     [Fact]
     public async Task Acceptance_VerificationTreeOutsideThePublishedBranch_IsRefused()
     {
@@ -3942,6 +4037,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
     private string PublishDelivery(string relativePath, string content)
     {
         RunGit(_repo, "checkout", "-q", "-b", DeliveryRef, "origin/develop");
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(_repo, relativePath))!);
         File.WriteAllText(Path.Combine(_repo, relativePath), content);
         RunGit(_repo, "add", "-A");
         RunGit(_repo, "commit", "-q", "-m", $"feat({TaskKey}): remote delivery");
@@ -3983,6 +4079,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         bool authorityRebuilt = false,
         bool guarded = false,
         bool engineMode = false,
+        BatchGateStore? batchGates = null,
         string contentStatus = "pass",
         string contentSummary = "The fixture delivery answers its brief.")
     {
@@ -4067,7 +4164,8 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
             preDevelopBuildGate: gateRunner == null ? null : new PreDevelopBuildGate(gateRunner),
             preDevelopTimeout: TimeSpan.FromSeconds(30));
         var integration = new TaskIntegrationStatusService(
-            git, settings, pipeline, NullLogger<TaskIntegrationStatusService>.Instance);
+            git, settings, pipeline, NullLogger<TaskIntegrationStatusService>.Instance,
+            batchGates: batchGates);
         var provenance = new TaskProvenanceService(
             git,
             settings,

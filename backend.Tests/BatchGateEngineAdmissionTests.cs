@@ -17,7 +17,7 @@ namespace AgentStudio.Tests;
 /// decision without a target lane before it enqueued. These cases drive the
 /// real applier and the recovery loop against the pilot fixture.
 /// </summary>
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGateEngineAdmissionTests : BatchGatePilotServiceTests
 {
     [Fact]
     public async Task Engine_defer_to_batch_admits_the_review_at_its_report_time()
@@ -392,13 +392,16 @@ public sealed partial class BatchGatePilotServiceTests
         recovery.MarkWaiting(waiting.Folder, waiting.RunId);
         Assert.Equal(waiting.RunId, EngineDecisionWaitMarker.Read(waiting.Folder));
     }
+}
 
-    private sealed record DeferredReview(SeededMember Member, ReviewAttemptDto Review,
+public abstract partial class BatchGatePilotServiceTests
+{
+    private protected sealed record DeferredReview(SeededMember Member, ReviewAttemptDto Review,
         DateTimeOffset ReportedAt);
 
-    private sealed record MarkedOccurrence(string Folder, string RunId);
+    private protected sealed record MarkedOccurrence(string Folder, string RunId);
 
-    private DeferredReview SettleDeferredReview(WebApplicationFactory<Program> factory, string key,
+    private protected DeferredReview SettleDeferredReview(WebApplicationFactory<Program> factory, string key,
         string changedFile, string initialState = TaskStates.AutoReview)
     {
         var member = SeedMember(factory, key, changedFile, settleReview: false, initialState: initialState);
@@ -413,7 +416,7 @@ public sealed partial class BatchGatePilotServiceTests
     /// report found the card in, with its wait marker, completed by an engine
     /// that decided DeferToBatch.
     /// </summary>
-    private async Task<Contract.OrchestrationRunDto> DecideDeferToBatchAsync(
+    private protected async Task<Contract.OrchestrationRunDto> DecideDeferToBatchAsync(
         MonolithOrchestrationStore orchestration, DeferredReview deferred, bool shadow = false,
         string sourceState = TaskStates.AutoReview)
     {
@@ -445,7 +448,7 @@ public sealed partial class BatchGatePilotServiceTests
     /// completed with <paramref name="output"/>, cancelled before activation, or
     /// still waiting for an engine claim.
     /// </summary>
-    private async Task<MarkedOccurrence> MarkedOccurrenceAsync(WebApplicationFactory<Program> factory,
+    private protected async Task<MarkedOccurrence> MarkedOccurrenceAsync(WebApplicationFactory<Program> factory,
         MonolithOrchestrationStore journal, string key, string? output, bool claimable = false)
     {
         var folder = Path.Combine(_watchPath, TaskStates.AutoReview, key);
@@ -477,10 +480,10 @@ public sealed partial class BatchGatePilotServiceTests
         return new MarkedOccurrence(folder, run.RunId);
     }
 
-    private string CardFolder(string key)
+    private protected string CardFolder(string key)
         => TaskStates.All.Select(state => Path.Combine(_watchPath, state, key)).Single(Directory.Exists);
 
-    private async Task MoveToEscalatedAsync(WebApplicationFactory<Program> factory, string key)
+    private protected async Task MoveToEscalatedAsync(WebApplicationFactory<Program> factory, string key)
     {
         var moved = await factory.Services.GetRequiredService<TaskTransitionService>().MoveAsync(
             key, TaskStates.Escalated, _watchPath, CancellationToken.None, cause: "operator",
@@ -492,11 +495,11 @@ public sealed partial class BatchGatePilotServiceTests
     /// A separate occurrence journal whose applier predates the fix: it completes
     /// a decision and applies nothing, as DeferToBatch did until 17.10.2026.
     /// </summary>
-    private MonolithOrchestrationStore PreFixJournal(WebApplicationFactory<Program> factory)
+    private protected MonolithOrchestrationStore PreFixJournal(WebApplicationFactory<Program> factory)
         => new(Path.Combine(_workspace, "pre-fix-occurrences"),
             factory.Services.GetRequiredService<TimeProvider>(), new UnappliedDecisions());
 
-    private sealed class UnappliedDecisions : IMonolithOrchestrationApplier
+    private protected sealed class UnappliedDecisions : IMonolithOrchestrationApplier
     {
         public Task ApplyAsync(MonolithOrchestrationOccurrence occurrence,
             Contract.CompleteOrchestrationStageRequest completion, CancellationToken ct)

@@ -1321,6 +1321,10 @@ site or derived from the lane pair for a human actor) and `details.causeDetail`
 when one was supplied; otherwise it falls back to `cause: causeDetail` (or
 whichever of the two is present) so the marker's `reason` field is never empty
 even when the lane-transition site only passed the taxonomy fields (AGT-2838).
+The marker also records the resolved cause and its qualifier as `cause` and
+`causeDetail`, so the park copy says who parked the card (for example the
+acceptance audit) instead of presenting the latest run as the parking run, and
+states the reason once (AGT-3586).
 
 A park whose run ended without a terminal sentinel carries its reason through the
 move, so the marker is never written with an empty `reason` and its `blockerType`
@@ -2312,8 +2316,10 @@ disk for runner state.
   shared body build pins the same generation itself, so the tag always names the
   generation the body came from.
 - **A dirty index refreshes in the background.** A dirty index
-  starts one single-flight background refresh after a 200 ms coalescing window.
-  It inherits neither the request trace nor the pin, and the read answers from
+  starts one single-flight background refresh after a 200 ms coalescing window
+  (`TaskIndexCache:RefreshCoalesceMilliseconds`; the batch gate pilot test
+  fixture sets 0 because each of its tests drives one reader at a time,
+  AGT-3566). It inherits neither the request trace nor the pin, and the read answers from
   the last snapshot. A cold start answers from the persisted board (below);
   only a first start without one waits, asynchronously and cancelled with
   the request. A failed background refresh keeps the last

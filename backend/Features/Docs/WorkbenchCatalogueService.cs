@@ -728,7 +728,7 @@ public sealed class WorkbenchCatalogueService
             var persisted = _repositoryMutations.Execute(
                 project.DisplayName,
                 root,
-                "workbench-key-discovery",
+                ManagedRepositoryMutationService.DocumentKeyOperationId,
                 "chore(workbench): assign document keys",
                 assignments.Select(assignment => assignment.RelativePath).ToArray(),
                 () =>

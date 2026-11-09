@@ -7,7 +7,7 @@ using Xunit;
 namespace AgentStudio.Tests;
 
 /// <summary>AGT-3562: a hung flight frees its slot and a finished flight starts the next batch.</summary>
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGatePilotFlightLivenessTests : BatchGatePilotServiceTests
 {
     [Fact]
     public async Task Flight_blocked_on_the_reservation_is_cancelled_at_its_deadline_and_the_next_batch_runs()
