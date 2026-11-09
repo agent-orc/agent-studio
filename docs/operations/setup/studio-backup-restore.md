@@ -125,7 +125,7 @@ Restore needs the archive with its `.sha256` file, the backup key copy, the secr
 7. For a public installation, install the Docker firewall as in the [install steps](./studio-website.md#install). Point DNS at the host.
 8. Run `docker compose up -d` (with `-f compose.yaml -f compose.runner-host.yaml` on a runner host) and sign in with an existing account. Check that runners reconnect, that the Operations page shows a new good backup after the first schedule tick, and that it reaches the off-host target, before retiring the old host.
 
-If a clone or a later step fails, the restore empties its targets again and stops. Recreate the data directory with `setup.sh` and run it again.
+If the archive does not open, a clone fails or a later step fails, the restore empties its targets again, puts the workspace repository from `setup.sh` back and stops. Fix the cause and run it again on the same data directory.
 
 ### Offline tools
 
@@ -142,7 +142,7 @@ A decrypted `tar.gz` holds credential material; delete it when done.
 
 ### Tested restore
 
-`backend.Tests/StudioBackupTests.cs` restores a backup onto an empty fake host: a workspace with access state and an empty lane, a home with an owner-only SSH key and a package cache, a checkout with a remote, a Studio-only ref, task storage inside it, a worktree and an untracked file, a checkout without a remote, and task storage outside checkouts. The new host's data directory is laid out as `setup.sh` leaves it, including the initialized workspace repository; a variant refuses that workspace once it holds another file, a second commit or an edited `.gitignore`. It checks the restored files and modes, the cloned checkout with its branch and Studio ref, that the worktree, the untracked file and the cache stay out, the installed secret store key, and that a second restore, a wrong secret store key and a wrong backup key are refused. The same class covers the schedule, retention, consistency while JSON, journal and SQLite stores are written, the key material guard, the off-host copy with fake, directory, SFTP and S3 targets, and the stale warning.
+`backend.Tests/StudioBackupTests.cs` restores a backup onto an empty fake host: a workspace with access state and an empty lane, a home with an owner-only SSH key and a package cache, a checkout with a remote, a Studio-only ref, task storage inside it, a worktree and an untracked file, a checkout without a remote, and task storage outside checkouts. The new host's data directory is laid out as `setup.sh` leaves it, including the initialized workspace repository; a variant refuses that workspace once it holds another file, a second commit or an edited `.gitignore`, and another keeps it in place when the archive is missing, the backup key is wrong or a clone fails. It checks the restored files and modes, the cloned checkout with its branch and Studio ref, that the worktree, the untracked file and the cache stay out, the installed secret store key, and that a second restore, a wrong secret store key and a wrong backup key are refused. The same class covers the schedule, retention, consistency while JSON, journal and SQLite stores are written, the key material guard, the off-host copy with fake, directory, SFTP and S3 targets, and the stale warning.
 
 ## Decisions
 
@@ -209,7 +209,7 @@ Restore needs the archive, the backup identity, and the secret store key copy. I
 7. Run `docker compose up -d` (with `-f compose.yaml -f compose.runner-host.yaml` on a runner host) and sign in with an existing account. The installer code from the new `.env` is not needed, because the restored access state already has an owner.
 8. Sign the CLIs in again, check that runners reconnect, and set the backup destination and timer on the new host before retiring the old one.
 
-If a clone fails, `restore.sh` stops before it writes anything; fix the access and run it again. If a later step fails, run `docker compose down`, delete and recreate the data directory with `setup.sh`, and start over.
+If a clone fails, `restore.sh` stops before it writes anything; fix the access and run it again. If unpacking fails, it empties the workspace and projects directory, puts the workspace repository from `setup.sh` back, and stops; fix the cause and run it again.
 
 ### Host-level restore drill
 

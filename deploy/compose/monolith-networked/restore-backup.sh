@@ -88,7 +88,8 @@ docker run --rm --user 10001:10001 "${agent[@]}" \
     --target workspace=/data/workspace --target home=/data/home --target projects=/data/projects \
     --target host-certificates=/data/host-certificates --target caddy-data=/data/caddy-data \
     --target origin-pull=/data/origin-pull --target stack=/data/restored-stack \
-  || fail 'the restore did not complete; see the message above. Recreate the data directory with setup.sh before retrying.'
+  || { rmdir "$restored_stack" 2>/dev/null || true
+       fail 'the restore did not complete; see the message above. The targets are empty again and the workspace repository from setup.sh is back; fix the cause and run restore-backup.sh again.'; }
 
 bash "$stack_dir/secret-key.sh" install "$data_dir" "$secret_key"
 bash "$stack_dir/backup-key.sh" install "$key"

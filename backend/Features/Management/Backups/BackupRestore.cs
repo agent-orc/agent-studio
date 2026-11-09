@@ -20,8 +20,9 @@ public sealed record BackupRestoreResult(
 /// manifest comes first, so checkouts are cloned before any file is written;
 /// a failed clone stops the restore with nothing restored. Every file is
 /// checked against the hash list at the end of the archive; on any
-/// failure the destinations are emptied again, so a restore never leaves a
-/// half-restored installation behind.
+/// failure the destinations are emptied again and the setup workspace is put
+/// back, so a restore never leaves a half-restored installation behind and a
+/// failed restore can run again on the same host.
 /// </summary>
 public static class BackupRestore
 {
@@ -51,14 +52,23 @@ public static class BackupRestore
         var directories = 0;
         var cloned = 0;
         var bundleScratch = Path.Combine(Path.GetTempPath(), "studio-restore-bundles-" + Guid.NewGuid().ToString("N"));
+        var setupHold = Path.Combine(Path.GetTempPath(), "studio-restore-setup-" + Guid.NewGuid().ToString("N"));
+        var held = new Dictionary<string, string>(StringComparer.Ordinal);
         try
         {
             using var archive = File.OpenRead(archivePath);
             var (manifest, contents) = BackupArchive.Read(archive, key,
                 onManifest: manifest =>
                 {
-                    // The key opened the archive: the archived workspace and its repository replace setup.sh's.
-                    foreach (var directory in setupWorkspaces) Empty(directory);
+                    // The key opened the archive: the archived workspace and its repository replace
+                    // setup.sh's. A copy stays aside until the restore succeeds.
+                    foreach (var directory in setupWorkspaces)
+                    {
+                        var copy = Path.Combine(setupHold, Guid.NewGuid().ToString("N"));
+                        CopyTree(directory, copy);
+                        held[directory] = copy;
+                        Empty(directory);
+                    }
                     foreach (var source in manifest.Sources.Where(source => source.Present))
                         if (!destinations.ContainsKey(source.Name) && plan.EverySourceUnder is { } under)
                             destinations[source.Name] = Path.GetFullPath(Path.Combine(under, source.Name));
@@ -124,12 +134,16 @@ public static class BackupRestore
         }
         catch
         {
-            foreach (var directory in destinations.Values) Empty(directory);
+            // A setup workspace that was not set aside yet is untouched: nothing was written.
+            foreach (var directory in destinations.Values)
+                if (!setupWorkspaces.Contains(directory) || held.ContainsKey(directory)) Empty(directory);
+            foreach (var (directory, copy) in held) CopyTree(copy, directory);
             throw;
         }
         finally
         {
             if (Directory.Exists(bundleScratch)) Directory.Delete(bundleScratch, recursive: true);
+            if (Directory.Exists(setupHold)) Directory.Delete(setupHold, recursive: true);
         }
     }
 
@@ -177,6 +191,16 @@ public static class BackupRestore
         var tracked = BackupCheckouts.Git(directory, ["ls-tree", "-r", "--name-only", "HEAD"]);
         return tracked.Success
                && tracked.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries).All(path => path == ".gitignore");
+    }
+
+    /// <summary>Copies a directory tree with file modes; a setup workspace holds no links.</summary>
+    private static void CopyTree(string source, string target)
+    {
+        Directory.CreateDirectory(target);
+        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
+            Directory.CreateDirectory(Path.Combine(target, Path.GetRelativePath(source, directory)));
+        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+            File.Copy(file, Path.Combine(target, Path.GetRelativePath(source, file)), overwrite: true);
     }
 
     private static void Empty(string directory)

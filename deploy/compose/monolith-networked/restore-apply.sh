@@ -38,7 +38,23 @@ fi
 if [ -n "$(find /data/projects -mindepth 1 -maxdepth 1 -print -quit)" ]; then
   fail 'the projects directory is not empty; restore needs a fresh stack from setup.sh'
 fi
-rm -rf /data/workspace/.git /data/workspace/.gitignore
+# The archived workspace and its repository replace setup.sh's. Keep them
+# aside until the restore succeeds; a failed restore empties the targets and
+# puts them back, so restore.sh can run again on the same stack.
+setup_held="$(mktemp -d)"
+for entry in .git .gitignore; do
+  if [ -e "/data/workspace/$entry" ]; then mv "/data/workspace/$entry" "$setup_held/"; fi
+done
+finish() {
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    find /data/workspace /data/projects -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+    cp -a "$setup_held/." /data/workspace/
+    log 'restore failed; the workspace and projects directory are back to the state setup.sh left'
+  fi
+  rm -rf "$setup_held"
+}
+trap finish EXIT
 
 staging=projects/.studio-restore
 # --no-overwrite-dir keeps owner and mode of the mounted roots from setup.sh.

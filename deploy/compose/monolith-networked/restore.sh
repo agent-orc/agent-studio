@@ -89,7 +89,7 @@ done < <(printf '%s\n' "$manifest" | sed '1,/^--$/d')
 age --decrypt --identity "$identity" "$archive" \
   | apply -v "$data_dir/workspace:/data/workspace" -v "$data_dir/projects:/data/projects" \
       -v "$clones:/restore-clones:ro" --entrypoint /bin/bash "$image" /usr/local/bin/restore-apply.sh unpack \
-  || fail 'unpacking the archive failed'
+  || fail 'unpacking the archive failed; the stack is back to the state setup.sh left, so fix the cause and run restore.sh again'
 
 if [ "$expected_key" != none ]; then
   bash "$stack_dir/secret-key.sh" install "$data_dir" "$secret_key"

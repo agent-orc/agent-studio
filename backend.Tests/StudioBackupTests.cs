@@ -549,6 +549,56 @@ public sealed class StudioBackupTests : IDisposable
         Assert.True(Directory.Exists(Path.Combine(workspace, ".git")));
     }
 
+    [Theory]
+    [InlineData("missing-archive")]
+    [InlineData("wrong-key")]
+    [InlineData("failed-clone")]
+    public async Task A_failed_restore_leaves_the_setup_workspace_in_place(string failure)
+    {
+        var origin = Path.Combine(_fixture.Root, "remotes", "app.git");
+        var checkout = Path.Combine(_fixture.Projects, "app");
+        CheckoutFileFixture.Git(_fixture.Root, "init", "-q", "--bare", origin);
+        CheckoutFileFixture.Git(_fixture.Root, "init", "-q", "-b", "main", checkout);
+        File.WriteAllText(Path.Combine(checkout, "README.md"), "app\n");
+        Commit(checkout, "initial");
+        CheckoutFileFixture.Git(checkout, "remote", "add", "origin", origin);
+        CheckoutFileFixture.Git(checkout, "push", "-q", "origin", "main");
+        File.WriteAllText(Path.Combine(_fixture.Workspace, ".security-access.json"), "{\"users\":[]}");
+        var record = await _fixture.Service(_clock, null).CreateAsync("test", CancellationToken.None);
+        var archive = _fixture.Catalog.ArchivePath(record.Id);
+        var key = BackupKey.Load(_fixture.KeyFile);
+        switch (failure)
+        {
+            case "missing-archive":
+                archive += ".missing";
+                break;
+            case "wrong-key":
+                var otherKey = Path.Combine(_fixture.Root, "keys", "other-backup.key");
+                BackupKey.Create(otherKey);
+                key = BackupKey.Load(otherKey);
+                break;
+            case "failed-clone":
+                Directory.Delete(origin, recursive: true);
+                break;
+        }
+        var host = Path.Combine(_fixture.Root, "new-host");
+        var workspace = LayOutSetupDataDirectory(host);
+        var installerCommit = CheckoutFileFixture.Git(workspace, "rev-parse", "HEAD").Trim();
+
+        Assert.ThrowsAny<Exception>(() => BackupRestore.Restore(archive, key, new BackupRestorePlan(
+            new Dictionary<string, string>
+            {
+                ["workspace"] = workspace, ["home"] = Path.Combine(host, "home"), ["projects"] = Path.Combine(host, "projects"),
+            }, CloneCheckouts: true)));
+
+        Assert.True(BackupRestore.IsSetupWorkspace(workspace));
+        Assert.Equal(installerCommit, CheckoutFileFixture.Git(workspace, "rev-parse", "HEAD").Trim());
+        Assert.Equal("/.security/\n", File.ReadAllText(Path.Combine(workspace, ".gitignore")));
+        Assert.Contains("/.security/", File.ReadAllText(Path.Combine(workspace, ".git", "info", "exclude")));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(host, "projects")));
+        Assert.False(File.Exists(Path.Combine(workspace, ".security-access.json")));
+    }
+
     [Fact]
     public async Task Restore_refuses_a_wrong_secret_key_and_a_wrong_backup_key_before_writing()
     {
