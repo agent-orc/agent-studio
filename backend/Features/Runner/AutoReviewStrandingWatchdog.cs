@@ -75,8 +75,9 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             {
                 var key = CardKey(card);
                 var projection = _authority.GetTaskProjection(key);
-                var review = projection.CurrentReviewAttempt;
                 var run = projection.CurrentRunAttempt;
+                var review = ReviewMatchesCurrentRun(projection.CurrentReviewAttempt, run)
+                    ? projection.CurrentReviewAttempt : null;
                 var writePrefix = $"auto-review-stranding:{card.ProjectName}:{key}:{card.EnteredLaneAt.Ticks}:";
                 var previous = interventions.Where(item => item.WriteKey.StartsWith(writePrefix, StringComparison.Ordinal)
                     && item.Status == StallInterventionStatuses.Verified).ToArray();
@@ -186,6 +187,13 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         }
         if (action == AutoReviewStrandingAction.ReenterBatch && review is not null && run is not null)
         {
+            // The projection can advance after the sweep snapshot. Never let a
+            // passed review for an older delivery resume or enqueue this one.
+            var current = _authority.GetTaskProjection(CardKey(card));
+            if (current.CurrentReviewAttempt?.AttemptId != review.AttemptId
+                || !ReviewMatchesCurrentRun(current.CurrentReviewAttempt, current.CurrentRunAttempt)
+                || current.CurrentRunAttempt?.AttemptId != run.AttemptId)
+                return (false, true, "The review no longer covers the current delivery.");
             var resumed = await _resume.ResumeAsync(card, "auto-review-stranding", ct);
             if (resumed.Resumed) return (true, false, "Resumed delivery integration: " + resumed.Reason + ".");
             if (resumed.Reason is AutoReviewDeliveryResumeService.Reasons.IntegrationInFlight
@@ -197,6 +205,11 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 if (_settings.Get(card.ProjectName).BatchGate.Enabled
                     && review.TerminalAt is { } reviewedAt)
                 {
+                    current = _authority.GetTaskProjection(CardKey(card));
+                    if (current.CurrentReviewAttempt?.AttemptId != review.AttemptId
+                        || !ReviewMatchesCurrentRun(current.CurrentReviewAttempt, current.CurrentRunAttempt)
+                        || current.CurrentRunAttempt?.AttemptId != run.AttemptId)
+                        return (false, true, "The review no longer covers the current delivery.");
                     await _batchPilot.EnqueueAsync(card, review, run, new DateTimeOffset(reviewedAt), ct);
                     if (IsBatchMember(_batches, card.ProjectName, CardKey(card), review.AttemptId))
                         return (true, false, "Re-entered the batch gate for the passed review.");
@@ -212,6 +225,17 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         }
         return (false, false, "There is no completed delivery or review step to recover.");
     }
+
+    internal static bool ReviewMatchesCurrentRun(ReviewAttemptDto? review, RunAttemptDto? run)
+        => review is not null && run is not null
+            && review.SourceRunAttemptId == run.AttemptId
+            && review.Subject.SourceRunAttemptId == run.AttemptId
+            && !string.IsNullOrWhiteSpace(run.ResultSha)
+            && string.Equals(review.Subject.ExpectedResultSha, run.ResultSha,
+                StringComparison.OrdinalIgnoreCase)
+            && (review.TestedResultSha is null
+                || string.Equals(review.TestedResultSha, run.ResultSha,
+                    StringComparison.OrdinalIgnoreCase));
 
     private bool CreateReview(TaskInfo card, ReviewAttemptDto? previous, RunAttemptDto? run, string source)
     {

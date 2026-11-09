@@ -740,6 +740,56 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Contains(records.All(), record => record.Action == AutoReviewStrandingAction.StartStep.ToString());
     }
 
+    [Fact]
+    public async Task Stranding_watchdog_requests_new_review_when_passed_review_covers_older_run()
+    {
+        var deliverySha = PublishDelivery("stranded-new-run.txt", "delivered work\n");
+        var deps = Build(deliverySha, initialState: TaskStates.AutoReview);
+        var olderReview = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt!;
+        Assert.Equal(ReviewTerminalOutcome.Pass, olderReview.Outcome);
+        var acquired = deps.Authority.AcquireRun(TaskKey, "PROJ-FIXTURE", null,
+            "agent-runner-01", "host-fixture", 60, "new-run-fixture").RunAttempt!;
+        var settled = deps.Authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(acquired.AttemptId, acquired.LastFence,
+                acquired.AuthorityEpoch, "settle-new-run-fixture"),
+            Outcome = "done",
+            ResultSha = deliverySha,
+            ResultEnvelope = new Contract.ImmutableResultEnvelope("PROJ-FIXTURE",
+                acquired.AttemptId, Git(_repo, "rev-parse", $"{deliverySha}^").Out.Trim(),
+                deliverySha, $"refs/heads/{DeliveryRef}", null,
+                new string('a', 64), RepositoryUrl: _origin),
+        });
+        Assert.True(settled.Accepted);
+        Assert.Equal(olderReview.AttemptId,
+            deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt?.AttemptId);
+
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.True(TaskJsonFile.UpdateField(card.FolderPath, "enteredLaneAt",
+            VerificationFixtureAtUtc, NullLogger.Instance));
+        deps.Scanner.InvalidateCache();
+        var reviewLifecycle = new ReviewAttemptTaskLifecycleService(deps.Authority,
+            deps.Scanner, deps.Timeline, NullLogger<ReviewAttemptTaskLifecycleService>.Instance);
+        var records = new StallInterventionStore(() => _tempDir);
+        var log = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
+        var projector = new WatcherActivityProjector(log, deps.Scanner, deps.Configuration,
+            NullLogger<WatcherActivityProjector>.Instance);
+        var receipts = new StallInterventionReceipts(log, projector, deps.Scanner, deps.Timeline,
+            NullLogger<StallInterventionReceipts>.Instance);
+        var watchdog = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
+            reviewLifecycle, new BatchGateStore(_tempDir), null!, deps.Settings,
+            deps.Pipeline, new AutoReviewPostProcessingQueue(), deps.Transitions,
+            null!, null!, records, receipts, deps.Configuration,
+            NullLogger<AutoReviewStrandingWatchdog>.Instance);
+
+        Assert.Equal(1, await watchdog.RunOnceAsync());
+        var currentReview = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt!;
+        Assert.NotEqual(olderReview.AttemptId, currentReview.AttemptId);
+        Assert.Equal(acquired.AttemptId, currentReview.SourceRunAttemptId);
+        Assert.Equal(deliverySha, currentReview.Subject.ExpectedResultSha);
+        Assert.Contains(records.All(), record => record.Action == AutoReviewStrandingAction.StartStep.ToString());
+    }
+
     /// <summary>
     /// AGT-3098 - AGT-2882: accepted with an override against its delivery
     /// evidence (run attempt lost, delivery integrated), but the merge step
