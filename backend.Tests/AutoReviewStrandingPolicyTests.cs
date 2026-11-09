@@ -41,10 +41,14 @@ public sealed class AutoReviewStrandingPolicyTests
             }));
         Assert.NotNull(AutoReviewStrandingWatchdog.ReviewForCurrentDelivery(
             review with { SourceRunAttemptId = run.AttemptId,
-                Subject = subject with { SourceRunAttemptId = run.AttemptId, ExpectedResultSha = newSha } }, run));
+                Subject = subject with { SourceRunAttemptId = run.AttemptId, ExpectedResultSha = newSha },
+                TestedResultSha = newSha }, run));
         Assert.Null(AutoReviewStrandingWatchdog.ReviewForCurrentDelivery(
             review with { SourceRunAttemptId = run.AttemptId,
                 Subject = subject with { SourceRunAttemptId = run.AttemptId } }, run));
+        Assert.Null(AutoReviewStrandingWatchdog.ReviewForCurrentDelivery(
+            review with { SourceRunAttemptId = run.AttemptId,
+                Subject = subject with { SourceRunAttemptId = run.AttemptId, ExpectedResultSha = newSha } }, run));
     }
 
     [Fact]
@@ -142,13 +146,21 @@ public sealed class AutoReviewStrandingPolicyTests
             var now = new DateTimeOffset(2026, 11, 5, 12, 0, 0, TimeSpan.Zero);
             const string sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
             var scope = new BatchGateScope("project", "repo", "develop", "full", "digest", "v1");
+            var run = new RunAttemptDto("run-1", "card-1", "repo", null,
+                AttemptLifecycleState.Completed, null, 1, 1, now.UtcDateTime, now.UtcDateTime,
+                sha, "done", null, []);
             BatchGateSubject Subject(string key) => new(
                 key, "project", "repo", "develop", "full", "digest", "v1",
                 "refs/heads/agent-studio/results/one", sha, "run-1", 1, 1, sha,
                 true, true, true, true, false, null, true, now, 0);
             var pending = store.Enqueue(new BatchGatePendingRecord("review-1", Subject("card-1"),
                 root, root, root, "direct-merge", "task", now));
-            Assert.True(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", "review-1"));
+            Assert.True(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", run, "review-1"));
+            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1",
+                run with { AttemptId = "run-2" }, "review-1"));
+            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1",
+                run with { ResultSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }, "review-1"));
+            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", run, "review-2"));
 
             var manifest = BatchGatePolicy.Form([pending.Subject,
                     Subject("card-2") with { EnqueueSequence = 2 },
@@ -159,11 +171,15 @@ public sealed class AutoReviewStrandingPolicyTests
             store.ResolvePending("review-1", "formed");
 
             Assert.Empty(store.ListPending());
-            Assert.True(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", "review-1"));
-            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "other-project", "card-1", "review-1"));
+            Assert.True(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", run, "review-1"));
+            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1",
+                run with { AttemptId = "run-2" }, "review-2"));
+            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1",
+                run with { ResultSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }, "review-1"));
+            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "other-project", "card-1", run, "review-1"));
             store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
                 BatchPhase.Published, null, 0, now.AddMinutes(21)));
-            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", "review-1"));
+            Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", run, "review-1"));
         }
         finally
         {

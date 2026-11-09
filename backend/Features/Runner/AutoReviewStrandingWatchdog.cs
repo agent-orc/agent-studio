@@ -63,7 +63,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         var activeBatchMembers = _batches.ListManifests()
             .Where(manifest => IsActiveManifest(_batches, manifest))
             .SelectMany(manifest => manifest.Members.Select(member =>
-                manifest.Scope.Project + "\u001f" + member.TaskKey))
+                BatchMemberKey(member)))
             .ToHashSet(StringComparer.Ordinal);
         var interventions = _records.All().ToList();
         var count = 0;
@@ -86,9 +86,10 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     _pipeline.Read(card.FolderPath)?.Steps.Any(step => step.Status == PipelineStepStatus.Running) == true
                         || IntegrationGateJournal.Read(card.FolderPath) is not null,
                     currentReview?.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased,
-                    pending.Any(item => item.Subject.Project == card.ProjectName
-                        && item.Subject.TaskKey == key)
-                        || activeBatchMembers.Contains(card.ProjectName + "\u001f" + key),
+                    pending.Any(item => IsPendingForDelivery(item, card.ProjectName, key,
+                        run, currentReview?.AttemptId))
+                        || run is not null && activeBatchMembers.Contains(
+                            BatchMemberKey(card.ProjectName, key, run.AttemptId, run.ResultSha)),
                     card.PendingIntent is not null,
                     _queue.PositionOf(card.ProjectName, card.Id) is not null,
                     TaskModes.IsReportOnly(card.Mode),
@@ -102,7 +103,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 if (action == AutoReviewStrandingAction.Leave) continue;
                 // A batch can form after the pass snapshot. Recheck before any
                 // side effect so formation never races a recovery intervention.
-                if (IsBatchMember(_batches, card.ProjectName, key, review?.AttemptId)) continue;
+                if (IsBatchMember(_batches, card.ProjectName, key, run, currentReview?.AttemptId)) continue;
                 var writeKey = NextWriteKey(writePrefix, interventions);
                 var repeated = action == AutoReviewStrandingAction.Escalate
                     && (facts.StartedStepBefore || facts.ReenteredBatchBefore);
@@ -116,7 +117,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     // Formation can consume the pending entry while recovery is
                     // running. A closed batch now owns the card, even if the
                     // recovery call did not observe a pending entry itself.
-                    if (IsBatchMember(_batches, card.ProjectName, key, review?.AttemptId)) continue;
+                    if (IsBatchMember(_batches, card.ProjectName, key, run, currentReview?.AttemptId)) continue;
                     var parked = await _escalation.EscalateAsync(card.Id, card.WatchPath,
                         card.ProjectName, HumanReviewEscalationCategories.Environmental,
                         $"Auto Review had no active owner for {facts.InLane.TotalMinutes:0} minutes. {detail}",
@@ -181,6 +182,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
             && string.Equals(review.SourceRunAttemptId, run.AttemptId, StringComparison.OrdinalIgnoreCase)
             && string.Equals(review.Subject.SourceRunAttemptId, run.AttemptId, StringComparison.OrdinalIgnoreCase)
             && string.Equals(review.Subject.ExpectedResultSha, run.ResultSha, StringComparison.OrdinalIgnoreCase)
+            && (review.State != AttemptLifecycleState.Completed
+                || string.Equals(review.TestedResultSha, run.ResultSha, StringComparison.OrdinalIgnoreCase))
             ? review : null;
 
     private async Task<(bool Done, bool Deferred, string Detail)> InterveneAsync(TaskInfo card,
@@ -212,7 +215,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     && review.TerminalAt is { } reviewedAt)
                 {
                     await _batchPilot.EnqueueAsync(card, review, run, new DateTimeOffset(reviewedAt), ct);
-                    if (IsBatchMember(_batches, card.ProjectName, CardKey(card), review.AttemptId))
+                    if (IsBatchMember(_batches, card.ProjectName, CardKey(card), run, review.AttemptId))
                         return (true, false, "Re-entered the batch gate for the passed review.");
                     return (false, false,
                         "The batch gate retained only a resolved record for this review attempt.");
@@ -253,16 +256,35 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
     }
 
     internal static bool IsBatchMember(BatchGateStore batches, string project, string taskKey,
-        string? reviewAttemptId)
+        RunAttemptDto? run, string? reviewAttemptId)
     {
-        if (batches.ListPending().Any(item => item.Subject.Project == project
-            && (item.Subject.TaskKey == taskKey
-                || reviewAttemptId is not null && item.ReviewAttemptId == reviewAttemptId))) return true;
+        if (run is null || run.ResultSha is null) return false;
+        if (batches.ListPending().Any(item => IsPendingForDelivery(item, project, taskKey,
+            run, reviewAttemptId))) return true;
         return batches.ListManifests().Any(manifest =>
             manifest.Scope.Project == project
-            && manifest.Members.Any(member => member.TaskKey == taskKey)
+            && manifest.Members.Any(member => IsSubjectForDelivery(member, project, taskKey, run))
             && IsActiveManifest(batches, manifest));
     }
+
+    private static bool IsPendingForDelivery(BatchGatePendingRecord pending, string project,
+        string taskKey, RunAttemptDto? run, string? reviewAttemptId)
+        => reviewAttemptId is not null
+            && string.Equals(pending.ReviewAttemptId, reviewAttemptId, StringComparison.Ordinal)
+            && run is not null && IsSubjectForDelivery(pending.Subject, project, taskKey, run);
+
+    private static bool IsSubjectForDelivery(BatchGateSubject subject, string project,
+        string taskKey, RunAttemptDto run)
+        => string.Equals(subject.Project, project, StringComparison.Ordinal)
+            && string.Equals(subject.TaskKey, taskKey, StringComparison.Ordinal)
+            && string.Equals(subject.RunAttempt, run.AttemptId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(subject.ResultSha, run.ResultSha, StringComparison.OrdinalIgnoreCase);
+
+    private static string BatchMemberKey(BatchGateSubject subject)
+        => BatchMemberKey(subject.Project, subject.TaskKey, subject.RunAttempt, subject.ResultSha);
+
+    private static string BatchMemberKey(string project, string taskKey, string runAttempt, string? resultSha)
+        => string.Join('\u001f', project, taskKey, runAttempt.ToUpperInvariant(), resultSha?.ToUpperInvariant());
 
     private static bool IsActiveManifest(BatchGateStore batches, BatchGateManifest manifest)
     {
