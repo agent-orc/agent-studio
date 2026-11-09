@@ -197,7 +197,9 @@ public static class VerifyDefinitionPolicy
         string stack, IReadOnlyList<string> build, IReadOnlyList<string> test, string? prepare)
     {
         var yaml = new StringBuilder();
-        yaml.AppendLf("schemaVersion: 1");
+        yaml.AppendLf("schemaVersion: 2");
+        yaml.AppendLf("project:");
+        yaml.AppendLf("  id: example-project");
         yaml.AppendLf($"stack: [{stack}]");
         yaml.AppendLf("commands:");
         yaml.AppendLf($"  prepare: {ProjectPreparationPaths.Script}");
