@@ -124,6 +124,9 @@ async function installRoutes(page: Page) {
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) }));
   await page.route('**/api/tags', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+  // A registered project keeps the first-run checklist from replacing the board.
+  await page.route(/\/api\/v1\/projects(\?|$)/, (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: PROJECT, archived: false }]) }));
 }
 
 async function seedBoardTab(page: Page): Promise<void> {
@@ -162,7 +165,8 @@ async function bootBoard(page: Page) {
   await page.waitForLoadState('domcontentloaded');
   await expect(page.locator('[data-testid="studio-board"], [data-testid="kanban-dashboard"]').first())
     .toBeVisible({ timeout: 15_000 });
-  await expect(page.locator('[data-testid="task-card"]').first()).toBeVisible({ timeout: 15_000 });
+  // Attached, not visible: below tablet width only the first container shows (AGT-3590).
+  await expect(page.locator('[data-testid="task-card"]').first()).toBeAttached({ timeout: 15_000 });
   await dismissDevOverlays(page);
 }
 
@@ -236,6 +240,11 @@ test.describe('Done & Decide — escalated cards do not look like Done', () => {
       .click({ timeout: 2_000 })
       .catch(() => undefined);
     await page.waitForTimeout(300);
+    // AGT-3590: below tablet width the board shows one container at a time.
+    // The thin route mocks leave an empty error-dialog overlay behind, as in
+    // execution-location-badge.spec.ts; hide it so the switcher takes the click.
+    await page.addStyleTag({ content: '.dialog__overlay { display: none !important; }' });
+    await page.getByTestId('board-group-switch-decide').click();
 
     const escalated = cardByTitle(page, 'Escalated fixture card');
     await escalated.scrollIntoViewIfNeeded();

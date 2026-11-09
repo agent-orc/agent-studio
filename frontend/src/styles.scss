@@ -825,6 +825,18 @@ select option:hover {
 .studio .dashboard--studio > .lane-group.lane-group--hidden-by-focus {
   display: none;
 }
+
+/* Narrow board (AGT-3590): below tablet width one container fills the board,
+   picked in <app-board-group-switcher>. This beats the Delivery track rules
+   above, so a picked Delivery group also gets the single track, and the
+   divider that separates side-by-side containers has nothing to separate. */
+.studio .dashboard--studio.dashboard--single-group.dashboard--has-focus {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.studio .dashboard--studio.dashboard--single-group > .lane-group {
+  border-left: 0;
+}
 // The legacy header shares the Studio action placement while its broader
 // visual migration remains outside this scoped bar change.
 .app .header__settings {

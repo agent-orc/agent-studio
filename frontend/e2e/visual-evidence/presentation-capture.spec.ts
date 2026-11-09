@@ -56,9 +56,6 @@ async function applyMarketingMode(page: Page): Promise<void> {
       [data-testid="dev-banner"] {
         display: none !important;
       }
-      [data-testid="status-bar"] .statusbar__quota {
-        visibility: hidden !important;
-      }
     `,
   });
   await expect(page.getByTestId('dev-banner')).toBeHidden();
