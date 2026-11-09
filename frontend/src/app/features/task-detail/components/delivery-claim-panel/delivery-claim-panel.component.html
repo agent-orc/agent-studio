@@ -46,6 +46,10 @@
             [cacTooltip]="claim()?.evidence ?? ''">{{ basis }}</span>
     }
 
+    @if (automaticAcceptance(); as accepted) {
+      <p class="claim__reason" data-testid="delivery-claim-automatic-acceptance">{{ accepted }}</p>
+    }
+
     @if (overrideReason(); as reason) {
       <p class="claim__reason" data-testid="delivery-claim-override-reason">{{ reason }}</p>
       <p class="claim__reason" data-testid="delivery-claim-override-audit">

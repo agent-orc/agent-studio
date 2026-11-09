@@ -92,6 +92,27 @@ public sealed record AcceptanceRailDecision(
 /// class only reads the card, its Git-derived integration status and the
 /// rail's receipt counts.
 /// </summary>
+/// <summary>
+/// AGT-3621: how an automatic acceptance names who accepted the card. Every
+/// automatic acceptance says so on the lane change, the timeline and the claim.
+/// </summary>
+public static class AutomaticAcceptanceText
+{
+    /// <summary>The autonomy level's name, as Project Settings shows it.</summary>
+    public static string AutonomyName(int autonomyLevel) => autonomyLevel switch
+    {
+        <= 0 => "Manual",
+        1 => "Cautious",
+        2 => "Balanced",
+        3 => "Confident",
+        _ => "Fully auto",
+    };
+
+    /// <summary>Completes the sentence "Accepted automatically by …".</summary>
+    public static string AcceptedBy(int autonomyLevel)
+        => $"the acceptance rail (project autonomy {AutonomyName(autonomyLevel)})";
+}
+
 public static class AcceptanceRailFacts
 {
     private static readonly IReadOnlySet<string> OperatorDecisionBlockers =
@@ -109,6 +130,7 @@ public static class AcceptanceRailFacts
     /// <param name="lastInfrastructureRequeueAt">Timestamp of the last such replay, or null when there was none.</param>
     /// <param name="now">Evaluation instant of the replay backoff.</param>
     /// <param name="quotaResetAt">Known provider reset instant, or null when the reset is unknown.</param>
+    /// <param name="autonomyLevel">The project's effective autonomy level.</param>
     public static AcceptanceRailOperatorFacts From(
         TaskInfo task,
         TaskIntegrationStatus? integration,
@@ -118,7 +140,8 @@ public static class AcceptanceRailFacts
         int infrastructureRequeues = 0,
         DateTimeOffset? lastInfrastructureRequeueAt = null,
         DateTimeOffset? quotaResetAt = null,
-        bool deliveryChainOwns = false)
+        bool deliveryChainOwns = false,
+        int autonomyLevel = AutomaticAcceptancePolicy.DefaultAutonomyLevel)
     {
         var failure = string.Equals(integration?.Status, IntegrationStatuses.ConflictSkipped, StringComparison.Ordinal)
             ? integration?.Failure
@@ -141,7 +164,8 @@ public static class AcceptanceRailFacts
             Math.Max(0, infrastructureRequeues),
             options.MaxInfrastructureRequeues,
             replayDue,
-            deliveryChainOwns);
+            deliveryChainOwns,
+            autonomyLevel);
     }
 
     public static bool IsHeld(TaskInfo task, IReadOnlySet<string> holdList)

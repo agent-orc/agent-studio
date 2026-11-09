@@ -245,6 +245,12 @@ export class DeliveryClaimPanelComponent {
     }
   });
 
+  /** AGT-3621: who accepted the card in a person's place, when the system did. */
+  readonly automaticAcceptance = computed(() => {
+    const by = this.claim()?.acceptedAutomaticallyBy?.trim();
+    return by ? `Accepted automatically by ${by}.` : null;
+  });
+
   /** An override's written reason is shown wherever the card claims completion. */
   readonly overrideReason = computed(() =>
     this.claim()?.basis === 'operator-override' ? this.claim()?.reason?.trim() || null : null,
