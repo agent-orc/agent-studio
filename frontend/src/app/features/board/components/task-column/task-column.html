@@ -140,6 +140,7 @@
       <app-batch-lane-indicator [laneState]="state()" [projectScope]="projectScope()" [jobs]="allBoardJobs()" />
       @if (state() === '5-human-review') {
         <app-decision-backlog-hint [tasks]="jobs()" [allTasks]="allBoardJobs()" (taskClick)="jobClick.emit($event)" />
+        <app-acceptance-readiness-bar [jobs]="jobs()" [mutationsBlocked]="mutationsBlocked()" />
       }
       <div class="column__body" #laneBody role="region" tabindex="0" [attr.aria-label]="title() + ' cards'"
            [class.column__body--windowed]="windowed()"

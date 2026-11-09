@@ -127,3 +127,45 @@ export function displayStateToLaneKey(state: string): string {
   if (state === '2-ready-intake') return TaskState.Ready;
   return state;
 }
+
+/** Glyph, label, and tooltip of a lane-header sort indicator. */
+export interface LaneSortIndicator {
+  readonly icon: string;
+  readonly label: string;
+  readonly tooltip: string;
+}
+
+/**
+ * F35: lane-header sort indicator for a resolved strategy, or null when no
+ * strategy data is available. When the strategy is non-manual the tooltip
+ * explains why drag is disabled; when the active projects disagree it renders
+ * a neutral "mixed" marker.
+ */
+export function laneSortIndicator(strategy: string | null | undefined): LaneSortIndicator | null {
+  if (!strategy) return null;
+  if (strategy === 'mixed') {
+    return {
+      icon: '⇅',
+      label: 'mixed',
+      tooltip:
+        'Auto-sorted — the projects shown in this lane use different sort orders. '
+        + 'Filter to a single project, or set that lane to Manual, to reorder by hand.',
+    };
+  }
+  const meta = laneSortStrategyMeta(strategy);
+  if (isManualStrategy(strategy)) {
+    return { icon: meta.icon, label: meta.label, tooltip: 'Manual order — drag cards to reorder.' };
+  }
+  if (strategy === 'lane-entry') {
+    return {
+      icon: meta.icon,
+      label: meta.label,
+      tooltip: 'Most recently entered on top — drag a card to pin it in place.',
+    };
+  }
+  return {
+    icon: meta.icon,
+    label: meta.label,
+    tooltip: `Auto-sorted by ${meta.label.toLowerCase()}; switch this lane to Manual to reorder.`,
+  };
+}

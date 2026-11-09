@@ -30,7 +30,7 @@ namespace AgentStudio.Tests;
 /// ref and SHA, while acceptance validates current lineage, Git ancestry, and
 /// exact-tree gate evidence.
 /// </summary>
-public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
+public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
 {
     // Generous on purpose: several call sites wait on a WebApplicationFactory's
     // first HTTP round trip, which JITs and spins up the whole app in-process.
@@ -3973,7 +3973,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         bool seedContent = true,
         bool authorityRebuilt = false,
         bool guarded = false,
-        bool engineMode = false)
+        bool engineMode = false,
+        string contentStatus = "pass",
+        string contentSummary = "The fixture delivery answers its brief.")
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -4108,7 +4110,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             });
         }
         if (seedContent)
-            SeedPassedContentReview(authority, sourceRun, jobFolder, deliverySha, deliveryBriefVersion);
+            SeedPassedContentReview(authority, sourceRun, jobFolder, deliverySha, deliveryBriefVersion,
+                contentStatus, contentSummary);
         pipeline.Begin(jobFolder, PipelineCatalogue.Standard, Project, Slug);
         Assert.NotNull(scanner.FindJob(Slug, _watchPath));
         // AGT-3076: the 11.10. crash rebuilt the attempt authority store into
@@ -4175,7 +4178,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 
     private void SeedPassedContentReview(
         AttemptAuthorityService authority, RunAttemptDto sourceRun,
-        string folder, string deliverySha, string briefVersion)
+        string folder, string deliverySha, string briefVersion,
+        string contentStatus = "pass", string contentSummary = "The fixture delivery answers its brief.")
     {
         var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
             TaskKey, "PROJ-FIXTURE", deliverySha, sourceRun.AttemptId,
@@ -4194,8 +4198,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             new Contract.ReviewEnvironmentDto("fixture-host", "fixture-reviewer", "fixture-instance",
                 "fixture-os", "fixture-arch", "fixture-runtime",
                 new Dictionary<string, string>(), new Dictionary<string, string>()),
-            [], [], [new Contract.ReviewVerdictDto("requirement-fit", "pass", "Product",
-                "The fixture delivery answers its brief.")],
+            [], [], [new Contract.ReviewVerdictDto("requirement-fit", contentStatus, "Product",
+                contentSummary, Missing: contentStatus == "pass" ? null : "The fixture names no missing file.")],
             AuthorityEpoch: review.AuthorityEpoch, BriefSha256: briefVersion);
         var entry = new RemoteReviewSettlementEntry
         {

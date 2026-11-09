@@ -13,7 +13,8 @@ import { TaskState } from '../../../models/task.model';
  * value is reserved for forward compatibility.
  */
 export interface ReviewSubSection {
-  readonly kind: 'orchestrator' | 'human';
+  /** `orchestrator` / `human` here; a readiness class in Human Review (AGT-3564). */
+  readonly kind: string;
   readonly label: string;
   readonly icon: string;
   readonly jobs: TaskInfo[];

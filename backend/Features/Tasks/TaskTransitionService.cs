@@ -1688,6 +1688,75 @@ public sealed class TaskTransitionService
     /// that gave no content verdict. A journal that reads as repair also
     /// leaves one timeline diagnostic on the card.
     /// </summary>
+    /// <summary>
+    /// AGT-3564 - the admission checks of a Human Review to Completed move
+    /// without an override, run without moving the card or writing anything.
+    /// They run in the order <see cref="MoveAsync"/> runs them, so the first
+    /// refusal named here is the one the move answers. Two differences only
+    /// make the preview stricter: an unusable settlement is not reported, and
+    /// a batch-gate containment is neither recorded nor repaired from the
+    /// published branch. A card the move could still repair reads as refused
+    /// here; a card refused by the move never reads as admitted.
+    /// </summary>
+    public CompletionAdmissionPreview PreviewCompletion(TaskInfo info, CancellationToken ct = default)
+    {
+        if (info.State != TaskStates.HumanReview)
+            return CompletionAdmissionPreview.Refused(CompletionAdmissionStages.Lane,
+                $"The card is in {info.State}, not in Human Review.");
+        if (TaskKinds.IsDecision(info.Kind)
+            && DecisionLaneGuard.Refusal(info, TaskStates.Completed, _scanner.GetReferenceIndex()) is { } refusal)
+            return CompletionAdmissionPreview.Refused(CompletionAdmissionStages.Decision, refusal);
+
+        var settings = _settings.Get(info.ProjectName);
+        var completionInfo = info.RequiresIntegration is null
+            && _failureInterventions?.IsInterventionFollowUp(info) == true
+            ? info with { NoBranchExpected = true }
+            : info;
+        var integrationRequired = AcceptanceIntegrationPolicy.IsIntegrationRequired(completionInfo);
+        var lineage = integrationRequired ? DecideAcceptanceLineage(info, operatorOverride: false) : null;
+        if (lineage is
+            { Admission: AcceptanceLineageAdmission.Refuse, Check: AgentStudio.Pipeline.ReviewSubjectAttemptCheck.NoCurrentRunAttempt })
+            return CompletionAdmissionPreview.Refused(CompletionAdmissionStages.Lineage, lineage.Message);
+
+        var content = CompletionContentEvidence.Read(info, _attemptAuthority);
+        var contentDecision = CompletionContentPolicy.Decide(content);
+        if (!contentDecision.Accepted)
+            return CompletionAdmissionPreview.Refused(CompletionAdmissionStages.Content, contentDecision.Message, content);
+
+        if (BatchGateReleaseFailure(info, ct, out _, repairContainedFallback: false, preview: true) is { } batchFailure)
+            return CompletionAdmissionPreview.Refused(CompletionAdmissionStages.BatchGate, batchFailure, content);
+
+        TaskIntegrationVerification? verification = null;
+        if (integrationRequired)
+        {
+            var integrated = IsAlreadyIntegrated(info, out verification);
+            if (ValidateIntegratedAcceptance(info, settings, operatorOverride: false, lineage) is { } integration)
+                return CompletionAdmissionPreview.Refused(
+                    lineage?.Admission == AcceptanceLineageAdmission.Refuse ? CompletionAdmissionStages.Lineage
+                    : integrated ? CompletionAdmissionStages.IntegrationUnverified
+                    : CompletionAdmissionStages.IntegrationMissing,
+                    integration.Message ?? "Acceptance refused by the integration check.", content, verification);
+        }
+
+        var status = _integrationStatus?.BuildForAcceptance(info);
+        var contract = DecideCompletionContract(info, settings, integrationRequired,
+            operatorOverride: false, reason: null, actor: null, status);
+        if (!contract.Accepted || contract.Claim is null)
+            return CompletionAdmissionPreview.Refused(CompletionAdmissionStages.Contract,
+                contract.Message ?? "Completion has no delivery claim.", content, verification);
+
+        var bound = BindCompletionClaim(info, contract.Claim);
+        if (_guardedDelivery && integrationRequired
+            && (bound.Basis != CompletionClaimBases.IntegratedDelivery
+                || string.IsNullOrWhiteSpace(bound.ResultSha)
+                || string.IsNullOrWhiteSpace(bound.DeliveryEpoch)))
+            return CompletionAdmissionPreview.Refused(CompletionAdmissionStages.Binding,
+                "The integrated delivery cannot be bound to a result SHA and delivery epoch. Recover its delivery evidence before acceptance.",
+                content, verification);
+
+        return CompletionAdmissionPreview.Admitted(contentDecision.Message, content, verification);
+    }
+
     private void ReportUnusableSettlement(
         TaskInfo info, CompletionSettlementProblem settlement, CompletionContentDecision decision)
     {
@@ -1769,7 +1838,7 @@ public sealed class TaskTransitionService
     }
 
     private string? BatchGateReleaseFailure(TaskInfo task, CancellationToken ct,
-        out bool recordedContainment, bool repairContainedFallback)
+        out bool recordedContainment, bool repairContainedFallback, bool preview = false)
     {
         recordedContainment = false;
         AgentStudio.Pipeline.BatchGateOwnership? ownership;
@@ -1789,7 +1858,7 @@ public sealed class TaskTransitionService
             ownership, projection, _batchGateStore, task.FolderPath);
         if (failure is null)
         {
-            if (ownership.ContainedInSha is not null
+            if (!preview && ownership.ContainedInSha is not null
                 && AgentStudio.Pipeline.BatchGateOwnershipStore.IsCurrentGeneration(ownership, projection))
                 recordedContainment = RecordContainmentMapping(task, ownership);
             return null;

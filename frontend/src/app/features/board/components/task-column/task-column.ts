@@ -31,7 +31,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { groupReviewJobs } from '../review-grouping.util';
 import { InfoButtonComponent } from '../../../../components/info-button/info-button.component';
 import { lanePresentation } from '../../../../models/lane-presentation';
-import { laneSortStrategyMeta, isManualStrategy } from '../../../../services/lane-sort.util';
+import { laneSortIndicator } from '../../../../services/lane-sort.util';
 import { deriveStalledTaskState } from '../../../../services/run-activity.util';
 import { PostProcessingSummaryComponent } from '../post-processing-summary/post-processing-summary.component';
 import { BoardDragStateService } from '../../state/board-drag-state.service';
@@ -40,6 +40,7 @@ import { BatchLaneIndicatorComponent } from '../../../batch-gate/batch-lane-indi
 import { OrchestratorFeedStore } from '../../../orchestrator';
 import { LaneCardWindow } from './lane-card-window';
 import { LaneCardWindowComponent } from '../lane-card-window/lane-card-window.component';
+import { AcceptanceReadinessBarComponent, AcceptanceReadinessStore } from '../../../acceptance-readiness';
 /** ASS-1727: Archive pagination and typed-filter debounce. */
 const ARCHIVE_PAGE_SIZE = 50;
 const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
@@ -55,6 +56,7 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
     InfoButtonComponent,
     PostProcessingSummaryComponent,
     BatchLaneIndicatorComponent,
+    AcceptanceReadinessBarComponent,
   ],
   // Signal inputs let OnPush skip unchanged lanes during board polling.
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -65,6 +67,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   private readonly taskService = inject(TaskService);
   private readonly boardDrag = inject(BoardDragStateService);
   private readonly stalls = inject(OrchestratorFeedStore);
+  private readonly readiness = inject(AcceptanceReadinessStore);
   readonly title = input.required<string>();
   readonly icon = input<string>('');
   readonly state = input.required<string>();
@@ -121,41 +124,8 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   /** Emits the project name when the user clicks the lane's auto chip. */
   readonly autoToggleRequest = output<string>();
 
-  /**
-   * F35: lane-header sort indicator. Returns the glyph + tooltip for the
-   * resolved strategy, or null when no strategy data is available. When the
-   * strategy is non-manual the tooltip explains why drag is disabled; when
-   * the active projects disagree it renders a neutral "mixed" marker.
-   */
-  readonly sortIndicator = computed<{ icon: string; label: string; tooltip: string } | null>(() => {
-    const strategy = this.sortStrategy();
-    if (!strategy) return null;
-    if (strategy === 'mixed') {
-      return {
-        icon: '⇅',
-        label: 'mixed',
-        tooltip:
-          'Auto-sorted — the projects shown in this lane use different sort orders. '
-          + 'Filter to a single project, or set that lane to Manual, to reorder by hand.',
-      };
-    }
-    const meta = laneSortStrategyMeta(strategy);
-    if (isManualStrategy(strategy)) {
-      return { icon: meta.icon, label: meta.label, tooltip: 'Manual order — drag cards to reorder.' };
-    }
-    if (strategy === 'lane-entry') {
-      return {
-        icon: meta.icon,
-        label: meta.label,
-        tooltip: 'Most recently entered on top — drag a card to pin it in place.',
-      };
-    }
-    return {
-      icon: meta.icon,
-      label: meta.label,
-      tooltip: `Auto-sorted by ${meta.label.toLowerCase()}; switch this lane to Manual to reorder.`,
-    };
-  });
+  /** F35: lane-header sort indicator, see {@link laneSortIndicator}. */
+  readonly sortIndicator = computed(() => laneSortIndicator(this.sortStrategy()));
 
   /** Running, pickup-mode, and queue pills for a project-scoped In-Progress lane. */
   readonly statusCluster = computed(() => {
@@ -401,8 +371,12 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
    * extra in-column split.
    */
   isReview(): boolean {
-    return this.state() === '4-review';
+    return this.state() === '4-review' || this.readinessGroups() !== null;
   }
+
+  /** AGT-3564: once a readiness check answered, Human Review groups its cards by acceptance readiness. */
+  private readonly readinessGroups = computed(() =>
+    this.state() === TaskState.HumanReview ? this.readiness.groupsFor(this.jobs()) : null);
 
   /**
    * Splits 4-review cards into two visually distinct sub-sections:
@@ -416,7 +390,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
    * lane and drag-drop semantics. Reorder within the column is disabled
    * while subdivided so the swim-lanes stay coherent.
    */
-  readonly reviewGroups = computed(() => groupReviewJobs(this.jobs()));
+  readonly reviewGroups = computed(() => this.readinessGroups() ?? groupReviewJobs(this.jobs()));
 
   canArchiveAll(): boolean {
     return this.state() === TaskState.Completed || this.state() === '5-completed';
@@ -444,7 +418,8 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   readonly archiveIsEmpty = computed(() => this.archiveLoaded() && this.archiveTotal() === 0);
 
   /** Count the children currently rendered in the lane, including held Ready cards. */
-  readonly headerCount = computed(() => (this.isArchive() ? this.archiveItems().length : this.jobs().length));
+  readonly headerCount = computed(() => (this.isArchive() ? this.archiveItems().length
+    : this.isReview() ? this.reviewGroups().reduce((sum, group) => sum + group.jobs.length, 0) : this.jobs().length));
 
   ngOnInit(): void {
     if (this.isArchive()) {

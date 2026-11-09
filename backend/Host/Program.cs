@@ -696,6 +696,8 @@ builder.Services.AddSingleton<TestRunService>();
 // AGT-2717: canonical read-time merge of local + remote review attempts.
 builder.Services.AddSingleton<ReviewProjectionService>();
 builder.Services.AddSingleton<TaskTransitionService>();
+// AGT-3564: Human Review acceptance readiness (a dry run of the completion checks).
+builder.Services.AddSingleton<AcceptanceReadinessService>();
 builder.Services.AddSingleton<DecisionCardService>();
 builder.Services.AddSingleton<DecisionRecordService>();
 // Decision cards, apply step and creation paths (Dossier decision-cards D3=C, D5=A).

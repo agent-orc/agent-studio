@@ -420,6 +420,8 @@ public static class RoutePermissionCatalog
 
         // --- Cards ---------------------------------------------------------
         Add("POST", IamPermissions.ProjectRead, "/api/tasks/reference-status");
+        // A dry run of the completion checks; the handler checks read access to every card.
+        AddProjectChecked("POST", IamPermissions.ProjectRead, "/api/tasks/acceptance-readiness");
         // Creation, reorder, and batch-move check every affected project in
         // the handler; title and prompt helpers touch no project.
         AddProjectChecked("POST", IamPermissions.ProjectCardsWrite, "/api/tasks", "/api/tasks/reorder", "/api/tasks/batch-move",

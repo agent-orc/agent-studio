@@ -41,6 +41,7 @@ public static class EndpointMapping
         tasks.MapTaskCoreEndpoint();
         tasks.MapTaskDetailResources();
         tasks.MapBatchMoveEndpoints();
+        tasks.MapAcceptanceReadinessEndpoints();
         tasks.MapTaskFilesEndpoints();
         tasks.MapTaskRunnerEndpoints();
         tasks.MapTaskGitEndpoints();
