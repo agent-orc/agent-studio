@@ -2001,6 +2001,40 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Baseline_report_retry_keeps_declared_dependencies_until_the_second_run()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var preparation = new ReviewPreparationCommandDto(
+            "prepare-dependencies", PosixShell.RequirePath(),
+            ["-c", "mkdir -p node_modules && touch node_modules/ready"],
+            DependencyScopes: [new ReviewDependencyScopeDto("", [])]);
+        var command = BaselineCommand(
+            "test -f node_modules/ready || exit 127; " +
+            "if grep -q subject product.txt; then " +
+            "printf '  Failed Product.NewFailure [1 ms]\\n'; exit 1; " +
+            "else n=$(cat ../baseline-report-runs 2>/dev/null || echo 0); n=$((n+1)); " +
+            "printf '%s' \"$n\" > ../baseline-report-runs; " +
+            "if [ \"$n\" -eq 2 ]; then printf 'Total tests: 1\\n'; fi; fi",
+            reportPassingTest: false);
+        var (workspace, _) = Workspace("attempt-baseline-report-dependencies", subjectSha,
+            [command], 26225, resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main", preparation: [preparation],
+            preserveGlobs: ["node_modules"]);
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        var baselineRuns = evidence.Commands.Where(item =>
+            item.StepId == command.StepId && item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(2, baselineRuns.Length);
+        Assert.All(baselineRuns, item => Assert.Equal(0, item.ExitCode));
+        Assert.Contains("report-retry", baselineRuns[1].WorkspaceRole, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Candidate_missing_report_without_setup_change_is_review_infrastructure()
     {
         var (_, subjectSha) = await SeedSubjectBranchAsync();
@@ -2014,6 +2048,34 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Contains("report path:", exception.Message, StringComparison.Ordinal);
         Assert.Equal(2, exception.Evidence!.Commands.Count(item =>
             item.WorkspaceRole.StartsWith("candidate", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task Candidate_report_retry_with_missing_declared_dependencies_is_harness_defect()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var sha = await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["package-lock.json"] = "lock-v1",
+            [".gitignore"] = "node_modules/\n.nm-state\n",
+        });
+        var preparation = new ReviewPreparationCommandDto(
+            "prepare-dependencies", PosixShell.RequirePath(),
+            ["-c", "mkdir -p node_modules && touch node_modules/ready"],
+            DependencyScopes: [new ReviewDependencyScopeDto("", ["package-lock.json"])],
+            CoveredByDependencyScopes: true);
+        var command = BaselineCommand("rm -rf node_modules; exit 0", reportPassingTest: false);
+        var (workspace, _) = Workspace("attempt-candidate-report-lost-dependencies", sha,
+            [command], 26226, preparation: [preparation], preserveGlobs: ["node_modules"]);
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("DependencyDirectoryMissing", exception.Classification);
+        Assert.Contains("Review harness defect", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("candidate report retry", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("ReviewInfra", exception.Evidence!.Outcome);
     }
 
     [Fact]

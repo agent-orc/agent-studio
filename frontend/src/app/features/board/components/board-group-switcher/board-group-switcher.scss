@@ -1,0 +1,24 @@
+:host {
+  display: block;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--studio-border);
+  background: var(--studio-bg-editor);
+}
+
+.board-group-switcher {
+  padding: var(--studio-spacing-2);
+  // Counts of the three groups compare at a glance.
+  font-variant-numeric: tabular-nums;
+}
+
+// The strip spans the board width; each choice keeps its full label and count
+// and the track wraps rather than clipping on the narrowest phones.
+:host ::ng-deep .segmented.segmented {
+  display: flex;
+  width: 100%;
+}
+
+:host ::ng-deep .segmented.segmented .segmented__option {
+  flex: 1 1 auto;
+  min-height: var(--studio-target-coarse-min);
+}

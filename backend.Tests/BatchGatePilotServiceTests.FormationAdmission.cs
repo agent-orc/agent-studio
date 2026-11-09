@@ -4,7 +4,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGatePilotFormationAdmissionTests : BatchGatePilotServiceTests
 {
     [Fact]
     public async Task Tick_does_not_form_when_a_member_leaves_pending_during_planning()

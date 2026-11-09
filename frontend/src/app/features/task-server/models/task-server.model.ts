@@ -33,7 +33,7 @@ export type TaskServerClientKind =
 /** The three management sweeps offered on the page. */
 export type ManagementActionKind =
   | 'archive-sweep' | 'orphan-sweep' | 'fixture-sweep'
-  | 'backup-create' | 'restore-verify' | 'backup-retention'
+  | 'backup-create' | 'restore-verify' | 'backup-retention' | 'backup-upload'
   | 'maintenance-enter' | 'maintenance-read-only' | 'maintenance-exit' | 'shutdown-prepare'
   | 'runner-enrollment-create' | 'runner-credential-rotate' | 'runner-credential-revoke'
   | 'runner-revoke' | 'runner-drain' | 'runner-retire';
@@ -265,6 +265,7 @@ export function managementActionLabel(kind: ManagementActionKind): string {
     case 'backup-create': return 'Create backup';
     case 'restore-verify': return 'Verify restore';
     case 'backup-retention': return 'Apply retention';
+    case 'backup-upload': return 'Copy off-host';
     case 'maintenance-enter': return 'Enter maintenance';
     case 'maintenance-read-only': return 'Enter read-only';
     case 'maintenance-exit': return 'Exit maintenance';

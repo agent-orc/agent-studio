@@ -167,12 +167,17 @@ function configuration(value: unknown): BatchGateConfiguration {
         .every(field => typeof settings[field] === 'number') ||
       !strings(settings['urgentTags']) ||
       !['conservative', 'balanced', 'aggressive'].includes(String(settings['riskPolicy'])) ||
+      !['legacy', 'empirical', undefined].includes(settings['calibration'] as string | undefined) ||
+      !['off', '1', undefined].includes(settings['stacking'] as string | undefined) ||
       !['adjacent', 'separate'].includes(String(settings['overlap'])) ||
       !['work-package', 'build-only'].includes(String(settings['reviewTestLevel'])) ||
       !record(advisor) || !['off', 'advise', 'enforce'].includes(String(advisor['mode'])) ||
       typeof advisor['cliType'] !== 'string' || !optionalString(advisor['model']) ||
       typeof advisor['timeoutSeconds'] !== 'number' ||
       typeof value['limits']['hardMaximumSize'] !== 'number') throw new Error('Invalid batch settings response');
+  // A server older than these fields applies the backend defaults.
+  settings['calibration'] ??= 'empirical';
+  settings['stacking'] ??= 'off';
   return value as unknown as BatchGateConfiguration;
 }
 

@@ -245,6 +245,37 @@ public sealed class LaneSortStrategyTests : IDisposable
     }
 
     [Fact]
+    public void PickupOrder_KeepsEachProjectsDisplayedOrderAndOffersEveryHeadFirst()
+    {
+        // AGT-3587: the remote claim used Order then CreatedAt across all
+        // projects, so an unplaced card was claimed oldest-created first while
+        // the board and the local runner showed the newest lane entry on top.
+        var jobs = new[]
+        {
+            J("alpha-old", project: "Alpha", order: LaneSortStrategies.UnpinnedOrder, createdAt: T(0), enteredLaneAt: T(10)),
+            J("alpha-new", project: "Alpha", order: LaneSortStrategies.UnpinnedOrder, createdAt: T(5), enteredLaneAt: T(50)),
+            J("bravo-2", project: "Bravo", order: 20),
+            J("bravo-1", project: "Bravo", order: 10),
+            J("alpha-placed", project: "Alpha", order: 300),
+        };
+
+        var board = LaneSortApplier.Sort(jobs, TaskStates.Ready, _ => new ProjectSettings())
+            .Select(j => j.Id).ToArray();
+        var pickup = LaneSortApplier.PickupOrder(jobs, _ => new ProjectSettings())
+            .Select(j => j.Id).ToArray();
+
+        Assert.Equal(new[] { "alpha-placed", "alpha-new", "alpha-old", "bravo-1", "bravo-2" }, board);
+        // Heads first (Bravo's order 10 before Alpha's 300), then second cards.
+        Assert.Equal(new[] { "bravo-1", "alpha-placed", "bravo-2", "alpha-new", "alpha-old" }, pickup);
+        foreach (var project in new[] { "Alpha", "Bravo" })
+        {
+            Assert.Equal(
+                board.Where(id => id.StartsWith(project.ToLowerInvariant(), StringComparison.Ordinal)),
+                pickup.Where(id => id.StartsWith(project.ToLowerInvariant(), StringComparison.Ordinal)));
+        }
+    }
+
+    [Fact]
     public void ProjectSettingsService_SetLaneSortStrategyPersistsAcrossReload()
     {
         var svc = BuildSettings();

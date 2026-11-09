@@ -12,20 +12,12 @@ using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Tests;
 
-/// <summary>
-/// AGT-3234: the applier contract of the GateResult profile. Shadow mode
-/// never runs the applier, and on 17.10.2026 a switched profile's decisions
-/// were dropped by the applier for 16 hours while its streak had matched. So
-/// every GateResult decision kind runs here on an engine-held occurrence
-/// through the real <see cref="MonolithOrchestrationApplier"/>, and the test
-/// asserts the lane move, the park verdict and the batch effects.
-/// </summary>
-public sealed partial class BatchGatePilotServiceTests
+public abstract partial class BatchGatePilotServiceTests
 {
-    private const string BatchReleaseCase = "batch-release";
-    private const string AlreadyIntegratedCase = "already-integrated";
-    private const string BatchRedCase = "batch-red-per-task-gate";
-    private const string CardGateCase = "card-gate";
+    private protected const string BatchReleaseCase = "batch-release";
+    private protected const string AlreadyIntegratedCase = "already-integrated";
+    private protected const string BatchRedCase = "batch-red-per-task-gate";
+    private protected const string CardGateCase = "card-gate";
 
     public static TheoryData<string, string> GateResultApplierCases() => new()
     {
@@ -37,7 +29,18 @@ public sealed partial class BatchGatePilotServiceTests
         { CardGateCase, nameof(TransitionAction.ReturnToReady) },
         { CardGateCase, nameof(TransitionAction.Escalate) },
     };
+}
 
+/// <summary>
+/// AGT-3234: the applier contract of the GateResult profile. Shadow mode
+/// never runs the applier, and on 17.10.2026 a switched profile's decisions
+/// were dropped by the applier for 16 hours while its streak had matched. So
+/// every GateResult decision kind runs here on an engine-held occurrence
+/// through the real <see cref="MonolithOrchestrationApplier"/>, and the test
+/// asserts the lane move, the park verdict and the batch effects.
+/// </summary>
+public sealed class GateResultApplierContractTests : BatchGatePilotServiceTests
+{
     [Theory]
     [MemberData(nameof(GateResultApplierCases))]
     public async Task Gate_result_applier_applies_the_lane_park_verdict_and_batch_effects_of_each_decision(
@@ -138,13 +141,16 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Equal("failed", payload.RootElement.GetProperty("gates")[0].GetProperty("status").GetString());
         Assert.Equal(member.ReviewAttemptId, payload.RootElement.GetProperty("reviewAttemptId").GetString());
     }
+}
 
+public abstract partial class BatchGatePilotServiceTests
+{
     /// <summary>
     /// Arranges an engine-held GateResult occurrence. The batch cases reach it
     /// through the pilot; the card gate case opens it with the payload of the
     /// per-task gate handler, whose verdict selects the decision.
     /// </summary>
-    private async Task<(SeededMember Member, string RunId)> ArrangeEngineGateResultAsync(
+    private protected async Task<(SeededMember Member, string RunId)> ArrangeEngineGateResultAsync(
         WebApplicationFactory<Program> factory, string gateCase, TransitionAction decided)
     {
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
@@ -203,10 +209,10 @@ public sealed partial class BatchGatePilotServiceTests
         return (member, held.Run.RunId);
     }
 
-    private string CardFolder(string lane, string key) => Path.Combine(_watchPath, lane, key);
+    private protected string CardFolder(string lane, string key) => Path.Combine(_watchPath, lane, key);
 
     /// <summary>The queue entry's resolution; the store names entries by the SHA-256 of the review id.</summary>
-    private string? ResolvedPendingOutcome(string reviewAttemptId)
+    private protected string? ResolvedPendingOutcome(string reviewAttemptId)
     {
         var name = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(reviewAttemptId)));
