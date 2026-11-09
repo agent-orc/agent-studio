@@ -4,6 +4,8 @@ import {
   DELETE_ID,
   REVIEW_FIRST_ID,
   MOVE_PREFIX,
+  MOVE_TOP_ID,
+  MOVE_BOTTOM_ID,
   cardMoveTarget,
 } from './task-card-view-model';
 import { TaskState } from '../../../../models/task.model';
@@ -77,40 +79,69 @@ describe('buildCardCtxMenuItems — delete row (AGT-2020)', () => {
   });
 });
 
-describe('card move rows', () => {
+describe('card move rows (AGT-3588)', () => {
   const moves = (state: string, blocked = false, visible?: readonly string[]) =>
     buildCardCtxMenuItems(makeJob({ state }), blocked, visible)
       .filter(isRow).filter((row) => row.id.startsWith(MOVE_PREFIX));
+  const labels = (state: string, visible?: readonly string[]) => moves(state, false, visible).map((row) => row.label);
 
-  it('uses visible manual neighbours and removes duplicate shortcuts', () => {
-    const rows = moves(TaskState.HumanReview);
-    expect(rows.map((row) => row.label)).toEqual([
-      'Move back: Ready', 'Move forward: Accepted', 'Move to Archive',
+  it('lists every allowed manual target by lane name', () => {
+    expect(labels(TaskState.HumanReview)).toEqual([
+      'Move to Backlog', 'Move to Preparation', 'Move to Ready', 'Move to Accepted', 'Move to Archive',
     ]);
-    expect(rows.map((row) => cardMoveTarget(row.id))).toEqual([
-      TaskState.Ready, TaskState.Completed, TaskState.Archive,
+    expect(moves(TaskState.HumanReview).map((row) => cardMoveTarget(row.id))).toEqual([
+      TaskState.Backlog, TaskState.Preparation, TaskState.Ready, TaskState.Completed, TaskState.Archive,
+    ]);
+    expect(labels(TaskState.CodeNotComplete)).toEqual([
+      'Move to Backlog', 'Move to Preparation', 'Move to Ready', 'Move to Human review',
+      'Move to Accepted', 'Move to Archive',
     ]);
   });
 
-  it('omits missing neighbours, hidden lanes, and current lane shortcuts', () => {
-    expect(moves(TaskState.Backlog).map((row) => row.label)).toEqual([
-      'Move forward: Preparation', 'Move to Accepted', 'Move to Archive',
-    ]);
-    expect(moves(TaskState.Archive).map((row) => row.label)).toEqual([
-      'Move back: Accepted',
-    ]);
-    expect(moves(TaskState.HumanReview, false, [TaskState.Backlog, TaskState.Ready, TaskState.HumanReview])
-      .map((row) => row.label)).toEqual([
-      'Move back: Ready', 'Move to Accepted', 'Move to Archive',
-    ]);
+  it('reaches Ready from Backlog in one move', () => {
+    expect(labels(TaskState.Backlog)).toContain('Move to Ready');
   });
 
-  it('maps virtual Ready to Ready and disables every move when blocked', () => {
-    expect(moves('2-ready-intake', true).map((row) => row.label)[0]).toBe('Move back: Preparation');
-    expect(moves(TaskState.CodeNotComplete).map((row) => row.label).slice(0, 2)).toEqual([
-      'Move back: Ready', 'Move forward: Human review',
+  it('leaves out targets that skip execution on an unrun card', () => {
+    for (const state of [TaskState.Backlog, TaskState.Preparation, TaskState.Ready, '2-ready-intake', TaskState.FailedPickup]) {
+      const targets = moves(state).map((row) => cardMoveTarget(row.id));
+      expect(targets, state).not.toContain(TaskState.HumanReview);
+      expect(targets, state).not.toContain(TaskState.Completed);
+    }
+    expect(labels(TaskState.Ready)).toEqual(['Move to Backlog', 'Move to Preparation', 'Move to Archive']);
+  });
+
+  it('omits the current lane, hidden lanes, and orchestrator lanes', () => {
+    expect(labels(TaskState.Archive)).toEqual([
+      'Move to Backlog', 'Move to Preparation', 'Move to Ready', 'Move to Human review', 'Move to Accepted',
     ]);
-    expect(moves(TaskState.Ready, true).every((row) => row.disabled)).toBe(true);
+    expect(labels(TaskState.HumanReview, [TaskState.Backlog, TaskState.Ready, TaskState.HumanReview]))
+      .toEqual(['Move to Backlog', 'Move to Ready']);
+    expect(labels('2-ready-intake')).not.toContain('Move to Ready');
     expect(cardMoveTarget(MOVE_PREFIX + TaskState.Progress)).toBeNull();
+  });
+
+  it('disables every move when blocked', () => {
+    expect(moves(TaskState.Ready, true).every((row) => row.disabled)).toBe(true);
+  });
+});
+
+describe('Ready queue position rows (AGT-3588)', () => {
+  const queueRows = (state: string, blocked = false, edge: { first: boolean; last: boolean } | null = null) =>
+    buildCardCtxMenuItems(makeJob({ state }), blocked, undefined, edge)
+      .filter(isRow).filter((row) => row.id === MOVE_TOP_ID || row.id === MOVE_BOTTOM_ID);
+
+  it('offers Move to top and Move to bottom on Ready cards only', () => {
+    expect(queueRows(TaskState.Ready).map((row) => row.label)).toEqual(['Move to top', 'Move to bottom']);
+    expect(queueRows(TaskState.Backlog)).toEqual([]);
+    expect(queueRows(TaskState.HumanReview)).toEqual([]);
+  });
+
+  it('disables the edge the card already sits at, and both when blocked', () => {
+    expect(queueRows(TaskState.Ready, false, { first: true, last: false }).map((row) => !!row.disabled))
+      .toEqual([true, false]);
+    expect(queueRows(TaskState.Ready, false, { first: false, last: true }).map((row) => !!row.disabled))
+      .toEqual([false, true]);
+    expect(queueRows(TaskState.Ready, true).every((row) => row.disabled)).toBe(true);
   });
 });

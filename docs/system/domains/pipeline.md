@@ -441,8 +441,12 @@ When several records match one execution, a completed record takes precedence
 over later partial snapshots.
 Error excerpts come only from the named test's output block. A test is a flaky suspect
 only when it failed in three batches with pairwise disjoint member sets. The
-operator can open a prefilled bug card in the normal creation dialog. The dialog
+operator can open a prefilled bug card for any ranked test, flaky suspect or
+deterministic failure, in the normal creation dialog. The dialog
 applies central model routing and requires submission to create it.
+The state route reuses the same projection for the failed tests of the run that
+proved an isolation finding red (AGT-3577); it never retries unreadable
+evidence, so polling reads no evidence file once the projection exists.
 Batch links request up to 500 historical manifests on demand; normal state
 polling stays at ten.
 

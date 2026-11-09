@@ -295,6 +295,8 @@ public static class ProjectSettingsEndpoints
                     // pair only matters once it is raised above 1.
                     maxParallelism = kv.Value.MaxParallelism < 1 ? 1 : kv.Value.MaxParallelism,
                     integrationBranch = kv.Value.IntegrationBranch,
+                    // AGT-3580: the readiness remedy opens this setting, so the page has to show it.
+                    repositoryVisibility = kv.Value.RepositoryVisibility,
                     integrationStrategy = IntegrationStrategies.Normalize(kv.Value.IntegrationStrategy),
                     // AGT-2839: raw override (null = inherit) plus the resolved
                     // value the merge gate actually applies.
@@ -1330,6 +1332,21 @@ public static class ProjectSettingsEndpoints
             if (windowDays is < 1 or > 90)
                 return Results.BadRequest(new { error = "windowDays must be between 1 and 90." });
             return Results.Ok(store.FailedTestRanking(project.Name, clock.GetUtcNow(), windowDays ?? 7));
+        });
+        // AGT-3577: the gate evidence of the isolation run that proved a member red or green.
+        app.MapGet("/api/projects/{projectName}/batch-gate/isolation-evidence", (string projectName,
+            string? parentBatchId, string? taskKey, BatchGateStore store, TaskScannerService scanner) =>
+        {
+            var project = scanner.GetWatchPaths().FirstOrDefault(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (project is null)
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (string.IsNullOrWhiteSpace(parentBatchId) || string.IsNullOrWhiteSpace(taskKey))
+                return Results.BadRequest(new { error = "parentBatchId and taskKey are required." });
+            var path = store.IsolationEvidencePath(project.Name, parentBatchId, taskKey);
+            return path is null
+                ? Results.NotFound(new { error = "No isolation evidence is recorded for this member." })
+                : Results.File(path, "text/plain; charset=utf-8");
         });
         app.MapGet("/api/projects/{projectName}/batch-gate/ledger", (string projectName,
             DateOnly? day, string? type, int? page, int? pageSize,

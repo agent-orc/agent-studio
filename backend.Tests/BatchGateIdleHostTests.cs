@@ -14,7 +14,7 @@ namespace AgentStudio.Tests;
 /// as idle whenever no batch ran. Busy slots now keep a lone card waiting for
 /// a batch partner until its deadline.
 /// </summary>
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGateIdleHostTests : BatchGatePilotServiceTests
 {
     [Fact]
     public async Task Lone_card_behind_busy_gate_slots_waits_and_closes_with_the_next_card()
@@ -63,8 +63,11 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Equal("per-task", factory.Services.GetRequiredService<BatchGateStore>()
             .LatestPlanDecision(ProjectName)!.Decision);
     }
+}
 
-    private WebApplicationFactory<Program> IdleHostFactory()
+public abstract partial class BatchGatePilotServiceTests
+{
+    private protected WebApplicationFactory<Program> IdleHostFactory()
     {
         var factory = BuildFactory(testServices: services =>
         {
@@ -80,7 +83,7 @@ public sealed partial class BatchGatePilotServiceTests
         return factory;
     }
 
-    private sealed class ClearLoadGate : ILoadThrottleGate
+    private protected sealed class ClearLoadGate : ILoadThrottleGate
     {
         public LoadThrottleDecision Current => new(false, 12, TimeSpan.Zero);
         public bool WasRecentlyActive => false;

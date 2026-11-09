@@ -45,6 +45,13 @@ if (args is [AgentStudio.Security.BreakGlassWindowCommand.RecordFlag, .. var bre
     return;
 }
 
+// AGT-3574: restore, decrypt and key creation for installation backups, without starting the host.
+if (args is [AgentStudio.Management.StudioBackupCommand.Flag, .. var backupArgs])
+{
+    Environment.ExitCode = AgentStudio.Management.StudioBackupCommand.Run(backupArgs, Console.Out, Console.Error);
+    return;
+}
+
 if (args is ["--durable-local-cli-worker", var durableLocalCliSpec])
 {
     Environment.ExitCode = await DurableLocalCliProcess.RunWorkerAsync(durableLocalCliSpec);
@@ -418,6 +425,7 @@ builder.Services.AddSingleton<ClientIdentityStore>();
 builder.Services.AddSingleton<AccessSecurityStore>();
 builder.Services.AddControlPlaneAudit();
 builder.Services.AddOperatorKillSwitch();
+builder.Services.AddSecurityPosture();
 builder.Services.AddBreakGlassWindows();
 builder.Services.AddHostedService<AgentStudio.Diagnostics.LastSeenPersistenceService>();
 builder.Services.AddSingleton<IKeyEncryptionKeySource, ConfiguredKeyEncryptionKeySource>();
@@ -453,6 +461,12 @@ builder.Services.AddHostedService<AgentStudio.GitHubApp.GitHubAppHostCredentialS
 builder.Services.AddSingleton<ProjectSecretBindings>();
 builder.Services.AddSingleton<ISecretWorkloadLeases, SecretWorkloadLeases>();
 builder.Services.AddSingleton<ManagementService>();
+// AGT-3574: scheduled, encrypted installation backups with an off-host copy.
+builder.Services.AddSingleton<AgentStudio.Management.BackupWritePause>();
+builder.Services.AddSingleton<AgentStudio.Management.StudioBackupService>();
+builder.Services.AddHttpClient("studio-backup-target", client => client.Timeout = Timeout.InfiniteTimeSpan);
+if (!underTestHost && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<AgentStudio.Management.BackupHostedService>();
 builder.Services.AddSingleton<IProviderAuthProvisioner, SshProviderAuthProvisioner>();
 builder.Services.AddSingleton<IRunnerLinkProcessLauncher, RunnerLinkProcessLauncher>();
 builder.Services.AddSingleton<IRunnerLinkAudit, RunnerLinkAudit>();

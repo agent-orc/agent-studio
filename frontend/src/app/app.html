@@ -134,14 +134,17 @@
                     (jobClick)="openDetail($event)" />
                 </main>
               } @else {
+              @if (singleGroupBoard()) {
+                <app-board-group-switcher [groups]="laneGroups()" [delivery]="visibleDeliveryGroup()" [value]="studioBoardFocus()" (valueChange)="selectBoardGroup($event)" />
+              }
               <main class="dashboard dashboard--studio" data-testid="studio-board" [appScrollMemory]="'board:' + (boardProjectScope() ?? '*')"
-                    [class.dashboard--has-focus]="focusedContainer() !== null">
+                    [class.dashboard--has-focus]="studioBoardFocus() !== null" [class.dashboard--single-group]="singleGroupBoard()">
                 @for (g of laneGroups(); track g.id) {
                   <section class="lane-group"
                            [attr.data-testid]="'lane-group-' + g.id"
                            [attr.data-states]="g.lanes.length > 0 ? g.lanes.map(l => l.state).join(',') : null"
-                           [class.lane-group--focused]="isContainerFocused(g.id)"
-                           [class.lane-group--hidden-by-focus]="focusedContainer() !== null && !isContainerFocused(g.id)"
+                           [class.lane-group--focused]="studioBoardFocus() === g.id"
+                           [class.lane-group--hidden-by-focus]="studioBoardFocus() !== null && studioBoardFocus() !== g.id"
                            [style.flex-grow]="expandedLaneCount(g)">
                     <header class="lane-group__head">
                       <span class="lane-group__label">{{ g.label }}</span>
@@ -179,7 +182,7 @@
                   </section>
                 }
                 <app-delivery-section class="lane-group" data-testid="lane-group-delivery"
-                  [class.lane-group--hidden-by-focus]="focusedContainer() !== null" [tasks]="dossierBoardTasks()"
+                  [class.lane-group--hidden-by-focus]="studioBoardFocus() !== null && studioBoardFocus() !== deliveryGroupId" [tasks]="dossierBoardTasks()"
                   [projects]="boardProjectScope() ? [boardProjectScope()!] : projectNames()"
                   [mutationsBlocked]="updateClient.mutationsBlocked()" (jobClick)="openDetail($event)" />
               </main>
@@ -237,7 +240,7 @@
                     <app-project-hub-view
                       [projectName]="tab.projectName" [projectId]="projectHubUrls.projectIdForName(tab.projectName)"
                       [initialSection]="tab.section ?? 'overview'" [wikiTarget]="tab.wikiTarget"
-                      [pipelineStepId]="tab.pipelineStepId"
+                      [pipelineStepId]="tab.pipelineStepId" [settingKey]="tab.settingKey"
                       (openTask)="onOpenTaskFromReel($event)" />
                   }
                 }

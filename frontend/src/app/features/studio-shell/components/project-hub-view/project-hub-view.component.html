@@ -17,6 +17,7 @@
         (openTask)="openTask.emit($event)" />
       <app-api-stall-panel />
       <app-project-product-runtime-panel [projectName]="projectName()" />
+      <app-operations-security (openTask)="openTask.emit($event)" />
     }
   </div>
 } @else {
@@ -166,7 +167,7 @@
   }
   @defer (when isSettingsRail(activeRail())) {
     @if (isSettingsRail(activeRail())) {
-      <app-project-settings-panel [projectName]="projectName()" />
+      <app-project-settings-panel [projectName]="projectName()" appSettingFocus [focusSettingKey]="settingKey()" />
     }
   }
   @defer (when activeRail() === 'orchestrator') {

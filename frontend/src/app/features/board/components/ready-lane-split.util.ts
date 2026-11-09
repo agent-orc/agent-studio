@@ -1,4 +1,4 @@
-import { TaskInfo, TaskState } from '../../../models/task.model';
+import { TaskInfo, TaskState, type RunnerStatus } from '../../../models/task.model';
 import { laneName } from '../../../models/lane-presentation';
 
 /**
@@ -72,4 +72,15 @@ export function readyPhaseLabel(phase: string | null | undefined): string | null
     case READY_PHASES.intakePassed: return 'Prep passed';
     default: return null;
   }
+}
+
+/**
+ * AGT-3587: true for the one Ready card per project that the runner takes
+ * next. The runner status `queuedJobIds` list is the pickup order itself
+ * (the per-project lane order minus held cards), so its head is the card a
+ * free slot claims; every other Ready card is merely queued.
+ */
+export function isReadyQueueHead(job: TaskInfo, status: RunnerStatus): boolean {
+  if (job.state !== TaskState.Ready) return false;
+  return status.projects[job.projectName]?.queuedJobIds?.[0] === job.id;
 }

@@ -1,0 +1,85 @@
+@if (!hidden()) {
+  <section class="backup-status" data-testid="operations-backups" aria-labelledby="operations-backups-title">
+    <header class="backup-status__head">
+      <div>
+        <h3 id="operations-backups-title">Installation backups</h3>
+        <p>Encrypted backups of the whole installation, verified by a restore and copied off this host.</p>
+      </div>
+      <button type="button" class="backup-status__refresh" data-testid="operations-backups-refresh" (click)="load()">Refresh</button>
+    </header>
+    @if (error(); as message) { <p role="alert">{{ message }}</p> }
+    @if (overview(); as o) {
+      <div class="backup-status__state" data-testid="operations-backups-state" [attr.data-state]="o.state">
+        <app-status-indicator [tone]="o.running ? 'running' : overviewTone(o.state)" [label]="overviewLabel(o)" />
+      </div>
+      @if (o.warnings.length) {
+        <ul class="backup-status__warnings" data-testid="operations-backups-warnings">
+          @for (warning of o.warnings; track warning.code) {
+            <li [attr.data-code]="warning.code" [attr.data-severity]="warning.severity">
+              <app-status-indicator [compact]="true" [tone]="warning.severity === 'danger' ? 'danger' : 'warning'" [label]="warning.message" />
+            </li>
+          }
+        </ul>
+      }
+      <dl class="backup-status__metrics">
+        <div data-testid="operations-backups-last-good">
+          <dt>Last good backup</dt>
+          <dd>
+            @if (o.lastGood; as good) {
+              <time [attr.datetime]="good.createdAt">{{ good.createdAt | date:'medium':'UTC' }} UTC</time>
+            } @else { None }
+          </dd>
+        </div>
+        <div data-testid="operations-backups-age" [attr.data-stale]="o.stale">
+          <dt>Age</dt>
+          <dd>{{ formatAge(o.lastGoodAgeHours) }}</dd>
+        </div>
+        <div data-testid="operations-backups-size">
+          <dt>Size</dt>
+          <dd>{{ o.lastGood ? formatBytes(o.lastGood.sizeBytes) : 'None' }}</dd>
+        </div>
+        <div data-testid="operations-backups-verification">
+          <dt>Restore verification</dt>
+          <dd>
+            @if (o.lastVerification; as v) {
+              <app-status-indicator [compact]="true" [tone]="verificationTone(v.outcome)" [label]="v.outcome === 'verified' ? 'Verified' : 'Failed'" [detail]="v.detail" />
+              <small><time [attr.datetime]="v.at">{{ v.at | date:'medium':'UTC' }} UTC</time></small>
+            } @else { Not run yet }
+          </dd>
+        </div>
+        <div data-testid="operations-backups-offhost">
+          <dt>Off-host copy</dt>
+          <dd>
+            <app-status-indicator [compact]="true" [tone]="offHostTone(o.offHost)" [label]="offHostLabel(o.offHost)" [detail]="o.offHost.lastError" />
+            @if (o.offHost.target) { <small>{{ o.offHost.target }}</small> }
+          </dd>
+        </div>
+        <div data-testid="operations-backups-schedule">
+          <dt>Schedule</dt>
+          <dd>
+            Every {{ o.intervalHours }} h, kept {{ o.retentionCount }}
+            @if (o.nextBackupAt) { <small>Next <time [attr.datetime]="o.nextBackupAt">{{ o.nextBackupAt | date:'short':'UTC' }} UTC</time></small> }
+          </dd>
+        </div>
+      </dl>
+      @if (o.backups.length) {
+        <div class="backup-status__table-wrap">
+          <table data-testid="operations-backups-list">
+            <thead><tr><th scope="col">Created</th><th scope="col">Size</th><th scope="col">Files</th><th scope="col">Verification</th><th scope="col">Off-host</th></tr></thead>
+            <tbody>
+              @for (item of o.backups; track item.id) {
+                <tr [attr.data-backup-id]="item.id">
+                  <th scope="row"><time [attr.datetime]="item.createdAt">{{ item.createdAt | date:'medium':'UTC' }} UTC</time></th>
+                  <td>{{ formatBytes(item.sizeBytes) }}</td>
+                  <td>{{ item.fileCount }}</td>
+                  <td>{{ verificationLabel(item.verification) }}</td>
+                  <td>{{ itemOffHostLabel(item.offHost) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    }
+  </section>
+}

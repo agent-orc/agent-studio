@@ -19,6 +19,7 @@ export { ProjectDeploymentPanelComponent } from './components/project-deployment
 export { ProjectEnvironmentOverviewComponent } from './components/project-environment-overview/project-environment-overview.component';
 export { ProjectShellComponent } from './components/project-shell/project-shell.component';
 export { ProjectSettingsPanelComponent } from './components/project-settings-panel/project-settings-panel.component';
+export { SettingFocusDirective } from './components/project-settings-panel/setting-focus.directive';
 export { ProjectExecutionDefinitionComponent } from './components/project-execution-definition/project-execution-definition';
 export { AnalysisReportDrilldownComponent } from './components/analysis-report-drilldown/analysis-report-drilldown';
 export { AutonomySliderComponent } from './components/autonomy-slider/autonomy-slider';
@@ -29,6 +30,7 @@ export { UxuiPanelComponent } from './components/uxui-panel/uxui-panel.component
 export { ProjectObservabilityPanelComponent } from './components/project-observability/project-observability-panel.component';
 export { ProjectProductRuntimePanelComponent } from './components/project-product-runtime/project-product-runtime-panel.component';
 export { ApiStallPanelComponent } from './components/api-stall-panel/api-stall-panel.component';
+export { OperationsSecurityComponent } from './components/operations-security/operations-security';
 export { ProjectPipelinePanelComponent } from './components/project-pipeline-panel/project-pipeline-panel.component';
 export { ProjectTestRunsPanelComponent } from './components/project-test-runs-panel/project-test-runs-panel';
 export { QualityStudioPanelComponent } from './components/quality-studio-panel/quality-studio-panel.component';

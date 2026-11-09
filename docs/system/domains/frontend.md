@@ -299,7 +299,10 @@ the suite is independent of the workstation's operating-system locale.
 ### Batch verification
 
 Project settings expose the batch gate's scope, planner, bounds, risk policy,
-review test level, timeout, and advisor mode. Review lane headers summarize
+calibration, stacking, review test level, timeout, and advisor mode. Enabling
+the gate while the scope is Documentation switches the scope to Code and says
+so; the operator can switch it back before saving. A link at the top of the
+project settings page jumps to the section (AGT-3592). Review lane headers summarize
 waiting and running batches; card badges and task detail read membership from
 `GET /api/projects/{project}/batch-gate/state?history=10`, not from board cards.
 The project batch panel shows the planner, look ahead, advisor verdict, pending
@@ -1143,6 +1146,15 @@ header chip, and Result header agree on word and resolved colour, both themes).
 - Destructive operations and runner side effects stay spinner-backed rather than
   optimistic.
 - Menus are text-only. Do not add leading icons to menu rows.
+- A burst of automatic escalations is grouped by cause, not shown as one row
+  per card (AGT-3585). The Escalated lane and Activity across projects both
+  group through `models/cause-burst.ts`: items with one cause whose times lie
+  at most 15 minutes apart form one burst, and every item lands in exactly one
+  group, so group counts add up (R3). Bulk actions come only from
+  `features/board/state/bulk-lane-actions.ts`. They are plain moves that are
+  valid for every member (today: Continue (reissue) and Resolve manually from
+  Escalated), always confirm with the card list, and run as one server-side
+  batch move.
 - Before adding visual variants, check the style guide and update it if a new
   pattern is truly needed.
 - Use stable `data-testid` hooks for Playwright selectors.

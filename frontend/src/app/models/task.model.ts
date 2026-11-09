@@ -86,6 +86,7 @@ export interface BatchMoveJobResponse {
 // live under their own `features/X/models/` and are accessed via the
 // feature barrel. The two `import type` lines below let TaskInfo's
 // own field types reference feature-owned shapes without copying them.
+import type { RemedyAction } from './remedy-action.model';
 import type { TaskCommitInfo, TaskProvenanceRecord, TaskMergeSignal, TaskIntegrationStatus } from '../features/git';
 import type { TaskTokenSummary } from '../features/tokens';
 import type { OrchestratorLogEntry, OrchestratorSession } from '../features/orchestrator';
@@ -458,8 +459,8 @@ export interface WaitsOnStatus {
 
 /**
  * AGT-2818: one way an operator can clear a pickup hold. Mirrors backend
- * `PickupHoldResolution`. The UI renders a control only for kinds with an
- * implemented handler; all other kinds remain explanatory text.
+ * `PickupHoldResolution`. AGT-3580: every kind carries a typed `action` that
+ * the detail view renders as a button or a link; `detail` stays prose.
  */
 export interface PickupHoldResolution {
   /** Machine-readable kind, e.g. `release-target` / `drop-release-gate`. */
@@ -472,6 +473,8 @@ export interface PickupHoldResolution {
   targetKey?: string | null;
   /** The stable source key for an edge decision; null means the waiting card. */
   sourceKey?: string | null;
+  /** AGT-3580: route, owning project setting, or API action behind this way out. */
+  action?: RemedyAction | null;
 }
 
 /**
@@ -1245,6 +1248,25 @@ export interface ContinueTaskResponse {
   status: 'started' | 'queued' | 'saved';
   execution?: CliExecution | null;
   queued?: ContinueTaskQueuedInfo | null;
+  /** AGT-3483: the result ref a queued round starts from; absent when it keeps today's checkout. */
+  base?: ContinueRoundBase | null;
+}
+
+/**
+ * Mirrors backend `ContinueRoundBaseInfo` (AGT-3483). `source` is
+ * `latest-result`, `explicit`, `review-fix-round` or `existing`.
+ */
+export interface ContinueRoundBase {
+  ref: string;
+  sha: string;
+  source: string;
+  resultAttemptId?: string | null;
+}
+
+/** `GET /api/tasks/{id}/failure/continue` (AGT-3582): the failure continuation guard, read only. */
+export interface FailureContinuationCheck {
+  available: boolean;
+  reason: string | null;
 }
 
 export interface ContinueTaskQueuedInfo {
@@ -2134,8 +2156,16 @@ export interface TaskLiveQueue {
   kind: 'runner' | 'review' | string;
   /** One-based slot position. Absent while waiting between passes; see `reason`. */
   position?: number | null;
-  /** Human-readable reason there is no `position`, e.g. "waiting for review executor: ...". */
+  /**
+   * Human-readable reason there is no `position`, e.g. "waiting for review
+   * executor: ...", or, with `reasonCode`, why the runner is not picking the card.
+   */
   reason?: string | null;
+  /**
+   * AGT-3579: `RunnerPickupWaitCodes` token for a Ready card the runner is not
+   * picking (runner gate or candidate skip). Absent when no reason is recorded.
+   */
+  reasonCode?: RunnerPickupWaitCode | string | null;
   /**
    * AGT-3094: `reviewing` while a review executor holds the ReviewAttempt lease,
    * `stalled` when nothing will review the delivery without an operator, else
@@ -2232,6 +2262,34 @@ export interface ProjectRunnerStatus {
   pendingModeActiveTaskCount?: number;
   /** Title of the sole remaining snapshot task, when exactly one remains. */
   pendingModeActiveTaskTitle?: string | null;
+  /** ADR-0052: the project's concurrency cap, clamped to at least 1. */
+  maxParallelism?: number;
+  /** ADR-0052: how many of the `maxParallelism` slots a running task fills. */
+  occupiedSlots?: number;
+  /** Free-text rationale of the last pick decision or candidate skip. */
+  lastPickReason?: string | null;
+  /** AGT-3579: the runner gate that ended the last pickup tick; null when it reached the candidates. */
+  pickupGate?: RunnerPickupWait | null;
+  /** AGT-3579: candidates the last pickup pass skipped; empty while `pickupGate` is set. */
+  pickupSkips?: RunnerPickupSkip[];
+}
+
+/** AGT-3579: mirrors backend `RunnerPickupWaitCodes`. */
+export type RunnerPickupWaitCode =
+  | 'manual-mode' | 'paused' | 'breaker-cooldown' | 'pending-mode' | 'test-subject'
+  | 'build-profile' | 'slots-full' | 'load-throttle' | 'provider-limit' | 'quota-defer'
+  | 'parallel-conflict';
+
+/** AGT-3579: why the runner is not picking; mirrors backend `RunnerPickupWait`. */
+export interface RunnerPickupWait {
+  code: RunnerPickupWaitCode | string;
+  /** One operator-facing sentence. */
+  detail: string;
+}
+
+/** AGT-3579: one Ready candidate the last pickup pass skipped. */
+export interface RunnerPickupSkip extends RunnerPickupWait {
+  jobId: string;
 }
 
 export interface ProviderLimitStatus {
@@ -2550,6 +2608,14 @@ export interface ParkedBlockerStatus {
   parkedForSeconds?: number;
   /** The original freetext park reason, verbatim. */
   reason: string;
+  /**
+   * Lane-change cause that parked the card (`acceptance-integration-failed`,
+   * `escalated`, ...). AGT-3586: the park copy is chosen from it. Absent on
+   * markers written before the field existed.
+   */
+  cause?: string | null;
+  /** Short qualifier of `cause`, e.g. `missing-delivery` or an escalation category. */
+  causeDetail?: string | null;
   /**
    * Latest sweep verdict: `blocked`, `recallable`, or `undeterminable`.
    * Absent on board cards; /details/overview carries it.

@@ -89,6 +89,25 @@ neither is applied. Releasing a validation gate states that the validation no
 longer has to happen, which is an operator decision, so no sweep, projection or
 background service in this feature performs a write.
 
+**Typed actions (AGT-3580).** Every resolution carries an `action`
+(`RemedyAction`: `kind` `route` | `setting` | `api`, a `target`, and the
+`project` or `taskKey` it acts on); `detail` is prose and never an HTTP line.
+The detail view renders the action as a control the operator clicks: a button
+that calls the existing route (waits-on edit, archive, release with a confirm,
+start, intake, cli-type, escalate, `DELETE /api/tasks/{id}/dispatch-rejection`
+for "Re-offer the card"), a runner picker for `route-to-remote-runner` that calls
+`PUT /api/projects/{name}/execution-runner`, or a link to the owning task,
+Execution Hosts, or project setting. The kind-to-action map is pinned by
+`PickupHoldPolicyTests.EveryResolutionKind_CarriesItsTypedAction_AndNoHttpDetail`.
+The server readiness report uses the same record: each line has a prose
+`remedy`, an optional `action` (repository visibility and integration branch
+open their project setting), an optional `command` with shell steps only,
+shown only as a copyable detail, and an optional `configEntry` (`file`,
+`section`, `text`) for a line the remedy adds to a configuration file, such as
+the `data-volume` compose volume line, shown as a labelled config entry and
+never as a command. The field contract is in
+[Move Studio to a server](../operations/setup/move-studio-to-server.md#readiness-report).
+
 ### 4. A one-off sweep for the existing backlog
 
 `PickupHoldSweep.RunOnce()` runs at boot and reports every card currently held in
@@ -118,6 +137,38 @@ be reporting noise rather than a standstill.
   card renders that shared component instead of its own partial inline copy, so
   one record has one rendering on the card and in the detail header.
 
+## Runner wait reasons (AGT-3579)
+
+A pickup hold is a fact about the card. The runner also declines to pick
+pickup-eligible cards for reasons of its own, and those used to reach the UI
+only as the free-text `lastPickReason`. `ProjectRunnerStatus` now carries them
+as typed facts next to `occupiedSlots` and `maxParallelism`:
+
+- `pickupGate` (`code`, `detail`): the gate that ended the last tick before any
+  candidate was evaluated: `manual-mode`, `paused`, `breaker-cooldown`,
+  `pending-mode`, `test-subject`, `build-profile`, or `slots-full`. A project
+  placed on a remote runner records no gate; remote dispatch states its holds.
+- `pickupSkips[]` (`jobId`, `code`, `detail`): candidates the last pass skipped
+  with `load-throttle`, `provider-limit`, `quota-defer`, or `parallel-conflict`.
+  Empty while a gate is set, because a closed gate evaluates no candidate.
+
+The `detail` sentences carry no per-sample numbers, so an unchanged wait keeps
+the board body stable. `TaskLiveStatusProjection.RunnerQueueFor` copies the gate,
+else the card's skip, onto `liveStatus.queue` as `reasonCode` and `reason`, for
+pickup candidates only (cards in `queuedJobIds`). A held card keeps its hold.
+
+`frontend/src/app/models/ready-wait-reason.ts` gives each Ready card exactly one
+reason: a blocked dependency, then any other hold, then the runner reason, else
+`queued`. Two surfaces read it:
+
+- **Ready lane header**: `<app-ready-wait-split>` shows the waiting count split
+  by reason (for example `1 dependency gate · 3 manual mode`). Every card counts
+  once, so the split sums to the lane count (R3). It renders only when at least
+  one card waits for a named reason.
+- **Card live status line**: a runner reason replaces the bare slot wait, for
+  example `Skipped · quota defer · position 2`, with the runner's sentence as
+  the detail line.
+
 ## Regression coverage
 
 - `backend.Tests/WaitsOnEvaluatorTests.cs` - archived and unreleased is blocked
@@ -132,3 +183,8 @@ be reporting noise rather than a standstill.
 - `frontend/src/app/components/pickup-hold/pickup-hold.component.spec.ts`,
   `.../remote-dispatch-rejection/remote-dispatch-rejection.component.spec.ts`,
   `frontend/e2e/board/pickup-hold-visibility.spec.ts` (both themes).
+- AGT-3579: `backend.Tests/RunnerPickupWaitReasonTests.cs` (mode and slot gates,
+  quota, load and provider skips, gate precedence), `ready-wait-reason.spec.ts`,
+  `ready-wait-split.component.spec.ts`, and
+  `frontend/e2e/board/ready-runner-wait-reasons.spec.ts` (manual mode, full
+  slots, quota defer; both themes).
