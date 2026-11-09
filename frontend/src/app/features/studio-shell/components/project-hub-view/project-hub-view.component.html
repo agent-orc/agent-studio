@@ -17,6 +17,7 @@
         (openTask)="openTask.emit($event)" />
       <app-api-stall-panel />
       <app-project-product-runtime-panel [projectName]="projectName()" />
+      <app-operations-security (openTask)="openTask.emit($event)" />
     }
   </div>
 } @else {

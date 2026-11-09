@@ -106,6 +106,7 @@ test('every working-set command answers with JSON and exit 0', async () => {
     ['title', 'DEMO-4', 'Repaired title'],
     ['capacity'],
     ['backups'],
+    ['security'],
     ['routing'],
     ['routing', 'set-step', '--step', 'remote-review', '--cli', 'codex', '--model', 'demo-model', '--all'],
     ['preflight', 'restart'],
@@ -152,6 +153,28 @@ test('backups prints the backup state and its warnings from the operator route (
   assert.match(result.stdout, /off-host sftp: current/);
   assert.match(result.stdout, /warning backup-stale: The newest good backup is 13 hours old\./);
   assert.ok(studio.requests.some(request => request.method === 'GET' && request.path === '/api/operator/backups'));
+});
+
+test('security lists ranked entries and narrows to what needs action soon', async () => {
+  const home = makeHome();
+  const all = await run(['security'], { home });
+  assert.equal(all.code, 0, all.stderr);
+  assert.match(all.stdout, /2 entries \(1 critical, 0 high, 1 medium, 0 low, 0 info\); 1 need action soon\./);
+  assert.match(all.stdout, /#1 critical 95 second-factor: Owner has no second factor \[action soon\]/);
+  assert.match(all.stdout, /#2 medium 50 credentials: API token ci never expires/);
+  const soon = await run(['security', '--soon'], { home });
+  assert.equal(soon.code, 0, soon.stderr);
+  assert.doesNotMatch(soon.stdout, /never expires/);
+  const allJson = await run(['security', '--json'], { home });
+  assert.equal(allJson.code, 0, allJson.stderr);
+  assert.equal(allJson.json.soonOnly, false);
+  assert.deepEqual(allJson.json.findings.map(finding => finding.rank), [1, 2]);
+  const soonJson = await run(['security', '--soon', '--json'], { home });
+  assert.equal(soonJson.code, 0, soonJson.stderr);
+  assert.equal(soonJson.json.soonOnly, true);
+  assert.deepEqual(soonJson.json.findings.map(finding => finding.id), ['second-factor:u1'], '--soon narrows the JSON findings');
+  assert.equal(soonJson.json.summary.total, 2, 'the summary keeps the installation-wide counts');
+  assert.ok(studio.requests.some(request => request.method === 'GET' && request.path === '/api/security/posture'));
 });
 
 test('accept refuses red and missing evidence and accepts a green card', async () => {

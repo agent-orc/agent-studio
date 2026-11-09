@@ -122,6 +122,7 @@ to stderr) and `--url`.
 | `title <card> <title>` | `.../attention`, `PUT /api/tasks/{card}/title` | |
 | `capacity` | `GET /api/operator/capacity` | |
 | `backups` | `GET /api/operator/backups` | Installation backup state and warnings (AGT-3574); the off-host target is shown only with installation-wide operate permission. |
+| `security [--soon]` | `GET /api/security/posture` | Read only. The installation security view ranked by severity; `--soon` lists only what needs action within 14 days, in the text and the `--json` findings (`soonOnly: true`; the summary keeps the installation-wide counts). Needs `security.posture.read`, which the `operator-agent` role holds. |
 | `routing` | `GET /api/model-selection/policy`, `GET /api/operator/capacity` | Central model selection policy and pins. |
 | `routing set-step --step <id> --cli <cli> [--model] [--thinking] [--pin-mode] [--pipeline-type] (--project <p>... \| --all)` | `GET /api/projects/settings`, `PUT /api/projects/{p}/pipeline-step` | See [Routing](#routing). |
 | `preflight restart\|deploy` | `GET /api/operator/preflight/{operation}` | Exit 8 with the named blockers. |

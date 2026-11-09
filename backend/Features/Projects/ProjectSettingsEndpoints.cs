@@ -1331,6 +1331,21 @@ public static class ProjectSettingsEndpoints
                 return Results.BadRequest(new { error = "windowDays must be between 1 and 90." });
             return Results.Ok(store.FailedTestRanking(project.Name, clock.GetUtcNow(), windowDays ?? 7));
         });
+        // AGT-3577: the gate evidence of the isolation run that proved a member red or green.
+        app.MapGet("/api/projects/{projectName}/batch-gate/isolation-evidence", (string projectName,
+            string? parentBatchId, string? taskKey, BatchGateStore store, TaskScannerService scanner) =>
+        {
+            var project = scanner.GetWatchPaths().FirstOrDefault(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (project is null)
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (string.IsNullOrWhiteSpace(parentBatchId) || string.IsNullOrWhiteSpace(taskKey))
+                return Results.BadRequest(new { error = "parentBatchId and taskKey are required." });
+            var path = store.IsolationEvidencePath(project.Name, parentBatchId, taskKey);
+            return path is null
+                ? Results.NotFound(new { error = "No isolation evidence is recorded for this member." })
+                : Results.File(path, "text/plain; charset=utf-8");
+        });
         app.MapGet("/api/projects/{projectName}/batch-gate/ledger", (string projectName,
             DateOnly? day, string? type, int? page, int? pageSize,
             GateRunLedger ledger, TaskScannerService scanner) =>
