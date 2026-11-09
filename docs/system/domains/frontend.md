@@ -1,11 +1,20 @@
 # Frontend Domain Map
 
-Version: 2026-11-05
+Version: 2026-11-09
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
+
+## Phone navigation and theme
+
+At 390 px the Studio board shows one lane at a time. The Board lane picker
+selects a workflow lane or delivery column; the chosen group supplies the
+single visible board track. Workspace settings replace their section rail with
+a picker below 760 px, keeping the checklist at the top of the content area.
+The root app initializes `ThemeService` before authentication so the auth gate
+uses the same saved or system-resolved light and dark tokens as Studio.
 
 ## Modal keyboard contract
 
