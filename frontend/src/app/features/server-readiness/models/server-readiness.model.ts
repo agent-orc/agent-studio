@@ -1,3 +1,5 @@
+import type { RemedyAction } from '../../../models/remedy-action.model';
+
 /** Server readiness report (AGT-3412): `GET /api/system/readiness`. */
 export type ReadinessState = 'pass' | 'unknown' | 'warn' | 'fail';
 export type ReadinessScope = 'server' | 'project' | 'host';
@@ -9,7 +11,24 @@ export interface ReadinessCheck {
   subject: string | null;
   state: ReadinessState;
   meaning: string;
+  /** The fix, as prose. */
   remedy: string | null;
+  /** AGT-3580: the shell command behind the remedy, shown only as a copyable detail. */
+  command?: string | null;
+  /** AGT-3580: the owning setting or surface, rendered as a link. */
+  action?: RemedyAction | null;
+  /** AGT-3580: an entry the remedy adds to a configuration file; never part of `command`. */
+  configEntry?: ReadinessConfigEntry | null;
+}
+
+/** AGT-3580: a configuration entry a remedy adds to a file on the host. */
+export interface ReadinessConfigEntry {
+  /** The file, relative to the stack directory, for example `compose.override.yaml`. */
+  file: string;
+  /** Where in that file, as a dotted key path, for example `services.api.volumes`. */
+  section: string;
+  /** The entry as it is written into the file. */
+  text: string;
 }
 
 export interface ServerReadinessReport {

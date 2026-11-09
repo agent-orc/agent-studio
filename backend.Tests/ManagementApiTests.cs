@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.IO.Compression;
 using System.Text.Json;
 using System.Diagnostics;
 using AgentStudio.Shared;
@@ -258,18 +257,15 @@ public sealed class ManagementApiTests : IClassFixture<ManagementApiTests.Host>
     {
         using var client = _host.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-        await EnterMaintenance(client, "tamper-maintenance-key");
         (await client.PostAsJsonAsync("/api/v1/management/commands", new
         {
             kind = "backup-create", dryRun = false, confirmation = "backup-create", idempotencyKey = "tamper-backup-key"
         })).EnsureSuccessStatusCode();
 
-        var archivePath = Assert.Single(Directory.GetFiles(_backups, "backup-*.zip"));
-        using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Update))
-        {
-            using var writer = new StreamWriter(archive.CreateEntry("tampered-after-creation.txt").Open());
-            writer.Write("changed");
-        }
+        var archivePath = Assert.Single(Directory.GetFiles(_backups, "studio-backup-*" + BackupCatalog.ArchiveSuffix));
+        var bytes = File.ReadAllBytes(archivePath);
+        bytes[^1] ^= 0x5a;
+        File.WriteAllBytes(archivePath, bytes);
 
         var verify = await client.PostAsJsonAsync("/api/v1/management/commands", new
         {
@@ -278,7 +274,10 @@ public sealed class ManagementApiTests : IClassFixture<ManagementApiTests.Host>
         verify.EnsureSuccessStatusCode();
         var body = await verify.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(0, body.GetProperty("affected").GetInt32());
-        Assert.Contains("failed before extraction", body.GetProperty("summary").GetString());
+        Assert.Contains("restore verification failed", body.GetProperty("summary").GetString());
+        var overview = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/backups");
+        Assert.Contains(overview.GetProperty("warnings").EnumerateArray(),
+            warning => warning.GetProperty("code").GetString() == "verification-failed");
     }
 
     [Fact]
@@ -447,6 +446,8 @@ public sealed class ManagementApiTests : IClassFixture<ManagementApiTests.Host>
         {
             ["TaskRepository"] = folders.Root,
             ["Management:BackupDirectory"] = folders.Backups,
+            ["Backup:KeyFile"] = folders.BackupKey,
+            ["Backup:Sources:workspace:Path"] = folders.Root,
             ["Logging:BackendFile:LogDirectory"] = folders.Logs,
             ["WatchPaths:0:Name"] = "Management Test",
             ["WatchPaths:0:Path"] = folders.Root,
@@ -567,18 +568,23 @@ internal sealed class ManagementTestFolders
         Root = root;
         Backups = root + "-backups";
         Logs = root + "-logs";
+        Keys = root + "-keys";
     }
 
     public string Root { get; }
     public string Backups { get; }
     public string Logs { get; }
+    public string Keys { get; }
+    public string BackupKey => Path.Combine(Keys, "backup.key");
 
     public static ManagementTestFolders Create(string root)
     {
         foreach (var state in TaskStates.All) Directory.CreateDirectory(Path.Combine(root, state));
         Directory.CreateDirectory(Path.Combine(root, ".metadata"));
         File.WriteAllText(Path.Combine(root, ".metadata", "server-evidence.jsonl"), "{}\n");
-        return new ManagementTestFolders(root);
+        var folders = new ManagementTestFolders(root);
+        if (!File.Exists(folders.BackupKey)) AgentStudio.Management.BackupKey.Create(folders.BackupKey);
+        return folders;
     }
 
     /// <summary>
@@ -602,6 +608,7 @@ internal sealed class ManagementTestFolders
         try { Directory.Delete(Root, true); } catch (Exception ex) { SilentCatch.Note(ex, "Management test root cleanup"); }
         try { Directory.Delete(Backups, true); } catch (Exception ex) { SilentCatch.Note(ex, "Management test backup cleanup"); }
         try { Directory.Delete(Logs, true); } catch (Exception ex) { SilentCatch.Note(ex, "Management test log cleanup"); }
+        try { Directory.Delete(Keys, true); } catch (Exception ex) { SilentCatch.Note(ex, "Management test key cleanup"); }
     }
 
     private static void DeleteEntry(string path)
@@ -1135,7 +1142,7 @@ public sealed class ManagementApiOwnHostTests : IDisposable
             || relativeToTemp == ".."
             || relativeToTemp.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal));
         client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-        await ManagementApiTests.EnterMaintenance(client, "backup-maintenance-key");
+        // AGT-3574: backups no longer need maintenance; writes are held while the stores are read.
         var response = await client.PostAsJsonAsync("/api/v1/management/commands", new
         {
             kind = "backup-create", dryRun = false, confirmation = "backup-create", idempotencyKey = "backup-test-key"
@@ -1143,15 +1150,17 @@ public sealed class ManagementApiOwnHostTests : IDisposable
         Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(1, body.GetProperty("affected").GetInt32());
-        var backups = Directory.GetFiles(_backups, "backup-*.zip");
+        var backups = Directory.GetFiles(_backups, "studio-backup-*" + BackupCatalog.ArchiveSuffix);
         Assert.Single(backups);
-        Assert.True(File.Exists(backups[0] + ".manifest.json"));
-        using (var archive = ZipFile.OpenRead(backups[0]))
-        {
-            var entry = Assert.IsType<ZipArchiveEntry>(archive.GetEntry("backup-fixture.txt"));
-            using var reader = new StreamReader(entry.Open());
-            Assert.Equal(archiveEvidence, await reader.ReadToEndAsync());
-        }
+        Assert.True(File.Exists(backups[0] + ".sha256"));
+        string? archived = null;
+        using (var archive = File.OpenRead(backups[0]))
+            BackupArchive.Read(archive, BackupKey.Load(_folders.BackupKey), null, (name, data, _) =>
+            {
+                if (name == "workspace/backup-fixture.txt") archived = new StreamReader(data).ReadToEnd();
+            }, null);
+        Assert.Equal(archiveEvidence, archived);
+        Assert.DoesNotContain(archiveEvidence.Trim(), System.Text.Encoding.Latin1.GetString(File.ReadAllBytes(backups[0])));
         Assert.DoesNotContain(Path.GetFullPath(_root) + Path.DirectorySeparatorChar, Path.GetFullPath(backups[0]));
 
         var verify = await client.PostAsJsonAsync("/api/v1/management/commands", new
@@ -1161,8 +1170,20 @@ public sealed class ManagementApiOwnHostTests : IDisposable
         verify.EnsureSuccessStatusCode();
         var verifyBody = await verify.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(1, verifyBody.GetProperty("affected").GetInt32());
-        var stagingRoot = Path.Combine(_backups, ".restore-verification");
+        var stagingRoot = Path.Combine(_backups, ".staging");
         Assert.False(Directory.Exists(stagingRoot) && Directory.EnumerateFileSystemEntries(stagingRoot).Any());
+
+        var overview = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/backups");
+        Assert.True(overview.GetProperty("configured").GetBoolean());
+        Assert.Equal("verified", overview.GetProperty("lastGood").GetProperty("verification").GetString());
+        Assert.Equal("verified", overview.GetProperty("lastVerification").GetProperty("outcome").GetString());
+        Assert.Equal("not-configured", overview.GetProperty("offHost").GetProperty("state").GetString());
+        var operatorView = await client.GetFromJsonAsync<JsonElement>("/api/operator/backups");
+        Assert.Equal(overview.GetProperty("lastGood").GetProperty("id").GetString(),
+            operatorView.GetProperty("lastGood").GetProperty("id").GetString());
+        var status = await client.GetFromJsonAsync<JsonElement>("/api/v1/management/status");
+        Assert.Equal(overview.GetProperty("lastGood").GetProperty("id").GetString(),
+            status.GetProperty("backups").GetProperty("items")[0].GetProperty("id").GetString());
     }
 
     [Fact]

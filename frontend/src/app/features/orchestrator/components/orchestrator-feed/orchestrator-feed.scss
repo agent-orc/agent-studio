@@ -177,6 +177,13 @@
   flex-direction: column;
   gap: 0;
 }
+/* AGT-3585: members of an opened burst sit indented under its row; no side bar (R1). */
+.orch-feed__burst-members {
+  display: flex;
+  flex-direction: column;
+  padding-inline-start: var(--studio-spacing-4);
+  border-bottom: 1px solid var(--studio-border);
+}
 .orch-feed__group-head {
   position: sticky;
   top: 0;

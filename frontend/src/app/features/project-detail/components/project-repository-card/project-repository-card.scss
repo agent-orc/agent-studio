@@ -1,0 +1,80 @@
+@use '../../../../../styles/mixins' as m;
+
+:host { display: block; }
+
+// Deck-Panel v1, like the other cards of the settings execution grid.
+.repository-card {
+  @include m.deck-panel;
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+  color: var(--studio-fg);
+}
+
+.repository-card__head,
+.repository-card__branch {
+  display: flex;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+}
+
+.repository-card__icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.repository-card__title {
+  color: var(--studio-fg-strong);
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.repository-card__desc,
+.repository-card__field small,
+.repository-card__notice {
+  margin: 0;
+  color: var(--studio-fg-dim);
+  font-size: 0.8rem;
+}
+
+.repository-card__field {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--studio-card-radius);
+
+  legend,
+  label {
+    padding: 0;
+    color: var(--studio-fg-muted);
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+}
+
+// A remedy link lands here: a background tint, never a left accent bar (R1).
+.repository-card__field[aria-current='location'] {
+  background: var(--studio-nav-active-bg);
+  box-shadow: 0 0 0 var(--studio-spacing-1) var(--studio-nav-active-bg);
+}
+
+.repository-card__branch input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+}
+
+.repository-card__error {
+  margin: 0;
+  color: var(--studio-danger);
+  font-size: 0.8rem;
+}
+
+// The remedy link focuses the field itself; the tint above already marks it.
+.repository-card__field[tabindex='-1']:focus {
+  outline: none;
+}

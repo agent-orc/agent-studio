@@ -121,6 +121,19 @@ export class ConfirmDialogComponent {
     this.service.cancel();
   }
 
+  /** R8: the item list owns its vertical scroll keys while it has focus. */
+  containListKeys(event: KeyboardEvent): void {
+    const list = event.currentTarget as HTMLElement;
+    const moves: Record<string, number> = {
+      ArrowUp: -32, ArrowDown: 32, PageUp: -list.clientHeight, PageDown: list.clientHeight,
+      Home: -list.scrollHeight, End: list.scrollHeight,
+    };
+    if (!(event.key in moves)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    list.scrollBy({ top: moves[event.key] });
+  }
+
   /**
    * Enter confirms when the focus is on the dialog. We avoid hijacking
    * Enter globally — the global handler is scoped to keydown originating

@@ -150,6 +150,47 @@ public class TaskStateMachineOutcomeTests : IDisposable
         Assert.True(File.Exists(ReviewSubjectStore.PathFor(outcome.NewFolderPath!) + ".invalidated"));
     }
 
+    // AGT-3586: the park marker records the lane-change cause, so the park copy
+    // can say the acceptance audit, not "the parking run", parked the card.
+    [Fact]
+    public void MoveJob_IntoParkedLane_RecordsTheTransitionCauseOnTheMarker()
+    {
+        SeedJob(TaskStates.Completed, "audit-park");
+
+        var (machine, _) = BuildMachine();
+        var outcome = machine.MoveJob("audit-park", TaskStates.Escalated, _watchPath,
+            cause: TimelineActors.System,
+            reason: "No delivery branch was found for this card, so its work cannot be integrated.",
+            transitionCause: LaneChangeCauses.AcceptanceIntegrationFailed,
+            transitionDetail: "missing-delivery");
+
+        Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        var marker = ParkedBlockerMarker.TryRead(outcome.NewFolderPath!);
+        Assert.NotNull(marker);
+        Assert.Equal(LaneChangeCauses.AcceptanceIntegrationFailed, marker!.Cause);
+        Assert.Equal("missing-delivery", marker.CauseDetail);
+        var status = ParkedBlockerMarker.ToStatus(marker, marker.ParkedAt)!;
+        Assert.Equal(LaneChangeCauses.AcceptanceIntegrationFailed, status.Cause);
+        Assert.Equal("missing-delivery", status.CauseDetail);
+    }
+
+    [Fact]
+    public void MoveJob_OperatorParkWithoutExplicitCause_RecordsTheDerivedOperatorCause()
+    {
+        SeedJob(TaskStates.Escalated, "operator-park");
+
+        var (machine, _) = BuildMachine();
+        var outcome = machine.MoveJob("operator-park", TaskStates.HumanReview, _watchPath,
+            cause: TimelineActors.Human("operator"));
+
+        Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        var marker = ParkedBlockerMarker.TryRead(outcome.NewFolderPath!)!;
+        Assert.Equal(LaneChangeCauses.OperatorDecision, marker.Cause);
+        Assert.Null(marker.CauseDetail);
+        // The reason fallback still reads the explicit cause only.
+        Assert.Equal("Parked with no recorded cause.", marker.Reason);
+    }
+
     private void SeedJob(string state, string slug, string? phase = null)
     {
         var dir = Path.Combine(_watchPath, state, slug);
