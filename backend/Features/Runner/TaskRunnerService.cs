@@ -1111,6 +1111,24 @@ public class TaskRunnerService : BackgroundService
         return (null, decision);
     }
 
+    /// <summary>
+    /// The base a continue, steer or extend round without a <c>baseRef</c>
+    /// would start from, decided as <see cref="ContinueJobAsync"/> decides it
+    /// but without writing anything (AGT-3582). The task detail shows it read
+    /// only before the operator sends the round; null when the round keeps
+    /// today's checkout.
+    /// </summary>
+    public ContinueRoundBaseInfo? PreviewContinueBase(TaskInfo info)
+    {
+        ArgumentNullException.ThrowIfNull(info);
+        var admission = FollowUpAdmissionPolicy.Decide(BuildFollowUpAdmissionFacts(info));
+        var (fixRound, round) = DecideContinueBase(info, admission, baseRef: null);
+        if (fixRound is not null) return BaseInfo(fixRound, ContinueRoundBaseSources.ReviewFixRound);
+        return round is { Action: ContinueRoundBaseAction.Use or ContinueRoundBaseAction.Keep, Base: { } chosen }
+            ? BaseInfo(chosen, round.Source!)
+            : null;
+    }
+
     private static ContinueRoundBaseInfo BaseInfo(ContinuationBaseRecord record, string source)
         => new(record.Ref, record.CommitSha, source, record.AttemptId);
 
