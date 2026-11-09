@@ -40,8 +40,9 @@
         <option
           [value]="host.id"
           [selected]="host.id === selectedHostId()"
-          [disabled]="host.status === 'offline' || host.status === 'draining'">
-          {{ host.role === 'local' ? 'Local' : host.name }}{{ host.role === 'remote' ? ' · ' + host.os : '' }}
+          [disabled]="!!unavailableReason(host)"
+          [attr.title]="unavailableReason(host) || null">
+          {{ host.role === 'local' ? 'Local' : host.name }}{{ host.role === 'remote' ? ' · ' + host.os : '' }}{{ unavailableReason(host) ? ' (' + unavailableReason(host) + ')' : '' }}
         </option>
       }
     </select>

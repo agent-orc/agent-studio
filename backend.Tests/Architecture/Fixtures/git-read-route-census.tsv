@@ -148,6 +148,7 @@
 /api/pipeline/accepted-integration-alert	free	-	-	-
 /api/pipeline/integration-bounce/metrics	free	-	-	-
 /api/projects	free	-	-	-
+/api/projects/execution-locations/policy	free	-	-	-
 /api/projects/pipeline-catalogue	reachable	frozen	Pipeline	Pipeline reads from the Git fact store
 /api/projects/settings	free	-	-	-
 /api/projects/{projId:regex(^PROJ-\d{{3,}}$)}	free	-	-	-

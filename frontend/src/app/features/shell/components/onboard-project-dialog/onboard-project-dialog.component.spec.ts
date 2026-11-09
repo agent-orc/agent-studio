@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { signal, provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { of } from 'rxjs';
+import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { OnboardProjectDialogComponent } from './onboard-project-dialog.component';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
 import { CliCatalogStore } from '../../../cli';
-import { RemoteHostsService } from '../../../remote-hosts';
+import { RemoteHostsService, seedRemoteHosts } from '../../../remote-hosts';
 import type { CreateRegistryProjectRequest } from '../../../../models/task.model';
 
 describe('OnboardProjectDialogComponent', () => {
@@ -21,6 +23,7 @@ describe('OnboardProjectDialogComponent', () => {
       imports: [OnboardProjectDialogComponent],
       providers: [
         provideZonelessChangeDetection(),
+        provideHttpClient(), provideHttpClientTesting(),
         { provide: WorkspaceManagerService, useValue: manager },
         { provide: TaskService, useValue: {
           createRegistryProject: (body: CreateRegistryProjectRequest) => {
@@ -31,10 +34,13 @@ describe('OnboardProjectDialogComponent', () => {
         } },
         { provide: NotificationService, useValue: { success: vi.fn(), error: vi.fn() } },
         { provide: CliCatalogStore, useValue: { ensure: () => of(null), modelsFor: () => [] } },
-        { provide: RemoteHostsService, useValue: { ensureLoaded: vi.fn(), hosts: signal([]) } },
+        { provide: RemoteHostsService, useValue: { ensureLoaded: vi.fn(), hosts: signal([{
+          id: 'local', name: 'Local machine', role: 'local', serviceRole: 'local', status: 'offline',
+        }]) } },
       ],
     }).overrideComponent(OnboardProjectDialogComponent, { set: { template: '' } }).compileComponents();
     const component = TestBed.createComponent(OnboardProjectDialogComponent).componentInstance;
+    component.localCodingAdmitted.set(true);
     component.registryWorkspaces.set([{
       id: 'ws-default', displayName: 'Default', projects: [],
     } as never]);
@@ -71,5 +77,23 @@ describe('OnboardProjectDialogComponent', () => {
     });
     expect(submitted()?.repositoryPath).toBeUndefined();
     expect(submitted()?.repositoryUrl).toBeUndefined();
+  });
+
+  it('admits only a coding location when local coding is disabled', async () => {
+    const { component } = await setup();
+    component.repositoryPath.set('/work/fresh-site');
+    component.localCodingAdmitted.set(false);
+    const hosts = TestBed.inject(RemoteHostsService).hosts;
+    hosts.update(current => [...current,
+      { ...seedRemoteHosts(0)[0], id: 'review', name: 'Review runner', role: 'remote', serviceRole: 'review', status: 'online' },
+      { ...seedRemoteHosts(0)[0], id: 'coding', name: 'Coding runner', role: 'remote', serviceRole: 'coding', status: 'online' },
+    ]);
+
+    expect(component.canSubmit()).toBe(false);
+    component.executionRunner.set('review');
+    expect(component.runnerUnavailableReason(hosts()[1])).toBe('Review-only runner');
+    expect(component.canSubmit()).toBe(false);
+    component.executionRunner.set('coding');
+    expect(component.canSubmit()).toBe(true);
   });
 });

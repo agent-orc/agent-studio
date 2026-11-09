@@ -254,6 +254,9 @@ public static class ProjectSettingsEndpoints
         // Per-project preferences (auto-commit on/off today). Read-all returns a
         // flat map keyed by project name so the header can render every toggle
         // in one shot without N round-trips.
+        app.MapGet("/api/projects/execution-locations/policy", (TaskRunnerService runner) =>
+            Results.Ok(new { localCodingAdmitted = runner.AllowsLocalCoding }));
+
         app.MapGet("/api/projects/settings", (
             HttpContext context,
             ProjectSettingsService settings,

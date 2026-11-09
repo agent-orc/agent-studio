@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
+import { HttpClient } from '@angular/common/http';
 import { DialogComponent } from '../../../../components/dialog/dialog.component';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { ProjectBasicsFormComponent } from '../../../../components/project-basics-form';
@@ -15,7 +16,7 @@ import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
 import { CliCatalogStore } from '../../../cli';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
-import { RemoteHostsService } from '../../../remote-hosts';
+import { RemoteHostsService, codingLocationUnavailableReason, type RemoteHost } from '../../../remote-hosts';
 
 @Component({
   selector: 'app-onboard-project-dialog',
@@ -31,6 +32,8 @@ export class OnboardProjectDialogComponent {
   private readonly notifications = inject(NotificationService);
   private readonly catalog = inject(CliCatalogStore);
   readonly hostRegistry = inject(RemoteHostsService);
+  private readonly http = inject(HttpClient);
+  readonly localCodingAdmitted = signal(false);
 
   readonly workspaceId = signal('');
   readonly displayName = signal('');
@@ -74,6 +77,7 @@ export class OnboardProjectDialogComponent {
   }));
   readonly canSubmit = computed(() =>
     !this.submitting()
+    && this.hostRegistry.hosts().some(host => host.id === this.executionRunner() && !this.runnerUnavailable(host))
     && (this.repositoryMode() === 'existing'
       || (/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(this.repositoryOwner().trim())
         && /^[A-Za-z0-9_.-]{1,100}$/.test(this.repositoryName().trim())))
@@ -87,6 +91,7 @@ export class OnboardProjectDialogComponent {
     effect(() => {
       if (!this.manager.onboardProjectOpen()) return;
       this.reset(this.manager.onboardWorkspaceId() ?? '');
+      this.localCodingAdmitted.set(false);
       this.tasks.getRegistryWorkspaces({ includeArchived: true }).subscribe({
         next: (list) => {
           this.registryWorkspaces.set(list ?? []);
@@ -96,6 +101,8 @@ export class OnboardProjectDialogComponent {
       });
       this.catalog.ensure('claude').subscribe({ error: () => void 0 });
       this.hostRegistry.ensureLoaded();
+      this.http.get<{ localCodingAdmitted: boolean }>('/api/projects/execution-locations/policy')
+        .subscribe({ next: policy => this.localCodingAdmitted.set(policy.localCodingAdmitted) });
       queueMicrotask(() => this.form()?.focusDisplayName());
     });
     effect(() => {
@@ -110,12 +117,17 @@ export class OnboardProjectDialogComponent {
     if (!this.submitting()) this.manager.closeProjectOnboard();
   }
 
-  runnerUnavailable(host: { status: string }): boolean {
-    return host.status === 'offline' || host.status === 'draining';
+  runnerUnavailable(host: RemoteHost): boolean {
+    return !!this.runnerUnavailableReason(host);
   }
 
-  runnerLabel(host: { name: string; status: string }): string {
-    return this.runnerUnavailable(host) ? `${host.name} (${host.status})` : host.name;
+  runnerUnavailableReason(host: RemoteHost): string {
+    return codingLocationUnavailableReason(host, this.localCodingAdmitted());
+  }
+
+  runnerLabel(host: RemoteHost): string {
+    const reason = this.runnerUnavailableReason(host);
+    return reason ? `${host.name} (${reason})` : host.name;
   }
 
   setRepositoryMode(mode: 'existing' | 'create'): void {
@@ -129,6 +141,11 @@ export class OnboardProjectDialogComponent {
 
   onSubmit(): void {
     if (!this.canSubmit()) return;
+    const host = this.hostRegistry.hosts().find(candidate => candidate.id === this.executionRunner());
+    if (!host || this.runnerUnavailable(host)) {
+      this.errorMsg.set('Choose an available coding location.');
+      return;
+    }
     const value = this.formValue();
     this.submitting.set(true);
     this.errorMsg.set(null);

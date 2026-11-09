@@ -83,16 +83,18 @@
                   [disabled]="submitting()"
                   [ngModel]="executionRunner()"
                   (ngModelChange)="executionRunner.set($event)">
-            <option value="local">Local host</option>
+            <option value="local" [disabled]="!localCodingAdmitted()">
+              Local host{{ localCodingAdmitted() ? '' : ' (Local coding is disabled)' }}
+            </option>
             @for (host of hostRegistry.hosts(); track host.id) {
               @if (host.id !== 'local' && host.status !== 'retired') {
-                <option [value]="host.id" [disabled]="runnerUnavailable(host)">
+                <option [value]="host.id" [disabled]="runnerUnavailable(host)" [attr.title]="runnerUnavailableReason(host) || null">
                   {{ runnerLabel(host) }}
                 </option>
               }
             }
           </select>
-          <span class="opd__hint">Offline and draining runners stay visible for context but cannot be selected.</span>
+          <span class="opd__hint">Only available coding locations can be selected. Unavailable options show why.</span>
         </label>
       </section>
 
