@@ -133,7 +133,7 @@ public sealed class ContinueRoundBaseEndpointTests : IDisposable
 
         // When isolation ends without a verdict the batch pauses; the member takes rounds again.
         var store = factory.Services.GetRequiredService<BatchGateStore>();
-        store.AppendState(new BatchGateState(flight.BatchId, flight.MembershipDigest, BatchPhase.Paused,
+        BatchGateStates.Reach(store, new BatchGateState(flight.BatchId, flight.MembershipDigest, BatchPhase.Paused,
             new string('b', 40), 1, Reviewed.AddMinutes(30), "unresolved-cohort:AGT-ISO"));
         var after = await client.PostAsJsonAsync(Route("AGT-ISO", "continue"),
             new { prompt = "Fix the failing test." });
@@ -193,7 +193,7 @@ public sealed class ContinueRoundBaseEndpointTests : IDisposable
         store.Enqueue(new BatchGatePendingRecord("rev-" + id, subject, "repo", WatchPath, folder,
             "merge", "default", Reviewed));
         BatchGateOwnershipStore.Write(folder, new BatchGateOwnership("rev-" + id, subject, BatchId: manifest.BatchId));
-        store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest, BatchPhase.Red,
+        BatchGateStates.Reach(store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest, BatchPhase.Red,
             resultSha, 1, Reviewed.AddMinutes(10), "deterministic suite red"));
         return manifest;
     }

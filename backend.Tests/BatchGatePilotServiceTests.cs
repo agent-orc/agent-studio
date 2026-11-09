@@ -1792,7 +1792,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         var c = SeedMember(factory, "DOC-RECOVER-C", "docs/recover-c.md");
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         var parent = ClosePendingBatch(factory);
-        store.AppendState(new BatchGateState(parent.BatchId, parent.MembershipDigest,
+        BatchGateStates.Reach(store, new BatchGateState(parent.BatchId, parent.MembershipDigest,
             BatchPhase.Running, null, 1, _clock));
         CloseChild([a.Key, b.Key], BatchPhase.Red);
         CloseChild([a.Key], BatchPhase.Green);
@@ -1821,7 +1821,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
                 ParentBatchId = parent.BatchId,
             };
             store.CloseManifest(child);
-            store.AppendState(new BatchGateState(child.BatchId, digest, phase, null, 1, _clock));
+            BatchGateStates.Reach(store, new BatchGateState(child.BatchId, digest, phase, null, 1, _clock));
         }
     }
 
@@ -3362,7 +3362,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         var manifest = ClosePendingBatch(factory);
         var running = new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Running, member.ResultSha, 1, _clock);
-        store.AppendState(running);
+        BatchGateStates.Reach(store, running);
         if (supersededReview) ReplaceDelivery(factory, member);
         else SaveContinuation(factory, member);
 

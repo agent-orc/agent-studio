@@ -366,5 +366,3 @@ public static class BatchGatePolicy
     private static bool IsSha(string value)
         => value is { Length: 40 or 64 } && value.All(Uri.IsHexDigit);
 }
-
-public enum BatchPhase { Formed, Assembling, Assembled, Running, Green, Publishing, Published, Red, Paused, Abandoned }

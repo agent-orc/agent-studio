@@ -16,7 +16,8 @@ public static class BatchGateStateSnapshotReader
         DateTimeOffset? now = null,
         GateRunLedger? ledger = null,
         IReadOnlyList<BatchGateReviewFixWait>? reviewFixWaits = null,
-        GateCapacity? gateCapacity = null)
+        GateCapacity? gateCapacity = null,
+        BatchGateInvariantReport? invariants = null)
     {
         var at = now ?? DateTimeOffset.UtcNow;
         var dailySummary = ledger?.Summary(store, project, DateOnly.FromDateTime(at.UtcDateTime));
@@ -263,6 +264,12 @@ public static class BatchGateStateSnapshotReader
             members,
             reviewFixWaits = reviewFixWaits ?? [],
             isolationFindings = store.ListIsolationFindings(project),
+            // AGT-3563: the last invariant check of the pilot tick; null before the first tick.
+            invariants = invariants is null ? null : new
+            {
+                invariants.CheckedAtUtc,
+                invariants.Findings,
+            },
             pushWait,
             pushWaits = pushWaits ?? (pushWait is null
                 ? Array.Empty<PendingIntegrationPushWait>() : [pushWait]),

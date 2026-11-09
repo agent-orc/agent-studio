@@ -79,8 +79,7 @@ public sealed class OperatorBatchGateFactSource(BatchGateStore store) : IOperato
     private BatchGateState? LatestState(string folder)
     {
         // A manifest closed a moment ago has no state entry yet.
-        var states = Path.Combine(folder, "state");
-        if (!Directory.Exists(states)) return null;
+        if (!store.HasState(_manifests[folder].BatchId)) return null;
         try { return store.LatestState(_manifests[folder].BatchId); }
         catch (InvalidOperationException) { return null; }
     }

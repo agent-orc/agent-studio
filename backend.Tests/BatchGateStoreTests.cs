@@ -414,7 +414,7 @@ public sealed class BatchGateStoreTests : IDisposable
         var run = new BatchGateRunRecord("run-1", manifest.BatchId,
             manifest.MembershipDigest, Base, Next, "full", "digest", "host", 1,
             ["dotnet test"], Now, evidence);
-        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+        BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Assembled, Next, 1, Now));
         _store.RecordRun(run);
         Assert.False(_store.CanRelease(member, manifest.BatchId, run.BatchRunId));
