@@ -670,6 +670,12 @@ export class TaskService {
    * "where did this card sit before I moved it" so the revert can put it
    * back at the same slot via `moveJob(..., targetIndex)`.
    */
+  /** Current board order of one lane, as painted (optimistic moves included). */
+  laneJobs(state: string): readonly TaskInfo[] {
+    const lane = STATE_TO_LANE[state];
+    return lane ? this.grouped()[lane] ?? [] : [];
+  }
+
   findLaneIndex(jobId: string, watchPath: string, state: string): number {
     const lane = STATE_TO_LANE[state];
     if (!lane) return -1;

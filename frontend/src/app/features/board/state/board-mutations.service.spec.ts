@@ -1,6 +1,6 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BatchMoveJobResponse, TaskInfo } from '../../../models/task.model';
 import { ConfirmDialogService } from '../../../services/confirm-dialog.service';
@@ -121,5 +121,71 @@ describe('BoardMutationsService archive job', () => {
     expect(warning.kind).toBe('warning');
     expect(warning.message).toBe('Archived 2 of 3 tasks. 1 needs attention.');
     expect(warning.details).toEqual(['beta: target exists']);
+  });
+});
+
+describe('BoardMutationsService Ready queue edge (AGT-3588)', () => {
+  const card = (id: string, watchPath = '/p/a') => ({ id, watchPath, title: id, state: '2-ready' }) as TaskInfo;
+  const lane = [card('a1'), card('b1', '/p/b'), card('a2')];
+  let taskService: Record<string, ReturnType<typeof vi.fn>>;
+  let undo: { offerReorderRevert: ReturnType<typeof vi.fn>; offerLaneRevert: ReturnType<typeof vi.fn>; cancelActive: ReturnType<typeof vi.fn> };
+  let errorDialog: { show: ReturnType<typeof vi.fn> };
+  const keys = (...list: [string, string][]) => list.map(([jobId, watchPath]) => ({ jobId, watchPath }));
+
+  function setup(reorderJobs: ReturnType<typeof vi.fn>): BoardMutationsService {
+    taskService = {
+      laneJobs: vi.fn(() => lane),
+      applyOptimisticReorder: vi.fn(() => lane),
+      revertOptimisticReorder: vi.fn(),
+      beginOptimisticPersist: vi.fn(),
+      endOptimisticPersist: vi.fn(),
+      reorderJobs,
+    };
+    undo = { offerReorderRevert: vi.fn(), offerLaneRevert: vi.fn(), cancelActive: vi.fn() };
+    errorDialog = { show: vi.fn() };
+    TestBed.configureTestingModule({
+      providers: [
+        provideZonelessChangeDetection(),
+        BoardMutationsService,
+        NotificationService,
+        { provide: TaskService, useValue: taskService },
+        { provide: ErrorDialogService, useValue: errorDialog },
+        { provide: ConfirmDialogService, useValue: { confirm: vi.fn() } },
+        { provide: TaskSelectionService, useValue: { selected: signal(null) } },
+        { provide: UndoController, useValue: undo },
+      ],
+    });
+    return TestBed.inject(BoardMutationsService);
+  }
+
+  it('paints, persists the project queue, and offers an undo that replays it', () => {
+    const service = setup(vi.fn(() => of(null)));
+    service.moveToQueueEdge(card('a2'), 'top');
+
+    expect(taskService['applyOptimisticReorder']).toHaveBeenCalledWith('2-ready',
+      keys(['a2', '/p/a'], ['b1', '/p/b'], ['a1', '/p/a']));
+    expect(taskService['reorderJobs']).toHaveBeenCalledWith(keys(['a2', '/p/a'], ['a1', '/p/a']));
+    expect(undo.offerReorderRevert).toHaveBeenCalledWith(expect.objectContaining({
+      jobId: 'a2',
+      targetLaneLabel: 'top of Ready',
+      laneState: '2-ready',
+      prevOrder: keys(['a1', '/p/a'], ['a2', '/p/a']),
+      paintOrder: keys(['a1', '/p/a'], ['b1', '/p/b'], ['a2', '/p/a']),
+    }));
+  });
+
+  it('rolls the paint back and explains a failed reorder', () => {
+    const service = setup(vi.fn(() => throwError(() => new Error('nope'))));
+    service.moveToQueueEdge(card('a1'), 'bottom');
+
+    expect(taskService['revertOptimisticReorder']).toHaveBeenCalledWith('2-ready', lane);
+    expect(errorDialog.show).toHaveBeenCalled();
+    expect(undo.offerReorderRevert).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the card already sits at that edge', () => {
+    const service = setup(vi.fn(() => of(null)));
+    service.moveToQueueEdge(card('a1'), 'top');
+    expect(taskService['reorderJobs']).not.toHaveBeenCalled();
   });
 });
