@@ -1,15 +1,16 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import type { TaskInfo } from '../../../models/task.model';
-import { batchMemberFor, batchPublishedSha } from '../../../models/batch-gate.model';
+import { batchMemberFor, batchProvenRedFor, batchPublishedSha } from '../../../models/batch-gate.model';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { BatchPanelComponent } from '../batch-panel/batch-panel';
 import { batchMemberStatusTone, batchOutcomeTone } from '../batch-panel/batch-status-tones';
+import { BatchProvenRedComponent } from '../batch-proven-red/batch-proven-red';
 import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
 
 @Component({
   selector: 'app-batch-detail',
   standalone: true,
-  imports: [BatchPanelComponent, StatusIndicatorComponent],
+  imports: [BatchPanelComponent, BatchProvenRedComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './batch-detail.html',
   styleUrl: './batch-detail.scss',
@@ -36,6 +37,9 @@ export class BatchDetailComponent {
     if (!state || state.plan.decision === 'disabled') return null;
     return batchMemberFor(state, this.task().taskKey, this.task().key, this.task().displayKey, this.task().id);
   });
+  /** AGT-3577: the current finding when the bisection proved this card red. */
+  readonly provenRed = computed(() => batchProvenRedFor(this.state(), this.member(),
+    this.task().taskKey, this.task().key, this.task().displayKey, this.task().id));
   readonly record = computed(() => {
     const batches = this.state()?.batches;
     const batchId = this.member()?.batchId;

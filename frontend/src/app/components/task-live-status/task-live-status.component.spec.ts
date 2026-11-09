@@ -211,6 +211,49 @@ describe('TaskLiveStatusComponent', () => {
       .toContain('Loop check');
   });
 
+  // AGT-3579: the runner's own reason replaces the bare slot wait.
+  it.each([
+    ['manual-mode', 'Not picked · auto-pickup is off · position 2', 'Auto-pickup is off; start the card or switch the project to auto.'],
+    ['slots-full', 'Waiting for runner slot · slots full · position 2', 'All 2 runner slots are occupied.'],
+    ['quota-defer', 'Skipped · quota defer · position 2', 'codex 5h window exhausted until 14:00'],
+  ])('names the runner reason %s with its sentence', (code, headline, reason) => {
+    fixture.componentRef.setInput('task', task({
+      state: '2-ready',
+      liveStatus: {
+        attempt: 1,
+        activeStep: null,
+        nextSteps: [],
+        queue: { kind: 'runner', position: 2, reasonCode: code, reason },
+        latestEventAt: new Date().toISOString(),
+      },
+    }));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    expect(root.getAttribute('data-wait-reason')).toBe(code);
+    expect(root.getAttribute('data-live-tone')).toBe('waiting');
+    expect(root.querySelector('[data-testid="task-live-current"]')?.textContent).toContain(headline);
+    expect(root.querySelector('.task-live__detail')?.textContent).toContain(reason);
+  });
+
+  it('keeps a card hold ahead of a runner reason', () => {
+    fixture.componentRef.setInput('task', task({
+      state: '2-ready',
+      pickupHold: { mechanism: 'crash-backoff', classification: 'satisfiable-soon',
+        reason: 'Cooling down.', sinceUtc: new Date().toISOString(), unsatisfiable: false, resolutions: [] },
+      liveStatus: {
+        attempt: 1, activeStep: null, nextSteps: [],
+        queue: { kind: 'runner', position: 1, reasonCode: 'manual-mode', reason: 'Auto-pickup is off.' },
+        latestEventAt: new Date().toISOString(),
+      },
+    }));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    expect(root.getAttribute('data-wait-reason')).toBeNull();
+    expect(root.querySelector('[data-testid="task-live-current"]')?.textContent).toContain('Crash cooldown');
+  });
+
   it('shows one dependency wait instead of a stale runner position, then flips to the slot after fulfillment', () => {
     const nextSteps = [{ stepId: 'core-agent-run', displayName: 'Agent execution' }];
     const open = task({
@@ -439,5 +482,40 @@ describe('TaskLiveStatusComponent', () => {
     expect(liveIndicatorTone('idle')).toBe('neutral');
     expect(liveIndicatorTone('stalled')).toBe('warning');
     expect(liveIndicatorTone('future-tone')).toBe('neutral');
+  });
+
+  // AGT-3589 (walkthrough F14): idle Post Processing cards read "Between steps
+  // · Last activity 0s ago" while nothing ran. They name the wait instead.
+  it.each([
+    { state: '4-auto-review', headline: 'Waiting for review' },
+    { state: '3-progress', headline: 'Waiting for the next step' },
+    { state: '2-ready', headline: 'Waiting for a runner' },
+  ])('names what an idle $state card waits for', ({ state, headline }) => {
+    const recent = new Date(Date.now() - 5 * 60_000).toISOString();
+    fixture.componentRef.setInput('task', task({
+      state,
+      lastActivity: recent,
+      liveStatus: { attempt: 1, activeStep: null, nextSteps: [], queue: null, latestEventAt: recent },
+    }));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    expect(root.textContent).toContain(headline);
+    expect(root.textContent).not.toContain('Between steps');
+    expect(root.textContent).toMatch(/Last activity (?:4m59s|5m00s) ago/);
+  });
+
+  it('shows the real activity stamp instead of "0s ago" when it lies ahead of the clock', () => {
+    const ahead = new Date(Date.now() + 3 * 60 * 60_000);
+    fixture.componentRef.setInput('task', task({
+      lastActivity: ahead.toISOString(),
+      liveStatus: { attempt: 1, activeStep: null, nextSteps: [], queue: null, latestEventAt: ahead.toISOString() },
+    }));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    const clock = ahead.toLocaleString('en-US', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    expect(root.textContent).toContain(`Last activity ${clock}`);
+    expect(root.textContent).not.toContain('0s ago');
   });
 });

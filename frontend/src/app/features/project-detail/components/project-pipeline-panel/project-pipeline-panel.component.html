@@ -26,6 +26,7 @@
           <span class="pp__group-meta">{{ groupSummary(group) }}</span>
           <span class="pp__group-caret" aria-hidden="true">▾</span>
         </summary>
+        @if (group.phase === 'aspect') { <app-aspect-model-bulk-apply [steps]="group.rows" [applyToSteps]="applyAspectAgent" (policyApplied)="refreshEffective()" /> }
         <div class="pp__rows" role="list">
           @for (step of group.rows; track step.id) {
             <details class="pp__row" role="listitem"
@@ -80,7 +81,7 @@
                   }
                   @if (step.usesModel) {
                     <span class="pp__chip"
-                          [cacTooltip]="'Effective model: ' + modelSummary(step) + ' (' + modelSourceLabel(step.effectiveModelSource) + ')'">
+                          [cacTooltip]="'Configured model: ' + modelSummary(step) + ' (' + modelSourceLabel(step.effectiveModelSource) + ')'">
                       {{ modelSummary(step) }}
                     </span>
                     @if (step.overridesWorkspace) { <span class="pp__chip pp__chip--muted" [attr.data-testid]="'pipeline-step-workspace-override-' + step.id">overrides workspace</span> }
@@ -110,6 +111,7 @@
                   [disabled]="!!stepBusy[step.id]"
                   (enabledChange)="onStepEnabledChange(step.id, $event)" />
                 <span class="pp__summary-caret" aria-hidden="true">▾</span>
+                @if (step.usesModel) { <app-pipeline-step-effective-route [stepId]="step.id" [route]="effectiveRoutes().get(step.id)" [configuredCli]="step.effectiveCliType" [configuredModel]="step.effectiveModel" /> }
               </summary>
               <div class="pp__details"><p class="pp__purpose">{{ stepPurpose(step) }}</p>
                 <app-pipeline-step-execution [projectName]="projectName()" [step]="step" />

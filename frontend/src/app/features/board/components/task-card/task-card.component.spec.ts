@@ -11,7 +11,7 @@ import { ProviderAuthStatusService } from '../../../remote-hosts';
 import { TaskService } from '../../../../services/task.service';
 import { BoardMutationsService } from '../../state/board-mutations.service';
 import { LaneCollapseService } from '../../state/lane-collapse.service';
-import { MOVE_PREFIX } from './task-card-view-model';
+import { MOVE_BOTTOM_ID, MOVE_PREFIX, MOVE_TOP_ID } from './task-card-view-model';
 import type { TaskInfo, ClientSummary, TagRegistryEntry } from '../../../../models/task.model';
 import {
   buildEffectiveModelChip,
@@ -65,6 +65,29 @@ describe('TaskCardComponent (smoke)', () => {
     fixture.detectChanges();
     fixture.componentInstance.onCardCtxMenuItemClick({ id: MOVE_PREFIX + '7-archive' } as never);
     expect(changeStateFromDetail).toHaveBeenCalledTimes(1);
+  });
+  it('dispatches Move to top and Move to bottom on a Ready card (AGT-3588)', async () => {
+    const moveToQueueEdge = vi.fn();
+    await TestBed.configureTestingModule({
+      imports: [TaskCardComponent],
+      providers: [
+        provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([]),
+        { provide: BoardMutationsService, useValue: { moveToQueueEdge } },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TaskCardComponent);
+    const job = makeJob({ state: '2-ready' });
+    fixture.componentRef.setInput('job', job);
+    fixture.detectChanges();
+
+    fixture.componentInstance.onCardCtxMenuItemClick({ id: MOVE_TOP_ID } as never);
+    fixture.componentInstance.onCardCtxMenuItemClick({ id: MOVE_BOTTOM_ID } as never);
+    expect(moveToQueueEdge.mock.calls).toEqual([[job, 'top'], [job, 'bottom']]);
+
+    fixture.componentRef.setInput('job', makeJob({ state: '0-backlog' }));
+    fixture.detectChanges();
+    fixture.componentInstance.onCardCtxMenuItemClick({ id: MOVE_TOP_ID } as never);
+    expect(moveToQueueEdge).toHaveBeenCalledTimes(2);
   });
   it('limits move rows to lanes of the focused board container', async () => {
     await TestBed.configureTestingModule({

@@ -346,6 +346,45 @@ public record ProjectRunnerStatus
     /// task was picked" without re-deriving it.
     /// </summary>
     public string? LastPickReason { get; init; }
+    /// <summary>
+    /// AGT-3579: the runner-level gate that ended the last pickup tick before
+    /// any candidate was evaluated (mode, deferred mode, role, build profile,
+    /// full slots). Null when the last tick reached the candidate stream.
+    /// </summary>
+    public RunnerPickupWait? PickupGate { get; init; }
+    /// <summary>
+    /// AGT-3579: candidates the last pickup pass skipped for a runner reason
+    /// (quota defer, load throttle, provider limit, parallel conflict). Empty
+    /// while <see cref="PickupGate"/> is set, because no candidate was evaluated.
+    /// </summary>
+    public IReadOnlyList<RunnerPickupSkip> PickupSkips { get; init; } = [];
+}
+
+/// <summary>
+/// AGT-3579: why the runner is not picking, as a stable
+/// <see cref="RunnerPickupWaitCodes"/> token plus one operator-facing sentence.
+/// The sentence avoids per-tick numbers so an unchanged wait keeps the board
+/// card bytes stable.
+/// </summary>
+public sealed record RunnerPickupWait(string Code, string Detail);
+
+/// <summary>AGT-3579: one Ready candidate the last pickup pass skipped.</summary>
+public sealed record RunnerPickupSkip(string JobId, string Code, string Detail);
+
+/// <summary>Wire tokens for <see cref="RunnerPickupWait.Code"/> and <see cref="RunnerPickupSkip.Code"/>.</summary>
+public static class RunnerPickupWaitCodes
+{
+    public const string ManualMode = "manual-mode";
+    public const string Paused = "paused";
+    public const string BreakerCooldown = "breaker-cooldown";
+    public const string PendingMode = "pending-mode";
+    public const string TestSubject = "test-subject";
+    public const string BuildProfile = "build-profile";
+    public const string SlotsFull = "slots-full";
+    public const string LoadThrottle = "load-throttle";
+    public const string ProviderLimit = "provider-limit";
+    public const string QuotaDefer = "quota-defer";
+    public const string ParallelConflict = "parallel-conflict";
 }
 
 // CliOutputLine now comes from the CodingAgentRunner package (aliased in the csproj).

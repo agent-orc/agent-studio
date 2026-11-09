@@ -31,9 +31,10 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { groupReviewJobs } from '../review-grouping.util';
 import { InfoButtonComponent } from '../../../../components/info-button/info-button.component';
 import { lanePresentation } from '../../../../models/lane-presentation';
-import { laneSortStrategyMeta, isManualStrategy } from '../../../../services/lane-sort.util';
+import { laneSortIndicator, perProjectOrderNote } from '../../../../services/lane-sort.util';
 import { deriveStalledTaskState } from '../../../../services/run-activity.util';
 import { PostProcessingSummaryComponent } from '../post-processing-summary/post-processing-summary.component';
+import { ReadyWaitSplitComponent } from '../ready-wait-split/ready-wait-split.component';
 import { BoardDragStateService } from '../../state/board-drag-state.service';
 import { isUnpullableDependencyHold } from './pullable-task.util';
 import { BatchLaneIndicatorComponent } from '../../../batch-gate/batch-lane-indicator/batch-lane-indicator';
@@ -56,6 +57,7 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
     TooltipDirective,
     InfoButtonComponent,
     PostProcessingSummaryComponent,
+    ReadyWaitSplitComponent,
     BatchLaneIndicatorComponent,
     StatusIndicatorComponent,
   ],
@@ -116,7 +118,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   readonly jobDrop = output<{ jobId: string; watchPath: string; targetState: string; targetIndex: number }>();
   readonly jobReorder = output<{ state: string; jobs: TaskOrderItem[] }>();
   readonly jobDeleteRequest = output<TaskInfo>();
-  /** F5: bubbled "Pick next" click from a 2-ready card. */
+  /** F5: bubbled "Move to top" click from a 2-ready card. */
   readonly jobPickNextRequest = output<TaskInfo>();
   readonly addTask = output<string>();
   readonly archiveAll = output<void>();
@@ -124,41 +126,10 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   /** Emits the project name when the user clicks the lane's auto chip. */
   readonly autoToggleRequest = output<string>();
 
-  /**
-   * F35: lane-header sort indicator. Returns the glyph + tooltip for the
-   * resolved strategy, or null when no strategy data is available. When the
-   * strategy is non-manual the tooltip explains why drag is disabled; when
-   * the active projects disagree it renders a neutral "mixed" marker.
-   */
-  readonly sortIndicator = computed<{ icon: string; label: string; tooltip: string } | null>(() => {
-    const strategy = this.sortStrategy();
-    if (!strategy) return null;
-    if (strategy === 'mixed') {
-      return {
-        icon: '⇅',
-        label: 'mixed',
-        tooltip:
-          'Auto-sorted — the projects shown in this lane use different sort orders. '
-          + 'Filter to a single project, or set that lane to Manual, to reorder by hand.',
-      };
-    }
-    const meta = laneSortStrategyMeta(strategy);
-    if (isManualStrategy(strategy)) {
-      return { icon: meta.icon, label: meta.label, tooltip: 'Manual order — drag cards to reorder.' };
-    }
-    if (strategy === 'lane-entry') {
-      return {
-        icon: meta.icon,
-        label: meta.label,
-        tooltip: 'Most recently entered on top — drag a card to pin it in place.',
-      };
-    }
-    return {
-      icon: meta.icon,
-      label: meta.label,
-      tooltip: `Auto-sorted by ${meta.label.toLowerCase()}; switch this lane to Manual to reorder.`,
-    };
-  });
+  /** F35 / AGT-3587: lane-header sort indicator; Ready adds the pickup rule. */
+  readonly sortIndicator = computed(() => laneSortIndicator(this.sortStrategy(), this.state()));
+  /** AGT-3587: names the per-project order when Ready mixes projects. */
+  readonly perProjectNote = computed(() => perProjectOrderNote(this.state(), this.jobs()));
 
   /** Running, pickup-mode, and queue pills for a project-scoped In-Progress lane. */
   readonly statusCluster = computed(() => {
@@ -334,9 +305,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   });
 
   cliIconFor(cli: string): string {
-    if (cli === 'claude' || cli === 'codex' || cli === 'gemini') {
-      return cliTypeIcon(cli);
-    }
+    if (cli === 'claude' || cli === 'codex' || cli === 'gemini') return cliTypeIcon(cli);
     return '🤖';
   }
 

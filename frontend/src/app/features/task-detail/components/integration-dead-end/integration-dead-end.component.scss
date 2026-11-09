@@ -20,6 +20,7 @@
   overflow-wrap: anywhere;
 }
 .dead-end__actions { @include section.actions; }
+.dead-end__note { color: var(--studio-fg-muted); }
 .dead-end button {
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   border: 1px solid var(--studio-border);

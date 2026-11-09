@@ -33,6 +33,11 @@ import type {
   CouncilFindingAssessment,
 } from '../../../../services/task.service';
 import {
+  councilFindingAction,
+  councilReactionDisposition,
+  type CouncilFindingAction,
+} from '../../../../models/council-review.model';
+import {
   codeReviewVerdictTone,
   type CodeReviewVerdictTone,
 } from '../code-review-verdict.util';
@@ -377,18 +382,17 @@ export interface EscalationSummaryInputs {
 export function gateItemsFromCouncil(
   assessments: readonly CouncilFindingAssessment[],
 ): EscalationGateItem[] {
-  return assessments.map((assessment, index) => ({
-    id: `council-${index}-${assessment.finding}`,
-    text: assessment.finding,
-    detail: assessment.reason,
-    checked: assessment.action === 'Accept',
-    verdict: councilActionLabel(assessment.action),
-    tone: assessment.action === 'Accept'
-      ? 'ok'
-      : assessment.action === 'FixNextRound'
-        ? 'warn'
-        : 'danger',
-  }));
+  return assessments.map((assessment, index) => {
+    const action = councilFindingAction(assessment.action);
+    return {
+      id: `council-${index}-${assessment.finding}`,
+      text: assessment.finding,
+      detail: assessment.reason,
+      checked: action === 'accept',
+      verdict: councilActionLabel(action, assessment.action),
+      tone: COUNCIL_ACTION_TONE[action ?? 'unknown'],
+    };
+  });
 }
 
 /**
@@ -460,10 +464,19 @@ export function resolveGateItems(
   return { items: [], source: 'none' };
 }
 
-function councilActionLabel(action: CouncilFindingAssessment['action']): string {
-  if (action === 'FixNextRound') return 'fix next round';
-  if (action === 'Escalate') return 'escalate';
-  return 'accepted';
+const COUNCIL_ACTION_TONE: Record<CouncilFindingAction | 'unknown', AspectVerdictTone> = {
+  accept: 'ok',
+  fixNextRound: 'warn',
+  escalate: 'danger',
+  unknown: 'neutral',
+};
+
+/** Chip text for a council action; an unknown action shows its raw value, never "accepted". */
+function councilActionLabel(action: CouncilFindingAction | null, raw: string | null | undefined): string {
+  if (action === 'fixNextRound') return 'fix next round';
+  if (action === 'escalate') return 'escalate';
+  if (action === 'accept') return 'accepted';
+  return raw?.trim() || 'unknown';
 }
 
 function newestCodeReview(
@@ -651,7 +664,7 @@ export function escalationReasonClass(
   if (cause === 'completion-gate') return 'Completion gate';
   if (cause === 'needs-input-escalate') return 'Input required';
   if (cause.includes('aspect-verdict')) return 'Aspect gate';
-  if (newestCodeReview(codeReviews)?.councilReaction?.disposition === 'Escalate') {
+  if (councilReactionDisposition(newestCodeReview(codeReviews)?.councilReaction?.disposition) === 'escalate') {
     return 'Council review escalated';
   }
   return 'Human decision required';

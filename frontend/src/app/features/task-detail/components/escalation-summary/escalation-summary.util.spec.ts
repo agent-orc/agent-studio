@@ -141,14 +141,62 @@ function reviewProjection(over: Partial<ReviewProjectionView> = {}): ReviewProje
 describe('gateItemsFromCouncil', () => {
   it('projects typed council actions without inspecting Markdown', () => {
     const items = gateItemsFromCouncil([
-      { finding: 'Fix the regression.', action: 'FixNextRound', reason: 'Required next round.' },
-      { finding: 'Accepted tradeoff.', action: 'Accept', reason: 'Operator-safe.' },
-      { finding: 'Budget exhausted.', action: 'Escalate', reason: 'Needs a human.' },
+      { finding: 'Fix the regression.', action: 'fixNextRound', reason: 'Required next round.' },
+      { finding: 'Accepted tradeoff.', action: 'accept', reason: 'Operator-safe.' },
+      { finding: 'Budget exhausted.', action: 'escalate', reason: 'Needs a human.' },
     ]);
     expect(items).toEqual([
       { id: 'council-0-Fix the regression.', text: 'Fix the regression.', detail: 'Required next round.', checked: false, verdict: 'fix next round', tone: 'warn' },
       { id: 'council-1-Accepted tradeoff.', text: 'Accepted tradeoff.', detail: 'Operator-safe.', checked: true, verdict: 'accepted', tone: 'ok' },
       { id: 'council-2-Budget exhausted.', text: 'Budget exhausted.', detail: 'Needs a human.', checked: false, verdict: 'escalate', tone: 'danger' },
+    ]);
+  });
+});
+
+/**
+ * Captured `/api/tasks/{id}/code-review/list` entry (AGT-3578, demo data from
+ * AGT-3561). The API serializes the council enums in camelCase.
+ */
+const CAPTURED_CODE_REVIEW_LIST_JSON = `{"entries":[{
+  "fileName":"code-review-grade-2026-11-09T10-12-40Z.md","verdict":"concerns","grade":"C",
+  "summary":"Two findings remain after the review-loop budget.","model":"claude-opus-4-8","cliType":"claude",
+  "runAt":"2026-11-09T10:12:40Z",
+  "councilReaction":{
+    "createdAt":"2026-11-09T10:12:41Z","reviewFileName":"code-review-grade-2026-11-09T10-12-40Z.md",
+    "grade":"C","disposition":"escalate","summary":"Escalate 2 open review findings; loop budget exhausted.",
+    "assessments":[
+      {"finding":"Live probe missing.","action":"escalate","reason":"Review-loop budget exhausted."},
+      {"finding":"Dark-theme screenshot missing.","action":"fixNextRound","reason":"Concrete review deficiency."},
+      {"finding":"Naming nit.","action":"accept","reason":"Cosmetic only."}
+    ],
+    "startsNewRound":false,"targetJobId":null,"targetRunAttempt":null
+  }
+}]}`;
+
+describe('council wire format (AGT-3578)', () => {
+  const captured = (JSON.parse(CAPTURED_CODE_REVIEW_LIST_JSON) as { entries: CodeReviewListEntry[] }).entries;
+
+  it('labels camelCase actions by their own decision; only accepted findings are checked', () => {
+    const items = gateItemsFromCouncil(captured[0].councilReaction?.assessments ?? []);
+    expect(items.map(({ verdict, tone, checked }) => ({ verdict, tone, checked }))).toEqual([
+      { verdict: 'escalate', tone: 'danger', checked: false },
+      { verdict: 'fix next round', tone: 'warn', checked: false },
+      { verdict: 'accepted', tone: 'ok', checked: true },
+    ]);
+  });
+
+  it('names the escalation "Council review escalated" from a camelCase disposition', () => {
+    expect(escalationReasonClass([], null, captured)).toBe('Council review escalated');
+  });
+
+  it('still reads an older PascalCase sidecar and never labels an unknown action accepted', () => {
+    const items = gateItemsFromCouncil([
+      { finding: 'Old escalate.', action: 'Escalate', reason: 'r' },
+      { finding: 'Unknown.', action: 'defer', reason: 'r' },
+    ] as unknown as Parameters<typeof gateItemsFromCouncil>[0]);
+    expect(items.map(({ verdict, tone, checked }) => ({ verdict, tone, checked }))).toEqual([
+      { verdict: 'escalate', tone: 'danger', checked: false },
+      { verdict: 'defer', tone: 'neutral', checked: false },
     ]);
   });
 });
@@ -202,9 +250,9 @@ describe('resolveGateItems priority', () => {
           createdAt: '2026-07-09T19:22:03Z',
           reviewFileName: 'code-review-grade-2026-07-09T19-22-02Z.md',
           grade: 'B',
-          disposition: 'Escalate',
+          disposition: 'escalate',
           summary: 'Escalate one finding.',
-          assessments: [{ finding: 'do the thing', action: 'Escalate', reason: 'budget exhausted' }],
+          assessments: [{ finding: 'do the thing', action: 'escalate', reason: 'budget exhausted' }],
           startsNewRound: false,
           targetJobId: null,
           targetRunAttempt: null,
@@ -376,11 +424,11 @@ describe('buildEscalationSummaryView', () => {
           createdAt: '2026-07-09T19:22:03Z',
           reviewFileName: 'code-review-grade-2026-07-09T19-22-02Z.md',
           grade: 'B',
-          disposition: 'Escalate',
+          disposition: 'escalate',
           summary: 'Escalate two findings.',
           assessments: [
-            { finding: 'Frontend verification missing.', action: 'Escalate', reason: 'Budget exhausted.' },
-            { finding: 'Live probe missing.', action: 'Escalate', reason: 'Budget exhausted.' },
+            { finding: 'Frontend verification missing.', action: 'escalate', reason: 'Budget exhausted.' },
+            { finding: 'Live probe missing.', action: 'escalate', reason: 'Budget exhausted.' },
           ],
           startsNewRound: false,
           targetJobId: null,

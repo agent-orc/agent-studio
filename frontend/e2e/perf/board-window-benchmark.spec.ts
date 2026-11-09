@@ -15,6 +15,7 @@ for (const size of [20, 830, 3000]) {
     test.setTimeout(300_000);
     const samples: Record<'cold' | 'warm', {
       firstBoardPaintMs: number; navigationWaitMs: number; longestTaskMs: number; domNodes: number; heapMiB: number;
+      boardResponseEndMs: number; scriptDurationMs: number; layoutDurationMs: number;
     }[]> = { cold: [], warm: [] };
 
     for (let run = 0; run < 3; run++) {
@@ -54,9 +55,17 @@ for (const size of [20, 830, 3000]) {
         const longestTaskMs = await page.evaluate(() => Math.max(0, ...((window as Window & { boardLongTasks?: number[] }).boardLongTasks ?? [])));
         await cdp.send('HeapProfiler.collectGarbage');
         const metrics = await cdp.send('Performance.getMetrics');
+        const metric = (name: string) => metrics.metrics.find(item => item.name === name)?.value ?? 0;
         const heapBytes = metrics.metrics.find(metric => metric.name === 'JSHeapUsedSize')?.value ?? 0;
         const domNodes = await page.evaluate(() => document.getElementsByTagName('*').length);
-        samples[temperature].push({ firstBoardPaintMs, navigationWaitMs, longestTaskMs, domNodes, heapMiB: heapBytes / 1024 / 1024 });
+        const boardResponseEndMs = await page.evaluate(() =>
+          performance.getEntriesByType('resource').find(entry => entry.name.includes('/api/v1/studio/board'))?.responseEnd ?? 0);
+        samples[temperature].push({
+          firstBoardPaintMs, navigationWaitMs, longestTaskMs, domNodes,
+          heapMiB: heapBytes / 1024 / 1024, boardResponseEndMs,
+          scriptDurationMs: metric('ScriptDuration') * 1000,
+          layoutDurationMs: metric('LayoutDuration') * 1000,
+        });
       }
       await context.close();
     }

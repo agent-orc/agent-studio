@@ -4,16 +4,17 @@ import { BatchGateService } from '../../../services/batch-gate.service';
 import { ModalStackService } from '../../../services/modal-stack.service';
 import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
 import { batchAdvisorVerdictTone, batchDecisionTone, batchOutcomeTone } from './batch-status-tones';
-import { batchPublishedSha, batchReplayLabel, batchRiskLabel } from '../../../models/batch-gate.model';
-import type { BatchTestFailureRank, BatchTestFailureReport, BatchGateState } from '../../../models/batch-gate.model';
+import { batchIsolationRows, batchPublishedSha, batchReplayLabel, batchRiskLabel } from '../../../models/batch-gate.model';
+import type { BatchGateBatch, BatchTestFailureRank, BatchTestFailureReport, BatchGateState } from '../../../models/batch-gate.model';
 import { CreateTaskFormService } from '../../board';
 import { TaskService } from '../../../services/task.service';
 import { PendingButtonDirective } from '../../../components/async-feedback';
+import { BatchIsolationComponent } from '../batch-isolation/batch-isolation';
 
 @Component({
   selector: 'app-batch-panel',
   standalone: true,
-  imports: [StatusIndicatorComponent, PendingButtonDirective],
+  imports: [StatusIndicatorComponent, PendingButtonDirective, BatchIsolationComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './batch-panel.html',
   styleUrl: './batch-panel.scss',
@@ -101,6 +102,14 @@ export class BatchPanelComponent implements OnDestroy {
     return `${minutes} min`;
   }
   phaseLabel(phase: string): string { return phase; }
+  isolationRows(batch: BatchGateBatch) { return batchIsolationRows(this.state(), batch); }
+  /** The members a failed run proved red, joined for display, or null. */
+  provenBy(failure: { batchId: string; runId: string }): string | null {
+    const culprits = (this.state()?.isolationFindings ?? []).filter(finding => finding.status === 'proven-red'
+      && finding.provingBatchId === failure.batchId && finding.provingRunId === failure.runId)
+      .map(finding => finding.taskKey);
+    return culprits.length ? [...new Set(culprits)].join(', ') : null;
+  }
   onBodyKeydown(event: KeyboardEvent): void {
     const owner = this.body()?.nativeElement;
     if (!owner || (event.target instanceof HTMLElement && event.target.closest(
@@ -133,9 +142,13 @@ export class BatchPanelComponent implements OnDestroy {
     this.actionError.set(null);
     this.openingFix.set(test.testName);
     const project = this.project();
+    const proven = test.failures.map(failure => ({ failure, culprits: this.provenBy(failure) }))
+      .filter(item => item.culprits);
     const prompt = [
-      `Fix the recurring test failure: ${test.testName}`,
+      `${test.flakySuspect ? 'Fix the recurring test failure' : 'Fix the failing test'}: ${test.testName}`,
       '',
+      ...proven.map(({ failure, culprits }) =>
+        `Batch isolation proved ${culprits} red in batch ${failure.batchId}, run ${failure.runId}.`),
       `Observed in ${test.batches} batches and ${test.runs} runs over 7 days, with ${test.distinctMemberSets} distinct member sets.`,
       `First failure: ${test.firstFailureUtc}. Last failure: ${test.lastFailureUtc}.`,
       `Flaky rerun passed: ${test.flakyRerunPassed ? 'yes' : 'no'}.`,
@@ -157,7 +170,7 @@ export class BatchPanelComponent implements OnDestroy {
         return;
       }
       this.createForm.openUxuiFollowUp({ projectName: project, prefill: prompt,
-        title: `Fix flaky test: ${test.testName}` }, paths);
+        title: `${test.flakySuspect ? 'Fix flaky test' : 'Fix failing test'}: ${test.testName}` }, paths);
       this.createForm.onTaskTypeChange('bug');
       this.close();
     }, error: () => {

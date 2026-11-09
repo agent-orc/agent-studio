@@ -1,10 +1,12 @@
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { describe, expect, it, vi } from 'vitest';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 import { IntegrationDeadEndComponent } from './integration-dead-end.component';
 import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
+
+const AVAILABLE = () => of({ available: true, reason: null });
 
 describe('IntegrationDeadEndComponent', () => {
   it('queues a continuation on the same task when the primary action is clicked', async () => {
@@ -15,7 +17,7 @@ describe('IntegrationDeadEndComponent', () => {
       imports: [IntegrationDeadEndComponent],
       providers: [
         provideZonelessChangeDetection(),
-        { provide: TaskService, useValue: { continueFromFailure, refresh } },
+        { provide: TaskService, useValue: { continueFromFailure, refresh, checkFailureContinuation: AVAILABLE } },
         { provide: NotificationService, useValue: { success, error: vi.fn() } },
       ],
     }).compileComponents();
@@ -26,6 +28,8 @@ describe('IntegrationDeadEndComponent', () => {
       status: 'pending', integrationBranch: 'develop', deliveryRef: 'task/AGT-2909',
       sha: null, detail: 'Delivery is not on develop.',
     });
+    fixture.detectChanges();
+    await fixture.whenStable();
     fixture.detectChanges();
     const panel = fixture.nativeElement as HTMLElement;
     expect(panel.textContent).toContain('Delivery pending');
@@ -45,13 +49,15 @@ describe('IntegrationDeadEndComponent', () => {
       imports: [IntegrationDeadEndComponent],
       providers: [
         provideZonelessChangeDetection(),
-        { provide: TaskService, useValue: { continueFromFailure, moveJob, refresh: vi.fn() } },
+        { provide: TaskService, useValue: { continueFromFailure, moveJob, refresh: vi.fn(), checkFailureContinuation: AVAILABLE } },
         { provide: NotificationService, useValue: { success, error: vi.fn() } },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(IntegrationDeadEndComponent);
     fixture.componentRef.setInput('jobId', 'task-2909');
     fixture.componentRef.setInput('status', { status: 'pending', detail: 'Delivery pending.' });
+    fixture.detectChanges();
+    await fixture.whenStable();
     fixture.detectChanges();
     (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.dead-end__primary')!.click();
     fixture.detectChanges();
@@ -60,5 +66,61 @@ describe('IntegrationDeadEndComponent', () => {
       .toContain('lane-not-runnable');
     (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-testid="continuation-move-ready"]')!.click();
     expect(moveJob).toHaveBeenCalledWith('task-2909', '2-ready', undefined);
+  });
+
+  describe('offers the continuation only when the server would continue it (AGT-3582)', () => {
+    async function mount(service: Record<string, unknown>) {
+      const error = vi.fn();
+      TestBed.resetTestingModule();
+      await TestBed.configureTestingModule({
+        imports: [IntegrationDeadEndComponent],
+        providers: [
+          provideZonelessChangeDetection(),
+          { provide: TaskService, useValue: { refresh: vi.fn(), ...service } },
+          { provide: NotificationService, useValue: { success: vi.fn(), error } },
+        ],
+      }).compileComponents();
+      const fixture = TestBed.createComponent(IntegrationDeadEndComponent);
+      fixture.componentRef.setInput('jobId', 'AGT-3582');
+      fixture.componentRef.setInput('watchPath', '/project/tasks');
+      fixture.componentRef.setInput('status', {
+        status: 'not-applicable', integrationBranch: 'develop', deliveryRef: null, sha: null, detail: null,
+      });
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+      return { host: fixture.nativeElement as HTMLElement, error };
+    }
+
+    it('hides the action and names the refusal for a delivery without a failure', async () => {
+      const checkFailureContinuation = vi.fn(() => of({
+        available: false, reason: 'The current delivery has no failure to continue.',
+      }));
+      const { host } = await mount({ checkFailureContinuation, continueFromFailure: vi.fn() });
+
+      expect(checkFailureContinuation).toHaveBeenCalledWith('AGT-3582', '/project/tasks');
+      expect(host.querySelector('[data-testid="dead-end-continue"]')).toBeNull();
+      expect(host.querySelector('[data-testid="dead-end-continue-unavailable"]')?.textContent)
+        .toContain('no failure to continue');
+    });
+
+    it('keeps the action hidden when the check itself fails', async () => {
+      const { host } = await mount({
+        checkFailureContinuation: vi.fn(() => throwError(() => ({ status: 500, error: {} }))),
+        continueFromFailure: vi.fn(),
+      });
+      expect(host.querySelector('[data-testid="dead-end-continue"]')).toBeNull();
+    });
+
+    it('shows the server refusal in the toast', async () => {
+      const continueFromFailure = vi.fn(() => throwError(() => ({
+        status: 409, error: { error: 'The recorded failure belongs to an earlier delivery. Re-check the task.' },
+      })));
+      const { host, error } = await mount({ checkFailureContinuation: AVAILABLE, continueFromFailure });
+
+      host.querySelector<HTMLButtonElement>('[data-testid="dead-end-continue"]')!.click();
+
+      expect(error).toHaveBeenCalledWith('The recorded failure belongs to an earlier delivery. Re-check the task.');
+    });
   });
 });

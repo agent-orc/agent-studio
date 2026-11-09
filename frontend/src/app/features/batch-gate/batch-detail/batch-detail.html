@@ -17,12 +17,25 @@
       @if (item.position && item.size) { · {{ item.position }} of {{ item.size }} }
       @if (item.phase) { · {{ item.phase }} }
     </p>
+    @if (provenRed(); as finding) {
+      <div class="batch-detail__proven-red" data-testid="task-batch-proven-red">
+        <app-status-indicator tone="danger" [label]="'Proven red in ' + finding.parentBatchId" testId="task-batch-proven-red-status" />
+        <app-batch-proven-red [project]="project()" [finding]="finding" />
+      </div>
+    }
     @if (item.status === 'review-fix') {
       <p data-testid="task-batch-review-fix" role="status">{{ item.reasonDetail }}</p>
     }
     @if (item.preCheck; as check) {
       <p data-testid="task-batch-pre-check">Pre-check: {{ check.outcome }} · base <code>{{ check.baseSha }}</code></p>
-      @if (check.outcome === 'red') { <p>{{ check.reason }}</p> }
+      @if (check.outcome === 'red') {
+        <p>{{ check.reason }}</p>
+        @if (check.failedTests.length) {
+          <ul class="batch-detail__tests" aria-label="Pre-check failing tests" data-testid="task-batch-pre-check-tests">
+            @for (test of check.failedTests; track test) { <li><code>{{ test }}</code></li> }
+          </ul>
+        }
+      }
     }
     @if (record(); as batch) {
       @let latestRun = batch.runs[batch.runs.length - 1]?.outcome ?? 'waiting';

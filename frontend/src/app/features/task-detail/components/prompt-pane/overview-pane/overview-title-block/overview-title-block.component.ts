@@ -7,6 +7,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { ConceptDossierNoticeComponent } from '../../../concept-dossier-notice/concept-dossier-notice.component';
 import { PlanningSpawnPanelComponent } from '../../../planning-spawn-panel/planning-spawn-panel.component';
 import { DeliveryClaimPanelComponent } from '../../../delivery-claim-panel/delivery-claim-panel.component';
+import { ContinueRoundPanelComponent } from '../../../continue-round-panel/continue-round-panel.component';
 import { CopyableTaskKeyComponent } from '../../../../../../components/copyable-task-key/copyable-task-key.component';
 import { TaskPromptPopoverComponent } from '../../task-prompt-popover/task-prompt-popover.component';
 import { laneTone } from '../../../../../../models/lane-presentation';
@@ -46,6 +47,7 @@ function makeAttachmentId(): string {
     ConceptDossierNoticeComponent,
     PlanningSpawnPanelComponent,
     DeliveryClaimPanelComponent,
+    ContinueRoundPanelComponent,
     CopyableTaskKeyComponent,
     TaskPromptPopoverComponent,
     StatusIndicatorComponent,

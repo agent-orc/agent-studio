@@ -35,14 +35,14 @@ describe('CouncilReviewReactionComponent', () => {
       createdAt: '2026-07-23T10:00:00Z',
       reviewFileName: 'code-review-grade.md',
       grade: 'B',
-      disposition: 'Reissue',
+      disposition: 'reissue',
       summary: 'Fix 1 review finding in the next round.',
       startsNewRound: true,
       targetJobId: 'demo-job',
       targetRunAttempt: 2,
       assessments: [{
         finding: 'Dark-theme colors are incorrect; provide both-theme screenshots.',
-        action: 'FixNextRound',
+        action: 'fixNextRound',
         reason: 'Concrete review deficiency.',
       }],
     });
@@ -54,5 +54,21 @@ describe('CouncilReviewReactionComponent', () => {
     expect(root.querySelector('[data-testid="code-review-council-action"]')?.getAttribute('data-tone')).toBe('warning');
     expect(root.querySelector<HTMLElement>('section')?.dataset['disposition']).toBe('reissue');
     expect(root.querySelector('a')?.getAttribute('href')).toContain('#/tasks/AGT-2108');
+  });
+
+  it('labels a camelCase escalate action and disposition from the wire (AGT-3578)', () => {
+    const fixture = TestBed.createComponent(CouncilReviewReactionComponent);
+    fixture.componentRef.setInput('job', job);
+    fixture.componentRef.setInput('reaction', JSON.parse(`{
+      "createdAt":"2026-11-09T10:12:41Z","reviewFileName":"code-review-grade.md","grade":"C",
+      "disposition":"escalate","summary":"Escalate 1 open review finding.",
+      "assessments":[{"finding":"Live probe missing.","action":"escalate","reason":"Budget exhausted."}],
+      "startsNewRound":false,"targetJobId":null,"targetRunAttempt":null
+    }`));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('.council-reaction__action')?.textContent?.trim()).toBe('Escalate');
+    expect(root.querySelector<HTMLElement>('section')?.dataset['disposition']).toBe('escalate');
   });
 });
