@@ -5,7 +5,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGateServiceRestartTests : BatchGatePilotServiceTests
 {
     /// <summary>
     /// 2 November 2026: two planned restarts of the API parked cards that had
