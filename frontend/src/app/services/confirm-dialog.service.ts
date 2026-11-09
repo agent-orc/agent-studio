@@ -29,6 +29,7 @@ export class ConfirmDialogService {
   readonly active = signal<ConfirmDialogState | null>(null);
 
   private resolver: ((value: boolean) => void) | null = null;
+  private acceptedReason: string | null = null;
 
   constructor() {
     // Expose the live instance on window so E2E screenshot specs can
@@ -56,6 +57,7 @@ export class ConfirmDialogService {
       kind: options.kind ?? 'danger',
       requireTypedValues: options.requireTypedValues?.length ? options.requireTypedValues : null,
       requireTypedPrompt: options.requireTypedPrompt ?? null,
+      requireReason: options.requireReason ?? null,
     };
     this.active.set(state);
 
@@ -64,7 +66,22 @@ export class ConfirmDialogService {
     });
   }
 
-  accept(): void {
+  /**
+   * Confirm with a written-reason gate. Resolves with the trimmed reason, or
+   * null when the operator cancels.
+   */
+  async confirmWithReason(
+    options: ConfirmDialogOptions & { requireReason: NonNullable<ConfirmDialogOptions['requireReason']> },
+  ): Promise<string | null> {
+    this.acceptedReason = null;
+    const ok = await this.confirm(options);
+    const reason = this.acceptedReason;
+    this.acceptedReason = null;
+    return ok ? reason : null;
+  }
+
+  accept(reason?: string): void {
+    this.acceptedReason = reason?.trim() || null;
     this.settle(true);
   }
 

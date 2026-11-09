@@ -11,6 +11,7 @@ import { phaseStaticLabel } from '../../../../services/lifecycle-phase.util';
 import { isTaskRunActive, resolveRunActivityKind } from '../../../../services/run-activity.util';
 import { buildTokenCostTooltip, formatTokenCostDisplay } from '../../../tokens';
 import { laneName, lanePresentation } from '../../../../models/lane-presentation';
+import { laneMoveRefusal, laneMoveRefusalText } from '../../../../models/lane-move-guard';
 import { MANUAL_MOVE_LANES, manualMoveSkipsExecution } from '../../../task-detail/state/triage-actions.model';
 import type { StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
 
@@ -1914,7 +1915,16 @@ export function buildCardCtxMenuItems(
   if (targets.length) {
     items.push({ kind: 'separator' }, { kind: 'header', label: 'Move' });
     for (const state of targets) {
-      items.push({ kind: 'row', id: MOVE_PREFIX + state, label: `Move to ${laneName(state)}`, disabled: mutationsBlocked });
+      // AGT-3624: a move the lane guard will refuse stays visible but
+      // disabled, and its tooltip says why and what to do instead.
+      const refusal = laneMoveRefusal(job, state);
+      items.push({
+        kind: 'row',
+        id: MOVE_PREFIX + state,
+        label: `Move to ${laneName(state)}`,
+        disabled: mutationsBlocked || refusal !== null,
+        ...(refusal ? { tooltip: laneMoveRefusalText(refusal) } : {}),
+      });
     }
   }
 

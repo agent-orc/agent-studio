@@ -6,6 +6,8 @@ import { ErrorDialogService } from '../../../services/error-dialog.service';
 import { NotificationService } from '../../../services/notification.service';
 import { ConfirmDialogService } from '../../../services/confirm-dialog.service';
 import { UndoController } from '../../../services/undo.service';
+import { confirmTaskDelete } from '../../../services/task-delete-confirm.util';
+import { describeMoveRefusal } from '../../../models/lane-move-guard';
 import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
 import { TaskSelectionService } from './task-selection.service';
 import { LanePagerService, LANE_LABELS } from './lane-pager.service';
@@ -282,10 +284,13 @@ export class TriageController {
           this.jobService.refresh(true);
           return;
         }
+        // AGT-3624: an expected lane guard refusal reads in plain words.
+        const refusal = describeMoveRefusal(err, info, ev.targetState);
         this.errorDialog.show(err, {
-          title: 'Failed to move task',
+          title: refusal ? `Cannot move to ${laneLabelFor(ev.targetState)}` : 'Failed to move task',
           fallbackMessage: 'Failed to move task',
           source: `Task ${info.id}`,
+          refusal,
         });
       },
     });
@@ -338,20 +343,12 @@ export class TriageController {
     void ev;
     const lane = this.jobSelection.triageLaneState ?? info.state;
     const peers = this.jobSelection.triageLanePeers();
-    const label = info.title || info.id;
-    const ok = await this.confirmDialog.confirm({
-      title: 'Delete this task?',
-      message: 'This removes the job folder and all its files (prompt, logs, results). Do you really want this?',
-      detail: label,
-      confirmLabel: 'Delete',
-      cancelLabel: 'Keep',
-      kind: 'danger',
-    });
-    if (!ok) {
+    const confirmed = await confirmTaskDelete(this.confirmDialog, info);
+    if (!confirmed) {
       this.clearActing();
       return;
     }
-    this.jobService.deleteJob(info.id, info.watchPath).subscribe({
+    this.jobService.deleteJob(info.id, info.watchPath, confirmed.reason).subscribe({
       next: () => {
         this.jobService.refresh();
         this.clearActing();
