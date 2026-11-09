@@ -29,7 +29,8 @@ public sealed partial class BatchGatePilotService
     // Project to its current ordinary flight, beside _runningBatches.
     private readonly Dictionary<string, BatchFlight> _batchFlights = new(StringComparer.OrdinalIgnoreCase);
     // Batch id to a flight cancelled at its lease deadline that has not exited yet.
-    private readonly Dictionary<string, Task> _detachedFlights = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (Task Task, BatchGateDetachedFlight View)> _detachedFlights =
+        new(StringComparer.Ordinal);
     // Project to the batch whose flight was cancelled last; it starts after the others.
     private readonly Dictionary<string, string> _leaseDeadlineDeferred = new(StringComparer.OrdinalIgnoreCase);
     // Exit continuations: each completes after cleanup and the follow-up start.
@@ -115,7 +116,9 @@ public sealed partial class BatchGatePilotService
                 _runningBatches.Remove(project);
                 _batchFlights.Remove(project);
                 _startedBatchIds.Remove(flight.Manifest.BatchId);
-                _detachedFlights[flight.Manifest.BatchId] = task;
+                _detachedFlights[flight.Manifest.BatchId] = (task, new BatchGateDetachedFlight(
+                    flight.Manifest.BatchId, project, flight.StartedAtUtc, now, minutes,
+                    MonolithTransitionAdapter.BatchFlightLeaseDeadlineReason(minutes)));
                 _leaseDeadlineDeferred[project] = flight.Manifest.BatchId;
                 expired.Add((flight, minutes));
             }
@@ -129,6 +132,25 @@ public sealed partial class BatchGatePilotService
             RecordLeaseDeadline(flight, minutes);
         }
     }
+
+    /// <summary>The flights of <paramref name="project"/> detached at their lease deadline that have not exited.</summary>
+    private BatchGateDetachedFlight[] DetachedFlights(string project)
+    {
+        lock (_runningBatches)
+            return _detachedFlights.Values
+                .Where(detached => string.Equals(detached.View.Project, project, StringComparison.OrdinalIgnoreCase))
+                .Select(detached => detached.View).OrderBy(view => view.DetachedAtUtc).ToArray();
+    }
+
+    /// <summary>
+    /// Exit continuations a flight wait observes. A flight detached at its
+    /// lease deadline may never exit, so its exit counts only once the flight
+    /// itself has finished; a hung detached flight never holds a wait.
+    /// Callers hold <c>_runningBatches</c>.
+    /// </summary>
+    private IEnumerable<Task> AwaitedFlightExits()
+        => _flightExits.Where(exit => !exit.Key.Cancelled || exit.Key.Task is { IsCompleted: true })
+            .Select(exit => exit.Value);
 
     private void RecordLeaseDeadline(BatchFlight flight, int minutes)
     {
@@ -205,7 +227,7 @@ public sealed partial class BatchGatePilotService
                 && successor.Manifest.BatchId == manifest.BatchId;
             if (!detached && !restarted) _startedBatchIds.Remove(manifest.BatchId);
             if (_detachedFlights.TryGetValue(manifest.BatchId, out var cancelled)
-                && ReferenceEquals(cancelled, done))
+                && ReferenceEquals(cancelled.Task, done))
                 _detachedFlights.Remove(manifest.BatchId);
         }
         flight.BeforeLease.Dispose();

@@ -111,7 +111,6 @@ export class RemoteHostCardComponent {
     const key = (role: RemoteHost) => role.release?.releaseId ?? role.releaseId ?? role.release?.version ?? null;
     return roles.length <= 1 || roles.every(role => key(role) === key(roles[0]));
   });
-  readonly roleActiveSlots = input<Readonly<Record<string, number>>>({});
   /** Board-local process runs or remote leased runs attributed to this host. */
   readonly boardActiveSlots = input(0);
   /**
@@ -229,26 +228,39 @@ export class RemoteHostCardComponent {
     if (this.liveError()) return 'status unavailable';
     return this.stale() ? 'stopped' : (this.host().daemonState ?? 'running');
   });
+  /**
+   * Occupied slots as the role daemons report them, summed over the machine's
+   * roles. "Slots", "Capacity" and "Host work" all read this one count; board
+   * leases are the comparison source, not a second slot number.
+   */
+  readonly telemetrySlots = computed(() => {
+    const roles = this.roles().length ? this.roles() : [this.host()];
+    const sampled = roles.filter(role => latestHostTelemetry(role) !== null);
+    if (!sampled.length) return null;
+    return {
+      active: sampled.reduce((total, role) => total + (latestHostTelemetry(role)?.activeSlots ?? 0), 0),
+      stale: sampled.some(role => freshHostTelemetry(role, this.now()) === null),
+    };
+  });
   readonly runSlotsLabel = computed(() => {
     if (this.liveLoading()) return 'Loading daemon telemetry…';
     if (this.liveError()) return 'Live count unavailable';
-    const latest = this.latestTelemetry();
-    if (!latest) return 'No slot telemetry';
-    if (!this.liveTelemetry()) return `${latest.activeSlots} active · stale`;
-    return `${latest.activeSlots} active`;
+    const slots = this.telemetrySlots();
+    if (!slots) return 'No slot telemetry';
+    return slots.stale ? `${slots.active} active · stale` : `${slots.active} active`;
   });
   readonly runSlotsDiverge = computed(() => {
-    const telemetry = this.liveTelemetry();
-    return telemetry !== null && telemetry.activeSlots !== this.boardActiveSlots();
+    const slots = this.telemetrySlots();
+    return slots !== null && !slots.stale && slots.active !== this.boardActiveSlots();
   });
   readonly runSlotsTooltip = computed(() => {
-    const telemetry = this.liveTelemetry();
-    if (!telemetry) return 'Active-slot telemetry is stale or unavailable.';
+    const slots = this.telemetrySlots();
+    if (!slots || slots.stale) return 'Active-slot telemetry is stale or unavailable.';
     if (this.runSlotsDiverge()) {
       const boardSource = this.host().role === 'remote' ? 'live remote leases' : 'live local executions';
-      return `Sources disagree: telemetry reports ${telemetry.activeSlots} active slots; the board reports ${this.boardActiveSlots()} ${boardSource} for this host.`;
+      return `Sources disagree: telemetry reports ${slots.active} active slots; the board reports ${this.boardActiveSlots()} ${boardSource} for this host.`;
     }
-    return `Telemetry and board leases agree on ${telemetry.activeSlots} active ${telemetry.activeSlots === 1 ? 'slot' : 'slots'}.`;
+    return `Telemetry and board leases agree on ${slots.active} active ${slots.active === 1 ? 'slot' : 'slots'}.`;
   });
   readonly failedProjectPreflights = computed(() =>
     (this.host().projectPreflights ?? []).filter(preflight => preflight.status === 'failed'),
@@ -261,7 +273,13 @@ export class RemoteHostCardComponent {
       ? totals.reduce((total, value) => total + value, 0)
       : null;
   });
-  readonly occupiedSlots = computed(() => this.boardActiveSlots());
+  /** The "Slots" fact: telemetry active over role capacity, marked stale like Host work. */
+  readonly machineSlotsLabel = computed(() => {
+    const slots = this.telemetrySlots();
+    const capacity = `${this.roleSlotCapacity() ?? 'Unknown'}`;
+    if (!slots) return `Unknown / ${capacity}`;
+    return `${slots.active} / ${capacity}${slots.stale ? ' · stale' : ''}`;
+  });
   readonly loadPct = computed(() => {
     if (this.liveLoading() || this.liveError() || this.stale()) return null;
     const load = this.host().stats?.cpuLoadPct;
@@ -293,8 +311,6 @@ export class RemoteHostCardComponent {
     if (update.state === 'ready') return 'Drained · waiting for the host updater';
     return `${update.state} · ${elapsedLabel} elapsed`;
   });
-  readonly totalActiveSlots = computed(() => this.roles()
-    .reduce((total, role) => total + this.activeSlotsFor(role), 0));
   readonly identitySummary = computed(() => {
     const count = this.roles().length || 1;
     return `${count} ${count === 1 ? 'role' : 'roles'} · ${this.host().os}`;
@@ -310,9 +326,10 @@ export class RemoteHostCardComponent {
   });
   readonly capacitySummary = computed(() => {
     const total = this.roleSlotCapacity();
+    const active = this.telemetrySlots()?.active ?? 'Unknown';
     const slots = total === null
-      ? `${this.totalActiveSlots()} active · capacity not reported`
-      : `${this.totalActiveSlots()} / ${total} role slots active`;
+      ? `${active} active · capacity not reported`
+      : `${active} / ${total} role slots active`;
     const gate = this.host().claimLoadGate;
     return gate ? `${slots} · ${claimLoadGateLabel(gate)}` : slots;
   });
@@ -351,10 +368,6 @@ export class RemoteHostCardComponent {
   emit(kind: HostActionKind): void {
     if (this.host().busyAction) return;
     this.action.emit({ kind, id: this.host().id });
-  }
-
-  activeSlotsFor(role: RemoteHost): number {
-    return this.roleActiveSlots()[role.id] ?? 0;
   }
 
   isSectionExpanded(section: DetailSection): boolean {
