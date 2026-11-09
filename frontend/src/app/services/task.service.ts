@@ -2,6 +2,7 @@ import { Injectable, signal, inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse, HttpHeaders, HttpParams } from '@angular/common/http';
 import { Subject, catchError, finalize, map, switchMap, tap, throwError, timer, type Observable } from 'rxjs';
 import { isGitFactsWarming, retryWhileWarming } from '../utils/git-facts-warming';
+import { sortLaneLikeBoard } from './lane-sort.util';
 import type { TaskCore, TaskResource, ResourceName } from '../models/task-core.model';
 import type {
   ArchivedTasksResponse,
@@ -3172,8 +3173,8 @@ export class TaskService {
    * Insert-or-update a single task in the local `jobs` + `grouped` signals,
    * keyed by `watchPath::id`. Removes the row from whatever lane currently
    * holds it and re-inserts it into the lane for its `state`, ordered by the
-   * card's `order` field so the position matches what the grouped endpoint
-   * would return. Idempotent.
+   * same per-project lane strategy as the grouped endpoint (AGT-3587), so a
+   * push never reorders unrelated cards across projects. Idempotent.
    */
   private upsertJobLocal(info: TaskInfo): void {
     if (!info || !info.id) return;
@@ -3202,9 +3203,7 @@ export class TaskService {
       if (filtered.length !== list.length) next[k] = filtered;
     }
     if (lane) {
-      next[lane] = [...(next[lane] ?? []), info].sort(
-        (a, b) => (a.order ?? 0) - (b.order ?? 0),
-      );
+      next[lane] = sortLaneLikeBoard([...(next[lane] ?? []), info], info.state, this.laneSortStrategies());
     }
     this.grouped.set(next);
     this.taskEventSubject.next({ kind: 'upserted', info });

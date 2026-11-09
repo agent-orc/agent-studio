@@ -151,6 +151,16 @@ Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
 
+Ready pickup order is one rule for every runner and the board (AGT-3587). Each
+project's Ready queue is that project's `2-ready` lane order
+(`LaneSortApplier.Sort`, default `lane-entry`: placed cards by `order`, then
+the newest lane entry). The local runner takes the first pickup-eligible card;
+the remote claim uses `LaneSortApplier.PickupOrder`, which keeps each project's
+order and offers every project's head before any second card. The runner
+status `queuedJobIds` list is that queue, and the board marks only its head as
+Next. Move to top (`PromoteToReadyTop`) rewrites only the placed cards and the
+promoted one, so the other cards keep their order.
+
 Unknown or interrupted attempts that publish salvage hand its exact ref and SHA
 to the next coding claim. The runner starts that worktree at the salvage commit;
 an unavailable or moved ref fails preparation instead of selecting the
