@@ -48,6 +48,7 @@ import type {
   DecisionActionResponse,
 } from '../models/task.model';
 import { TaskState } from '../models/task.model';
+import type { CouncilFindingAction, CouncilReactionDisposition } from '../models/council-review.model';
 import type { ClaudeSessionResponse } from '../features/claude';
 import type { CliModelCatalog, CliCompletionContract, CliUsageReport, ModelMigrationCatalog } from '../features/cli';
 import type { GitFileChange, GitStatus, TaskCommitDetail, TaskProvenanceView } from '../features/git';
@@ -134,7 +135,7 @@ export interface CodeReviewListEntry {
 
 export interface CouncilFindingAssessment {
   finding: string;
-  action: 'FixNextRound' | 'Accept' | 'Escalate';
+  action: CouncilFindingAction;
   reason: string;
 }
 
@@ -142,7 +143,7 @@ export interface CouncilReviewReaction {
   createdAt: string;
   reviewFileName: string;
   grade: string;
-  disposition: 'Accept' | 'Reissue' | 'Escalate';
+  disposition: CouncilReactionDisposition;
   summary: string;
   assessments: CouncilFindingAssessment[];
   startsNewRound: boolean;

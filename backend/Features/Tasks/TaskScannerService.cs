@@ -278,9 +278,8 @@ public class TaskScannerService : ITaskScanner
     {
         if (_indexCache is null) return;
         var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
-        var info = ScanJobFolder(folder, entry, state, bypassMemo: true);
-        if (info is not null) _indexCache.PublishRoutingMutation(info);
-        else _indexCache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+        _indexCache.PublishRoutingFromFolder(folder,
+            () => ScanJobFolder(folder, entry, state, bypassMemo: true));
     }
 
     /// <summary>Publish a newly created card into the resident board and core indexes.</summary>

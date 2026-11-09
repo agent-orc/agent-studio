@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -14,6 +15,8 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -559,7 +562,16 @@ public abstract class NetworkedEdgeHardeningTestBase
         IReadOnlyDictionary<string, string?>? settings = null, string? publishedSha = null)
     {
         builder.UseEnvironment("Test");
-        builder.ConfigureTestServices(services => services.AddSingleton<TimeProvider>(clock));
+        builder.ConfigureTestServices(services =>
+        {
+            services.AddSingleton<TimeProvider>(clock);
+            services.RemoveAll<AccessSecurityStore>();
+            services.AddSingleton(provider => new AccessSecurityStore(
+                provider.GetRequiredService<IConfiguration>(),
+                provider.GetRequiredService<ILogger<AccessSecurityStore>>(),
+                provider.GetRequiredService<TimeProvider>(),
+                VerifyPasswordOnce, HashPasswordOnce));
+        });
         if (publishedSha is not null)
             builder.ConfigureTestServices(services => services.AddSingleton(new PublishedArtifactSha(publishedSha)));
         if (remoteIp is not null)
@@ -580,6 +592,25 @@ public abstract class NetworkedEdgeHardeningTestBase
             ["WatchPaths:0:RepositoryPath"] = projectPath,
         }.Concat(settings ?? new Dictionary<string, string?>())));
     }
+
+    /// <summary>
+    /// The real PBKDF2 hash and check, each run once per password (and stored
+    /// hash) in this process (AGT-3567). The throttle tests bootstrap four
+    /// hosts and send dozens of logins with the same two passwords; at 600,000
+    /// iterations each hash took one to four seconds on a loaded runner. The
+    /// throttle, the hash slots and the responses are unchanged, and every
+    /// distinct pair is still hashed by <see cref="PasswordSecretHasher.HashPassword"/>
+    /// and verified by <see cref="PasswordSecretHasher.VerifyPassword"/>.
+    /// </summary>
+    private static bool VerifyPasswordOnce(string password, string encoded)
+        => VerifiedPasswords.GetOrAdd((password, encoded),
+            pair => PasswordSecretHasher.VerifyPassword(pair.Password, pair.Encoded));
+
+    private static string HashPasswordOnce(string password)
+        => HashedPasswords.GetOrAdd(password, PasswordSecretHasher.HashPassword);
+
+    private static readonly ConcurrentDictionary<(string Password, string Encoded), bool> VerifiedPasswords = new();
+    private static readonly ConcurrentDictionary<string, string> HashedPasswords = new(StringComparer.Ordinal);
 
     protected static string Header(HttpResponseMessage response, string name)
         => response.Headers.TryGetValues(name, out var values) || response.Content.Headers.TryGetValues(name, out values)

@@ -753,6 +753,10 @@ public sealed class GitStateIndexService : BackgroundService
             state.ActiveDeadline = deadline;
         }
         using var budget = GitProcessBudget.Begin(deadline.Token);
+        // A cold task index can still be publishing its first generation.
+        // Await it without occupying a worker or recording a blocking refresh
+        // wait while the host is starting other services.
+        await _scanner.WaitForFirstPublicationAsync(deadline.Token).ConfigureAwait(false);
         var tasksForRepo = TaskProjectionCards.Select(ReadTasks(state), _logger);
         SidecarFileGeneration.Repair();
         var effectiveConfig = ResolveConfig(state, run);

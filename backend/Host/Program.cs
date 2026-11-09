@@ -1888,8 +1888,20 @@ catch (Exception ex)
     crashRecorder.Record("IntegrationWorktreeStartupLockSweep", ex);
 }
 
+// AGT-3567: the one-time repair, backfill and report sweeps below are
+// idempotent and change nothing on a workspace they already ran on, but the
+// first of them builds the task index that TaskAccess boot then rebuilds. A
+// Test host can boot without them with Startup:RepairSweeps=false; the Git
+// facts census boots 26 hosts over its 3,000-card board. Recovery (crash
+// recovery, the stale-progress archiver, run adoption unless
+// Runner:RunLiveness:Enabled is false) still runs. Outside the Test
+// environments the setting is ignored.
+var runRepairSweeps = !(app.Environment.IsEnvironment("Test") || app.Environment.IsEnvironment("Testing"))
+    || app.Configuration.GetValue("Startup:RepairSweeps", true);
+
 // Backfill jobs that carry agent:"human" + cliType:null + model:null with owner
 // client defaults. Idempotent; no-op once all jobs are already migrated.
+if (runRepairSweeps)
 {
     var backfillCount = hostTimeline.Sweep("BackfillAgentDefaults",
         () => app.Services.GetRequiredService<TaskMutationService>().BackfillAgentDefaults());
@@ -1922,6 +1934,7 @@ catch (Exception ex)
 // Backfill task keys (ATP-NNN) on jobs created before key generation was wired
 // into CreateJob. Runs after RegistryBootstrap so project short codes exist.
 // Idempotent; no-op once all jobs carry a key.
+if (runRepairSweeps)
 {
     var mutations = app.Services.GetRequiredService<TaskMutationService>();
     var keyCount = hostTimeline.Sweep("BackfillTaskKeys", mutations.BackfillTaskKeys);
@@ -1946,7 +1959,7 @@ catch (Exception ex)
 // ReviewAttempts are claimable only while their owning task remains in Auto
 // Review. Repair stale authority left behind by older terminal lane moves
 // before any Remote Review Executor can poll this process.
-try
+if (runRepairSweeps) try
 {
     var repaired = hostTimeline.Sweep("ReviewAttemptTaskLifecycle.BootSweep",
         () => app.Services.GetRequiredService<ReviewAttemptTaskLifecycleService>().SweepUnclaimableAttempts());
@@ -1967,7 +1980,7 @@ catch (Exception ex)
 // historical cli-output.log inventory. The marker makes subsequent boots a
 // cheap no-op; this runs before CLI reattachment and before the listener starts
 // so historical and new live observations cannot race each other.
-try
+if (runRepairSweeps) try
 {
     hostTimeline.Sweep("WikiAgentReadBackfill",
         () => app.Services.GetRequiredService<AgentStudio.Docs.WikiAgentReadService>().EnsureBackfilled());
@@ -1979,7 +1992,7 @@ catch (Exception ex)
 
 // One-time migration from the legacy [repository] commit-subject convention to
 // the structured repository field used by multi-repository delivery status.
-try
+if (runRepairSweeps) try
 {
     hostTimeline.Sweep("CommitRepositoryBackfill",
         () => app.Services.GetRequiredService<TaskMutationService>().BackfillLegacyCommitRepositories());
@@ -1992,7 +2005,7 @@ catch (Exception ex)
 // One-time, idempotent repair of Git-derived commit file metadata on live
 // cards. The sweep reads Git and writes only task.json through the owning
 // mutation service; entries with complete metadata make later boots a no-op.
-try
+if (runRepairSweeps) try
 {
     hostTimeline.Sweep("CommitMetadataBackfill",
         () => app.Services.GetRequiredService<TaskMutationService>().BackfillMissingCommitMetadata());
@@ -2005,7 +2018,7 @@ catch (Exception ex)
 // One-time, conservative repair of historical rebase/steer generations. The
 // persisted report is also the completion marker. Ambiguous file-breadth cases
 // remain untouched and visible in that report.
-try
+if (runRepairSweeps) try
 {
     hostTimeline.Sweep("SupersededCommitSweep",
         () => app.Services.GetRequiredService<SupersededCommitSweep>().RunOnce());
@@ -2018,7 +2031,7 @@ catch (Exception ex)
 // AGT-2818: announce every card currently held in a pickup lane, so the backlog
 // that accumulated while the state was invisible becomes visible once. Purely a
 // report; nothing here changes what the pickup gate admits.
-try
+if (runRepairSweeps) try
 {
     hostTimeline.Sweep("PickupHoldSweep",
         () => app.Services.GetRequiredService<AgentStudio.Tasks.PickupHoldSweep>().RunOnce());
@@ -2032,7 +2045,7 @@ catch (Exception ex)
 // already advanced to the result SHA and therefore collapsed commits[] to an
 // empty merge-base range. The same pass materializes missing remote token
 // receipts from the durable CLI log.
-try
+if (runRepairSweeps) try
 {
     hostTimeline.Sweep("RemoteCompletionAttributionSweep",
         () => app.Services.GetRequiredService<RemoteCompletionAttributionSweep>().RunOnce());
@@ -2046,7 +2059,7 @@ catch (Exception ex)
 // backfill but before CLI reattachment can append new output. The sweep also
 // ensures the sole rotation file stays outside workspace evidence commits.
 // It is idempotent and cheap once every active/rotated file is bounded.
-try
+if (runRepairSweeps) try
 {
     hostTimeline.Sweep("CliOutputLogMaintenance",
         () => app.Services.GetRequiredService<CliOutputLogMaintenanceService>().Run());
@@ -2061,7 +2074,7 @@ catch (Exception ex)
 // and this backfill, so both paths synthesize exactly the same honest Result
 // scaffold. Repaired files carry an operator-backfill marker; later boots are
 // no-ops because existing non-empty Result documents are never overwritten.
-try
+if (runRepairSweeps) try
 {
     hostTimeline.Sweep("ResultDocumentBackfill",
         () => app.Services.GetRequiredService<TaskTransitionService>().BackfillMissingResultDocuments());
@@ -2074,7 +2087,7 @@ catch (Exception ex)
 // Reconcile the historical remote-claim bug before runner pickup begins. The
 // mutation service converts proven-delivered or terminal intents into timeline
 // receipts and leaves genuinely newer queued follow-ups untouched.
-try
+if (runRepairSweeps) try
 {
     hostTimeline.Sweep("PendingIntentReconciliation",
         () => app.Services.GetRequiredService<TaskTransitionService>().ReconcilePendingIntents());
