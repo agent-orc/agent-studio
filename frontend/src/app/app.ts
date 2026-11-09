@@ -1419,7 +1419,7 @@ export class App implements OnInit, OnDestroy {
   }
 
   /**
-   * F5: bubble-up from <app-job-card>'s "Pick next" affordance.
+   * F5: bubble-up from <app-job-card>'s "Move to top" affordance.
    * Promotes the card to position 1 in the runner queue. Re-uses the
    * existing `moveJobToTop` round-trip — same endpoint the detail-view
    * "Do Next" already drove. Toasts on success so the operator gets a
@@ -1429,8 +1429,8 @@ export class App implements OnInit, OnDestroy {
     this.jobService.moveJobToTop(job.id, job.watchPath).subscribe({
       next: () => {
         this.notifications.success(
-          `"${job.title || job.id}" is next up`,
-          'Pick next',
+          `"${job.title || job.id}" moved to the top of its project's Ready queue`,
+          'Move to top',
         );
         this.refresh();
       },

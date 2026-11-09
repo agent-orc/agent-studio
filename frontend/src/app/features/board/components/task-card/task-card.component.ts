@@ -3,6 +3,7 @@ import { TaskState, isTerminalTaskState, type AutoLoopSnapshot, type TaskExecuti
 import { RemoteDispatchRejectionComponent } from '../../../../components/remote-dispatch-rejection/remote-dispatch-rejection.component';
 import { GitSummaryService } from '../../../../services/git-summary.service';
 import { TaskService } from '../../../../services/task.service';
+import { isReadyQueueHead } from '../ready-lane-split.util';
 import { BoardMutationsService } from '../../state/board-mutations.service';
 import { readyQueueReorder } from '../../state/ready-queue-order';
 import { LaneCollapseService } from '../../state/lane-collapse.service';
@@ -159,8 +160,10 @@ export class TaskCardComponent implements OnInit, OnDestroy {
     return { labels, text: labels.join(', ') };
   });
 
-  /** True for cards where "Pick next" makes sense (front-of-queue promotion). */
-  readonly canPickNext = computed(() => this.job().state === TaskState.Ready && !this.mutationsBlocked());
+  /** AGT-3587: the one Ready card per project the runner takes next. */
+  readonly isPickupNext = computed(() => isReadyQueueHead(this.job(), this.jobs.runnerStatus()));
+  /** True for queued Ready cards that "Move to top" can promote; the head card is already next. */
+  readonly canPickNext = computed(() => this.job().state === TaskState.Ready && !this.isPickupNext() && !this.mutationsBlocked());
 
   onPickNextClick(event: Event) {
     event.stopPropagation();
