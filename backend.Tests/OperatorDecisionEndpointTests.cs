@@ -59,6 +59,33 @@ public sealed class OperatorDecisionEndpointTests : IDisposable
     }
 
     [Fact]
+    public async Task The_attention_list_shows_the_current_facts_in_the_readers_scope_and_counts_its_rows()
+    {
+        using var factory = BuildFactory();
+        factory.Services.GetRequiredService<ProviderLimitRegistry>().Record(new ProviderLimitStatus(
+            "claude", Now(factory), Now(factory).AddHours(1), "rate limited", true));
+        using var alpha = BearerClient(factory, Token(factory, "alpha reader", StudioRoles.Viewer, "alpha"));
+        using var owner = Client(factory, Login(factory));
+
+        var all = await Attention(owner);
+        var scoped = await Attention(alpha);
+
+        Assert.Equal(all.Items.Count, all.Count);
+        Assert.Equal(scoped.Items.Count, scoped.Count);
+        Assert.Contains(all.Items, item => item.CardKey == "alpha-escalated" && item.Type == OperatorDecisionTypes.EscalationOpened);
+        Assert.Contains(all.Items, item => item.CardKey == "beta-escalated");
+        Assert.Contains(all.Items, item => item.Project is null && item.Type == OperatorDecisionTypes.QuotaExhausted);
+        Assert.All(scoped.Items, item => Assert.Equal("alpha", item.Project));
+        Assert.Contains(scoped.Items, item => item.CardKey == "alpha-escalated"
+            && item.SuggestedOperations.Contains(OperatorOperations.CardInspect));
+
+        await factory.Services.GetRequiredService<TaskTransitionService>().MoveAsync("alpha-backlog",
+            TaskStates.HumanReview, ProjectPath("alpha"), cause: "test", reason: "ready for review");
+        await WaitUntilAttention(factory, owner, list => list.Items.Any(item =>
+            item.CardKey == "alpha-backlog" && item.Type == OperatorDecisionTypes.HumanReviewReady));
+    }
+
+    [Fact]
     public async Task A_client_resuming_with_its_last_cursor_receives_every_event_in_between_once()
     {
         using var factory = BuildFactory();
@@ -254,6 +281,26 @@ public sealed class OperatorDecisionEndpointTests : IDisposable
             await Task.Delay(100);
         }
         Assert.Fail($"Expected {count} matching events after cursor {after}.");
+    }
+
+    private static async Task<OperatorAttentionResponse> Attention(HttpClient client)
+    {
+        using var response = await client.GetAsync("/api/operator/attention");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<OperatorAttentionResponse>(JsonOptions))!;
+    }
+
+    private static async Task WaitUntilAttention(WebApplicationFactory<Program> factory, HttpClient client,
+        Func<OperatorAttentionResponse, bool> match)
+    {
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            // A sweep refreshes the facts the list reads.
+            await Sweep(factory);
+            if (match(await Attention(client))) return;
+            await Task.Delay(100);
+        }
+        Assert.Fail("The attention list never showed the expected row.");
     }
 
     private static async Task<List<OperatorDecisionEvent>> Snapshot(HttpClient client, string after)

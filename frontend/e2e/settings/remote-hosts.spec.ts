@@ -568,7 +568,7 @@ test.describe('Execution Hosts settings section', () => {
     expect(errors).toEqual([]);
   });
 
-  test('shows open operational stalls in the Studio header and Execution Hosts', async ({ page }) => {
+  test('shows open operational stalls in Execution Hosts', async ({ page }) => {
     await page.route('**/api/watcher/stalls', route => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify({ count: 2, cases: [
         { id: 'WCH-1', project: '_workspace', subject: 'host:agent-runner-01', severity: 'critical', affectedCards: ['AGT-1'], blockedCount: 1,
@@ -592,7 +592,6 @@ test.describe('Execution Hosts settings section', () => {
     }));
     await page.reload();
     await page.goto('/#/workspace/settings/execution-hosts');
-    await expect(page.getByTestId('studio-open-stalls')).toContainText('2');
     const attention = page.getByTestId('environment-attention');
     await expect(attention).toBeVisible();
     await attention.getByRole('button').first().click();
