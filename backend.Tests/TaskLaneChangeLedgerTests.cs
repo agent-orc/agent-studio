@@ -239,6 +239,30 @@ public class TaskLaneChangeLedgerTests : IDisposable
     }
 
     [Fact]
+    public void PromoteToReadyTop_MovesOnlyThePromotedCard()
+    {
+        // AGT-3587: promote used to rewrite every Ready card's order in scan
+        // order, so unplaced cards froze in an arbitrary sequence and two
+        // unrelated cards could swap places.
+        SeedJob(TaskStates.Ready, "placed-a", order: 10);
+        SeedJob(TaskStates.Ready, "placed-b", order: 20);
+        SeedJob(TaskStates.Ready, "loose-1", order: LaneSortStrategies.UnpinnedOrder);
+        SeedJob(TaskStates.Ready, "loose-2", order: LaneSortStrategies.UnpinnedOrder);
+        SeedJob(TaskStates.Ready, "promote-me", order: LaneSortStrategies.UnpinnedOrder);
+
+        var (machine, scanner, _) = BuildMachine();
+        var position = machine.PromoteToReadyTop("promote-me", _watchPath);
+
+        Assert.Equal(1, position);
+        int Order(string slug) => scanner.FindJob(slug, _watchPath)!.Order;
+        Assert.Equal(10, Order("promote-me"));
+        Assert.Equal(20, Order("placed-a"));
+        Assert.Equal(30, Order("placed-b"));
+        Assert.Equal(LaneSortStrategies.UnpinnedOrder, Order("loose-1"));
+        Assert.Equal(LaneSortStrategies.UnpinnedOrder, Order("loose-2"));
+    }
+
+    [Fact]
     public void PromoteToReadyTop_MissingTask_ReturnsZero()
     {
         var (machine, _, _) = BuildMachine();
@@ -308,12 +332,12 @@ public class TaskLaneChangeLedgerTests : IDisposable
         Assert.Equal(TaskStates.AutoReview, laneChanges[1].Details!["to"]);
     }
 
-    private void SeedJob(string state, string slug)
+    private void SeedJob(string state, string slug, int order = 1)
     {
         var dir = Path.Combine(_watchPath, state, slug);
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "task.json"),
-            $"{{\"id\":\"{slug}\",\"title\":\"{slug} title\",\"state\":\"{state}\",\"order\":1,\"agent\":\"claude\"}}");
+            $"{{\"id\":\"{slug}\",\"title\":\"{slug} title\",\"state\":\"{state}\",\"order\":{order},\"agent\":\"claude\"}}");
     }
 
     private (TaskStateMachine, TaskScannerService, TimelineLog) BuildMachine()

@@ -47,6 +47,20 @@ public sealed class RoutePermissionInventoryTests : IDisposable
         Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Isolation_evidence_route_is_project_read_scoped_and_rejects_unknown_project()
+    {
+        Assert.Equal(IamPermissions.ProjectRead,
+            RoutePermissionCatalog.Resolve("GET", "/api/projects/{projectName}/batch-gate/isolation-evidence")?.Permission);
+        using var factory = Factory(SecurityProfiles.Local, null);
+        Assert.Contains(Routes(factory.Services), route =>
+            route.RoutePattern.RawText == "/api/projects/{projectName}/batch-gate/isolation-evidence");
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync(
+            "/api/projects/unknown-project/batch-gate/isolation-evidence?parentBatchId=batch-14&taskKey=AGT-2");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "route-permissions-" + Guid.NewGuid().ToString("N"));
 
     public static TheoryData<string, string?> Profiles => new()

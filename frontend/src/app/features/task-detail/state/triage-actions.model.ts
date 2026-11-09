@@ -162,6 +162,31 @@ export const MANUAL_MOVE_LANES: readonly string[] = LANE_PRESENTATIONS
     && state !== TaskState.Escalated);
 
 /**
+ * Lanes a card sits in before any run executed it: captured, prepared, or
+ * queued, plus the pickup that never started. The virtual Ready intake
+ * sub-lane is a Ready card.
+ */
+export const PRE_EXECUTION_LANES: ReadonlySet<string> = new Set([
+  TaskState.Backlog,
+  TaskState.Preparation,
+  TaskState.OrchestratorPrep,
+  TaskState.Ready,
+  '2-ready-intake',
+  TaskState.FailedPickup,
+]);
+
+/**
+ * AGT-3588: a manual move from an unrun card into Human review or Accepted
+ * would skip the run that produces the work to review or accept. The board
+ * menu leaves those targets out; the detail view keeps the guarded paths
+ * (acceptance override, Resolve manually) for the rare deliberate case.
+ */
+export function manualMoveSkipsExecution(currentState: string, targetState: string): boolean {
+  return PRE_EXECUTION_LANES.has(currentState)
+    && (targetState === TaskState.HumanReview || targetState === TaskState.Completed);
+}
+
+/**
  * AGT-2069 — whether accepting `info` should surface the spawn-contract warning
  * (the AGT-1915 trap guard). True only when a planning task is being accepted
  * into `6-completed` and its spawn contract is not satisfied: it has spawned no
