@@ -1,5 +1,14 @@
 # Install Agent Studio
 
+> **Status (2026-11-09): no release is published yet.** The download URLs on
+> this page (`releases/latest/download/...`) return 404, and the
+> `ghcr.io/agent-orc` images are not anonymously pullable. Until the first
+> GitHub Release exists, use the
+> [source-built Docker one-box](./docker.md#install-from-this-checkout); the
+> [setup guide](./README.md#choose-your-path) names the path for each
+> situation. This page describes the installer for that first release and
+> later ones.
+
 The Linux `install.sh` detects the distribution and x64 architecture, downloads
 `agent-studio-setup`, verifies it against the release `SHA256SUMS`, and starts
 the guided installer. Debian, Ubuntu, and Fedora are tested. Choose a one-box

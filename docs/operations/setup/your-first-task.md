@@ -1,101 +1,245 @@
 # Your first task
 
-Studio opens **Settings → First-run checklist** after owner sign-in when the
-Task Server has no active project. The checklist remains available in Settings.
-Its Refresh button rereads installation identity, project repository
-registration, host heartbeats, provider authentication capabilities, and the
-latest admitted repository proof. A failed read stays pending. Once those
-checks pass, **Create sample card** queues a small overview-document task in
-the first registered project. Studio follows that card by its id and marks the
-proof complete only after coding, review, and integration evidence is visible.
-The browser stores the card id, project id, and task-store path for returning
-to the checklist; it stores no credential. For a local project without a
-checkout, GitHub verification clones the registered URL into backend-managed
-storage and records that checkout on the project. Its read/write probe uses a
-fresh temporary Git repository with only the selected credential, so URL
-rewrites in the project checkout cannot make a different repository pass.
-For a new local project, the checkout also becomes its CLI working directory
-and the local runner is activated before the sample card starts.
-A networked project uses its registered origin and the runner's checkout. Use
-[onboard-a-project.md](./onboard-a-project.md) to prepare the checkout.
+This walkthrough follows the current Studio UI from the first sign-in to the
+first accepted card. It assumes the
+[source-built Docker one-box](./docker.md#install-from-this-checkout) is
+running on `http://127.0.0.1:4011`, the recommended path in the
+[setup guide](./README.md#choose-your-path). The screenshots come from
+`frontend/e2e/settings/your-first-task-guide.spec.ts`; see
+[Refresh the screenshots](#refresh-the-screenshots).
 
-Once a project is attached ([onboard-a-project.md](./onboard-a-project.md)) and at least one CLI is installed ([onboard-an-agent-cli.md](./onboard-an-agent-cli.md)), queue a small first task to confirm the loop works end to end. The goal is to watch a real run: pickup, CLI invocation, log streaming, lane transition, auto-commit, auto-review.
+The order matters: a card only runs when the project has an execution host,
+pickup mode **Auto**, and a repository that Studio can verify through
+`.agent-studio/project.yml`.
 
-## A good first task
+## 1. Sign in as the owner
 
-Pick something **small**, **scoped**, and **read-then-write**: the agent has to look at real files and produce a real diff. This exercises the load-bearing surfaces (Git status, prompt rendering, model selection, sentinel emission, lane transition, commit stamping) without making you wait 20 minutes for a real feature.
+Open `http://127.0.0.1:4011`. The first sign-in creates the owner account with
+the one-time owner code that the stack generated:
 
-The pattern that has worked well on every new project so far is the **Project Overview Doc**:
+```sh
+docker compose exec task-server-dev cat /run/agent-studio-secrets/owner_bootstrap_code
+```
 
-> Title: `docs: add Project Overview doc`
->
-> Prompt:
-> ```
-> Read the repository's existing README and top-level folders to understand
-> what this project is. Write a short overview at docs/project-overview.md
-> covering:
-> - what the project does (1 paragraph)
-> - the main folders and what lives in each
-> - how to run it locally (commands only, no setup theory)
->
-> Keep it under 80 lines. End your reply with [[TASK_DONE]].
-> ```
-> Type: `Chore` &middot; State: `2-ready` &middot; CLI: whichever you want to test
+Do not paste the code into a task, chat, or log. It is consumed when the owner
+exists.
 
-What you should see:
+## 2. Work through the first-run checklist
 
-1. The card appears in `2-ready`. The runner picks it up within ~5 s in `auto-continuous` mode (or you click Start in `manual` mode).
-2. The card moves to `3-progress`. The Activity Log streams tool calls live: `Read`, `Glob`, `Grep`, then `Write`.
-3. The agent emits `[[TASK_DONE]]`. The runner records the lane-transition commit (when `AutoCommit` is on), moves the card to `4-auto-review`, and the orchestrator decides accept / re-issue.
-4. The card lands in `5-human-review` for your final sign-off. The protocol view shows the prompt, the activity log, the per-run summary, and the commit.
+While no project exists, Studio opens **Settings > First-run checklist** after
+sign-in. It is always available there later (`#/workspace/settings/first-run`).
+Each step shows **Verified** or **Pending**, read from the Task Server and
+fresh host probes; **Refresh** reads them again.
 
-## Anti-patterns
+![First-run checklist with its six steps: Owner account, Provider login on an execution host, GitHub read and write access, First project, Execution host, and Proof run](./images/your-first-task/first-run-checklist.png)
 
-Tasks that look small but make the loop tell you nothing:
+1. **Owner account**: verified after step 1 above.
+2. **Provider login on an execution host**: each CLI needs a live
+   authentication probe on the host that runs it. Choose **Sign in** next to
+   the host's Codex or Claude badge and finish the device sign-in.
+3. **GitHub read and write access**: recommended is **connect the GitHub App**
+   ([github-app.md](./github-app.md)). Otherwise choose the **Access method**
+   (**Generated deploy key** or **GitHub token**), then **Configure access on
+   host** and **Verify read and write**. Verification fetches and pushes a
+   temporary ref.
+4. **First project**: **Create project** opens the dialog in step 3 of this
+   guide. Then register the credential-free **Repository clone URL** and
+   **Integration branch** with **Register repository**.
+5. **Execution host**: verified when a host's heartbeat reaches the Task
+   Server. In the one-box stack, `distributed-runner` (coding) and
+   `distributed-review-runner` (review) are already running.
+6. **Proof run**: covered in step 6 of this guide.
+
+## 3. Create the project
+
+Choose **Create project** in the checklist, or the **+** button on a workspace
+row in the Explorer (tooltip "Create project in this workspace"). The
+**Create a project** dialog has these parts:
+
+- **Repository setup**: **Use an existing repository**, or **Create a new
+  repository** on GitHub from a template.
+- **Identity**: workspace, **Display name**, **Short code** (2 to 6 uppercase
+  letters or digits, starting with a letter; task keys use it), and colour.
+- **Code location** (optional now): **Repository checkout path**, **Working
+  directory**, and **Repository URL**. For a project that runs on a runner
+  host, the URL is enough; the host resolves its own checkout.
+- **Default coding agent**: the CLI and model new tasks use.
+- **Execution location**: the **Execution runner** that runs this project's
+  coding tasks. Choose the runner host, `distributed-runner` in the one-box
+  stack. Do not keep **Local host**: the orchestrator does not run coding
+  tasks on its own host, and tasks would wait in **Ready**. Offline and
+  draining runners are listed but cannot be selected.
+
+![Create a project dialog with Identity, Code location, Default coding agent, and Execution location, where distributed-runner is selected as the execution runner](./images/your-first-task/create-project-dialog.png)
+
+Choose **Create project**. The project appears on the board immediately; no
+restart is needed. Details and the API form: [onboard-a-project.md](./onboard-a-project.md).
+
+## 4. Add `.agent-studio/project.yml`
+
+Studio merges a delivery only when a check verified it, or when the repository
+declares on purpose that it has none. Until the repository has
+`.agent-studio/project.yml`, or a root `.sln`/`.csproj` or `package.json`
+scripts from which commands can be derived, Project Settings shows **No verify
+commands defined** with the badge **Merges refused** and a generated example
+for the repository's stack.
+
+![Project Settings notice No verify commands defined, Merges refused, with a generated project.yml example](./images/your-first-task/project-yml-missing.png)
+
+Commit the file and an executable prepare script to the integration branch of
+the product repository, for example for a Node repository:
+
+```yaml
+schemaVersion: 1
+stack: [node]
+commands:
+  prepare: .agent-studio/prepare
+  build:
+    - npm run build
+  test:
+    - npm test
+  lint: []
+```
+
+```sh
+#!/bin/sh
+set -eu
+npm ci
+```
+
+```sh
+git add .agent-studio/project.yml .agent-studio/prepare
+git update-index --chmod=+x .agent-studio/prepare
+git commit -m "chore: add Agent Studio project definition"
+```
+
+A repository without checks declares that with empty `build`, `test` and
+`lint` lists; the gate then records **No build/test defined** and merges.
+The authoring rules and the smallest valid file are in
+[pipeline.md](../../system/domains/pipeline.md#minimal-repository-execution-definition-aow-15).
+
+**Test reports.** Review reruns each `test` command on the delivery and on the
+integration branch. Each command must print a summary that names at least one
+completed test, such as `dotnet test` (`Total tests: N`), Vitest or Jest
+(`Tests N passed`), or TAP output from `node --test` (`# tests N`). A test
+command that exits without such a report is retried once and then settles as
+`ReviewInfra/TestReportUnavailable` (or `BaselineUnavailable` for the
+integration branch), so the card does not integrate. Do not list a command
+that runs zero tests; leave `test` empty instead. Details:
+[review.md](../../system/domains/review.md) ("Missing test reports").
+
+## 5. Set pickup mode to Auto
+
+Open the project's **Project Settings**. The **Execution location** card holds
+two independent controls:
+
+- **Pickup mode**: **Auto** ("Ready tasks are offered automatically."),
+  **Manual** (only explicit starts), or **Paused** (holds pickup and keeps the
+  location). Choose **Auto**.
+- **Execution location**: the host, the same choice as in the dialog. Change
+  it here if the project still says **Local**.
+
+If the project still runs on **Local** with **Auto**, the card warns "Local
+coding is disabled on this orchestrator. Ready coding tasks will wait until
+this project is routed to a remote runner." Select the runner host to clear
+it. **Try it** (**Start probe**) checks the code channel, develop branch,
+toolchain, and a no-op run on the selected host.
+
+![Execution location card with Pickup mode Auto selected and the Local coding is disabled warning for a project still on the local host](./images/your-first-task/execution-location-auto.png)
+
+## 6. Queue the first task
+
+Two ways, both small and checkable:
+
+- **Proof run** in the checklist: tick "This project is a disposable demo
+  repository." and choose **Create sample card**. It queues "First-run proof:
+  add a project overview" in **Ready**, and the checklist follows it through
+  coding, review, and integration. The button is enabled only after the
+  other five steps are verified.
+- **Add task** on the board or in the project tab, with a prompt such as:
+
+  > Title: `docs: add Project Overview doc`
+  >
+  > ```
+  > Read the repository's existing README and top-level folders to understand
+  > what this project is. Write a short overview at docs/project-overview.md
+  > covering:
+  > - what the project does (1 paragraph)
+  > - the main folders and what lives in each
+  > - how to run it locally (commands only, no setup theory)
+  >
+  > Keep it under 80 lines. End your reply with [[TASK_DONE]].
+  > ```
+  >
+  > Lane: **Ready** · CLI: the one you signed in on the host
+
+Tasks that look small but tell you nothing:
 
 | Don't queue | Why |
 |---|---|
-| `was-ist-1-plus-1` / single-line answers | The agent answers in chat and exits without touching a file. No diff, no commit, no real signal that the loop works. |
-| "Refactor module X" without a brief | Open-ended scope; agent flails, the run is long, the failure mode is unclear. |
-| "Run all tests and report" | The agent doesn't know the test runner's quirks on day one; the run produces a noisy log without exercising the write path. |
-| Anything that requires non-trivial repo conventions | Day-one tasks should not double as onboarding for the agent. Pick something that works from a cold read of the README. |
+| Single-line questions such as "what is 1 + 1" | The agent answers and exits without a file change. No diff, no commit, no signal. |
+| "Refactor module X" without a brief | Open scope; the run is long and the failure mode unclear. |
+| "Run all tests and report" | Exercises no write path and depends on test quirks the agent does not know yet. |
+| Anything that needs unwritten repository conventions | Day-one tasks should work from a cold read of the README. |
 
-## Where to watch
+## 7. Watch it run
 
-- **Board view** (`http://localhost:4010`) shows the card moving lanes. Drag-and-drop is optimistic with a snapshot-revert path.
-- **Detail panel** (click the card): prompt, status, live activity log with tool-call ticker, live `git diff` once the agent starts writing.
-- **Run timeline**: one card per CLI invocation between user inputs. Useful when a job has been continued multiple times.
-- **`logs/cli-output.log`** inside the job folder: the raw CLI stdout/stderr buffer. Look here when the UI parser drops something you saw the model say.
+The board shows the card moving **Ready -> In Progress -> Post Processing ->
+Human review**:
+
+- **Ready**: with pickup mode **Auto**, the selected host claims the card.
+- **In Progress**: the Activity Log streams the CLI's tool calls; the detail
+  panel shows a live `git diff` once the agent writes.
+- **Post Processing**: the build and test gate runs the `project.yml`
+  commands, and review runs on the review host.
+- **Human review**: waiting for your decision. A card that needs a decision
+  earlier lands in **Escalated** instead.
+
+If the card stays in **Ready**, check the pickup mode and execution location
+(step 5) and the checklist's provider step.
+
+## 8. Review and Accept
+
+Open the card in **Human review**. The **Result** tab shows the run summary
+and the review grade; **Code Review** and **Evidence** show the diff and the
+review evidence. The header holds the lane action:
+
+- **Accept** moves the card to **Accepted**. Until the delivery is integrated
+  into the integration branch, the button reads **Await integration** and is
+  disabled.
+- The **More task actions** menu (**⋯**) offers **Send back to Ready (re-do)**
+  and **Send to Backlog**.
+
+![Task detail of a card in Human review with the Result tab open and the Accept action at the right of the header](./images/your-first-task/human-review-accept.png)
+
+The screenshot's card was placed in **Human review** by the test, so it also
+carries an operator-decision banner and no review grade. A card that went
+through a real run shows its review result in the same places.
+
+When the overview document is in the integration branch and the card is in
+**Accepted** (or the checklist shows the proof run as **Verified**), the
+installation works end to end. From there, queue real work and leave pickup
+on **Auto**.
 
 ## Creating tasks programmatically
 
-When you need to script task creation (bulk seed, follow-up batches, triage scripts), use the Task API rather than the create dialog. The full contract, the `watchPath` quirk, the `X-Client-Id` header, and ready-to-use Node templates live in [../../.agents/skills/task-api/SKILL.md](../../../.agents/skills/task-api/SKILL.md).
+To script task creation (bulk seeds, follow-up batches, triage), use the Task
+API instead of the dialog. Read
+[the Task API skill](../../../.agents/skills/task-api/SKILL.md) first. It covers
+the operator token file for a networked installation, project identity (send
+the short code or `PROJ-NNN` id in the `project` field rather than a raw
+`watchPath`), and ready-to-use Node templates. Keep `agent` and `cliType` on
+the same real CLI value (`claude`, `codex`, `copilot`, or `gemini`).
 
-A minimal create looks like:
+If something goes sideways, check [troubleshooting.md](./troubleshooting.md)
+before opening a bug.
 
-```js
-// scripts ship in .agents/skills/task-api/scripts/
-const watchPaths = await fetch('http://127.0.0.1:5030/api/watch-paths').then(r => r.json());
-const target = watchPaths.find(w => w.name === 'Lotta Dashboard');
+## Refresh the screenshots
 
-await fetch('http://127.0.0.1:5030/api/tasks', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json', 'X-Client-Id': 'local-default' },
-  body: JSON.stringify({
-    watchPath: target.path,   // resolved job-folder root, NOT rootPath
-    title: 'docs: add Project Overview doc',
-    promptMarkdown: '...',
-    agent: 'claude',
-    cliType: 'claude',
-    targetState: '2-ready',
-  }),
-});
+The images in `images/your-first-task/` come from the isolated Playwright
+stack. The runner list in the dialog is the only stubbed response, because
+that stack has no runner host:
+
+```sh
+PW_DOC_SCREENSHOTS=1 npm --prefix frontend run e2e -- e2e/settings/your-first-task-guide.spec.ts
 ```
-
-The Task API skill is **mandatory** before any scripted board mutation; the `watchPath` vs. `rootPath` distinction trips up every new operator at least once. Keep `agent` and `cliType` on the same real CLI value (`claude`, `codex`, `copilot`, or `gemini`).
-
-## What "the loop works" actually means
-
-If you can queue the Project Overview task, watch it pass through `2-ready -> 3-progress -> 4-auto-review -> 5-human-review`, and read the resulting `docs/project-overview.md` in the diff pane, the install is healthy. From there, scale up: queue real features, set `auto-continuous`, walk away.
-
-If something goes sideways - the card pauses, two cards end up in `3-progress`, the counters look wrong, the agent emits only sandbox errors - check [troubleshooting.md](./troubleshooting.md) before opening a bug.

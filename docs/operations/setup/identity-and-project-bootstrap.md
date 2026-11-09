@@ -49,7 +49,8 @@ provide host, credential, merge, or promotion access.
    `%ProgramData%\AgentOrchestrator` with restricted host permissions.
 2. While no owner exists the server arms that code. Read it over the
    administration channel only. For Compose, use
-   `docker compose exec task-server cat /run/agent-studio-secrets/owner_bootstrap_code`.
+   `docker compose exec task-server cat /run/agent-studio-secrets/owner_bootstrap_code`
+   (`task-server-dev` for the source-built stack).
    On a native Linux host, read the file directly as the installation
    administrator. Do not paste it into task text or logs.
 3. Sign in through the Studio edge and call

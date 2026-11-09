@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
 import { DialogComponent } from '../../../../components/dialog/dialog.component';
@@ -86,17 +86,11 @@ export class OnboardProjectDialogComponent {
   constructor() {
     effect(() => {
       if (!this.manager.onboardProjectOpen()) return;
-      this.reset(this.manager.onboardWorkspaceId() ?? '');
-      this.tasks.getRegistryWorkspaces({ includeArchived: true }).subscribe({
-        next: (list) => {
-          this.registryWorkspaces.set(list ?? []);
-          if (!this.workspaceId() && list?.length) this.workspaceId.set(list[0].id);
-        },
-        error: () => this.registryWorkspaces.set([]),
-      });
-      this.catalog.ensure('claude').subscribe({ error: () => void 0 });
-      this.hostRegistry.ensureLoaded();
-      queueMicrotask(() => this.form()?.focusDisplayName());
+      const workspaceId = this.manager.onboardWorkspaceId() ?? '';
+      // Opening reads and writes other signals (the host registry reloads its
+      // own host list). Tracking them re-ran this effect on every host load and
+      // never rendered the dialog.
+      untracked(() => this.open(workspaceId));
     });
     effect(() => {
       const cli = this.cliDefault();
@@ -104,6 +98,20 @@ export class OnboardProjectDialogComponent {
       const first = this.catalog.modelsFor(cli)[0]?.id ?? '';
       if (!this.modelDefault()) this.modelDefault.set(first);
     });
+  }
+
+  private open(workspaceId: string): void {
+    this.reset(workspaceId);
+    this.tasks.getRegistryWorkspaces({ includeArchived: true }).subscribe({
+      next: (list) => {
+        this.registryWorkspaces.set(list ?? []);
+        if (!this.workspaceId() && list?.length) this.workspaceId.set(list[0].id);
+      },
+      error: () => this.registryWorkspaces.set([]),
+    });
+    this.catalog.ensure('claude').subscribe({ error: () => void 0 });
+    this.hostRegistry.ensureLoaded();
+    queueMicrotask(() => this.form()?.focusDisplayName());
   }
 
   onCancel(): void {

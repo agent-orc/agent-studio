@@ -156,6 +156,13 @@ export class GitPaneService implements OnDestroy {
   readonly provenanceLoaded = signal(false);
 
   /**
+   * True only while a provenance request for the open job is in flight. A
+   * hidden git pane defers that request, so waiting on `provenanceLoaded`
+   * there kept "Accept" disabled until the pane was opened (AGT-3625).
+   */
+  readonly provenanceLoading = signal(false);
+
+  /**
    * Ordered chain of commits attributed to this task (oldest -&gt; newest).
    * Mirrors <c>TaskInfo.commits</c>; surfaces an in-memory list so the
    * git-pane can render a multi-commit strip and let the user pick which
@@ -292,6 +299,7 @@ export class GitPaneService implements OnDestroy {
     this.generatingMsg.set(false);
     this.provenance.set(null);
     this.provenanceLoaded.set(false);
+    this.provenanceLoading.set(false);
     this.codeReviews.set([]);
     this.clearDiffCache();
     this.previewCache.clear();
@@ -335,12 +343,13 @@ export class GitPaneService implements OnDestroy {
   loadProvenance(): void {
     const info = this.currentJob;
     if (!info) return;
+    this.provenanceLoading.set(true);
     this.jobService.getTaskProvenance(info.id, info.watchPath).subscribe({
       // Flip the resolved flag on both settle paths: a failed load still means
       // "we are no longer waiting". Acceptance still reads target membership
       // only from the task's computed integration field.
-      next: (view) => { this.provenance.set(view); this.provenanceLoaded.set(true); },
-      error: () => { this.provenance.set(null); this.provenanceLoaded.set(true); },
+      next: (view) => { this.provenance.set(view); this.provenanceLoaded.set(true); this.provenanceLoading.set(false); },
+      error: () => { this.provenance.set(null); this.provenanceLoaded.set(true); this.provenanceLoading.set(false); },
     });
   }
 

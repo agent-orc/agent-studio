@@ -13,6 +13,9 @@ import type { CreateRegistryProjectRequest } from '../../../../models/task.model
 describe('OnboardProjectDialogComponent', () => {
   async function setup() {
     let submitted: CreateRegistryProjectRequest | undefined;
+    // Mirrors RemoteHostsService.reload(): it reads and replaces its own host list.
+    const hosts = signal<{ id: string }[]>([]);
+    const ensureLoaded = vi.fn(() => hosts.set(hosts().map(host => ({ ...host }))));
     const manager = {
       onboardProjectOpen: signal(false), onboardWorkspaceId: signal<string | null>(null),
       closeProjectOnboard: vi.fn(), refreshAfterProjectCreate: vi.fn(),
@@ -31,7 +34,7 @@ describe('OnboardProjectDialogComponent', () => {
         } },
         { provide: NotificationService, useValue: { success: vi.fn(), error: vi.fn() } },
         { provide: CliCatalogStore, useValue: { ensure: () => of(null), modelsFor: () => [] } },
-        { provide: RemoteHostsService, useValue: { ensureLoaded: vi.fn(), hosts: signal([]) } },
+        { provide: RemoteHostsService, useValue: { ensureLoaded, hosts } },
       ],
     }).overrideComponent(OnboardProjectDialogComponent, { set: { template: '' } }).compileComponents();
     const component = TestBed.createComponent(OnboardProjectDialogComponent).componentInstance;
@@ -41,7 +44,7 @@ describe('OnboardProjectDialogComponent', () => {
     component.workspaceId.set('ws-default');
     component.displayName.set('Fresh Site');
     component.shortCode.set('FS');
-    return { component, submitted: () => submitted };
+    return { component, manager, ensureLoaded, submitted: () => submitted };
   }
 
   it('submits an existing repository without provisioning', async () => {
@@ -71,5 +74,13 @@ describe('OnboardProjectDialogComponent', () => {
     });
     expect(submitted()?.repositoryPath).toBeUndefined();
     expect(submitted()?.repositoryUrl).toBeUndefined();
+  });
+
+  it('loads the host registry once when the dialog opens', async () => {
+    const { manager, ensureLoaded } = await setup();
+    manager.onboardWorkspaceId.set('ws-default');
+    manager.onboardProjectOpen.set(true);
+    for (let pass = 0; pass < 5; pass++) TestBed.tick();
+    expect(ensureLoaded).toHaveBeenCalledTimes(1);
   });
 });

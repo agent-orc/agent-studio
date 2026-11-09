@@ -37,18 +37,24 @@
 
 ## Install
 
+No GitHub Release has been published yet, so the release installer
+(`releases/latest/download/install.sh`) returns 404 for now. Until the first
+release, the recommended path for one machine is the source-built one-box
+stack. It needs Docker Engine with Compose v2 (or Docker Desktop) that your
+user can reach without `sudo`, Git, and about 8 GB of disk:
+
 ```bash
-curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh | sh
+git clone https://github.com/agent-orc/agent-studio.git && cd agent-studio
+scripts/compose-distributed-bootstrap.sh
+AGENT_STUDIO_VERSION="$(cat VERSION)" docker compose --profile dev up --build --wait task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev web-dev agent-host-distributed-dev agent-host-review-distributed-dev
 ```
 
-The Linux script checks the distribution and architecture, verifies the setup
-executable against `SHA256SUMS`, then offers a one-box Docker or native systemd
-install, or an agent host that joins an existing Studio. Native setup serves
-the UI locally and guides provider login and GitHub access for the execution
-user. Windows users download `agent-studio-setup.exe` and verify it against
-`SHA256SUMS`; its native package includes the browser UI and local runner.
-See the [install guide](./docs/operations/setup/install.md) for Windows commands,
-the native and connector profiles, unattended answers, update, rollback, uninstall, and remote topologies.
+Open `http://127.0.0.1:4011`, sign in with the owner code from
+`docker compose exec task-server-dev cat /run/agent-studio-secrets/owner_bootstrap_code`,
+and follow [your first task](./docs/operations/setup/your-first-task.md).
+The [setup guide](./docs/operations/setup/README.md#choose-your-path) names
+the recommended path for every other situation (no Docker, extra execution
+hosts, contributing).
 
 The one-box stack starts the Task Server, Engine, Studio BFF, compatibility
 API, web UI, and coding and review hosts. It creates restricted principal
@@ -57,13 +63,19 @@ Coding tasks additionally need provider and Git credentials mounted into the
 agent host. The default UI listens only on loopback; LAN exposure uses the
 optional HTTPS edge and an exact origin allowlist.
 
-To run the same one-box stack from a source checkout (interim source-built
-path), bootstrap once and start the dev profile:
+Once a release is published, the Linux script
 
 ```bash
-scripts/compose-distributed-bootstrap.sh
-docker compose --profile dev up --build --wait task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev web-dev agent-host-distributed-dev agent-host-review-distributed-dev
+curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh | sh
 ```
+
+checks the distribution and architecture, verifies the setup executable
+against `SHA256SUMS`, then offers the same one-box stack from pinned images,
+a native systemd install (root), or an agent host that joins an existing
+Studio. Windows users download `agent-studio-setup.exe` and verify it against
+`SHA256SUMS`. See the [install guide](./docs/operations/setup/install.md) for
+Windows commands, the native and connector profiles, unattended answers,
+update, rollback, uninstall, and remote topologies.
 
 See the [Docker operations guide](./docs/operations/setup/docker.md) for
 updates, backups, product-managed credential rotation, credential mounts, and
