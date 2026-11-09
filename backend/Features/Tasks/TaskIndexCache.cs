@@ -55,9 +55,15 @@ public sealed class TaskIndexCache
 {
     /// <summary>Coalescing window for the bulk-changed push after a background publish.</summary>
     internal static readonly TimeSpan BulkChangedDebounce = TimeSpan.FromMilliseconds(250);
+    /// <summary>
+    /// Default wait before a background refresh scans, so mutation readers
+    /// arriving together share one scan. <c>TaskIndexCache:RefreshCoalesceMilliseconds</c>
+    /// overrides it; a fixture that drives one reader at a time sets 0.
+    /// </summary>
     internal static readonly TimeSpan RefreshCoalesceWindow = TimeSpan.FromMilliseconds(200);
 
     private readonly TimeSpan _safetyTtl;
+    private readonly TimeSpan _refreshCoalesceWindow;
     private readonly TimeSpan _reconciliationInterval;
     private readonly TimeProvider _time;
     private readonly Func<List<TaskInfo>> _scanAllJobsRaw;
@@ -221,6 +227,9 @@ public sealed class TaskIndexCache
         _safetyTtl = incremental ? TimeSpan.MaxValue : TimeSpan.FromSeconds(Math.Max(1, ttlSec));
         var reconcileSec = int.TryParse(config["TaskIndexCache:ReconciliationSeconds"], out var r) ? r : 900;
         _reconciliationInterval = TimeSpan.FromSeconds(Math.Max(1, reconcileSec));
+        _refreshCoalesceWindow = int.TryParse(config["TaskIndexCache:RefreshCoalesceMilliseconds"], out var coalesceMs)
+            ? TimeSpan.FromMilliseconds(Math.Max(0, coalesceMs))
+            : RefreshCoalesceWindow;
     }
 
     /// <summary>The refresh in flight, if any (tests wait on it).</summary>
@@ -782,6 +791,20 @@ public sealed class TaskIndexCache
     /// reference edges. Replace that card in the published board generation
     /// after publishing the core fact, without a workspace disk walk.
     /// </summary>
+    public void PublishRoutingFromFolder(string folder, Func<TaskInfo?> read)
+    {
+        lock (_corePublicationLock)
+        {
+            var info = read();
+            if (info is null)
+            {
+                Invalidate(InvalidationSource.Mutation, changedPath: Path.Combine(folder, "task.json"));
+                return;
+            }
+            PublishRoutingMutation(info);
+        }
+    }
+
     public void PublishRoutingMutation(TaskInfo info)
     {
         lock (_corePublicationLock)
@@ -1759,7 +1782,7 @@ public sealed class TaskIndexCache
 
         void StartWorker() => _ = Task.Factory.StartNew(() =>
         {
-            Thread.Sleep(RefreshCoalesceWindow);
+            if (_refreshCoalesceWindow > TimeSpan.Zero) Thread.Sleep(_refreshCoalesceWindow);
             RunBackgroundRefresh(completion);
         }, CancellationToken.None, TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach,
             TaskScheduler.Default);

@@ -35,8 +35,9 @@ for cancelled stacked batches; if the cancelled gate has no completion fact,
 the run start to cancellation interval is the estimate. These are spent host
 minutes, not a projected delay saved.
 
-To pilot, set the project's batch gate `stacking` field to `"1"` through the
-batch gate settings API and keep at least two gate slots. During the first
+To pilot, set the project's batch gate `stacking` field to `"1"` (Project
+settings, Batch verification, Stacked batches: One successor, or the batch gate
+settings API) and keep at least two gate slots. During the first
 hours, watch those four counters, the batch predecessor links, slot occupancy,
 stale-base cancellations, and published cards per hour. Set `stacking` back
 to `"off"` to stop forming speculative successors; already formed or running
@@ -134,6 +135,32 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   reports `baseMoves` by new base SHA and `baseMoveTotals`, each counting formed
   batches kept and abandoned. A replay probe infrastructure failure pauses
   the batch rather than classifying a member as conflicting.
+- AGT-3562: one flight per project starts, so the start order decides who
+  waits (`BatchGateStartPolicy`). A stacked successor starts first. Within
+  its maximum wait (`maximumWaitMinutes`, default 45, the planning deadline)
+  the larger formed batch starts first, then the older one. A batch past its
+  maximum wait starts before younger ones, oldest first, regardless of size.
+  On 5 November 2026 batches 24991efe (12:59 UTC) and baddb7f9 (15:11 UTC)
+  stayed formed for hours while later, larger batches ran.
+- AGT-3562: a flight can wait on the project reservation before it acquires
+  its coordinator lease, so lease expiry cannot free its project slot. A
+  flight that has not claimed its lease within `flightLeaseDeadlineMinutes`
+  (default 40, above the 27-minute integration gate lease cap) is cancelled
+  and loses the slot even if it ignores the cancellation. The batch stays
+  formed with the phase reason `flight cancelled: no coordinator lease within
+  <n> minutes`, each member's timeline records
+  `batch-flight-lease-deadline`, and the next formed batch starts first. The
+  cancelled batch is retried after it. On 2 November 2026 only an API
+  restart freed such a slot.
+- AGT-3562: a flight that completes or fails (its batch ran a gate, or left
+  the formed phase other than by retirement before replay) starts the next
+  eligible formed batch of its project at once, instead of on the next hosted
+  tick. A publication moves the base of that next batch, so when a flight
+  started this way re-forms its batch on the moved base, the successor also
+  starts at once. A flight that ends with its batch still formed, for example
+  without a lease, or that a tick started and that retired before replay,
+  leaves the start to the next tick, so a refused start cannot loop. A
+  re-formed batch keeps the wait of the batch it replaced.
 - Each card's paths and changed lines come from its result SHA, measured
   from the merge base with `refs/remotes/origin/<branch>`, the ref the
   planning tick fetches. A card whose diff cannot be computed scores at the
@@ -299,6 +326,7 @@ Enable one project with `scope: code`, `planner: look-ahead`,
 `minimumSize: 2`, `maximumSize: 6`, `deadlineMinutes: 20`,
 `lookAheadMinutes: 45`, `riskPolicy: balanced`, `overlap: adjacent`,
 `reviewTestLevel: work-package`, `gateTimeoutMinutes: 150`, and
-`advisor.mode: advise`. Roll back with `scope: documentation` or
+`advisor.mode: advise`. `maximumWaitMinutes: 45` and
+`flightLeaseDeadlineMinutes: 40` are the defaults. Roll back with `scope: documentation` or
 `enabled: false`; pending members use the per-task gate, which tests their
 immutable result SHA merged onto the current integration tip (AGT-3434). The setting does not authorize a project-wide rollout.

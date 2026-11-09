@@ -148,6 +148,19 @@ export function buildLaneGroups(grouped: GroupedJobs, dragActive: boolean): Boar
   ];
 }
 
+/**
+ * Lanes a group count sums (AGT-3590). Archive is terminal and pages its own
+ * history, so it stays out, as in the Explorer lane metrics (AGT-2676).
+ */
+export function countedLanes(group: BoardLaneGroup): BoardLane[] {
+  return group.lanes.filter((lane) => lane.state !== TaskState.Archive);
+}
+
+/** Cards a lane group holds: the sum of its counted lane counts (R3). */
+export function laneGroupCount(group: BoardLaneGroup): number {
+  return countedLanes(group).reduce((sum, lane) => sum + lane.jobs.length, 0);
+}
+
 const EMPTY_GROUPED: GroupedJobs = {
   backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [],
   codeNotComplete: [], autoReview: [], humanReview: [], escalated: [], review: [], completed: [], archive: [],

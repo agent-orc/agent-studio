@@ -27,6 +27,7 @@ public static class EndpointMapping
         var mapsLocalV1 = MapsLocalV1(app.Configuration);
         if (!mapsLocalV1) app.MapTaskServerPlaneProxy();
         app.MapAccessSecurityEndpoints();
+        app.MapSecurityPostureEndpoints();
         app.MapHostCertificateEndpoints();
         app.MapHostOperationEndpoints();
         app.MapQualityStudioEndpoints();
@@ -75,6 +76,7 @@ public static class EndpointMapping
         app.MapWatcherEndpoints();
         app.MapOperatorEndpoints();
         app.MapOperatorCapacityEndpoints();
+        app.MapOperatorBackupEndpoints();
         app.MapOperatorLogEndpoints();
         app.MapDeployPreflightEndpoints();
         app.MapOrchestratorSessionEndpoints();

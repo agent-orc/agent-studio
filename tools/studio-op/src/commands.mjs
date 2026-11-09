@@ -345,6 +345,40 @@ export const COMMANDS = {
     },
   },
 
+  backups: {
+    summary: 'Installation backups: last good backup, age, restore verification, off-host copy and warnings.',
+    spec: {},
+    async run(ctx) {
+      const backups = await ctx.client.request('GET', '/api/operator/backups');
+      const good = backups.lastGood;
+      return { data: backups, text: lines(
+        `backups ${backups.state}${backups.running ? ' (running)' : ''}`,
+        good ? `last good ${good.id} at ${good.createdAt}, ${backups.lastGoodAgeHours} h old, ${good.sizeBytes} bytes`
+          : 'last good: none',
+        backups.lastVerification
+          ? `restore verification ${backups.lastVerification.outcome} at ${backups.lastVerification.at}`
+          : 'restore verification: not run yet',
+        `off-host ${backups.offHost?.kind ?? 'none'}: ${backups.offHost?.state ?? 'unknown'}`,
+        (backups.warnings ?? []).map(warning => `warning ${warning.code}: ${warning.message}`)) };
+    },
+  },
+
+  security: {
+    summary: 'The installation security view, read only: entries ranked by severity, what needs action soon, and their facts.',
+    spec: { soon: 'boolean' },
+    async run(ctx, _positionals, options) {
+      const view = await ctx.client.request('GET', '/api/security/posture');
+      const summary = view.summary ?? {};
+      const shown = (view.findings ?? []).filter(finding => !options.soon || finding.actionSoon);
+      // --soon narrows the findings in both outputs; the summary keeps the installation-wide counts.
+      return { data: { ...view, findings: shown, soonOnly: Boolean(options.soon) }, text: lines(
+        `Security: ${summary.total ?? 0} entries (${summary.critical ?? 0} critical, ${summary.high ?? 0} high, ${summary.medium ?? 0} medium, ${summary.low ?? 0} low, ${summary.info ?? 0} info); ${summary.actionSoon ?? 0} need action soon.`,
+        shown.length === 0 ? (options.soon ? 'Nothing needs action soon.' : 'No security entries.') : null,
+        shown.map(finding => `#${finding.rank} ${finding.severity} ${finding.score} ${finding.area}: ${finding.title}${finding.actionSoon ? ' [action soon]' : ''}${finding.dueAt ? ` (due ${finding.dueAt})` : ''}`),
+        'The Owner changes credentials, second factors and the kill switch; the view only reads.') };
+    },
+  },
+
   routing: {
     summary: 'Show central model selection, or change a review step model for every project in scope (set-step).',
     spec: {},

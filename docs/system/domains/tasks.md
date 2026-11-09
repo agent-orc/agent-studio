@@ -45,6 +45,16 @@ the matching GET supplies the Deck status panel.
 `task.json` once with all related fields, then publish that card into the
 resident core and board generations. `POST /api/tasks` publishes the new card
 after its task file, derived layout index, and timeline have been written.
+Routing writes hold the card's file lock through publication and use the
+latest published card under that lock before deriving related fields. Publication reads
+the written card under the index publication lock. This keeps concurrent
+routing writes in durable order across board, core, and detail readers; the
+new board generation also changes board validators and deploy projections.
+Git projections retain their snapshot because routing fields do not enter the
+Git input signature.
+On a cold host, the background Git indexer awaits the first task publication
+asynchronously before reading clean task partitions, so a held startup scan
+does not consume a worker in the index refresh gate.
 These paths do not invalidate the whole task index for a routine API write.
 The watcher ignores a `task.json` event when its file stamp matches the
 version already published by the API; an external edit still invalidates the
@@ -53,7 +63,8 @@ counter, and derived layout index.
 
 The `task-operation-timing` line for these four routes carries a `breakdown`
 JSON object. It reports request wall time, `mutation.lookup`,
-`mutation.write`, `mutation.publish`, and the creation-only `mutation.lock`, `mutation.key`,
+`mutation.lock`, `mutation.read-current`, `mutation.write`, `mutation.publish`,
+and the creation-only `mutation.key`,
 `mutation.index`, and `mutation.timeline` spans, plus workspace scans and Git
 process count. The spans are stage costs; their sum can be below wall time
 because validation and response coordination are outside them.
@@ -1310,6 +1321,10 @@ site or derived from the lane pair for a human actor) and `details.causeDetail`
 when one was supplied; otherwise it falls back to `cause: causeDetail` (or
 whichever of the two is present) so the marker's `reason` field is never empty
 even when the lane-transition site only passed the taxonomy fields (AGT-2838).
+The marker also records the resolved cause and its qualifier as `cause` and
+`causeDetail`, so the park copy says who parked the card (for example the
+acceptance audit) instead of presenting the latest run as the parking run, and
+states the reason once (AGT-3586).
 
 A park whose run ended without a terminal sentinel carries its reason through the
 move, so the marker is never written with an empty `reason` and its `blockerType`
@@ -2264,8 +2279,10 @@ disk for runner state.
   shared body build pins the same generation itself, so the tag always names the
   generation the body came from.
 - **A dirty index refreshes in the background.** A dirty index
-  starts one single-flight background refresh after a 200 ms coalescing window.
-  It inherits neither the request trace nor the pin, and the read answers from
+  starts one single-flight background refresh after a 200 ms coalescing window
+  (`TaskIndexCache:RefreshCoalesceMilliseconds`; the batch gate pilot test
+  fixture sets 0 because each of its tests drives one reader at a time,
+  AGT-3566). It inherits neither the request trace nor the pin, and the read answers from
   the last snapshot. A cold start answers from the persisted board (below);
   only a first start without one waits, asynchronously and cancelled with
   the request. A failed background refresh keeps the last

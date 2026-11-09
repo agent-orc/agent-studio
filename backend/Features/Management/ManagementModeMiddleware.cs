@@ -18,7 +18,8 @@ public sealed class ManagementModeMiddleware(RequestDelegate next)
         "/api/runner/completion",
     ];
 
-    public async Task InvokeAsync(HttpContext context, ManagementService management)
+    public async Task InvokeAsync(HttpContext context, ManagementService management, BackupWritePause backupPause,
+        StudioBackupService backups)
     {
         var method = context.Request.Method;
         if (HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method))
@@ -29,13 +30,40 @@ public sealed class ManagementModeMiddleware(RequestDelegate next)
 
         var path = Normalize(context.Request.Path.Value);
         var state = management.CurrentMaintenance();
+        var managementPath = path.StartsWith("/api/v1/management", StringComparison.OrdinalIgnoreCase);
+        // Application telemetry writes only the telemetry store, never task state.
+        var telemetryPath = path.StartsWith("/api/telemetry/otlp/", StringComparison.OrdinalIgnoreCase);
         if (state.Mode == "normal"
-            || path.StartsWith("/api/v1/management", StringComparison.OrdinalIgnoreCase)
+            || managementPath
             || path.StartsWith("/api/auth", StringComparison.OrdinalIgnoreCase)
             || DrainSafeWrites.Contains(path, StringComparer.OrdinalIgnoreCase)
-            // Application telemetry writes only the telemetry store, never task state.
-            || path.StartsWith("/api/telemetry/otlp/", StringComparison.OrdinalIgnoreCase))
+            || telemetryPath)
         {
+            // Runner lease and evidence writes keep their deadlines, and SignalR
+            // negotiation writes nothing; the backup reads their files through
+            // its stable-read path instead.
+            if (managementPath || telemetryPath
+                || DrainSafeWrites.Contains(path, StringComparer.OrdinalIgnoreCase)
+                || path.StartsWith("/hubs/", StringComparison.OrdinalIgnoreCase))
+            {
+                await next(context);
+                return;
+            }
+            // AGT-3574: a backup reading the stores holds ordinary mutations
+            // for a bounded time, so the archive is one point in time.
+            using var admission = await backupPause.EnterAsync(backups.MaxRequestHold, context.RequestAborted);
+            if (admission is null)
+            {
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                context.Response.ContentType = "application/json";
+                context.Response.Headers.RetryAfter = "30";
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    error = "backup-in-progress",
+                    message = "A backup is reading the stores. Retry the change in a moment.",
+                });
+                return;
+            }
             await next(context);
             return;
         }

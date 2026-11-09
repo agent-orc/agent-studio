@@ -153,7 +153,8 @@ export class UndoController {
    * Convenience for same-lane reorders (e.g. Move-to-top). The caller
    * captures the lane's ordered job list BEFORE the action; the undo
    * replays that order via `/api/tasks/reorder` so the card returns to
-   * its original slot.
+   * its original slot. `paintOrder` is the whole lane to repaint when
+   * `prevOrder` covers only part of it (one project's queue in a mixed lane).
    */
   offerReorderRevert(params: {
     jobId: string;
@@ -162,6 +163,7 @@ export class UndoController {
     targetLaneLabel: string;
     prevOrder: { jobId: string; watchPath: string }[];
     laneState: string;
+    paintOrder?: { jobId: string; watchPath: string }[];
   }): void {
     this.offer({
       jobId: params.jobId,
@@ -169,7 +171,8 @@ export class UndoController {
       actionLabel: params.actionLabel,
       targetLaneLabel: params.targetLaneLabel,
       revert: () => {
-        const before = this.jobService.applyOptimisticReorder(params.laneState, params.prevOrder);
+        const before = this.jobService.applyOptimisticReorder(
+          params.laneState, params.paintOrder ?? params.prevOrder);
         this.jobService.beginOptimisticPersist();
         return new Observable<unknown>((subscriber) => {
           this.jobService.reorderJobs(params.prevOrder).subscribe({
