@@ -45,6 +45,7 @@ public sealed partial class AccessSecurityStore
     private readonly SemaphoreSlim _passwordHashSlots;
     private readonly SemaphoreSlim _returningClientHashSlot = new(1, 1);
     private readonly Func<string, string, bool> _verifyPassword;
+    private readonly Func<string, string> _hashPassword;
     private static readonly string DummyPasswordHash = PasswordSecretHasher.HashPassword(PasswordSecretHasher.RandomToken());
     private SecurityState? _state;
     private bool _lastSeenDirty;
@@ -55,12 +56,13 @@ public sealed partial class AccessSecurityStore
     }
 
     internal AccessSecurityStore(IConfiguration configuration, ILogger<AccessSecurityStore> logger,
-        TimeProvider? clock, Func<string, string, bool> verifyPassword)
+        TimeProvider? clock, Func<string, string, bool> verifyPassword, Func<string, string>? hashPassword = null)
     {
         _configuration = configuration;
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
         _verifyPassword = verifyPassword;
+        _hashPassword = hashPassword ?? PasswordSecretHasher.HashPassword;
         ControlPlaneAudit = new ControlPlaneAuditLog(SecurityFolder, _clock, logger);
         _passwordHashSlots = new SemaphoreSlim(Math.Clamp(
             configuration.GetValue("Security:LoginThrottle:MaxConcurrentHashes", Math.Max(2, Environment.ProcessorCount)),
@@ -108,7 +110,7 @@ public sealed partial class AccessSecurityStore
                 Username = NormalizeUsername(request.Username),
                 DisplayName = string.IsNullOrWhiteSpace(request.DisplayName) ? (request.Username ?? string.Empty).Trim() : request.DisplayName.Trim(),
                 Role = StudioRoles.Owner,
-                PasswordHash = PasswordSecretHasher.HashPassword(request.Password ?? string.Empty),
+                PasswordHash = _hashPassword(request.Password ?? string.Empty),
                 CreatedAt = now,
                 PasswordChangedAt = now
             };
@@ -613,7 +615,7 @@ public sealed partial class AccessSecurityStore
         {
             var matches = (request.CurrentPassword?.Length ?? 0) <= 128
                 && _verifyPassword(request.CurrentPassword ?? string.Empty, user.PasswordHash);
-            var newHash = matches ? PasswordSecretHasher.HashPassword(request.NewPassword ?? string.Empty) : null;
+            var newHash = matches ? _hashPassword(request.NewPassword ?? string.Empty) : null;
             lock (_gate)
             {
                 var state = StateLocked();
@@ -664,7 +666,7 @@ public sealed partial class AccessSecurityStore
             {
                 Id = "usr_" + Guid.NewGuid().ToString("N"), Username = username,
                 DisplayName = string.IsNullOrWhiteSpace(request.DisplayName) ? (request.Username ?? string.Empty).Trim() : request.DisplayName.Trim(), Role = request.Role,
-                Projects = NormalizeProjects(request.Projects), PasswordHash = PasswordSecretHasher.HashPassword(temporary),
+                Projects = NormalizeProjects(request.Projects), PasswordHash = _hashPassword(temporary),
                 MustChangePassword = true, CreatedAt = now, PasswordChangedAt = now
             };
             state.Users.Add(user);
@@ -691,7 +693,7 @@ public sealed partial class AccessSecurityStore
                 Id = "usr_" + Guid.NewGuid().ToString("N"), Username = username,
                 DisplayName = string.IsNullOrWhiteSpace(request.DisplayName) ? username : request.DisplayName.Trim(),
                 Role = request.Role, Projects = NormalizeProjects(request.Projects),
-                PasswordHash = PasswordSecretHasher.HashPassword(PasswordSecretHasher.RandomToken()),
+                PasswordHash = _hashPassword(PasswordSecretHasher.RandomToken()),
                 MustChangePassword = true, CreatedAt = now, PasswordChangedAt = now
             };
             var id = Guid.NewGuid().ToString("N");
@@ -725,7 +727,7 @@ public sealed partial class AccessSecurityStore
             ValidatePassword(request.NewPassword, user.Username);
             var updated = user with
             {
-                PasswordHash = PasswordSecretHasher.HashPassword(request.NewPassword),
+                PasswordHash = _hashPassword(request.NewPassword),
                 MustChangePassword = false, PasswordChangedAt = Now
             };
             state.Users[state.Users.IndexOf(user)] = updated;
@@ -792,7 +794,7 @@ public sealed partial class AccessSecurityStore
             var user = state.Users.FirstOrDefault(x => x.Id == id)
                 ?? throw new SecurityOperationException(404, "user-not-found", "User not found.");
             ValidatePassword(temporary, user.Username);
-            var updated = user with { PasswordHash = PasswordSecretHasher.HashPassword(temporary), PasswordChangedAt = Now, MustChangePassword = true };
+            var updated = user with { PasswordHash = _hashPassword(temporary), PasswordChangedAt = Now, MustChangePassword = true };
             state.Users[state.Users.IndexOf(user)] = updated;
             state.Sessions.RemoveAll(x => x.UserId == id);
             SaveLocked(state);

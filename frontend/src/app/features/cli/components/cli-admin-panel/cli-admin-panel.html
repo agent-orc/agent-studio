@@ -52,9 +52,9 @@
     </header>
 
     @if (rows().length === 0) {
-      <div class="cli-admin__empty">
-        No quota windows reported yet. Open the CLI Usage panel and
-        refresh to populate quota data.
+      <div class="cli-admin__empty" data-testid="cli-admin-caps-empty">
+        No quota windows reported yet. Open a usage entry in the footer to
+        check each subscription; its windows appear here once the CLI reports them.
       </div>
     }
 

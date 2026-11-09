@@ -48,3 +48,22 @@ The same seven specs also passed through the repository's isolated E2E stack wit
 | 3,000 | Warm | 1.845 s | 201 ms | 1,067 | 13.12 MiB |
 
 The 830-card 1.5-second paint target was **missed in the isolated-stack run** by 77 ms cold and 396 ms warm; the 3,000-card, DOM, heap, longest-task and lane-move targets were met. The lane-move median was 45.2 ms. The 20-card baseline also took substantially longer than the 830-card board in this run, indicating strong timing noise from the shared host. A reproducible idle-host pass, with a stable 20-card baseline, remains unverified.
+
+## Follow-up measurement, 9 November 2026
+
+The frontend-only mocked server, production build and Chrome for Testing 147 ran the same generated-board fixture with one Playwright worker. The API harness now rejects every unlisted request; its prior blanket `[]` fallback was removed. The complete large-board behavior spec passed with this strict fixture. Each measurement below is a median of three cold navigations in new contexts or three warm reloads, at 1280 × 800. The before and after `uptime` readings for the 830-card run were 30.90 and 37.02 one-minute load average on a 12-core host. Other builds were active, so this is **not the requested nearly idle confirmation**.
+
+| Cards | Cache | First board paint | Longest task | DOM nodes | Heap after GC |
+|---:|---|---:|---:|---:|---:|
+| 20 | Cold | 1.217 s | 232 ms | 1,575 | 10.24 MiB |
+| 20 | Warm | 1.322 s | 298 ms | 1,575 | 10.26 MiB |
+| 830 | Cold | 2.044 s | 409 ms | 1,067 | 9.94 MiB |
+| 830 | Warm | 1.791 s | 328 ms | 1,067 | 9.96 MiB |
+| 3,000 | Cold | 2.385 s | 406 ms | 1,067 | 11.43 MiB |
+| 3,000 | Warm | 1.555 s | 343 ms | 1,067 | 11.49 MiB |
+
+The 20 and 3,000-card control run followed immediately; its ending one-minute load average was 37.67. The 830-card raw samples ranged from 1.477 to 2.851 s cold and 1.245 to 1.810 s warm, showing material host noise. The 830-card median missed the 1.5 s target in both cache states; the other listed performance targets passed. A follow-up probe now records board response, script and layout durations to locate the remaining time if the target is still missed on a quieter host.
+
+The complete benchmark spec ran again after adding that profile probe. `uptime` read 45.80 before and 38.32 after, and 73.48 during the run. The 20-card first-paint median rose to 9.056 s cold and 6.691 s warm; 830 cards took 4.844 s cold and 4.615 s warm; 3,000 took 4.390 s cold and 4.359 s warm. The 830-card menu-move median was 111.2 ms. This run missed the paint and move targets, but even the 20-card control was slower than the 3,000-card board, so it does not isolate a board-size regression.
+
+For the 830-card cold samples, the local mock board response ended at 3.308–3.687 s, leaving 0.789–1.537 s until the first card paint. CDP recorded 1.284–1.699 s total script duration and 0.120–0.324 s layout duration by the sample point. The late response on a local server and the much slower 20-card control point to shared CPU contention as the dominant limit of this run. The probe does not attribute all script time to the board, and an idle-host confirmation remains open.

@@ -18,7 +18,7 @@ internal sealed class TaskSwitchTrace
         // the build and the payload serialisation.
         "snapshot", "filter", "git-freshness", "compose", "compose.review-queue",
         "compose.runtime", "compose.runner-status", "compose.cards", "compose.lease", "compose.identity", "body",
-        "mutation.lookup", "mutation.write", "mutation.publish", "mutation.lock", "mutation.key",
+        "mutation.lookup", "mutation.read-current", "mutation.write", "mutation.publish", "mutation.lock", "mutation.key",
         "mutation.index", "mutation.timeline"
     ];
     private readonly long _started = Stopwatch.GetTimestamp();

@@ -1,0 +1,25 @@
+<div class="batch-proven-red" data-testid="batch-proven-red">
+  @if (failures().length) {
+    <ul class="batch-proven-red__tests" aria-label="Failing tests">
+      @for (failure of failures(); track failure.testName) {
+        <li>
+          <code class="batch-proven-red__test" data-testid="batch-proven-red-test">{{ failure.testName }}</code>
+          @if (failure.errorExcerpt) { <pre class="batch-proven-red__excerpt" data-testid="batch-proven-red-excerpt">{{ failure.errorExcerpt }}</pre> }
+        </li>
+      }
+    </ul>
+  } @else {
+    <p>No failing test names were recorded for the run that proved it.</p>
+  }
+  <p class="batch-proven-red__evidence">
+    @if (finding().evidenceAvailable) {
+      <a [href]="evidenceUrl()" target="_blank" rel="noopener" data-testid="batch-proven-red-evidence">Open evidence</a>
+    } @else {
+      <span>Evidence file unavailable</span>
+    }
+    @if (finding().evidencePath) { <code data-testid="batch-proven-red-evidence-path">{{ finding().evidencePath }}</code> }
+  </p>
+  @if (finding().provingBatchId) {
+    <p class="batch-proven-red__run">Proved by batch {{ finding().provingBatchId }}@if (finding().provingRunId) {, run {{ finding().provingRunId }}}</p>
+  }
+</div>
