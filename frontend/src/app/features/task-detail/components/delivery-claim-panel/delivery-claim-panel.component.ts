@@ -66,6 +66,8 @@ export class DeliveryClaimPanelComponent {
 
   readonly job = input.required<TaskInfo>();
   readonly escalated = computed(() => this.job().state === TaskState.Escalated);
+  readonly settled = computed(() =>
+    this.job().state === TaskState.Completed || this.job().state === TaskState.Archive);
 
   readonly answer = signal<TaskDeliveryClaimAnswer | null>(null);
 

@@ -190,6 +190,8 @@ describe('DeliveryClaimPanelComponent', () => {
       .toContain('By human:operator · Delivery brief aaaaaaaaaaaa · Current brief bbbbbbbbbbbb');
     expect(host.querySelector('[data-testid="delivery-claim-panel"]')?.getAttribute('data-integration'))
       .toBe('not-integrated');
+    expect(host.querySelector('[data-testid="delivery-claim-panel"]')?.getAttribute('data-settled'))
+      .toBe('true');
   });
 
   it('falls back to the board projection when the lookup fails', async () => {
