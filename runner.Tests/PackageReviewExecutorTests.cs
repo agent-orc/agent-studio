@@ -93,6 +93,23 @@ public sealed class PackageReviewExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task Cli_input_refusal_reports_package_review_infrastructure()
+    {
+        var (a, b) = await SeedTwoMembersAsync();
+        var plane = new FakePlane();
+        var executor = new PackageReviewExecutor(Options(), plane, () => "instance-a", _ => { }, () => Now,
+            CacheRoot, (_, _, _, _) => Task.FromResult(new PackageAgentRun(
+                "turn/start failed: input_too_large", 1, null, Now, Now, null)));
+
+        await executor.RunClaimedAsync(Claim(Subject(a, b)), default);
+
+        var report = Assert.Single(plane.Reports);
+        Assert.Equal(ReviewPackageOutcomes.Infrastructure, report.Outcome);
+        Assert.Contains(ReviewCliRefusalPolicy.InputTooLarge, report.Summary);
+        Assert.Equal(ReviewCliRefusalPolicy.InputTooLarge, Assert.Single(report.Commands).Classification);
+    }
+
+    [Fact]
     public async Task A_member_that_does_not_stack_is_reported_as_a_stack_conflict_without_any_aspect()
     {
         await SeedMainAsync();
