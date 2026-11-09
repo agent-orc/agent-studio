@@ -31,9 +31,10 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { groupReviewJobs } from '../review-grouping.util';
 import { InfoButtonComponent } from '../../../../components/info-button/info-button.component';
 import { lanePresentation } from '../../../../models/lane-presentation';
-import { laneSortIndicator } from '../../../../services/lane-sort.util';
+import { laneSortIndicator, perProjectOrderNote } from '../../../../services/lane-sort.util';
 import { deriveStalledTaskState } from '../../../../services/run-activity.util';
 import { PostProcessingSummaryComponent } from '../post-processing-summary/post-processing-summary.component';
+import { ReadyWaitSplitComponent } from '../ready-wait-split/ready-wait-split.component';
 import { BoardDragStateService } from '../../state/board-drag-state.service';
 import { isUnpullableDependencyHold } from './pullable-task.util';
 import { BatchLaneIndicatorComponent } from '../../../batch-gate/batch-lane-indicator/batch-lane-indicator';
@@ -55,6 +56,7 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
     TooltipDirective,
     InfoButtonComponent,
     PostProcessingSummaryComponent,
+    ReadyWaitSplitComponent,
     BatchLaneIndicatorComponent,
     AcceptanceReadinessBarComponent,
   ],
@@ -116,7 +118,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   readonly jobDrop = output<{ jobId: string; watchPath: string; targetState: string; targetIndex: number }>();
   readonly jobReorder = output<{ state: string; jobs: TaskOrderItem[] }>();
   readonly jobDeleteRequest = output<TaskInfo>();
-  /** F5: bubbled "Pick next" click from a 2-ready card. */
+  /** F5: bubbled "Move to top" click from a 2-ready card. */
   readonly jobPickNextRequest = output<TaskInfo>();
   readonly addTask = output<string>();
   readonly archiveAll = output<void>();
@@ -124,8 +126,10 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   /** Emits the project name when the user clicks the lane's auto chip. */
   readonly autoToggleRequest = output<string>();
 
-  /** F35: lane-header sort indicator, see {@link laneSortIndicator}. */
-  readonly sortIndicator = computed(() => laneSortIndicator(this.sortStrategy()));
+  /** F35 / AGT-3587: lane-header sort indicator; Ready adds the pickup rule. */
+  readonly sortIndicator = computed(() => laneSortIndicator(this.sortStrategy(), this.state()));
+  /** AGT-3587: names the per-project order when Ready mixes projects. */
+  readonly perProjectNote = computed(() => perProjectOrderNote(this.state(), this.jobs()));
 
   /** Running, pickup-mode, and queue pills for a project-scoped In-Progress lane. */
   readonly statusCluster = computed(() => {
@@ -313,9 +317,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   });
 
   cliIconFor(cli: string): string {
-    if (cli === 'claude' || cli === 'codex' || cli === 'gemini') {
-      return cliTypeIcon(cli);
-    }
+    if (cli === 'claude' || cli === 'codex' || cli === 'gemini') return cliTypeIcon(cli);
     return '🤖';
   }
 

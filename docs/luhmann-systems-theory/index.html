@@ -1,0 +1,1475 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Studio read through Niklas Luhmann | Concept Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list,
+    .glossary dt,
+    .mark {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    h2 .number { display: block; margin-bottom: 8px; }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant h4 { margin: 14px 0 4px; }
+    .variant p { font-size: 0.94rem; line-height: 1.65; margin-bottom: 8px; }
+    .variant[data-recommended="true"] { border-color: color-mix(in srgb, var(--article-link) 40%, var(--article-line)); background: var(--article-link-soft); }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    a.evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; font-family: var(--article-sans); }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; font-family: var(--article-sans); }
+    .dim { color: var(--article-muted); }
+
+    /* Dossier-specific: reading markers, contents, glossary and diagrams, built only from the template variables. */
+    nav.contents { margin: 28px 0 0; font-size: 0.82rem; line-height: 1.7; color: var(--article-muted); }
+    nav.contents ol { columns: 2; column-gap: 32px; margin: 8px 0 0; padding-left: 20px; }
+    nav.contents li + li { margin-top: 0; }
+    .mark {
+      display: inline-block;
+      margin-right: 8px;
+      padding: 1px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.66rem;
+      font-weight: 750;
+      letter-spacing: 0.06em;
+      line-height: 1.6;
+      text-transform: uppercase;
+      vertical-align: 0.12em;
+    }
+    .mark[data-mark="reading"] { background: var(--article-link-soft); color: var(--article-link); }
+    .mark[data-mark="limit"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    .mark[data-mark="consequence"] { background: var(--article-good-soft); color: var(--article-good); }
+    .theory { padding-left: 0; }
+    .glossary { margin: 24px 0; }
+    .glossary dt { margin-top: 18px; font-size: 0.95rem; font-weight: 700; }
+    .glossary dt i { font-weight: 500; color: var(--article-muted); }
+    .glossary dd { margin: 4px 0 0; font-size: 0.94rem; line-height: 1.65; }
+    .glossary dd small { display: block; margin-top: 2px; color: var(--article-faint); font-family: var(--article-sans); font-size: 0.74rem; }
+    .refs li { font-size: 0.92rem; line-height: 1.6; }
+    .principle { margin: 22px 0; padding: 16px 20px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); }
+    .principle h3 { margin: 0 0 6px; }
+    .principle p { font-size: 0.94rem; line-height: 1.65; margin-bottom: 8px; }
+    .principle .card-link { font-family: var(--article-sans); font-size: 0.8rem; color: var(--article-muted); }
+    table.map td:first-child { white-space: nowrap; font-weight: 650; }
+    svg .bg { fill: var(--article-paper); }
+    svg .zone { fill: var(--article-surface); stroke: var(--article-line); stroke-width: 1.5; }
+    svg .zone-strong { fill: var(--article-surface-strong); stroke: var(--article-line); stroke-width: 1.5; }
+    svg .node { fill: var(--article-paper); stroke: var(--article-line); stroke-width: 1.5; }
+    svg .node-accent { fill: var(--article-link-soft); stroke: var(--article-link); stroke-width: 1.5; }
+    svg .node-warn { fill: var(--article-warn-soft); stroke: var(--article-warn); stroke-width: 1.5; }
+    svg .boundary { fill: none; stroke: var(--article-ink); stroke-width: 2; stroke-dasharray: 7 5; }
+    svg .edge { fill: none; stroke: var(--article-faint); stroke-width: 1.5; }
+    svg .edge-accent { fill: none; stroke: var(--article-link); stroke-width: 1.8; }
+    svg .arrowhead { fill: var(--article-faint); }
+    svg .arrowhead-accent { fill: var(--article-link); }
+    svg text { font-family: var(--article-sans); fill: var(--article-ink); }
+    svg .t-title { font-size: 15px; font-weight: 700; }
+    svg .t-label { font-size: 13px; font-weight: 650; }
+    svg .t-small { font-size: 11.5px; fill: var(--article-muted); }
+    svg .t-faint { font-size: 11px; fill: var(--article-faint); }
+    svg .t-accent { fill: var(--article-link); }
+    svg .t-warn { fill: var(--article-warn); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout { width: calc(100vw - 20px); }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+      nav.contents ol { columns: 1; }
+      table.map td:first-child { white-space: normal; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept Dossier · AGT-3606 · 9 November 2026</p>
+    <h1>Agent Studio read through Niklas Luhmann</h1>
+    <p class="lede">Agent Studio is turning into an organisation. It has cards that produce more cards, observers that review other observers, personas with charters and budgets, managers that decide within grants, a weekly magazine and an owner who is both outside the system and its first decision premise. Niklas Luhmann's systems theory was built to describe exactly such arrangements: systems of communication that reproduce themselves through decisions, observe themselves through codes and describe themselves through their own media. This Dossier reads every major part of Agent Studio through that theory, separates what Luhmann says from what we infer, says where the analogy breaks, and derives fifteen design principles, each tied to an existing card or a draft card.</p>
+    <div class="meta">
+      <span><b>Status</b> Decision pending</span>
+      <span><b>Phase</b> Decision ready</span>
+      <span><b>Source</b> AGT-3606</span>
+      <span><b>Builds on</b> AGT-3573 persona team, AGT-3462 operator level, AGT-3020 improvement scout, AGT-3353 security model, AGT-3459 model selection, AGT-3177 quotas</span>
+      <span><b>Kind</b> Theory reading with design consequences</span>
+    </div>
+    <nav class="contents" aria-label="Contents">
+      <b>Contents</b>
+      <ol>
+        <li><a href="#scope">Scope</a></li>
+        <li><a href="#method">Method and reading markers</a></li>
+        <li><a href="#system">System and environment</a></li>
+        <li><a href="#meaning">Meaning and complexity</a></li>
+        <li><a href="#observation">Observation</a></li>
+        <li><a href="#expectations">Expectations and double contingency</a></li>
+        <li><a href="#coupling">Coupling and the owner</a></li>
+        <li><a href="#codes">Codes, programmes and personas</a></li>
+        <li><a href="#organisation">Organisation and decision</a></li>
+        <li><a href="#informal">Formal and informal organisation</a></li>
+        <li><a href="#media">Tokens, budgets and attention</a></li>
+        <li><a href="#trust">Trust</a></li>
+        <li><a href="#risk">Risk and danger</a></li>
+        <li><a href="#massmedia">The magazine as mass media</a></li>
+        <li><a href="#self">Self-description</a></li>
+        <li><a href="#memory">Time, memory and forgetting</a></li>
+        <li><a href="#slipbox">The slip box</a></li>
+        <li><a href="#map">Concept map</a></li>
+        <li><a href="#limits">Limits and critique</a></li>
+        <li><a href="#principles">Design principles</a></li>
+        <li><a href="#glossary">Glossary</a></li>
+        <li><a href="#alternatives">Alternatives</a></li>
+        <li><a href="#recommendation">Recommendation</a></li>
+        <li><a href="#evidence">Evidence</a></li>
+        <li><a href="#open-decisions">Open decisions</a></li>
+        <li><a href="#cards">Cards</a></li>
+        <li><a href="#references">References</a></li>
+      </ol>
+    </nav>
+  </header>
+  <section id="scope">
+    <h2><span class="number">01</span> Scope</h2>
+    <p>On 9 November 2026 the owner asked for a Dossier that relates everything Agent Studio is building to the body of thought of Niklas Luhmann (1927 to 1998). The request names the persona team with its stats, budgets, reporting obligations, feeds, managers and importance numbers, the magazine and the presenter (Dossier <a href="../persona-team/index.html"><code>docs/persona-team/</code></a>, AGT-3573), the global orchestrator sessions and the operator level (<a href="../operator-agent-level/index.html"><code>docs/operator-agent-level/</code></a>, AGT-3462), cards, rounds and follow-up cards, review aspects and the batch gate, Dossiers and the Wiki, quotas and budgets, and the relation between the owner and the agents.</p>
+    <p>This is a concept. It changes no product code, configuration or existing document. It does three things:</p>
+    <ol>
+      <li>it states the relevant parts of Luhmann's theory, with the German terms and the works they come from;</li>
+      <li>it reads each Agent Studio element through that theory and says what follows from the reading;</li>
+      <li>it derives design principles and ties each one to an existing card or to a draft card in <code>workbench.json</code>.</li>
+    </ol>
+    <p>The persona team Dossier was read from its result ref, because it was not yet on <code>develop</code> when this Dossier was written. It is cited by its slice ids PT-1 to PT-12. The owner's brief names the persona slices as AGT-3594 to AGT-3605. That range has twelve keys for twelve slices, so this Dossier assumes the order PT-1 = AGT-3594 through PT-12 = AGT-3605. The assumption is marked wherever a card key appears and must be checked against the card titles before a dependent card starts.</p>
+    <div class="callout" data-tone="accent">
+      <h3>In one paragraph</h3>
+      <p>Read with Luhmann, Agent Studio is not a set of agents but a system of recorded decisions. Its elements are communications the platform accepts: lane moves, verdicts, receipts, Dossier revisions. Agents, models and the owner are its environment. The platform reaches them only through narrow couplings such as prompts, sentinels, tokens and grants. The board is a structure of expectations. Cards and follow-up cards are the way decisions reproduce decisions. Reviews and the batch gate are second-order observers with binary codes, and their criteria are the programmes that can change. Personas are observers with their own distinctions and blind spots. Managers and importance numbers absorb uncertainty. The magazine is the system's mass medium and one of its self-descriptions. Dossiers and the Wiki work as a slip box. The owner is at the same time environment, decision premise and the one who bears the risk of every delegated decision. The practical result is fifteen principles. Codes stay binary and criteria change. "Not observed" never reads as "passed". Every absorbed conclusion keeps its evidence trail. Persistent dangers must not age out of the news. Informal practice is formalised by watching it, not upfront. Trust is staged and revocable. Forgetting is designed.</p>
+    </div>
+  </section>
+
+  <section id="method">
+    <h2><span class="number">02</span> Method and reading markers</h2>
+    <p>Systems theory is easy to apply to anything, and that is its danger. A reading that fits everything explains nothing. This Dossier therefore keeps three kinds of statement apart and labels them in the text:</p>
+    <ul>
+      <li><span class="mark">Luhmann</span> what Luhmann's theory says, paraphrased with the work and year. Exact quotations are used only where the wording is certain, and they are given in German with a marked translation.</li>
+      <li><span class="mark" data-mark="reading">Reading</span> the interpretation of an Agent Studio element in the theory's terms. A reading is an analogy unless it says otherwise.</li>
+      <li><span class="mark" data-mark="consequence">Consequence</span> what the reading suggests for the design. Every consequence leads to a principle in <a href="#principles">Design principles</a>.</li>
+      <li><span class="mark" data-mark="limit">Limit</span> where the analogy breaks, and what the reading must not be used to claim.</li>
+    </ul>
+    <p>Three rules follow from this. First, a reading counts only when it changes a design question or makes a risk visible that was not visible before. Second, Luhmann's sociology describes; it was not written as a method of design, and he was sceptical of the idea that one system can steer another. Design principles are our step, not his. Third, product claims rest on the repository and on the three source Dossiers at commit <code>d4d2c49d7</code> (current <code>develop</code>), and visible surfaces rest on captures from the pinned demo installation in <a href="#evidence">Evidence</a>.</p>
+    <p>Luhmann's work is cited by German title and year of first publication. English translations exist for most of the main works and are listed in <a href="#references">References</a>. Secondary literature is used where it helps, mainly Baraldi, Corsi and Esposito's glossary (GLU, 1997), Kneer and Nassehi's introduction (1993), Baecker's work on organisation and on the "next society", Fritz B. Simon's introductions, and Elena Esposito on social memory and on algorithms as communication partners.</p>
+  </section>
+  <section id="system">
+    <h2><span class="number">03</span> System and environment</h2>
+    <h3>What Luhmann says</h3>
+    <p class="theory"><span class="mark">Luhmann</span>In <i>Soziale Systeme</i> (1984) social systems consist of communications, not of people and not of actions. A communication is a synthesis of three selections: information (<i>Information</i>), utterance (<i>Mitteilung</i>) and understanding (<i>Verstehen</i>). It comes about when someone else distinguishes what was said from the fact that it was said. Whether it is then accepted or rejected is a further selection. Action is how communication simplifies itself for attribution: to know how to go on, a system treats a communication as the act of somebody.</p>
+    <p class="theory"><span class="mark">Luhmann</span>Luhmann takes the term autopoiesis (<i>Autopoiesis</i>) from the biologists Humberto Maturana and Francisco Varela. A social system produces the communications it consists of only through its own communications. It is operationally closed (<i>operative Geschlossenheit</i>): no operation of the environment enters it, and the environment cannot determine what happens inside. The environment can only irritate it (<i>Irritation</i>), and the system decides by its own structures what an irritation means. Closure is the condition of openness, not its opposite. A system can react to its environment in many ways only because it decides itself how to react. The system is the difference between system and environment (<i>System und Umwelt</i>), and the environment is always more complex than the system. Human beings, as bodies and as consciousness, belong to the environment of social systems. Luhmann insists that this does not make them less important. It makes them freer, because no social system can take their consciousness in.</p>
+    <h3>Reading: Agent Studio as a system of recorded decisions</h3>
+    <p><span class="mark" data-mark="reading">Reading</span>The system called Agent Studio is not the agents, not the source code and not the owner. It is the network of recorded communications that connect to each other: card creations and lane moves with their causes, review verdicts, gate results, run outcomes and receipts, Dossier revisions, operator log entries and, once the persona team exists, persona items and magazine issues. Something is an element of this system when a later element can refer to it. A model's draft that never became a typed fact does not belong to the system, even if it sits in a log file.</p>
+    <p>The product already draws this line in several places, and it draws it where Luhmann draws it, at understanding:</p>
+    <ul>
+      <li>A card run ends with a terminal sentinel such as <code>[[TASK_DONE]]</code>. The orchestrator parses it. Without it, the run lands in review as <code>missing-terminal-sentinel</code>. The platform does not read the agent's intentions. It reads what it can understand.</li>
+      <li>In the persona team design, "only step 5 involves a model, and its output is data until step 6 accepts it". Validation is the moment at which an utterance becomes a communication of the system.</li>
+      <li>Remote and concept review settlement can end as <code>Inconclusive</code> with a named reason, and never as <code>Pass</code> (<code>docs/system/domains/review.md</code>). An observation that could not be understood is not counted as a positive result.</li>
+      <li>The security model's rule that "content is data: it can propose, never authorize", carried by the <code>X-Operator-Instruction-Source</code> header, is the distinction of information and utterance turned into a control. The platform always asks who uttered something and on which authority, not only what it says.</li>
+    </ul>
+    <p><span class="mark" data-mark="reading">Reading</span>Autopoiesis appears as the way decisions produce decisions. A run produces an outcome, the outcome a lane move, the lane move a review, the review a verdict, and the verdict a round, an acceptance or a follow-up card. Two rules make this reproduction explicit. A planning card must have "spawned at least one follow-up card OR declared no follow-up intended" (<code>PlanningCompletionGate</code>, AGT-1915). After two consecutive blocks a further non-build block is degraded to concerns with one linked follow-up card (<code>DegradeWithFollowUp</code>). In the first rule a decision must connect to a further decision or explicitly close the chain. In the second, a conflict that cannot be settled now is turned into a new element and moved into the future.</p>
+    <p><span class="mark" data-mark="consequence">Consequence</span>Every point where agent output becomes a fact of the system is a point of understanding, and it should be designed as one. It should be typed, explicit and recorded, it should say what was understood, and it should say what was not understood rather than fall back to a default. Everything else is irritation. It may be valuable, but the system has not taken it in. This is principle <a href="#p1">P1</a>.</p>
+    <figure class="breakout" id="fig-system">
+      <svg viewBox="0 0 1000 600" role="img" aria-labelledby="fig-system-title fig-system-desc">
+        <title id="fig-system-title">Agent Studio as system and environment</title>
+        <desc id="fig-system-desc">A dashed boundary encloses the system, which consists of six kinds of recorded communication: cards and lane moves, verdicts and gate results, receipts and run outcomes, Dossier revisions, persona items and issues, and the operator log and timeline. Outside the boundary are the environment's systems: the owner at the top, coding-agent sessions and model providers on the left, the operator agent and society's function systems on the right, repositories and hosts at the bottom. Each is joined to the boundary by a coupling that names the narrow channel through which it irritates the system.</desc>
+        <rect class="bg" x="0" y="0" width="1000" height="600"/>
+        <rect class="boundary" x="240" y="110" width="520" height="360" rx="24"/>
+        <text class="t-title" x="500" y="142" text-anchor="middle">System: recorded communication</text>
+        <rect class="node" x="268" y="162" width="220" height="62" rx="10"/>
+        <text class="t-label" x="282" y="186">Cards and lane moves</text>
+        <text class="t-small" x="282" y="207">decisions that produce decisions</text>
+        <rect class="node" x="512" y="162" width="220" height="62" rx="10"/>
+        <text class="t-label" x="526" y="186">Verdicts and gate results</text>
+        <text class="t-small" x="526" y="207">pass · concerns · block, green · red</text>
+        <rect class="node" x="268" y="240" width="220" height="62" rx="10"/>
+        <text class="t-label" x="282" y="264">Receipts and run outcomes</text>
+        <text class="t-small" x="282" y="285">what the platform understood</text>
+        <rect class="node" x="512" y="240" width="220" height="62" rx="10"/>
+        <text class="t-label" x="526" y="264">Dossier revisions</text>
+        <text class="t-small" x="526" y="285">alternatives, recommendation</text>
+        <rect class="node" x="268" y="318" width="220" height="62" rx="10"/>
+        <text class="t-label" x="282" y="342">Persona items and issues</text>
+        <text class="t-small" x="282" y="363">proposed in AGT-3573</text>
+        <rect class="node" x="512" y="318" width="220" height="62" rx="10"/>
+        <text class="t-label" x="526" y="342">Operator log and timeline</text>
+        <text class="t-small" x="526" y="363">append-only, attributed</text>
+        <text class="t-small" x="500" y="414" text-anchor="middle">Elements are events: each is accepted, recorded and connected to the next.</text>
+        <text class="t-small" x="500" y="436" text-anchor="middle">Operationally closed: only accepted communication connects to communication.</text>
+        <text class="t-faint" x="500" y="458" text-anchor="middle">Environment can irritate, never decide, what happens inside.</text>
+
+        <rect class="node-accent" x="390" y="14" width="220" height="76" rx="10"/>
+        <text class="t-label" x="404" y="38">Owner</text>
+        <text class="t-small" x="404" y="58">consciousness, also a decision premise</text>
+        <text class="t-small t-accent" x="404" y="78">coupled by grants, step-up, approvals</text>
+        <line class="edge-accent" x1="500" y1="90" x2="500" y2="110"/>
+        <circle cx="500" cy="110" r="5" class="node-accent"/>
+
+        <rect class="node" x="20" y="140" width="190" height="96" rx="10"/>
+        <text class="t-label" x="34" y="164">Coding-agent sessions</text>
+        <text class="t-small" x="34" y="184">models behind CLIs, personas</text>
+        <text class="t-small t-accent" x="34" y="204">coupled by prompt, brief,</text>
+        <text class="t-small t-accent" x="34" y="222">sentinel, status.md</text>
+        <line class="edge-accent" x1="210" y1="188" x2="240" y2="188"/>
+        <circle cx="240" cy="188" r="5" class="node-accent"/>
+
+        <rect class="node" x="20" y="290" width="190" height="96" rx="10"/>
+        <text class="t-label" x="34" y="314">Model providers</text>
+        <text class="t-small" x="34" y="334">subscriptions, limits, prices</text>
+        <text class="t-small t-accent" x="34" y="354">coupled by tokens, quota,</text>
+        <text class="t-small t-accent" x="34" y="372">fallback events</text>
+        <line class="edge-accent" x1="210" y1="338" x2="240" y2="338"/>
+        <circle cx="240" cy="338" r="5" class="node-accent"/>
+
+        <rect class="node" x="790" y="140" width="190" height="96" rx="10"/>
+        <text class="t-label" x="804" y="164">Operator agent</text>
+        <text class="t-small" x="804" y="184">the owner's CLI session</text>
+        <text class="t-small t-accent" x="804" y="204">coupled by studio-op, decision</text>
+        <text class="t-small t-accent" x="804" y="222">stream, attention lease</text>
+        <line class="edge-accent" x1="760" y1="188" x2="790" y2="188"/>
+        <circle cx="760" cy="188" r="5" class="node-accent"/>
+
+        <rect class="node" x="790" y="290" width="190" height="96" rx="10"/>
+        <text class="t-label" x="804" y="314">Society</text>
+        <text class="t-small" x="804" y="334">law, economy, science</text>
+        <text class="t-small t-accent" x="804" y="354">coupled by contracts, prices,</text>
+        <text class="t-small t-accent" x="804" y="372">licences, published papers</text>
+        <line class="edge-accent" x1="760" y1="338" x2="790" y2="338"/>
+        <circle cx="760" cy="338" r="5" class="node-accent"/>
+
+        <rect class="node" x="300" y="500" width="190" height="88" rx="10"/>
+        <text class="t-label" x="314" y="524">Repositories</text>
+        <text class="t-small" x="314" y="544">code and its history</text>
+        <text class="t-small t-accent" x="314" y="564">coupled by branches,</text>
+        <text class="t-small t-accent" x="314" y="580">commits, result refs</text>
+        <line class="edge-accent" x1="395" y1="470" x2="395" y2="500"/>
+        <circle cx="395" cy="470" r="5" class="node-accent"/>
+
+        <rect class="node-warn" x="510" y="500" width="190" height="88" rx="10"/>
+        <text class="t-label" x="524" y="524">Hosts and hardware</text>
+        <text class="t-small" x="524" y="544">disks, networks, timers</text>
+        <text class="t-small t-warn" x="524" y="564">coupled only by typed facts;</text>
+        <text class="t-small t-warn" x="524" y="580">silent when no fact exists</text>
+        <line class="edge-accent" x1="605" y1="470" x2="605" y2="500"/>
+        <circle cx="605" cy="470" r="5" class="node-accent"/>
+      </svg>
+      <figcaption>Figure 1. Agent Studio read as a system and its environment. This is an interpretation, not a product architecture diagram. Inside the dashed line are only recorded communications that later communications can refer to. Agents, models, the owner, repositories and hosts are environment, each reaching the system through a narrow coupling. The hosts are marked because their coupling is the weakest: on 9 November 2026 the networked installation had no scheduled backup, and no fact told the system so (persona team Dossier, calibration case).</figcaption>
+    </figure>
+    <p><span class="mark" data-mark="limit">Limit</span>The reading has three weak joints. First, in Luhmann communication needs understanding, and understanding is a selection of meaning. The platform's "understanding" is mechanical classification. Elena Esposito proposes calling communication with algorithms artificial communication: the algorithm takes part in communication without understanding in the human sense, and its contingency is produced for the human partner (<i>Artificial Communication? The Production of Contingency by Algorithms</i>, 2017; <i>Artificial Communication</i>, 2022). This Dossier follows her and treats the platform's classifications as communication only because people and later decisions connect to them. Second, Luhmann's systems cannot pause. Agent Studio can be stopped and resumed from files, so its autopoiesis is more like a recorded procedure than a living process. Third, Agent Studio's structures are written by people and by agents in commits. A curious inversion softens this: many of those commits come from cards on Agent Studio's own board, so the system does change its own structures through its own decisions, more literally than most organisations do.</p>
+  </section>
+
+  <section id="meaning">
+    <h2><span class="number">04</span> Meaning and complexity</h2>
+    <p class="theory"><span class="mark">Luhmann</span>Meaning (<i>Sinn</i>) is the medium in which psychic and social systems operate. It is the difference between what is actual and what is possible: everything that is actualised refers to further possibilities, its horizon. Complexity (<i>Komplexität</i>) means that there are more possibilities than can be realised, so selection is forced (<i>Selektionszwang</i>), and every selection is contingent, neither necessary nor impossible. Systems reduce the complexity of their environment (<i>Reduktion von Komplexität</i>), and by doing so they can build up complexity of their own. Meaning has three dimensions: the factual (<i>Sachdimension</i>, this rather than that), the temporal (<i>Zeitdimension</i>, before and after) and the social (<i>Sozialdimension</i>, ego and alter, consent and dissent). The account is in <i>Soziale Systeme</i> (1984), chapter 2. The thought goes back to the early essays in <i>Soziologische Aufklärung</i> (1970).</p>
+    <p><span class="mark" data-mark="reading">Reading</span>Agent Studio is full of deliberate reductions. A brief turns an open wish into a bounded task with acceptance criteria. <code>DecisionGroundsV1</code> freezes what a model may see into at most 32 KiB, about 6,500 tokens, with a digest. The improvement scout receives at most 8,000 input tokens and never raw logs or CLI sessions. The action vocabulary is closed: observe, prepare, defer, continue, adapt, checkpoint, retry, halt, ask. A persona's scope keeps areas out of its grounds "so the model cannot spend tokens on them". The three dimensions of meaning reappear in the product:</p>
+    <table>
+      <thead><tr><th>Dimension</th><th>Where Agent Studio reduces it</th></tr></thead>
+      <tbody>
+        <tr><td>Factual</td><td>Project and area scope, review aspects, persona aspects and focus weights, acceptance criteria, the closed action union.</td></tr>
+        <tr><td>Temporal</td><td>Lanes as before and after, report cadence, analysis windows of 14 and 90 days, deadlines, urgency that grows with waiting, weekly quota periods from Monday 00:00 UTC.</td></tr>
+        <tr><td>Social</td><td>Who decides (owner, operator agent, manager persona, orchestrator), attribution in <code>delegatedBy</code>, acceptance and rejection of proposals, the attention lease that settles who works on a card.</td></tr>
+      </tbody>
+    </table>
+    <p><span class="mark" data-mark="consequence">Consequence</span>Luhmann's point is that reduction does not destroy the excluded possibilities. It keeps them as a horizon that can be called up again. A reduction is therefore safe only if the way back stays open. The scout design already has this: drill-down links "authorize a separate read of the source artefact", and grounds list their omissions. The persona items carry evidence references, and the magazine's editor sentences must cite an item id. The general rule is principle <a href="#p2">P2</a>: every summary, score and verdict keeps a link back to what it reduced, and says what it left out.</p>
+    <p><span class="mark" data-mark="reading">Reading</span>The second half of the thought matters as much. Reducing the environment's complexity lets a system build complexity of its own, and Agent Studio is doing that: more lanes, more aspects, more pipeline steps, a persona team. That internal complexity in turn needs its own reductions. The magazine and the importance number are the first reductions aimed at the system itself rather than at its environment.</p>
+    <p><span class="mark" data-mark="limit">Limit</span>For Luhmann meaning belongs to psychic and social systems. Whether a language model operates in meaning is contested, and this Dossier does not decide it. The claim here is narrower: the platform's selections can be read as reductions inside the meaning processing of the people and the records around it.</p>
+  </section>
+  <section id="observation">
+    <h2><span class="number">05</span> Observation</h2>
+    <h3>What Luhmann says</h3>
+    <p class="theory"><span class="mark">Luhmann</span>To observe (<i>beobachten</i>) is to draw a distinction (<i>Unterscheidung</i>) and to indicate (<i>bezeichnen</i>) one side of it. Luhmann takes the calculus from George Spencer-Brown's <i>Laws of Form</i> (1969), which begins with the injunction "Draw a distinction". A form (<i>Form</i>) has two sides: a marked state that is indicated and an unmarked state that is left out but still belongs to the form. Re-entry (<i>Wiedereintritt</i>) means that a distinction appears again on one of its own sides. A system that distinguishes itself from its environment and then uses that distinction inside itself, as self-reference and other-reference (<i>Selbstreferenz und Fremdreferenz</i>), is Luhmann's main example.</p>
+    <p class="theory"><span class="mark">Luhmann</span>A first-order observer sees what it distinguishes, the world. A second-order observer (<i>Beobachtung zweiter Ordnung</i>) observes another observer: which distinction it uses, and therefore what it cannot see. No observer can see the distinction it uses while it uses it. That is its blind spot (<i>blinder Fleck</i>). The second-order observer can see the blind spot of the first, but it has one of its own, and further levels only add more second-order observation, not a final view from above. Luhmann argues that modern society's function systems run largely at the second order: science observes publications, the economy observes prices, art observes how works are observed. The main sources are <i>Die Wissenschaft der Gesellschaft</i> (1990), chapter 2, and <i>Beobachtungen der Moderne</i> (1992), with Heinz von Foerster's <i>Observing Systems</i> (1981) as the cybernetic background.</p>
+    <h3>Reading: the levels of observation in Agent Studio</h3>
+    <p><span class="mark" data-mark="reading">Reading</span>Agent Studio is built as a stack of observers, and each level observes the one below by a distinction of its own:</p>
+    <ul>
+      <li><b>First order.</b> A coding agent observes the brief and the repository and asks what to change. The operations warden reads host facts and asks whether a backup is scheduled.</li>
+      <li><b>Second order.</b> The review aspects observe how the coding agent observed: <code>requirement-fit</code> (or <code>concept-fit</code> on concept cards), <code>code-quality</code>, <code>documentation-impact</code>, <code>tests-and-evidence</code> and <code>visual-review</code>, each ending in <code>pass</code>, <code>concerns</code> or <code>block</code> (<code>AspectVerdict.cs</code>). The batch gate observes deliveries in combination and turns green or red. Isolation is an observation of that observation, used to find which member made the flight red. In Human review the owner observes evidence and verdicts, rarely the raw diff. Manager personas read scored items and never raw bodies.</li>
+      <li><b>Second order, repeated.</b> The improvement scout and the quality lead observe how reviews have observed over 14 and 90 days. The persona evaluation counts misses, meaning incidents in a persona's scope that another source found first.</li>
+    </ul>
+    <figure class="breakout" id="fig-observation">
+      <svg viewBox="0 0 1000 540" role="img" aria-labelledby="fig-obs-title fig-obs-desc">
+        <title id="fig-obs-title">Levels of observation in Agent Studio</title>
+        <desc id="fig-obs-desc">Two columns, card work and installation watch, each with three levels above an environment band. First order: the coding agent observes brief and repository; the operations warden observes host facts. Second order: review aspects and the batch gate observe the delivery; managers and the owner observe scored items. Repeated second order: the improvement scout and quality lead observe how reviews observed; evaluation and misses observe who found an incident first. Each second-order node names its blind spot, and the repeated level names a blind spot that was actually found.</desc>
+        <defs>
+          <marker id="ah-obs" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker>
+        </defs>
+        <rect class="bg" x="0" y="0" width="1000" height="540"/>
+        <text class="t-title" x="575" y="44" text-anchor="middle">Each observer sees what the one below cannot see, and has a blind spot of its own</text>
+        <text class="t-small" x="575" y="68" text-anchor="middle">Luhmann: further levels add more second-order observation, not a final view from above</text>
+
+        <text class="t-label" x="24" y="138">Second order,</text>
+        <text class="t-label" x="24" y="156">repeated</text>
+        <text class="t-label" x="24" y="272">Second order</text>
+        <text class="t-label" x="24" y="392">First order</text>
+
+        <rect class="node" x="170" y="92" width="390" height="100" rx="10"/>
+        <text class="t-label" x="186" y="116">Improvement scout, quality lead</text>
+        <text class="t-small" x="186" y="138">observe how reviews observed over 14 and 90 days</text>
+        <text class="t-small t-warn" x="186" y="162">found: 19 of 28 concepts reviewed</text>
+        <text class="t-small t-warn" x="186" y="180">without requirement-fit (AGT-3020)</text>
+
+        <rect class="node" x="590" y="92" width="390" height="100" rx="10"/>
+        <text class="t-label" x="606" y="116">Evaluation and misses</text>
+        <text class="t-small" x="606" y="138">observe who found an incident first</text>
+        <text class="t-small t-warn" x="606" y="162">found: a documented weekly restore</text>
+        <text class="t-small t-warn" x="606" y="180">that this installation never ran (AGT-3573)</text>
+
+        <rect class="node-accent" x="170" y="222" width="390" height="96" rx="10"/>
+        <text class="t-label" x="186" y="246">Review aspects and batch gate</text>
+        <text class="t-small" x="186" y="268">observe the delivery: pass · concerns · block, green · red</text>
+        <text class="t-small t-warn" x="186" y="294">blind spot: whatever the aspect set does not contain</text>
+
+        <rect class="node-accent" x="590" y="222" width="390" height="96" rx="10"/>
+        <text class="t-label" x="606" y="246">Managers and the owner</text>
+        <text class="t-small" x="606" y="268">observe scored items, verdicts and evidence</text>
+        <text class="t-small t-warn" x="606" y="294">blind spot: whatever no persona reported</text>
+
+        <rect class="node" x="170" y="350" width="390" height="72" rx="10"/>
+        <text class="t-label" x="186" y="374">Coding agent</text>
+        <text class="t-small" x="186" y="396">observes brief and repository: what to change?</text>
+
+        <rect class="node" x="590" y="350" width="390" height="72" rx="10"/>
+        <text class="t-label" x="606" y="374">Operations warden</text>
+        <text class="t-small" x="606" y="396">observes host facts: is a backup scheduled?</text>
+
+        <rect class="zone" x="170" y="454" width="810" height="64" rx="10"/>
+        <text class="t-label" x="186" y="480">Environment: briefs, repositories, hosts, providers</text>
+        <text class="t-small" x="186" y="502">What nobody observes stays in the unmarked space. "Not looked" and "looked, all clear" look the same unless coverage is stated.</text>
+
+        <line class="edge" x1="365" y1="192" x2="365" y2="220" marker-end="url(#ah-obs)"/>
+        <line class="edge" x1="785" y1="192" x2="785" y2="220" marker-end="url(#ah-obs)"/>
+        <line class="edge" x1="365" y1="318" x2="365" y2="348" marker-end="url(#ah-obs)"/>
+        <line class="edge" x1="785" y1="318" x2="785" y2="348" marker-end="url(#ah-obs)"/>
+        <line class="edge" x1="365" y1="422" x2="365" y2="452" marker-end="url(#ah-obs)"/>
+        <line class="edge" x1="785" y1="422" x2="785" y2="452" marker-end="url(#ah-obs)"/>
+      </svg>
+      <figcaption>Figure 2. Levels of observation, an interpretation. Arrows point from observer to observed. The two "found" lines are real cases: the scout calibration set of AGT-3020 (operator-provided incident counts) and the 9 November 2026 backup case in the persona team Dossier. In both, an observer at one level could not see the gap its own distinction produced, and an observer at another level could.</figcaption>
+    </figure>
+    <h3>Blind spots the product has already met</h3>
+    <p><span class="mark" data-mark="reading">Reading</span>The source Dossiers record several blind spots. Each was produced by the distinction an observer used, and each was found by a different observer:</p>
+    <table>
+      <thead><tr><th>Observer</th><th>Its distinction</th><th>What it could not see</th><th>Who saw it</th></tr></thead>
+      <tbody>
+        <tr><td>Concept Remote Review</td><td>Build and lint pass or fail</td><td>Whether the concept fit the requirement. 19 of 28 completed concepts had no requirement-fit aspect.</td><td>The scout calibration set (AGT-3020)</td></tr>
+        <tr><td>Security overview</td><td>The designed posture</td><td>That the weekly scratch restore it describes had never run on this installation</td><td>The owner, then the warden design (AGT-3573)</td></tr>
+        <tr><td>Credential monitor</td><td>Expiry date of a credential file</td><td>Whether that file was the credential actually in use</td><td>The scout calibration set</td></tr>
+        <tr><td>Workspace activity feed</td><td>Newest first</td><td>Importance across aspects</td><td>Persona team evidence capture</td></tr>
+        <tr><td>Integration gate</td><td>Conflict or no conflict</td><td>That a ref-lock race is not a semantic conflict</td><td>The scout calibration set</td></tr>
+      </tbody>
+    </table>
+    <p><span class="mark" data-mark="reading">Reading</span>The persona team Dossier contains a sentence that could stand in a commentary on Spencer-Brown: a no-change report "must still list its coverage, because silence without coverage reads as 'all clear' when it may mean 'not looked'". A report marks what it indicated. Its unmarked space holds two quite different states, "looked and found nothing" and "never looked", and the form alone cannot tell them apart. The coverage line is a re-entry: the distinction between observed and not observed comes back into the report.</p>
+    <p><span class="mark" data-mark="reading">Reading</span>Re-entry shows up in more places. The confidence factor of the importance number puts the distinction between known and unknown into the item. The magazine's colophon reports which personas missed their reports, so the medium speaks about its own coverage. The Dossier template classifies evidence as observed, inferred or proposed, so the document distinguishes observation from interpretation inside itself. Agent Studio documents itself in its own Wiki and builds itself through its own cards. The system draws its distinction from its environment inside itself, and this Dossier is one more instance of that.</p>
+    <p><span class="mark" data-mark="consequence">Consequence</span>Two principles follow. <a href="#p4">P4</a>: "not observed" is never a positive value. Coverage is stated next to every verdict and report, and a missing observation cannot read as a pass. <a href="#p5">P5</a>: blind spots cannot be removed, only observed from elsewhere. So the product should rotate observers and count misses, and it should not keep adding reviewers in the hope of completeness.</p>
+    <p><span class="mark" data-mark="limit">Limit</span>The observer concept is abstract enough to cover review agents. Luhmann, following von Foerster, defines observation by its operation, not by consciousness. The weak point is elsewhere. The theory says blind spots are structural, and it promises no method to find the important ones. More observers bring more blind spots and more cost. The value of second-order observation in Agent Studio has to be shown by misses found, not assumed from the theory.</p>
+  </section>
+  <section id="expectations">
+    <h2><span class="number">06</span> Expectations and double contingency</h2>
+    <p class="theory"><span class="mark">Luhmann</span>Double contingency (<i>doppelte Kontingenz</i>) is a term Luhmann takes from Talcott Parsons. Two parties each make their behaviour depend on what the other does, and each is a black box to the other. Luhmann's solution is not consensus. Any first move that both can connect to starts a history, and the history becomes structure (<i>Soziale Systeme</i>, 1984, chapter 3). The structures of social systems are expectations (<i>Erwartungen</i>, chapter 8). They are not things. They limit what is likely to come next. Social life runs on expectations of expectations (<i>Erwartungserwartungen</i>): I expect what you expect of me. Expectations differ in how they handle disappointment (<i>Enttäuschung</i>). Cognitive expectations are dropped or changed when disappointed, which is learning. Normative expectations are held against disappointment, and law generalises them (<i>Rechtssoziologie</i>, 1972). Expectations are bundled and made identifiable at four levels: persons, roles, programmes and values (<i>Personen, Rollen, Programme, Werte</i>).</p>
+    <h3>Reading: the board as a structure of expectations</h3>
+    <p><span class="mark" data-mark="reading">Reading</span>A lane is not a container. It is a statement about what is expected next and from whom. The lane catalogue in <code>contracts/TaskServer.Contracts/TaskStates.cs</code> says so in its own comments:</p>
+    <table>
+      <thead><tr><th>Lane</th><th>Expectation it carries</th><th>Kind</th></tr></thead>
+      <tbody>
+        <tr><td><code>0-backlog</code></td><td>Nothing happens here without triage; "auto-pickup never reaches into this lane".</td><td>Normative</td></tr>
+        <tr><td><code>1-preparation</code></td><td>The card is shaped before it may run. Promoted Dossier slices land here.</td><td>Normative</td></tr>
+        <tr><td><code>2-ready</code></td><td>A runner will pick it up.</td><td>Normative, with a visible disappointment</td></tr>
+        <tr><td><code>3-progress</code></td><td>An agent is working and will end with an outcome.</td><td>Normative</td></tr>
+        <tr><td><code>4-auto-review</code></td><td>The orchestrator will reissue, accept as done or escalate.</td><td>Normative</td></tr>
+        <tr><td><code>5-human-review</code></td><td>Reserved for accepting a finished delivery backed by review evidence: the owner decides.</td><td>Normative</td></tr>
+        <tr><td><code>5e-escalated</code></td><td>The intervention basin: a person must act.</td><td>Normative</td></tr>
+        <tr><td><code>6-completed</code>, <code>7-archive</code></td><td>Nothing more is expected; the card becomes memory.</td><td>Normative</td></tr>
+      </tbody>
+    </table>
+    <p>All lane expectations are normative in Luhmann's sense. A card in Ready that no runner picks does not change what Ready means. The system treats the disappointment as an anomaly and names it. The decision stream emits <code>progress.idle-with-ready</code>, orphaned pickups get their own lane <code>3a-failed-pickup</code>, and the board itself says why a Ready card is not moving. In the capture below, two Ready cards say "Queued, but not pickable" and "Held: this cannot clear by itself", with the reason. That is how normative expectations are kept: the disappointment is explained, and the expectation stays.</p>
+    <figure class="evidence-figure media-breakout" id="ev-board">
+      <div class="evidence-captures">
+        <div class="evidence-capture">
+          <span class="capture-theme">Light</span>
+          <img src="assets/board-lanes-escalated-decision-light--pinned.png" alt="Demo App board with three lane groups, Backlog, Active and Done and Decide. The Ready lane shows three cards, three of them stalled, each with a held explanation. In Progress shows no tasks, Post Processing shows two waiting, and Escalated shows six cards headed by DEMO-9, Approve the reports export release.">
+          <span class="figure-annotation">Ready cards state why they are held</span>
+        </div>
+        <div class="evidence-capture">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/board-lanes-escalated-decision-dark--pinned.png" alt="The same Demo App board in the dark theme, with the same lanes, counts and held explanations on the Ready cards.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence.</b> The board arranges cards in named lanes grouped as Backlog, Active and Done &amp; Decide. A Ready card that cannot be picked keeps its lane and shows "Queued, but not pickable" and "Held: this cannot clear by itself" with the reason. DEMO-9 waits in Escalated for a person.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> captured <time datetime="2026-11-09">9 November 2026</time> from an isolated ADR-0056 pinned demo stack built from commit <code>d4d2c49d7</code> (<code>scripts/worktree-test-stack.sh up --demo --with-frontend</code>, project Demo App, board route), viewport 1600 × 900 CSS pixels at device scale 2, browser clock fixed at 9 August 2026 13:00 UTC.</span>
+          <span><b>Dark:</b> captured <time datetime="2026-11-09">9 November 2026</time>, same stack, route and viewport.</span>
+        </span>
+      </figcaption>
+    </figure>
+    <p><span class="mark" data-mark="reading">Reading</span>Cognitive expectations live elsewhere: in routing weights and the "reported versus achieved" feedback of complexity routing (AGT-2815), in quota forecasts, and in the persona team's calibration stat, which measures how far managers and the owner had to correct a persona's importance numbers. These are expectations the system is meant to learn from.</p>
+    <p><span class="mark" data-mark="reading">Reading</span>Luhmann's four levels of identification fit the product closely. Persons are personas and the operator agent, addressable bundles of expectations with a record (see <a href="#coupling">Coupling and the owner</a>). Roles are owner, operator agent, runner and review host, each with one identity, one scope and one record (AGT-3462). Programmes are briefs, pipeline steps, review aspects and transition rules. Values are the most general expectations, which hold everywhere and decide nothing by themselves: "card work always wins", "the owner always wins", "content can propose, never authorize".</p>
+    <h3>Reading: double contingency between the owner and the agents</h3>
+    <p><span class="mark" data-mark="reading">Reading</span>The owner cannot see into an agent session, and the agent cannot see what the owner will accept. Both are black boxes. Agent Studio does not solve this with agreement. It solves it with structures that let one side move first. A concept card must "recommend a working option for every decision point" and deliver without waiting. A promoted implementation card uses the recommendation "unless its recorded operator decision selects another option" and records which option it implemented. A persona's decision request states that without an answer "nothing changes". The agent moves first, and the owner connects or corrects later. Expectations of expectations are written down: <code>AGENTS.md</code>, the prompt enrichments and the terminal sentinel contract all tell an agent what the platform expects it to expect.</p>
+    <p>Between two acting parties the same problem returns as concurrency. The operator agent and the in-app chat may both want to act on a card. The attention lease and the revision check (OA-D3, delivered in AGT-3487) are a structural answer: the card shows who holds the lease, a stale revision is refused, and "an owner action always wins".</p>
+    <p><span class="mark" data-mark="consequence">Consequence</span>Every expectation the system holds should be marked as normative, held against disappointment, or cognitive, changed by disappointment. Normative expectations need a named disappointment signal, like <code>progress.idle-with-ready</code>. Cognitive ones need a learning path and a record of what was learned. Mixing them is the typical failure: a gate that quietly learns, or an estimate that is defended as a rule. This joins principle <a href="#p3">P3</a>.</p>
+    <p><span class="mark" data-mark="limit">Limit</span>Double contingency in Luhmann concerns two self-referential systems that experience meaning. A model session has no history beyond its context and no expectations of its own between runs. Esposito suggests that with algorithms the contingency on the other side is not experienced but produced, built from data about other people's behaviour (2017, 2022). The reading therefore holds for the owner's side and for the structures the platform builds, not for an inner life of agents.</p>
+  </section>
+
+  <section id="coupling">
+    <h2><span class="number">07</span> Coupling and the owner</h2>
+    <p class="theory"><span class="mark">Luhmann</span>Structural coupling (<i>strukturelle Kopplung</i>, again after Maturana) means that a system relies on certain features of its environment without any operation crossing the boundary. Couplings are narrow. They make some irritations likely and exclude most others. Luhmann's examples are language, which couples consciousness and communication, the constitution, which couples law and politics, and property and contract, which couple law and the economy (<i>Die Gesellschaft der Gesellschaft</i>, 1997, chapters 1 and 4). Interpenetration (<i>Interpenetration</i>, <i>Soziale Systeme</i>, chapter 6) is the special case in which human beings and social systems make their own complexity available to each other. In <i>Ökologische Kommunikation</i> (1986) Luhmann adds the notion of resonance (<i>Resonanz</i>): a system can respond to dangers in its environment only in its own terms, and it may resonate too little or too much. The person (<i>Person</i>), finally, is not the human being. It is a form of communication, a bundle of expectations attributed to an individual so that communication has an address (<i>Die Form "Person"</i>, 1991).</p>
+    <h3>Reading: narrow couplings and the weakest one</h3>
+    <p><span class="mark" data-mark="reading">Reading</span>Figure 1 names the couplings. Agents are reached through prompt, brief, sentinel and <code>status.md</code>. Providers are reached through tokens, quota and fallback events. Repositories are reached through branches, commits and result refs. The owner is reached through grants, step-up and approvals, the operator agent through <code>studio-op</code>, the decision stream and the attention lease, and hosts through typed facts. Narrowness is a feature. It is why prompt injection in a repository file cannot move a card: that channel only carries data.</p>
+    <p>Narrowness also produces silence. On 9 November 2026 the networked installation had no scheduled backup. The commands and the runbook existed, but no typed fact reported the timer state, so the system could not resonate. In Luhmann's terms, the danger existed in the environment and had no form inside the system. The operations warden adds the missing coupling (<code>OpsPostureFactsV1</code>, with a freshness limit per fact), and it makes the coupling report its own failure: "cannot see backup status" is a finding at floor 70, never a clean result.</p>
+    <h3>Reading: the owner in three positions at once</h3>
+    <p><span class="mark" data-mark="reading">Reading</span>As a human being with consciousness, the owner is environment. No social system, Agent Studio included, contains the owner's thoughts. As the holder of the Owner role, the owner is a decision premise. Everything not explicitly granted stays with the owner: credentials, consent clicks, installation-wide settings, the second factor, T2 operations and product decisions (AGT-3462, AGT-3573). In communication, the owner is a person, the addressee of decision requests, the reader of the magazine, and the <code>human:&lt;id&gt;</code> in <code>delegatedBy</code>. Interpenetration happens between the first and the third position. The owner lends the system their complexity through briefs, corrections and memory files. The system lends the owner its complexity through Dossiers, the magazine and the operator log.</p>
+    <h3>Reading: personas as the person form</h3>
+    <p><span class="mark" data-mark="reading">Reading</span>A persona is the person form in an unusually clean shape. It has a charter, a scope, attributes, a reporting obligation and a record. All of these are expectations addressed to an attribution point, the principal <code>persona:&lt;id&gt;</code>. Behind it is not a psychic system but a model session that is different on every occurrence. Luhmann needed the person form because communication must address someone, without being able to reach the consciousness behind the address. With personas the platform builds that address on purpose, and the character sheet is its record of met and missed expectations. The analogy fits better here than it does for human members of an organisation.</p>
+    <p><span class="mark" data-mark="consequence">Consequence</span>Keep the person apart from what fills it (principle <a href="#p6">P6</a>). The persona team already separates the descriptor from the activation, resolves the model through central selection instead of pinning it, and splits stats by charter revision (PT-1, PT-7). One step is missing: a change of model behind a persona is a change of personnel, and the record should split by it as well (principle <a href="#p8">P8</a>).</p>
+    <p><span class="mark" data-mark="limit">Limit</span>Interpenetration needs two autopoietic systems. It applies between the owner and Agent Studio, not between Agent Studio and a model session. With one owner, much of what looks social is the extended work of one person carried out by non-human participants. Luhmann's third type of social system, interaction among those present (<i>Interaktion unter Anwesenden</i>), hardly occurs. The in-app chat is not co-presence.</p>
+  </section>
+  <section id="codes">
+    <h2><span class="number">08</span> Codes, programmes and personas</h2>
+    <p class="theory"><span class="mark">Luhmann</span>Modern society is functionally differentiated (<i>funktionale Differenzierung</i>). Economy, law, science, politics, religion, art, education, the mass media and other function systems each fulfil one function for society as a whole, and each observes everything through one binary code (<i>binärer Code</i>, <i>Leitdifferenz</i>): payment and non-payment, legal and illegal, true and untrue, government and opposition, information and non-information. A code has a positive value, which other operations can connect to, and a negative value, which serves reflection. Codes are invariant and exclude third values. Which value applies in a given case is decided by programmes (<i>Programme</i>): theories and methods in science, laws and contracts in law, budgets in the economy. Codes give a system its closure. Programmes give it openness, because they can change without the code changing. No function system can stand in for another, and society has no centre and no apex from which the whole could be observed. The main sources are <i>Ökologische Kommunikation</i> (1986) and <i>Die Gesellschaft der Gesellschaft</i> (1997), chapter 4.</p>
+    <h3>Reading: review and gate codes</h3>
+    <p><span class="mark" data-mark="reading">Reading</span>Review and gating in Agent Studio are coded observation, and the product already keeps code and programme apart in several places:</p>
+    <ul>
+      <li>An aspect verdict is <code>pass</code>, <code>concerns</code> or <code>block</code> (<code>AspectStatus</code>). On closer reading this is two binary codes stacked. The lane-relevant code is block versus no block: a single <code>block</code> reissues to <code>3-progress</code>. Concerns versus clean decides only what is remembered: <code>concerns</code> adds a <code>{namespace}:concerns</code> tag and the card moves on.</li>
+      <li>The batch gate is binary: green or red. Isolation sorts members into <code>proven-red</code>, <code>proven-green</code> and <code>superseded</code>, which is the same code applied to parts.</li>
+      <li>The quality grade A to D is "reporting only; the grade never gates the lane decision" (<code>PipelineCatalogue.cs</code>). It is a programme-level judgement, not a code.</li>
+      <li>The programmes are the aspect prompts, acceptance criteria, test suites, style guides, round budgets and the models assigned to review steps. They change all the time. When the round budget degrades a third non-build block to concerns with a linked follow-up card, a programme decides which value applies. When it never degrades a build or test block, it protects the code itself.</li>
+    </ul>
+    <figure class="evidence-figure media-breakout" id="ev-review">
+      <div class="evidence-captures">
+        <div class="evidence-capture">
+          <span class="capture-theme">Light</span>
+          <img src="assets/review-verdict-evidence-light--pinned.png" alt="Card DEMO-5, Add CSV export to reports, open in the task view. The upper panel shows an operator decision park with the lines Clears when, Recall verdict and Park reason, a Never checked badge and an Escalation strip. The lower left shows the Code Reviews tab with a review result chip reading concerns and, separately, Grade B.">
+          <span class="figure-annotation">Verdict and grade shown apart</span>
+        </div>
+        <div class="evidence-capture">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/review-verdict-evidence-dark--pinned.png" alt="The same DEMO-5 task view in the dark theme with the operator decision park, the concerns chip on the review result and Grade B.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence.</b> In the task view of DEMO-5, the review result carries the verdict chip "concerns" and, separately, "Grade B". The parked card states what it has not observed: a "Never checked" badge and "Recall verdict: no sweep has evaluated this blocker yet".</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> captured <time datetime="2026-11-09">9 November 2026</time> from the same isolated pinned demo stack built from commit <code>d4d2c49d7</code>, task DEMO-5, Code Reviews tab with the seeded review opened, viewport 1600 × 900 CSS pixels at device scale 2.</span>
+          <span><b>Dark:</b> captured <time datetime="2026-11-09">9 November 2026</time>, same stack, task, tab and viewport.</span>
+        </span>
+      </figcaption>
+    </figure>
+    <p><span class="mark" data-mark="consequence">Consequence</span>Keep codes binary and stable, and put learning into programmes that are versioned and recorded (principle <a href="#p3">P3</a>). Whenever a step seems to need a new verdict value, the theory points to two other options: a further binary code at a different place, as concerns already is, or a programme change. A growing verdict vocabulary would blur what a lane may connect to. The capture also shows the opposite discipline at work: "Never checked" states a missing observation instead of letting it read as a value (principle <a href="#p4">P4</a>).</p>
+    <h3>Reading: each persona observes through one guiding distinction</h3>
+    <p><span class="mark" data-mark="reading">Reading</span>The persona team reads like a functionally differentiated society in miniature. Each persona looks at the whole installation, but only through its own distinction, and no persona sees everything. The distinctions below are this Dossier's reading of the charters in AGT-3573. They are not fields of the descriptor.</p>
+    <table>
+      <thead><tr><th>Persona</th><th>Guiding distinction (reading)</th><th>What falls outside it</th></tr></thead>
+      <tbody>
+        <tr><td>Operations warden</td><td>Recoverable / not recoverable; doors shut / open</td><td>Whether the work being protected is any good</td></tr>
+        <tr><td>Security officer</td><td>Secure / exposed</td><td>Cost and speed of the fix</td></tr>
+        <tr><td>Reliability engineer</td><td>Flowing / stuck</td><td>Whether what flows is the right work</td></tr>
+        <tr><td>Quality lead</td><td>Proven / unproven</td><td>Proofs nobody asked for</td></tr>
+        <tr><td>Design lead</td><td>Coherent / drifting</td><td>Behaviour without a visible surface</td></tr>
+        <tr><td>Product manager</td><td>Connected to a goal / unconnected</td><td>Goals not written down</td></tr>
+        <tr><td>Cost controller</td><td>Proportionate / wasteful</td><td>Value that has no measure yet</td></tr>
+        <tr><td>Documentation editor</td><td>True to behaviour / drifted</td><td>Behaviour nobody documented</td></tr>
+        <tr><td>Improvement scout</td><td>Recurring friction / one-off</td><td>Rare but severe events</td></tr>
+        <tr><td>Presenter</td><td>Sourced / unsourced</td><td>Whether the sourced item matters</td></tr>
+      </tbody>
+    </table>
+    <p>The persona design also follows the claim that there is no centre. "Managers sit above aspect personas only in authority, not in data access: they read the same scored items, never more raw content." The chief of staff orders the queue, but it does not observe the whole. The magazine is not a centre either. It is one more observer (see <a href="#massmedia">The magazine as mass media</a>).</p>
+    <p><span class="mark" data-mark="consequence">Consequence</span>A persona's charter should name its guiding distinction and what it deliberately does not see, so that the blind spot is declared rather than discovered. The misses metric (PT-11) then checks whether the declared blind spot was the one that mattered. This is principle <a href="#p5">P5</a>.</p>
+    <p><span class="mark" data-mark="limit">Limit</span>Function systems are autonomous, nobody founded them, and they are not ranked. Personas are created, scoped, budgeted and switched off by the owner. Luhmann would place the persona team inside an organisation, as a division of labour by task (<i>Abteilungsbildung</i>), not as societal differentiation. The analogy holds for the logic of codes and blind spots. It fails on autonomy. A persona's distinction is also not an operating code that its next operations connect to. It is a description of what the persona looks at.</p>
+  </section>
+  <section id="organisation">
+    <h2><span class="number">09</span> Organisation and decision</h2>
+    <h3>What Luhmann says</h3>
+    <p class="theory"><span class="mark">Luhmann</span>An organisation is a social system that consists of decisions and reproduces itself by producing decisions from decisions (<i>Organisation und Entscheidung</i>, 2000, edited after his death by Dirk Baecker). A decision is a communication that communicates its own contingency. It says that something else could have been chosen, and so it carries its rejected alternatives with it. That is its paradox: only what could go either way needs deciding. Luhmann cites Heinz von Foerster's remark that only questions which are in principle undecidable can be decided.</p>
+    <p class="theory"><span class="mark">Luhmann</span>Decisions absorb uncertainty (<i>Unsicherheitsabsorption</i>). The term comes from James March and Herbert Simon's <i>Organizations</i> (1958): conclusions are drawn from evidence, and from then on the conclusions are passed on instead of the evidence. Later decisions take earlier ones as premises without re-examining them, and the organisation's reality is built from absorbed uncertainty. Whoever absorbs uncertainty is held responsible for it.</p>
+    <p class="theory"><span class="mark">Luhmann</span>Decision premises (<i>Entscheidungsprämissen</i>) are decisions that serve as premises for many later decisions. Luhmann names three decidable kinds. Programmes (<i>Programme</i>) are either conditional (<i>Konditionalprogramme</i>, if this then that) or purposive (<i>Zweckprogramme</i>, reach this end by suitable means). Communication channels (<i>Kommunikationswege</i>) are competences and hierarchy: who may decide what, with whom. Personnel (<i>Personal</i>) means who occupies a position. Hiring, moving and dismissing people are decisions about premises. The position (<i>Stelle</i>) bundles the three, so each can be exchanged without the others. There are also premises nobody decided, above all organisational culture (<i>Organisationskultur</i>), which grows from habit and cannot be changed by decree. Membership (<i>Mitgliedschaft</i>) is itself decided: organisations decide who enters and who leaves, and accepting the formal expectations is the condition of membership (<i>Funktionen und Folgen formaler Organisation</i>, 1964).</p>
+    <p class="theory"><span class="mark">Luhmann</span>In <i>Legitimation durch Verfahren</i> (1969) Luhmann argues that procedures make decisions acceptable not by proving them right but by involving participants in a process whose outcome is open at the start. By taking part, people commit themselves to the result.</p>
+    <h3>Reading: cards, Dossiers and the decision form</h3>
+    <p><span class="mark" data-mark="reading">Reading</span>Agent Studio is an organisation in this exact sense. Cards are decisions to do something. Lane moves, verdicts, gate results and acceptances are decisions about decisions. Follow-up cards are decisions that become premises of later decisions. The Dossier is the decision form made explicit: Alternatives, Recommendation, Evidence, Open decisions, and in <code>workbench.json</code> a <code>rejectedOption</code> next to each recommendation. Luhmann's point that a decision communicates the alternatives it excludes is the template.</p>
+    <p>The house rule for promoted cards is an institution of uncertainty absorption. An implementation card "uses each Dossier recommendation as the working decision unless its recorded operator decision selects another option", and it must "record which option you implemented". The implementing agent takes the recommendation as a premise without reopening it, which is absorption, and it leaves a trace of which premise it took, which keeps the absorption visible.</p>
+    <p>The lanes after delivery (sight review, decision acceptance, operator approval) are a procedure in the 1969 sense. A Dossier's recommendation becomes binding not because someone proved it right but because it went through the procedure and the owner took part.</p>
+    <h3>Reading: the map of decision premises</h3>
+    <figure class="breakout" id="fig-premises">
+      <svg viewBox="0 0 1000 640" role="img" aria-labelledby="fig-prem-title fig-prem-desc">
+        <title id="fig-prem-title">Map of decision premises in Agent Studio</title>
+        <desc id="fig-prem-desc">A central decision node, standing for a card, lane move, verdict, acceptance or Dossier option, receives four kinds of premise. Programmes at upper left: conditional rules such as transition rules, batch gate rules, round budgets, quota thresholds and importance floors, and purpose programmes such as briefs, acceptance criteria, Dossier recommendations and persona charters. Communication channels at upper right: lanes and their writers, the decision stream, the message bus, tiers T0 to T3, standing grants, the attention lease and delegatedBy. Personnel at lower right: model routing tiers, central model selection, the per-transition switch between Monolith and Engine, persona activation and runner enrollment. Undecided premises at lower left: AGENTS.md habits, house style, plain nouns, card work first. Below the decision, a position node bundles programme, channel and personnel, for example a persona descriptor or a pipeline step. A band at the bottom names uncertainty absorption.</desc>
+        <defs>
+          <marker id="ah-prem" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker>
+        </defs>
+        <rect class="bg" x="0" y="0" width="1000" height="640"/>
+        <rect class="zone" x="20" y="20" width="330" height="236" rx="12"/>
+        <text class="t-title" x="38" y="50">Programmes</text>
+        <text class="t-faint" x="38" y="70">Konditionalprogramme, Zweckprogramme</text>
+        <text class="t-label" x="38" y="100">If-then</text>
+        <text class="t-small" x="38" y="120">transition rules, batch gate rules,</text>
+        <text class="t-small" x="38" y="138">round budgets, quota 80 % and 100 %,</text>
+        <text class="t-small" x="38" y="156">importance floors</text>
+        <text class="t-label" x="38" y="186">Purpose</text>
+        <text class="t-small" x="38" y="206">briefs, acceptance criteria,</text>
+        <text class="t-small" x="38" y="224">Dossier recommendations,</text>
+        <text class="t-small" x="38" y="242">persona charters</text>
+
+        <rect class="zone" x="650" y="20" width="330" height="236" rx="12"/>
+        <text class="t-title" x="668" y="50">Communication channels</text>
+        <text class="t-faint" x="668" y="70">Kommunikationswege</text>
+        <text class="t-small" x="668" y="100">lanes and their writers</text>
+        <text class="t-small" x="668" y="120">decision stream, message bus</text>
+        <text class="t-small" x="668" y="140">tiers T0 to T3, standing grants</text>
+        <text class="t-small" x="668" y="160">attention lease, revision checks</text>
+        <text class="t-small" x="668" y="180">delegatedBy in every audit entry</text>
+        <text class="t-label" x="668" y="214">Top of the hierarchy</text>
+        <text class="t-small" x="668" y="234">"the owner always wins"</text>
+
+        <rect class="zone" x="650" y="340" width="330" height="200" rx="12"/>
+        <text class="t-title" x="668" y="370">Personnel</text>
+        <text class="t-faint" x="668" y="390">Personal</text>
+        <text class="t-small" x="668" y="420">model routing tiers, central selection</text>
+        <text class="t-small" x="668" y="440">per-transition switch: Monolith or Engine</text>
+        <text class="t-small" x="668" y="460">persona activation and retirement</text>
+        <text class="t-small" x="668" y="480">runner and review host enrollment</text>
+        <text class="t-small" x="668" y="500">the operator agent's identity</text>
+
+        <rect class="zone-strong" x="20" y="340" width="330" height="200" rx="12" stroke-dasharray="6 5"/>
+        <text class="t-title" x="38" y="370">Undecided premises</text>
+        <text class="t-faint" x="38" y="390">Organisationskultur</text>
+        <text class="t-small" x="38" y="420">AGENTS.md habits, house style</text>
+        <text class="t-small" x="38" y="440">plain nouns, no em dashes</text>
+        <text class="t-small" x="38" y="460">"card work first"</text>
+        <text class="t-small" x="38" y="480">the operator's working rhythm</text>
+        <text class="t-small" x="38" y="500">what agents copy from earlier Dossiers</text>
+
+        <rect class="node-accent" x="380" y="196" width="240" height="116" rx="12"/>
+        <text class="t-title" x="500" y="228" text-anchor="middle">Decision</text>
+        <text class="t-small" x="500" y="252" text-anchor="middle">card, lane move, verdict,</text>
+        <text class="t-small" x="500" y="270" text-anchor="middle">acceptance, Dossier option</text>
+        <text class="t-faint" x="500" y="294" text-anchor="middle">carries its rejected alternatives</text>
+
+        <rect class="node" x="380" y="372" width="240" height="116" rx="12"/>
+        <text class="t-label" x="500" y="402" text-anchor="middle">Position (Stelle)</text>
+        <text class="t-small" x="500" y="426" text-anchor="middle">bundles programme, channel</text>
+        <text class="t-small" x="500" y="444" text-anchor="middle">and personnel: a persona</text>
+        <text class="t-small" x="500" y="462" text-anchor="middle">descriptor, a pipeline step,</text>
+        <text class="t-small" x="500" y="480" text-anchor="middle">a review aspect</text>
+
+        <line class="edge" x1="350" y1="190" x2="380" y2="230" marker-end="url(#ah-prem)"/>
+        <line class="edge" x1="650" y1="190" x2="620" y2="230" marker-end="url(#ah-prem)"/>
+        <line class="edge" x1="650" y1="420" x2="620" y2="290" marker-end="url(#ah-prem)"/>
+        <line class="edge" x1="350" y1="420" x2="380" y2="290" marker-end="url(#ah-prem)" stroke-dasharray="5 4"/>
+        <line class="edge" x1="500" y1="372" x2="500" y2="314" marker-end="url(#ah-prem)"/>
+
+        <rect class="node-warn" x="20" y="566" width="960" height="56" rx="12"/>
+        <text class="t-label" x="38" y="590">Uncertainty absorption (Unsicherheitsabsorption)</text>
+        <text class="t-small" x="38" y="610">Every decision becomes a premise. Later decisions read the conclusion (pass, green, 74, recommended), not the evidence behind it.</text>
+      </svg>
+      <figcaption>Figure 3. Map of decision premises, an interpretation after <i>Organisation und Entscheidung</i> (2000). Solid arrows are decided premises. The dashed arrow is culture, which shapes decisions but is not itself decided. The position in the middle is where the three decided premises meet: a persona descriptor holds a charter (programme), operations, a feed and grants (channels), and a model class (personnel).</figcaption>
+    </figure>
+    <p><span class="mark" data-mark="reading">Reading</span>Three points on the map deserve emphasis.</p>
+    <ul>
+      <li><b>Model choice is a personnel decision.</b> Central model selection (AGT-3459), the routing tiers <code>luna-medium</code>, <code>sonnet-low</code>, <code>terra-medium</code>, <code>sol-medium</code> and <code>sol-xhigh</code>, and the correctness floors decide who does the work. The per-transition switch <code>Orchestration:Transitions:*</code>, Monolith or Engine, is described in the contract as "the single selector of who decides". These are the most consequential personnel decisions in the product. They deserve the same treatment an organisation gives a staffing change: recorded, attributable, and visible in the record of the position that changed.</li>
+      <li><b>The persona descriptor is a position.</b> Charter and scope are its programme. Operations, feed, grants and report template are its channels. The model class is its personnel. The persona team design already lets each be changed separately: charter revisions, grants, and a model resolved by central selection.</li>
+      <li><b>Culture is a real premise.</b> Much of what agents do comes from imitation. They copy the shape of earlier Dossiers, the tone of <code>AGENTS.md</code>, the habits of the operator. This premise was never decided, and it is the hardest one to change.</li>
+    </ul>
+    <h3>Reading: where uncertainty is absorbed</h3>
+    <table>
+      <thead><tr><th>Absorption point</th><th>Conclusion passed on</th><th>Evidence left behind</th><th>What keeps it reachable today</th></tr></thead>
+      <tbody>
+        <tr><td>Review aspect</td><td><code>pass</code>, <code>concerns</code>, <code>block</code></td><td>Diff, results, screenshots</td><td>Review report with citations</td></tr>
+        <tr><td>Batch gate</td><td>Green or red</td><td>Combined tree, test output</td><td>Exact-SHA gate receipt</td></tr>
+        <tr><td>Integration</td><td>Integrated</td><td>Containment proof</td><td><code>integrated-verified</code> versus <code>integrated-unverified</code> (AGT-3002)</td></tr>
+        <tr><td>Dossier recommendation</td><td>Recommended option</td><td>Evidence and rejected options</td><td>The Dossier and its decision record</td></tr>
+        <tr><td>Importance number</td><td>A score from 0 to 100</td><td>Factors, evidence, body</td><td>Factors shown next to the number</td></tr>
+        <tr><td>Manager persona</td><td>A lane move or a promotion</td><td>Item bodies, which managers never read</td><td>Audit with grant id, 24-hour undo</td></tr>
+        <tr><td>Card result</td><td><code>status.md</code></td><td>The session</td><td>Run records and artifacts</td></tr>
+      </tbody>
+    </table>
+    <p>The manager design is uncertainty absorption by intent. Managers read typed fields (kind, factors, score, links) and never raw bodies, so that injected text cannot reach a decision with authority. Absorption here is a safety measure as well as an economy. The product also already distinguishes absorption with evidence from absorption without it: <code>integrated-verified</code> versus <code>integrated-unverified</code>.</p>
+    <p><span class="mark" data-mark="consequence">Consequence</span>Absorbed uncertainty disappears from view. Later readers see the conclusion as a fact. Two measures follow (principle <a href="#p7">P7</a>). Every absorption point should keep a link to its evidence and a statement of confidence. And absorbed decisions should be reopened now and then by sample, for example a fresh requirement-fit review of a few accepted cards some weeks later, so that the system learns how much its own conclusions can be trusted.</p>
+    <p><span class="mark" data-mark="limit">Limit</span>Agents are not members. They cannot enter or leave, they draw no salary, and they have no motive that membership could generalise. Their "acceptance of formal expectations" is produced by prompts and validators, not by a membership role. Personas come closest: activation is an entry decision, retirement an exit, and Probation, Member and Senior look like a career (<i>Karriere</i>). But a persona's career changes nothing for the persona. It changes what the owner may decide about it. Luhmann's organisation also assumes members who can be held responsible for absorbed uncertainty. In Agent Studio that responsibility always comes back to the owner (see <a href="#risk">Risk and danger</a>).</p>
+  </section>
+  <section id="informal">
+    <h2><span class="number">10</span> Formal and informal organisation</h2>
+    <p class="theory"><span class="mark">Luhmann</span>In <i>Funktionen und Folgen formaler Organisation</i> (1964) formal expectations are those whose acceptance is made a condition of membership. Formal structure can never cover everything. Informal expectations, such as routines, contacts and the norms among colleagues, fill the gaps, and the formal organisation depends on them. Luhmann's best-known figure here is useful illegality (<i>brauchbare Illegalität</i>): deviations from formal rules that serve the organisation, are tolerated, and cannot be formalised without losing their function. Formalising them would make the organisation answer for them, and it would end the latency that made them workable. Working strictly to rule (<i>Dienst nach Vorschrift</i>) shows the point from the other side: an organisation that does only what its rules say comes to a halt. Stefan Kühl later describes three sides of an organisation, the formal side, the informal side and the display side (<i>Schauseite</i>) shown to the outside (<i>Organisationen. Eine sehr kurze Einführung</i>, 2011; <i>Brauchbare Illegalität</i>, 2020).</p>
+    <h3>Reading: the operator's working set was informal organisation</h3>
+    <p><span class="mark" data-mark="reading">Reading</span>Between 1 and 3 November 2026 Agent Studio was operated from scripts kept outside the repository and from the memory of a CLI session (AGT-3462). That working set included a board watcher, batch gate triage, continue rounds that name the card's result ref, lane moves, model switches and title repair. Its guardrails were learned in operation: no Git as root, deploy the server first, check pending pushes before a restart, one watcher at a time, no rounds to members of an isolating batch. None of them was enforced. In Luhmann's terms they were informal expectations, and the operator Dossier says so in its own words: "the guardrails depend on memory today". The slices OP-1 to OP-10 formalised them: <code>studio-op</code>, the decision stream, the attention lease, the append-only operator log, the preflights and the narrow operator role. The rule for where to enforce them reads like a programme of formalisation: "in the server first, in the CLI second, and in the skill text last".</p>
+    <p>Informal practice remains, and the repository shows it. Recent history on <code>develop</code> carries commits titled "wip(runner): salvage before teardown", and Dossier implementation logs repeatedly record "integration recovery after the merge-into-develop replay conflict". These are recurring repairs that the formal process absorbs after the fact.</p>
+    <h3>Reading: useful illegality is reserved for the owner</h3>
+    <p><span class="mark" data-mark="reading">Reading</span>The product holds a sharp asymmetry. For agents there is no tolerated deviation. A manager persona cannot move a card past a running one or into Human review, and every bound "refuses with a receipt". For agents, deviation is a security event, because tolerance relies on loyalty and on latency, and an agent that can be instructed by a card's text has neither. The zone of tolerated deviation lives entirely with the owner and is itself formalised: break-glass (T3), the audited quota override, the T2 override of a blocked preflight, the watcher lease <code>takeOver</code> recorded in the audit, and "an owner action always wins". Break-glass is the paradox in pure form, a formal rule for leaving the formal rules.</p>
+    <p><span class="mark" data-mark="reading">Reading</span>The display side matters too. The security overview described a weekly scratch restore that the installation had never run. The documentation presented a posture to readers that practice did not have. The warden's fact "documented posture matches observed posture" (floor 60) is a check of the display side against the other two.</p>
+    <p><span class="mark" data-mark="consequence">Consequence</span>Formalising gains inheritance, because a new session or a different agent gets the rule. It gains enforcement where the agent cannot argue past it, and it gains an audit. It loses discretion and the ability to handle what nobody foresaw. It also produces new informal practice around each new rule, and it makes the organisation answer for what it formalises. The theory therefore suggests formalising by observation, not upfront (principle <a href="#p9">P9</a>). Rules that must never depend on memory, such as safety, credentials and data loss, are formalised at once. A bounded, owner-held zone of deviation stays, and every use of it is recorded. Everything else is formalised only after it has recurred in the operator log, through a periodic review that proposes rules and decides nothing itself.</p>
+    <p><span class="mark" data-mark="limit">Limit</span>Luhmann's informal organisation is made of people's relations with each other. Agent Studio's informal organisation is mostly one owner's habits and one CLI session's memory. It is closer to personal working style than to a culture among colleagues. The asymmetry also means the system has almost no informal flexibility below the owner. That is a deliberate price, and it makes the owner the only buffer for the unforeseen.</p>
+  </section>
+
+  <section id="media">
+    <h2><span class="number">11</span> Tokens, budgets and attention</h2>
+    <p class="theory"><span class="mark">Luhmann</span>Luhmann distinguishes medium and form (<i>Medium und Form</i>), after Fritz Heider. A medium is a loosely coupled set of elements, and a form couples some of them tightly, as words do with sounds. A medium is not used up by its forms (<i>Die Kunst der Gesellschaft</i>, 1995; <i>Die Gesellschaft der Gesellschaft</i>, 1997, chapter 2). Symbolically generalised communication media (<i>symbolisch generalisierte Kommunikationsmedien</i>), such as money, power, truth and love, make the acceptance of improbable communications probable. Money makes scarcity (<i>Knappheit</i>) communicable. The paradox of scarcity is that one person's access is everyone else's non-access (<i>Die Wirtschaft der Gesellschaft</i>, 1988). Power transmits a selection by an avoidance alternative that both sides would rather not see realised (<i>Macht</i>, 1975). In an early essay on public opinion (<i>Öffentliche Meinung</i>, 1970) Luhmann argued that public communication is structured less by opinions than by themes and by rules of attention. Attention is the scarce resource.</p>
+    <p><span class="mark" data-mark="reading">Reading</span>Tokens are not a medium in Heider's sense, because they are used up. They behave like money: a quantified, transferable, scarce claim on computation. The budget design makes scarcity communicable inside the system. There is a persona pool of 10 % of <code>ModelTokensPerWeek</code>, allowances per persona, warning at 80 % and blocked at 100 %, admission as "a check, not a reservation", cost "shown as priced plus 'price unknown', never as an assumed zero", and a budget steward who moves unused allowance between personas, which looks a lot like payment. The scarcity paradox is answered by a value rather than a market: "persona work is the lowest-priority consumer… card work always wins".</p>
+    <p><span class="mark" data-mark="reading">Reading</span>The scarcest medium in Agent Studio is not tokens. Tokens can be bought. The owner's attention cannot. Every persona report, decision request, front-page slot and Human review card draws on the same small reserve of the owner's attention. The persona team rations it indirectly, through signal thresholds, maximum items per report and the decisions-needed box, but no ledger counts it.</p>
+    <p><span class="mark" data-mark="consequence">Consequence</span>Treat the owner's attention as a budget with its own visible count (principle <a href="#p10">P10</a>). Count decision requests and front-page items per week against a stated attention allowance, and let items compete for it by importance, just as personas compete for tokens.</p>
+    <p><span class="mark" data-mark="limit">Limit</span>The owner's control over agents is not power in Luhmann's sense. Power needs a counterpart who has alternatives and prefers to avoid the sanction. An agent refused with <code>403 grant-required</code> chooses nothing. It is stopped. Technical enforcement is closer to what Luhmann calls physical force than to power as a medium. The budget steward's "payments" also have no counterpart with its own interest. They are allocations that look like an economy.</p>
+  </section>
+
+  <section id="trust">
+    <h2><span class="number">12</span> Trust</h2>
+    <p class="theory"><span class="mark">Luhmann</span>In <i>Vertrauen. Ein Mechanismus der Reduktion sozialer Komplexität</i> (1968), trust reduces social complexity by acting as if a certain future were secure. It is a risky advance (<i>riskante Vorleistung</i>) that goes beyond the available information. Trust grows in small steps, where disappointment would be limited and visible. Personal trust (<i>persönliches Vertrauen</i>) is directed at people. System trust (<i>Systemvertrauen</i>) is directed at the functioning of media and institutions such as money or the courts. Distrust is a functional equivalent, but a more demanding one, because it needs more information and more strategies. Controls can support trust, but trust cannot be demanded, and too much visible control reads as distrust. In a later essay, <i>Familiarity, Confidence, Trust</i> (1988), Luhmann separates confidence (<i>Zuversicht</i>), where alternatives are not even considered, from trust, which is a decision made in awareness of the risk.</p>
+    <p><span class="mark" data-mark="reading">Reading</span>The owner's relation to the agents is built as staged trust. Standing grants last 7 days by default and at most 30. Operator sessions are designed to last at most 8 hours and persona sessions at most 30 minutes. A new persona spends its first period in shadow mode, its first four weeks in Probation, and every manager action can be undone within 24 hours. There are kill switches per persona, per team and installation-wide. Each of these limits the cost of disappointment, which is exactly what makes a risky advance affordable. The persona record (acceptance rate, calibration, misses) gives each persona a reputation, and with it something personal trust can attach to. A model session alone has no reputation to lose.</p>
+    <p><span class="mark" data-mark="reading">Reading</span>For most of the work, though, the owner's trust is system trust. The owner does not trust a coding agent. The owner trusts the chain of review aspects, the batch gate and the acceptance rail. The danger Luhmann's later distinction points to is the drift from trust to confidence. After weeks of green gates, failure is no longer considered. The backup case shows the pattern: the documentation said weekly restore, and nobody considered that it might not be true.</p>
+    <p><span class="mark" data-mark="consequence">Consequence</span>Keep trust staged, expiring and revocable, and turn confidence back into trust on a schedule (principle <a href="#p11">P11</a>). Restore tests, kill switch drills and audit chain verification bring the possibility of failure back into view. The warden already gives them floors: restore test older than 35 days at 70, never at 85, broken audit chain at 95 (PT-5).</p>
+    <p><span class="mark" data-mark="limit">Limit</span>Trust is an attitude of a psychic system. It flows only one way here, from the owner to the system. Agents do not trust. They are configured. Luhmann's reciprocity, where trust given invites trust returned, has no counterpart.</p>
+  </section>
+
+  <section id="risk">
+    <h2><span class="number">13</span> Risk and danger</h2>
+    <p class="theory"><span class="mark">Luhmann</span>In <i>Soziologie des Risikos</i> (1991) the difference between risk (<i>Risiko</i>) and danger (<i>Gefahr</i>) is a matter of attribution. A possible future loss is a risk if it is attributed to one's own decision, and a danger if it is attributed to something outside, the environment. The same loss can be a risk for those who decide and a danger for those affected (<i>Entscheider und Betroffene</i>), and this difference produces conflict. There is no risk-free behaviour, because not deciding is also a decision. As technology and knowledge grow, more dangers turn into risks: once something could have been prevented, not preventing it becomes a decision.</p>
+    <p><span class="mark" data-mark="reading">Reading</span>Delegation in Agent Studio moves this line. When a manager persona moves a card or the operator agent accepts one under a grant, the action is attributed to the session (<code>persona:&lt;id&gt;/session:&lt;sid&gt;</code>), with <code>delegatedBy: human:&lt;owner&gt;</code>. In the moment, a wrong move looks to the owner like a danger: "I did not decide that". Structurally it is the owner's risk, because the owner decided to grant. The design keeps the highest-loss decisions as undelegated risks. T2 operations (secrets, exposure, deletes, history rewrites, gate bypass, key rotation, access) stay with the owner and require a step-up. Agents decide without being affected. They bear no loss and no liability. The divide between deciders and affected is therefore extreme, and it only stays quiet because the most affected party, the owner, is also the final decider.</p>
+    <p><span class="mark" data-mark="reading">Reading</span>The backup case is Luhmann's technology thesis in miniature. Disk loss on a host is a danger. Once <code>backup.sh</code>, <code>install-backup-timer.sh</code> and a runbook exist, an unscheduled backup is a decision, a risk the owner carries without having noticed deciding it. The warden's floor <code>backup.none-scheduled:95</code> turns that non-decision into a visible item. The persona design's rule for decision requests, that "no answer: nothing changes", is safe for proposed actions. For missing protection it is not: if nothing changes, the risk stays where it is.</p>
+    <p><span class="mark" data-mark="consequence">Consequence</span>Every delegated decision should show its chain of attribution, and every decision request about missing protection should say what remains at risk without an answer (principle <a href="#p12">P12</a>). Protection that exists but is unused should appear as an owner risk, not as a neutral absence.</p>
+    <p><span class="mark" data-mark="limit">Limit</span>Luhmann's risk theory is about attribution in communication. It is not a method of calculation. The importance number (impact × urgency × confidence) is a quantified risk estimate, and quantifying is itself an observation with blind spots. Luhmann would add that deciders and affected parties judge the same number differently. Liability in the legal sense lies outside both the theory and this Dossier.</p>
+  </section>
+  <section id="massmedia">
+    <h2><span class="number">14</span> The magazine as mass media</h2>
+    <h3>What Luhmann says</h3>
+    <p class="theory"><span class="mark">Luhmann</span><i>Die Realität der Massenmedien</i> (1996) opens with a sentence that is often quoted: "Was wir über unsere Gesellschaft, ja über die Welt, in der wir leben, wissen, wissen wir durch die Massenmedien." (Our translation: what we know about our society, indeed about the world in which we live, we know through the mass media.) Luhmann defines the mass media by the technical dissemination of communication without interaction between sender and receivers. Their code is information and non-information (<i>Information / Nichtinformation</i>). Information does not survive repetition: once something is known, it is no longer information. So the mass media constantly turn information into non-information and need new information all the time. They have a double reality. One is their own operations, printing and broadcasting. The other is what appears as reality through them, for everyone else. They work in three programme areas: news and reports (<i>Nachrichten und Berichte</i>), advertising (<i>Werbung</i>) and entertainment (<i>Unterhaltung</i>). Their function is to produce a background reality that everyone can presuppose, and can presuppose that everyone else presupposes. In this sense they are society's memory and steer its self-observation. Their constant companion is the suspicion of manipulation.</p>
+    <p class="theory"><span class="mark">Luhmann</span>For news, Luhmann names selectors (<i>Selektoren</i>), the features that make something likely to be reported. Paraphrased from chapter 5: novelty and surprise (<i>Neuheit</i>); conflict (<i>Konflikte</i>); quantities (<i>Quantitäten</i>), which are informative and invite comparison; local relevance (<i>lokaler Bezug</i>); norm violations (<i>Normverstöße</i>); moral judgement of such violations (<i>moralische Bewertung</i>); attribution to actors (<i>Zurechnung auf Handelnde</i>); topicality and the preference for the single event (<i>Aktualität</i>); and the reporting of opinions as news (<i>Meinungsäußerungen</i>). Behind all of these stand the routines of the news organisations themselves.</p>
+    <h3>Reading: Studio Weekly as the system's mass medium</h3>
+    <p><span class="mark" data-mark="reading">Reading</span>The weekly issue proposed in AGT-3573 (PT-8) is composed by deterministic layout rules and one editor call. It is immutable once published, and corrections appear in the next issue. Its readers do not talk back to the issue. They act elsewhere, on cards and grants. It has a double reality: its own operations (scoring, layout, export) and the reality it presents. Its function is the one Luhmann names: it produces a background reality that the owner, the chief of staff, the presenter, the operator agent and the in-app chat can all presuppose. The chief of staff is triggered by "magazine issue published", and the presenter builds its deck from the issue. Several readers that can assume the others have read the same issue make up a small public. Without that, there would be no mass-media function at all.</p>
+    <figure class="breakout" id="fig-magazine">
+      <svg viewBox="0 0 1000 520" role="img" aria-labelledby="fig-mag-title fig-mag-desc">
+        <title id="fig-mag-title">The magazine as the system's mass media</title>
+        <desc id="fig-mag-desc">A left-to-right flow in five columns: personas observe; they publish items with fingerprints and thresholds; a selection step applies the code information or non-information and the importance number with floors; the Studio Weekly issue is composed; readers, namely the owner, the chief of staff, the presenter, the operator agent and the in-app chat, read it. Below, a band names the background reality every reader may assume the others share, and a loop arrow carries decisions back to the personas. A warning band at the bottom says that what is not in the issue is not in the background reality, and that the coverage line and colophon name what was not looked at.</desc>
+        <defs>
+          <marker id="ah-mag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker>
+        </defs>
+        <rect class="bg" x="0" y="0" width="1000" height="520"/>
+        <text class="t-title" x="500" y="36" text-anchor="middle">From observation to background reality</text>
+
+        <rect class="node" x="20" y="60" width="170" height="250" rx="10"/>
+        <text class="t-label" x="34" y="86">Personas</text>
+        <text class="t-small" x="34" y="112">eight aspect personas,</text>
+        <text class="t-small" x="34" y="130">each with one distinction</text>
+        <text class="t-small" x="34" y="156">report on a cadence</text>
+        <text class="t-small" x="34" y="174">or on a trigger</text>
+        <text class="t-faint" x="34" y="290">observers</text>
+
+        <rect class="node" x="217" y="60" width="170" height="250" rx="10"/>
+        <text class="t-label" x="231" y="86">Items</text>
+        <text class="t-small" x="231" y="112">finding, proposal,</text>
+        <text class="t-small" x="231" y="130">decision request, report</text>
+        <text class="t-small" x="231" y="156">fingerprint: one item</text>
+        <text class="t-small" x="231" y="174">per problem</text>
+        <text class="t-small" x="231" y="200">threshold filters noise</text>
+        <text class="t-faint" x="231" y="290">utterances</text>
+
+        <rect class="node-accent" x="414" y="60" width="170" height="250" rx="10"/>
+        <text class="t-label" x="428" y="86">Selection</text>
+        <text class="t-small t-accent" x="428" y="112">code: information /</text>
+        <text class="t-small t-accent" x="428" y="130">non-information</text>
+        <text class="t-small" x="428" y="156">impact × urgency ×</text>
+        <text class="t-small" x="428" y="174">confidence, 0 to 100</text>
+        <text class="t-small" x="428" y="200">floors keep dangers</text>
+        <text class="t-small" x="428" y="218">on the front page</text>
+        <text class="t-faint" x="428" y="290">selectors</text>
+
+        <rect class="node" x="611" y="60" width="170" height="250" rx="10"/>
+        <text class="t-label" x="625" y="86">Studio Weekly</text>
+        <text class="t-small" x="625" y="112">front page, decisions</text>
+        <text class="t-small" x="625" y="130">needed, sections,</text>
+        <text class="t-small" x="625" y="148">operations watch,</text>
+        <text class="t-small" x="625" y="166">numbers, corrections</text>
+        <text class="t-small" x="625" y="192">immutable once out</text>
+        <text class="t-faint" x="625" y="290">medium</text>
+
+        <rect class="node" x="808" y="60" width="170" height="250" rx="10"/>
+        <text class="t-label" x="822" y="86">Readers</text>
+        <text class="t-small" x="822" y="112">owner</text>
+        <text class="t-small" x="822" y="130">chief of staff</text>
+        <text class="t-small" x="822" y="148">presenter</text>
+        <text class="t-small" x="822" y="166">operator agent</text>
+        <text class="t-small" x="822" y="184">in-app chat</text>
+        <text class="t-faint" x="822" y="290">a small public</text>
+
+        <line class="edge" x1="190" y1="185" x2="215" y2="185" marker-end="url(#ah-mag)"/>
+        <line class="edge" x1="387" y1="185" x2="412" y2="185" marker-end="url(#ah-mag)"/>
+        <line class="edge" x1="584" y1="185" x2="609" y2="185" marker-end="url(#ah-mag)"/>
+        <line class="edge" x1="781" y1="185" x2="806" y2="185" marker-end="url(#ah-mag)"/>
+
+        <rect class="node-accent" x="611" y="340" width="367" height="62" rx="10"/>
+        <text class="t-label" x="625" y="366">Background reality</text>
+        <text class="t-small" x="625" y="388">what every reader may assume the others have read</text>
+        <line class="edge" x1="893" y1="310" x2="893" y2="338" marker-end="url(#ah-mag)"/>
+
+        <path class="edge-accent" d="M611,371 L105,371 L105,314" marker-end="url(#ah-mag)"/>
+        <text class="t-small t-accent" x="130" y="362">decisions: cards, grants, charter changes, acknowledgements</text>
+
+        <rect class="node-warn" x="20" y="430" width="958" height="70" rx="10"/>
+        <text class="t-label" x="36" y="456">Not in the issue means not in the background reality</text>
+        <text class="t-small" x="36" y="478">The coverage line and the colophon say which personas did not report and what was not looked at.</text>
+      </svg>
+      <figcaption>Figure 4. The magazine as the system's mass medium, an interpretation of the proposed Studio Weekly (AGT-3573, PT-8). The selection step is where Luhmann's code of information and non-information meets the importance number. The loop at the bottom is what makes the medium matter: decisions taken on the basis of the issue feed back into what the personas observe next.</figcaption>
+    </figure>
+    <h3>Reading: the news selectors against the persona design</h3>
+    <table>
+      <thead><tr><th>Selector</th><th>In the mass media (paraphrase)</th><th>In the persona design (AGT-3573)</th><th>Reading</th></tr></thead>
+      <tbody>
+        <tr><td>Novelty (<i>Neuheit</i>)</td><td>The new is preferred; repetition turns information into non-information.</td><td>A persistent problem keeps one fingerprint; urgency grows with age; floors keep a missing backup in the lead; settled history is kept off the front page.</td><td>The design deliberately breaks the news code for persistent dangers. That is its most important departure, and it needs protecting (P13).</td></tr>
+        <tr><td>Conflict (<i>Konflikte</i>)</td><td>Disputes are newsworthy.</td><td>Decision requests with options; manager reversals counted in calibration.</td><td>Conflict appears only as a decision with options, never as controversy. Keep it that way.</td></tr>
+        <tr><td>Quantities (<i>Quantitäten</i>)</td><td>Numbers inform and invite comparison.</td><td>Importance numbers, numbers of the week, trends with denominators, section counts that sum to the strap.</td><td>Numbers also suggest precision. Denominators, "too few decisions" and capped confidence are the right correctives.</td></tr>
+        <tr><td>Local relevance (<i>lokaler Bezug</i>)</td><td>The near is preferred to the far.</td><td>Scope per persona; facts about "this installation", not CI in general.</td><td>Local relevance is useful here: "the CI restore test proves the code, not this installation's archives".</td></tr>
+        <tr><td>Norm violations (<i>Normverstöße</i>)</td><td>Breaches of rules are reported.</td><td>Fact floors: no backup 95, expired credential 95, broken audit chain 95; style guide hard rules for the design lead.</td><td>Floors make norm violations structural rather than editorial.</td></tr>
+        <tr><td>Moral judgement (<i>moralische Bewertung</i>)</td><td>Breaches are judged as esteem or disesteem of persons.</td><td>Owner rating "Useful / Not useful"; rank; misses listed by name.</td><td>Luhmann treats moral communication as esteem and disesteem (<i>Achtung / Missachtung</i>) and warns that it inflames conflict. The design rightly keeps ratings out of scores and ranks.</td></tr>
+        <tr><td>Attribution to actors (<i>Zurechnung auf Handelnde</i>)</td><td>Events are told as deeds of persons.</td><td>Bylines such as "Operations warden · Critical"; findings carry "competing explanations".</td><td>Bylines invite blaming a persona or an agent instead of a structure. Competing explanations are the counterweight.</td></tr>
+        <tr><td>Topicality (<i>Aktualität</i>)</td><td>The single recent event beats the slow process.</td><td>Weekly issue, optional daily brief; eight-week trends; the scout's 90-day pass.</td><td>Trends and the scout supply the processes that issues alone would miss.</td></tr>
+        <tr><td>Opinions (<i>Meinungsäußerungen</i>)</td><td>Opinions become news.</td><td>One editor call writes the lead and teasers, and every sentence must cite an item id.</td><td>The citation rule keeps the editor's emphasis from becoming the reality.</td></tr>
+        <tr><td>Organisational routine</td><td>Newsrooms select by their own routines.</td><td>Deterministic layout: at most two side stories per persona; a Critical item always reaches the front page.</td><td>The routines are written down and reproducible, which the mass media's are not.</td></tr>
+      </tbody>
+    </table>
+    <p><span class="mark" data-mark="reading">Reading</span>The other two programme areas appear as well, in small form. A persona's value panel and rank advertise its usefulness, and Luhmann notes that advertising declares its motive openly and is read accordingly. The character sheet's game feel, which "keeps the game feel and stays honest", is entertainment in Luhmann's sense: a framed second reality in which the reader can place themselves. Both are harmless as long as they stay separate from the news.</p>
+    <p><span class="mark" data-mark="consequence">Consequence</span>Persistent dangers must not age out of the news (principle <a href="#p13">P13</a>). Floors and growing urgency are a strong start. Two additions would make the departure from the news code durable. A still-open register would list every open item of 40 or more older than 14 days, by age. And the front page would reserve a bounded number of slots for persistent items, so that new items cannot crowd out a backup that has been missing for three weeks. Against the suspicion of manipulation the design already has the right tools: sourced numbers, a deck validator that refuses unsourced claims, immutable issues and a corrections box.</p>
+    <p><span class="mark" data-mark="limit">Limit</span>Luhmann's mass media serve an anonymous public at the scale of society. Studio Weekly has a handful of readers, one of them human, so its "public" is very small. Its readers can also act on what they read through the same system that produced it, which a newspaper reader cannot. The comparison is useful for its selection logic and its blind spots. It says little about public opinion.</p>
+  </section>
+
+  <section id="self">
+    <h2><span class="number">15</span> Self-description</h2>
+    <p class="theory"><span class="mark">Luhmann</span>Self-observation (<i>Selbstbeobachtung</i>) is an operation in which a system uses its distinction from its environment inside itself. Self-description (<i>Selbstbeschreibung</i>) produces texts the system can use again to describe itself, such as constitutions, theories of society or mission statements. Self-descriptions simplify by necessity, they can be several, and they can contradict each other. In a society without a centre, no self-description is privileged. Sociology describes society from inside society and is therefore autological: it is part of what it describes (<i>Die Gesellschaft der Gesellschaft</i>, 1997, chapter 5).</p>
+    <p><span class="mark" data-mark="reading">Reading</span>Agent Studio observes itself in receipts, timelines, <code>status.md</code>, run outcomes and, once built, persona records. It describes itself in <code>README.md</code>, <code>ROADMAP.md</code>, <code>AGENTS.md</code>, the documentation index, the designated topics with their Current State pages kept fresh by <code>post-agents-wiki-sync</code>, the Dossiers, the website, the magazine and the deck. These descriptions are several, and they do not always agree. The security overview's restore claim and the installation's practice are one recorded case. This Dossier is one more self-description, and an autological one. It lives in <code>docs/</code>, it will be indexed in the Wiki, and its terms may change how the system talks about itself.</p>
+    <p><span class="mark" data-mark="consequence">Consequence</span>Self-descriptions should be dated, sourced and plural. They should say what they leave out, and they should be compared with self-observation on a schedule. The warden's posture check and the documentation editor's drift findings are two such comparisons (PT-5, PT-12). This joins principle <a href="#p2">P2</a>.</p>
+    <p><span class="mark" data-mark="limit">Limit</span>Most of Agent Studio's self-descriptions are written by agents on cards. Their authors do not remember earlier descriptions they wrote. Continuity therefore depends entirely on the texts, which is closer to Luhmann's model than human authorship is, but it also means nobody notices a contradiction unless an observer is set up to look for it.</p>
+  </section>
+  <section id="memory">
+    <h2><span class="number">16</span> Time, memory and forgetting</h2>
+    <p class="theory"><span class="mark">Luhmann</span>The elements of social systems are events (<i>Ereignisse</i>). They vanish as they happen, so the system must keep reproducing itself. Structures bind time (<i>Zeitbindung</i>): they make the past usable for a future that is still open. The present is the difference between past and future. A present future (<i>gegenwärtige Zukunft</i>), the future as imagined today, must be told apart from a future present (<i>zukünftige Gegenwart</i>), what will actually be present later (<i>The Future Cannot Begin</i>, 1976). Memory (<i>Gedächtnis</i>) is not storage. It is the function that keeps separating what is forgotten from what is remembered, and its main achievement is forgetting, which frees capacity. Remembering is a consistency check made in current operations (<i>Die Gesellschaft der Gesellschaft</i>, 1997, chapter 3). Elena Esposito traces how the forms of social memory change with the media of communication, from oral cultures through writing and print to the computer (<i>Soziales Vergessen</i>, 2002).</p>
+    <p><span class="mark" data-mark="reading">Reading</span>Runs, lane moves and verdicts are events. Cards, receipts, Dossiers and the repository bind time. The repository does not forget: Git keeps every commit, and the product's working rules keep records append-only. Forgetting therefore has to be designed, and the product designs it in many places, each with its own rule:</p>
+    <table>
+      <thead><tr><th>What is forgotten</th><th>Rule</th><th>Source</th></tr></thead>
+      <tbody>
+        <tr><td>Operator decision events</td><td>72 hours by default, never below 24; an older cursor reads as a gap</td><td>OP-2, AGT-3482</td></tr>
+        <tr><td>Persona experience</td><td>Half-life of 90 days</td><td>AGT-3573</td></tr>
+        <tr><td>Floor items acknowledged by the owner</td><td>Quiet for at most 14 days, then back</td><td>AGT-3573</td></tr>
+        <tr><td>Rejected proposals</td><td>Suppressed until material new evidence</td><td>AGT-3020</td></tr>
+        <tr><td>Improvement theme Dossiers</td><td>Closed after 90 days without an open proposal; may reopen</td><td>AGT-3020</td></tr>
+        <tr><td>Cards</td><td><code>7-archive</code>, kept read-only</td><td>Lane catalogue</td></tr>
+        <tr><td>Task learnings</td><td>Distilled per task into <code>docs/operations/learnings/</code>; the rest of the session is not carried forward</td><td><code>post-wiki-learnings</code></td></tr>
+      </tbody>
+    </table>
+    <p>Two observations follow. First, nobody sees these rules together, so the system's forgetting as a whole is undesigned even though each part is designed. Second, the most important memories are remembered by observing again, not by storing. The warden does not remember that no backup exists. It finds it again every morning from a fresh fact, and the stable fingerprint makes the repeated finding one item whose age grows. That is Luhmann's memory as a consistency check, not as an archive.</p>
+    <p><span class="mark" data-mark="reading">Reading</span>The distinction between present future and future present structures every Dossier. The recommendation is a present future. The implementation log appended at the end, with entries such as "Delivered with OA-D2 option B as recommended", records future presents next to the earlier expectation. The comparison between the two, like the "reported versus achieved" feedback in complexity routing, is where an organisation learns about its own forecasts.</p>
+    <p><span class="mark" data-mark="consequence">Consequence</span>Forgetting should be designed as a whole: one inventory of every retention, decay and closure rule, with an owner-visible page and a guard that every new retention setting adds a row (principle <a href="#p14">P14</a>). Important states should be remembered by being observed again, not only by being stored.</p>
+    <p><span class="mark" data-mark="limit">Limit</span>Luhmann's memory is a function of operations, not of data. A file kept for years is not memory until an operation uses it. The inventory proposed here therefore lists the conditions for forgetting, not memory itself.</p>
+  </section>
+
+  <section id="slipbox">
+    <h2><span class="number">17</span> The slip box</h2>
+    <p class="theory"><span class="mark">Luhmann</span>In <i>Kommunikation mit Zettelkästen. Ein Erfahrungsbericht</i> (1981) Luhmann describes his card index as a communication partner. Communication needs a partner that can surprise, so the slip box must become independent of its author. Paraphrased, it does so through four features. Slips have fixed positions (<i>feste Stellordnung</i>) and numbers that allow branching anywhere, so a thought can grow inside another without a system fixed in advance. Slips link to each other (<i>Verweisungen</i>), across topics. A keyword register (<i>Schlagwortregister</i>) gives a few points of entry. And over time the box gains a complexity its author no longer has in mind. Luhmann deliberately rejects a systematic, thematic order, because it would fix a hierarchy before the thoughts exist. Johannes F. K. Schmidt, who studied the collection in the Niklas Luhmann Archive at Bielefeld, describes it as a thinking tool, a communication partner and a publication machine of roughly 90,000 slips (2016).</p>
+    <p><span class="mark" data-mark="reading">Reading</span>Dossiers and the Wiki already work partly like a slip box:</p>
+    <ul>
+      <li><b>Fixed addresses.</b> Card keys such as AGT-3606, Dossier paths such as <code>docs/persona-team/</code>, decision ids such as PT-D8, slice ids such as PT-8, and item fingerprints such as <code>ops:&lt;fact id&gt;:&lt;scope&gt;</code>.</li>
+      <li><b>Branching.</b> Follow-up cards, append-only Dossier revisions, implementation logs appended to Dossiers, and chains such as OA-D1 to OP-8 to AGT-3488.</li>
+      <li><b>Links.</b> <code>relatedTaskKeys</code>, card-to-Dossier references, the Wiki's linked elements.</li>
+      <li><b>Register.</b> <code>docs/start/README.md</code>, with its rule that every new document adds one row, and the designated-topics registry.</li>
+      <li><b>Surprise.</b> The improvement scout reads across cards and Dossiers and proposes patterns nobody asked for. That is the nearest thing to the slip box answering back.</li>
+    </ul>
+    <figure class="evidence-figure media-breakout" id="ev-wiki">
+      <div class="evidence-captures">
+        <div class="evidence-capture">
+          <span class="capture-theme">Light</span>
+          <img src="assets/wiki-folder-tree-page-light--pinned.png" alt="Demo App Knowledge view with 13 pages. The middle column lists categories as folders, dossiers, operations, product, quality and system, under the root folder docs. The open page is Demo App product overview, README.md. The right rail shows Linked elements with a count of 8, listing tasks DEMO-1, DEMO-11, DEMO-5, DEMO-16, DEMO-17, DEMO-3, DEMO-7 and the page Dossier index.">
+          <span class="figure-annotation">Folders, and links out of the page</span>
+        </div>
+        <div class="evidence-capture">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/wiki-folder-tree-page-dark--pinned.png" alt="The same Knowledge view in the dark theme with the folder categories, the open product overview page and the Linked elements rail.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence.</b> The Wiki presents knowledge as a folder tree ("Knowledge, 13 pages", categories dossiers, operations, product, quality and system under the root folder <code>docs</code>). Its right rail lists "Linked elements, 8": the tasks and pages that the open page links to.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> captured <time datetime="2026-11-09">9 November 2026</time> from the same isolated pinned demo stack built from commit <code>d4d2c49d7</code>, Demo App, Wiki opened from the explorer, first page selected, viewport 1600 × 900 CSS pixels at device scale 2.</span>
+          <span><b>Dark:</b> captured <time datetime="2026-11-09">9 November 2026</time>, same stack, page and viewport.</span>
+        </span>
+      </figcaption>
+    </figure>
+    <p><span class="mark" data-mark="reading">Reading</span>Where it breaks is just as clear. The Wiki is a folder tree: "the repository tree is the Wiki tree" (<code>docs/system/contracts/wiki-tree.md</code>). That is the systematic order Luhmann rejected. Documents are long, this one included, rather than one thought per slip. Links run one way. The rail lists the elements an open page links to (<code>extractWikiLinkedElements</code> extracts outgoing links of kind doc, anchor, external and task), but the repository has no index of incoming links. The nearest equivalent is the reference list of a single Dossier (<code>GET …/workbenches/{key}/references</code>). A slip box surprises its reader through links followed backwards, from a note to the notes that cite it, and that path is missing.</p>
+    <p><span class="mark" data-mark="reading">Reading</span>One development would have interested Luhmann. Through search and the in-app chat with Dossier context, the docs now literally answer questions. The slip box has become a partner that talks. With Esposito, this is artificial communication: the contingency of the answers is produced by a model over the box, not by the box's own structure. Surprise is now cheap. The fixed addresses and links that let a reader check the surprise are what keep it worth having.</p>
+    <p><span class="mark" data-mark="consequence">Consequence</span>Give the knowledge base fixed addresses, links that can be followed backwards, and a register (principle <a href="#p15">P15</a>). The smallest step is a "Linked from" list next to "Linked elements" for Wiki pages and Dossiers, computed from the links the Wiki already extracts. Converting the docs into atomic notes is not recommended. The folder tree serves people browsing for the first time, and links can add the slip box's cross-cutting order on top of it.</p>
+    <p><span class="mark" data-mark="limit">Limit</span>Luhmann's box was private. It was the partner of one author over forty years, and its surprise came from his own forgotten notes. Agent Studio's docs are written by many agents that never remember what they wrote. The box is less an alter ego than a shared memory without a single author. Whether it can surprise in Luhmann's sense depends on readers who follow its links, and nowadays that reader is often a model.</p>
+  </section>
+  <section id="map">
+    <h2><span class="number">18</span> Concept map</h2>
+    <p>The table maps each product concept to the theory concept used in this Dossier. "Fit" rates the analogy. <b>Strong</b> means the structure matches and the reading changes a design question. <b>Partial</b> means the logic transfers but a premise of the theory is missing. <b>Weak</b> means it is useful as an image only.</p>
+    <table class="map">
+      <thead><tr><th>Product concept</th><th>Theory concept</th><th>Reading in one line</th><th>Fit</th></tr></thead>
+      <tbody>
+        <tr><td>Recorded facts, receipts</td><td>Communication (<i>Kommunikation</i>)</td><td>Elements of the system are what later elements can refer to.</td><td>Partial</td></tr>
+        <tr><td>Validator, sentinel</td><td>Understanding (<i>Verstehen</i>)</td><td>The point where an utterance becomes a fact of the system.</td><td>Partial</td></tr>
+        <tr><td>Instruction-source header</td><td>Information and utterance (<i>Information / Mitteilung</i>)</td><td>Who uttered it decides authority, not what it says.</td><td>Strong</td></tr>
+        <tr><td>Follow-up cards, spawn contract</td><td>Autopoiesis (<i>Autopoiesis</i>)</td><td>Decisions produce decisions, or closure is declared.</td><td>Partial</td></tr>
+        <tr><td>Agents, models, hosts, owner</td><td>Environment (<i>Umwelt</i>)</td><td>They irritate the system through narrow couplings.</td><td>Strong</td></tr>
+        <tr><td>Prompt, tokens, grants, typed facts</td><td>Structural coupling (<i>strukturelle Kopplung</i>)</td><td>Narrow channels that include some irritations and exclude most.</td><td>Strong</td></tr>
+        <tr><td>Missing backup fact</td><td>Resonance (<i>Resonanz</i>)</td><td>A danger without a fact has no form inside the system.</td><td>Strong</td></tr>
+        <tr><td>Brief, grounds pack, scope</td><td>Reduction of complexity (<i>Reduktion von Komplexität</i>)</td><td>Bounded selection that must keep a way back.</td><td>Strong</td></tr>
+        <tr><td>Lanes</td><td>Normative expectations (<i>normative Erwartungen</i>)</td><td>Held against disappointment, with a named disappointment signal.</td><td>Strong</td></tr>
+        <tr><td>Routing feedback, calibration</td><td>Cognitive expectations (<i>kognitive Erwartungen</i>)</td><td>Expectations meant to learn.</td><td>Strong</td></tr>
+        <tr><td>Recommend-and-proceed rule</td><td>Double contingency (<i>doppelte Kontingenz</i>)</td><td>One side moves first, the other connects or corrects.</td><td>Partial</td></tr>
+        <tr><td>Persona</td><td>Person (<i>Person</i>)</td><td>An addressable bundle of expectations with a record.</td><td>Strong</td></tr>
+        <tr><td>Review aspects, batch gate</td><td>Second-order observation (<i>Beobachtung zweiter Ordnung</i>)</td><td>Observers of how coding agents observed.</td><td>Strong</td></tr>
+        <tr><td>Aspect set, persona scope</td><td>Blind spot (<i>blinder Fleck</i>)</td><td>What the distinction in use cannot see.</td><td>Strong</td></tr>
+        <tr><td>Coverage line, confidence</td><td>Re-entry (<i>Wiedereintritt</i>)</td><td>Observed / not observed comes back into the report.</td><td>Strong</td></tr>
+        <tr><td><code>block</code> / not, green / red</td><td>Binary code (<i>binärer Code</i>)</td><td>The values a lane can connect to.</td><td>Strong</td></tr>
+        <tr><td>Aspect prompts, tests, budgets</td><td>Programmes (<i>Programme</i>)</td><td>Rules that decide which value applies; free to change.</td><td>Strong</td></tr>
+        <tr><td>Persona team</td><td>Functional differentiation (<i>funktionale Differenzierung</i>)</td><td>Each sees the whole through one distinction; no centre.</td><td>Partial</td></tr>
+        <tr><td>Card, lane move, verdict</td><td>Decision (<i>Entscheidung</i>)</td><td>Communication of its own contingency.</td><td>Strong</td></tr>
+        <tr><td>Dossier with rejected options</td><td>Decision form</td><td>Communicates the alternatives it excludes.</td><td>Strong</td></tr>
+        <tr><td>Verdicts, scores, managers</td><td>Uncertainty absorption (<i>Unsicherheitsabsorption</i>)</td><td>Conclusions passed on, evidence left behind.</td><td>Strong</td></tr>
+        <tr><td>Rules, transition library, charters</td><td>Programmes as decision premises</td><td>Conditional and purpose programmes.</td><td>Strong</td></tr>
+        <tr><td>Lanes, tiers, grants, lease</td><td>Communication channels (<i>Kommunikationswege</i>)</td><td>Who may decide what, with whom.</td><td>Strong</td></tr>
+        <tr><td>Model selection, transition switch</td><td>Personnel (<i>Personal</i>)</td><td>Who does the work is a decision premise.</td><td>Strong</td></tr>
+        <tr><td>Persona descriptor, pipeline step</td><td>Position (<i>Stelle</i>)</td><td>Bundles programme, channel and personnel.</td><td>Strong</td></tr>
+        <tr><td><code>AGENTS.md</code> habits, house style</td><td>Organisational culture (<i>Organisationskultur</i>)</td><td>Undecided premise, learned by imitation.</td><td>Partial</td></tr>
+        <tr><td>Sight review, acceptance lanes</td><td>Legitimation by procedure (<i>Legitimation durch Verfahren</i>)</td><td>Acceptance through participation, not proof.</td><td>Partial</td></tr>
+        <tr><td>Persona activation, rank</td><td>Membership, career (<i>Mitgliedschaft, Karriere</i>)</td><td>Entry, exit and eligibility decided by others.</td><td>Weak</td></tr>
+        <tr><td>Operator scripts and memory</td><td>Informal organisation</td><td>Learned guardrails that depended on memory.</td><td>Strong</td></tr>
+        <tr><td>Break-glass, override, take-over</td><td>Useful illegality (<i>brauchbare Illegalität</i>)</td><td>Formalised and reserved for the owner.</td><td>Partial</td></tr>
+        <tr><td>Security overview vs practice</td><td>Display side (<i>Schauseite</i>, Kühl)</td><td>Presented posture differs from practised posture.</td><td>Strong</td></tr>
+        <tr><td>Tokens, pool, allowances</td><td>Money, scarcity (<i>Geld, Knappheit</i>)</td><td>Scarcity made communicable and transferable.</td><td>Partial</td></tr>
+        <tr><td>Owner attention</td><td>Rules of attention (<i>Aufmerksamkeitsregeln</i>)</td><td>The scarcest medium, without a ledger.</td><td>Partial</td></tr>
+        <tr><td>Grants, probation, undo, kill switch</td><td>Trust (<i>Vertrauen</i>)</td><td>Risky advances made affordable.</td><td>Strong</td></tr>
+        <tr><td>Green-gate routine</td><td>Confidence (<i>Zuversicht</i>)</td><td>Failure no longer considered; drills reverse it.</td><td>Strong</td></tr>
+        <tr><td><code>delegatedBy</code>, T2 tier</td><td>Risk and danger (<i>Risiko und Gefahr</i>)</td><td>Delegated loss is the owner's risk.</td><td>Strong</td></tr>
+        <tr><td>Studio Weekly</td><td>Mass media (<i>Massenmedien</i>)</td><td>Background reality for a small public.</td><td>Partial</td></tr>
+        <tr><td>Importance number</td><td>News selectors (<i>Selektoren</i>)</td><td>Formalised selection, deliberately against novelty.</td><td>Strong</td></tr>
+        <tr><td>Receipts / Dossiers, README</td><td>Self-observation / self-description</td><td>Operations about itself / texts about itself.</td><td>Strong</td></tr>
+        <tr><td>Retention, decay, closure</td><td>Memory and forgetting (<i>Gedächtnis, Vergessen</i>)</td><td>Forgetting designed per feature, not as a whole.</td><td>Strong</td></tr>
+        <tr><td>Dossiers, Wiki, card keys</td><td>Slip box (<i>Zettelkasten</i>)</td><td>Fixed addresses and branching; links run one way.</td><td>Partial</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="limits">
+    <h2><span class="number">19</span> Limits and critique</h2>
+    <h3>Theory is not a design method</h3>
+    <p>Luhmann's sociology describes. It answered Habermas's charge that systems theory amounts to social technology by insisting that it is not technology at all (<i>Theorie der Gesellschaft oder Sozialtechnologie</i>, Habermas and Luhmann, 1971). Using it to derive design principles for a platform that steers agents is exactly the use he refused. This Dossier takes that step openly and marks it: the principles are ours, they are justified by product goals, and the theory only supplies the questions. Luhmann was also sceptical that one system can steer another. In the debate on political steering (<i>Steuerung</i>) with Fritz Scharpf around 1989, he argued that political intervention mostly irritates other systems and does not control them. A software platform differs here: code does determine what its operations can be.</p>
+    <h3>Trivial and non-trivial machines</h3>
+    <p>The clearest break with the theory is also the most useful observation. Heinz von Foerster distinguishes trivial machines, whose output follows from the input by a fixed rule, from non-trivial machines, whose output also depends on a changing internal state. Luhmann used the distinction for organisations and for education. Agent Studio deliberately wraps non-trivial machines, model sessions, in trivial ones. The orchestration decision library "reads no files, configuration, clock, processes, or HTTP services". Validators are pure, and the importance score is a formula. Social systems in Luhmann's sense are thoroughly non-trivial. Agent Studio is a hybrid that tries to trivialise exactly the places where decisions bind. Where it succeeds, systems theory describes it less well. Where it fails, at the places where model output slips into authority, the theory becomes relevant again.</p>
+    <h3>No consciousness, no membership, no stake</h3>
+    <p>Agents have no consciousness, motive, membership, career, liability or moral standing. Many of Luhmann's concepts assume at least one of these: double contingency, membership, trust, risk and moral communication. In each section the reading is restricted to the owner's side or to the structures the platform builds. Esposito's artificial communication offers a bridge, but it is a contested proposal, not settled theory.</p>
+    <h3>Scale</h3>
+    <p>Agent Studio with one owner is small. Mass media without a mass, an organisation with one member who can be held responsible, and functional differentiation among eleven personas that one person switches on and off are all analogies at a scale the theory was not built for. The readings that hold best are those that do not depend on scale: observation, codes and programmes, expectations, decision premises and uncertainty absorption.</p>
+    <h3>Everything fits, so nothing is proved</h3>
+    <p>Systems theory can redescribe almost anything. The defence used here is that a reading counts only when it changes a design question, and that each principle names a card whose acceptance criteria can be tested. The theory's value for Agent Studio should be judged by those cards: misses found, uncertainty reopened, dangers that stayed visible, owner attention saved. Theoretical elegance is not the measure.</p>
+    <h3>Jargon</h3>
+    <p>Luhmann's terms are precise and opaque. Bringing them into product surfaces would conflict with the house rule of plain nouns and would make the product harder to use. This Dossier recommends keeping the theory in documents and keeping product vocabulary as it is (decision LT-D1).</p>
+    <h3>This Dossier's own blind spot</h3>
+    <p>This reading observes Agent Studio from the owner's side and the platform's. It hardly sees the providers' side, whose terms and prices are environment here, or the people affected by the code the agents produce, the users of the projects. A second-order observer of this Dossier would start there.</p>
+  </section>
+  <section id="principles">
+    <h2><span class="number">20</span> Design principles</h2>
+    <p>Fifteen principles follow from the readings. Each states the rule, where it comes from, and the card that carries it: an existing card, or a draft slice LS-1 to LS-9 in <code>workbench.json</code>. Persona slices are cited by slice id with the card key assumed from the brief's range (marked *). Principles are product rules justified by product goals. The theory supplied the question, not the authority.</p>
+
+    <div class="principle" id="p1">
+      <h3>P1 · Make every point of understanding typed and explicit</h3>
+      <p>Where agent output becomes a fact of the system, the platform decides what it understood, records it, and names what it did not understand instead of falling back to a default. <span class="dim">From: communication as information, utterance and understanding (Soziale Systeme, 1984).</span></p>
+      <p class="card-link">Carried by: PT-4 item validation and scoring (AGT-3597*); the existing terminal sentinel and <code>Inconclusive</code>-never-<code>Pass</code> settlement. No new card.</p>
+    </div>
+    <div class="principle" id="p2">
+      <h3>P2 · Every reduction keeps a way back and says what it left out</h3>
+      <p>Summaries, scores, verdicts, issues, decks and self-descriptions link to what they reduced, and they state their omissions and coverage. <span class="dim">From: meaning as actuality against a horizon of possibilities; self-description.</span></p>
+      <p class="card-link">Carried by: PT-8 magazine citation rule (AGT-3601*), PT-9 deck validator (AGT-3602*), the scout's drill-down links (IS-S1). No new card.</p>
+    </div>
+    <div class="principle" id="p3">
+      <h3>P3 · Codes stay binary and stable; programmes learn and are versioned</h3>
+      <p>Lane-relevant verdicts keep their small fixed vocabulary. Learning happens in aspect prompts, criteria, tests and budgets, and each verdict records which programme revision produced it. Every expectation is marked as normative, with a named disappointment signal, or cognitive, with a learning path. <span class="dim">From: code and programme (Ökologische Kommunikation, 1986); normative and cognitive expectations.</span></p>
+      <p class="card-link">Carried by: draft <a href="#card-ls-2">LS-2</a>.</p>
+    </div>
+    <div class="principle" id="p4">
+      <h3>P4 · "Not observed" never reads as "passed"</h3>
+      <p>Every verdict and every report states its coverage. A missing required observation produces an explicit not-observed state, never a positive value. <span class="dim">From: the form's unmarked space; re-entry.</span></p>
+      <p class="card-link">Carried by: draft <a href="#card-ls-1">LS-1</a>; PT-12 report coverage (AGT-3605*).</p>
+    </div>
+    <div class="principle" id="p5">
+      <h3>P5 · Observe the observers; declare and rotate blind spots</h3>
+      <p>Each observer, whether review aspect or persona, names its guiding distinction and what it does not see. Misses, meaning what another observer found first, are counted and reviewed across observers rather than answered by adding reviewers. <span class="dim">From: second-order observation and the blind spot.</span></p>
+      <p class="card-link">Carried by: PT-11 misses (AGT-3604*) and draft <a href="#card-ls-3">LS-3</a>.</p>
+    </div>
+    <div class="principle" id="p6">
+      <h3>P6 · Keep the person apart from what fills it</h3>
+      <p>A persona's charter, record and address stay stable while the model behind it changes. Changes to either are recorded separately. <span class="dim">From: the person form (Die Form "Person", 1991).</span></p>
+      <p class="card-link">Carried by: PT-1 descriptor and activation (AGT-3594*), PT-7 record by revision (AGT-3600*). No new card.</p>
+    </div>
+    <div class="principle" id="p7">
+      <h3>P7 · Absorbed uncertainty keeps its trail and is reopened by sample</h3>
+      <p>Every absorption point (verdict, gate, score, manager action, recommendation) links its evidence and confidence. A small sample of accepted decisions is reviewed again later, so the system learns how far its own conclusions hold. <span class="dim">From: uncertainty absorption (March and Simon 1958; Organisation und Entscheidung, 2000).</span></p>
+      <p class="card-link">Carried by: PT-10 managers on typed fields with audit (AGT-3603*) and draft <a href="#card-ls-4">LS-4</a>.</p>
+    </div>
+    <div class="principle" id="p8">
+      <h3>P8 · Model choice is a personnel decision</h3>
+      <p>Who does the work, meaning model, tier, capability class and the Monolith or Engine switch, is recorded like a staffing change and visible in the record of the position it affects. <span class="dim">From: personnel as decision premise; the position.</span></p>
+      <p class="card-link">Carried by: AGT-3459 central model selection (MS-1 to MS-8 delivered) and draft <a href="#card-ls-9">LS-9</a>.</p>
+    </div>
+    <div class="principle" id="p9">
+      <h3>P9 · Formalise by watching, not upfront</h3>
+      <p>Rules that must never depend on memory (safety, credentials, data loss) are enforced at once in the server. A bounded zone of deviation stays with the owner, and every use is recorded. Other practice is formalised after it recurs in the operator log. <span class="dim">From: formal and informal organisation, useful illegality (1964).</span></p>
+      <p class="card-link">Carried by: OP-7 operator log and lease (AGT-3487), OP-8 studio-op (AGT-3488), draft <a href="#card-ls-6">LS-6</a>.</p>
+    </div>
+    <div class="principle" id="p10">
+      <h3>P10 · The owner's attention is a budget</h3>
+      <p>Decision requests and front-page items are counted against a stated weekly attention allowance and compete for it by importance, as personas compete for tokens. <span class="dim">From: scarcity and rules of attention (1970, 1988).</span></p>
+      <p class="card-link">Carried by: draft <a href="#card-ls-5">LS-5</a>, amending PT-8 (AGT-3601*).</p>
+    </div>
+    <div class="principle" id="p11">
+      <h3>P11 · Trust is staged, expiring and revocable; drills turn confidence back into trust</h3>
+      <p>Grants expire, new observers start in shadow, actions can be undone, and stop switches need no step-up. Restore tests, kill-switch drills and audit verification run on a schedule and rank high when overdue. <span class="dim">From: Vertrauen (1968); Familiarity, Confidence, Trust (1988).</span></p>
+      <p class="card-link">Carried by: PT-2 principals and team stop (AGT-3595*), PT-5 warden floors for restore tests and audit (AGT-3598*). No new card.</p>
+    </div>
+    <div class="principle" id="p12">
+      <h3>P12 · Delegated loss stays the owner's risk, and unused protection is a decision</h3>
+      <p>Every delegated action shows its chain (<code>delegatedBy</code>, grant). A decision request about missing protection says what remains at risk without an answer. Protection that exists but is unused appears as an owner risk. <span class="dim">From: Soziologie des Risikos (1991).</span></p>
+      <p class="card-link">Carried by: PT-10 audit chain (AGT-3603*), PT-5 floors (AGT-3598*), draft <a href="#card-ls-5">LS-5</a> for the risk statement on decision requests.</p>
+    </div>
+    <div class="principle" id="p13">
+      <h3>P13 · Persistent dangers must not age out of the news</h3>
+      <p>A danger that stays open stays visible as one item whose age grows. A still-open register and reserved front-page slots protect it from newer items. <span class="dim">From: the code information / non-information and the novelty selector (1996).</span></p>
+      <p class="card-link">Carried by: PT-8 floors and urgency (AGT-3601*) and draft <a href="#card-ls-5">LS-5</a>.</p>
+    </div>
+    <div class="principle" id="p14">
+      <h3>P14 · Forgetting is designed as a whole</h3>
+      <p>Every retention, decay and closure rule is listed in one place with its owner and code location. Important states are remembered by being observed again, not only by being stored. <span class="dim">From: memory as the separation of forgetting and remembering (1997; Esposito 2002).</span></p>
+      <p class="card-link">Carried by: draft <a href="#card-ls-7">LS-7</a>.</p>
+    </div>
+    <div class="principle" id="p15">
+      <h3>P15 · The knowledge base needs fixed addresses, links back, and a register</h3>
+      <p>Pages and Dossiers show what links to them as well as what they link to, so that a reader, human or model, can follow a thought backwards and be surprised. <span class="dim">From: Kommunikation mit Zettelkästen (1981).</span></p>
+      <p class="card-link">Carried by: draft <a href="#card-ls-8">LS-8</a>.</p>
+    </div>
+  </section>
+  <section id="glossary">
+    <h2><span class="number">21</span> Glossary</h2>
+    <p>Short definitions in Luhmann's sense, paraphrased, with the German original and the main source. For fuller entries see Baraldi, Corsi and Esposito, <i>GLU. Glossar zu Niklas Luhmanns Theorie sozialer Systeme</i> (1997), in English as <i>Unlocking Luhmann</i> (2021).</p>
+    <dl class="glossary">
+      <dt>Autopoiesis <i>(Autopoiesis)</i></dt><dd>A system produces the elements it consists of from its own elements. Taken from Maturana and Varela.<small>Soziale Systeme, 1984</small></dd>
+      <dt>Binary code <i>(binärer Code, Leitdifferenz)</i></dt><dd>The two-valued distinction through which a function system observes everything, such as true / untrue or legal / illegal. Invariant, with no third value.<small>Ökologische Kommunikation, 1986; Die Gesellschaft der Gesellschaft, 1997</small></dd>
+      <dt>Blind spot <i>(blinder Fleck)</i></dt><dd>The distinction an observer uses, which it cannot observe while using it.<small>Die Wissenschaft der Gesellschaft, 1990</small></dd>
+      <dt>Communication <i>(Kommunikation)</i></dt><dd>The synthesis of information, utterance and understanding. The element of social systems.<small>Soziale Systeme, 1984</small></dd>
+      <dt>Communication channels <i>(Kommunikationswege)</i></dt><dd>A decision premise: competences and hierarchy, who may decide what, with whom.<small>Organisation und Entscheidung, 2000</small></dd>
+      <dt>Complexity <i>(Komplexität)</i></dt><dd>More possibilities than can be realised, so selection is forced.<small>Soziale Systeme, 1984</small></dd>
+      <dt>Confidence <i>(Zuversicht)</i></dt><dd>Expectation without considering alternatives, as opposed to trust, which is chosen in view of risk.<small>Familiarity, Confidence, Trust, 1988</small></dd>
+      <dt>Contingency <i>(Kontingenz)</i></dt><dd>Neither necessary nor impossible: it could be otherwise.<small>Soziale Systeme, 1984</small></dd>
+      <dt>Decision <i>(Entscheidung)</i></dt><dd>A communication that communicates its own contingency, including the alternatives it rejects.<small>Organisation und Entscheidung, 2000</small></dd>
+      <dt>Decision premise <i>(Entscheidungsprämisse)</i></dt><dd>A decision that serves as a premise for many later decisions: programmes, communication channels, personnel. Culture is an undecided premise.<small>Organisation und Entscheidung, 2000</small></dd>
+      <dt>Distinction, indication <i>(Unterscheidung, Bezeichnung)</i></dt><dd>The two components of observation, after Spencer-Brown.<small>Laws of Form, 1969; Die Wissenschaft der Gesellschaft, 1990</small></dd>
+      <dt>Double contingency <i>(doppelte Kontingenz)</i></dt><dd>Two parties each make their behaviour depend on the other, and each is opaque to the other. Solved by structure, not by consensus.<small>Soziale Systeme, 1984, after Parsons</small></dd>
+      <dt>Environment <i>(Umwelt)</i></dt><dd>Everything that is not the system. Always more complex than the system.<small>Soziale Systeme, 1984</small></dd>
+      <dt>Expectation <i>(Erwartung)</i>; expectations of expectations <i>(Erwartungserwartungen)</i></dt><dd>The form structures take in social systems: what is likely to come next, and what others expect one to expect.<small>Soziale Systeme, 1984</small></dd>
+      <dt>Expectations, cognitive and normative <i>(kognitive und normative Erwartungen)</i></dt><dd>Changed when disappointed (learning), or held against disappointment.<small>Rechtssoziologie, 1972; Soziale Systeme, 1984</small></dd>
+      <dt>Form <i>(Form)</i></dt><dd>The two-sided distinction with a marked and an unmarked side.<small>after Spencer-Brown; Die Kunst der Gesellschaft, 1995</small></dd>
+      <dt>Formal organisation <i>(formale Organisation)</i></dt><dd>Expectations whose acceptance is a condition of membership.<small>Funktionen und Folgen formaler Organisation, 1964</small></dd>
+      <dt>Functional differentiation <i>(funktionale Differenzierung)</i></dt><dd>Society divided into function systems, each with one function and code. No centre, no apex.<small>Die Gesellschaft der Gesellschaft, 1997</small></dd>
+      <dt>Information / non-information <i>(Information / Nichtinformation)</i></dt><dd>The code of the mass media. Information becomes non-information by being known.<small>Die Realität der Massenmedien, 1996</small></dd>
+      <dt>Interpenetration <i>(Interpenetration)</i></dt><dd>Human beings and social systems make their own complexity available to each other.<small>Soziale Systeme, 1984</small></dd>
+      <dt>Irritation <i>(Irritation)</i>; resonance <i>(Resonanz)</i></dt><dd>How the environment affects a closed system: only by triggering the system's own structures. Resonance is the system's capacity to respond to environmental danger in its own terms.<small>Ökologische Kommunikation, 1986</small></dd>
+      <dt>Mass media <i>(Massenmedien)</i></dt><dd>Communication disseminated by technical means without interaction between sender and receivers. They produce a background reality.<small>Die Realität der Massenmedien, 1996</small></dd>
+      <dt>Meaning <i>(Sinn)</i></dt><dd>The medium of psychic and social systems: the difference between actuality and possibility.<small>Soziale Systeme, 1984</small></dd>
+      <dt>Medium and form <i>(Medium und Form)</i></dt><dd>Loosely coupled elements, and the strict couplings formed in them. After Fritz Heider.<small>Die Kunst der Gesellschaft, 1995</small></dd>
+      <dt>Membership <i>(Mitgliedschaft)</i></dt><dd>Decided entry into and exit from an organisation, bound to accepting formal expectations.<small>Funktionen und Folgen formaler Organisation, 1964</small></dd>
+      <dt>Memory <i>(Gedächtnis)</i></dt><dd>The function that keeps separating forgetting from remembering. Not storage.<small>Die Gesellschaft der Gesellschaft, 1997; Esposito, 2002</small></dd>
+      <dt>News selectors <i>(Selektoren)</i></dt><dd>Features that make an event likely to be reported: novelty, conflict, quantities, local relevance, norm violations, moral judgement, attribution to actors, topicality, opinions.<small>Die Realität der Massenmedien, 1996</small></dd>
+      <dt>Observation, second order <i>(Beobachtung zweiter Ordnung)</i></dt><dd>Observing how another observer observes, and therefore what it cannot see.<small>Die Wissenschaft der Gesellschaft, 1990; Beobachtungen der Moderne, 1992</small></dd>
+      <dt>Operational closure <i>(operative Geschlossenheit)</i></dt><dd>No operation crosses the system's boundary. Closure is the condition of openness.<small>Soziale Systeme, 1984</small></dd>
+      <dt>Organisational culture <i>(Organisationskultur)</i></dt><dd>Premises that arise from habit and are not decided.<small>Organisation und Entscheidung, 2000</small></dd>
+      <dt>Person <i>(Person)</i></dt><dd>A form of communication: a bundle of expectations attributed to an individual as an address. Not the human being.<small>Die Form "Person", 1991</small></dd>
+      <dt>Personnel <i>(Personal)</i></dt><dd>A decision premise: who occupies a position.<small>Organisation und Entscheidung, 2000</small></dd>
+      <dt>Position <i>(Stelle)</i></dt><dd>The unit that bundles a programme, a place in the communication channels and personnel.<small>Organisation und Entscheidung, 2000</small></dd>
+      <dt>Programme <i>(Programm)</i>: conditional, purpose <i>(Konditionalprogramm, Zweckprogramm)</i></dt><dd>Rules for applying a code correctly, or decision premises of an organisation: if-then rules, or ends with means to choose.<small>Organisation und Entscheidung, 2000; Die Gesellschaft der Gesellschaft, 1997</small></dd>
+      <dt>Re-entry <i>(Wiedereintritt)</i></dt><dd>A distinction reappears on one of its own sides, as when a system uses its system/environment distinction inside itself.<small>after Spencer-Brown; Die Gesellschaft der Gesellschaft, 1997</small></dd>
+      <dt>Reduction of complexity <i>(Reduktion von Komplexität)</i></dt><dd>Selecting among too many possibilities, which lets a system build its own complexity.<small>Soziale Systeme, 1984</small></dd>
+      <dt>Risk and danger <i>(Risiko und Gefahr)</i></dt><dd>A possible loss attributed to one's own decision, or to the environment. Deciders and affected see the same loss differently.<small>Soziologie des Risikos, 1991</small></dd>
+      <dt>Self-description <i>(Selbstbeschreibung)</i></dt><dd>Texts a system produces to describe itself for repeated use. Simplifying, plural, contestable.<small>Die Gesellschaft der Gesellschaft, 1997</small></dd>
+      <dt>Slip box <i>(Zettelkasten)</i></dt><dd>A card index with fixed positions, branching, links and a register that becomes a communication partner able to surprise.<small>Kommunikation mit Zettelkästen, 1981</small></dd>
+      <dt>Structural coupling <i>(strukturelle Kopplung)</i></dt><dd>A system's reliance on features of its environment through narrow channels, without operational overlap.<small>Die Gesellschaft der Gesellschaft, 1997</small></dd>
+      <dt>System trust <i>(Systemvertrauen)</i></dt><dd>Trust in the functioning of media and institutions rather than in persons.<small>Vertrauen, 1968</small></dd>
+      <dt>Trust <i>(Vertrauen)</i></dt><dd>A risky advance that goes beyond the available information and reduces social complexity.<small>Vertrauen, 1968</small></dd>
+      <dt>Uncertainty absorption <i>(Unsicherheitsabsorption)</i></dt><dd>Conclusions drawn from evidence are passed on instead of the evidence, and later decisions rely on them.<small>March and Simon, 1958; Organisation und Entscheidung, 2000</small></dd>
+      <dt>Useful illegality <i>(brauchbare Illegalität)</i></dt><dd>Tolerated deviations from formal rules that serve the organisation and cannot be formalised without losing their function.<small>Funktionen und Folgen formaler Organisation, 1964</small></dd>
+    </dl>
+  </section>
+  <section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+    <h2><span class="number">22</span> Alternatives</h2>
+    <p>Eight decision points follow from the readings. For each, the credible options and their main trade-off. The recommended option is marked and argued in <a href="#recommendation">Recommendation</a>.</p>
+
+    <h3>LT-D1 · What status the theory reading has</h3>
+    <div class="variant-grid">
+      <article class="variant"><h4>A. Essay only</h4><p>Publish the reading as background and change nothing.</p><p class="dim">Cheap and harmless, but the readings that expose real gaps (coverage, absorption, persistent dangers) would stay unused.</p></article>
+      <article class="variant" data-recommended="true"><h4>B. A lens with principles and bounded cards; product vocabulary unchanged (recommended)</h4><p>The fifteen principles become a review lens for concept work. Each one is carried by an existing card or a draft slice. Luhmann's terms stay in documents.</p><p class="dim">Turns theory into testable product changes without jargon. Needs discipline that every principle stays tied to a card.</p></article>
+      <article class="variant"><h4>C. Adopt the theory's vocabulary in product and docs</h4><p>Name surfaces and fields after the theory, for example "observer", "premise", "absorption".</p><p class="dim">Precise for readers of Luhmann, opaque for everyone else, and in conflict with the house rule of plain nouns.</p></article>
+    </div>
+
+    <h3>LT-D2 · Codes, coverage and programmes in review</h3>
+    <div class="variant-grid">
+      <article class="variant"><h4>A. Keep as is</h4><p><code>pass</code>, <code>concerns</code>, <code>block</code>, with coverage left implicit.</p><p class="dim">No work, but a missing observation can still read as a pass where no settlement path catches it.</p></article>
+      <article class="variant" data-recommended="true"><h4>B. Coverage beside every verdict; programme revision on every verdict; codes unchanged (recommended)</h4><p>Each aspect declares the material it requires and records what it observed and what was missing. Missing required material cannot yield <code>pass</code>. Verdicts record the programme revision that produced them. An inventory names every code and programme and marks expectations as normative or cognitive.</p><p class="dim">Keeps the lane code stable and makes blind spots visible. Needs a declared material list per aspect.</p></article>
+      <article class="variant"><h4>C. Add a fourth verdict value "not observed"</h4><p>Extend <code>AspectStatus</code>.</p><p class="dim">Explicit, but it widens the code every lane rule must handle, and it competes with the existing <code>Inconclusive</code> path.</p></article>
+    </div>
+
+    <h3>LT-D3 · Observing observers and reopening absorbed uncertainty</h3>
+    <div class="variant-grid">
+      <article class="variant"><h4>A. Per-persona misses only</h4><p>PT-11 as designed.</p><p class="dim">Covers personas but not review aspects, and never tests accepted conclusions.</p></article>
+      <article class="variant" data-recommended="true"><h4>B. Cross-observer misses in the scout, and a small sampled re-review of accepted cards (recommended)</h4><p>The scout attributes each incident to the observer whose scope held it and to the observer that found it first. Each week a few accepted cards get a fresh requirement-fit review after 14 days.</p><p class="dim">Measures how far absorbed conclusions hold, at a bounded cost. Needs attribution rules and a small budget.</p></article>
+      <article class="variant"><h4>C. Re-review everything with raw evidence</h4><p>Managers and the owner read bodies and diffs.</p><p class="dim">Defeats the purpose of absorption, doubles cost, and reopens the injection path the manager design closes.</p></article>
+    </div>
+
+    <h3>LT-D4 · Magazine, persistent dangers and the owner's attention</h3>
+    <div class="variant-grid">
+      <article class="variant"><h4>A. Newest first</h4><p>Follow the news code.</p><p class="dim">Readable, but a backup missing for three weeks becomes non-information.</p></article>
+      <article class="variant"><h4>B. PT-8 as designed</h4><p>Floors, growing urgency, and a Critical item always on the front page.</p><p class="dim">Strong for Critical items. Persistent items between 40 and 89 can still be crowded out, and the owner's attention is not counted.</p></article>
+      <article class="variant" data-recommended="true"><h4>C. PT-8 plus a still-open register, reserved slots, an attention allowance and a risk statement (recommended)</h4><p>A still-open register by age, up to two front-page slots reserved for long-open items, a weekly allowance for decision requests, and a line on each protection request saying what stays at risk without an answer.</p><p class="dim">Makes the departure from the news code durable. It is a small amendment to PT-8.</p></article>
+    </div>
+
+    <h3>LT-D5 · Formalising informal practice</h3>
+    <div class="variant-grid">
+      <article class="variant"><h4>A. Formalise everything now</h4><p>Turn every remaining operator habit into a rule.</p><p class="dim">Rigid, and it produces new workarounds around each rule.</p></article>
+      <article class="variant"><h4>B. Leave it informal</h4><p>Rely on the operator's memory and the skill text.</p><p class="dim">Breaks inheritance, as the operator Dossier showed.</p></article>
+      <article class="variant" data-recommended="true"><h4>C. Enforce safety rules at once, keep an owner-held recorded zone of deviation, and review the operator log monthly (recommended)</h4><p>A monthly report lists recurring operator-log patterns, take-overs, overrides and break-glass uses, and proposes rules as Dossier proposals. Nothing is formalised automatically.</p><p class="dim">Formalises what recurs and leaves the rest flexible.</p></article>
+    </div>
+
+    <h3>LT-D6 · Forgetting</h3>
+    <div class="variant-grid">
+      <article class="variant"><h4>A. Keep everything</h4><p>No decay, no closure.</p><p class="dim">Feeds grow without bound, and old items crowd selection.</p></article>
+      <article class="variant"><h4>B. Per-feature rules as today</h4><p>Each feature sets its own retention.</p><p class="dim">Works locally, but nobody sees what the system forgets as a whole.</p></article>
+      <article class="variant" data-recommended="true"><h4>C. One inventory with a guard (recommended)</h4><p>A contract page lists every retention, decay and closure rule with its owner and code location. A guard test fails when a new retention setting has no row.</p><p class="dim">Small effort, and forgetting becomes a visible design choice.</p></article>
+    </div>
+
+    <h3>LT-D7 · The knowledge base as a slip box</h3>
+    <div class="variant-grid">
+      <article class="variant"><h4>A. Folder tree only</h4><p>Keep outgoing links only.</p><p class="dim">No way to follow a thought backwards.</p></article>
+      <article class="variant" data-recommended="true"><h4>B. "Linked from" lists for Wiki pages and Dossiers (recommended)</h4><p>A backlink index computed from the links the Wiki already extracts, shown next to "Linked elements".</p><p class="dim">Adds the slip box's cross-cutting order on top of the tree. Needs a server-side index.</p></article>
+      <article class="variant"><h4>C. Convert docs into atomic notes</h4><p>One thought per page, fixed numbers.</p><p class="dim">Faithful to Luhmann, but a large migration that would break navigation and every existing link.</p></article>
+    </div>
+
+    <h3>LT-D8 · Model changes as personnel changes</h3>
+    <div class="variant-grid">
+      <article class="variant"><h4>A. Leave model changes implicit in records</h4><p>Stats split only by charter revision.</p><p class="dim">A persona's record can change because its model changed, and nobody can tell.</p></article>
+      <article class="variant" data-recommended="true"><h4>B. Split records by resolved model route and show personnel changes (recommended)</h4><p>Persona stats split by charter revision and by resolved model. The history shows a "personnel change" entry whenever the resolved model behind a persona changes.</p><p class="dim">Makes the most consequential premise visible. Needs the resolved route on occurrence receipts.</p></article>
+    </div>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+    <h2><span class="number">23</span> Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>Recommended default</h3>
+      <p>Use Luhmann's theory as a lens, not as a vocabulary. Keep product language as it is, adopt the fifteen principles as a review lens for concept work, and carry them through the existing persona and operator slices plus nine small draft slices. The most important reason: the readings that matter expose concrete gaps the product has already met. A missing observation can read as a pass. Absorbed conclusions are never reopened. A persistent danger can age out of a news-like issue. Forgetting is designed only piece by piece. Links run one way. Each gap can be closed by a bounded, testable card.</p>
+    </div>
+    <table>
+      <thead><tr><th>Decision</th><th>Recommended option</th><th>Most important reason</th><th>Cards</th></tr></thead>
+      <tbody>
+        <tr><td>LT-D1 Status of the reading</td><td>B: lens with principles and bounded cards; product vocabulary unchanged</td><td>Testable change without jargon</td><td>This Dossier</td></tr>
+        <tr><td>LT-D2 Codes and coverage</td><td>B: coverage beside every verdict, programme revision on every verdict, codes unchanged, inventory with normative and cognitive marks</td><td>"Not observed" stops reading as "passed" while the lane code stays stable</td><td>LS-1, LS-2</td></tr>
+        <tr><td>LT-D3 Observers and absorption</td><td>B: cross-observer misses in the scout and a sampled re-review of accepted cards</td><td>The system learns how far its own conclusions hold</td><td>LS-3, LS-4</td></tr>
+        <tr><td>LT-D4 Magazine and attention</td><td>C: PT-8 plus still-open register, reserved slots, attention allowance, risk statement</td><td>Persistent dangers stay visible and the owner's attention is counted</td><td>LS-5</td></tr>
+        <tr><td>LT-D5 Informal practice</td><td>C: safety at once, owner-held recorded deviation, monthly operator-log review</td><td>Formalise what recurs, keep the rest flexible</td><td>LS-6</td></tr>
+        <tr><td>LT-D6 Forgetting</td><td>C: one inventory with a guard</td><td>Forgetting becomes a visible design choice</td><td>LS-7</td></tr>
+        <tr><td>LT-D7 Slip box</td><td>B: "Linked from" lists for pages and Dossiers</td><td>Thoughts can be followed backwards</td><td>LS-8</td></tr>
+        <tr><td>LT-D8 Personnel changes</td><td>B: records split by resolved model route, with personnel-change history</td><td>The most consequential premise becomes visible</td><td>LS-9</td></tr>
+      </tbody>
+    </table>
+    <p>Order of work: LS-1 and LS-2 first, because they touch delivered review code and need no persona slice. LS-7 and LS-8 are independent. LS-5 and LS-9 follow PT-8 and PT-7. LS-3, LS-4 and LS-6 follow the scout's proposal path (IS-S2, IS-S3) and PT-11.</p>
+  </section>
+  <section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+    <h2><span class="number">24</span> Evidence</h2>
+    <p>Evidence is classified as observed, inferred or proposed. Observed means read in the repository at commit <code>d4d2c49d7</code> (current <code>develop</code>, merged before writing), read in the persona team Dossier at its result ref, or captured from an isolated pinned demo stack built from that commit on 9 November 2026. The captures used <code>scripts/worktree-test-stack.sh up --demo --with-frontend</code> (ADR-0056 pinned seed, Demo App and Demo Platform, isolated temporary workspace on dynamic ports) and a temporary Playwright spec in the visual-evidence project. The spec followed the presentation capture's navigation, failed on any page error, captured at 1600 × 900 CSS pixels at device scale 2 in both themes, and was removed after capture. The SHA-256 list of the six images is kept in the task results. The pinned seed contains no real project data. Theory claims are paraphrases with their sources in <a href="#references">References</a>, and the one direct quotation is marked.</p>
+    <p>Three full-bleed figures prove the claims about visible surfaces:</p>
+    <ul>
+      <li><a href="#ev-board">Board lanes and held Ready cards</a> (section 06): lanes keep their expectation and name the disappointment.</li>
+      <li><a href="#ev-review">Review verdict and grade</a> (section 08): the verdict chip and the grade are shown apart, and the parked card states "Never checked".</li>
+      <li><a href="#ev-wiki">Wiki folder tree and linked elements</a> (section 17): knowledge is a folder tree, and the rail lists outgoing links.</li>
+    </ul>
+    <div class="evidence-list">
+      <a class="evidence" href="#ev-board"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Lane catalogue and meanings</b><small><code>contracts/TaskServer.Contracts/TaskStates.cs</code> (0-backlog to 7-archive, with comments on auto-pickup, the orchestrator lane, the intervention basin and Human review reserved for evidence-backed acceptance); <code>docs/system/contracts/filesystem.md</code>; <code>docs/system/domains/tasks.md</code> (parked-blocker marker and <code>lane_changed</code> cause).</small></span></a>
+      <a class="evidence" href="#ev-review"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Verdict vocabulary, grade and settlement</b><small><code>backend/Features/Runner/AspectVerdict.cs</code> (<code>AspectStatus</code> pass, concerns, block; a single block reissues; concerns adds a tag); <code>backend/Features/Runner/ReviewDecisionOrchestrator.cs</code> (default aspect ids); <code>backend/Features/Pipeline/PipelineCatalogue.cs</code> (grade is reporting only); <code>docs/system/domains/review.md</code> (round budgets, degrade with follow-up, build blocks never degraded, <code>Inconclusive</code> never <code>Pass</code>).</small></span></a>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Batch gate and follow-up mechanics</b><small><code>docs/operations/gates/batch-gate.md</code> (red isolation, proven-red, proven-green, superseded, <code>409 batch-isolation-active</code>); <code>docs/concepts/planning-task-lifecycle.md</code> and <code>PlanningCompletionGate</code> (spawn contract); <code>orchestration-decisions/TransitionDecision.cs</code> (<code>DegradeWithFollowUp</code>, round defaults).</small></span></span>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Decision library, grounds and the per-transition switch</b><small><code>docs/system/contracts/orchestration-decisions.md</code> (library reads no files, configuration, clock, processes or HTTP; <code>DecisionGroundsV1</code> at most 32 KiB; closed action union; switch as "the single selector of who decides").</small></span></span>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Persona team design</b><small><code>docs/persona-team/</code> at result ref <code>715f644d3</code> (AGT-3573): descriptor, budgets, importance formula and floors, managers on typed fields, magazine, the 9 November 2026 backup calibration case, the coverage rule for no-change reports, slices PT-1 to PT-12.</small></span></span>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Operator level and its formalisation</b><small><code>docs/operator-agent-level/</code> (AGT-3462): working set outside the repository, guardrails enforced "in the server first", implementation log for OP-1 to OP-10; <code>docs/operations/operator-api.md</code> (append-only operator log); <code>.agents/skills/operator/SKILL.md</code> (four runbooks).</small></span></span>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Improvement scout</b><small><code>docs/orchestrator-improvement-scout/</code> (AGT-3020): bounded grounds without raw logs, drill-down links, calibration set (19 of 28 concepts without requirement-fit, credential false alarm, ref-lock race; operator-provided counts), rejection suppression, 90-day closure.</small></span></span>
+      <a class="evidence" href="#ev-wiki"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Wiki tree and links</b><small><code>docs/system/contracts/wiki-tree.md</code> ("the repository tree is the Wiki tree"); <code>frontend/…/project-wiki-section/wiki-linked-elements/</code> (<code>extractWikiLinkedElements</code>, outgoing links only); no incoming-link index was found in the repository; <code>GET …/workbenches/{key}/references</code> is the nearest equivalent.</small></span></a>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Quotas, routing and informal repairs</b><small><code>docs/concepts/workspace-quotas.md</code> (80 % warning, 100 % blocked, check not reservation); <code>docs/system/domains/model-routing-policy.md</code> (tiers and floors); <code>git log</code> on <code>develop</code> shows commits titled "wip(runner): salvage before teardown".</small></span></span>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>The readings</b><small>Every passage marked Reading is an interpretation. Its fit is rated in <a href="#map">Concept map</a>, and its breaking points are stated under Limit and in <a href="#limits">Limits and critique</a>.</small></span></span>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Persona slice card keys</b><small>The brief names AGT-3594 to AGT-3605 as the persona slices. Twelve keys for twelve slices suggests PT-1 = AGT-3594 through PT-12 = AGT-3605. The board API was not reachable from this run, so the order is marked with * and must be confirmed against card titles.</small></span></span>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Nine draft slices</b><small>LS-1 to LS-9 in <a href="#cards">Cards</a> and <code>workbench.json</code>, each with a bounded acceptance scope.</small></span></span>
+    </div>
+  </section>
+
+  <section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+    <h2><span class="number">25</span> Open decisions</h2>
+    <p>Each decision has a recommended working option. A promoted card uses it unless a recorded owner decision selects another.</p>
+    <h3>LT-D1 · Status of the theory reading</h3>
+    <p>Options: essay only; lens with principles and cards; theory vocabulary in product. <b>Recommended: B.</b> Principles as a review lens for concept work, carried by cards. Product vocabulary unchanged.</p>
+    <h3>LT-D2 · Codes, coverage and programmes</h3>
+    <p>Options: keep as is; coverage and programme revision beside unchanged codes; a fourth verdict value. <b>Recommended: B.</b> Declared required material per aspect, coverage on every verdict, no <code>pass</code> with missing required material (use <code>Inconclusive</code> where the settlement has it, otherwise <code>concerns</code> with reason <code>not-observed</code>), programme revision on every verdict, and an inventory of codes and programmes.</p>
+    <h3>LT-D3 · Observing observers and absorbed uncertainty</h3>
+    <p>Options: per-persona misses only; cross-observer misses plus a sampled re-review; full re-review. <b>Recommended: B.</b> The scout attributes incidents to observers. Each week up to two accepted cards per project, at most six per workspace, get a fresh requirement-fit or concept-fit review 14 days after acceptance, capped at 60,000 tokens per workspace-week.</p>
+    <h3>LT-D4 · Magazine, persistent dangers and attention</h3>
+    <p>Options: newest first; PT-8 as designed; PT-8 with additions. <b>Recommended: C.</b> A still-open register (items of 40 or more open longer than 14 days, by age). Up to two front-page side-story slots reserved for items of 70 or more open longer than 14 days. A weekly attention allowance of five decision requests in the decisions box, with the rest listed below it by importance. On every decision request about missing protection, a line saying what stays at risk without an answer.</p>
+    <h3>LT-D5 · Informal practice</h3>
+    <p>Options: formalise all; leave informal; formalise by watching. <b>Recommended: C.</b> A monthly report over the operator log proposes rules as Dossier proposals and changes nothing by itself.</p>
+    <h3>LT-D6 · Forgetting</h3>
+    <p>Options: keep everything; per-feature rules; one inventory with a guard. <b>Recommended: C.</b></p>
+    <h3>LT-D7 · Slip box</h3>
+    <p>Options: folder tree only; "Linked from" lists; atomic notes. <b>Recommended: B.</b></p>
+    <h3>LT-D8 · Model changes as personnel changes</h3>
+    <p>Options: implicit; split records with personnel-change history. <b>Recommended: B.</b></p>
+    <p class="dim">Facts to confirm when the slices start, not blockers: the PT-n to AGT-n order of the persona slices, and whether verdict records already carry the runtime prompt revision. If they do, LS-2 reduces to the inventory and its test.</p>
+  </section>
+
+  <section id="cards">
+    <h2><span class="number">26</span> Cards</h2>
+    <p>Nine independently reviewable draft slices, defined as <code>implementationTasks</code> in <code>workbench.json</code>, each with a bounded <code>acceptanceScope</code>. Existing cards that carry principles without a new slice are listed in <a href="#principles">Design principles</a>.</p>
+    <table>
+      <thead><tr><th>Card</th><th>Title</th><th>Decision</th><th>Depends on</th><th>Acceptance (summary)</th></tr></thead>
+      <tbody>
+        <tr id="card-ls-1"><td>LS-1</td><td>Coverage beside every review aspect verdict</td><td>LT-D2</td><td>none</td><td>An aspect with missing required material never yields pass; the coverage line shows observed and missing material in the review view in both themes; the lane code is unchanged.</td></tr>
+        <tr id="card-ls-2"><td>LS-2</td><td>Codes and programmes inventory with programme revision on verdicts</td><td>LT-D2</td><td>none</td><td>The inventory lists every code-bearing step and every lane expectation as normative or cognitive; every new verdict records its programme revision; a guard test fails on a new verdict value without an inventory row.</td></tr>
+        <tr id="card-ls-3"><td>LS-3</td><td>Cross-observer misses in the improvement scout</td><td>LT-D3</td><td>PT-11 (AGT-3604*), scout IS-S5</td><td>Each attributed incident names the observer whose scope held it and the one that found it first; review aspects count as observers; a fixture shows a reopened card attributed as a requirement-fit miss.</td></tr>
+        <tr id="card-ls-4"><td>LS-4</td><td>Sampled re-review of accepted cards</td><td>LT-D3</td><td>scout IS-S3</td><td>The sample respects its caps and seed; a disagreement becomes a finding with both verdicts linked; no card moves lanes because of the sample.</td></tr>
+        <tr id="card-ls-5"><td>LS-5</td><td>Still-open register, reserved slots and attention allowance in the magazine</td><td>LT-D4</td><td>PT-8 (AGT-3601*)</td><td>A replayed three-week backup gap stays on the front page with its age; decision requests beyond the allowance list below the box; protection requests state what stays at risk.</td></tr>
+        <tr id="card-ls-6"><td>LS-6</td><td>Monthly informal practice review from the operator log</td><td>LT-D5</td><td>OP-7 (AGT-3487), scout IS-S2</td><td>Recurring patterns, take-overs, overrides and break-glass uses are listed with counts and links; proposals go through the append path; nothing is formalised automatically.</td></tr>
+        <tr id="card-ls-7"><td>LS-7</td><td>Retention and forgetting inventory with a guard</td><td>LT-D6</td><td>none</td><td>Every retention, decay and closure setting has a row with its owner and code location; the guard fails on a new setting without a row.</td></tr>
+        <tr id="card-ls-8"><td>LS-8</td><td>"Linked from" lists for Wiki pages and Dossiers</td><td>LT-D7</td><td>none</td><td>The backlink index matches the outgoing-link extraction in a test; the Wiki rail and the Dossier header show incoming links in both themes.</td></tr>
+        <tr id="card-ls-9"><td>LS-9</td><td>Persona records split by resolved model route</td><td>LT-D8</td><td>PT-7 (AGT-3600*), AGT-3459</td><td>Stats split by charter revision and resolved model; a model change writes one personnel-change history entry; the sheet shows before and after.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="references">
+    <h2><span class="number">27</span> References</h2>
+    <h3>Niklas Luhmann</h3>
+    <ul class="refs">
+      <li><i>Funktionen und Folgen formaler Organisation</i>. Berlin: Duncker &amp; Humblot, 1964.</li>
+      <li><i>Vertrauen. Ein Mechanismus der Reduktion sozialer Komplexität</i>. Stuttgart: Enke, 1968. English in <i>Trust and Power</i>, 1979.</li>
+      <li><i>Legitimation durch Verfahren</i>. Neuwied: Luchterhand, 1969.</li>
+      <li>"Öffentliche Meinung". <i>Politische Vierteljahresschrift</i> 11, 1970.</li>
+      <li><i>Soziologische Aufklärung</i>, volume 1. Opladen: Westdeutscher Verlag, 1970.</li>
+      <li>with Jürgen Habermas: <i>Theorie der Gesellschaft oder Sozialtechnologie – Was leistet die Systemforschung?</i> Frankfurt am Main: Suhrkamp, 1971.</li>
+      <li><i>Rechtssoziologie</i>. Reinbek: Rowohlt, 1972.</li>
+      <li><i>Macht</i>. Stuttgart: Enke, 1975.</li>
+      <li>"The Future Cannot Begin: Temporal Structures in Modern Society". <i>Social Research</i> 43, 1976.</li>
+      <li>"Kommunikation mit Zettelkästen. Ein Erfahrungsbericht". In H. Baier, H. M. Kepplinger, K. Reumann (eds.), <i>Öffentliche Meinung und sozialer Wandel</i>. Opladen: Westdeutscher Verlag, 1981.</li>
+      <li><i>Soziale Systeme. Grundriß einer allgemeinen Theorie</i>. Frankfurt am Main: Suhrkamp, 1984. English: <i>Social Systems</i>, 1995.</li>
+      <li><i>Ökologische Kommunikation</i>. Opladen: Westdeutscher Verlag, 1986. English: <i>Ecological Communication</i>, 1989.</li>
+      <li><i>Die Wirtschaft der Gesellschaft</i>. Frankfurt am Main: Suhrkamp, 1988.</li>
+      <li>"Familiarity, Confidence, Trust: Problems and Alternatives". In D. Gambetta (ed.), <i>Trust: Making and Breaking Cooperative Relations</i>. Oxford: Blackwell, 1988.</li>
+      <li><i>Die Wissenschaft der Gesellschaft</i>. Frankfurt am Main: Suhrkamp, 1990.</li>
+      <li>"Die Form 'Person'". <i>Soziale Welt</i> 42, 1991.</li>
+      <li><i>Soziologie des Risikos</i>. Berlin: de Gruyter, 1991. English: <i>Risk: A Sociological Theory</i>, 1993.</li>
+      <li><i>Beobachtungen der Moderne</i>. Opladen: Westdeutscher Verlag, 1992.</li>
+      <li><i>Die Kunst der Gesellschaft</i>. Frankfurt am Main: Suhrkamp, 1995.</li>
+      <li><i>Die Realität der Massenmedien</i>. Opladen: Westdeutscher Verlag, 1996 (second, extended edition). English: <i>The Reality of the Mass Media</i>, 2000.</li>
+      <li><i>Die Gesellschaft der Gesellschaft</i>. Frankfurt am Main: Suhrkamp, 1997. English: <i>Theory of Society</i>, 2012 and 2013.</li>
+      <li><i>Organisation und Entscheidung</i>. Opladen: Westdeutscher Verlag, 2000 (ed. Dirk Baecker). English: <i>Organization and Decision</i>, 2018.</li>
+      <li><i>Einführung in die Systemtheorie</i> (lectures 1991 and 1992, ed. Dirk Baecker). Heidelberg: Carl-Auer, 2002.</li>
+    </ul>
+    <h3>Other sources</h3>
+    <ul class="refs">
+      <li>Baecker, Dirk. <i>Organisation als System</i>. Frankfurt am Main: Suhrkamp, 1999.</li>
+      <li>Baecker, Dirk. <i>Studien zur nächsten Gesellschaft</i>. Frankfurt am Main: Suhrkamp, 2007.</li>
+      <li>Baraldi, Claudio, Giancarlo Corsi and Elena Esposito. <i>GLU. Glossar zu Niklas Luhmanns Theorie sozialer Systeme</i>. Frankfurt am Main: Suhrkamp, 1997. English: <i>Unlocking Luhmann</i>, 2021.</li>
+      <li>Esposito, Elena. <i>Soziales Vergessen. Formen und Medien des Gedächtnisses der Gesellschaft</i>. Frankfurt am Main: Suhrkamp, 2002.</li>
+      <li>Esposito, Elena. "Artificial Communication? The Production of Contingency by Algorithms". <i>Zeitschrift für Soziologie</i> 46, 2017.</li>
+      <li>Esposito, Elena. <i>Artificial Communication: How Algorithms Produce Social Intelligence</i>. Cambridge, MA: MIT Press, 2022.</li>
+      <li>Foerster, Heinz von. <i>Observing Systems</i>. Seaside, CA: Intersystems, 1981.</li>
+      <li>Kneer, Georg and Armin Nassehi. <i>Niklas Luhmanns Theorie sozialer Systeme. Eine Einführung</i>. München: Fink (UTB), 1993.</li>
+      <li>Kühl, Stefan. <i>Organisationen. Eine sehr kurze Einführung</i>. Wiesbaden: VS, 2011.</li>
+      <li>Kühl, Stefan. <i>Brauchbare Illegalität. Vom Nutzen des Regelbruchs in Organisationen</i>. Frankfurt am Main: Campus, 2020.</li>
+      <li>March, James G. and Herbert A. Simon. <i>Organizations</i>. New York: Wiley, 1958.</li>
+      <li>Moeller, Hans-Georg. <i>Luhmann Explained: From Souls to Systems</i>. Chicago: Open Court, 2006.</li>
+      <li>Schmidt, Johannes F. K. "Niklas Luhmann's Card Index: Thinking Tool, Communication Partner, Publication Machine". In A. Cevolini (ed.), <i>Forgetting Machines</i>. Leiden: Brill, 2016.</li>
+      <li>Simon, Fritz B. <i>Einführung in die systemische Organisationstheorie</i>. Heidelberg: Carl-Auer, 2007.</li>
+      <li>Spencer-Brown, George. <i>Laws of Form</i>. London: Allen &amp; Unwin, 1969.</li>
+    </ul>
+    <p class="dim">Secondary works are listed as further reading for the readings above. Baecker's argument in <i>Studien zur nächsten Gesellschaft</i>, that each new distribution medium (language, writing, print, the computer) confronts society with a surplus it must learn to handle, is a useful frame for a platform in which agents produce more communication than one owner can read. It is not used as a premise here.</p>
+  </section>
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">28</span> Implementation</h2>
+    <p>Delivery slices append their current implementation status here. Decision content above remains unchanged. Each <code>workbench.json</code> <code>implementationTasks</code> entry is one independently reviewable slice with a bounded <code>acceptanceScope</code>.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

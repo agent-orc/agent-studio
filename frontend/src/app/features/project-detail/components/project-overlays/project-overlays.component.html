@@ -48,6 +48,7 @@
               (openTask)="openTaskFromProjectShell($event)" />
             <app-api-stall-panel />
             <app-project-product-runtime-panel [projectName]="projShell" />
+            <app-operations-security (openTask)="openTaskFromProjectShell($event)" />
           }
         }
         @defer (when overlays.projectShellRail() === 'security') {

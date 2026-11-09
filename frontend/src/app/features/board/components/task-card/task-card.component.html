@@ -38,16 +38,19 @@
           <span class="task-card__owner-name">{{ oc.initials }}</span>
         </span>
       }
-      @if (canPickNext()) {
+      @if (isPickupNext()) {
+        <span class="task-card__pickup-next" data-testid="task-card-pickup-next"
+              [cacTooltip]="'Runs next in this project when it has a free slot.'">Next</span>
+      } @else if (canPickNext()) {
         <button type="button"
                 class="task-card__pick-next"
                 data-testid="task-card-pick-next"
                 [attr.aria-disabled]="decisionBlockTooltip() ? 'true' : null"
-                [cacTooltip]="decisionBlockTooltip() || 'Pick next — bump to the front of the runner queue'"
-                aria-label="Pick next"
+                [cacTooltip]="decisionBlockTooltip() || 'Move to the top of the Ready queue for this project'"
+                aria-label="Move to top"
                 (click)="onPickNextClick($event)">
           <span class="task-card__pick-next-glyph" aria-hidden="true">⤴</span>
-          <span class="task-card__pick-next-label">Next</span>
+          <span class="task-card__pick-next-label">Move to top</span>
         </button>
       }
       </span>

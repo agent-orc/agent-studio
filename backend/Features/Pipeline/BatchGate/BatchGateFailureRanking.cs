@@ -59,9 +59,12 @@ public static class BatchGateFailureRanking
             throw new FileNotFoundException("Batch gate failure ranking evidence is unavailable.", fact.EvidencePath);
         var found = new List<BatchTestFailure>();
         var lines = File.ReadLines(fact.EvidencePath).ToArray();
-        var selected = lines.Select((line, index) => (line, index, distance: Distance(line, fact)))
-            .OrderBy(item => item.distance).ThenByDescending(item => item.index).FirstOrDefault();
-        if (selected.line is null || selected.distance == double.MaxValue)
+        var selected = lines.Select((line, index) =>
+                (line, index, completeness: MatchingCompleteness(line, fact)))
+            .Where(item => item.completeness >= 0)
+            .OrderByDescending(item => item.completeness)
+            .ThenByDescending(item => item.index).FirstOrDefault();
+        if (selected.line is null)
             throw new InvalidDataException("Batch gate failure ranking evidence has no matching completed record.");
         foreach (var line in new[] { selected.line })
         {
@@ -177,7 +180,7 @@ public static class BatchGateFailureRanking
             (String(process, "standardError") ?? "")).ToArray();
     }
 
-    private static double Distance(string line, BatchGateExecutionFact fact)
+    private static int MatchingCompleteness(string line, BatchGateExecutionFact fact)
     {
         try
         {
@@ -185,17 +188,24 @@ public static class BatchGateFailureRanking
             var root = document.RootElement;
             if (String(root, "testedSha") is not { Length: > 0 } sha
                 || !string.Equals(sha, fact.TestedSha, StringComparison.OrdinalIgnoreCase))
-                return double.MaxValue;
+                return -1;
             var gateRunId = String(root, "gateRunId");
             if (fact.EvidenceGateRunId is { Length: > 0 } expected)
-                return gateRunId == expected ? -1 : double.MaxValue;
-            return gateRunId is { Length: > 0 } && gateRunId == fact.BatchRunId
-                ? -1 : double.MaxValue;
+            {
+                if (gateRunId != expected) return -1;
+            }
+            else if (gateRunId is not { Length: > 0 } || gateRunId != fact.BatchRunId)
+                return -1;
+            // A later progress snapshot for this execution must not replace its
+            // completed evidence. Prefer a complete record before recency.
+            return DateTimeOffset.TryParse(String(root, "gateCompletedAtUtc"), out _)
+                && TryGet(root, "recordedFailedTests", out var inventory)
+                && inventory.ValueKind == JsonValueKind.Array ? 1 : 0;
         }
         catch (JsonException exception)
         {
             SilentCatch.Note(exception, "Batch gate failure ranking skipped an invalid evidence timestamp");
         }
-        return double.MaxValue;
+        return -1;
     }
 }

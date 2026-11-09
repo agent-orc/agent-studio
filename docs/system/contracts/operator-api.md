@@ -62,6 +62,17 @@ timeline shows the same base as a "Run base" entry with the base SHA.
 | `409` | `base-ref-not-applicable` | `baseRef` was sent for a round that no runner claim starts. Nothing was written. |
 | `409` | `batch-isolation-active` | The card is a member of a batch under isolation; `flight` names the batch. |
 
+`GET /api/tasks/{id}/continue/base?watchPath=<project path>` answers
+`{ "base": { ... } }` with the base a round without `baseRef` would start
+from, or `{ "base": null }` when it keeps today's checkout. It writes nothing.
+The task detail's Continue form on Human review and Accepted cards shows it
+read only and sends the round through the route above (AGT-3582).
+
+`GET /api/tasks/{id}/failure/continue?watchPath=<project path>` answers
+`{ "available": true|false, "reason": "<refusal or null>" }` from the guard of
+`POST /api/tasks/{id}/failure/continue`, without continuing. The task detail
+offers "Continue with delivery context" only when `available` is true.
+
 ### Requeue
 
 `POST /api/tasks/{id}/move` (and `PUT /api/tasks/{id}/state`) with
