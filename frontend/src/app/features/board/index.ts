@@ -24,6 +24,7 @@ export { TaskCardComponent } from './components/task-card/task-card.component';
 export { TaskColumnComponent } from './components/task-column/task-column';
 export { DossierGroupBoardComponent } from './components/dossier-group-board/dossier-group-board.component';
 export { DeliverySectionComponent } from './components/delivery-section/delivery-section';
+export { BoardGroupSwitcherComponent } from './components/board-group-switcher/board-group-switcher';
 export {
   ProjectTabsComponent,
   type ProjectAutoInfo,
@@ -50,7 +51,9 @@ export {
   buildFocusLanes,
   buildDeliveryGroup,
   buildLaneGroups,
+  countedLanes,
   laneChrome,
+  laneGroupCount,
   DELIVERY_GROUP_ID,
   type BoardDeliveryColumn,
   type BoardDeliveryGroup,

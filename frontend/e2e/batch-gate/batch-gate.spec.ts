@@ -10,7 +10,7 @@ const path = '/tmp/batch-fixture';
 const key = `${path}::AGT-2`;
 const settings = {
   enabled: true, scope: 'code', planner: 'look-ahead', minimumSize: 2, maximumSize: 4,
-  deadlineMinutes: 30, lookAheadMinutes: 15, urgentTags: ['urgent'], riskPolicy: 'balanced',
+  deadlineMinutes: 30, lookAheadMinutes: 15, urgentTags: ['urgent'], riskPolicy: 'balanced', calibration: 'empirical', stacking: 'off',
   overlap: 'separate', reviewTestLevel: 'work-package', gateTimeoutMinutes: 90, preCheckEnabled: true,
   advisor: { mode: 'enforce', cliType: 'codex', model: 'test-model', timeoutSeconds: 45 },
 };
@@ -64,6 +64,14 @@ async function routeBoard(page: import('@playwright/test').Page, batchState: unk
   await page.route('**/api/workspaces/*/quota/admission', route => json(route, {
     workspaceId: 'workspace-1', workspace: { ...admission, projectId: null, project: null },
     projects: [{ ...admission, projectId: project, project }],
+  }));
+  // The deferred workspace quota card on Project settings reads this snapshot.
+  const meter = { modelTokens: 0, modelCostUsd: 0, computeCoreHours: 0, hostingSlots: 0 };
+  await page.route(/\/api\/workspaces\/[^/]+(\/projects\/[^/]+)?\/quota$/, route => json(route, {
+    workspaceId: 'workspace-1', projectId: null, weekStartUtc: '2026-10-05T00:00:00Z', weekEndUtc: '2026-10-12T00:00:00Z',
+    limits: { modelTokensPerWeek: null, computeCoreHoursPerWeek: null, hostingSlots: null },
+    usage: meter, remaining: meter, ...admission, meterComplete: true,
+    biggestConsumers: [], biggestProjects: [], dailyTrend: [],
   }));
   await page.route('**/api/environment**', route => json(route, { isDev: false, devTools: {} }));
   await page.route('**/api/usage/cockpit**', route => json(route, {
@@ -183,9 +191,24 @@ test('board badge, batch panel and project settings save use batch contract', as
   await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
   await expect(page.getByTestId('batch-settings')).toBeVisible();
   await expect(page.locator('[name="preCheckEnabled"]')).toBeChecked();
+  await page.getByTestId('project-settings-jump-batch').click();
+  await expect(page.getByTestId('batch-settings')).toBeFocused();
+  await expect(page.getByTestId('batch-settings-calibration')).toHaveValue('empirical');
+  await expect(page.getByTestId('batch-settings-stacking')).toHaveValue('off');
+  await page.getByTestId('batch-settings-enabled').uncheck();
+  await page.getByTestId('batch-settings-scope').selectOption('documentation');
+  await page.getByTestId('batch-settings-enabled').check();
+  await expect(page.getByTestId('batch-settings-scope')).toHaveValue('code');
+  await expect(page.getByTestId('batch-settings-scope-defaulted')).toContainText('Scope set to Code.');
+  await page.getByTestId('batch-settings-stacking').selectOption('1');
+  if (evidence) {
+    await page.getByTestId('batch-settings-stacking').scrollIntoViewIfNeeded();
+    await page.getByTestId('batch-settings').screenshot({ path: nodePath.join(evidence, 'batch-settings-calibration-stacking.png') });
+  }
   await page.getByTestId('batch-settings-save').click();
   await expect.poll(() => saved).toBe(true);
   await expect(page.getByTestId('batch-settings')).toContainText('Saved');
+  await expect(page.getByTestId('batch-settings-stacking')).toHaveValue('1');
   await page.locator('#batch-settings-title').scrollIntoViewIfNeeded();
   await captureThemes(page, evidence, 'batch-settings');
 });

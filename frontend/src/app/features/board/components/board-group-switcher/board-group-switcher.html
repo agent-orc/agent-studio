@@ -1,0 +1,4 @@
+<div class="board-group-switcher" data-testid="board-group-switcher">
+  <app-segmented-control [options]="options()" [value]="value() ?? ''" ariaLabel="Board group"
+    (valueChange)="valueChange.emit($event)" />
+</div>

@@ -159,6 +159,8 @@ function runScript(
           'WatchPaths__1__RepositoryPath': path.join(isolated.taskRepository, 'projects', 'demo-platform'),
           'DeliveryChain__Guarded': 'false',
           'ReviewDecisionOrchestrator__BootDelaySeconds': '3600',
+          // AGT-3593: the demo workspace shows the pinned quota snapshot, never the host's quota.
+          'Quota__Mode': 'demo',
         } : {}),
       } : {}),
     },
