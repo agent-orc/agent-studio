@@ -752,7 +752,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
                 ["-c", "printf '  Failed Example.Tests.Sample.Fails [1 ms]\\n'; exit 1"],
                 CompareToBaseline: true),
             new ReviewCommandDto("verify-6", "build-tests", PosixShell.RequirePath(),
-                ["-c", "frontend/node_modules/.bin/ng"], CompareToBaseline: true),
+                ["-c", "frontend/node_modules/.bin/ng"], CompareToBaseline: true,
+                BaselineMode: ReviewBaselineModes.ExitStatus),
         };
         var logs = new List<string>();
         var (workspace, _) = Workspace("attempt-red-backend-frontend", subjectSha, commands, 24007,
@@ -1972,8 +1973,93 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
 
         Assert.Equal("BaselineUnavailable", exception.Classification);
         Assert.Contains("exited 0 without reporting a test result", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("report path:", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(2, exception.Evidence!.Commands.Count(item =>
+            item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal)));
         Assert.Empty(Directory.EnumerateFiles(
             workspace.BaselineCacheRoot, "*.json", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task Baseline_missing_report_retries_once_and_uses_the_second_report()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            "printf '  Failed Product.NewFailure [1 ms]\\n'; exit 1; " +
+            "else n=$(cat ../baseline-report-runs 2>/dev/null || echo 0); n=$((n+1)); " +
+            "printf '%s' \"$n\" > ../baseline-report-runs; " +
+            "if [ \"$n\" -eq 2 ]; then printf 'Total tests: 1\\n'; fi; fi",
+            reportPassingTest: false);
+        var (workspace, _) = Workspace("attempt-baseline-report-retry", subjectSha, [command], 26221,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+        var evidence = await workspace.ExecutePlanAsync(default);
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Equal(2, evidence.Commands.Count(item =>
+            item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task Candidate_missing_report_without_setup_change_is_review_infrastructure()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand("exit 0", reportPassingTest: false);
+        var (workspace, _) = Workspace("attempt-candidate-report-missing", subjectSha, [command], 26222,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+        Assert.Equal(ReviewTestReportPolicy.MissingReportClassification, exception.Classification);
+        Assert.Contains("report path:", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(2, exception.Evidence!.Commands.Count(item =>
+            item.WorkspaceRole.StartsWith("candidate", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task Candidate_missing_report_after_spec_list_change_is_product_finding()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchWithFileAsync(
+            "task/new-spec", "frontend/src/new.spec.ts", "test('new', () => {})");
+        var command = BaselineCommand("exit 0", reportPassingTest: false);
+        var (workspace, subject) = Workspace("attempt-candidate-new-spec-no-report", subjectSha, [command], 26223,
+            resultRef: "refs/heads/task/new-spec", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+        var evidence = await workspace.ExecutePlanAsync(default);
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Contains("spec file list changed", Assert.Single(evidence.Verdicts).Summary, StringComparison.Ordinal);
+        Assert.Equal("ProductFailure",
+            ReviewReportDiagnosisPolicy.Normalize(Report(evidence, workspace), subject.Plan).Outcome);
+    }
+
+    [Fact]
+    public async Task Candidate_missing_report_after_spec_renamed_to_non_spec_is_product_finding()
+    {
+        await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["frontend/src/existing.spec.ts"] = "test('existing', () => {})",
+        });
+        var seed = Path.Combine(_root, "seed");
+        await GitAsync(seed, "checkout", "-b", "task/removed-spec");
+        await GitAsync(seed, "mv", "frontend/src/existing.spec.ts", "frontend/src/helper.ts");
+        await GitAsync(seed, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-m", "rename spec to helper");
+        await GitAsync(seed, "push", "origin", "task/removed-spec");
+        var subjectSha = (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
+        var command = BaselineCommand("exit 0", reportPassingTest: false);
+        var (workspace, subject) = Workspace("attempt-candidate-removed-spec-no-report", subjectSha,
+            [command], 26225, resultRef: "refs/heads/task/removed-spec", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Contains("spec file list changed: frontend/src/existing.spec.ts",
+            Assert.Single(evidence.Verdicts).Summary, StringComparison.Ordinal);
+        Assert.Equal("ProductFailure",
+            ReviewReportDiagnosisPolicy.Normalize(Report(evidence, workspace), subject.Plan).Outcome);
+        Assert.Equal(2, evidence.Commands.Count(item =>
+            item.WorkspaceRole.StartsWith("candidate", StringComparison.Ordinal)));
     }
 
     /// <summary>

@@ -16,7 +16,7 @@ import { CodexSignInDialogService } from '../../../remote-hosts/services/codex-s
 import { ClaudeSignInDialogService } from '../../../remote-hosts/services/claude-sign-in-dialog.service';
 import type { RemoteHost } from '../../../remote-hosts/models/remote-host.model';
 import type { ProviderAuthBadge } from '../../../remote-hosts/models/provider-auth.model';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 
 describe('first-run repository URL', () => {
   it('accepts a credential-free clone URL', () => {
@@ -42,7 +42,8 @@ describe('FirstRunChecklistComponent probes', () => {
   const host = signal<RemoteHost[]>([]);
   const badges = signal<ProviderAuthBadge[]>([]);
   const authStatus = signal<AuthStatus | null>(null);
-  const deviceLogins = { startDeviceLogin: vi.fn(), deviceLoginStatus: vi.fn(), cancelActiveDeviceLogin: vi.fn() };
+  const deviceLogins = { startDeviceLogin: vi.fn(), deviceLoginStatus: vi.fn(), cancelActiveDeviceLogin: vi.fn(),
+    submitDeviceLoginCode: vi.fn() };
   let http: HttpTestingController;
   const readyBadge = (): ProviderAuthBadge => ({
     id: 'auth-a', provider: 'codex', providerLabel: 'Codex', runnerId: 'runner-a',
@@ -382,12 +383,69 @@ describe('FirstRunChecklistComponent probes', () => {
     expect(host.querySelector<HTMLElement>('[data-testid="first-run-device-state"]')?.dataset['icon']).toBe('spinner');
     expect(host.querySelector('[data-testid="first-run-device-url"]')?.getAttribute('href'))
       .toBe('https://claude.ai/oauth/authorize');
+    expect(host.querySelector('[data-testid="device-login-auth-code"]')).toBeNull();
     deviceLogins.deviceLoginStatus.mockReturnValue(of({ ...session, state: 'failed',
       detail: 'The sign-in timed out.' }));
     component.refreshDeviceLogin();
     fixture.detectChanges();
     expect(host.querySelector('[role="alert"]')?.textContent).toContain('The sign-in timed out.');
     expect(host.querySelector('[data-testid="first-run-device-url"]')).toBeNull();
+    fixture.destroy();
+  });
+
+  it('sends the pasted Claude authorization code once and keeps no copy of it', () => {
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    http.expectOne('/api/v1/installation').flush({ installationId: 'install-a', ownerBootstrapped: true });
+    http.expectOne('/api/v1/projects').flush([]);
+    const session = { handle: 'dlogin_c', state: 'queued' as const, verificationUrl: null, userCode: null,
+      sessionKey: 'key-c', expiresAt: new Date(Date.now() + 900_000).toISOString() };
+    const awaiting = { ...session, sessionKey: null, state: 'running' as const, detail: null,
+      verificationUrl: 'https://claude.com/cai/oauth/authorize?code=true', codeState: 'awaiting' as const };
+    deviceLogins.startDeviceLogin.mockReturnValue(of(session));
+    deviceLogins.deviceLoginStatus.mockReturnValue(of(awaiting));
+    deviceLogins.submitDeviceLoginCode.mockReset();
+    const component = fixture.componentInstance;
+    component.signIn({ ...readyBadge(), provider: 'claude', providerLabel: 'Claude', hostId: 'host-a' });
+    component.refreshDeviceLogin();
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    const input = host.querySelector<HTMLInputElement>('[data-testid="device-login-auth-code"]')!;
+    const submit = () => host.querySelector<HTMLButtonElement>('[data-testid="device-login-auth-code-submit"]')!;
+    const type = (value: string) => {
+      input.value = value;
+      input.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+    };
+    expect(input).not.toBeNull();
+    expect(submit().disabled).toBe(true);
+
+    deviceLogins.submitDeviceLoginCode.mockReturnValueOnce(throwError(() => ({
+      error: { message: 'Paste the complete authorization code shown after the Claude sign-in.' } })));
+    type('not a code');
+    submit().click();
+    fixture.detectChanges();
+    expect(host.querySelector('[role="alert"]')?.textContent)
+      .toContain('Paste the complete authorization code shown after the Claude sign-in.');
+
+    deviceLogins.submitDeviceLoginCode.mockReturnValueOnce(of(undefined));
+    type('  pasted-code#state  ');
+    submit().click();
+    fixture.detectChanges();
+    expect(deviceLogins.submitDeviceLoginCode).toHaveBeenLastCalledWith('dlogin_c', 'key-c', 'pasted-code#state');
+    expect(host.querySelector('[data-testid="device-login-auth-code"]')).toBeNull();
+    expect(host.querySelector('[data-testid="device-login-code-sent"]')?.textContent)
+      .toContain('Code sent to the host. Waiting for Claude to confirm the sign-in.');
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+
+    deviceLogins.deviceLoginStatus.mockReturnValue(of({ ...awaiting, state: 'failed', verificationUrl: null,
+      codeState: null, detail: 'Claude did not accept the authorization code.' }));
+    component.refreshDeviceLogin();
+    fixture.detectChanges();
+    expect(host.querySelector('[role="alert"]')?.textContent)
+      .toContain('Claude did not accept the authorization code. Start it again on this host.');
+    expect(host.querySelector('[data-testid="device-login-code-sent"]')).toBeNull();
+    expect(deviceLogins.submitDeviceLoginCode).toHaveBeenCalledTimes(2);
     fixture.destroy();
   });
 

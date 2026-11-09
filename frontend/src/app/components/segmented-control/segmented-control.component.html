@@ -9,7 +9,7 @@
             [attr.aria-pressed]="option.value === value()"
             [disabled]="disabled() || option.disabled === true"
             [attr.data-testid]="option.testid ?? null"
-            [title]="option.tooltip ?? null"
+            [cacTooltip]="option.tooltip ?? ''"
             (click)="select(option)">
       @if (option.icon; as icon) {
         <span class="segmented__icon" aria-hidden="true">

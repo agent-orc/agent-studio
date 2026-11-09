@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { SegmentedControlComponent } from './segmented-control.component';
+import { TooltipDirective } from 'coding-agent-chat/shared';
 
 /**
  * Render-path spec for the shared segmented control. Pins the load-bearing
@@ -63,7 +65,9 @@ describe('SegmentedControlComponent', () => {
       { value: 'light', label: 'Light' },
     ]);
     fixture.detectChanges();
-    expect(fixture.nativeElement.querySelector('button[title]')?.title).toBe('Use dark colours');
+    const button = fixture.debugElement.query(By.css('button'));
+    expect(button.injector.get(TooltipDirective).content()).toBe('Use dark colours');
+    expect(button.nativeElement.hasAttribute('title')).toBe(false);
   });
 
   it('renders a studio icon only for options that declare one', () => {

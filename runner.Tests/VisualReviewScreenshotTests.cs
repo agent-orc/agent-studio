@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using AgentRunner;
 using AgentStudio.TaskServer.Contracts;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using Xunit;
 
 namespace AgentRunner.Tests;
@@ -32,12 +34,15 @@ public sealed class VisualReviewScreenshotTests
             Assert.Contains(image, prompt);
             Assert.Contains("image-viewing tool", prompt);
 
-            // The model is stubbed: this verifies the screenshot and its cited
-            // verdict survive the review boundary, not machine vision quality.
-            var modelVerdict = new ReviewVerdictDto("visual-review", modelStatus,
-                "RemoteAspectVerdict", modelStatus == "pass" ? "Footer is separated."
+            // Judge the delivered fixture pixels before passing a verdict through
+            // the review boundary. The clean footer has separated metric groups;
+            // the run-on footer does not.
+            var visibleStatus = FooterSpacingVerdict(image);
+            Assert.Equal(modelStatus, visibleStatus);
+            var modelVerdict = new ReviewVerdictDto("visual-review", visibleStatus,
+                "RemoteAspectVerdict", visibleStatus == "pass" ? "Footer is separated."
                     : "Footer metrics run together and end with a separator.",
-                $"{artifact.Name}: footer", modelStatus == "pass" ? "none"
+                $"{artifact.Name}: footer", visibleStatus == "pass" ? "none"
                     : "Separate footer metrics and remove the dangling separator.");
             var actual = VisualReviewEvidence.EnforceMissingScreenshots(modelVerdict,
                 ["frontend/src/app/layout/footer.component.html"], hasReadableScreenshot: true);
@@ -252,6 +257,22 @@ public sealed class VisualReviewScreenshotTests
     private static ArtifactDto Artifact(string id, string name, byte[] bytes) => new(
         id, "run-1", name, "image/png", Convert.ToHexStringLower(SHA256.HashData(bytes)),
         bytes.Length, "key", 1, DateTime.UnixEpoch);
+
+    private static string FooterSpacingVerdict(string path)
+    {
+        using var image = Image.Load<Rgba32>(path);
+        var inkColumns = Enumerable.Range(0, image.Width)
+            .Where(x => Enumerable.Range(145, 21).Any(y =>
+            {
+                var pixel = image[x, y];
+                return pixel.R < 150 && pixel.G < 150 && pixel.B < 150;
+            }))
+            .ToArray();
+        Assert.NotEmpty(inkColumns);
+        var wideGaps = inkColumns.Zip(inkColumns.Skip(1))
+            .Count(pair => pair.Second - pair.First > 20);
+        return wideGaps >= 3 ? "pass" : "concerns";
+    }
 
     [Fact]
     public void Visual_prompt_receives_product_and_admin_rules()

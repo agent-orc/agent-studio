@@ -6,6 +6,7 @@ import {
   output,
 } from '@angular/core';
 import { StudioIconComponent, StudioIconName } from '../studio-icon/studio-icon.component';
+import { TooltipDirective } from 'coding-agent-chat/shared';
 
 /**
  * One choice in a {@link SegmentedControlComponent}.
@@ -25,7 +26,7 @@ export interface SegmentedOption<T extends string | number = string> {
   readonly testid?: string;
   /** Disables this one segment but keeps it in the strip. */
   readonly disabled?: boolean;
-  /** Optional native tooltip for a choice. */
+  /** Optional accessible tooltip for a choice. */
   readonly tooltip?: string;
 }
 
@@ -42,7 +43,7 @@ export interface SegmentedOption<T extends string | number = string> {
 @Component({
   selector: 'app-segmented-control',
   standalone: true,
-  imports: [StudioIconComponent],
+  imports: [StudioIconComponent, TooltipDirective],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './segmented-control.component.html',

@@ -46,6 +46,8 @@
                 <code data-testid="first-run-device-code">{{ login.userCode }}</code>
                 <button type="button" (click)="copyDeviceCode()">{{ codeCopyLabel() }}</button>
               }
+              <app-device-login-code-entry [handle]="login.handle" [sessionKey]="login.sessionKey"
+                [providerLabel]="login.providerLabel" [codeState]="login.codeState" />
             }
             @if (login.state === 'failed') {
               <p role="alert">{{ login.detail ?? 'Sign-in did not complete.' }} Start it again on this host.</p>
