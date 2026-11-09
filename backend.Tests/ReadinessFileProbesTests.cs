@@ -120,8 +120,8 @@ public sealed class ReadinessFileProbesTests : IDisposable
         Assert.Equal(TimeSpan.FromMinutes(70), locks[0].Age);
         var check = ServerReadinessPolicy.GitLocks(ReadinessScopes.Server, "workspace", locks);
         Assert.Equal(ReadinessStates.Warn, check.State);
-        Assert.Contains(index, check.Remedy);
-        Assert.DoesNotContain(refLock, check.Remedy);
+        Assert.Contains(index, check.Command);
+        Assert.DoesNotContain(refLock, check.Command);
 
         var worktree = Path.Combine(_root, "worktree");
         var worktreeGitDir = Path.Combine(gitDir, "worktrees", "wt");

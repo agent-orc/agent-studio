@@ -1,0 +1,76 @@
+@use '../../../../../styles/mixins' as m;
+
+:host { display: block; width: 100%; }
+
+.feed-burst {
+  @include m.disclosure-control;
+
+  display: grid;
+  grid-template-columns: max-content 48px 62px 82px minmax(0, 1fr) max-content;
+  min-height: var(--studio-row-min-h-interactive);
+  padding: var(--studio-row-pad-block) var(--studio-row-pad-inline);
+  border-radius: 0;
+  color: var(--studio-fg);
+}
+.feed-burst--alert { background: color-mix(in srgb, var(--severity-high) 11%, transparent); }
+.feed-burst--action { background: color-mix(in srgb, var(--studio-accent-3) 7%, transparent); }
+.feed-burst--intervention { background: color-mix(in srgb, var(--studio-accent-warn) 8%, transparent); }
+.feed-burst--selected,
+.feed-burst--selected:hover:not(:disabled) { background: var(--studio-bg-selected); }
+
+.feed-burst__time,
+.feed-burst__span {
+  color: var(--studio-fg-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.feed-burst__time { text-align: end; }
+.feed-burst__projects {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  min-width: 0;
+  overflow: hidden;
+}
+.feed-burst__projects i {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--studio-tab-dot-ring);
+}
+.feed-burst__kind {
+  min-width: 0;
+  color: var(--studio-fg-strong);
+  font-size: 11px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.feed-burst__summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--studio-spacing-2);
+  min-width: 0;
+  font-size: 12px;
+}
+.feed-burst__count {
+  flex: 0 0 auto;
+  color: var(--studio-fg-strong);
+  font-variant-numeric: tabular-nums;
+}
+.feed-burst__label {
+  min-width: 0;
+  color: var(--studio-fg-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 680px) {
+  .feed-burst { grid-template-columns: max-content max-content minmax(0, 1fr) max-content; }
+  .feed-burst__projects,
+  .feed-burst__kind { display: none; }
+}

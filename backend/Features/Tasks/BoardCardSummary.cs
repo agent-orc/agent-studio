@@ -304,6 +304,9 @@ internal static class BoardCardSummary
                 // the recall verdict belong to the parked section, which reads
                 // them from /details/overview.
                 park.BlockerType,
+                // AGT-3586: who parked the card picks the badge label.
+                park.Cause,
+                park.CauseDetail,
                 // No read-time age: the client derives it from ParkedAt, so an
                 // unchanged parked card serializes to the same bytes on every read.
                 parkedAt = WholeSeconds(park.ParkedAt),

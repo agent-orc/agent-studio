@@ -53,6 +53,13 @@ public static class ManagementEndpoints
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             return Results.Ok(service.Snapshot($"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}"));
         });
+        // AGT-3574: backup state for the Operations page and operator agents.
+        group.MapGet("/backups", (HttpContext context, StudioBackupService backups, IConfiguration configuration) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            return Results.Ok(backups.Overview());
+        });
         group.MapGet("/diagnostics", (HttpContext context, ManagementService service, IConfiguration configuration) =>
         {
             context.Response.Headers.CacheControl = "no-store";
@@ -448,7 +455,7 @@ internal static class RecoveryConsole
 <div class="grid"><section><h2>Health</h2><dl id="health"></dl></section><section><h2>Store</h2><dl id="store"></dl></section><section><h2>Credentials and Runners</h2><div class="actions"><input id="runnerName" placeholder="New Runner name"><button onclick="run('runner-enrollment-create',false,{runnerName:runnerName.value})">Preview enrollment</button></div><div id="runners"></div></section><section><h2>Backup and migration</h2><div id="backup"></div></section></div>
 <section><h2>Audited commands</h2><p class="muted">Every button previews first. Confirming requires a second click and a fresh idempotency key.</p><div class="actions" id="actions"></div><pre id="result"></pre></section>
 </main><script>
-let csrf='';const commands=['backup-create','restore-verify','backup-retention','archive-sweep','orphan-sweep','fixture-sweep','maintenance-enter','maintenance-read-only','maintenance-exit','shutdown-prepare'];
+let csrf='';const commands=['backup-create','restore-verify','backup-retention','backup-upload','archive-sweep','orphan-sweep','fixture-sweep','maintenance-enter','maintenance-read-only','maintenance-exit','shutdown-prepare'];
 const headers=()=>({'Content-Type':'application/json','X-Client-Id':'local-default',...(csrf?{'X-CSRF-Token':csrf}:{})});
 async function call(path,options={}){const r=await fetch(path,{credentials:'same-origin',...options,headers:{...headers(),...(options.headers||{})}});const body=await r.json().catch(()=>({}));if(!r.ok)throw new Error(body.message||body.error||r.statusText);return body}
 async function login(){return authenticate('/api/auth/login')}async function bootstrap(){return authenticate('/api/auth/bootstrap')}

@@ -406,6 +406,10 @@
   .mag-numbers div { padding: 8px 0; border-top: 1px solid var(--article-line); }
   .mag-numbers b { display: block; font: 700 1.5rem/1.1 var(--article-serif); font-variant-numeric: tabular-nums; }
   .mag-numbers span { color: var(--article-muted); font-size: 0.72rem; }
+  .mag-ops { margin-top: 18px; padding-top: 16px; border-top: 3px double var(--article-ink); }
+  .mag-ops h5 { margin: 0 0 4px; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; }
+  .mag-ops-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-top: 8px; }
+  .mag-ops .mock-list li { padding: 6px 0; font-size: 0.82rem; }
 
   /* Slide mockups: one forced light and one forced dark token set, copied from the article theme. */
   .slides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
@@ -426,7 +430,7 @@
   .slide .theme-tag { position: absolute; top: 8px; right: 10px; padding: 1px 7px; border: 1px solid var(--article-line); border-radius: 999px; background: var(--article-surface); color: var(--article-muted); font-size: 0.56rem; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; }
 
   @media (max-width: 860px) {
-    .mock-cols, .mag-front, .mag-band, .slides { grid-template-columns: 1fr; }
+    .mock-cols, .mag-front, .mag-band, .mag-ops-cols, .slides { grid-template-columns: 1fr; }
     .mag-sections { grid-template-columns: 1fr; }
   }
 </style>
@@ -435,7 +439,7 @@
 <header class="page"><p class="kicker">Concept Dossier · AGT-3573 · 9 November 2026</p>
 <h1>Persona team for global orchestrator sessions</h1>
 <p class="lede">Global orchestrator sessions already look at the whole installation, but they all look at it in the same way. This Dossier turns them into a team of personas. Each persona watches one aspect, such as security, operations, design or product. Each has a charter, a character sheet with honest stats, a budget and a reporting obligation, and its own feed and page. Manager roles decide within bounds. A weekly magazine ranks everything by an importance number, and a presenter turns the results into slides.</p>
-<div class="meta"><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>Source</b> AGT-3573</span><span><b>Builds on</b> AGT-3020, AGT-3462, AGT-3018, AGT-3459, AGT-3353, AGT-3177, AGT-2800</span><span><b>Scope</b> Persona definition, stats, budgets, scheduling, reports, managers, magazine, importance, presentations, safety, evaluation, starter catalogue, operations watch</span></div></header>
+<div class="meta"><span><b>Status</b> Decision pending</span><span><b>Owner decision</b> PT-D1 to PT-D12 as recommended, 9 November 2026</span><span><b>Phase</b> Decision ready</span><span><b>Source</b> AGT-3573</span><span><b>Builds on</b> AGT-3020, AGT-3462, AGT-3018, AGT-3459, AGT-3353, AGT-3177, AGT-2800</span><span><b>Scope</b> Persona definition, stats, budgets, scheduling, reports, managers, magazine, importance, presentations, safety, evaluation, starter catalogue, operations watch</span></div></header>
 <nav class="contents" aria-label="Contents"><a href="#scope">Scope</a> · <a href="#current-state">What exists</a> · <a href="#roles">Roles</a> · <a href="#definition">Persona definition</a> · <a href="#stats">Stats</a> · <a href="#budgets">Budgets</a> · <a href="#scheduling">Activation and scheduling</a> · <a href="#reporting">Reports and outputs</a> · <a href="#managers">Manager roles</a> · <a href="#importance">Importance numbers</a> · <a href="#magazine">Magazine</a> · <a href="#presentations">Presentations</a> · <a href="#operations-watch">Operations watch</a> · <a href="#safety">Safety</a> · <a href="#evaluation">Evaluation</a> · <a href="#catalogue">Starter catalogue</a> · <a href="#mockups">Mockups</a> · <a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#evidence">Evidence</a> · <a href="#open-decisions">Open decisions</a> · <a href="#plan">Phased plan</a> · <a href="#cards">Cards</a> · <a href="#implementation">Implementation</a></nav>
 
 <section id="scope"><h2>Scope</h2>
@@ -769,11 +773,41 @@ importance = clamp(importance + managerAdjustment, floor, 100)    adjustment wit
 <tr><td>Front page</td><td>The lead is the highest open item of the period. Three or four side stories follow by importance, at most two from one persona. A Critical item always reaches the front page.</td></tr>
 <tr><td>Decisions needed</td><td>Every open decision request and every proposal waiting for the owner, by importance, with the recommended option and the deadline.</td></tr>
 <tr><td>Sections</td><td>One per aspect, in the order of their highest item: items with importance, one-line teaser and link.</td></tr>
-<tr><td>Operations watch</td><td>A fixed panel from the operations warden: backup age, restore test age, off-host copy, escrow, expiring credentials, second factor coverage and patch lag, each with its state and importance.</td></tr>
+<tr><td>Operations watch</td><td>A fixed panel from the operations warden with fifteen rows, eight for backups and seven for the security posture, each with its state and importance number. It comes directly after Decisions needed. See <a href="#magazine-operations">Operations watch in the issue</a>.</td></tr>
 <tr><td>Trends and numbers</td><td>Small multiples over eight weeks: items raised and accepted, cost per accepted finding, budget use, cards delivered from proposals. The totals equal the sum of the visible personas (R3).</td></tr>
 <tr><td>Corrections and colophon</td><td>Items retracted or rejected since the last issue, personas that missed their report, and the stub notice when a budget ran out.</td></tr>
 </tbody></table>
 <p>Issues appear under <code>#/workspace/team/magazine</code> and on the Team page, which keeps the newest three. Each issue is immutable once published. A correction is an entry in the next issue, not an edit. Export is a self-contained HTML file in the house article layout with both themes, plus print styles for PDF. Sending is off by default. When the owner enables it, the message carries only the masthead, the front page titles with their importance numbers and a link that requires sign-in, so no finding text leaves the instance by mail.</p>
+<h3 id="magazine-operations">Operations watch in the issue</h3>
+<p>The operations warden reports every row of the panel. The facts come from the separate backup and Operations security view cards as <code>OpsPostureFactsV1</code>. The panel reads the warden's latest daily snapshot (06:30 on Monday, before the 07:00 issue) and shows its time. The security officer and the reliability engineer do not report these rows. When one of them touches the same fact, it cites the warden's fingerprint <code>ops:&lt;fact id&gt;:&lt;scope&gt;</code>, and the validator merges the citation into the warden's item instead of creating a second one. The security officer's own items (code, dependencies, permissions, prompts) stay in the Security section.</p>
+<p>All fifteen rows appear in every issue, passing or not, so the panel is a complete checklist. A row is never left out. If a row has no item, the composer fails the issue's coverage check.</p>
+<table>
+<thead><tr><th>Group</th><th>Row</th><th>Floor when it fails</th><th>Issue 45 (illustrative)</th></tr></thead>
+<tbody>
+<tr><td rowspan="8">Backups</td><td>Schedule installed and enabled, destination set</td><td>95 if none</td><td>No timer, no destination · <b>97</b></td></tr>
+<tr><td>Age of the last good backup (newest archive with a matching checksum)</td><td>70 above 26 h · 90 above 48 h or none</td><td>None on record · <b>90</b></td></tr>
+<tr><td>Coverage of instance state: workspace, task storage, <code>refs/agent-studio/*</code> bundles, hosted volumes</td><td>80 for an uncovered part</td><td>Not covered · <b>80</b></td></tr>
+<tr><td>Coverage of configuration: <code>.metadata</code> and access state</td><td>80 for an uncovered part</td><td>Not covered · <b>80</b></td></tr>
+<tr><td>Coverage of secrets: the sealed secret store</td><td>80 for an uncovered part</td><td>Not covered · <b>80</b></td></tr>
+<tr><td>Restore test of this installation's archives</td><td>70 above 35 days · 85 if never</td><td>Never · <b>85</b></td></tr>
+<tr><td>Off-host copy</td><td>85 if none or on the same host</td><td>None · <b>85</b></td></tr>
+<tr><td>Key escrow for the secret store and the backup identity</td><td>85 if unconfirmed or mismatched</td><td>No escrow record · <b>85</b></td></tr>
+<tr><td rowspan="7">Security posture</td><td>Exposed endpoints and firewall</td><td>80 for an unexpected public port</td><td>Only 443 on the edge · <b>20</b></td></tr>
+<tr><td>TLS and origin protection</td><td>95 expired · 90 origin reachable without the access layer · 80 below 14 days</td><td>Certificate 61 days, origin behind the access layer, HSTS on · <b>20</b></td></tr>
+<tr><td>Credential and token age and expiry</td><td>95 expired and still referenced · 80 below 7 days · 70 no expiry · 60 below 14 days</td><td>1 expired API token still referenced, 1 runner credential expiring in 6 days, 1 without expiry · <b>95</b></td></tr>
+<tr><td>Second factor coverage</td><td>85 for any owner without a second factor</td><td>Every owner and operator enrolled · <b>16</b></td></tr>
+<tr><td>Patch level of hosts, images and CLIs</td><td>75 for a security update pending more than 7 days</td><td>1 host update pending 3 days, images at pinned digests, CLIs current · <b>48</b></td></tr>
+<tr><td>Audit anomalies, including break-glass windows</td><td>95 broken chain · 80 break-glass window without a review card</td><td>Chain verified 05:00, no refusal spike, no open window · <b>20</b></td></tr>
+<tr><td>Open security cards and findings</td><td>75 for a High finding open more than 7 days</td><td>2 open, none High · <b>12</b></td></tr>
+</tbody></table>
+<ul>
+<li><b>Number of a failing row.</b> A failing row shows its highest open item, scored with the formula in <a href="#importance">Importance numbers</a> and never below its floor. The row also shows how many items it holds. A missing schedule, a backup older than 48 hours and an expired credential still in use therefore show at 90 or more, which is Critical. A backup older than 26 hours shows at 70 or more, which is High. They rank above any item without a floor, unless that item scores higher by its own factors.</li>
+<li><b>Number of a passing row.</b> A passing row is a report line with the same formula: the fact's impact anchor, urgency 1 (2 when the value is within twice its threshold) and the fact's confidence, capped at 39. A certificate valid for 61 days scores 20 (impact 5, urgency 1). At 25 days the formula gives 40, which is capped at 39. Below 14 days the row becomes a finding at 80 or more. The number rises as a limit approaches, before the row turns red.</li>
+<li><b>Unknown is not green.</b> A row whose fact is missing, or older than its freshness limit, shows "unknown since" with the last observation time, at the visibility floor of 70.</li>
+<li><b>Placement.</b> Every row of 90 or more reaches the front page, and the highest open item of the issue is the lead. When the schedule is missing, the rows that follow from it (last good backup, the three coverage rows, the restore test and the off-host copy) are filed as children of the schedule item. They keep their own numbers in the panel and in the Operations section and are named in the lead story, but they take no separate side story slot. Escrow, credentials, TLS and the other rows are independent. Rows of 70 or more are also listed in the Operations section. A row with an open decision request also appears in Decisions needed.</li>
+<li><b>Acknowledgement.</b> An owner acknowledgement keeps the row in the panel with its number and an "acknowledged until" date of at most 14 days. Only the front page slot goes.</li>
+<li><b>Budget.</b> The panel is model-free. It renders from the facts even when the warden's allowance and the editor call are used up, and the colophon then notes the stub report.</li>
+</ul>
 </section>
 
 <section id="presentations"><h2>Presentations</h2>
@@ -816,7 +850,7 @@ importance = clamp(importance + managerAdjustment, floor, 100)    adjustment wit
 <li>A daily report at 06:30 with template <code>operations-v1</code>, and event occurrences for <code>backup.missed</code>, <code>backup.failed</code>, <code>credential.expiring</code>, <code>credential.expired</code>, <code>audit.chain-broken</code> and completed deploys.</li>
 <li>Each failing fact becomes one finding with a stable fingerprint (<code>ops:&lt;fact id&gt;:&lt;scope&gt;</code>), so a backup that stays missing is one item whose urgency and age grow, not a new item every day.</li>
 <li>Fixes are proposals into the owning Dossier or runbook, for example "Install the backup timer with the documented default schedule". The warden never runs a backup, installs a timer, rotates a key or reads a secret value. Those are owner actions or T2 operations.</li>
-<li>The magazine's Operations watch panel and the warden's sheet show the same fact rows. The Operations page's security view links to the warden's feed, and the warden links back to the fact on that page, so there is one truth and two readings.</li>
+<li>The magazine's Operations watch panel (<a href="#magazine-operations">Operations watch in the issue</a>) and the warden's sheet show the same fifteen fact rows. The Operations page's security view links to the warden's feed, and the warden links back to the fact on that page, so there is one truth and two readings.</li>
 </ul>
 </section>
 
@@ -977,24 +1011,25 @@ importance = clamp(importance + managerAdjustment, floor, 100)    adjustment wit
 
 <h3>Magazine issue</h3>
 <figure class="mockup media-breakout" id="mock-magazine">
-<div class="mock-frame" role="img" aria-label="Magazine issue mockup, Studio Weekly issue 45: a masthead, a lead story at importance 97 about the missing backup schedule, four side stories, sections per aspect with importance numbers, a decisions needed box, an operations watch panel, numbers of the week and a colophon.">
+<div class="mock-frame" role="img" aria-label="Magazine issue mockup, Studio Weekly issue 45: a masthead, a lead story at importance 97 about the missing backup schedule, four side stories led by an expired API token at 95, sections per aspect with importance numbers, a decisions needed box, numbers of the week, an operations watch panel with eight backup rows and seven security posture rows each with an importance number, and a colophon.">
 <div class="mag">
 <div class="mag-masthead"><p class="mag-title">Studio Weekly</p><div class="mag-issue">Issue 45 · 2 to 8 November 2026<br>Published Monday 9 November, 07:00</div>
-<div class="mag-strap"><span>7 of 8 personas reported</span><span>31 items</span><span>4 decisions needed</span><span>Sorted by importance</span></div></div>
+<div class="mag-strap"><span>7 of 8 personas reported</span><span>34 items</span><span>4 decisions needed</span><span>Sorted by importance</span></div></div>
 <div class="mag-front">
 <article class="mag-lead"><span class="mag-kicker">Operations warden · Critical</span>
 <h3><span class="imp crit big">97</span> No backup has ever been scheduled on the networked installation</h3>
 <p>The backup commands and the runbook exist, but the timer was never installed and no destination is set. Instance state, configuration and the sealed secret store exist only on the Studio host. Only the workspace repository is pushed. The security overview describes a weekly scratch restore that this installation has never run.</p>
+<p class="dim">Filed under this item: no good backup on record (90), no restore test (85), no off-host copy (85), instance state, configuration and secrets not covered (80 each).</p>
 <p class="dim">Proposal: install the timer with the documented 03:15 default and record a first restore test. Decision needed by 11 November. Evidence: timer state, empty destination, no archive on record.</p></article>
 <div class="mag-side">
-<article><span class="mag-kicker">Operations warden</span><h4><span class="imp hi">85</span> No restore test on record</h4><p>CI proves the restore code. Nothing proves this installation's archives.</p></article>
-<article><span class="mag-kicker">Security officer</span><h4><span class="imp hi">74</span> Runner credential without expiry still in use</h4><p>Enrolled before the 30-day binding. Rotate to adopt the default.</p></article>
+<article><span class="mag-kicker">Operations warden · Critical</span><h4><span class="imp crit">95</span> An expired API token is still in use</h4><p>It expired two days ago and one script still presents it. Revoke it and issue a scoped replacement.</p></article>
+<article><span class="mag-kicker">Operations warden</span><h4><span class="imp hi">85</span> No escrow record for the secret store key</h4><p>If the Studio host is lost, nobody can confirm that the key to the sealed secret store survives.</p></article>
 <article><span class="mag-kicker">Reliability engineer</span><h4><span class="imp">68</span> Batch isolation hit Demo Platform three times</h4><p>The same test class failed each time. A quarantine proposal is in the Dossier.</p></article>
 <article><span class="mag-kicker">Product manager</span><h4><span class="imp">63</span> Three Dossiers have waited 14 days for a decision</h4><p>Two of them block cards in Backlog.</p></article>
 </div></div>
 <div class="mag-sections">
-<section><h5>Operations · 8</h5><ol><li><span class="imp crit">97</span><span>No backup schedule</span></li><li><span class="imp hi">85</span><span>No restore test</span></li><li><span class="imp hi">85</span><span>No off-host copy</span></li><li><span class="imp hi">85</span><span>No escrow record for the secret store key</span></li><li><span class="imp hi">80</span><span>Runner credential expires in 6 days</span></li><li><span class="dim">+ 3 more, 22 to 48</span></li></ol></section>
-<section><h5>Security · 7</h5><ol><li><span class="imp hi">74</span><span>Credential without expiry</span></li><li><span class="imp">52</span><span>Prompt file reads card text as instruction</span></li><li><span class="imp">31</span><span>Dependency advisory, not reachable</span></li><li><span class="dim">+ 4 more, 12 to 29</span></li></ol></section>
+<section><h5>Operations · 12</h5><ol><li><span class="imp crit">97</span><span>No backup schedule</span></li><li><span class="imp crit">95</span><span>Expired API token still in use</span></li><li><span class="imp crit">90</span><span>No good backup on record</span></li><li><span class="imp hi">85</span><span>No restore test</span></li><li><span class="imp hi">85</span><span>No off-host copy</span></li><li><span class="imp hi">85</span><span>No escrow record for the secret store key</span></li><li><span class="dim">+ 6 more, 48 to 80</span></li></ol></section>
+<section><h5>Security · 6</h5><ol><li><span class="imp">52</span><span>Prompt file reads card text as instruction</span></li><li><span class="imp">31</span><span>Dependency advisory, not reachable</span></li><li><span class="dim">+ 4 more, 12 to 29</span></li></ol></section>
 <section><h5>Reliability · 6</h5><ol><li><span class="imp">68</span><span>Batch isolation repeated</span></li><li><span class="imp">47</span><span>Review queue p95 wait up 40 %</span></li><li><span class="dim">+ 4 more, 15 to 38</span></li></ol></section>
 <section><h5>Product · 4</h5><ol><li><span class="imp">63</span><span>Dossiers waiting for a decision</span></li><li><span class="imp">40</span><span>Two cards without a stated outcome</span></li><li><span class="dim">+ 2 more, 18 and 25</span></li></ol></section>
 <section><h5>Cost · 3</h5><ol><li><span class="imp">58</span><span>Review fallback active 31 hours</span></li><li><span class="imp">35</span><span>Cost per card up 12 %</span></li><li><span class="dim">+ 1 more, 14</span></li></ol></section>
@@ -1007,21 +1042,38 @@ importance = clamp(importance + managerAdjustment, floor, 100)    adjustment wit
 <li><span class="imp">58</span> Raise the persona pool from 10 % to 12 %? · Budget steward · by 15 Nov</li>
 <li><span class="imp">45</span> Decide or archive the three waiting Dossiers · Product manager · by 16 Nov</li>
 </ol></div>
-<div><h5>Operations watch</h5>
-<ul class="mock-list">
-<li><span class="dot bad"></span><span>Backups: no schedule, no archive on record</span><span class="imp crit">97</span></li>
-<li><span class="dot bad"></span><span>Restore test: never</span><span class="imp hi">85</span></li>
-<li><span class="dot bad"></span><span>Off-host copy and key escrow: none</span><span class="imp hi">85</span></li>
-<li><span class="dot warn"></span><span>Credentials: 1 expires within 7 days</span><span class="imp hi">80</span></li>
-<li><span class="dot good"></span><span>TLS 61 days · second factor every owner · audit chain verified 05:00</span><span class="dim">ok</span></li>
-</ul></div>
+<div><h5>Numbers of the week</h5><div class="mag-numbers"><div><b>34</b><span>items raised · 18 accepted</span></div><div><b>402k</b><span>tokens of 1,030k allocated</span></div><div><b>$0.41</b><span>per accepted finding</span></div></div></div>
 </div>
+<div class="mag-ops">
+<h5>Operations watch</h5><span class="mag-kicker">Reported by the operations warden · facts as of Monday 9 November, 06:30 · 15 rows, sorted by importance</span>
+<div class="mag-ops-cols">
+<div><span class="mag-kicker">Backups</span>
+<ul class="mock-list">
+<li><span class="dot bad"></span><span>Schedule: no timer installed, no destination</span><span class="imp crit">97</span></li>
+<li><span class="dot bad"></span><span>Last good backup: none on record</span><span class="imp crit">90</span></li>
+<li><span class="dot bad"></span><span>Restore test: never</span><span class="imp hi">85</span></li>
+<li><span class="dot bad"></span><span>Off-host copy: none</span><span class="imp hi">85</span></li>
+<li><span class="dot bad"></span><span>Key escrow, secret store and backup identity: no record</span><span class="imp hi">85</span></li>
+<li><span class="dot bad"></span><span>Coverage, instance state: not covered</span><span class="imp hi">80</span></li>
+<li><span class="dot bad"></span><span>Coverage, configuration: not covered</span><span class="imp hi">80</span></li>
+<li><span class="dot bad"></span><span>Coverage, secrets: not covered</span><span class="imp hi">80</span></li>
+</ul></div>
+<div><span class="mag-kicker">Security posture</span>
+<ul class="mock-list">
+<li><span class="dot bad"></span><span>Credentials: 1 expired and still referenced, 1 expires in 6 days, 1 without expiry</span><span class="imp crit">95</span></li>
+<li><span class="dot warn"></span><span>Patch level: 1 host security update pending 3 days; images and CLIs current</span><span class="imp">48</span></li>
+<li><span class="dot good"></span><span>Exposed endpoints and firewall: only 443 on the edge</span><span class="imp">20</span></li>
+<li><span class="dot good"></span><span>TLS and origin protection: 61 days, behind the access layer, HSTS on</span><span class="imp">20</span></li>
+<li><span class="dot good"></span><span>Audit: chain verified 05:00, no refusal spike, no break-glass window</span><span class="imp">20</span></li>
+<li><span class="dot good"></span><span>Second factor: every owner and operator</span><span class="imp">16</span></li>
+<li><span class="dot good"></span><span>Open security cards: 2, none High</span><span class="imp">12</span></li>
+</ul></div>
+</div></div>
 <div class="mag-band">
-<div><h5>Numbers of the week</h5><div class="mag-numbers"><div><b>31</b><span>items raised · 18 accepted</span></div><div><b>402k</b><span>tokens of 1,030k allocated</span></div><div><b>$0.41</b><span>per accepted finding</span></div></div></div>
-<div><h5>Colophon and corrections</h5><p class="dim" style="margin:0;font-size:0.8rem">Quality lead missed its Thursday report. Design lead has been paused since 6 November and is not counted. The cost controller retracted "fallback active for 40 hours" because of a meter gap; the corrected value is 31 hours. Section counts sum to the 31 items in the strap.</p></div>
+<div><h5>Colophon and corrections</h5><p class="dim" style="margin:0;font-size:0.8rem">Quality lead missed its Thursday report. Design lead has been paused since 6 November and is not counted. The cost controller retracted "fallback active for 40 hours" because of a meter gap; the corrected value is 31 hours. Section counts sum to the 34 items in the strap. Passing Operations watch rows are report lines and are not counted.</p></div>
 </div>
 </div></div>
-<figcaption>Proposed issue layout, illustrative content. The lead and the Operations watch use the real 9 November backup gap. Every number in a story is an item importance, and every section count sums to the strap. History and settled items are not on the front page.</figcaption>
+<figcaption>Proposed issue layout, illustrative content. The lead and the backup rows of the Operations watch use the real 9 November backup gap. The credential, patch and other security posture values are invented examples. Every number in a story or a panel row is an item importance, and every section count sums to the strap. The warden reports all fifteen panel rows, and the expired credential ranks at 95, directly behind the missing backup. History and settled items are not on the front page.</figcaption>
 </figure>
 
 <h3>Two slides of a generated deck</h3>
@@ -1203,18 +1255,20 @@ importance = clamp(importance + managerAdjustment, floor, 100)    adjustment wit
 
 <section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions"><h2>Open decisions</h2>
 <p>Each decision has a recommended working option. A promoted card uses it unless a recorded owner decision selects another.</p>
-<div class="decision"><h3>PT-D1 · Persona definition and catalogue</h3><p>Options: prompt-only skills; versioned descriptor plus workspace activation; settings records only; files per project.</p><p><b>Recommended:</b> B. <code>backend/Policies/personas/*.persona.json</code> with <code>persona.schema.json</code> and revisions; activations and forks through <code>/api/workspaces/{id}/personas</code>; activation with step-up and one shadow period.</p></div>
-<div class="decision"><h3>PT-D2 · Stats</h3><p>Options: flavour attributes; measured record only; attributes with effects plus record and earned rank.</p><p><b>Recommended:</b> C. Focus, autonomy, risk appetite, thoroughness and signal threshold; a derived record with denominators; Probation, Member and Senior as eligibility only.</p></div>
-<div class="decision"><h3>PT-D3 · Budgets</h3><p>Options: share the Watcher contingent; persona pool with allowances; per-subscription slices.</p><p><b>Recommended:</b> B. A pool of 10 % of <code>ModelTokensPerWeek</code> (1.2 million without a limit), allowances, session, proposal, card and minute limits, stub reports and model-free floor items on exhaustion, pause at workspace warning, same-class fallback or wait.</p></div>
-<div class="decision"><h3>PT-D4 · Activation and scheduling</h3><p>Options: API container; persona principal sessions on runner hosts; owner machine.</p><p><b>Recommended:</b> B. The Watcher sweep schedules with coalescing; at most one occurrence per persona and two per workspace; idle slots only; digest by default, investigation by attribute.</p></div>
-<div class="decision"><h3>PT-D5 · Reports, feed and page</h3><p>Options: free text in Dossiers; typed items on the bus plus a store; a new event stream.</p><p><b>Recommended:</b> B. <code>PersonaItemV1</code>, participant kind <code>Persona</code>, a configurable obligation with fixed templates, the Team page and a persona page.</p></div>
-<div class="decision"><h3>PT-D6 · Manager roles</h3><p>Options: none; advisory; bounded T1 rights.</p><p><b>Recommended:</b> C. A chief of staff and a budget steward with the bounds in <a href="#managers">Manager roles</a>; everything T2 and the owner list stay with the owner.</p></div>
-<div class="decision"><h3>PT-D7 · Magazine</h3><p>Options: digest list; weekly issue with deterministic layout; fully model-written issue.</p><p><b>Recommended:</b> B. Studio Weekly on Monday at 07:00, optional daily brief, HTML and PDF export, sending off by default and then titles and numbers only.</p></div>
-<div class="decision"><h3>PT-D8 · Importance numbers</h3><p>Options: severity labels; a computed score with floors; a model-typed score.</p><p><b>Recommended:</b> B. <code>round(100 × impact × urgency / 25 × (0.5 + 0.5 × confidence))</code>, fact floors, ±15 manager adjustment, owner acknowledgement up to 14 days.</p></div>
-<div class="decision"><h3>PT-D9 · Presentations</h3><p>Options: magazine export; presenter persona with <code>deck.json</code>; PPTX first.</p><p><b>Recommended:</b> B. Weekly 7-slide and monthly 10 to 12-slide decks, both themes, HTML and PDF; PPTX later.</p></div>
-<div class="decision"><h3>PT-D10 · Safety</h3><p>Options: owner or operator identity; a principal per persona; read-only personas.</p><p><b>Recommended:</b> B. <code>opa_persona_*</code> principals, catalogued persona operations, sessions of at most 30 minutes, untrusted content only for own publication, team stop and SM-2.</p></div>
-<div class="decision"><h3>PT-D11 · Evaluation</h3><p>Options: owner judgement; value panel with suggestions; automatic retirement.</p><p><b>Recommended:</b> B. Value per 100k tokens, cost per accepted finding, misses, owner rating, suggestions by rule, before/after by revision.</p></div>
-<div class="decision"><h3>PT-D12 · Starter catalogue and the operations aspect</h3><p>Options: reliability takes operations; eight personas with a dedicated warden; everything active at once.</p><p><b>Recommended:</b> B. The catalogue in <a href="#catalogue">Starter catalogue</a>; the warden and the cost controller start active.</p></div>
+<div class="callout" data-tone="accent"><h3>Owner decision, 9 November 2026</h3>
+<p>The owner decided PT-D1 to PT-D12 as recommended on 9 November 2026. Each decision below records the option taken. The decisions themselves are unchanged. The later addition of <a href="#magazine-operations">Operations watch in the issue</a> details the magazine under PT-D7 and PT-D8. It does not change either decision.</p></div>
+<div class="decision"><h3>PT-D1 · Persona definition and catalogue</h3><p>Options: prompt-only skills; versioned descriptor plus workspace activation; settings records only; files per project.</p><p><b>Recommended:</b> B. <code>backend/Policies/personas/*.persona.json</code> with <code>persona.schema.json</code> and revisions; activations and forks through <code>/api/workspaces/{id}/personas</code>; activation with step-up and one shadow period.</p><p><b>Owner decision:</b> B, as recommended, 9 November 2026.</p></div>
+<div class="decision"><h3>PT-D2 · Stats</h3><p>Options: flavour attributes; measured record only; attributes with effects plus record and earned rank.</p><p><b>Recommended:</b> C. Focus, autonomy, risk appetite, thoroughness and signal threshold; a derived record with denominators; Probation, Member and Senior as eligibility only.</p><p><b>Owner decision:</b> C, as recommended, 9 November 2026.</p></div>
+<div class="decision"><h3>PT-D3 · Budgets</h3><p>Options: share the Watcher contingent; persona pool with allowances; per-subscription slices.</p><p><b>Recommended:</b> B. A pool of 10 % of <code>ModelTokensPerWeek</code> (1.2 million without a limit), allowances, session, proposal, card and minute limits, stub reports and model-free floor items on exhaustion, pause at workspace warning, same-class fallback or wait.</p><p><b>Owner decision:</b> B, as recommended, 9 November 2026.</p></div>
+<div class="decision"><h3>PT-D4 · Activation and scheduling</h3><p>Options: API container; persona principal sessions on runner hosts; owner machine.</p><p><b>Recommended:</b> B. The Watcher sweep schedules with coalescing; at most one occurrence per persona and two per workspace; idle slots only; digest by default, investigation by attribute.</p><p><b>Owner decision:</b> B, as recommended, 9 November 2026.</p></div>
+<div class="decision"><h3>PT-D5 · Reports, feed and page</h3><p>Options: free text in Dossiers; typed items on the bus plus a store; a new event stream.</p><p><b>Recommended:</b> B. <code>PersonaItemV1</code>, participant kind <code>Persona</code>, a configurable obligation with fixed templates, the Team page and a persona page.</p><p><b>Owner decision:</b> B, as recommended, 9 November 2026.</p></div>
+<div class="decision"><h3>PT-D6 · Manager roles</h3><p>Options: none; advisory; bounded T1 rights.</p><p><b>Recommended:</b> C. A chief of staff and a budget steward with the bounds in <a href="#managers">Manager roles</a>; everything T2 and the owner list stay with the owner.</p><p><b>Owner decision:</b> C, as recommended, 9 November 2026.</p></div>
+<div class="decision"><h3>PT-D7 · Magazine</h3><p>Options: digest list; weekly issue with deterministic layout; fully model-written issue.</p><p><b>Recommended:</b> B. Studio Weekly on Monday at 07:00, optional daily brief, HTML and PDF export, sending off by default and then titles and numbers only.</p><p><b>Owner decision:</b> B, as recommended, 9 November 2026.</p></div>
+<div class="decision"><h3>PT-D8 · Importance numbers</h3><p>Options: severity labels; a computed score with floors; a model-typed score.</p><p><b>Recommended:</b> B. <code>round(100 × impact × urgency / 25 × (0.5 + 0.5 × confidence))</code>, fact floors, ±15 manager adjustment, owner acknowledgement up to 14 days.</p><p><b>Owner decision:</b> B, as recommended, 9 November 2026.</p></div>
+<div class="decision"><h3>PT-D9 · Presentations</h3><p>Options: magazine export; presenter persona with <code>deck.json</code>; PPTX first.</p><p><b>Recommended:</b> B. Weekly 7-slide and monthly 10 to 12-slide decks, both themes, HTML and PDF; PPTX later.</p><p><b>Owner decision:</b> B, as recommended, 9 November 2026.</p></div>
+<div class="decision"><h3>PT-D10 · Safety</h3><p>Options: owner or operator identity; a principal per persona; read-only personas.</p><p><b>Recommended:</b> B. <code>opa_persona_*</code> principals, catalogued persona operations, sessions of at most 30 minutes, untrusted content only for own publication, team stop and SM-2.</p><p><b>Owner decision:</b> B, as recommended, 9 November 2026.</p></div>
+<div class="decision"><h3>PT-D11 · Evaluation</h3><p>Options: owner judgement; value panel with suggestions; automatic retirement.</p><p><b>Recommended:</b> B. Value per 100k tokens, cost per accepted finding, misses, owner rating, suggestions by rule, before/after by revision.</p><p><b>Owner decision:</b> B, as recommended, 9 November 2026.</p></div>
+<div class="decision"><h3>PT-D12 · Starter catalogue and the operations aspect</h3><p>Options: reliability takes operations; eight personas with a dedicated warden; everything active at once.</p><p><b>Recommended:</b> B. The catalogue in <a href="#catalogue">Starter catalogue</a>; the warden and the cost controller start active.</p><p><b>Owner decision:</b> B, as recommended, 9 November 2026.</p></div>
 <p class="dim">Facts to confirm when the first slices land, not blockers: the default pool share (10 %) against the real weekly token use of the installation, and whether the website baseline's <code>website.restore.signin</code> signal is published on the networked installation or only planned.</p>
 </section>
 

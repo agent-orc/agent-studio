@@ -343,7 +343,7 @@ public static class RoutePermissionCatalog
         // operate runs in at least one project.
         Add("R", IamPermissions.ProjectRead,
             "/api/operator/decisions", "/api/operator/decisions/stream", "/api/operator/watcher/lease",
-            "/api/operator/capacity");
+            "/api/operator/capacity", "/api/operator/backups");
         AddProjectChecked("W", IamPermissions.ProjectRunsOperate,
             "/api/operator/watcher/lease", "/api/operator/watcher/lease/{}", "/api/operator/watcher/lease/{}/heartbeat");
         Add("R", IamPermissions.ProjectRead, "/api/operator/log");
@@ -436,7 +436,7 @@ public static class RoutePermissionCatalog
 
         // --- Runs, pipeline, integration, and project actions --------------
         Under("W", IamPermissions.ProjectRunsOperate, "/api/tasks/{}",
-            "start", "stop", "continue", "failure/continue", "re-evaluate", "restore-from-failed-pickup",
+            "start", "stop", "continue", "failure/continue", "re-evaluate", "restore-from-failed-pickup", "dispatch-rejection",
             "pipeline/**", "review-results", "integration/**", "integration-records", "commits/integration", "git/**", "code-review",
             "external-completion", "summary/**", "context-usage/refresh", "conversation/invalidate",
             "older-brief-delivery/decision", "open-in-vscode", "review-evidence/**", "preview-feedback",

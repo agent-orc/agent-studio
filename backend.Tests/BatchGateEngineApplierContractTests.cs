@@ -16,18 +16,10 @@ using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Tests;
 
-/// <summary>
-/// AGT-3218: the applier contract. Every action each rollout profile can
-/// complete runs through the real <see cref="MonolithOrchestrationApplier"/>
-/// on an engine-completed occurrence, and the effects come from the one
-/// <see cref="EngineApplierContract"/> table that the applier canary checks.
-/// The shadow streak that switched ReviewReport on 16.10.2026 compared
-/// receipts only; these cases prove the applied side effect.
-/// </summary>
-public sealed partial class BatchGatePilotServiceTests
+public abstract partial class BatchGatePilotServiceTests
 {
-    private const string ContractKey = "DOC-APPLIER";
-    private const string GateReasonText = "dotnet test failed in PilotTests.";
+    private protected const string ContractKey = "DOC-APPLIER";
+    private protected const string GateReasonText = "dotnet test failed in PilotTests.";
 
     /// <summary>
     /// Each profile action of <see cref="EngineApplierContract.ProfileActions"/>,
@@ -63,13 +55,13 @@ public sealed partial class BatchGatePilotServiceTests
         ("OperatorSweep", nameof(TransitionAction.SweepHold), ""),
     ];
 
-    private const string ReviewInputHandoffVariant = "review-input-handoff";
+    private protected const string ReviewInputHandoffVariant = "review-input-handoff";
 
     /// <summary>The integration ends in Conflict, and the real agent round service moves the card to Ready.</summary>
-    private const string AgentRoundVariant = "agent-round";
+    private protected const string AgentRoundVariant = "agent-round";
 
     /// <summary>As <see cref="AgentRoundVariant"/>, but an earlier review of the delivery spent its round.</summary>
-    private const string BudgetSpentVariant = "agent-round-budget-spent";
+    private protected const string BudgetSpentVariant = "agent-round-budget-spent";
 
     public static TheoryData<string, string, string> ApplierContractData()
     {
@@ -77,7 +69,18 @@ public sealed partial class BatchGatePilotServiceTests
         foreach (var (profile, action, variant) in ApplierContractCases) data.Add(profile, action, variant);
         return data;
     }
+}
 
+/// <summary>
+/// AGT-3218: the applier contract. Every action each rollout profile can
+/// complete runs through the real <see cref="MonolithOrchestrationApplier"/>
+/// on an engine-completed occurrence, and the effects come from the one
+/// <see cref="EngineApplierContract"/> table that the applier canary checks.
+/// The shadow streak that switched ReviewReport on 16.10.2026 compared
+/// receipts only; these cases prove the applied side effect.
+/// </summary>
+public sealed class BatchGateEngineApplierContractTests : BatchGatePilotServiceTests
+{
     [Theory]
     [MemberData(nameof(ApplierContractData))]
     public async Task Applier_contract_applies_the_effect_of_every_engine_decision(string profile, string action,
@@ -885,9 +888,12 @@ public sealed partial class BatchGatePilotServiceTests
         var check = probe.Check(journal.GetOccurrence(decided.RunId)!);
         Assert.True(check.Verified, check.Evidence);
     }
+}
 
+public abstract partial class BatchGatePilotServiceTests
+{
     /// <summary>The refusal the applier before the fix threw on a seeded state, once; then the real applier.</summary>
-    private sealed class RefusedOnce(IMonolithOrchestrationApplier inner) : IMonolithOrchestrationApplier
+    private protected sealed class RefusedOnce(IMonolithOrchestrationApplier inner) : IMonolithOrchestrationApplier
     {
         private int _calls;
 
@@ -899,7 +905,7 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     /// <summary>The integration request the applier builds for the arranged review.</summary>
-    private RemoteDeliveryIntegrationRequest IntegrationRequest(WebApplicationFactory<Program> factory,
+    private protected RemoteDeliveryIntegrationRequest IntegrationRequest(WebApplicationFactory<Program> factory,
         ArrangedDecision arranged)
     {
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
@@ -915,7 +921,7 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     /// <summary>The settlement journal the applier's first pass writes for this review.</summary>
-    private void SeedSettlementJournal(WebApplicationFactory<Program> factory, ArrangedDecision arranged,
+    private protected void SeedSettlementJournal(WebApplicationFactory<Program> factory, ArrangedDecision arranged,
         RemoteDeliveryIntegrationRequest request)
         => RemoteDeliverySettlementStore.Write(CardFolder(arranged.TaskId), new RemoteDeliverySettlementRecord
         {
@@ -939,7 +945,7 @@ public sealed partial class BatchGatePilotServiceTests
     /// conflicted, and the round service spent the delivery's one automatic
     /// round. Both rows are a minute older than anything this review writes.
     /// </summary>
-    private void SeedEarlierRound(WebApplicationFactory<Program> factory, ArrangedDecision arranged)
+    private protected void SeedEarlierRound(WebApplicationFactory<Program> factory, ArrangedDecision arranged)
     {
         var folder = CardFolder(arranged.TaskId);
         var subject = ReviewSubjectStore.Read(folder)!;
@@ -967,14 +973,14 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     /// <summary>An applier that cannot apply, as one that is down or broken.</summary>
-    private sealed class FailingApplier : IMonolithOrchestrationApplier
+    private protected sealed class FailingApplier : IMonolithOrchestrationApplier
     {
         public Task ApplyAsync(MonolithOrchestrationOccurrence occurrence,
             Contract.CompleteOrchestrationStageRequest completion, CancellationToken ct)
             => throw new IOException("The applier is unavailable.");
     }
 
-    private (Contract.OrchestrationRunDto Run, Contract.OrchestrationClaimResponse Claim) PrepareReviewDecision(
+    private protected (Contract.OrchestrationRunDto Run, Contract.OrchestrationClaimResponse Claim) PrepareReviewDecision(
         MonolithOrchestrationStore orchestration, DeferredReview deferred, bool waitMarker = true)
     {
         var review = deferred.Review;
@@ -990,7 +996,7 @@ public sealed partial class BatchGatePilotServiceTests
         return (run, claim);
     }
 
-    private static Contract.CompleteOrchestrationStageRequest ReviewCompletion(
+    private protected static Contract.CompleteOrchestrationStageRequest ReviewCompletion(
         Contract.OrchestrationClaimResponse claim, DeferredReview deferred, TransitionAction action,
         object? activeChoice = null)
     {
@@ -1005,7 +1011,7 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     /// <summary>The real applier, held until the test releases it, as a long integration holds it.</summary>
-    private sealed class HeldApplier(IMonolithOrchestrationApplier inner) : IMonolithOrchestrationApplier
+    private protected sealed class HeldApplier(IMonolithOrchestrationApplier inner) : IMonolithOrchestrationApplier
     {
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -1017,18 +1023,18 @@ public sealed partial class BatchGatePilotServiceTests
         }
     }
 
-    private static readonly Dictionary<string, string?> UnguardedDeliveryChain = new()
+    private protected static readonly Dictionary<string, string?> UnguardedDeliveryChain = new()
     {
         ["DeliveryChain:Guarded"] = "false",
     };
 
-    private static readonly Dictionary<string, string?> OneMatchThreshold = new()
+    private protected static readonly Dictionary<string, string?> OneMatchThreshold = new()
     {
         ["Orchestration:ShadowMatchThreshold"] = "1",
     };
 
     /// <summary>Shadow, one matching comparison, Ready, then the canary switch.</summary>
-    private static void StartReviewReportCanary(WebApplicationFactory<Program> factory)
+    private protected static void StartReviewReportCanary(WebApplicationFactory<Program> factory)
     {
         var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
         rollout.Switch("ReviewReport", "shadow", "operator", "compare review decisions");
@@ -1040,15 +1046,15 @@ public sealed partial class BatchGatePilotServiceTests
             .SwitchProfile("ReviewReport", "canary", "operator", "shadow matched").State);
     }
 
-    private static OrchestrationProfileStatus ReviewReport(OrchestrationRolloutStore rollout)
+    private protected static OrchestrationProfileStatus ReviewReport(OrchestrationRolloutStore rollout)
         => rollout.GetProfiles().Single(item => item.Profile == "ReviewReport");
 
-    private sealed record ArrangedDecision(string TaskId, Contract.OrchestrationStage Stage, string Payload,
+    private protected sealed record ArrangedDecision(string TaskId, Contract.OrchestrationStage Stage, string Payload,
         string IdempotencyKey, string SourceState, string AuthorityAttemptId, long Fence, long Epoch,
         Contract.OrchestrationAction StageAction, string Output, string? PayloadLane,
         string? ReviewAttemptId = null);
 
-    private ArrangedDecision Arrange(WebApplicationFactory<Program> factory, string profile, string action,
+    private protected ArrangedDecision Arrange(WebApplicationFactory<Program> factory, string profile, string action,
         string variant) => profile switch
     {
         "CodingCompletion" => ArrangeCoding(factory, Enum.Parse<TransitionAction>(action)),
@@ -1064,7 +1070,7 @@ public sealed partial class BatchGatePilotServiceTests
     /// completion leaves it. A requeue to Ready follows a failed run without a
     /// result envelope; a completed delivery would be recovered to Auto Review.
     /// </summary>
-    private ArrangedDecision ArrangeCoding(WebApplicationFactory<Program> factory, TransitionAction action)
+    private protected ArrangedDecision ArrangeCoding(WebApplicationFactory<Program> factory, TransitionAction action)
     {
         var target = action switch
         {
@@ -1147,7 +1153,7 @@ public sealed partial class BatchGatePilotServiceTests
     /// it. The agent round variants carry the remote result ref, which the
     /// round service needs to queue its steer round.
     /// </summary>
-    private ArrangedDecision ArrangeReview(WebApplicationFactory<Program> factory, string profile,
+    private protected ArrangedDecision ArrangeReview(WebApplicationFactory<Program> factory, string profile,
         TransitionAction action, string variant = "")
     {
         var infrastructure = action == TransitionAction.ReviewInfrastructureRetry;
@@ -1177,7 +1183,7 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     /// <summary>A card in Auto Review whose build and test gate reported a result.</summary>
-    private ArrangedDecision ArrangeGate(WebApplicationFactory<Program> factory, TransitionAction action,
+    private protected ArrangedDecision ArrangeGate(WebApplicationFactory<Program> factory, TransitionAction action,
         bool batchHold)
     {
         var member = SeedMember(factory, ContractKey, "docs/applier.md", settleReview: false, deferredPlan: false);
@@ -1202,7 +1208,7 @@ public sealed partial class BatchGatePilotServiceTests
             batchHold ? TaskStates.HumanReview : null, member.ReviewAttemptId);
     }
 
-    private static ArrangedDecision ArrangeBatchPlan()
+    private protected static ArrangedDecision ArrangeBatchPlan()
     {
         var taskId = BatchGatePilotService.BatchPlanTaskId("contract-scope");
         var plan = new BatchPlanDecision("wait", "Members are still arriving.", null, [], 4, []);
@@ -1218,7 +1224,7 @@ public sealed partial class BatchGatePilotServiceTests
     /// fixture's lane-folder cards are no longer scanned, so the case runs the
     /// applier's replay branch: it links both cards and continues.
     /// </summary>
-    private void SeedEngineFollowUp(WebApplicationFactory<Program> factory, string runId)
+    private protected void SeedEngineFollowUp(WebApplicationFactory<Program> factory, string runId)
     {
         var folder = Path.Combine(_watchPath, TaskStates.Ready, ContractKey + "-FOLLOW-UP");
         Directory.CreateDirectory(folder);
@@ -1233,7 +1239,7 @@ public sealed partial class BatchGatePilotServiceTests
         factory.Services.GetRequiredService<TaskScannerService>().InvalidateCache();
     }
 
-    private static string Output(TransitionAction action, string attemptId)
+    private protected static string Output(TransitionAction action, string attemptId)
     {
         Contract.ReviewFollowUpFinding[] findings = action is TransitionAction.FindingRound
             or TransitionAction.ConcernRound or TransitionAction.DegradeWithFollowUp
@@ -1246,7 +1252,7 @@ public sealed partial class BatchGatePilotServiceTests
         });
     }
 
-    private void AssertApplied(WebApplicationFactory<Program> factory, EngineApplierEffectKind effect,
+    private protected void AssertApplied(WebApplicationFactory<Program> factory, EngineApplierEffectKind effect,
         MonolithOrchestrationOccurrence occurrence, ArrangedDecision arranged, string? lane, string action,
         string? handoff)
     {

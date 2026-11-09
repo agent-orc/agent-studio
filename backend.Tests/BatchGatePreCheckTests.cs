@@ -7,7 +7,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGatePreCheckTests : BatchGatePilotServiceTests
 {
     [Fact]
     public async Task Red_pre_check_returns_route_inventory_to_agent_and_keeps_member_out_of_batch()
@@ -121,8 +121,11 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Equal(1, _gate.BatchRuns);
         Assert.Empty(factory.Services.GetRequiredService<BatchGateStore>().ListPreChecks(ProjectName));
     }
+}
 
-    private void EnablePreCheck(Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> factory,
+public abstract partial class BatchGatePilotServiceTests
+{
+    private protected void EnablePreCheck(Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> factory,
         int closeSize)
     {
         EnableBatchGate(factory, closeSize, scope: "code");
