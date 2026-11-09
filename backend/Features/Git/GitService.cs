@@ -5445,10 +5445,12 @@ public partial class GitService
     /// </summary>
     private static bool IsLinkedWorktree(string root)
     {
-        var (gitDir, _, gitDirCode) = RunGitArgs(root, "rev-parse", "--git-dir");
-        var (commonDir, _, commonCode) = RunGitArgs(root, "rev-parse", "--git-common-dir");
-        if (gitDirCode != 0 || commonCode != 0) return false;
-        return !string.Equals(gitDir.Trim(), commonDir.Trim(), StringComparison.OrdinalIgnoreCase);
+        // One process answers both, one line each (AGT-3567: the merge path
+        // asks several times per integration).
+        var (output, _, code) = RunGitArgs(root, "rev-parse", "--git-dir", "--git-common-dir");
+        if (code != 0) return false;
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return lines.Length == 2 && !string.Equals(lines[0], lines[1], StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsIntegrationHeadAttached(string root, string integrationBranch)

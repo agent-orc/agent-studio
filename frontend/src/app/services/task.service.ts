@@ -31,7 +31,9 @@ import type {
   ContextUsageSnapshot,
   CliType,
   ContinueMode,
+  ContinueRoundBase,
   ContinueTaskResponse,
+  FailureContinuationCheck,
   ProjectSnapshot,
   PromoteToCodingResponse,
   CreateRegistryProjectRequest,
@@ -48,6 +50,7 @@ import type {
   DecisionActionResponse,
 } from '../models/task.model';
 import { TaskState } from '../models/task.model';
+import type { CouncilFindingAction, CouncilReactionDisposition } from '../models/council-review.model';
 import type { ClaudeSessionResponse } from '../features/claude';
 import type { CliModelCatalog, CliCompletionContract, CliUsageReport, ModelMigrationCatalog } from '../features/cli';
 import type { GitFileChange, GitStatus, TaskCommitDetail, TaskProvenanceView } from '../features/git';
@@ -134,7 +137,7 @@ export interface CodeReviewListEntry {
 
 export interface CouncilFindingAssessment {
   finding: string;
-  action: 'FixNextRound' | 'Accept' | 'Escalate';
+  action: CouncilFindingAction;
   reason: string;
 }
 
@@ -142,7 +145,7 @@ export interface CouncilReviewReaction {
   createdAt: string;
   reviewFileName: string;
   grade: string;
-  disposition: 'Accept' | 'Reissue' | 'Escalate';
+  disposition: CouncilReactionDisposition;
   summary: string;
   assessments: CouncilFindingAssessment[];
   startsNewRound: boolean;
@@ -983,6 +986,22 @@ export class TaskService {
     return this.http.post<{ status: 'started' | 'queued' | 'saved'; stage: string; taskKey: string; savedReason: string | null }>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/failure/continue`,
       {},
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /** AGT-3582: whether the card has a delivery failure to continue, by the POST's own guard. */
+  checkFailureContinuation(jobId: string, watchPath?: string) {
+    return this.http.get<FailureContinuationCheck>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/failure/continue`,
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /** AGT-3582: the run base a continue round would start from, read only; null keeps today's checkout. */
+  getContinueRoundBase(jobId: string, watchPath?: string) {
+    return this.http.get<{ base: ContinueRoundBase | null }>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/continue/base`,
       this.withWatchPath(watchPath),
     );
   }

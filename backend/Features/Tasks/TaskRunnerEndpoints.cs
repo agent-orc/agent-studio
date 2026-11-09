@@ -168,6 +168,16 @@ public static class TaskRunnerEndpoints
                 : Results.NotFound();
         });
 
+        // AGT-3582: the run base a continue round would start from, read only,
+        // for the task detail's Continue form.
+        group.MapGet("/{jobId}/continue/base", (string jobId, string? project, string? watchPath, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects, TaskScannerService scanner) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var info = scanner.FindJob(jobId, watchPath);
+            if (info is null) return Results.NotFound(new { error = "Task not found." });
+            return Results.Ok(new { @base = runner.PreviewContinueBase(info) });
+        });
+
         group.MapPost("/{jobId}/continue", async (string jobId, string? project, string? watchPath, ContinueJobRequest req, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects, MonolithOrchestrationStore orchestration, TaskScannerService scanner, AgentStudio.Pipeline.BatchIsolationGuard isolation, HttpContext context, CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
