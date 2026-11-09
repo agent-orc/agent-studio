@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DELIVERY_GROUP_ID, buildDeliveryGroup, buildFocusLanes, buildLaneGroups, focusVisibleLaneStates, laneChrome,
+  laneGroupCount,
 } from './board-lane-layout.util';
 import type { DeliveryColumn, DeliveryColumnCard, DeliveryColumnsResponse } from '../../../models/delivery-column.model';
 import { READY_PHASES } from './ready-lane-split.util';
@@ -166,6 +167,21 @@ describe('buildLaneGroups', () => {
       TaskState.CodeNotComplete,
       TaskState.AutoReview,
     ]);
+  });
+});
+
+describe('laneGroupCount', () => {
+  it('sums the lane counts of each group and leaves the paged Archive out', () => {
+    const grouped = emptyGrouped({
+      ready: [task('r1', TaskState.Ready), task('r2', TaskState.Ready)],
+      backlog: [task('b1', TaskState.Backlog)],
+      progress: [task('p1', TaskState.Progress)],
+      humanReview: [task('h1', TaskState.HumanReview)],
+      completed: [task('c1', TaskState.Completed)],
+      archive: [task('a1', TaskState.Archive), task('a2', TaskState.Archive)],
+    });
+    const counts = buildLaneGroups(grouped, false).map((group) => [group.id, laneGroupCount(group)]);
+    expect(counts).toEqual([['backlog', 3], ['active', 1], ['decide', 2]]);
   });
 });
 

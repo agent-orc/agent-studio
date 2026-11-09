@@ -1,0 +1,142 @@
+@let view = posture();
+<div class="security-facts" data-testid="operations-security-facts">
+  <section aria-labelledby="security-exposure-title" data-testid="security-facts-exposure">
+    <h3 id="security-exposure-title">Exposure</h3>
+    <dl class="security-facts__pairs">
+      <div><dt>Profile</dt><dd>{{ view.exposure.profile }}</dd></div>
+      <div><dt>HTTPS required</dt><dd>{{ view.exposure.httpsRequired ? 'Yes' : 'No' }}</dd></div>
+      <div><dt>Cloudflare edge</dt><dd>{{ view.exposure.cloudflareEdge ? 'On' : 'Off' }}</dd></div>
+      <div><dt>Trusted proxies</dt><dd>{{ view.exposure.trustedProxyCount }}</dd></div>
+      <div><dt>Sign-in client address</dt><dd>{{ view.exposure.loginAddressHealthy ? 'Public address' : 'Internal address seen' }}</dd></div>
+    </dl>
+    @if (view.exposure.external.length) {
+      <ul class="security-facts__rows">
+        @for (fact of view.exposure.external; track fact.id) {
+          <li><span>{{ fact.label }}</span><app-status-indicator [tone]="state(fact.state).tone" [label]="state(fact.state).label" [compact]="true" /><small>{{ fact.detail }}</small></li>
+        }
+      </ul>
+    }
+    <p class="security-facts__note">Open to anonymous callers ({{ view.exposure.anonymousRoutes.length }}):</p>
+    <ul class="security-facts__routes" data-testid="security-facts-anonymous">
+      @for (route of view.exposure.anonymousRoutes; track route) { <li><code>{{ route }}</code></li> }
+    </ul>
+  </section>
+
+  <section aria-labelledby="security-credentials-title" data-testid="security-facts-credentials">
+    <h3 id="security-credentials-title">Credentials</h3>
+    <h4>API and service account tokens</h4>
+    @if (!view.credentials.tokens.length) { <p class="security-facts__note">No tokens.</p> } @else {
+      <div class="security-facts__table"><table>
+        <thead><tr><th>Holder</th><th>Kind</th><th>Role</th><th>Scope</th><th>Expires</th><th>Last use</th><th>State</th></tr></thead>
+        <tbody>@for (token of view.credentials.tokens; track token.id) {
+          <tr [attr.data-testid]="'security-token-' + token.id">
+            <th scope="row">{{ token.holder }}</th><td>{{ token.kind === 'api-token' ? 'API token' : 'Service account' }}</td>
+            <td>{{ token.role }}</td><td>{{ projects(token.projects) }}</td>
+            <td>@if (token.expiresAt) { <time [attr.datetime]="token.expiresAt">{{ token.expiresAt | date:'d MMM y':'UTC' }}</time> · {{ expiry(token.expiresAt) }} } @else { No expiry }</td>
+            <td>@if (token.lastUsedAt) { <time [attr.datetime]="token.lastUsedAt">{{ token.lastUsedAt | date:'d MMM y':'UTC' }}</time> } @else { Never }</td>
+            <td><app-status-indicator [tone]="state(token.state).tone" [label]="state(token.state).label" [compact]="true" /></td>
+          </tr>
+        }</tbody>
+      </table></div>
+    }
+    @if (view.credentials.operatorAgents.length) {
+      <h4>Operator agents</h4>
+      <ul class="security-facts__rows">
+        @for (agent of view.credentials.operatorAgents; track agent.id) {
+          <li><span>{{ agent.name }}</span>
+            <app-status-indicator [tone]="agent.disabled ? 'neutral' : 'success'" [label]="agent.disabled ? 'Disabled' : agent.liveSessions + ' live session' + (agent.liveSessions === 1 ? '' : 's')" [compact]="true" />
+            <small>@if (agent.nextSessionExpiry) { Next session ends <time [attr.datetime]="agent.nextSessionExpiry">{{ agent.nextSessionExpiry | date:'d MMM, HH:mm':'UTC' }} UTC</time> } @else { No live session }</small></li>
+        }
+      </ul>
+    }
+    <h4>Host sign-ins, GitHub App and runner credentials</h4>
+    @if (sourceNote(view.credentials.inventorySource, view.credentials.inventoryProblem); as note) { <p class="security-facts__note">{{ note }}</p> }
+    @if (!hostCredentials().length) { <p class="security-facts__note">No host credentials are reported.</p> } @else {
+      <ul class="security-facts__rows" data-testid="security-facts-inventory">
+        @for (item of hostCredentials(); track item.id) {
+          <li><span>{{ item.label }} <small>{{ item.hostId }}</small></span>
+            <app-status-indicator [tone]="state(item.state).tone" [label]="state(item.state).label" [compact]="true" />
+            <small>@if (item.expiresAt) { Expires {{ expiry(item.expiresAt) }} · } {{ item.detail }}</small></li>
+        }
+      </ul>
+    }
+  </section>
+
+  <section aria-labelledby="security-factor-title" data-testid="security-facts-second-factor">
+    <h3 id="security-factor-title">Second factor</h3>
+    <p class="security-facts__note" data-testid="security-facts-coverage">{{ view.secondFactor.covered }} of {{ view.secondFactor.activeUsers }} active users use a second factor.@if (view.exposure.profile === 'local') { The local profile has no sign-in. }</p>
+    @if (view.secondFactor.users.length) {
+      <div class="security-facts__table"><table>
+        <thead><tr><th>User</th><th>Role</th><th>TOTP</th><th>Passkeys</th><th>Recovery codes</th><th>State</th></tr></thead>
+        <tbody>@for (user of view.secondFactor.users; track user.id) {
+          <tr [attr.data-testid]="'security-user-' + user.id">
+            <th scope="row">{{ user.displayName || user.username }}</th><td>{{ user.role }}@if (user.required) { · required }</td>
+            <td>{{ user.totp ? 'Yes' : 'No' }}</td><td>{{ user.passkeys }}</td><td>{{ user.recoveryCodes }}</td>
+            <td><app-status-indicator [tone]="userState(user.state).tone" [label]="userState(user.state).label" [compact]="true" /></td>
+          </tr>
+        }</tbody>
+      </table></div>
+    }
+  </section>
+
+  <section aria-labelledby="security-versions-title" data-testid="security-facts-versions">
+    <h3 id="security-versions-title">Versions</h3>
+    <dl class="security-facts__pairs">
+      <div><dt>Server release</dt><dd>{{ view.versions.server.known ? view.versions.server.version : 'Unknown' }}</dd></div>
+      <div><dt>Tag</dt><dd>{{ view.versions.server.tag }}</dd></div>
+      <div><dt>Commit</dt><dd><code>{{ view.versions.server.commit.slice(0, 12) }}</code></dd></div>
+      <div><dt>Built</dt><dd>@if (view.versions.server.builtAt) { {{ view.versions.server.builtAt | date:'d MMM y':'UTC' }} } @else { Unknown }</dd></div>
+    </dl>
+    @if (sourceNote(view.versions.hostSource, view.versions.hostProblem); as note) { <p class="security-facts__note">{{ note }}</p> }
+    @if (!view.versions.hosts.length) { <p class="security-facts__note">No runner hosts are registered.</p> } @else {
+      <div class="security-facts__table"><table>
+        <thead><tr><th>Host</th><th>Operating system</th><th>Agent host</th><th>Against server</th><th>CLIs</th><th>Images</th></tr></thead>
+        <tbody>@for (host of view.versions.hosts; track host.runnerId) {
+          <tr [attr.data-testid]="'security-host-' + host.runnerId">
+            <th scope="row">{{ host.name }}</th><td>{{ host.operatingSystem ?? 'Not reported' }}</td>
+            <td>{{ host.releaseVersion ?? host.runnerVersion }}</td>
+            <td><app-status-indicator [tone]="state(host.releaseState).tone" [label]="state(host.releaseState).label" [compact]="true" /></td>
+            <td>@for (cli of host.clis; track cli.name) {
+              <span class="security-facts__cli">{{ cli.name }} {{ cli.version }}@if (cli.targetVersion) { / {{ cli.targetVersion }} }
+                @if (cli.belowTarget) { <app-status-indicator tone="warning" label="Below required" [compact]="true" /> }</span>
+            } @empty { Not reported }</td>
+            <td>@for (image of host.containers; track image.name) { <span class="security-facts__cli">{{ image.name }} <code>{{ (image.imageDigest ?? 'no digest').slice(0, 19) }}</code></span> } @empty { None reported }</td>
+          </tr>
+        }</tbody>
+      </table></div>
+    }
+  </section>
+
+  <section aria-labelledby="security-audit-title" data-testid="security-facts-audit">
+    <h3 id="security-audit-title">Audit</h3>
+    <dl class="security-facts__pairs">
+      <div><dt>Audit chain</dt><dd><app-status-indicator [tone]="state(view.audit.integrityState).tone" [label]="integrityLabel(view.audit.integrityState)" [compact]="true" /></dd></div>
+      <div><dt>Off-host copy</dt><dd>{{ view.audit.sinkConfigured ? view.audit.pendingForward + ' pending' : 'Not configured' }}</dd></div>
+      <div><dt>Last kill switch use</dt><dd>@if (view.audit.lastKillAt) { {{ view.audit.lastKillAt | date:'d MMM y':'UTC' }} } @else { Never }</dd></div>
+      <div><dt>Last drill</dt><dd>@if (view.audit.lastDrillAt) { {{ view.audit.lastDrillAt | date:'d MMM y':'UTC' }} · {{ view.audit.lastDrillPassed ? 'passed' : 'failed' }} } @else { None }</dd></div>
+      <div><dt>Open break-glass windows</dt><dd>{{ view.audit.activeBreakGlassWindows }}</dd></div>
+    </dl>
+    <h4>Unusual events, last {{ view.audit.windowDays }} days</h4>
+    @if (!view.audit.anomalies.length) { <p class="security-facts__note" data-testid="security-facts-no-anomalies">No refused requests, kill switch or break-glass events.</p> } @else {
+      <div class="security-facts__table"><table data-testid="security-facts-anomalies">
+        <thead><tr><th>Latest</th><th>Event</th><th>Actor</th><th>Operation</th><th>Answer</th><th>Count</th></tr></thead>
+        <tbody>@for (event of view.audit.anomalies; track event.kind + event.actor + event.operation + event.outcome) {
+          <tr><td><time [attr.datetime]="event.at">{{ event.at | date:'d MMM, HH:mm':'UTC' }}</time></td><td>{{ anomaly(event.kind) }}</td>
+            <td>{{ event.actor }}</td><td><code>{{ event.operation }}</code></td><td>{{ event.outcome }}</td><td>{{ event.count }}</td></tr>
+        }</tbody>
+      </table></div>
+    }
+  </section>
+
+  <section aria-labelledby="security-cards-title" data-testid="security-facts-cards">
+    <h3 id="security-cards-title">Open security cards</h3>
+    @if (!view.cards.length) { <p class="security-facts__note">No open card carries the security tag.</p> } @else {
+      <ul class="security-facts__rows">
+        @for (card of view.cards; track card.key) {
+          <li><button type="button" class="security-facts__card" [attr.data-testid]="'security-card-' + card.key" (click)="openCard.emit(card)">{{ card.key }}</button>
+            <span>{{ card.title }}</span><small>{{ card.project }} · {{ lane(card.state) }}</small></li>
+        }
+      </ul>
+    }
+  </section>
+</div>

@@ -62,3 +62,53 @@ export const backendShapedState: BatchGateState = {
     'AGT-2': { status: 'published', batchId: 'batch-9', phase: 'published', position: 1, size: 1 },
   },
 };
+
+const run = (id: string, outcome: string, start: string, end: string) =>
+  ({ batchRunId: id, host: 'agent-runner-01', outcome, classification: outcome === 'fail' ? 'DeterministicSuiteRed' : null,
+    startedAtUtc: start, finishedAtUtc: end });
+const member = (taskKey: string, released = false) => ({ taskKey, replay: { outcome: 'admitted' }, released });
+const evidence = (batchId: string) => `/var/lib/agentstudio/batch-gates/${batchId}/gate-evidence.jsonl`;
+
+/**
+ * AGT-3577: a four-member red batch bisected to one member. AGT-2 is proven
+ * red by run-17 of batch-17; the other three are proven green.
+ */
+export const isolatedRedState: BatchGateState = {
+  plan: { decision: 'idle', reason: 'no eligible cards', closeAtUtc: null, proposedMembers: [], targetSize: 0, upcoming: [], advisor: null },
+  pending: [],
+  batches: [
+    { batchId: 'batch-18', parentBatchId: 'batch-14', phase: 'published', baseSha: 'b'.repeat(40), candidateSha: 'e'.repeat(40),
+      members: [member('AGT-1', true)], runs: [run('run-18', 'pass', '2026-11-09T09:40:00Z', '2026-11-09T09:52:00Z')],
+      publication: { verifiedRemoteSha: 'e'.repeat(40) } },
+    { batchId: 'batch-17', parentBatchId: 'batch-14', phase: 'red', baseSha: 'b'.repeat(40), candidateSha: 'f'.repeat(40),
+      members: [member('AGT-2')], runs: [run('run-17', 'fail', '2026-11-09T09:40:00Z', '2026-11-09T09:51:00Z')] },
+    { batchId: 'batch-16', parentBatchId: 'batch-14', phase: 'published', baseSha: 'b'.repeat(40), candidateSha: 'd'.repeat(40),
+      members: [member('AGT-3', true), member('AGT-4', true)], runs: [run('run-16', 'pass', '2026-11-09T09:20:00Z', '2026-11-09T09:33:00Z')],
+      publication: { verifiedRemoteSha: 'd'.repeat(40) } },
+    { batchId: 'batch-15', parentBatchId: 'batch-14', phase: 'red', baseSha: 'b'.repeat(40), candidateSha: 'a'.repeat(40),
+      members: [member('AGT-1'), member('AGT-2')], runs: [run('run-15', 'fail', '2026-11-09T09:20:00Z', '2026-11-09T09:34:00Z')] },
+    { batchId: 'batch-14', parentBatchId: null, phase: 'red', phaseReason: 'DeterministicSuiteRed', baseSha: 'b'.repeat(40), candidateSha: 'c'.repeat(40),
+      members: [member('AGT-1'), member('AGT-2'), member('AGT-3'), member('AGT-4')],
+      runs: [run('run-14', 'fail', '2026-11-09T09:00:00Z', '2026-11-09T09:15:00Z')] },
+  ],
+  members: {
+    'AGT-1': { status: 'published', batchId: 'batch-18', phase: 'published', position: 1, size: 1 },
+    'AGT-2': { status: 'in-batch', batchId: 'batch-17', phase: 'red', position: 1, size: 1 },
+    'AGT-3': { status: 'published', batchId: 'batch-16', phase: 'published', position: 1, size: 2 },
+    'AGT-4': { status: 'published', batchId: 'batch-16', phase: 'published', position: 2, size: 2 },
+  },
+  isolationFindings: [
+    { parentBatchId: 'batch-14', taskKey: 'AGT-3', status: 'proven-green', evidencePath: evidence('batch-16'),
+      recordedAtUtc: '2026-11-09T09:33:00Z', provingBatchId: 'batch-16', provingRunId: 'run-16', failures: [], evidenceAvailable: false },
+    { parentBatchId: 'batch-14', taskKey: 'AGT-4', status: 'proven-green', evidencePath: evidence('batch-16'),
+      recordedAtUtc: '2026-11-09T09:33:00Z', provingBatchId: 'batch-16', provingRunId: 'run-16', failures: [], evidenceAvailable: false },
+    { parentBatchId: 'batch-14', taskKey: 'AGT-2', status: 'proven-red', evidencePath: evidence('batch-17'),
+      recordedAtUtc: '2026-11-09T09:51:00Z', provingBatchId: 'batch-17', provingRunId: 'run-17', evidenceAvailable: true,
+      failures: [
+        { testName: 'Checkout.Tests.TotalsIncludeShipping', errorExcerpt: 'Error Message:\n Assert.Equal() Failure: Expected 12.50, Actual 10.00' },
+        { testName: 'Checkout.Tests.EmptyCartHasNoTotal', errorExcerpt: '' },
+      ] },
+    { parentBatchId: 'batch-14', taskKey: 'AGT-1', status: 'proven-green', evidencePath: evidence('batch-18'),
+      recordedAtUtc: '2026-11-09T09:52:00Z', provingBatchId: 'batch-18', provingRunId: 'run-18', failures: [], evidenceAvailable: false },
+  ],
+};

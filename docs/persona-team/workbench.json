@@ -1,0 +1,315 @@
+{
+  "schemaVersion": 1,
+  "id": "persona-team",
+  "title": "Persona team for global orchestrator sessions",
+  "summary": "Turns global orchestrator sessions into a team of personas that watch the installation from different aspects (security, operations, reliability, quality, design, product, cost, documentation), each with a versioned charter, an honest character sheet, a budget carved from the workspace token limit, a configurable reporting obligation, its own feed and management page. Two manager personas decide within standing grants; a weekly magazine and a presenter deck rank every item by a 0 to 100 importance number computed from impact, urgency and confidence with fact floors. A dedicated operations warden watches backups and the security posture, so a missing backup or an expired credential always ranks high. Personas run as short sessions of their own principal on runner hosts, scheduled by the Watcher sweep. Twelve decisions with recommended options, diagrams, mockups, light and dark evidence captures, a phased plan and twelve implementation cards.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-11-09T12:00:00Z",
+  "sourceTaskKeys": [
+    "AGT-3573"
+  ],
+  "relatedTaskKeys": [
+    "AGT-3020",
+    "AGT-3462",
+    "AGT-3018",
+    "AGT-3459",
+    "AGT-3353",
+    "AGT-3177",
+    "AGT-3485",
+    "AGT-2800"
+  ],
+  "tags": [
+    "personas",
+    "orchestrator",
+    "operations",
+    "backups",
+    "security",
+    "magazine",
+    "importance",
+    "budgets"
+  ],
+  "openDecisions": [
+    {
+      "id": "PT-D1",
+      "question": "What a persona is and where the catalogue lives",
+      "recommendation": "Versioned descriptor in backend/Policies/personas plus workspace activation through the API, step-up activation, one shadow period.",
+      "rejectedOption": "Prompt-only skills, settings records only, files per project."
+    },
+    {
+      "id": "PT-D2",
+      "question": "Stats",
+      "recommendation": "Owner-set attributes with named effects, derived record with denominators, rank as eligibility only.",
+      "rejectedOption": "Flavour attributes; measured record only."
+    },
+    {
+      "id": "PT-D3",
+      "question": "Budgets",
+      "recommendation": "Persona pool of 10 % of ModelTokensPerWeek (1.2M without limit) with per-persona allowances; stubs and model-free floor items on exhaustion; pause at 80 % workspace use; same-class fallback or wait.",
+      "rejectedOption": "Share the Watcher contingent; per-subscription slices."
+    },
+    {
+      "id": "PT-D4",
+      "question": "Activation and scheduling",
+      "recommendation": "Persona principal sessions on runner hosts, scheduled by the Watcher sweep with coalescing; at most two per workspace; card work first.",
+      "rejectedOption": "API container; owner machine."
+    },
+    {
+      "id": "PT-D5",
+      "question": "Reports, feed and page",
+      "recommendation": "Typed PersonaItemV1 on the Agent Message Bus (participant kind Persona) plus application store; configurable obligation with fixed templates; Team page and persona page.",
+      "rejectedOption": "Free text in Dossiers; a new event stream."
+    },
+    {
+      "id": "PT-D6",
+      "question": "Manager roles",
+      "recommendation": "Chief of staff and budget steward with bounded T1 rights, attention lease, 24-hour undo; T2 stays with the owner.",
+      "rejectedOption": "No managers; advisory only."
+    },
+    {
+      "id": "PT-D7",
+      "question": "Magazine",
+      "recommendation": "Weekly Studio Weekly issue, deterministic layout plus one editor call, HTML and PDF export, sending off by default.",
+      "rejectedOption": "Digest list; fully model-written issue."
+    },
+    {
+      "id": "PT-D8",
+      "question": "Importance numbers",
+      "recommendation": "0 to 100 from impact \u00D7 urgency \u00D7 confidence with fact floors, \u00B115 manager adjustment, owner acknowledgement.",
+      "rejectedOption": "Severity labels; model-typed score."
+    },
+    {
+      "id": "PT-D9",
+      "question": "Presentations",
+      "recommendation": "Presenter persona with deck.json, weekly and monthly decks, style guide tokens in both themes, HTML and PDF.",
+      "rejectedOption": "Magazine-as-slides; PPTX first."
+    },
+    {
+      "id": "PT-D10",
+      "question": "Safety",
+      "recommendation": "Principal per persona, catalogued persona operations, untrusted content only for own publication, managers on typed fields, team stop plus SM-2.",
+      "rejectedOption": "Owner or operator identity; read-only personas."
+    },
+    {
+      "id": "PT-D11",
+      "question": "Evaluation",
+      "recommendation": "Value panel, misses, owner rating, rule-based suggestions, before/after by revision; the owner decides.",
+      "rejectedOption": "Owner judgement only; automatic retirement."
+    },
+    {
+      "id": "PT-D12",
+      "question": "Starter catalogue and the operations aspect",
+      "recommendation": "Eight aspect personas with a dedicated operations warden, presenter, two managers; warden and cost controller start active.",
+      "rejectedOption": "Reliability takes operations; everything active at once."
+    }
+  ],
+  "implementationTasks": [
+    {
+      "id": "PT-1",
+      "title": "PT-1 \u00B7 Persona descriptor, starter catalogue and workspace activation API",
+      "section": "cards",
+      "decisionId": "PT-D1",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-1",
+        "criteria": [
+          "Every starter descriptor validates and the revision test fails on an unversioned change",
+          "Activation without step-up answers 403 step-up-required; with step-up it records revision, digest and shadow state",
+          "Deactivation and pause need no step-up and are audited",
+          "A fork is independent of later catalogue revisions until the Owner adopts one"
+        ]
+      },
+      "promptMarkdown": "# Persona descriptor, starter catalogue and workspace activation API\n\nSource: docs/persona-team/index.html (AGT-3573), decisions PT-D1, PT-D12. Read that Dossier and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/orchestrator-improvement-scout/index.html and docs/system/domains/tasks.md. Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: none. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: backend/Policies/ (next to model-routing-policy.v1.json), docs/app/schemas/, backend/Features/Watcher/WatcherOptions.cs for options style, application-owned workspace metadata stores.\n\n## Deliver\nAdd \u0060docs/app/schemas/persona.schema.json\u0060 for the descriptor fields in the Dossier\u0027s Persona definition table (id, revision, title, aspect, kind persona|presenter|manager, charter of at most 600 characters, scope, attributes, operations, model capability class and thinking, cadence, triggers, budget, report, floors). Add the eleven starter descriptors from the Starter catalogue as \u0060backend/Policies/personas/\u003Cid\u003E.persona.json\u0060 with the documented defaults. Add a catalogue test that validates every file against the schema and fails when a file\u0027s content changed without a new \u0060revision\u0060. Add an application-owned activation store per workspace with routes \u0060GET /api/workspaces/{id}/personas\u0060 (catalogue entries with activation state), \u0060POST .../personas/{personaId}/activate\u0060 (attributes, allowance, scope narrowing; records descriptor revision and digest; state \u0060shadow\u0060 for the first report period), \u0060POST .../pause\u0060, \u0060.../resume\u0060, \u0060.../deactivate\u0060 and \u0060.../fork\u0060 (custom persona with its own revision chain). Activation requires the Owner and a fresh step-up; deactivation does not. Every change is written to the IAM audit. No occurrences run yet.\n\n## Out of scope\nPrincipals and grants (PT-2), scheduling (PT-3), any UI (PT-6).\n\n## Acceptance\n- Every starter descriptor validates and the revision test fails on an unversioned change\n- Activation without step-up answers 403 step-up-required; with step-up it records revision, digest and shadow state\n- Deactivation and pause need no step-up and are audited\n- A fork is independent of later catalogue revisions until the Owner adopts one\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-2",
+      "title": "PT-2 \u00B7 Persona principals, catalogued persona operations and team stop",
+      "section": "cards",
+      "decisionId": "PT-D10",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-2",
+        "criteria": [
+          "Every new operation has exactly one tier and passes the catalogue inventory test",
+          "A persona session calling card.requeue without a manager grant gets 403 grant-required",
+          "stop-all refuses every persona call within 60 seconds and is audited",
+          "A publish call with instruction source repository-file is admitted, the same source on a manager operation is refused"
+        ]
+      },
+      "promptMarkdown": "# Persona principals, catalogued persona operations and team stop\n\nSource: docs/persona-team/index.html (AGT-3573), decisions PT-D10, PT-D6. Read that Dossier and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/security-model/index.html and docs/operations/security/overview.md (SM-1, SM-2, SM-4, SM-5). Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-1. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: backend/Features/Security/Iam/OperatorPolicy/OperatorOperationCatalog.cs, the operator-agent principal and session code (SM-1), standing grants under /api/auth/iam/standing-grants, the SM-2 kill switch, OperatorOperationCatalogInventoryTests.\n\n## Deliver\nAdd principal kind \u0060persona\u0060 on the operator-agent model (ids \u0060opa_persona_*\u0060, actor \u0060persona:\u003Cid\u003E/session:\u003Csid\u003E\u0060 with \u0060delegatedBy\u0060 the activating Owner). Activation (PT-1) creates or re-enables the principal and issues one T1 standing grant for the descriptor\u0027s persona operations in its scope, with the SM-4 lifetimes. Catalogue new operations: T1 \u0060persona.item.publish\u0060, \u0060persona.report.publish\u0060, \u0060persona.proposal.draft\u0060, \u0060persona.decision.request\u0060; T1 manager-only \u0060persona.proposal.accept\u0060, \u0060persona.importance.adjust\u0060, \u0060persona.budget.rebalance\u0060, \u0060persona.pause\u0060. Allow \u0060X-Operator-Instruction-Source\u0060 values \u0060card\u0060, \u0060repository-file\u0060 and \u0060log\u0060 only on the four publish operations. Add occurrence sessions minted by the platform, bound to one occurrence id, at most 30 minutes. Add \u0060POST /api/workspaces/{id}/personas/stop-all\u0060 (Owner, no step-up) that revokes all persona grants and ends sessions, and a \u0060Renew team grants\u0060 route that renews every active persona grant with one step-up. Make SM-2 \u0060End all operator access\u0060 include persona principals.\n\n## Out of scope\nScheduling and model calls (PT-3, PT-4); manager validators (PT-10).\n\n## Acceptance\n- Every new operation has exactly one tier and passes the catalogue inventory test\n- A persona session calling card.requeue without a manager grant gets 403 grant-required\n- stop-all refuses every persona call within 60 seconds and is audited\n- A publish call with instruction source repository-file is admitted, the same source on a manager operation is refused\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-3",
+      "title": "PT-3 \u00B7 Persona scheduling, admission and budget ledger",
+      "section": "cards",
+      "decisionId": "PT-D3",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-3",
+        "criteria": [
+          "A restart or a duplicate trigger yields one occurrence per key",
+          "At 80 % workspace use, persona occurrences are refused with a receipt while card admission is unchanged",
+          "A fallback outside the persona capability class is never selected; the occurrence waits",
+          "Ledger totals reconcile with occurrence receipts for a replayed week"
+        ]
+      },
+      "promptMarkdown": "# Persona scheduling, admission and budget ledger\n\nSource: docs/persona-team/index.html (AGT-3573), decisions PT-D3, PT-D4. Read that Dossier and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/orchestrator-rule-core/index.html, docs/model-selection-and-fallback/index.html and docs/concepts/workspace-quotas.md. Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-1, PT-2. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: backend/Features/Watcher/WatcherHostedService.cs, WatcherContingentService.cs, backend/Features/Cli/Selection/ModelSelectionService.cs, backend/Features/Quota/WorkspaceQuotaService.cs, backend/Features/Operator/Capacity/OperatorCapacityEndpoints.cs, the operator decision stream event types.\n\n## Deliver\nOn each Watcher sweep, compute due persona occurrences from cadence and triggers (decision stream events such as batch.red, escalation.opened, quota.exhausted, quota.fallback-active, deploy completed, plus fact triggers for the warden). Key occurrences by workspace, persona, window end and descriptor revision; coalesce events within 6 hours (1 hour for floors of 90 or more). Admit only when: the persona allowance and the pool have tokens and sessions left; the workspace quota is below warning (80 %); at most one open occurrence per persona and two per workspace (setting 1 to 4); a runner host has an idle slot and no waiting Ready card it serves; the grant is live. Add a budget ledger per workspace week: pool size (10 % of ModelTokensPerWeek, 1,200,000 when unlimited, Owner setting), allowances (sum at most the pool), usage by persona from receipts. Add consumer class \u0060persona\u0060 to ModelSelectionService with same-capability-class fallback, otherwise \u0060wait\u0060. Every refusal writes a no-call receipt with the reason. Write persona usage to the token ledger as consumer \u0060persona:\u003Cid\u003E\u0060.\n\n## Out of scope\nThe occurrence itself and scoring (PT-4); budget UI (PT-6).\n\n## Acceptance\n- A restart or a duplicate trigger yields one occurrence per key\n- At 80 % workspace use, persona occurrences are refused with a receipt while card admission is unchanged\n- A fallback outside the persona capability class is never selected; the occurrence waits\n- Ledger totals reconcile with occurrence receipts for a replayed week\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-4",
+      "title": "PT-4 \u00B7 Persona occurrence, item validation and importance scoring",
+      "section": "cards",
+      "decisionId": "PT-D4",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-4",
+        "criteria": [
+          "A response with an unresolvable reference or out-of-scope project is rejected with a failed receipt",
+          "The score formula reproduces the Dossier\u0027s three worked examples and never drops below a floor",
+          "A repeated finding with the same fingerprint updates one item instead of creating a second",
+          "An exhausted allowance yields a stub report and still publishes a floor item of 70 or more without a model call"
+        ]
+      },
+      "promptMarkdown": "# Persona occurrence, item validation and importance scoring\n\nSource: docs/persona-team/index.html (AGT-3573), decisions PT-D4, PT-D5, PT-D8. Read that Dossier and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/orchestrator-rule-core/index.html, docs/app/schemas/agent-message.schema.json and docs/system/domains/runner.md. Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-3. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: DecisionGroundsV1 and OrchestratorDecisionReceiptV1, runner lease types in runner/, docs/app/schemas/agent-participant.schema.json, the scout\u0027s proposal store and deduplication (WatcherProposalStore, WatcherFingerprint).\n\n## Deliver\nAdd a persona lease on runner hosts that runs a digest session (one bounded model call on \u0060PersonaGroundsV1\u0060: in-scope sources weighted by focus, Watcher cases, prior item outcomes, at most 12,000 input tokens) under the persona session; investigation sessions (read-only checkout, no write or deploy credentials, MCP off, 15-minute limit) behind thoroughness 4 or more. Define \u0060PersonaItemV1\u0060 (finding, proposal, decision request, report line) with the limits in the Dossier, and validate output: schema, lengths, resolving in-scope references, scope, per-week proposal and card limits, fingerprint deduplication against open cards, Watcher proposals and earlier items. Add an importance service: \u0060round(100 \u00D7 impact \u00D7 urgency / 25 \u00D7 (0.5 \u002B 0.5 \u00D7 confidence))\u0060, confidence caps by evidence count, floors from descriptor fact rules, recomputed urgency for open items, history of every change. Publish items to the Agent Message Bus with the new participant kind \u0060Persona\u0060 (additive schema change) and severity derived from importance, and to the application persona store with lifecycle state. Write stub reports and model-free floor items when admission refuses.\n\n## Out of scope\nWarden facts (PT-5); UI (PT-6); manager adjustments (PT-10).\n\n## Acceptance\n- A response with an unresolvable reference or out-of-scope project is rejected with a failed receipt\n- The score formula reproduces the Dossier\u0027s three worked examples and never drops below a floor\n- A repeated finding with the same fingerprint updates one item instead of creating a second\n- An exhausted allowance yields a stub report and still publishes a floor item of 70 or more without a model call\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-5",
+      "title": "PT-5 \u00B7 Operations warden: posture facts, floors and shadow run",
+      "section": "cards",
+      "decisionId": "PT-D12",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-5",
+        "criteria": [
+          "The 9 November replay yields exactly one backup item at 97 and keeps one item across seven daily runs while urgency grows",
+          "An expired credential still referenced yields 95; a stale fact source yields a 70 visibility finding",
+          "No grounds pack or item contains a secret value",
+          "Proposals for fixes deduplicate onto the open backup card instead of creating a new one"
+        ]
+      },
+      "promptMarkdown": "# Operations warden: posture facts, floors and shadow run\n\nSource: docs/persona-team/index.html (AGT-3573), decisions PT-D12, PT-D8. Read that Dossier and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/operations/setup/studio-backup-restore.md, docs/operations/security/overview.md and the Dossier\u0027s Operations watch section. Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-4; consumes the separate backup scheduling and Operations security view cards. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: deploy/compose/monolith-networked/backup.sh (status), install-backup-timer.sh, secret-key.sh id, task-server backup verify-full, the credential inventory, POST /api/auth/audit/verify, host.inspect, the facts exposed by the Operations security view card.\n\n## Deliver\nDefine \u0060OpsPostureFactsV1\u0060 (id, value, observedAt, source, freshness) and a reader that collects, without reimplementing, the facts produced by the separate backup and Operations security view cards and existing sources: backup schedule and destination, last good backup age per part, coverage, restore test result and age (including \u0060website.restore.signin\u0060 where published), off-host copy, escrow fingerprint match, exposed ports, TLS expiry and origin protection, credential and token expiry, second factor coverage, patch lag, audit chain verification, open security findings, break-glass windows. A missing or stale fact is a finding at floor 70. Encode the floors from the Operations watch table in the warden descriptor. Use stable fingerprints \u0060ops:\u003Cfact id\u003E:\u003Cscope\u003E\u0060. Run the warden in shadow for two weeks. Add a replay fixture of the 9 November 2026 state (no timer, empty destination, no archive) that must yield one finding at importance 97 and the matching decision request, also with an exhausted allowance.\n\n## Out of scope\nInstalling timers, running backups, rotating keys or reading secret values: the warden never does these.\n\n## Acceptance\n- The 9 November replay yields exactly one backup item at 97 and keeps one item across seven daily runs while urgency grows\n- An expired credential still referenced yields 95; a stale fact source yields a 70 visibility finding\n- No grounds pack or item contains a secret value\n- Proposals for fixes deduplicate onto the open backup card instead of creating a new one\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-6",
+      "title": "PT-6 \u00B7 Team page and persona management page",
+      "section": "cards",
+      "decisionId": "PT-D5",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-6",
+        "criteria": [
+          "Pool totals equal the sum of the visible persona cards",
+          "Stop all personas paints optimistically and rolls back on failure (R6)",
+          "A resolved Critical item loses acute styling immediately",
+          "Playwright light and dark captures of both pages are saved to results"
+        ]
+      },
+      "promptMarkdown": "# Team page and persona management page\n\nSource: docs/persona-team/index.html (AGT-3573), decisions PT-D5, PT-D3. Read that Dossier and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, frontend/AGENTS.md, docs/quality/design/style-guide-hard-rules.md and docs/operations/admin-design-guideline/index.html. Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-1, PT-3, PT-4. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: frontend/src/app/features/studio-shell/services/studio-route.ts (new route kind for #/workspace/team and #/workspace/team/\u003Cid\u003E), shared app-status-indicator, appPendingButton, app-loading-surface, the project observability panel for the bus projection.\n\n## Deliver\nAdd the Team page at \u0060#/workspace/team\u0060: pool reconciliation (used, allocated, unallocated, workspace limit), one card per persona with state, rank, allowance meter, last report, overdue state and highest open importance, and controls Activate persona, Renew team grants and Stop all personas. Add the persona page at \u0060#/workspace/team/\u003Cid\u003E\u0060 with tabs Feed (sort by importance or time, filters), Reports, Proposals (accept, reject, defer through the existing scout lifecycle and promote-concept), Budget, Charter (revision history, adopt new catalogue revision) and History, and header controls Ask (in-app chat context \u0060persona:\u003Cid\u003E\u0060), Run now, Pause or Resume, Deactivate. Follow the flat admin grammar and the hard rules: full-bleed, no left accent bars, acute tone only for open Critical items, both themes, R3 sums.\n\n## Out of scope\nCharacter sheet details (PT-7); magazine (PT-8).\n\n## Acceptance\n- Pool totals equal the sum of the visible persona cards\n- Stop all personas paints optimistically and rolls back on failure (R6)\n- A resolved Critical item loses acute styling immediately\n- Playwright light and dark captures of both pages are saved to results\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-7",
+      "title": "PT-7 \u00B7 Character sheet: attributes and derived record",
+      "section": "cards",
+      "decisionId": "PT-D2",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-7",
+        "criteria": [
+          "Every rate shows its denominator and hides below five decided items",
+          "Rank changes never change grants or allowances by themselves",
+          "Stats split by activation revision",
+          "Light and dark captures saved"
+        ]
+      },
+      "promptMarkdown": "# Character sheet: attributes and derived record\n\nSource: docs/persona-team/index.html (AGT-3573), decisions PT-D2, PT-D11. Read that Dossier and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, frontend/AGENTS.md and docs/quality/design/style-guide-hard-rules.md. Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-4, PT-6. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: The persona page from PT-6 (Sheet tab), occurrence receipts, the persona item store.\n\n## Deliver\nAdd the attribute editor (focus weights summing to 100, autonomy A0 or A1 for aspect personas and A2 only for managers, risk appetite, thoroughness 1 to 5, signal threshold) where each control states what it changes; saving creates a new activation revision. Add a stats projection with 30-day and lifetime windows: raised, accepted, rejected, duplicate, open, acceptance with denominator, cards and outcomes, tokens, priced cost plus unknown-price sessions, cost per accepted finding, median and p90 response time, punctuality, calibration, misses. Show \u0027too few decisions\u0027 below five decided items. Add experience (sum of accepted importance with a 90-day half-life) and rank Probation, Member, Senior with the Dossier\u0027s rules, showing eligibility only.\n\n## Out of scope\nValue panel and review suggestions (PT-11).\n\n## Acceptance\n- Every rate shows its denominator and hides below five decided items\n- Rank changes never change grants or allowances by themselves\n- Stats split by activation revision\n- Light and dark captures saved\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-8",
+      "title": "PT-8 \u00B7 Magazine issue composer, viewer and export",
+      "section": "cards",
+      "decisionId": "PT-D7",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-8",
+        "criteria": [
+          "Composing twice from the same items yields byte-identical layout data",
+          "Section counts sum to the strap total (R3)",
+          "An editor sentence without an item id is rejected",
+          "Exported HTML renders in light and dark and prints to PDF"
+        ]
+      },
+      "promptMarkdown": "# Magazine issue composer, viewer and export\n\nSource: docs/persona-team/index.html (AGT-3573), decisions PT-D7, PT-D8. Read that Dossier and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/app/templates/article-document-v2.html and docs/quality/design/style-guide-hard-rules.md. Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-4, PT-6. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: Persona item store, report store, the Team page, the presenter allowance for the editor call.\n\n## Deliver\nCompose a weekly issue on Monday at 07:00 workspace time (optional daily brief with the front page only): masthead with coverage line; front page with the highest open item as lead and three or four side stories by importance, at most two per persona, Critical always on the front page; decisions needed; one section per aspect ordered by its highest item with counts; the Operations watch panel from the warden\u0027s fact rows; trends and numbers over eight weeks; corrections and colophon. Layout is deterministic; one editor model call writes the lead paragraph and teasers, each sentence citing an item id, and is skipped on budget exhaustion (titles only). Issues are immutable. Viewer at \u0060#/workspace/team/magazine\u0060 and on the Team page; export as self-contained HTML in the article layout with both themes and print styles for PDF. Sending stays off; when enabled by the Owner it sends only masthead, front page titles, importance numbers and a sign-in link.\n\n## Out of scope\nDeck (PT-9).\n\n## Acceptance\n- Composing twice from the same items yields byte-identical layout data\n- Section counts sum to the strap total (R3)\n- An editor sentence without an item id is rejected\n- Exported HTML renders in light and dark and prints to PDF\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-9",
+      "title": "PT-9 \u00B7 Presenter persona and deck renderer",
+      "section": "cards",
+      "decisionId": "PT-D9",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-9",
+        "criteria": [
+          "Every number on every slide resolves to a stats field or item",
+          "Light and dark renders pass a contrast check",
+          "Stakeholder variant contains no host names or costs",
+          "Playwright captures of two slides in both themes saved"
+        ]
+      },
+      "promptMarkdown": "# Presenter persona and deck renderer\n\nSource: docs/persona-team/index.html (AGT-3573), decisions PT-D9. Read that Dossier and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, frontend/AGENTS.md and docs/quality/frontend/design-system.md. Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-8. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: The issue store from PT-8, frontend style guide tokens (--studio-*).\n\n## Deliver\nDefine \u0060deck.json\u0060 (slides with layout title, ranked list, decision list, trend, numbers, operations watch; blocks referencing item ids and stats fields). The presenter builds a 7-slide weekly deck after each issue and a 10 to 12-slide monthly review deck, selecting items of 40 or more, at most three per slide, Critical first, an aspect slide only with an item of 70 or more, always a decisions slide, trends only with four weeks of data. One model call for slide titles and speaker notes. A validator refuses numbers without a source field and claims without an item id. Render 16:9 in the Studio with style guide tokens in both themes; export self-contained HTML (one slide per screen, arrow keys) and PDF. Add the stakeholder variant without bodies, costs and host names.\n\n## Out of scope\nPPTX export.\n\n## Acceptance\n- Every number on every slide resolves to a stats field or item\n- Light and dark renders pass a contrast check\n- Stakeholder variant contains no host names or costs\n- Playwright captures of two slides in both themes saved\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-10",
+      "title": "PT-10 \u00B7 Manager roles: chief of staff and budget steward",
+      "section": "cards",
+      "decisionId": "PT-D6",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-10",
+        "criteria": [
+          "Each bound has a test that refuses with a receipt",
+          "An Owner-held attention lease refuses the manager write",
+          "Undo restores lane and revision and counts against calibration",
+          "No manager grounds pack contains an item body"
+        ]
+      },
+      "promptMarkdown": "# Manager roles: chief of staff and budget steward\n\nSource: docs/persona-team/index.html (AGT-3573), decisions PT-D6, PT-D10. Read that Dossier and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/operator-agent-level/index.html (attention lease, OA-D3) and docs/security-model/index.html. Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-2, PT-4, PT-6. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: Manager operations from PT-2, POST /api/tasks/{id}/attention, card.requeue, promote-concept, the budget ledger.\n\n## Deliver\nRun manager occurrences on grounds built only from typed item fields (kind, factors, score, persona, fingerprint, links), never raw bodies or repository content. Chief of staff: order the proposal queue, adjust importance by at most \u00B115 with a reason (never below a floor), move persona-origin or watcher-proposal cards between Backlog and Ready with the attention lease and revision check (at most 5 per day, never into Progress or Human review), accept proposals into Preparation through promote-concept (at most 3 per day, never its own drafts), expire stale decision requests into the magazine. Budget steward: move allowance between personas by at most \u00B125 % per week, never raise the pool or its own or the chief of staff\u0027s allowance, pause a persona except the warden while a floor item of 90 or more is open. Escalate by decision request; no answer means no change. Every action is audited with actor and grant id, appears in the card timeline and the manager feed, and is undoable for 24 hours by the Owner.\n\n## Out of scope\nT2 operations, accepting out of Human review, decision cards: never.\n\n## Acceptance\n- Each bound has a test that refuses with a receipt\n- An Owner-held attention lease refuses the manager write\n- Undo restores lane and revision and counts against calibration\n- No manager grounds pack contains an item body\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-11",
+      "title": "PT-11 \u00B7 Evaluation: value panel, misses and review suggestions",
+      "section": "cards",
+      "decisionId": "PT-D11",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-11",
+        "criteria": [
+          "Each suggestion rule has a fixture that triggers it and one that does not",
+          "Misses link to the item or card that was first",
+          "Ratings never change scores or ranks",
+          "Retire archives feed and stats read-only and revokes the principal"
+        ]
+      },
+      "promptMarkdown": "# Evaluation: value panel, misses and review suggestions\n\nSource: docs/persona-team/index.html (AGT-3573), decisions PT-D11. Read that Dossier and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html. Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-7, PT-8. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: Stats projection from PT-7, the magazine\u0027s monthly team review section, incident cards and Critical items for miss attribution.\n\n## Deliver\nAdd the Value panel per persona: importance-weighted accepted items per 100,000 tokens, cost per accepted finding, team medians, noise, owner rating (one optional Useful or Not useful click per report, shown as counts), misses (an incident card or Critical item in scope raised first by another source within the persona\u0027s window, listed by name), and outcomes of promoted cards. Add rule-based suggestions: Probation for four weeks; acceptance below 30 % over at least ten decided items, or cost per accepted finding above three times the median for two months, suggests Pause and charter review; two or more misses of 70 or more in a month suggest a scope or focus change; eight weeks without an accepted item suggest retirement. The Owner decides; nothing retires automatically. Show before/after stats by charter revision for four weeks after a change, and add a monthly team review section to the magazine.\n\n## Out of scope\nAutomatic retirement.\n\n## Acceptance\n- Each suggestion rule has a fixture that triggers it and one that does not\n- Misses link to the item or card that was first\n- Ratings never change scores or ranks\n- Retire archives feed and stats read-only and revokes the principal\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-12",
+      "title": "PT-12 \u00B7 Remaining starter personas with templates and shadow periods",
+      "section": "cards",
+      "decisionId": "PT-D12",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-12",
+        "criteria": [
+          "Each persona produces a valid report in shadow with coverage listed",
+          "No persona reads outside its scope in a scope test",
+          "The scout runs once per due window after migration, never twice",
+          "Allowances of the activated set stay within the pool"
+        ]
+      },
+      "promptMarkdown": "# Remaining starter personas with templates and shadow periods\n\nSource: docs/persona-team/index.html (AGT-3573), decisions PT-D12, PT-D5. Read that Dossier and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html and the Dossier\u0027s Starter catalogue. Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-5, PT-6, PT-8. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: Descriptors from PT-1, the scout profile (AGT-3020) for migration.\n\n## Deliver\nEnable the security officer, reliability engineer, quality lead, design lead, product manager, cost controller, documentation editor and presenter with their report templates (security-v1, reliability-v1, quality-v1, design-v1, product-v1, cost-v1, docs-v1), grounds sources and triggers. Each starts in shadow for one report period and is activated by the Owner. Move the improvement scout into the catalogue as an aspect persona that keeps its decided cadence, proposal lifecycle and Dossier homes, and move its subceiling from the Watcher contingent into the persona pool when it migrates. Calibrate each template\u0027s anchors against two weeks of shadow output and record the calibration in the Dossier\u0027s implementation log.\n\n## Out of scope\nNew aspects beyond the catalogue.\n\n## Acceptance\n- Each persona produces a valid report in shadow with coverage listed\n- No persona reads outside its scope in a scope test\n- The scout runs once per due window after migration, never twice\n- Allowances of the activated set stay within the pool\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    }
+  ],
+  "key": "AGT-W3459"
+}

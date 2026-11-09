@@ -30,3 +30,5 @@
 .batch-panel__failures pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--studio-fg-muted); }
 .batch-panel__links { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }
 .batch-panel__links a { color: var(--studio-accent); }
+.batch-panel__failure-runs { font-variant-numeric: tabular-nums; color: var(--studio-fg-muted); }
+.batch-panel__failure-runs strong { color: var(--studio-fg); }
