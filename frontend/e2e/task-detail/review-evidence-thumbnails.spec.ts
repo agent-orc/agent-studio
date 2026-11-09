@@ -88,6 +88,8 @@ const DETAIL = {
     commit: null,
     commits: [],
     ownerClientId: 'local-default',
+    tags: [],
+    references: { dependsOn: [], relatedTo: [], blockedBy: [], supersedes: [] },
   },
   promptMarkdown: 'Test prompt.',
   statusMarkdown: '',
@@ -151,6 +153,9 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined),
   );
+  await page.route('**/api/usage/cockpit**', (route) =>
+    route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }),
+  );
   await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
@@ -163,8 +168,48 @@ async function installRoutes(page: Page): Promise<void> {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        preparation: [], orchestratorPrep: [], ready: [], progress: [],
-        failedPickup: [], autoReview: [], humanReview: [], completed: [], archive: [],
+        backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
+        failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [DETAIL.info],
+        review: [], completed: [], archive: [],
+      }),
+    }),
+  );
+  const project = {
+    id: PROJECT,
+    displayName: PROJECT,
+    shortCode: 'AGT',
+    workspaceId: 'workspace-fixture',
+    storageLocation: WATCH_PATH,
+    rootPath: WATCH_PATH,
+    repositoryPath: WATCH_PATH,
+    sortOrder: 0,
+    archived: false,
+    urls: [],
+  };
+  await page.route('**/api/v1/projects', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([project]) }),
+  );
+  await page.route('**/api/v1/workspaces', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([{ id: 'workspace-fixture', displayName: 'Fixture', projects: [project] }]),
+    }),
+  );
+  await page.route('**/api/projects/*/workbenches**', (route) =>
+    route.fulfill({ json: { projectName: PROJECT, count: 0, items: [] } }),
+  );
+  await page.route('**/api/workbenches**', (route) =>
+    route.fulfill({ json: { projectName: null, count: 0, currentCount: 0, historyCount: 0, items: [] } }),
+  );
+  await page.route('**/api/workspaces/workspace-fixture/quota/admission**', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        workspaceId: 'workspace-fixture',
+        workspace: { codingAllowed: true, hostingAllowed: true, limited: false },
+        projects: [],
       }),
     }),
   );
@@ -198,6 +243,26 @@ async function installRoutes(page: Page): Promise<void> {
       }),
     }),
   );
+  await page.route('**/api/tasks/reference-status', (route) =>
+    route.fulfill({ json: { items: [] } }),
+  );
+  await page.route(new RegExp(`/api/tasks/${idEsc}/plan(\\?|$)`), (route) =>
+    route.fulfill({ json: { hasPlan: false, source: null, snapshotCount: 0, activeItemId: null,
+      softEstimateMedian: null, items: [], unassignedSubActions: [] } }),
+  );
+  await page.route(new RegExp(`/api/tasks/${idEsc}/pipeline(\\?|$)`), (route) =>
+    route.fulfill({ json: { pipeline: { pre: [], core: [], post: [], allSteps: [] },
+      execution: null, executions: [], config: {}, cost: null } }),
+  );
+  await page.route(new RegExp(`/api/tasks/${idEsc}/runs(\\?|$)`), (route) =>
+    route.fulfill({ json: { runs: [], runnerEvents: [] } }),
+  );
+  await page.route(new RegExp(`/api/tasks/${idEsc}/session-events(\\?|$)`), (route) =>
+    route.fulfill({ json: { events: [], sessionChain: [] } }),
+  );
+  await page.route(new RegExp(`/api/tasks/${idEsc}/claude-session(\\?|$)`), (route) =>
+    route.fulfill({ json: null }),
+  );
 
   // The harvested screenshots: a real PNG so the thumbnail paints.
   await page.route(/\/results\/pipeline-state-empty--mocked\.png(\?|$)/, (route) =>
@@ -229,12 +294,12 @@ test.describe('AGT-1992: review-evidence image thumbnails', () => {
   test('renders image refs as thumbnails, non-image refs as typed rows, opens the shared lightbox', async ({ page }) => {
     test.setTimeout(60_000);
     await installRoutes(page);
-    await page.goto(`/#/tasks/${encodeURIComponent(JOB_ID)}?view=evidence%3Aprotocol`);
+    await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
     await dismissDevErrorDialog(page);
 
-    // The canonical route selects Evidence before the detail surface paints.
     const evidenceTab = page.getByTestId('prompt-tab-evidence');
     await expect(evidenceTab).toBeVisible({ timeout: 15_000 });
+    await evidenceTab.click();
     await expect(evidenceTab).toHaveAttribute('aria-selected', 'true');
     await dismissDevErrorDialog(page);
 

@@ -69,6 +69,19 @@
   transition: filter 120ms ease;
 }
 
+.artifact-thumb__placeholder {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg-muted);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
 .artifact-thumb__open:hover .artifact-thumb__image {
   filter: brightness(1.05);
 }

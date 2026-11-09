@@ -3,8 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AgentStudio.TaskServer.Contracts;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats;
+using AgentStudio.Shared;
 
 namespace AgentRunner;
 
@@ -124,27 +123,15 @@ internal static class VisualReviewScreenshotBundle
 
     private static bool IsReadableImage(byte[] bytes, string name)
     {
-        try
-        {
-            var identified = Image.Identify(bytes);
-            if (identified is null || identified.Width < 1 || identified.Height < 1
-                || (long)identified.Width * identified.Height > MaximumImagePixels)
-                return false;
-            var format = Image.DetectFormat(bytes);
-            using var image = Image.Load(new DecoderOptions { MaxFrames = 1 }, bytes);
-            var extension = Path.GetExtension(name).ToLowerInvariant();
-            return extension switch
+        var header = ImageHeaderReader.Read(bytes);
+        return header is not null && (long)header.Width * header.Height <= MaximumImagePixels
+            && (Path.GetExtension(name).ToLowerInvariant() switch
             {
-                ".png" => format.Name.Equals("PNG", StringComparison.OrdinalIgnoreCase),
-                ".jpg" or ".jpeg" => format.Name.Equals("JPEG", StringComparison.OrdinalIgnoreCase),
-                ".webp" => format.Name.Equals("WEBP", StringComparison.OrdinalIgnoreCase),
+                ".png" => header.Format == "png",
+                ".jpg" or ".jpeg" => header.Format == "jpeg",
+                ".webp" => header.Format == "webp",
                 _ => false,
-            };
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            return false;
-        }
+            });
     }
 
     internal static bool HasReadableAfterScreenshot(string attemptRoot)

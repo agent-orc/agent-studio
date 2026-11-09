@@ -2,8 +2,7 @@ using System.Text;
 using AgentStudio.Cli;
 using AgentStudio.Prompts;
 using AgentStudio.TaskServer.Contracts;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats;
+using AgentStudio.Shared;
 
 namespace AgentStudio.Runner;
 
@@ -33,18 +32,13 @@ internal static class LocalVisualScreenshotEvidence
         {
             var info = new FileInfo(path);
             if (info.Length is < 1 or > 8L * 1024 * 1024) return false;
-            var bytes = File.ReadAllBytes(path);
-            var identified = Image.Identify(bytes);
-            if (identified is null || identified.Width < 1 || identified.Height < 1
-                || (long)identified.Width * identified.Height > 80_000_000)
-                return false;
-            var format = Image.DetectFormat(bytes);
-            using var image = Image.Load(new DecoderOptions { MaxFrames = 1 }, bytes);
+            var header = ImageHeaderReader.ReadFile(path);
+            if (header is null || (long)header.Width * header.Height > 80_000_000) return false;
             return Path.GetExtension(path).ToLowerInvariant() switch
             {
-                ".png" => format.Name.Equals("PNG", StringComparison.OrdinalIgnoreCase),
-                ".jpg" or ".jpeg" => format.Name.Equals("JPEG", StringComparison.OrdinalIgnoreCase),
-                ".webp" => format.Name.Equals("WEBP", StringComparison.OrdinalIgnoreCase),
+                ".png" => header.Format == "png",
+                ".jpg" or ".jpeg" => header.Format == "jpeg",
+                ".webp" => header.Format == "webp",
                 _ => false,
             };
         }

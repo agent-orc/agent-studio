@@ -543,6 +543,10 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var claimed = service.Claim("preview-host")!;
         Assert.Equal(queued.Id, claimed.Id);
         Assert.False(service.Report("demo", claimed.Id, new DeployReportRequest(claimed.LeaseToken!, true, "health-ok")));
+        Assert.False(service.Report("demo", claimed.Id, new DeployReportRequest(claimed.LeaseToken!, true, "health-ok",
+            ScreenshotBase64: Convert.ToBase64String(PngFixture.Create(4097, 1)))));
+        Assert.False(service.Report("demo", claimed.Id, new DeployReportRequest(claimed.LeaseToken!, true, "health-ok",
+            ScreenshotBase64: Convert.ToBase64String(PngFixture.Create(1, 1)[..20]))));
         var png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC";
         Assert.True(service.Report("demo", claimed.Id,
             new DeployReportRequest(claimed.LeaseToken!, true, "health-ok", ScreenshotBase64: png)));
