@@ -214,6 +214,10 @@ journey does not need report `n/a`. Docker and Compose are required only for
 `--target docker`; a Windows connector does not require Hyper-V or 20 GiB
 of repository space. One-box and join-host preflight checks `git --version`
 and names the Git installation step when Git is unavailable.
+For Docker targets, preflight distinguishes a missing Docker installation, a
+stopped engine, and denied access to the Docker socket. On Linux, denied access
+prompts the user to join the `docker` group and log out and back in before
+retrying.
 For a fresh one-box Docker install, setup checks the selected browser port
 before it changes services and suggests `--ui-port` if another process owns it.
 The [installation scenario harness](../testing/installation-scenarios.md)
