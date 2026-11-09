@@ -61,6 +61,65 @@ describe('RemoteHostsPanelComponent', () => {
     fixture.destroy();
   });
 
+  it('shows claim gate stops and resumes with host, load and duration in History', async () => {
+    await TestBed.configureTestingModule({
+      imports: [RemoteHostsPanelComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const service = TestBed.inject(RemoteHostsService);
+    const fixture = TestBed.createComponent(RemoteHostsPanelComponent);
+    fixture.detectChanges();
+    service.hosts.update(hosts => hosts.map(host => host.clientId === 'agent-runner-01'
+      ? { ...host, name: 'Coding runner' } : host));
+    fixture.componentInstance.setView('history');
+    service.claimGateEvents.set([
+      { sequence: 2, occurredAt: '2026-11-09T09:30:00Z', runnerId: 'agent-runner-01', hostId: 'agent-runner-01',
+        event: 'claim-resumed', loadPerCore: 3.2, threshold: 4, durationSeconds: 1380, activeSlots: 2 },
+      { sequence: 1, occurredAt: '2026-11-09T09:07:00Z', runnerId: 'unknown-runner', hostId: null,
+        event: 'claim-stopped', loadPerCore: 5.51, threshold: 4, durationSeconds: 702, activeSlots: 4 },
+    ]);
+    fixture.detectChanges();
+    const rows = [...(fixture.nativeElement as HTMLElement).querySelectorAll('[data-testid="claim-gate-event"]')];
+    expect(rows.map(row => row.getAttribute('data-event'))).toEqual(['claim-resumed', 'claim-stopped']);
+    expect(rows[0].textContent).toContain('Coding runner');
+    expect(rows[0].textContent).toContain('Claim resumed');
+    expect(rows[0].textContent).toContain('Not claiming for 23 min · load 3.2 per core, threshold 4.0');
+    expect(rows[1].textContent).toContain('unknown-runner');
+    expect(rows[1].textContent).toContain('Load 5.5 per core above 4.0 for 12 min');
+    fixture.destroy();
+  });
+
+  it('summary buckets follow the status each machine row shows (R3)', async () => {
+    await TestBed.configureTestingModule({
+      imports: [RemoteHostsPanelComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const service = TestBed.inject(RemoteHostsService);
+    const fixture = TestBed.createComponent(RemoteHostsPanelComponent);
+    fixture.detectChanges();
+    const base = { role: 'remote' as const, address: null, os: 'Linux', lastHeartbeatAt: null, uptimeLabel: null,
+      capabilities: [], cliQuotas: [], stats: null, liveDataState: 'ready' as const };
+    service.hosts.set([
+      { ...base, id: 'offline-unenrolled', name: 'offline-unenrolled', clientId: 'offline-unenrolled', status: 'offline' },
+      { ...base, id: 'local', name: 'local', clientId: 'local', role: 'local', status: 'online' },
+      { ...base, id: 'draining', name: 'draining', clientId: 'draining', status: 'draining',
+        runnerInstanceId: 'i', capacityHostId: 'draining' },
+    ]);
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    const count = (key: string) => Number(el.querySelector(`[data-testid="remote-hosts-summary-${key}"] strong`)?.textContent);
+    const rows = [...el.querySelectorAll('[data-testid="remote-host-primary-row"]')];
+    const shown = (label: string) => rows.filter(row => row.textContent?.includes(label)).length;
+    expect(count('machines')).toBe(rows.length);
+    expect(count('offline')).toBe(shown('Offline'));
+    expect(count('reporting')).toBe(shown('Online') + shown('Idle'));
+    expect(count('draining')).toBe(shown('Draining'));
+    expect(count('degraded')).toBe(0);
+    expect(count('reporting') + count('degraded') + count('draining') + count('offline')).toBe(rows.length);
+    expect(count('not-enrolled')).toBe(el.querySelectorAll('[data-testid="remote-host-not-enrolled"]').length);
+    fixture.destroy();
+  });
+
   it('mounts a machine list and selected detail with setup and add actions', async () => {
     await TestBed.configureTestingModule({
       imports: [RemoteHostsPanelComponent],
