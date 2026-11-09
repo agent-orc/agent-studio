@@ -32,6 +32,8 @@ public sealed class TransitionDecisionBoundaryTests
         // AGT-3219: queue overrun, backlog and release rule of the batch gate.
         "GateQueueStallPolicy",
         "RedDevelopRepairPolicy",
+        // AGT-3562: batch flight start order and pre-lease deadline.
+        "BatchGateStartPolicy",
     ];
 
     [Fact]
