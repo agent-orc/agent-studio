@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TaskInfo } from '../../../models/task.model';
 import type { BatchGateState } from '../../../models/batch-gate.model';
 import { BatchGateService } from '../../../services/batch-gate.service';
-import { redHalvingState } from '../testing/batch-fixtures';
+import { isolatedRedState, redHalvingState } from '../testing/batch-fixtures';
 import { BatchDetailComponent } from './batch-detail';
 
 async function mount(initial: BatchGateState | null, task: Partial<TaskInfo>) {
@@ -79,5 +79,25 @@ describe('BatchDetailComponent', () => {
   it('renders no DOM when the gate is disabled, even for a listed member', async () => {
     const { host } = await mount({ ...redHalvingState, plan: { ...redHalvingState.plan, decision: 'disabled' } }, { id: 'AGT-2' });
     expect(host.children.length).toBe(0);
+  });
+  it('says which batch proved the card red and lists the failing tests', async () => {
+    const { host } = await mount(isolatedRedState, { taskKey: '/tmp/demo::AGT-2', key: 'AGT-2', id: 'AGT-2' });
+    const proven = host.querySelector('[data-testid="task-batch-proven-red"]')!;
+    expect(proven.querySelector('[data-testid="task-batch-proven-red-status"]')!.textContent!.trim()).toBe('Proven red in batch-14');
+    expect([...proven.querySelectorAll('[data-testid="batch-proven-red-test"]')].map(test => test.textContent))
+      .toEqual(['Checkout.Tests.TotalsIncludeShipping', 'Checkout.Tests.EmptyCartHasNoTotal']);
+    expect(proven.querySelector('[data-testid="batch-proven-red-evidence"]')).not.toBeNull();
+  });
+
+  it('marks no proven-green member red and lists failing pre-check tests', async () => {
+    const green = await mount(isolatedRedState, { id: 'AGT-1' });
+    expect(green.host.querySelector('[data-testid="task-batch-proven-red"]')).toBeNull();
+    TestBed.resetTestingModule();
+    const preCheck = { outcome: 'red' as const, resultSha: 'a'.repeat(40), baseSha: 'b'.repeat(40), gateProfileDigest: 'digest',
+      reason: 'Build or tests failed', failedTests: ['Product.Tests.One', 'Product.Tests.Two'], completedAtUtc: '2026-11-09T09:00:00Z' };
+    const red = await mount({ ...redHalvingState, members: { ...redHalvingState.members,
+      'AGT-9': { status: 'pre-check-red', preCheck } } }, { id: 'AGT-9' });
+    expect([...red.host.querySelectorAll('[data-testid="task-batch-pre-check-tests"] li')].map(item => item.textContent))
+      .toEqual(['Product.Tests.One', 'Product.Tests.Two']);
   });
 });

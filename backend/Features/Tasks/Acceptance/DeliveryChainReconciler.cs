@@ -143,6 +143,26 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
             status?.Failure?.Code == AcceptedIntegrationFailureCodes.MergeConflict
                 || status?.Failure?.ConflictReport is not null);
 
+    private const string StaleVerdictCategory = "delivery-verdict-stale";
+
+    /// <summary>
+    /// The fact behind an acceptance park, without a slug prefix or a next step.
+    /// The recorded failure reason is kept whenever there is one.
+    /// </summary>
+    internal static string IntegrationParkReason(string category, TaskIntegrationStatus? status)
+    {
+        // A stale verdict is no integration failure; an older failure on the
+        // status would describe a delivery that is no longer current.
+        if (category == StaleVerdictCategory)
+            return "The review verdict no longer matches the current delivery, so it cannot be accepted.";
+        var fact = category == "missing-delivery"
+            ? "No delivery branch was found for this card, so its work cannot be integrated"
+            : "The delivery could not be integrated";
+        var failure = status?.Failure?.Reason?.Trim();
+        if (string.IsNullOrEmpty(failure)) return fact + ".";
+        return failure[^1] is '.' or '!' or '?' ? $"{fact}: {failure}" : $"{fact}: {failure}.";
+    }
+
     private static string SubjectKey(TaskInfo card, DeliveryChainOperatorFacts facts)
         => AiOperatorDecisionGateway.FactsSubjectKey("delivery", card.Id, facts);
 
@@ -206,12 +226,13 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
         var category = fatal
             ? gateParkCategory ?? status?.Failure?.Code ?? (status?.Status == IntegrationStatuses.NoBranch
                 ? "missing-delivery" : "integration-failed")
-            : "delivery-verdict-stale";
-        var action = fatal
-            ? "Recover the delivery, resolve the integration failure and rerun the gate."
-            : "Integrate the current delivery and repeat review.";
+            : StaleVerdictCategory;
+        // AGT-3586: a park reason states what happened, once, as a sentence.
+        // The category travels as the transition detail, and the park copy
+        // offers the next step from the buttons the lane really has.
+        var reason = gateParkReason ?? IntegrationParkReason(category, status);
         var outcome = await _transitions.MoveAsync(card.Id, target, card.WatchPath, ct,
-            cause: TimelineActors.System, reason: gateParkReason ?? $"{category}: {action}",
+            cause: TimelineActors.System, reason: reason,
             expectedSourceState: card.State, suppressProductExecution: true,
             transitionCause: LaneChangeCauses.AcceptanceIntegrationFailed,
             transitionDetail: category);

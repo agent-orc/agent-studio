@@ -615,10 +615,17 @@ public sealed record TaskLiveQueue
     public int? Position { get; init; }
     /// <summary>
     /// Human-readable reason the task has no <see cref="Position"/>, e.g.
-    /// "waiting for review executor: <detail>". Null when a real position is
-    /// known. Never used for machine matching.
+    /// "waiting for review executor: <detail>", or, for a runner queue entry
+    /// with a <see cref="ReasonCode"/>, why the runner is not picking it.
+    /// Never used for machine matching.
     /// </summary>
     public string? Reason { get; init; }
+    /// <summary>
+    /// AGT-3579: the <see cref="RunnerPickupWaitCodes"/> token for a Ready card
+    /// the runner is not picking (runner gate or candidate skip). Null when the
+    /// runner recorded no reason for this card.
+    /// </summary>
+    public string? ReasonCode { get; init; }
     /// <summary>
     /// AGT-3094: one of the <see cref="TaskLiveQueueStates"/> tokens. Runner
     /// queues and legacy review queues are always <c>queued</c>; a canonical

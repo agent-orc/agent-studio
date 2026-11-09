@@ -1,8 +1,16 @@
 @for (project of projects(); track project) {
   @if (stateFor(project); as batch) {
     @if (batch.plan.decision !== 'disabled') {
-      <button type="button" class="batch-lane-indicator" data-testid="batch-lane-indicator" (click)="panelProject.set(project)">
+      @let alert = alertFor(project);
+      <button type="button" class="batch-lane-indicator" data-testid="batch-lane-indicator" (click)="panelProject.set(project)"
+        [attr.data-batch-alert]="alert?.state ?? null" [attr.data-batch-id]="alert?.batchId ?? null"
+        [attr.title]="alert ? alertTitle(alert) : null">
         @if (projects().length > 1) { {{ project }} · }
+        @if (alert) {
+          <app-status-indicator [tone]="alert.state === 'red' ? 'danger' : 'running'" [label]="alertLabel(alert)"
+            [compact]="true" testId="batch-lane-alert" />
+          @if (alert.culprits.length) { {{ alert.culprits.join(', ') }} proven red · }
+        }
         Batch: {{ batch.pending.length }} waiting · @if (batch.plan.closeAtUtc) { ~{{ batch.plan.closeAtUtc | date:'shortTime' }} } @else { when ready } · {{ runningFor(project) }} running
       </button>
     }

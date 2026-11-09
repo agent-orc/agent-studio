@@ -106,7 +106,7 @@ beforeEach(() => {
 });
 
 describe('EscalationSummaryComponent', () => {
-  it('puts the latest ended attempt and its fresh park reason in the header', () => {
+  it('puts the latest ended attempt in the header and leaves the reason to the park panel', () => {
     const parked = detail();
     parked.info.parkedBlocker = {
       parkedAt: '2026-10-06T04:22:54Z', reason: 'Push protection rejected the branch.',
@@ -119,8 +119,8 @@ describe('EscalationSummaryComponent', () => {
       ],
     });
     const header = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="escalation-essence"]');
-    expect(header?.textContent).toContain('Latest attempt ended 2026-10-06 04:22 UTC');
-    expect(header?.textContent).toContain('Push protection rejected the branch.');
+    expect(header?.textContent).toContain('Latest attempt ended 2026-10-06 04:22 UTC and parked this card.');
+    expect(header?.textContent).not.toContain('Push protection rejected the branch.');
   });
 
   it('renders the AGT-2736 question and options and submits the answer as a steer', () => {
@@ -192,11 +192,11 @@ describe('EscalationSummaryComponent', () => {
             createdAt: '2026-07-09T19:22:03Z',
             reviewFileName: 'code-review-grade-2026-07-09T19-22-02Z.md',
             grade: 'B',
-            disposition: 'Escalate',
+            disposition: 'escalate',
             summary: 'Escalate two open findings; loop budget exhausted.',
             assessments: [
-              { finding: 'Frontend verification missing.', action: 'Escalate', reason: 'Budget exhausted.' },
-              { finding: 'Live probe missing.', action: 'Escalate', reason: 'Budget exhausted.' },
+              { finding: 'Frontend verification missing.', action: 'escalate', reason: 'Budget exhausted.' },
+              { finding: 'Live probe missing.', action: 'escalate', reason: 'Budget exhausted.' },
             ],
             startsNewRound: false,
             targetJobId: null,

@@ -262,7 +262,8 @@ public static class BatchGateStateSnapshotReader
                 abandoned = moved.Count(state => state.BaseMoveOutcome == "abandoned") },
             members,
             reviewFixWaits = reviewFixWaits ?? [],
-            isolationFindings = store.ListIsolationFindings(project),
+            isolationFindings = store.ListIsolationFindings(project)
+                .Select(finding => IsolationFinding(store, projectManifests, finding)).ToArray(),
             pushWait,
             pushWaits = pushWaits ?? (pushWait is null
                 ? Array.Empty<PendingIntegrationPushWait>() : [pushWait]),
@@ -274,6 +275,52 @@ public static class BatchGateStateSnapshotReader
             preCheckMinutesSaved = preChecks.Sum(check => check.MinutesSaved),
             dailySummary,
         };
+    }
+
+    /// <summary>
+    /// AGT-3577: a finding with the run that proved it. A proven-red finding
+    /// also carries that run's failed tests with their error excerpts and
+    /// whether its evidence file can be opened.
+    /// </summary>
+    private static object IsolationFinding(BatchGateStore store,
+        IReadOnlyList<BatchGateManifest> manifests, BatchGateIsolationFinding finding)
+    {
+        var proving = finding.Status == "proven-red" ? ProvingRun(store, manifests, finding) : null;
+        var batchId = finding.ProvingBatchId ?? proving?.BatchId;
+        var runId = finding.ProvingRunId ?? proving?.RunId;
+        var failures = finding.Status == "proven-red" && batchId is not null && runId is not null
+            ? store.RunFailures(finding.Project, batchId, runId)
+                .DistinctBy(failure => failure.TestName, StringComparer.Ordinal)
+                .Select(failure => new { failure.TestName, failure.ErrorExcerpt }).ToArray()
+            : [];
+        return new
+        {
+            finding.Project, finding.ParentBatchId, finding.TaskKey, finding.RunAttempt,
+            finding.ResultSha, finding.BaseSha, finding.Status, finding.EvidencePath,
+            finding.RecordedAtUtc,
+            provingBatchId = batchId,
+            provingRunId = runId,
+            failures,
+            evidenceAvailable = finding.Status == "proven-red"
+                && store.StoredEvidenceFile(finding.EvidencePath) is not null,
+        };
+    }
+
+    // Findings written before AGT-3577 name only the evidence path: the proving
+    // run is the last run of a red child holding the member with that evidence.
+    private static (string BatchId, string RunId)? ProvingRun(BatchGateStore store,
+        IReadOnlyList<BatchGateManifest> manifests, BatchGateIsolationFinding finding)
+    {
+        if (finding.ProvingBatchId is not null && finding.ProvingRunId is not null) return null;
+        foreach (var child in manifests.Where(manifest => manifest.ParentBatchId == finding.ParentBatchId
+                     && manifest.Members.Any(member => member.TaskKey == finding.TaskKey)))
+        {
+            var run = store.ListRuns(child.BatchId).LastOrDefault();
+            if (run is not null && string.Equals(store.ReadVerdict(child.BatchId, run.BatchRunId)?.EvidencePath,
+                    finding.EvidencePath, StringComparison.Ordinal))
+                return (child.BatchId, run.BatchRunId);
+        }
+        return null;
     }
 
     private static string? EjectionDetail(BatchGateReplayRecord replay)

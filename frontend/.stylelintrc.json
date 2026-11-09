@@ -189,10 +189,12 @@
       "comment": "Scoped spacing-token enforcement for the lane rail and new components. Padding/margin/gap must source --studio-spacing-* tokens. If a raw value is structurally necessary, use a targeted disable with rationale.",
       "files": [
         "src/app/features/retention/**/*.scss",
+        "src/app/features/backups/**/*.scss",
         "src/app/features/access/components/access-operator-agents/access-operator-agents.component.scss",
         "src/app/features/access/components/access-operator-activity/access-operator-activity.component.scss",
         "src/app/features/remote-hosts/components/execution-infrastructure/execution-infrastructure.scss",
         "src/app/components/status-indicator/status-indicator.component.scss",
+        "src/app/features/board/components/ready-wait-split/ready-wait-split.component.scss",
         "src/app/components/tag-chips/tag-chips.component.scss",
         "src/app/components/tag-filters/tag-filters.component.scss",
         "src/app/components/tag-proposals/tag-proposals.component.scss",
@@ -200,6 +202,7 @@
         "src/app/features/project-detail/components/project-pipeline-definition/project-pipeline-definition.scss",
         "src/app/features/project-detail/components/project-pipeline-diagram/project-pipeline-diagram.scss",
         "src/app/features/project-detail/components/task-detail-latency/task-detail-latency.component.scss",
+        "src/app/features/project-detail/components/settings-jump-links/settings-jump-links.scss",
         "src/app/features/usage-cockpit/**/*.scss",
         "src/app/features/token-analysis/**/*.scss",
         "src/app/features/deployments/components/delivery-lanes/delivery-lanes.scss",
@@ -337,7 +340,8 @@
         "src/app/features/project-detail/components/quality-studio-panel/quality-studio-panel.component.scss",
         "src/app/features/project-detail/components/quality-studio-connection-settings/quality-studio-connection-settings.component.scss",
         "src/app/features/board/components/lane-card-window/lane-card-window.scss",
-        "src/app/features/board/components/task-column/_task-column-drop-zone.scss"
+        "src/app/features/board/components/task-column/_task-column-drop-zone.scss",
+        "src/app/features/board/components/board-group-switcher/board-group-switcher.scss"
       ],
       "rules": {
         "color-no-hex": null,

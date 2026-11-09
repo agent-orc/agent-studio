@@ -54,7 +54,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Hosted app database binding, retained volumes, scheduled backups and restore (IP-D5 option A) | [operations/hosted-data/](../operations/hosted-data/README.md) |
 | Studio website on a dedicated VM | [operations/setup/studio-website.md](../operations/setup/studio-website.md) |
 | Server-first networked deploy, duration journal and rollback | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
-| Studio website encrypted off-host backups, secret store key copy, restore into an empty stack, and the restore drill (AGT-3365) | [operations/setup/studio-backup-restore.md](../operations/setup/studio-backup-restore.md) |
+| Studio website scheduled encrypted backups, off-host copy (SFTP, S3, mounted directory), Operations page state, backup and secret store key escrow, restore onto a new host (AGT-3574), and the host-level timer (AGT-3365) | [operations/setup/studio-backup-restore.md](../operations/setup/studio-backup-restore.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
 | Windows process spawn safety and repository guards | [operations/windows-process-spawn-safety.md](../operations/windows-process-spawn-safety.md) |
 | Runner | [domains/runner.md](../system/domains/runner.md) |
@@ -115,6 +115,8 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Tunnel-loss drill evidence: correlated synthetic outage report, raw decisions, and step receipts (AGT-2937) | [operations/testing/tunnel-loss-drill-evidence/tunnel-drill-report.md](../operations/testing/tunnel-loss-drill-evidence/tunnel-drill-report.md) |
 | Build/test gate recovery: targeted flaky re-runs, budget environment retries, contention thresholds, and slow-test evidence (AGT-2853, AGT-2872) | [operations/testing/build-test-gate-flaky-rerun.md](../operations/testing/build-test-gate-flaky-rerun.md) |
 | Backend test class durations: complete before and after rankings, three fixture changes, and project wall time under contention (AGT-3507) | [operations/testing/backend-test-class-durations-2026-11-05.md](../operations/testing/backend-test-class-durations-2026-11-05.md) |
+| Batch gate pilot test durations: where the slowest backend class spent its time, the index refresh wait, and the split into topic classes with before and after runs (AGT-3566) | [operations/testing/batch-gate-pilot-test-durations-2026-11-09.md](../operations/testing/batch-gate-pilot-test-durations-2026-11-09.md) |
+| Four slow backend test classes: profiles, changes, and interleaved before and after measurements under recorded host load (AGT-3567) | [operations/testing/backend-slow-classes-2026-11-09.md](../operations/testing/backend-slow-classes-2026-11-09.md) |
 | ADR archive | [architecture/decisions/adr-archive.md](../system/architecture/decisions/adr-archive.md) |
 | Architecture model | [architecture/model.md](../system/architecture/model.md) |
 | Architecture and Quality layer (Project Map, mapped guides, analysis inventory, component grading) | [concept](../concepts/architecture-quality-layer.md) · [interactive Dossier](../quality/architecture-quality-layer/index.html) |

@@ -343,7 +343,7 @@ public static class RoutePermissionCatalog
         // operate runs in at least one project.
         Add("R", IamPermissions.ProjectRead,
             "/api/operator/decisions", "/api/operator/decisions/stream", "/api/operator/watcher/lease",
-            "/api/operator/capacity");
+            "/api/operator/capacity", "/api/operator/backups");
         AddProjectChecked("W", IamPermissions.ProjectRunsOperate,
             "/api/operator/watcher/lease", "/api/operator/watcher/lease/{}", "/api/operator/watcher/lease/{}/heartbeat");
         Add("R", IamPermissions.ProjectRead, "/api/operator/log");
@@ -454,6 +454,7 @@ public static class RoutePermissionCatalog
         Add("POST", IamPermissions.WorkspaceOperate, "/api/projects/{}/operator-candidate-verifications");
         Add("POST", IamPermissions.ProjectRunsOperate, "/api/projects/{}/batch-gate/queue-stalls/release");
         Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/failed-tests");
+        Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/isolation-evidence");
 
         // --- Documents -----------------------------------------------------
         Under("W", IamPermissions.ProjectDocsWrite, "/api/projects/{}",

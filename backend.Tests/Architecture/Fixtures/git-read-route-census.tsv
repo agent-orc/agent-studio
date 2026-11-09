@@ -117,6 +117,7 @@
 /api/integrations/quality-studio/connection	free	-	-	-
 /api/integrations/quality-studio/open	free	-	-	-
 /api/integrations/quality-studio/status	free	-	-	-
+/api/operator/backups	free	-	-	-
 /api/operator/batch-triage	free	-	-	-
 /api/operator/capacity	free	-	-	-
 /api/operator/decisions	free	-	-	-
@@ -168,6 +169,7 @@
 /api/projects/{projectName}/autonomy	free	-	-	-
 /api/projects/{projectName}/batch-gate	free	-	-	-
 /api/projects/{projectName}/batch-gate/failed-tests	free	-	-	-
+/api/projects/{projectName}/batch-gate/isolation-evidence	free	-	-	-
 /api/projects/{projectName}/batch-gate/ledger	free	-	-	-
 /api/projects/{projectName}/batch-gate/queue-stalls	free	-	-	-
 /api/projects/{projectName}/batch-gate/report	free	-	-	-
@@ -333,6 +335,7 @@
 /api/secrets/audit	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/secrets/workspace/	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/secrets/workspace/{name}	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/security/posture	free	-	-	-
 /api/supervisor/{project}/meta-cycle	free	-	-	-
 /api/supervisor/{project}/observation	free	-	-	-
 /api/supervisor/{project}/recent-events	free	-	-	-
@@ -366,6 +369,7 @@
 /api/tasks/{jobId}/commits/{sha}/diff	free	-	-	-
 /api/tasks/{jobId}/commits/{sha}/file	free	-	-	-
 /api/tasks/{jobId}/commits/{sha}/files	free	-	-	-
+/api/tasks/{jobId}/continue/base	free	-	-	-
 /api/tasks/{jobId}/conversation	free	-	-	-
 /api/tasks/{jobId}/core	free	-	-	-
 /api/tasks/{jobId}/delivery-claim	free	-	-	-
@@ -376,6 +380,7 @@
 /api/tasks/{jobId}/details/overview	free	-	-	-
 /api/tasks/{jobId}/details/review	free	-	-	-
 /api/tasks/{jobId}/details/usage	free	-	-	-
+/api/tasks/{jobId}/failure/continue	free	-	-	-
 /api/tasks/{jobId}/files/{**path}	free	-	-	-
 /api/tasks/{jobId}/git/diff	reachable	frozen	AGT-3017 route ownership	AGT-3017 D2/D4 dev-seat retirement
 /api/tasks/{jobId}/git/file	reachable	frozen	AGT-3017 route ownership	AGT-3017 D2/D4 dev-seat retirement
@@ -410,6 +415,7 @@
 /api/token-pricing/unpriced-models	free	-	-	-
 /api/usage/cockpit	free	-	-	-
 /api/v1/gates/subjects/{subjectId}	free	-	-	-
+/api/v1/management/backups	free	-	-	-
 /api/v1/management/credential-inventory	free	-	-	-
 /api/v1/management/device-logins/{handle}	free	-	-	-
 /api/v1/management/diagnostics	free	-	-	-
