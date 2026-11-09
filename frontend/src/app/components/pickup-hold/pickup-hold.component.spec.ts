@@ -6,12 +6,13 @@ import type { PickupHoldStatus, TaskInfo } from '../../models/task.model';
 import { NowTickService } from '../../services/now-tick.service';
 import { TaskService } from '../../services/task.service';
 import { RemoteHostsService, type RemoteHost } from '../../features/remote-hosts';
-import {
-  PICKUP_HOLD_RESOLUTION_ACTIONABILITY,
-  PICKUP_HOLD_RESOLUTION_KINDS,
-  PickupHoldComponent,
-  pickupHoldIndicatorTone,
-} from './pickup-hold.component';
+import { startsWithHttpVerb, type RemedyAction } from '../../models/remedy-action.model';
+import { RemedyNavigationService } from '../../services/remedy-navigation.service';
+import { controlFor } from '../pickup-hold-resolution/pickup-hold-resolution.component';
+import { PickupHoldComponent, pickupHoldIndicatorTone } from './pickup-hold.component';
+
+const api = (target: string, taskKey?: string): RemedyAction => ({ kind: 'api', target, project: 'demo', taskKey });
+const route = (target: string, taskKey?: string): RemedyAction => ({ kind: 'route', target, project: 'demo', taskKey });
 
 function task(pickupHold: PickupHoldStatus | null): TaskInfo {
   return {
@@ -55,18 +56,21 @@ const ARCHIVED_GATE: PickupHoldStatus = {
       label: 'Drop the dependency',
       detail: 'Remove this waits-on edge.',
       targetKey: 'AGT-2372',
+      action: api('edit-waits-on'),
     },
     {
       kind: 'repoint-dependency',
       label: 'Point to a successor card',
       detail: 'Replace the edge with its successor.',
       targetKey: 'AGT-2372',
+      action: api('edit-waits-on'),
     },
     {
       kind: 'archive-waiting-card',
       label: 'Archive this waiting card',
       detail: 'Close the waiting card.',
       targetKey: 'AGT-2372',
+      action: api('archive-task'),
     },
   ],
 };
@@ -83,6 +87,13 @@ const REFUSED_DISPATCH: PickupHoldStatus = {
       kind: 'restore-runner-capability',
       label: 'Restore the runner capability',
       detail: 'Give agent-runner-01 what it reported missing, or route this project elsewhere.',
+      action: route('execution-hosts'),
+    },
+    {
+      kind: 'retry-dispatch',
+      label: 'Re-offer the card',
+      detail: 'Clears the recorded refusal so the next dispatch tick offers the card again.',
+      action: api('clear-dispatch-rejection'),
     },
   ],
 };
@@ -93,6 +104,16 @@ describe('PickupHoldComponent', () => {
   const taskService = {
     editTaskWaitsOn: vi.fn(),
     moveJob: vi.fn(),
+    setTaskReleased: vi.fn(() => of({ released: true })),
+    clearDispatchRejection: vi.fn(() => of({ message: 'The refusal is cleared.' })),
+    startJob: vi.fn(() => of({})),
+    setJobCliType: vi.fn(() => of({})),
+    runTaskIntake: vi.fn(() => of({ outcome: 'Pass', reason: '' })),
+    setProjectExecutionLocation: vi.fn(() => of({ executionLocation: 'runner-01' })),
+  };
+  const navigation = {
+    canOpen: vi.fn((action: RemedyAction | null | undefined) => Boolean(action && action.kind !== 'api')),
+    open: vi.fn(() => true),
   };
 
   beforeEach(async () => {
@@ -102,6 +123,10 @@ describe('PickupHoldComponent', () => {
     }));
     taskService.moveJob.mockReset();
     taskService.moveJob.mockReturnValue(of({}));
+    for (const mock of [taskService.setTaskReleased, taskService.clearDispatchRejection, taskService.startJob,
+      taskService.setJobCliType, taskService.runTaskIntake, taskService.setProjectExecutionLocation, navigation.open]) {
+      mock.mockClear();
+    }
     await TestBed.configureTestingModule({
       imports: [PickupHoldComponent],
       providers: [
@@ -109,6 +134,7 @@ describe('PickupHoldComponent', () => {
         { provide: TaskService, useValue: taskService },
         { provide: NowTickService, useValue: { now } },
         { provide: RemoteHostsService, useValue: { hosts } },
+        { provide: RemedyNavigationService, useValue: navigation },
       ],
     }).compileComponents();
     now.set(NOW);
@@ -151,15 +177,33 @@ describe('PickupHoldComponent', () => {
       resolutions: [{
         kind: 'route-to-remote-runner',
         label: 'Route to a remote runner',
-        detail: 'PUT /api/projects/demo/execution-runner {"executionLocation":"runner-01"}',
+        detail: 'Pick the remote runner that executes demo; the project setting holds the same choice.',
+        action: api('set-execution-runner'),
       }],
     }, 'detail');
+    const way = root.querySelector('[data-resolution-kind="route-to-remote-runner"]')!;
+    const route = way.querySelector<HTMLButtonElement>('[data-testid="pickup-hold-decision-route-to-remote-runner"]')!;
 
     expect(root.querySelector('[data-testid="pickup-hold-mechanism"]')?.textContent)
       .toContain('Execution placement');
-    expect(root.querySelector('[data-resolution-kind="route-to-remote-runner"]')?.textContent)
-      .toContain('PUT /api/projects/demo/execution-runner');
-    expect(root.querySelector('[data-resolution-kind="route-to-remote-runner"] button')).toBeNull();
+    expect(way.textContent).not.toContain('/api/');
+    expect(route.disabled).toBe(true);
+
+    hosts.set([
+      { id: 'runner-01', name: 'agent-runner-01', role: 'remote', status: 'online' } as RemoteHost,
+      { id: 'local', name: 'This orchestrator', role: 'local', status: 'online' } as RemoteHost,
+    ]);
+    fixture.detectChanges();
+    const select = way.querySelector<HTMLSelectElement>('[data-testid="pickup-hold-runner-select"]')!;
+    expect(Array.from(select.options).map(option => option.value)).toEqual(['', 'runner-01']);
+    select.value = 'runner-01';
+    select.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    route.click();
+
+    expect(taskService.setProjectExecutionLocation).toHaveBeenCalledWith('demo', 'runner-01');
+    way.querySelector<HTMLButtonElement>('[data-testid="pickup-hold-open-setting"]')!.click();
+    expect(navigation.open).toHaveBeenCalledWith({ kind: 'setting', target: 'execution-runner', project: 'demo' });
   });
 
   it('says an archived gate cannot clear by itself, and how long it has been held', () => {
@@ -205,30 +249,38 @@ describe('PickupHoldComponent', () => {
     expect(root.querySelectorAll('button')).toHaveLength(3);
   });
 
-  it('classifies every backend resolution kind as handled or explicitly non-actionable', () => {
-    const kinds = Object.values(PICKUP_HOLD_RESOLUTION_KINDS).sort();
-    const classified = Object.keys(PICKUP_HOLD_RESOLUTION_ACTIONABILITY).sort();
-
-    expect(classified).toEqual(kinds);
-    expect(Object.values(PICKUP_HOLD_RESOLUTION_ACTIONABILITY).every(
-      value => value === 'handled' || value === 'non-actionable')).toBe(true);
-    expect(Object.entries(PICKUP_HOLD_RESOLUTION_ACTIONABILITY)
-      .filter(([, value]) => value === 'handled')
-      .map(([kind]) => kind).sort()).toEqual([
-      'archive-waiting-card',
-      'drop-cycle-edge',
-      'drop-dependency',
-      'repoint-dependency',
-    ]);
+  it('gives every backend resolution kind a control from its typed action', () => {
+    // The kind-to-action map of PickupHoldPolicy (pinned by the backend
+    // EveryResolutionKind_CarriesItsTypedAction_AndNoHttpDetail test).
+    const emitted: [string, RemedyAction][] = [
+      ['assign-agent', api('set-cli-type')],
+      ['decide-escalation', api('move-to-escalated')],
+      ['wait-out-backoff', api('start-run')],
+      ['pass-intake', api('run-intake')],
+      ['drop-dependency', api('edit-waits-on')],
+      ['repoint-dependency', api('edit-waits-on')],
+      ['archive-waiting-card', api('archive-task')],
+      ['release-target', api('release-task', 'LIB-2')],
+      ['drop-release-gate', api('edit-waits-on')],
+      ['await-target', route('task', 'LIB-1')],
+      ['drop-cycle-edge', api('edit-waits-on', 'APP-1')],
+      ['restore-runner-capability', route('execution-hosts')],
+      ['retry-dispatch', api('clear-dispatch-rejection')],
+      ['route-to-remote-runner', api('set-execution-runner')],
+    ];
+    for (const [kind, action] of emitted) {
+      const control = controlFor(action, { kind, label: kind, detail: '', targetKey: 'APP-2', action }, navigation);
+      expect(control, kind).not.toBe('none');
+    }
   });
 
-  it('renders an unhandled resolution kind as explanation, never as a button', () => {
+  it('renders a resolution without a typed action as explanation, never as a button', () => {
     const root = render({
       ...ARCHIVED_GATE,
       resolutions: [{
         kind: 'release-target',
         label: 'Release AGT-2372',
-        detail: 'This resolution does not have an inline handler.',
+        detail: 'An older payload without an action.',
         targetKey: 'AGT-2372',
       }],
     }, 'detail');
@@ -238,6 +290,66 @@ describe('PickupHoldComponent', () => {
     expect(root.querySelector('button')).toBeNull();
   });
 
+  it('releases the target only after the operator confirms', () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const root = render({
+      ...ARCHIVED_GATE,
+      classification: 'satisfiable-soon',
+      unsatisfiable: false,
+      resolutions: [{
+        kind: 'release-target', label: 'Release LIB-2', detail: 'Only an operator may decide that.',
+        targetKey: 'LIB-2', action: api('release-task', 'LIB-2'),
+      }],
+    }, 'detail');
+    const release = root.querySelector<HTMLButtonElement>('[data-testid="pickup-hold-decision-release-target"]')!;
+
+    release.click();
+    expect(taskService.setTaskReleased).not.toHaveBeenCalled();
+    release.click();
+    expect(taskService.setTaskReleased).toHaveBeenCalledWith('LIB-2', true);
+    confirm.mockRestore();
+  });
+
+  it('re-offers a refused card and links the capability fix to Execution Hosts', () => {
+    const root = render(REFUSED_DISPATCH, 'detail');
+
+    root.querySelector<HTMLButtonElement>('[data-testid="pickup-hold-decision-retry-dispatch"]')!.click();
+    expect(taskService.clearDispatchRejection).toHaveBeenCalledWith('duplicate-cli-paths', '/workspace');
+    fixture.detectChanges();
+    expect(root.textContent).toContain('The refusal is cleared.');
+
+    const link = root.querySelector<HTMLButtonElement>('[data-testid="pickup-hold-link-restore-runner-capability"]')!;
+    expect(link.textContent).toContain('Open Execution Hosts');
+    link.click();
+    expect(navigation.open).toHaveBeenCalledWith(route('execution-hosts'));
+  });
+
+  it('keeps a decision label as a heading when the click does something else', () => {
+    const root = render({
+      ...REFUSED_DISPATCH,
+      mechanism: 'crash-backoff',
+      resolutions: [
+        { kind: 'wait-out-backoff', label: 'Wait out the cooldown', detail: 'It expires on its own.', action: api('start-run') },
+        { kind: 'assign-agent', label: 'Assign a CLI agent', detail: 'Change the agent.', action: api('set-cli-type') },
+        { kind: 'await-target', label: 'Finish LIB-1', detail: 'The gate opens.', targetKey: 'LIB-1', action: route('task', 'LIB-1') },
+      ],
+    }, 'detail');
+
+    const start = root.querySelector<HTMLButtonElement>('[data-testid="pickup-hold-decision-wait-out-backoff"]')!;
+    expect(start.textContent?.trim()).toBe('Start the run now');
+    start.click();
+    expect(taskService.startJob).toHaveBeenCalledWith('duplicate-cli-paths', '/workspace');
+
+    root.querySelector<HTMLButtonElement>('[data-testid="pickup-hold-decision-assign-agent"]')!.click();
+    expect(taskService.setJobCliType).toHaveBeenCalledWith('duplicate-cli-paths', 'claude', '/workspace');
+
+    root.querySelector<HTMLButtonElement>('[data-testid="pickup-hold-link-await-target"]')!.click();
+    expect(navigation.open).toHaveBeenCalledWith(route('task', 'LIB-1'));
+    for (const text of Array.from(root.querySelectorAll('[data-resolution-kind] button, [data-resolution-kind] span'))) {
+      expect(startsWithHttpVerb(text.textContent)).toBe(false);
+    }
+  });
+
   it('does not render a button when a handled edge action lacks its target', () => {
     const root = render({
       ...ARCHIVED_GATE,
@@ -245,6 +357,7 @@ describe('PickupHoldComponent', () => {
         kind: 'drop-dependency',
         label: 'Drop the dependency',
         detail: 'The malformed response omitted the target key.',
+        action: api('edit-waits-on'),
       }],
     }, 'detail');
 
@@ -288,6 +401,7 @@ describe('PickupHoldComponent', () => {
           detail: 'Remove the waits-on edge from APP-1 to APP-2.',
           sourceKey: 'APP-1',
           targetKey: 'APP-2',
+          action: api('edit-waits-on', 'APP-1'),
         },
         {
           kind: 'drop-cycle-edge',
@@ -295,6 +409,7 @@ describe('PickupHoldComponent', () => {
           detail: 'Remove the waits-on edge from APP-2 to APP-3.',
           sourceKey: 'APP-2',
           targetKey: 'APP-3',
+          action: api('edit-waits-on', 'APP-2'),
         },
         {
           kind: 'drop-cycle-edge',
@@ -302,6 +417,7 @@ describe('PickupHoldComponent', () => {
           detail: 'Remove the waits-on edge from APP-3 to APP-1.',
           sourceKey: 'APP-3',
           targetKey: 'APP-1',
+          action: api('edit-waits-on', 'APP-3'),
         },
       ],
     }, 'detail');

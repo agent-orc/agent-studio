@@ -83,6 +83,14 @@
   border: 0;
 }
 
+// AGT-3580: a remedy link lands on the location field. An even tint ring on
+// every side, never a left accent bar (R1), and no layout shift.
+.execution-card__field[aria-current='location'] {
+  border-radius: var(--studio-card-radius);
+  background: var(--studio-nav-active-bg);
+  box-shadow: 0 0 0 var(--studio-spacing-1) var(--studio-nav-active-bg);
+}
+
 .execution-card__field > small {
   color: var(--studio-fg-dim);
   font-size: 0.76rem;

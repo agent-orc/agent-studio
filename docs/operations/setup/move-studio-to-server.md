@@ -157,6 +157,20 @@ The server checks itself shortly after start, every five minutes, and on **Reche
 
 Reads never start Git: the page and the move tool read the last computed report, and every Git fact stays cached for a minute per repository, so a recheck runs Git at most once per repository per minute. Operators read the report at `GET /api/system/readiness` and recheck with `POST /api/system/readiness/refresh`. Inside the API container, `curl -H "Host: $STUDIO_DOMAIN" http://127.0.0.1:5031/healthz/readiness` returns the same report; that route answers loopback callers only.
 
+The report carries `computedAt` (null until the first collection finished), `state` (`pending`, or the worst line state), the `failing` and `attention` counts, and `checks`. Each line in `checks` has these fields; an optional field is `null` when the line has nothing for it, and a passing line has no remedy, command, action, or config entry:
+
+| Field | Meaning |
+|---|---|
+| `id`, `title` | The check from the table above and its display name. |
+| `scope`, `subject` | `server`, `project`, or `host`, and the folder, project, or host the line is about. |
+| `state`, `meaning` | `pass`, `unknown`, `warn`, or `fail`, and what that state means for the installation. |
+| `remedy` | The fix as prose. It never starts with a command or an HTTP verb. |
+| `command` | Optional (AGT-3580). Shell steps only, one per line, for a fix without a UI equivalent. The Environment view shows it as a copyable detail, the move tool prints each line as `$ <step>`. |
+| `action` | Optional (AGT-3580). A typed `RemedyAction` (`kind` `route`, `setting`, or `api`, a `target`, and `project`) that the Environment view renders as a link to the owning setting. `repository-visibility` and `integration-branch` open their project setting. |
+| `configEntry` | Optional (AGT-3580). An entry the remedy adds to a configuration file: `file` (relative to the stack directory), `section` (a dotted key path in that file), and `text` (the entry as written into the file). Today only `data-volume` sets it, with the volume line for `services.api.volumes` in `compose.override.yaml`. It is never part of `command`: the Environment view shows it as a copyable *Config entry* labelled with file and section, and the move tool prints it as `add to <file> under <section>:` followed by the entry, without a `$` prefix. |
+
+`ServerReadinessPolicyTests` pins the `data-volume` config entry and that its text never appears in `command`; `scripts/migration/readiness-report.test.mjs` pins the move tool output.
+
 `--apply` reads this report after the switch and prints every line that is not ready, failing lines first, each with its remedy. It keeps the report in `<server-root>/move-bin/readiness.json`. A failing check does not undo the move. `--rehearse` prints the report of the rehearsal stack the same way; there, missing hosts and disabled pushes are expected.
 
 ## Tests

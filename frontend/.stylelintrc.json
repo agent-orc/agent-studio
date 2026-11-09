@@ -189,6 +189,7 @@
       "comment": "Scoped spacing-token enforcement for the lane rail and new components. Padding/margin/gap must source --studio-spacing-* tokens. If a raw value is structurally necessary, use a targeted disable with rationale.",
       "files": [
         "src/app/features/retention/**/*.scss",
+        "src/app/features/backups/**/*.scss",
         "src/app/features/access/components/access-operator-agents/access-operator-agents.component.scss",
         "src/app/features/access/components/access-operator-activity/access-operator-activity.component.scss",
         "src/app/features/remote-hosts/components/execution-infrastructure/execution-infrastructure.scss",
@@ -201,6 +202,7 @@
         "src/app/features/project-detail/components/project-pipeline-definition/project-pipeline-definition.scss",
         "src/app/features/project-detail/components/project-pipeline-diagram/project-pipeline-diagram.scss",
         "src/app/features/project-detail/components/task-detail-latency/task-detail-latency.component.scss",
+        "src/app/features/project-detail/components/settings-jump-links/settings-jump-links.scss",
         "src/app/features/usage-cockpit/**/*.scss",
         "src/app/features/token-analysis/**/*.scss",
         "src/app/features/deployments/components/delivery-lanes/delivery-lanes.scss",

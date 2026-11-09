@@ -24,6 +24,8 @@ public sealed record ManagedRepositoryMutationResult(
 /// </summary>
 public sealed class ManagedRepositoryMutationService
 {
+    public const string DocumentKeyOperationId = "workbench-key-discovery";
+    public const string DocumentKeyCommitTrailer = "Agent-Studio-Operation: workbench-key-discovery";
     private static readonly ConcurrentDictionary<string, object> RepositoryGates =
         new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
@@ -140,7 +142,9 @@ public sealed class ManagedRepositoryMutationService
             if (!changed)
                 return new ManagedRepositoryMutationResult(true, false, false, null, false, null);
 
-            var commit = _git.CommitPaths(root, commitMessage, paths);
+            var recordedMessage = operationId == DocumentKeyOperationId
+                ? $"{commitMessage}\n\n{DocumentKeyCommitTrailer}" : commitMessage;
+            var commit = _git.CommitPaths(root, recordedMessage, paths);
             if (!commit.Success || string.IsNullOrWhiteSpace(commit.Sha))
             {
                 var cleanup = RestoreAfterFailure(root, paths, operationId);

@@ -7,6 +7,7 @@ import type { RunPromptEntry, RunRecord, RunTimeline } from '../../../../feature
 import type { SessionEvent, SessionEventsResponse } from '../../../../features/session-events';
 import {
   buildParkedBlockerView,
+  parkNextStepSentence,
   type ParkedBlockerView,
   type ParkedRecallTone,
 } from '../../../../models/parked-blocker-presentation';
@@ -16,6 +17,8 @@ import { NowTickService } from '../../../../services/now-tick.service';
 import { TaskService } from '../../../../services/task.service';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
+import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
+import { laneActionsFor } from '../../state/triage-actions.model';
 import { ActivityLogViewComponent } from '../activity-log-view/activity-log-view';
 import { resolveTaskArtifactLink } from '../task-artifact-links/task-artifact-link';
 
@@ -96,6 +99,8 @@ export class ParkedBlockerComponent {
   readonly detail = input.required<TaskDetail>();
 
   private readonly tabs = inject(StudioTabStateService);
+  /** Ledger rows; they supply the park cause when the marker predates it. */
+  private readonly timeline = inject(TaskTimelinePollService, { optional: true });
   private readonly tasks = inject(TaskService);
   private readonly destroyRef = inject(DestroyRef);
   private loadedTaskId: string | null = null;
@@ -154,7 +159,50 @@ export class ParkedBlockerComponent {
 
   /** Null when the card is not parked; the template renders nothing then. */
   private readonly now = inject(NowTickService).now;
-  readonly view = computed<ParkedBlockerView | null>(() => buildParkedBlockerView(this.info(), this.now()));
+  readonly view = computed<ParkedBlockerView | null>(() =>
+    buildParkedBlockerView(this.info(), this.now(), this.timeline?.events() ?? []));
+
+  /**
+   * The main sentence when the park states no question (AGT-3586). A park the
+   * run caused says the run asked nothing; a park the acceptance audit, a
+   * review gate or an operator caused says who parked it and why, once.
+   */
+  readonly statement = computed<{ text: string; missingQuestion: boolean } | null>(() => {
+    const view = this.view();
+    if (!view || view.question) return null;
+    const identifier = view.questionId ? ', only the identifier below' : '';
+    if (view.cause.origin === 'run') {
+      return {
+        text: `The run that parked this card stated no question${identifier}. `
+          + 'Expand the session context to see what it was waiting for.',
+        missingQuestion: true,
+      };
+    }
+    if (!view.cause.parkedBy) {
+      return { text: `No question was recorded for this park${identifier}.`, missingQuestion: true };
+    }
+    return { text: `${view.cause.parkedBy} parked this card. ${view.reason}`, missingQuestion: false };
+  });
+
+  /** The reason row repeats nothing: it is omitted when the statement carries it. */
+  readonly showReasonFact = computed(() => this.statement()?.missingQuestion !== false);
+
+  /** The suggested next step, naming only buttons this lane offers. */
+  readonly nextStep = computed(() => {
+    const view = this.view();
+    return view ? parkNextStepSentence(view.cause.nextSteps, laneActionsFor(this.info().state)) : null;
+  });
+
+  /** One line for the collapsed panel: who parked the card, when known, and why. */
+  readonly collapsedLine = computed(() => {
+    const view = this.view();
+    if (!view) return '';
+    return view.cause.parkedBy ? `${view.cause.parkedBy} parked this card. ${view.reason}` : view.reason;
+  });
+
+  /** The latest run is only "the parking run" when the run caused the park. */
+  readonly runCausedPark = computed(() => this.view()?.cause.origin === 'run');
+
   readonly recallTone = parkedRecallStatusTone;
 
   readonly parkedAtLabel = computed(() => {
@@ -171,14 +219,14 @@ export class ParkedBlockerComponent {
   readonly evaluationLine = computed(() => {
     const recall = this.view()?.recall;
     if (!recall) return '';
-    const when = recall.heldFor
-      ? `unchanged for ${recall.heldFor}`
-      : 'no sweep has evaluated this blocker yet';
+    // Without a verdict the backend detail restates the same absence.
+    if (!recall.heldFor) return 'No sweep has evaluated this blocker yet.';
+    const when = `unchanged for ${recall.heldFor}`;
     return recall.detail ? `${when} · ${recall.detail}` : when;
   });
 
-  /** The freetext park reason, verbatim - it is the record, not a headline. */
-  readonly reasonLine = computed(() => this.info().parkedBlocker?.reason?.trim() || 'not recorded');
+  /** The park reason as one sentence, without its slug prefix. */
+  readonly reasonLine = computed(() => this.view()?.reason ?? '');
 
   toggleCollapsed(): void {
     const next = { ...this.collapsedByTask(), [this.info().id]: !this.collapsed() };
@@ -261,7 +309,7 @@ export class ParkedBlockerComponent {
     this.visibleLineCount.set(TRANSCRIPT_PAGE_LINES);
   }
 
-  /** Open a document the parking run named, in the project wiki. */
+  /** Open a document the park named, in the project wiki. */
   openDocument(relPath: string): void {
     const projectName = this.info().projectName;
     if (!projectName) return;

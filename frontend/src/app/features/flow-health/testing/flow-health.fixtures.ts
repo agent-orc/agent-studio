@@ -183,7 +183,7 @@ export function batchSettingsPayload(enabled: boolean) {
   return {
     settings: {
       enabled, scope: 'code', planner: 'look-ahead', minimumSize: 2, maximumSize: 8,
-      deadlineMinutes: 30, lookAheadMinutes: 45, urgentTags: [], riskPolicy: 'balanced',
+      deadlineMinutes: 30, lookAheadMinutes: 45, urgentTags: [], riskPolicy: 'balanced', calibration: 'empirical', stacking: 'off',
       overlap: 'adjacent', reviewTestLevel: 'work-package', gateTimeoutMinutes: 90, preCheckEnabled: true,
       advisor: { mode: 'off', cliType: 'claude', model: null, timeoutSeconds: 60 },
     },

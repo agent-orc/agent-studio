@@ -12,6 +12,8 @@ import {
 import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
 import { NowTickService } from '../../../../services/now-tick.service';
 import { TaskService } from '../../../../services/task.service';
+import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
+import type { TaskTimelineEvent } from '../../../task-timeline';
 import type { CliOutputLine, ParkedBlockerStatus, TaskDetail, TaskInfo } from '../../../../models/task.model';
 import type { RunRecord, RunTimeline } from '../../../../features/run-timeline';
 import type { SessionEventsResponse } from '../../../../features/session-events';
@@ -66,20 +68,22 @@ describe('ParkedBlockerComponent', () => {
     };
   }
 
-  function info(parkedBlocker: ParkedBlockerStatus | null, id = 'AGT-2736'): TaskInfo {
+  const timelineEvents = signal<TaskTimelineEvent[]>([]);
+
+  function info(parkedBlocker: ParkedBlockerStatus | null, id = 'AGT-2736', state = '5e-escalated'): TaskInfo {
     return {
       id,
       key: id,
       projectName: 'PROJ-002',
       watchPath: '/ws',
-      state: '5e-escalated',
+      state,
       parkedBlocker,
     } as unknown as TaskInfo;
   }
 
-  function detail(parkedBlocker: ParkedBlockerStatus | null, id = 'AGT-2736'): TaskDetail {
+  function detail(parkedBlocker: ParkedBlockerStatus | null, id = 'AGT-2736', state = '5e-escalated'): TaskDetail {
     return {
-      info: info(parkedBlocker, id),
+      info: info(parkedBlocker, id, state),
       promptMarkdown: 'Initial task prompt.',
       promptHistory: [{ index: 1, fileName: 'prompt-1.md', markdown: 'Choose the managed connector.', writtenAt: '2026-09-11T14:40:00Z' }],
       titleHistory: [],
@@ -120,9 +124,9 @@ describe('ParkedBlockerComponent', () => {
     };
   }
 
-  function render(parkedBlocker: ParkedBlockerStatus | null): HTMLElement {
+  function render(parkedBlocker: ParkedBlockerStatus | null, state = '5e-escalated'): HTMLElement {
     const fixture = TestBed.createComponent(ParkedBlockerComponent);
-    fixture.componentRef.setInput('detail', detail(parkedBlocker));
+    fixture.componentRef.setInput('detail', detail(parkedBlocker, 'AGT-2736', state));
     fixture.detectChanges();
     return fixture.nativeElement as HTMLElement;
   }
@@ -133,6 +137,7 @@ describe('ParkedBlockerComponent', () => {
   beforeEach(() => {
     opened.length = 0;
     localStorage.clear();
+    timelineEvents.set([]);
     taskService.getRunTimeline.mockReset().mockReturnValue(of(timeline()));
     taskService.getSessionEvents.mockReset().mockReturnValue(of(sessionEvents()));
     taskService.getJobOutput.mockReset().mockReturnValue(of([
@@ -145,6 +150,7 @@ describe('ParkedBlockerComponent', () => {
         provideZonelessChangeDetection(),
         { provide: StudioTabStateService, useClass: TabsStub },
         { provide: TaskService, useValue: taskService },
+        { provide: TaskTimelinePollService, useValue: { events: timelineEvents } },
         // Three days after the fixture's parkedAt; the age is derived from it.
         { provide: NowTickService, useValue: { now: signal(Date.parse('2026-09-14T14:44:00.000Z')) } },
       ],
@@ -206,12 +212,87 @@ describe('ParkedBlockerComponent', () => {
 
   it('states the gap when the parking run supplied only a slug', () => {
     const el = render(park({
+      cause: 'escalated',
+      causeDetail: 'agent-needs-input',
       decision: { questionId: 'choose-primary-column', question: '', options: [], documents: [], decisionCardKey: null },
     }));
 
     expect(el.querySelector('[data-testid="parked-blocker-question"]')).toBeNull();
-    expect(text(el, 'parked-blocker-question-missing')).toContain('stated no question');
+    expect(text(el, 'parked-blocker-question-missing')).toBe(
+      'The run that parked this card stated no question, only the identifier below. '
+        + 'Expand the session context to see what it was waiting for.',
+    );
     expect(text(el, 'parked-blocker-question-id')).toContain('choose-primary-column');
+  });
+
+  it('claims no parking run when the cause is unknown and names no identifier that is absent', () => {
+    const el = render(park({ decision: null }));
+
+    expect(text(el, 'parked-blocker-question-missing')).toBe('No question was recorded for this park.');
+    expect(el.textContent).not.toContain('parking run');
+    expect(el.querySelector('[data-testid="parked-blocker-question-id"]')).toBeNull();
+  });
+
+  /** AGT-3586: DEMO-6 from walkthrough AGT-3561 (F11). */
+  function auditPark(overrides: Partial<ParkedBlockerStatus> = {}): ParkedBlockerStatus {
+    return park({
+      blockerType: 'operator-decision',
+      reason: 'missing-delivery: Recover the delivery, resolve the integration failure and rerun the gate.',
+      cause: 'acceptance-integration-failed',
+      causeDetail: 'missing-delivery',
+      decision: null,
+      needsInputFile: null,
+      lastEvaluatedAt: null,
+      evaluationAgeSeconds: null,
+      evaluationStale: true,
+      detail: 'No recall sweep has evaluated this blocker yet.',
+      ...overrides,
+    });
+  }
+
+  it('says the acceptance audit parked the card, states the reason once and suggests an offered button', () => {
+    const el = render(auditPark());
+    const body = el.textContent ?? '';
+
+    expect(text(el, 'parked-blocker-type')).toBe('Acceptance audit');
+    expect(text(el, 'parked-blocker-statement')).toBe(
+      'The acceptance audit parked this card. '
+        + 'No delivery branch was found for this card, so its work cannot be integrated.',
+    );
+    expect(el.querySelector('[data-testid="parked-blocker-question-missing"]')).toBeNull();
+    expect(el.querySelector('[data-testid="parked-blocker-reason"]')).toBeNull();
+    expect(body).not.toContain('parking run');
+    expect(body).not.toContain('missing-delivery');
+    expect(body).not.toContain('rerun the gate');
+    expect(body.split('No delivery branch was found')).toHaveLength(2);
+    expect(text(el, 'parked-blocker-next-step')).toBe(
+      'Use Continue (reissue) to build and deliver the work again, or Abort if the work is no longer needed.',
+    );
+  });
+
+  it('names the Human Review button when the audit parks the card there', () => {
+    const el = render(auditPark({ lane: '5-human-review' }), '5-human-review');
+
+    expect(text(el, 'parked-blocker-next-step')).toBe(
+      'Use Send back to Ready (re-do) to build and deliver the work again.',
+    );
+  });
+
+  it('reads the cause from the lane-change row when the marker predates it', () => {
+    timelineEvents.set([{
+      ts: '2026-09-11T14:44:00.000Z', kind: 'lane_changed', actor: 'system', summary: '6-completed → 5e-escalated',
+      details: { to: '5e-escalated', cause: 'acceptance-integration-failed', causeDetail: 'missing-delivery' },
+    }]);
+    const el = render(auditPark({ cause: undefined, causeDetail: undefined }));
+
+    expect(text(el, 'parked-blocker-type')).toBe('Acceptance audit');
+    expect(text(el, 'parked-blocker-statement')).toContain('The acceptance audit parked this card.');
+  });
+
+  it('says once that no sweep has evaluated the blocker', () => {
+    const el = render(auditPark());
+
+    expect(text(el, 'parked-blocker-evaluation')).toBe('No sweep has evaluated this blocker yet.');
   });
 
   it('shows the park reason and clearing condition once', () => {

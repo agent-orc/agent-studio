@@ -30,33 +30,11 @@
         <ul class="pickup-hold__list">
           @for (resolution of resolutions(); track resolutionIdentity($index, resolution)) {
             <li class="pickup-hold__item" [attr.data-resolution-kind]="resolution.kind">
-              @if ((held.classification === 'unsatisfiable' || held.unsatisfiable)
-                  && canApplyResolution(resolution)) {
-                <button type="button"
-                        class="pickup-hold__decision"
-                        [disabled]="mutationPending()"
-                        [attr.data-testid]="'pickup-hold-decision-' + resolution.kind"
-                        (click)="applyResolution(resolution)">{{ resolution.label }}</button>
-              } @else {
-                <span class="pickup-hold__item-label">{{ resolution.label }}</span>
-              }
-              <span class="pickup-hold__item-detail">{{ resolution.detail }}</span>
+              <app-pickup-hold-resolution [resolution]="resolution" [task]="task()" />
             </li>
           }
         </ul>
       </div>
-    }
-    @if (mutationError(); as error) {
-      <p class="pickup-hold__message" role="alert">
-        <app-status-indicator tone="danger" [label]="error" [detail]="error" [compact]="true"
-                              testId="pickup-hold-error" />
-      </p>
-    }
-    @if (mutationNotice(); as notice) {
-      <p class="pickup-hold__message" role="status">
-        <app-status-indicator tone="success" [label]="notice" [detail]="notice" [compact]="true"
-                              testId="pickup-hold-notice" />
-      </p>
     }
   </section>
 }

@@ -106,7 +106,7 @@ beforeEach(() => {
 });
 
 describe('EscalationSummaryComponent', () => {
-  it('puts the latest ended attempt and its fresh park reason in the header', () => {
+  it('puts the latest ended attempt in the header and leaves the reason to the park panel', () => {
     const parked = detail();
     parked.info.parkedBlocker = {
       parkedAt: '2026-10-06T04:22:54Z', reason: 'Push protection rejected the branch.',
@@ -119,8 +119,8 @@ describe('EscalationSummaryComponent', () => {
       ],
     });
     const header = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="escalation-essence"]');
-    expect(header?.textContent).toContain('Latest attempt ended 2026-10-06 04:22 UTC');
-    expect(header?.textContent).toContain('Push protection rejected the branch.');
+    expect(header?.textContent).toContain('Latest attempt ended 2026-10-06 04:22 UTC and parked this card.');
+    expect(header?.textContent).not.toContain('Push protection rejected the branch.');
   });
 
   it('renders the AGT-2736 question and options and submits the answer as a steer', () => {

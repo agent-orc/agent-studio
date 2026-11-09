@@ -39,6 +39,13 @@ public sealed record ParkedBlockerStatus(
     /// <summary>The lane the card was parked in, as recorded by the park.</summary>
     public string Lane { get; init; } = "";
 
+    /// <summary>The lane-change cause that parked the card, for example
+    /// <c>acceptance-integration-failed</c>; null on markers that predate it.</summary>
+    public string? Cause { get; init; }
+
+    /// <summary>Short qualifier of <see cref="Cause"/>, for example <c>missing-delivery</c>.</summary>
+    public string? CauseDetail { get; init; }
+
     /// <summary>The question, options, and named documents of this park.</summary>
     public ParkedDecisionStatus? Decision { get; init; }
 
