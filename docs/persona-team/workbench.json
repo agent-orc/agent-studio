@@ -4,10 +4,10 @@
   "title": "Persona team for global orchestrator sessions",
   "summary": "Turns global orchestrator sessions into a team of personas that watch the installation from different aspects (security, operations, reliability, quality, design, product, cost, documentation), each with a versioned charter, an honest character sheet, a budget carved from the workspace token limit, a configurable reporting obligation, its own feed and management page. Two manager personas decide within standing grants; a weekly magazine and a presenter deck rank every item by a 0 to 100 importance number computed from impact, urgency and confidence with fact floors. A dedicated operations warden watches backups and the security posture and reports the magazine\u0027s fifteen-row Operations watch panel, so a missing or stale backup or an expired credential always ranks high. Personas run as short sessions of their own principal on runner hosts, scheduled by the Watcher sweep. Twelve decisions with recommended options, diagrams, mockups, light and dark evidence captures, a phased plan and twelve implementation cards. The owner decided PT-D1 to PT-D12 as recommended on 9 November 2026.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-11-09T15:30:00Z",
+  "updatedAt": "2026-11-09T18:00:00Z",
   "sourceTaskKeys": [
     "AGT-3573"
   ],
@@ -37,84 +37,120 @@
       "question": "What a persona is and where the catalogue lives",
       "recommendation": "Versioned descriptor in backend/Policies/personas plus workspace activation through the API, step-up activation, one shadow period.",
       "rejectedOption": "Prompt-only skills, settings records only, files per project.",
-      "ownerDecision": "Decided as recommended by the owner on 9 November 2026."
+      "ownerDecision": "Decided as recommended by the owner on 9 November 2026.",
+      "status": "resolved",
+      "selectedOption": "B",
+      "resolution": "recommended"
     },
     {
       "id": "PT-D2",
       "question": "Stats",
       "recommendation": "Owner-set attributes with named effects, derived record with denominators, rank as eligibility only.",
       "rejectedOption": "Flavour attributes; measured record only.",
-      "ownerDecision": "Decided as recommended by the owner on 9 November 2026."
+      "ownerDecision": "Decided as recommended by the owner on 9 November 2026.",
+      "status": "resolved",
+      "selectedOption": "C",
+      "resolution": "recommended"
     },
     {
       "id": "PT-D3",
       "question": "Budgets",
       "recommendation": "Persona pool of 10 % of ModelTokensPerWeek (1.2M without limit) with per-persona allowances; stubs and model-free floor items on exhaustion; pause at 80 % workspace use; same-class fallback or wait.",
       "rejectedOption": "Share the Watcher contingent; per-subscription slices.",
-      "ownerDecision": "Decided as recommended by the owner on 9 November 2026."
+      "ownerDecision": "Decided as recommended by the owner on 9 November 2026.",
+      "status": "resolved",
+      "selectedOption": "B",
+      "resolution": "recommended"
     },
     {
       "id": "PT-D4",
       "question": "Activation and scheduling",
       "recommendation": "Persona principal sessions on runner hosts, scheduled by the Watcher sweep with coalescing; at most two per workspace; card work first.",
       "rejectedOption": "API container; owner machine.",
-      "ownerDecision": "Decided as recommended by the owner on 9 November 2026."
+      "ownerDecision": "Decided as recommended by the owner on 9 November 2026.",
+      "status": "resolved",
+      "selectedOption": "B",
+      "resolution": "recommended"
     },
     {
       "id": "PT-D5",
       "question": "Reports, feed and page",
       "recommendation": "Typed PersonaItemV1 on the Agent Message Bus (participant kind Persona) plus application store; configurable obligation with fixed templates; Team page and persona page.",
       "rejectedOption": "Free text in Dossiers; a new event stream.",
-      "ownerDecision": "Decided as recommended by the owner on 9 November 2026."
+      "ownerDecision": "Decided as recommended by the owner on 9 November 2026.",
+      "status": "resolved",
+      "selectedOption": "B",
+      "resolution": "recommended"
     },
     {
       "id": "PT-D6",
       "question": "Manager roles",
       "recommendation": "Chief of staff and budget steward with bounded T1 rights, attention lease, 24-hour undo; T2 stays with the owner.",
       "rejectedOption": "No managers; advisory only.",
-      "ownerDecision": "Decided as recommended by the owner on 9 November 2026."
+      "ownerDecision": "Decided as recommended by the owner on 9 November 2026.",
+      "status": "resolved",
+      "selectedOption": "C",
+      "resolution": "recommended"
     },
     {
       "id": "PT-D7",
       "question": "Magazine",
       "recommendation": "Weekly Studio Weekly issue, deterministic layout plus one editor call, HTML and PDF export, sending off by default.",
       "rejectedOption": "Digest list; fully model-written issue.",
-      "ownerDecision": "Decided as recommended by the owner on 9 November 2026."
+      "ownerDecision": "Decided as recommended by the owner on 9 November 2026.",
+      "status": "resolved",
+      "selectedOption": "B",
+      "resolution": "recommended"
     },
     {
       "id": "PT-D8",
       "question": "Importance numbers",
       "recommendation": "0 to 100 from impact \u00D7 urgency \u00D7 confidence with fact floors, \u00B115 manager adjustment, owner acknowledgement.",
       "rejectedOption": "Severity labels; model-typed score.",
-      "ownerDecision": "Decided as recommended by the owner on 9 November 2026."
+      "ownerDecision": "Decided as recommended by the owner on 9 November 2026.",
+      "status": "resolved",
+      "selectedOption": "B",
+      "resolution": "recommended"
     },
     {
       "id": "PT-D9",
       "question": "Presentations",
       "recommendation": "Presenter persona with deck.json, weekly and monthly decks, style guide tokens in both themes, HTML and PDF.",
       "rejectedOption": "Magazine-as-slides; PPTX first.",
-      "ownerDecision": "Decided as recommended by the owner on 9 November 2026."
+      "ownerDecision": "Decided as recommended by the owner on 9 November 2026.",
+      "status": "resolved",
+      "selectedOption": "B",
+      "resolution": "recommended"
     },
     {
       "id": "PT-D10",
       "question": "Safety",
       "recommendation": "Principal per persona, catalogued persona operations, untrusted content only for own publication, managers on typed fields, team stop plus SM-2.",
       "rejectedOption": "Owner or operator identity; read-only personas.",
-      "ownerDecision": "Decided as recommended by the owner on 9 November 2026."
+      "ownerDecision": "Decided as recommended by the owner on 9 November 2026.",
+      "status": "resolved",
+      "selectedOption": "B",
+      "resolution": "recommended"
     },
     {
       "id": "PT-D11",
       "question": "Evaluation",
       "recommendation": "Value panel, misses, owner rating, rule-based suggestions, before/after by revision; the owner decides.",
       "rejectedOption": "Owner judgement only; automatic retirement.",
-      "ownerDecision": "Decided as recommended by the owner on 9 November 2026."
+      "ownerDecision": "Decided as recommended by the owner on 9 November 2026.",
+      "status": "resolved",
+      "selectedOption": "B",
+      "resolution": "recommended"
     },
     {
       "id": "PT-D12",
       "question": "Starter catalogue and the operations aspect",
       "recommendation": "Eight aspect personas with a dedicated operations warden, presenter, two managers; warden and cost controller start active.",
       "rejectedOption": "Reliability takes operations; everything active at once.",
-      "ownerDecision": "Decided as recommended by the owner on 9 November 2026."
+      "ownerDecision": "Decided as recommended by the owner on 9 November 2026.",
+      "status": "resolved",
+      "selectedOption": "B",
+      "resolution": "recommended"
     }
   ],
   "implementationTasks": [
