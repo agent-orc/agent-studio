@@ -28,6 +28,31 @@ public sealed class AutoReviewStrandingPolicyTests
             AutoReviewStrandingPolicy.Decide(Stranded() with { HasReview = true, PassedReview = true }));
 
     [Fact]
+    public void Only_review_of_current_run_and_result_can_resume_delivery()
+    {
+        const string sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        var run = new RunAttemptDto("run-current", "AGT-1", "repo", null,
+            AttemptLifecycleState.Completed, null, 1, 1, DateTime.UnixEpoch,
+            DateTime.UnixEpoch, sha, "done", null, []);
+        var subject = new ReviewSubjectDto("subject", "repo", sha, run.AttemptId,
+            "requirements", "policy", [], DateTime.UnixEpoch);
+        var review = new ReviewAttemptDto("review", "AGT-1", "repo", run.AttemptId,
+            null, subject, AttemptLifecycleState.Completed, null, 1, 1,
+            DateTime.UnixEpoch, DateTime.UnixEpoch, ReviewTerminalOutcome.Pass,
+            null, sha, null, []);
+
+        Assert.True(AutoReviewStrandingWatchdog.ReviewMatchesCurrentRun(review, run));
+        Assert.False(AutoReviewStrandingWatchdog.ReviewMatchesCurrentRun(
+            review with { SourceRunAttemptId = "run-older" }, run));
+        Assert.False(AutoReviewStrandingWatchdog.ReviewMatchesCurrentRun(
+            review with { Subject = subject with { SourceRunAttemptId = "run-older" } }, run));
+        Assert.False(AutoReviewStrandingWatchdog.ReviewMatchesCurrentRun(
+            review with { Subject = subject with { ExpectedResultSha = new string('b', 40) } }, run));
+        Assert.False(AutoReviewStrandingWatchdog.ReviewMatchesCurrentRun(
+            review with { TestedResultSha = new string('b', 40) }, run));
+    }
+
+    [Fact]
     public void Unrecoverable_card_escalates()
         => Assert.Equal(AutoReviewStrandingAction.Escalate,
             AutoReviewStrandingPolicy.Decide(Stranded() with { HasCompletedRun = false }));
