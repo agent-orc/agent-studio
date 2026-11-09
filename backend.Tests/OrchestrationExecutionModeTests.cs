@@ -142,7 +142,7 @@ public sealed class OrchestrationExecutionModeTests
     }
 
     [Fact]
-    public void Monolith_mode_registers_all_seven_loop_owners()
+    public void Monolith_mode_registers_all_loop_owners()
     {
         var services = new ServiceCollection();
 
@@ -164,9 +164,12 @@ public sealed class OrchestrationExecutionModeTests
             typeof(RemoteReviewSettlementReconciler),
         }, hosted.Where(descriptor => descriptor.ImplementationType is not null)
             .Select(descriptor => descriptor.ImplementationType!).ToArray());
-        Assert.Single(hosted, descriptor => descriptor.ImplementationFactory is not null);
+        Assert.Equal(2, hosted.Count(descriptor => descriptor.ImplementationFactory is not null));
         Assert.Single(services, descriptor =>
             descriptor.ServiceType == typeof(AutoReviewDeliveryResumeService)
+            && descriptor.Lifetime == ServiceLifetime.Singleton);
+        Assert.Single(services, descriptor =>
+            descriptor.ServiceType == typeof(AutoReviewStrandingWatchdog)
             && descriptor.Lifetime == ServiceLifetime.Singleton);
     }
 }

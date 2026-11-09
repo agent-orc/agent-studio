@@ -22,6 +22,7 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
     private readonly AgentStudio.Pipeline.TaskGateCancellationRegistry? _gateCancellation;
     private readonly TaskIntegrationRecoveryService? _recovery;
     private readonly AgentStudio.Runner.AutoReviewStrandingWatchdog? _stranding;
+    private readonly AgentStudio.Runner.HumanReviewEscalation? _escalation;
     private readonly TimelineLog? _timeline;
 
     public DeliveryChainReconciler(TaskScannerService scanner,
@@ -31,7 +32,8 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
         AgentStudio.Pipeline.TaskGateCancellationRegistry? gateCancellation = null,
         TaskIntegrationRecoveryService? recovery = null,
         AgentStudio.Runner.AutoReviewStrandingWatchdog? stranding = null,
-        TimelineLog? timeline = null)
+        TimelineLog? timeline = null,
+        AgentStudio.Runner.HumanReviewEscalation? escalation = null)
     {
         _scanner = scanner;
         _statuses = statuses;
@@ -44,6 +46,7 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
         _recovery = recovery;
         _stranding = stranding;
         _timeline = timeline;
+        _escalation = escalation;
     }
 
     public string Decider => AiOperatorDeciders.DeliveryChain;
@@ -156,12 +159,9 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
             if (round.Queued) return Applied.Moved;
             _logger.LogWarning("delivery-chain-merge-round-failed task={TaskKey} reason={Reason}",
                 card.TaskKey, round.Error);
-            var parked = await _transitions.MoveAsync(card.Id, TaskStates.Escalated,
-                card.WatchPath, ct, cause: TimelineActors.System,
-                reason: "The delivery conflicts with develop, but a merge round could not be queued: " + round.Error,
-                expectedSourceState: card.State,
-                transitionCause: LaneChangeCauses.Escalated,
-                transitionDetail: DeliveryChainReasons.MergeRoundQueued);
+            var parked = await EscalateRecoveryFailureAsync(card,
+                "The delivery conflicts with develop, but a merge round could not be queued: " + round.Error,
+                DeliveryChainReasons.MergeRoundQueued, ct);
             return parked.Status == MoveJobStatus.Success ? Applied.Moved : Applied.Failed;
         }
         string? target = decision.Effect switch
@@ -242,12 +242,9 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
                                     TaskIntegrationRecoveryService.AcceptanceRailSource).Queued;
                             if (!queued)
                             {
-                                var parked = await _transitions.MoveAsync(current.Id, TaskStates.Escalated,
-                                    current.WatchPath, ct, cause: TimelineActors.System,
-                                    reason: "The current delivery conflicts with develop, but a merge round could not be queued.",
-                                    expectedSourceState: TaskStates.AutoReview,
-                                    transitionCause: LaneChangeCauses.Escalated,
-                                    transitionDetail: DeliveryChainReasons.MergeRoundQueued);
+                                var parked = await EscalateRecoveryFailureAsync(current,
+                                    "The current delivery conflicts with develop, but a merge round could not be queued.",
+                                    DeliveryChainReasons.MergeRoundQueued, ct);
                                 return parked.Status == MoveJobStatus.Success ? Applied.Moved : Applied.Failed;
                             }
                         }
@@ -256,13 +253,10 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
                     if (integration?.Outcome.IsSuccessfulIntegration() != true
                         || !_stranding!.RequestFreshReview(returned))
                     {
-                        var parked = await _transitions.MoveAsync(returned.Id, TaskStates.Escalated,
-                            returned.WatchPath, ct, cause: TimelineActors.System,
-                            reason: "The delivery verdict became stale, but the current delivery could not be integrated and sent for review: "
+                        var parked = await EscalateRecoveryFailureAsync(returned,
+                            "The delivery verdict became stale, but the current delivery could not be integrated and sent for review: "
                                 + (integration?.Error ?? integration?.Outcome.ToString() ?? "integration unavailable"),
-                            expectedSourceState: TaskStates.AutoReview,
-                            transitionCause: LaneChangeCauses.Escalated,
-                            transitionDetail: DeliveryChainReasons.VerdictStale);
+                            DeliveryChainReasons.VerdictStale, ct);
                         return parked.Status == MoveJobStatus.Success ? Applied.Moved : Applied.Failed;
                     }
                     else
@@ -289,6 +283,13 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
             card.TaskKey, target, outcome.Status, outcome.Message);
         return Applied.Failed;
     }
+
+    private Task<MoveJobOutcome> EscalateRecoveryFailureAsync(TaskInfo card, string reason,
+        string category, CancellationToken ct)
+        => _escalation is null
+            ? Task.FromResult(new MoveJobOutcome(MoveJobStatus.Failure, "Escalation service unavailable."))
+            : _escalation.EscalateAsync(card.Id, card.WatchPath, card.ProjectName,
+                category, reason, ct, expectedSourceState: card.State);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
