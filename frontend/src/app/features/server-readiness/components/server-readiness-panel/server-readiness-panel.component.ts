@@ -12,7 +12,8 @@ import {
  * The readiness report the server computes about itself (AGT-3412): one line
  * per check with its state, what it means, and the exact remedy.
  * AGT-3580: the remedy is prose; a fix Studio owns opens its setting or
- * surface through a link, and a shell command is a copyable detail only.
+ * surface through a link, and a shell command is a copyable detail only. A
+ * configuration entry for a file is its own detail, labelled with the file.
  */
 @Component({
   selector: 'app-server-readiness-panel',

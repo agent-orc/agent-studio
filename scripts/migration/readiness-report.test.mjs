@@ -38,6 +38,21 @@ test('failing lines come first with their meaning and remedy; passing lines are 
   assert.ok(!text.includes('git-identity'));
 });
 
+test('a compose volume line prints as an entry for its file, not as a command', () => {
+  const volume = { id: 'data-volume', title: 'Data folder on the data volume', scope: 'server', subject: 'home', state: 'fail',
+    meaning: '/data/home is inside the container layer.',
+    remedy: 'Mount it from the data directory: add the volume line below under services.api.volumes in compose.override.yaml and recreate the stack.',
+    command: 'docker compose up -d',
+    configEntry: { file: 'compose.override.yaml', section: 'services.api.volumes', text: '- ${STUDIO_DATA_DIR}/home:/data/home' } };
+  const lines = formatReadiness({ ...report, checks: [volume] }).text.split('\n');
+
+  assert.deepEqual(lines.slice(4), [
+    '       add to compose.override.yaml under services.api.volumes:',
+    '           - ${STUDIO_DATA_DIR}/home:/data/home',
+    '         $ docker compose up -d',
+  ]);
+});
+
 test('a ready server prints one line', () => {
   const ready = { ...report, checks: [report.checks[0]] };
 

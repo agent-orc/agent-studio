@@ -201,7 +201,9 @@ public sealed class ServerReadinessPolicyTests
         Assert.Equal("/data/home is inside the container layer: whatever Studio writes there is lost when the container is recreated.", check.Meaning);
         Assert.Equal("Mount it from the data directory: add the volume line below under services.api.volumes "
             + "in compose.override.yaml and recreate the stack.", check.Remedy);
-        Assert.Equal("- ${STUDIO_DATA_DIR}/home:/data/home\ndocker compose up -d", check.Command);
+        Assert.Equal(new ReadinessConfigEntry("compose.override.yaml", "services.api.volumes",
+            "- ${STUDIO_DATA_DIR}/home:/data/home"), check.ConfigEntry);
+        Assert.Equal("docker compose up -d", check.Command);
     }
 
     [Fact]
@@ -213,7 +215,7 @@ public sealed class ServerReadinessPolicyTests
 
         Assert.Equal(ReadinessStates.Fail, check.State);
         Assert.Equal(ReadinessScopes.Project, check.Scope);
-        Assert.StartsWith("- ${STUDIO_DATA_DIR}/projects/demo:/data/projects/demo", check.Command);
+        Assert.Equal("- ${STUDIO_DATA_DIR}/projects/demo:/data/projects/demo", check.ConfigEntry?.Text);
     }
 
     [Fact]
@@ -225,6 +227,21 @@ public sealed class ServerReadinessPolicyTests
         Assert.Equal(ReadinessStates.Fail, check.State);
         Assert.Equal("/data/workspace does not exist, so Studio cannot keep its workspace data.", check.Meaning);
         Assert.EndsWith("create that folder owned by UID 10001, and recreate the stack.", check.Remedy);
+        Assert.Equal("- ${STUDIO_DATA_DIR}/workspace:/data/workspace", check.ConfigEntry?.Text);
+        Assert.Equal("sudo install -d -o 10001 -g 10001 \"$STUDIO_DATA_DIR/workspace\"\ndocker compose up -d", check.Command);
+    }
+
+    [Theory]
+    [InlineData(false, "/")]
+    [InlineData(true, "/")]
+    public void A_data_volume_command_holds_only_shell_steps_never_the_yaml_entry(bool exists, string mountPoint)
+    {
+        var check = ServerReadinessPolicy.DataFolder(
+            new DataFolderFact("home", "/data/home", "home", exists, mountPoint, "overlay"), runsInContainer: true);
+
+        Assert.NotNull(check.ConfigEntry);
+        Assert.All(check.Command!.Split('\n'), line => Assert.False(line.TrimStart().StartsWith('-'), line));
+        Assert.DoesNotContain(check.ConfigEntry!.Text, check.Command);
     }
 
     [Fact]

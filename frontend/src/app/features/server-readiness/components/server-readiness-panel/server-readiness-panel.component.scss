@@ -81,8 +81,8 @@
   &[data-state='warn'] { background: var(--studio-warn); }
   &[data-state='fail'] { background: var(--studio-error); }
 }
-// AGT-3580: prose remedy, then the owning setting as a link, then the command
-// as a copyable detail.
+// AGT-3580: prose remedy, then the owning setting as a link, then the config
+// entry and the command as copyable details.
 .readiness__remedy {
   display: grid;
   gap: var(--studio-spacing-2);

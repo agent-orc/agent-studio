@@ -57,10 +57,11 @@ public static class ServerReadinessPolicy
     }
 
     private static ReadinessCheck Line(string id, string title, string scope, string? subject,
-        string state, string meaning, string? remedy = null, string? command = null, RemedyAction? action = null)
+        string state, string meaning, string? remedy = null, string? command = null, RemedyAction? action = null,
+        ReadinessConfigEntry? configEntry = null)
         => state == ReadinessStates.Pass
             ? new(id, title, scope, subject, state, meaning, null)
-            : new(id, title, scope, subject, state, meaning, remedy, command, action);
+            : new(id, title, scope, subject, state, meaning, remedy, command, action, configEntry);
 
     private const string IdentityRemedy = "Set the Git identity of the service user in the API container, from the stack directory.";
 
@@ -138,12 +139,17 @@ public static class ServerReadinessPolicy
         subject ??= fact.Name;
         const string mount = "Mount it from the data directory: add the volume line below under services.api.volumes "
                              + "in compose.override.yaml";
-        var volume = $"- ${{STUDIO_DATA_DIR}}/{fact.HostFolder}:{fact.Path}";
+        // The volume line is YAML for the compose file, not a shell step: it
+        // travels as a config entry; the command holds only what is run.
+        var volume = new ReadinessConfigEntry("compose.override.yaml", "services.api.volumes",
+            $"- ${{STUDIO_DATA_DIR}}/{fact.HostFolder}:{fact.Path}");
+        const string recreate = "docker compose up -d";
         if (!fact.Exists)
             return Line(id, title, scope, subject, ReadinessStates.Fail,
                 $"{fact.Path} does not exist, so Studio cannot keep its {fact.Name} data.",
                 mount + ", create that folder owned by UID 10001, and recreate the stack.",
-                volume + "\ndocker compose up -d");
+                $"sudo install -d -o 10001 -g 10001 \"$STUDIO_DATA_DIR/{fact.HostFolder}\"\n{recreate}",
+                configEntry: volume);
         if (!runsInContainer)
             return Line(id, title, scope, subject, ReadinessStates.Pass,
                 $"{fact.Path} is on the host file system; Studio does not run in a container.");
@@ -156,7 +162,7 @@ public static class ServerReadinessPolicy
             return Line(id, title, scope, subject, ReadinessStates.Fail,
                 $"{fact.Path} is inside the container layer: whatever Studio writes there is lost when the container is recreated.",
                 mount + " and recreate the stack.",
-                volume + "\ndocker compose up -d");
+                recreate, configEntry: volume);
         return Line(id, title, scope, subject, ReadinessStates.Pass,
             $"{fact.Path} is on the mount {fact.MountPoint} ({fact.FileSystemType ?? "unknown type"}), outside the container layer.");
     }

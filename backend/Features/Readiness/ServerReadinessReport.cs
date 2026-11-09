@@ -39,6 +39,11 @@ public static class ReadinessScopes
 /// AGT-3580 - the typed action the UI renders as a button or a link to the
 /// owning setting or surface, when Studio itself can make the fix.
 /// </param>
+/// <param name="ConfigEntry">
+/// AGT-3580 - a configuration entry the remedy adds to a file, shown as a
+/// copyable detail labelled with that file. It is never part of
+/// <paramref name="Command"/>, so nothing renders it as something to run.
+/// </param>
 public sealed record ReadinessCheck(
     string Id,
     string Title,
@@ -48,7 +53,16 @@ public sealed record ReadinessCheck(
     string Meaning,
     string? Remedy,
     string? Command = null,
-    AgentStudio.Shared.RemedyAction? Action = null);
+    AgentStudio.Shared.RemedyAction? Action = null,
+    ReadinessConfigEntry? ConfigEntry = null);
+
+/// <summary>
+/// AGT-3580 - a configuration entry a remedy adds to a file on the host.
+/// </summary>
+/// <param name="File">The file the entry goes into, relative to the stack directory.</param>
+/// <param name="Section">Where in that file, as a dotted key path.</param>
+/// <param name="Text">The entry itself, as it is written into the file.</param>
+public sealed record ReadinessConfigEntry(string File, string Section, string Text);
 
 /// <summary>
 /// The readiness report the server computes about itself (AGT-3412). The

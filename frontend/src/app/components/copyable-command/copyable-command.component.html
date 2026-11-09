@@ -1,6 +1,9 @@
 <div class="copyable-command" [attr.data-testid]="testId()">
-  <span class="copyable-command__label">Command</span>
+  <span class="copyable-command__label">{{ label() }}</span>
+  @if (location(); as where) {
+    <span class="copyable-command__location" [attr.data-testid]="testId() + '-location'">{{ where }}</span>
+  }
   <pre class="copyable-command__text"><code [attr.data-testid]="testId() + '-text'">{{ command() }}</code></pre>
   <button type="button" class="copyable-command__copy" [attr.data-testid]="testId() + '-copy'"
-          [attr.aria-label]="'Copy command'" (click)="copy()">{{ copied() ? 'Copied' : 'Copy' }}</button>
+          [attr.aria-label]="'Copy ' + label().toLowerCase()" (click)="copy()">{{ copied() ? 'Copied' : 'Copy' }}</button>
 </div>

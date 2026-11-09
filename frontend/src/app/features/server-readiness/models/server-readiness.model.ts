@@ -17,6 +17,18 @@ export interface ReadinessCheck {
   command?: string | null;
   /** AGT-3580: the owning setting or surface, rendered as a link. */
   action?: RemedyAction | null;
+  /** AGT-3580: an entry the remedy adds to a configuration file; never part of `command`. */
+  configEntry?: ReadinessConfigEntry | null;
+}
+
+/** AGT-3580: a configuration entry a remedy adds to a file on the host. */
+export interface ReadinessConfigEntry {
+  /** The file, relative to the stack directory, for example `compose.override.yaml`. */
+  file: string;
+  /** Where in that file, as a dotted key path, for example `services.api.volumes`. */
+  section: string;
+  /** The entry as it is written into the file. */
+  text: string;
 }
 
 export interface ServerReadinessReport {

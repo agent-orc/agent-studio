@@ -8,7 +8,8 @@ import { setTheme } from '../helpers/theme';
 // wording for a server shortly after a move.
 const line = (id: string, title: string, scope: string, subject: string | null, state: string,
   meaning: string, remedy: string | null = null, command: string | null = null,
-  action: Record<string, string> | null = null) => ({ id, title, scope, subject, state, meaning, remedy, command, action });
+  action: Record<string, string> | null = null, configEntry: Record<string, string> | null = null) =>
+  ({ id, title, scope, subject, state, meaning, remedy, command, action, configEntry });
 
 const checks = [
   line('git-identity', 'Git identity of the service user', 'server', null, 'pass',
@@ -20,7 +21,8 @@ const checks = [
   line('data-volume', 'Data folder on the data volume', 'server', 'home', 'fail',
     '/data/home is inside the container layer: whatever Studio writes there is lost when the container is recreated.',
     'Mount it from the data directory: add the volume line below under services.api.volumes in compose.override.yaml and recreate the stack.',
-    '- ${STUDIO_DATA_DIR}/home:/data/home\ndocker compose up -d'),
+    'docker compose up -d', null,
+    { file: 'compose.override.yaml', section: 'services.api.volumes', text: '- ${STUDIO_DATA_DIR}/home:/data/home' }),
   line('state-writable', 'State folder writable', 'server', 'workspace', 'pass',
     'Studio created and removed a probe file in /data/workspace.'),
   line('git-locks', 'No stale Git locks', 'server', 'workspace', 'warn',
@@ -87,7 +89,7 @@ test('the environment view lists each readiness check with state, meaning and re
     // The operator mounted /data/home and seeded the lane; the rest is unchanged.
     await route.fulfill({ json: report('2026-11-01T12:09:00+00:00', checks.map(item =>
       item.subject === 'home' || item.id === 'integration-lane'
-        ? { ...item, state: 'pass', remedy: null, command: null, meaning: item.id === 'integration-lane'
+        ? { ...item, state: 'pass', remedy: null, command: null, configEntry: null, meaning: item.id === 'integration-lane'
           ? 'refs/agent-studio/integration/main is present.' : '/data/home is on the mount /data/home (ext4), outside the container layer.' }
         : item)) });
   });
@@ -104,7 +106,10 @@ test('the environment view lists each readiness check with state, meaning and re
   await expect(home).toHaveAttribute('data-state', 'fail');
   await expect(home).toContainText('Failing');
   await expect(home).toContainText('/data/home is inside the container layer');
-  await expect(home.getByTestId('readiness-command-text')).toContainText('- ${STUDIO_DATA_DIR}/home:/data/home');
+  // The volume line is YAML for the compose file: a config entry, not a command.
+  await expect(home.getByTestId('readiness-config-location')).toHaveText('compose.override.yaml › services.api.volumes');
+  await expect(home.getByTestId('readiness-config-text')).toHaveText('- ${STUDIO_DATA_DIR}/home:/data/home');
+  await expect(home.getByTestId('readiness-command-text')).toHaveText('docker compose up -d');
   await expect(panel.getByTestId('readiness-project:app-coverage:Demo')).toContainText('Install the App on this repository');
   await expect(panel.getByTestId('readiness-host:execution-host:agent-runner-02')).toContainText('not seen for 5 h');
   await expect(panel.getByTestId('readiness-server:git-identity:')).toHaveCount(0);

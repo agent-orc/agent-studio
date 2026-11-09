@@ -93,6 +93,28 @@ describe('ServerReadinessPanelComponent', () => {
     http.verify();
   });
 
+  it('shows a compose volume line as a config entry for its file, apart from the command to run', async () => {
+    const { fixture, http, element } = await render();
+    http.expectOne('/api/system/readiness').flush({ ...report, checks: [check({
+      id: 'data-volume', title: 'Data folder on the data volume', subject: 'home', state: 'fail',
+      meaning: '/data/home is inside the container layer.',
+      remedy: 'Mount it from the data directory: add the volume line below under services.api.volumes in compose.override.yaml and recreate the stack.',
+      command: 'docker compose up -d',
+      configEntry: { file: 'compose.override.yaml', section: 'services.api.volumes', text: '- ${STUDIO_DATA_DIR}/home:/data/home' },
+    })] });
+    fixture.detectChanges();
+
+    const row = element.querySelector('[data-testid="readiness-server:data-volume:home"]')!;
+    const config = row.querySelector('[data-testid="readiness-config"]')!;
+    expect(config.textContent).toContain('Config entry');
+    expect(row.querySelector('[data-testid="readiness-config-location"]')!.textContent)
+      .toBe('compose.override.yaml › services.api.volumes');
+    expect(row.querySelector('[data-testid="readiness-config-text"]')!.textContent).toBe('- ${STUDIO_DATA_DIR}/home:/data/home');
+    expect(row.querySelector('[data-testid="readiness-command-text"]')!.textContent).toBe('docker compose up -d');
+    fixture.destroy();
+    http.verify();
+  });
+
   it('rechecks through the POST route and says when every check passes', async () => {
     const { fixture, http, element } = await render();
     http.expectOne('/api/system/readiness').flush({ computedAt: null, state: 'pending', failing: 0, attention: 0, checks: [] });

@@ -20,6 +20,15 @@
   text-transform: uppercase;
 }
 
+// File names and key paths are case-sensitive: shown as written, not uppercased.
+.copyable-command__location {
+  grid-column: 1 / -1;
+  color: var(--studio-fg-muted);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
+}
+
 .copyable-command__text {
   min-width: 0;
   margin: 0;
