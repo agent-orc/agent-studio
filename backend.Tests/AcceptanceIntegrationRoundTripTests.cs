@@ -4001,7 +4001,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
             notifier,
             NullLogger<TaskMutationService>.Instance);
-        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config,
+            new FixtureSettingsWriter());
         if (configureIntegrationBranch)
             settings.SetIntegrationBranch(Project, "develop");
         settings.SetIntegrationStrategy(Project, integrationStrategy);
@@ -4276,6 +4277,24 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         AcceptedIntegrationQueue? AcceptedQueue,
         AttemptAuthorityService Authority,
         TaskChangeNotifier Notifier);
+
+    /// <summary>
+    /// Replaces the fixture's settings file atomically (temp file, then
+    /// rename) like the production writer, without its two fsyncs per write
+    /// (AGT-3567). Build stores three or four settings per test; on a loaded
+    /// runner those flushes took several seconds per class run, and no test
+    /// here depends on the settings surviving a power loss.
+    /// </summary>
+    private sealed class FixtureSettingsWriter : AgentStudio.Persistence.IAtomicJsonFileWriter
+    {
+        public void Write(string path, string content)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var temporary = $"{path}.{Guid.NewGuid():N}.tmp";
+            File.WriteAllText(temporary, content);
+            File.Move(temporary, path, overwrite: true);
+        }
+    }
 
     private sealed class BlockingBuildTestGateRunner(BuildTestGateResult result)
         : IBuildTestGateRunner

@@ -95,6 +95,8 @@ public sealed class TaskOperationTimingFilterTests
         await filter.InvokeAsync(new DefaultEndpointFilterInvocationContext(http), _ =>
         {
             using (TaskSwitchTrace.Span("mutation.lookup")) { }
+            using (TaskSwitchTrace.Span("mutation.lock")) { }
+            using (TaskSwitchTrace.Span("mutation.read-current")) { }
             using (TaskSwitchTrace.Span("mutation.write")) { }
             using (TaskSwitchTrace.Span("mutation.publish")) { }
             return ValueTask.FromResult<object?>(Results.Ok());
@@ -102,6 +104,8 @@ public sealed class TaskOperationTimingFilterTests
 
         var timing = Assert.Single(logger.Lines, line => line.Contains("task-operation-timing", StringComparison.Ordinal));
         Assert.Contains("mutation.lookup", timing, StringComparison.Ordinal);
+        Assert.Contains("mutation.lock", timing, StringComparison.Ordinal);
+        Assert.Contains("mutation.read-current", timing, StringComparison.Ordinal);
         Assert.Contains("mutation.write", timing, StringComparison.Ordinal);
         Assert.Contains("mutation.publish", timing, StringComparison.Ordinal);
         Assert.Contains("\"gitSpawns\":0", timing, StringComparison.Ordinal);
