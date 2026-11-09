@@ -2,42 +2,82 @@ using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Cli;
 
-/// <summary>
-/// Write seam for the selection ledger. The selection service records every
-/// result that is not a plain primary launch here; the daily JSONL store with
-/// retention and the read API arrive with MS-2 behind the same seam.
-/// </summary>
 public interface IModelSelectionLedger
 {
     void Record(SelectionLedgerEntry entry);
+    SelectionLedgerEntry? GetActive(SelectionRequest request) => null;
+    IReadOnlyList<SelectionLedgerEntry> Active() => [];
 }
 
-/// <summary>
-/// Interim ledger: one structured <c>model_selection_event</c> log line per
-/// event. Claim and pickup loops ask again every tick, so an event identical
-/// to the previous one for the same card and consumer is written once.
-/// </summary>
-public sealed class LoggingModelSelectionLedger(ILogger<LoggingModelSelectionLedger> logger) : IModelSelectionLedger
+/// <summary>Adapts planner receipts to the workspace selection ledger and its active projection.</summary>
+public sealed class LoggingModelSelectionLedger : IModelSelectionLedger
 {
-    private const int MaxTrackedScopes = 2048;
-    private readonly Dictionary<string, string> _lastByScope = new(StringComparer.Ordinal);
-    private readonly object _lock = new();
+    private readonly ILogger<LoggingModelSelectionLedger> _logger;
+    private readonly ModelSelectionLedger _ledger;
+
+    public LoggingModelSelectionLedger(ILogger<LoggingModelSelectionLedger> logger,
+        IConfiguration config, TimeProvider? timeProvider = null, ModelSelectionLedger? ledger = null)
+    {
+        _logger = logger;
+        _ledger = ledger ?? new ModelSelectionLedger(config, timeProvider);
+    }
+
+    public SelectionLedgerEntry? GetActive(SelectionRequest request) => Active().FirstOrDefault(entry =>
+        entry.Consumer == request.Consumer && entry.Project == request.Project
+        && entry.TaskKey == request.TaskKey && entry.StepId == request.StepId
+        && entry.Host == request.Host?.HostId);
+
+    public IReadOnlyList<SelectionLedgerEntry> Active() => _ledger.Active()
+        .Where(entry => entry.Kind is SelectionLedgerKinds.Switched or "operator-switch"
+            && entry.From is not null && entry.To is not null)
+        .Select(FromEvent).ToArray();
 
     public void Record(SelectionLedgerEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
-        var scope = $"{entry.Consumer}|{entry.Project}|{entry.TaskKey}|{entry.StepId}";
-        var signature = $"{entry.Kind}|{entry.Rule}|{entry.From}|{entry.To}|{entry.Reason}";
-        lock (_lock)
+        var quota = entry.Quota;
+        var projection = quota?.Projection;
+        var receipt = new ModelSelectionEvent
         {
-            if (_lastByScope.TryGetValue(scope, out var last) && last == signature) return;
-            if (_lastByScope.Count >= MaxTrackedScopes) _lastByScope.Clear();
-            _lastByScope[scope] = signature;
-        }
-        logger.LogInformation(
-            "model_selection_event id={Id} kind={Kind} consumer={Consumer} path={Path} project={Project} task={TaskKey} host={Host} from={FromCli}/{FromModel}/{FromThinking} to={ToCli}/{ToModel}/{ToThinking} rule={Rule} reason={Reason}",
-            entry.Id, entry.Kind, entry.Consumer, entry.ExecutionPath, entry.Project ?? "-", entry.TaskKey ?? "-",
-            entry.Host ?? "-", entry.From.CliType, entry.From.Model ?? "<default>", entry.From.ThinkingLevel ?? "-",
-            entry.To.CliType, entry.To.Model ?? "<default>", entry.To.ThinkingLevel ?? "-", entry.Rule, entry.Reason);
+            Id = entry.Id,
+            At = new DateTimeOffset(DateTime.SpecifyKind(entry.At, DateTimeKind.Utc)),
+            Kind = entry.Kind,
+            Consumer = entry.Consumer,
+            Host = entry.Host,
+            Project = entry.Project,
+            PipelineType = entry.PipelineType,
+            StepId = entry.StepId,
+            TaskKey = entry.TaskKey,
+            AttemptId = entry.AttemptId,
+            Round = entry.Round,
+            From = new ModelSelectionRoute(entry.From.CliType, entry.From.Model, entry.From.ThinkingLevel),
+            To = entry.Kind == SelectionLedgerKinds.Waiting ? null
+                : new ModelSelectionRoute(entry.To.CliType, entry.To.Model, entry.To.ThinkingLevel),
+            Rule = entry.Rule,
+            Reason = entry.Reason,
+            Quota = quota is null ? null : new ModelSelectionQuota(entry.From.CliType,
+                quota.Window, quota.UsedPct, projection?.CapPct, projection?.ProjectedUsedPct,
+                projection?.ResetAt is { } reset ? new DateTimeOffset(DateTime.SpecifyKind(reset, DateTimeKind.Utc)) : null, null),
+            Equivalence = entry.Equivalence is null ? null : new ModelSelectionEquivalence(
+                entry.Equivalence.CapabilityClass, entry.Equivalence.CatalogueVersion, entry.Equivalence.Source),
+            ReturnToPrimaryAt = entry.ReturnToPrimaryAt is { } returnAt
+                ? new DateTimeOffset(DateTime.SpecifyKind(returnAt, DateTimeKind.Utc)) : null,
+            ClosesId = entry.ClosesId,
+            PricePerMTok = entry.FromPricePerMTok is null && entry.ToPricePerMTok is null
+                ? null : new ModelSelectionPrice((double?)entry.FromPricePerMTok, (double?)entry.ToPricePerMTok),
+        };
+        if (_ledger.Append(receipt))
+            _logger.LogInformation("model_selection_event id={Id} kind={Kind} consumer={Consumer} rule={Rule}",
+                receipt.Id, receipt.Kind, receipt.Consumer, receipt.Rule);
     }
+
+    private static SelectionLedgerEntry FromEvent(ModelSelectionEvent entry) => new(
+        entry.Id, entry.At.UtcDateTime, entry.Kind, entry.Consumer, entry.Host, entry.Project,
+        entry.PipelineType, entry.StepId, entry.TaskKey, entry.AttemptId, entry.Round, "ledger",
+        new SelectionRoute(entry.From!.CliType ?? "", entry.From.Model, entry.From.ThinkingLevel),
+        new SelectionRoute(entry.To!.CliType ?? "", entry.To.Model, entry.To.ThinkingLevel),
+        entry.Rule, entry.Reason, null,
+        entry.Equivalence is null ? null : new SelectionEquivalence(entry.Equivalence.CapabilityClass,
+            entry.Equivalence.CatalogueVersion, null, entry.Equivalence.Source),
+        null, entry.ReturnToPrimaryAt?.UtcDateTime);
 }

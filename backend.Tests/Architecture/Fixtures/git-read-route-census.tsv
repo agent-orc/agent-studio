@@ -23,10 +23,12 @@
 /api/auth/api-tokens	free	-	-	-
 /api/auth/audit/operator-activity	free	-	-	-
 /api/auth/iam/	free	-	-	-
+/api/auth/iam/break-glass/windows	free	-	-	-
 /api/auth/iam/check	free	-	-	-
 /api/auth/iam/operator-agents/	free	-	-	-
 /api/auth/iam/operator-approvals/	free	-	-	-
 /api/auth/iam/operator-catalogue	free	-	-	-
+/api/auth/iam/operator-kill-switch/	free	-	-	-
 /api/auth/iam/standing-grants/	free	-	-	-
 /api/auth/runner	free	-	-	-
 /api/auth/runner-enrollments	free	-	-	-
@@ -91,7 +93,11 @@
 /api/filesystem-layer/snapshot	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
 /api/first-run/git-setups/{id}	free	-	-	-
 /api/first-run/projects/{projectId}/repository	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
+/api/model-selection/active	free	-	-	-
 /api/model-selection/effective	free	-	-	-
+/api/model-selection/active	free	-	-	-
+/api/model-selection/policy	free	-	-	-
+/api/model-selection/events	free	-	-	-
 /api/gate-artifacts/{runId}	free	-	-	-
 /api/gate-artifacts/{runId}/{name}	free	-	-	-
 /api/gate-economics	free	-	-	-
@@ -107,12 +113,17 @@
 /api/git/project-commit/diff	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
 /api/git/project-commit/files	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
 /api/git/summary	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
+/api/hosts/{id}/operations/{attemptId}	free	-	-	-
 /api/integrations/quality-studio/connection	free	-	-	-
 /api/integrations/quality-studio/open	free	-	-	-
 /api/integrations/quality-studio/status	free	-	-	-
 /api/operator/batch-triage	free	-	-	-
+/api/operator/capacity	free	-	-	-
 /api/operator/decisions	free	-	-	-
 /api/operator/decisions/stream	free	-	-	-
+/api/operator/log	free	-	-	-
+/api/operator/preflight/deploy	free	-	-	-
+/api/operator/preflight/restart	free	-	-	-
 /api/operator/watcher/lease/	free	-	-	-
 /api/orchestration/decision-receipts/	free	-	-	-
 /api/orchestration/decision-receipts/spend	free	-	-	-
@@ -156,6 +167,7 @@
 /api/projects/{projectName}/areas/{areaId}/glossary	free	-	-	-
 /api/projects/{projectName}/autonomy	free	-	-	-
 /api/projects/{projectName}/batch-gate	free	-	-	-
+/api/projects/{projectName}/batch-gate/failed-tests	free	-	-	-
 /api/projects/{projectName}/batch-gate/ledger	free	-	-	-
 /api/projects/{projectName}/batch-gate/queue-stalls	free	-	-	-
 /api/projects/{projectName}/batch-gate/report	free	-	-	-
@@ -218,6 +230,7 @@
 /api/projects/{projectName}/quality-studio	free	-	-	-
 /api/projects/{projectName}/quota-wait-policy	free	-	-	-
 /api/projects/{projectName}/regression-radar	reachable	gap	Pipeline	Pipeline reads from the Git fact store
+/api/projects/{projectName}/review-concerns/daily	free	-	-	-
 /api/projects/{projectName}/review-decisions-pending	free	-	-	-
 /api/projects/{projectName}/review-packages	free	-	-	-
 /api/projects/{projectName}/review-packages/formation	free	-	-	-
@@ -325,6 +338,7 @@
 /api/supervisor/{project}/recent-events	free	-	-	-
 /api/system/about	free	-	-	-
 /api/system/execution-infrastructure	free	-	-	-
+/api/system/gate-capacity	free	-	-	-
 /api/system/gate-slots	free	-	-	-
 /api/system/readiness	free	-	-	-
 /api/system/version	free	-	-	-
@@ -391,7 +405,6 @@
 /api/tasks/{jobId}/steering-feedback	free	-	-	-
 /api/tasks/{jobId}/step-prompts	free	-	-	-
 /api/tasks/{jobId}/stop/{commandId}	free	-	-	-
-/api/tasks/{jobId}/thumbnail	free	-	-	-
 /api/tasks/{jobId}/timeline	free	-	-	-
 /api/tasks/{primaryId}/merge/candidates	free	-	-	-
 /api/token-pricing/unpriced-models	free	-	-	-

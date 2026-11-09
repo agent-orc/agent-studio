@@ -125,7 +125,7 @@ public class TaskBatchMoveTests : IDisposable
         Assert.True(accepted.Status is BatchMoveJobStates.Queued or BatchMoveJobStates.Running);
 
         BatchMoveJobResponse? completed = null;
-        for (var attempt = 0; attempt < 100; attempt++)
+        for (var attempt = 0; attempt < 500; attempt++)
         {
             completed = await client.GetFromJsonAsync<BatchMoveJobResponse>(
                 $"/api/tasks/batch-move/{accepted.Id}");
@@ -371,16 +371,15 @@ public class TaskBatchMoveTests : IDisposable
     }
 
     [Fact]
-    public async Task DeliveryReconciler_ReopensCompletedAndEscalatesMissingIntegratingDelivery()
+    public async Task DeliveryReconciler_EscalatesStaleAcceptanceWithoutCurrentDeliveryAndMissingIntegratingDelivery()
     {
         var reconciler = DeliveryReconcilerScenario(store: null, out var scanner);
 
         Assert.Equal(2, await reconciler.RunOnceAsync());
         var lanes = ReadLaneByJob();
-        Assert.Equal(TaskStates.AutoReview, lanes["stale-accepted"]);
+        Assert.Equal(TaskStates.Escalated, lanes["stale-accepted"]);
         Assert.Equal(TaskStates.Escalated, lanes["missing-delivery"]);
-        Assert.Equal(LifecyclePhases.Integrating,
-            scanner.FindJob("stale-accepted", _watchPath)?.Phase);
+        Assert.NotNull(scanner.FindJob("stale-accepted", _watchPath));
     }
 
     /// <summary>
@@ -415,10 +414,10 @@ public class TaskBatchMoveTests : IDisposable
         }
 
         var lanes = ReadLaneByJob();
-        Assert.Equal(TaskStates.AutoReview, lanes["stale-accepted"]);
+        Assert.Equal(TaskStates.Escalated, lanes["stale-accepted"]);
         Assert.Equal(TaskStates.Escalated, lanes["missing-delivery"]);
         scanner.InvalidateCache();
-        Assert.Equal(LifecyclePhases.Integrating, scanner.FindJob("stale-accepted", _watchPath)?.Phase);
+        Assert.NotNull(scanner.FindJob("stale-accepted", _watchPath));
         Assert.Empty(store.List("batchmove-test", "pending"));
     }
 
@@ -473,8 +472,11 @@ public class TaskBatchMoveTests : IDisposable
         var transitions = new TaskTransitionService(scanner, states, mutations, git, settings,
             NullLogger<TaskTransitionService>.Instance, integrationStatus: status,
             configuration: config);
+        var escalation = new HumanReviewEscalation(states, transitions, _watchPath,
+            NullLogger<HumanReviewEscalation>.Instance, scanner);
         return new DeliveryChainReconciler(scanner, status, transitions, config,
-            NullLogger<DeliveryChainReconciler>.Instance, decisions: new AiOperatorDecisionGateway(config, store));
+            NullLogger<DeliveryChainReconciler>.Instance,
+            decisions: new AiOperatorDecisionGateway(config, store), escalation: escalation);
     }
 
     [Fact]

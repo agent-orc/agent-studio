@@ -49,7 +49,7 @@ public static class ModelSelectionPlanner
             ? request.Pins with { CliType = sessionCli, Model = session.SessionModel ?? request.Pins.Model }
             : null;
         var pins = continuation ?? request.Pins;
-        var result = ApplyFloor(request, facts, PlanQuota(request, pins, facts));
+        var result = ApplyCostGuard(facts, ApplyFloor(request, facts, PlanQuota(request, pins, facts)));
         return continuation is not null || pins.Mode == SelectionPinMode.Hard
             ? HoldPinnedRoute(result, continuation is not null ? "same-session continuation" : "hard pin")
             : result;
@@ -125,7 +125,8 @@ public static class ModelSelectionPlanner
             : evaluateQuota(fallbackCli);
         if (fallbackCap.Blocked)
             return new(cli, primaryModel, primaryThinking, false,
-                $"primary {cap.DescribeReason()}; fallback {fallbackCap.DescribeReason()}", cap);
+                $"primary {cap.DescribeReason()}; fallback {fallbackCap.DescribeReason()}", cap)
+                { TargetQuotaBlocked = true };
 
         var isOverride = profile is not null && !string.IsNullOrWhiteSpace(profile.FallbackModel)
             && (!preferFallback || !string.Equals(profile.FallbackCliType ?? cli, cli,
@@ -385,10 +386,80 @@ public static class ModelSelectionPlanner
             }
         }
 
-        var preferFallback = preference?.Active == true;
-        var route = facts.Routing is null ? null : ResolveRoute(cli, requestedModel, requestedThinking, facts.Routing,
-            Admission, preferFallback, facts.HostAcceptsFallback ?? facts.HostAccepts,
-            request.Required.SameClassOnly, facts.FallbackProviderAllowed);
+        var holdSwitch = ShouldHoldSwitch(facts, primarySnapshot, cli);
+        var preferFallback = preference?.Active == true || holdSwitch;
+        var route = facts.Routing is null ? null : ResolveConfiguredRoute();
+        if (holdSwitch && preference?.Active != true && route?.IsFallback == true)
+            route = route with
+            {
+                Reason = "holding the quota fallback until the primary return rule clears",
+                FallbackReason = "quota-cap",
+                FallbackSource = facts.ActiveSwitch?.Equivalence?.Source ?? route.FallbackSource,
+                CatalogueVersion = facts.ActiveSwitch?.Equivalence?.CatalogueVersion ?? route.CatalogueVersion,
+                CapabilityClass = facts.ActiveSwitch?.Equivalence?.CapabilityClass ?? route.CapabilityClass,
+            };
+
+        CliRouteDecision ResolveConfiguredRoute()
+        {
+            var routing = facts.Routing!;
+            var accepted = facts.HostAcceptsFallback ?? facts.HostAccepts;
+            var configured = holdSwitch && facts.ActiveSwitch is { } active
+                ? (IReadOnlyList<SelectionRoute>)[active.To]
+                : facts.ConfiguredFallbacks;
+            if (configured is not { Count: > 0 })
+                return ResolveRoute(cli, requestedModel, requestedThinking, routing, Admission,
+                    preferFallback, accepted, request.Required.SameClassOnly, facts.FallbackProviderAllowed);
+
+            // Keep the list in planner facts so every host applies the same
+            // admission checks and the ledger records the route actually used.
+            CliRouteDecision? rejected = null;
+            for (var index = 0; index < configured.Count; index++)
+            {
+                var candidate = configured[index];
+                if (string.IsNullOrWhiteSpace(candidate.Model) || string.IsNullOrWhiteSpace(candidate.CliType))
+                    continue;
+                if (Admission(candidate.CliType).Blocked)
+                {
+                    rejected = new CliRouteDecision(cli, requestedModel, requestedThinking, false,
+                        $"configured fallback {index + 1} provider quota is exhausted", Admission(cli))
+                        { TargetQuotaBlocked = true };
+                    continue;
+                }
+                var candidateRouting = routing with { Profile = candidateCli =>
+                {
+                    var previous = routing.Profile(candidateCli);
+                    return (previous ?? new CliModelRouteProfile { CliType = candidateCli }) with
+                    {
+                        FallbackCliType = candidate.CliType,
+                        FallbackModel = candidate.Model,
+                        FallbackThinkingLevel = candidate.ThinkingLevel,
+                    };
+                } };
+                var evaluated = ResolveRoute(cli, requestedModel, requestedThinking, candidateRouting,
+                    Admission, preferFallback, accepted, request.Required.SameClassOnly,
+                    facts.FallbackProviderAllowed);
+                if (!evaluated.IsFallback)
+                {
+                    rejected = evaluated;
+                    continue;
+                }
+                var floor = request.CorrectnessFloor ?? facts.CorrectnessFloor?.Invoke();
+                if (floor is not null && !RouteMeetsFloor(facts.Tiers,
+                    evaluated.Model ?? string.Empty, evaluated.ThinkingLevel, floor, facts.NormalizeModelId))
+                {
+                    rejected = evaluated with { IsFallback = false,
+                        Reason = $"configured fallback {index + 1} does not clear the correctness floor" };
+                    continue;
+                }
+                return evaluated with
+                {
+                    Reason = $"{evaluated.Reason}; selected configured fallback {index + 1} of {configured.Count}",
+                    FallbackSource = "policy",
+                };
+            }
+            return rejected ?? new CliRouteDecision(cli, requestedModel, requestedThinking, false,
+                "no configured fallback route is usable", Admission(cli));
+        }
 
         if (preferFallback && route?.IsFallback != true)
             return Decided(SelectionOutcome.Wait,
@@ -417,9 +488,9 @@ public static class ModelSelectionPlanner
                 Outcome = SelectionOutcome.Fallback,
                 Route = new SelectionRoute(route.CliType, route.Model, route.ThinkingLevel),
                 Primary = primary,
-                Rule = fallbackReason == "operator-preference" ? SelectionRules.OperatorSwitch : SelectionRules.QuotaCap,
+                Rule = preference?.Active == true ? SelectionRules.OperatorSwitch : SelectionRules.QuotaCap,
                 Reason = AppendReset(BuildSwitchReason(cli, route), primaryReset),
-                ReturnToPrimaryAt = primaryReset?.ResetAt,
+                ReturnToPrimaryAt = facts.ActiveSwitch?.ReturnToPrimaryAt ?? primaryReset?.ResetAt,
                 Quota = new SelectionQuota(usedWindow, usedPct, Worst(snapshotFor(cli)), projectionWarning),
                 Equivalence = new SelectionEquivalence(
                     route.CapabilityClass,
@@ -478,6 +549,10 @@ public static class ModelSelectionPlanner
         {
             var proj = Worst(snapshotFor(cli));
             var reset = SelectionQuotaMath.EarliestReset(snapshotFor(cli), nowUtc, caps, blockedOnly: false);
+            if (route?.TargetQuotaBlocked == true)
+                return Decided(SelectionOutcome.Wait, model, thinking, SelectionRules.QuotaCap,
+                    AppendReset($"waiting: fallback target would cross its quota cap ({route.Reason})", reset),
+                    reset?.ResetAt, proj);
             if (modelAccepted is not null)
                 return Decided(SelectionOutcome.Wait, model, thinking, SelectionRules.QuotaCap,
                     AppendReset($"waiting: no accepted fallback on the claiming host ({route?.Reason ?? admissionPrimary.DescribeReason()})", reset),
@@ -514,6 +589,43 @@ public static class ModelSelectionPlanner
             RetryAt = result.ReturnToPrimaryAt,
             ReturnToPrimaryAt = null,
         };
+    }
+
+    private static SelectionResult ApplyCostGuard(SelectionFacts facts, SelectionResult result)
+    {
+        if (result.Outcome != SelectionOutcome.Fallback
+            || result.Rule == SelectionRules.OperatorSwitch
+            || result.Equivalence?.Source == "policy") return result;
+        var primary = facts.PricePerMTok(result.Primary.Model);
+        var target = facts.PricePerMTok(result.Route.Model);
+        if (primary is not > 0 || target is null
+            || target <= primary * (decimal)facts.CostGuardFactor) return result;
+        return result with
+        {
+            Outcome = SelectionOutcome.Wait,
+            Route = result.Primary,
+            Rule = SelectionRules.CostGuard,
+            Reason = $"waiting: fallback price {target:0.##} per MTok exceeds {facts.CostGuardFactor:0.##} times the primary price {primary:0.##}",
+            RetryAt = result.ReturnToPrimaryAt,
+            ReturnToPrimaryAt = null,
+            Equivalence = null,
+            Fallback = null,
+        };
+    }
+
+    private static bool ShouldHoldSwitch(SelectionFacts facts, QuotaSnapshot? snapshot, string cli)
+    {
+        var active = facts.ActiveSwitch;
+        if (active?.Rule != SelectionRules.QuotaCap || active.From.CliType != cli) return false;
+        if (snapshot is null || snapshot.Suspicious || !string.IsNullOrWhiteSpace(snapshot.Error)) return true;
+        if (SelectionQuotaMath.EvaluateCap(snapshot, facts.Caps).Blocked) return true;
+        if (SelectionQuotaMath.EvaluateProjectedBreach(snapshot, facts.Caps, facts.NowUtc)?.Blocked == true) return true;
+        if (active.ReturnToPrimaryAt is { } reset && facts.NowUtc >= reset)
+            return snapshot.FetchedAt < reset;
+        if (facts.NowUtc - active.At < TimeSpan.FromMinutes(facts.MinDwellMinutes)) return true;
+        return !snapshot.Windows.Where(w => w.UsedPct is not null).Any()
+            || snapshot.Windows.Where(w => w.UsedPct is not null)
+                .Any(w => w.UsedPct!.Value > facts.Caps.GetCap(cli, w.Label) - facts.ReturnBelowCapPoints);
     }
 
     /// <summary>Rules 1 and 2: a hard pin or a same-session resume never switches; it waits.</summary>

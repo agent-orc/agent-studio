@@ -1005,6 +1005,42 @@ public sealed class GitStateIndexServiceTests : IDisposable
         Assert.NotEqual(present, GitStateIndexService.CaptureTaskInputSignature([task], cache));
     }
 
+    [Fact]
+    public void SidecarGenerations_ChangeOnlyTheAffectedCardInput()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var tasks = Enumerable.Range(0, 2).Select(i =>
+        {
+            var folder = Path.Combine(jobsPath, $"task-{i}");
+            Directory.CreateDirectory(folder);
+            return new TaskInfo
+            {
+                Id = $"task-{i}", TaskKey = $"task-{i}", ProjectName = "proj",
+                WatchPath = jobsPath, FolderPath = folder,
+            };
+        }).ToArray();
+        var cache = new TaskListGitProjectionCache();
+        var first = GitStateIndexService.CaptureTaskInputSignatures(tasks, cache);
+        Assert.Equal(first, GitStateIndexService.CaptureTaskInputSignatures(tasks, cache));
+
+        ReviewRoundBudgetStore.Record(tasks[0].FolderPath,
+            AgentStudio.OrchestrationDecisions.ReviewRoundBudgetLedger.Empty,
+            new AgentStudio.OrchestrationDecisions.DeliveredReviewRound("round-1", [], []));
+        var ledgerChange = GitStateIndexService.CaptureTaskInputSignatures(tasks, cache);
+        Assert.NotEqual(first.Tasks, ledgerChange.Tasks);
+        Assert.NotEqual(first.Durable, ledgerChange.Durable);
+
+        IntegrationVerificationStore.Write(tasks[1].FolderPath, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Unverified,
+            Reason = "pending gate",
+        });
+        var verificationChange = GitStateIndexService.CaptureTaskInputSignatures(tasks, cache);
+        Assert.NotEqual(ledgerChange.Tasks, verificationChange.Tasks);
+        Assert.NotEqual(ledgerChange.Durable, verificationChange.Durable);
+        Assert.Equal(verificationChange, GitStateIndexService.CaptureTaskInputSignatures(tasks, cache));
+    }
+
     private sealed class RecordingLogger : ILogger
     {
         private readonly List<(LogLevel Level, string Message, Exception? Exception)> _entries = [];

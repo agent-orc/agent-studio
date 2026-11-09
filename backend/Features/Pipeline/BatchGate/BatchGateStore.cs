@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.Diagnostics;
 using AgentStudio.TaskServer.Contracts.BatchGate;
 using AgentStudio.TaskServer.Contracts;
 
@@ -10,7 +11,10 @@ public sealed record BatchGateState(
     string BatchId, string MembershipDigest, BatchPhase Phase,
     string? CandidateSha, long CoordinatorFence, DateTimeOffset RecordedAtUtc,
     string? Reason = null, string? BatchRunId = null,
-    long? RefMutationFence = null);
+    long? RefMutationFence = null,
+    string? BaseMoveToSha = null, string? BaseMoveOutcome = null,
+    string? SuccessorBatchId = null,
+    IReadOnlyDictionary<string, string>? BaseMoveMemberReasons = null);
 
 public sealed record BatchGateRunRecord(
     string BatchRunId, string BatchId, string MembershipDigest, string BaseSha,
@@ -71,7 +75,7 @@ public sealed record BatchGateExecutionFact(
     DateTimeOffset StartedAtUtc, DateTimeOffset CompletedAtUtc,
     long QueueWaitMs, double OverloadMinutes, string EvidencePath,
     long? DurationMs = null, IReadOnlyList<string>? MemberKeys = null,
-    string? NarrowCheck = null);
+    string? NarrowCheck = null, string? EvidenceGateRunId = null);
 
 /// <summary>
 /// Review-side verification of one batch-deferred review: the builds and
@@ -118,6 +122,16 @@ public sealed record BatchGateIsolationFinding(
     string ResultSha, string BaseSha, string Status, string EvidencePath,
     DateTimeOffset RecordedAtUtc);
 
+/// <summary>Immutable first candidate outcome for an original batch manifest.</summary>
+public sealed record BatchFirstCandidateFact(
+    string BatchId, string Project, DateTimeOffset AtUtc, int Size,
+    double MaxRisk, IReadOnlyList<string> Areas, string OverlapGroup,
+    bool Red, string Classification);
+
+/// <summary>Cost of suites used to isolate a red candidate; one fact per parent.</summary>
+public sealed record BatchIsolationCostFact(
+    string BatchId, int SuiteRuns, double HostMinutes, DateTimeOffset AtUtc);
+
 /// <summary>
 /// Durable batch authority. A closed manifest is written once before assembly;
 /// all later facts are append-only files carrying its digest. CreateNew and
@@ -130,6 +144,55 @@ public sealed partial class BatchGateStore
         WriteIndented = true,
     };
     private readonly string _root;
+    private readonly object _failureRankingLock = new();
+    private sealed class FailureRankingProjection
+    {
+        public List<BatchTestFailure> Failures { get; } = [];
+        public List<BatchGateExecutionFact> UnreadableFacts { get; } = [];
+    }
+    private readonly Dictionary<string, FailureRankingProjection> _failureRanking = new(StringComparer.Ordinal);
+    private readonly Func<BatchGateExecutionFact, IReadOnlyList<BatchTestFailure>> _readFailureEvidence;
+
+    public void RecordFirstCandidate(BatchFirstCandidateFact fact)
+    {
+        var manifest = ReadManifest(fact.BatchId);
+        if (manifest.ParentBatchId is not null || manifest.Diagnostic
+            || manifest.Scope.Project != fact.Project || fact.Size != manifest.Members.Count
+            || fact.Size < 1 || fact.MaxRisk is < 0 or > 1)
+            throw new InvalidDataException("First candidate fact does not match its batch.");
+        var folder = Path.Combine(_root, "first-candidates");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, SafeName(fact.BatchId) + ".json");
+        if (!File.Exists(path)) WriteOnce(path, fact);
+    }
+
+    public void RecordIsolationCost(BatchIsolationCostFact fact)
+    {
+        if (fact.SuiteRuns < 0 || fact.HostMinutes < 0)
+            throw new ArgumentOutOfRangeException(nameof(fact));
+        var folder = Path.Combine(_root, "isolation-costs");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, SafeName(fact.BatchId) + ".json");
+        if (!File.Exists(path)) WriteOnce(path, fact);
+    }
+
+    public IReadOnlyList<BatchPlanObservation> ListPlanObservations(string project)
+    {
+        var folder = Path.Combine(_root, "first-candidates");
+        if (!Directory.Exists(folder)) return [];
+        return Directory.EnumerateFiles(folder, "*.json")
+            .Select(Read<BatchFirstCandidateFact>)
+            .Where(fact => string.Equals(fact.Project, project, StringComparison.Ordinal))
+            .Select(fact =>
+            {
+                var path = Path.Combine(_root, "isolation-costs", SafeName(fact.BatchId) + ".json");
+                var cost = File.Exists(path) ? Read<BatchIsolationCostFact>(path) : null;
+                return new BatchPlanObservation(fact.BatchId, fact.AtUtc, fact.Size,
+                    fact.MaxRisk, fact.Areas, fact.OverlapGroup, fact.Red,
+                    cost?.SuiteRuns ?? 0, cost?.HostMinutes ?? 0,
+                    fact.Classification);
+            }).OrderBy(fact => fact.AtUtc).ToArray();
+    }
 
     public void RecordIsolationFinding(BatchGateIsolationFinding finding)
     {
@@ -154,6 +217,13 @@ public sealed partial class BatchGateStore
     public BatchGateStore(string? root = null)
     {
         _root = root ?? LocalStateRoot.Combine("agentstudio", "batch-gates");
+        _readFailureEvidence = BatchGateFailureRanking.ReadEvidence;
+    }
+
+    internal BatchGateStore(string root,
+        Func<BatchGateExecutionFact, IReadOnlyList<BatchTestFailure>> readFailureEvidence) : this(root)
+    {
+        _readFailureEvidence = readFailureEvidence;
     }
 
     public string BatchDirectory(string batchId)
@@ -385,9 +455,69 @@ public sealed partial class BatchGateStore
 
     public void RecordExecution(BatchGateExecutionFact fact)
     {
-        var folder = Path.Combine(_root, "executions");
-        Directory.CreateDirectory(folder);
-        WriteOnce(Path.Combine(folder, Guid.NewGuid().ToString("N") + ".json"), fact);
+        lock (_failureRankingLock)
+        {
+            // Initialization scans persisted executions under this lock. Keep the
+            // write and projection update together so that scan cannot include
+            // this fact before the writer adds its evidence to the projection.
+            var folder = Path.Combine(_root, "executions");
+            Directory.CreateDirectory(folder);
+            var path = Path.Combine(folder, Guid.NewGuid().ToString("N") + ".json");
+            WriteOnce(path, fact);
+            if (_failureRanking.TryGetValue(fact.Project, out var projection))
+                AppendFailureEvidence(projection, fact);
+        }
+    }
+
+    public BatchTestFailureReport FailedTestRanking(string project, DateTimeOffset now, int windowDays = 7)
+    {
+        if (windowDays is < 1 or > 90) throw new ArgumentOutOfRangeException(nameof(windowDays));
+        lock (_failureRankingLock)
+        {
+            if (!_failureRanking.TryGetValue(project, out var projection))
+            {
+                projection = new FailureRankingProjection();
+                foreach (var fact in ListExecutions(project).Where(fact => fact.BatchId is not null))
+                    AppendFailureEvidence(projection, fact);
+                _failureRanking[project] = projection;
+            }
+            else if (projection.UnreadableFacts.Count > 0)
+            {
+                var retry = projection.UnreadableFacts.ToArray();
+                projection.UnreadableFacts.Clear();
+                foreach (var fact in retry) AppendFailureEvidence(projection, fact);
+            }
+            projection.Failures.RemoveAll(failure => failure.AtUtc < now.AddDays(-90));
+            return new BatchTestFailureReport(project, windowDays,
+                BatchGateFailureRanking.Rank(projection.Failures, now, windowDays),
+                projection.UnreadableFacts.Count(fact => fact.CompletedAtUtc >= now.AddDays(-windowDays)
+                    && fact.CompletedAtUtc <= now));
+        }
+    }
+
+    private void AppendFailureEvidence(FailureRankingProjection projection, BatchGateExecutionFact fact)
+    {
+        try { projection.Failures.AddRange(_readFailureEvidence(WithMembers(fact))); }
+        catch (Exception exception) when (exception is not OperationCanceledException and not OutOfMemoryException)
+        {
+            projection.UnreadableFacts.Add(fact);
+            SilentCatch.Note(exception, "Batch gate failure ranking will retry unreadable evidence");
+        }
+    }
+
+    private BatchGateExecutionFact WithMembers(BatchGateExecutionFact fact)
+    {
+        if (fact.MemberKeys is { Count: > 0 } || fact.BatchId is null) return fact;
+        try
+        {
+            return fact with { MemberKeys = ReadManifest(fact.BatchId).Members
+                .Select(member => member.TaskKey).ToArray() };
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or InvalidDataException)
+        {
+            SilentCatch.Note(exception, "Batch gate failure ranking could not read a historical manifest");
+            return fact;
+        }
     }
 
     public IReadOnlyList<BatchGateExecutionFact> ListExecutions(string project)
@@ -604,6 +734,7 @@ public sealed partial class BatchGateStore
 
     public void RecordPublication(BatchGatePublication publication)
     {
+        var manifest = ReadManifest(publication.BatchId);
         var run = ReadRun(publication.BatchId, publication.BatchRunId);
         var verdict = Read<BatchGateRunVerdict>(Path.Combine(BatchDirectory(publication.BatchId),
             "runs", SafeName(publication.BatchRunId) + ".verdict.json"));
@@ -614,6 +745,10 @@ public sealed partial class BatchGateStore
             || publication.CoordinatorFence < run.CoordinatorFence
             || publication.RefMutationFence <= 0 || verdict.Outcome != "pass")
             throw new InvalidDataException("Untested or unverified batch publication.");
+        if (manifest.StackedOnBatchId is { } predecessorId
+            && !BatchStackingPolicy.CanPublish(ReadManifest(predecessorId),
+                LatestState(predecessorId), ReadPublication(predecessorId), manifest))
+            throw new InvalidDataException("Stacked predecessor has no verified publication.");
         WriteOnce(Path.Combine(BatchDirectory(publication.BatchId), "publication.json"), publication);
     }
 

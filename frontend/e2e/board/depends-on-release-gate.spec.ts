@@ -55,6 +55,8 @@ const COMPLETION_WAIT = task('completion-wait', 'APP-2', 'Ordinary completion ga
     resolved: true,
     fulfilled: false,
     releaseGate: false,
+    requiresCompletion: true,
+    fulfillmentRule: 'completion',
     targetReleased: false,
     waitingForRelease: false,
     targetJobId: 'lib-2',
@@ -64,7 +66,19 @@ const COMPLETION_WAIT = task('completion-wait', 'APP-2', 'Ordinary completion ga
   }],
 });
 
-const TASKS = [RELEASE_WAIT, COMPLETION_WAIT];
+const DELIVERY_WAIT = task('delivery-wait', 'APP-3', 'Current delivery still pending', {
+  blocked: true,
+  cycleDetected: false,
+  items: [{ key: 'LIB-3', resolved: true, fulfilled: false,
+    fulfillmentRule: 'delivery-integration', targetState: '5-human-review' }],
+});
+const INTEGRATED = task('integrated', 'APP-4', 'Current delivery integrated', {
+  blocked: false,
+  cycleDetected: false,
+  items: [{ key: 'LIB-4', resolved: true, fulfilled: true,
+    fulfillmentRule: 'integrated-delivery', targetState: '5-human-review' }],
+});
+const TASKS = [RELEASE_WAIT, COMPLETION_WAIT, DELIVERY_WAIT, INTEGRATED];
 
 function json(route: Route, body: unknown): Promise<void> {
   return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
@@ -116,6 +130,7 @@ async function openBoard(page: Page): Promise<void> {
   }));
 
   await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded' });
+  await page.getByText('All projects · Board', { exact: true }).click();
   await expect(page.getByTestId('studio-board')).toBeVisible({ timeout: 15_000 });
   await dismissDevErrorDialog(page);
 }
@@ -131,8 +146,11 @@ test.describe('dependsOn release gate board status', () => {
 
     await expect(releaseChip).toContainText('waits for release: LIB-1');
     await expect(completionChip).toContainText('waits for completion: LIB-2');
-    await releaseChip.hover();
-    await expect(page.getByTestId('cac-tooltip')).toContainText('completed, release pending');
+    await expect(page.getByTestId('task-card').filter({ hasText: DELIVERY_WAIT.title })
+      .getByTestId('task-card-waiting-on')).toContainText('waits for delivery integration: LIB-3');
+    const integratedChip = page.getByTestId('task-card').filter({ hasText: INTEGRATED.title })
+      .getByTestId('task-card-waiting-on');
+    await expect(integratedChip).toContainText('delivery integrated: LIB-4');
   });
 
   for (const theme of ['light', 'dark'] as const) {
@@ -142,6 +160,7 @@ test.describe('dependsOn release gate board status', () => {
       await expect(page.locator('html')).toHaveAttribute('data-studio-theme', theme);
       await expect(page.getByText('waits for release: LIB-1')).toBeVisible();
       await expect(page.getByText('waits for completion: LIB-2')).toBeVisible();
+      await expect(page.getByText('waits for delivery integration: LIB-3')).toBeVisible();
 
       if (RESULTS_DIR) {
         await page.addStyleTag({ content: 'app-offline-banner { display: none !important; }' });

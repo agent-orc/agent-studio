@@ -125,10 +125,8 @@ public sealed partial class BatchGatePilotServiceTests
         await DecideGateResultAsEngineAsync(factory, observed.Run.RunId);
         Assert.Equal(0, rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak);
 
-        // The integration coordinator has merged locally. Publishing the
-        // branch makes the gate eligible for release; the target file now
-        // isolates the lane-move failure from the publication wait.
-        Git(_repo, "push", "-q", "origin", $"{member.ResultSha}:refs/heads/develop");
+        // The integration coordinator has published the gated merge. The
+        // target file isolates the lane-move failure from publication.
         await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
             authority.GetRun(member.RunAttemptId)!,
             _clock, CancellationToken.None);
@@ -411,7 +409,6 @@ public sealed partial class BatchGatePilotServiceTests
                 _gate.Fallback = request => Green(request.ExpectedSha);
                 await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
                     authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
-                Git(_repo, "push", "-q", "origin", $"{member.ResultSha}:refs/heads/develop");
                 await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
                     authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
                 return [(member.Key, TaskStates.HumanReview, "batch-fallback:", release)];

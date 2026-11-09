@@ -9,6 +9,115 @@ Which token may call which route is in the
 routes are in the
 [operator-agent-level Dossier](../operator-agent-level/index.html) (AGT-3462).
 
+## studio-op
+
+The operator agent and the Owner call these routes through the official CLI
+`studio-op` (OP-8, decision OA-D1 option B) instead of hand-written scripts.
+It reads the token only from `~/.config/agent-studio/operator-token` (or
+`operator-session`), mode 600, and has no token option or variable. It
+redacts token-shaped values in every output, prints JSON with `--json`, and
+exits with stable codes. Installation, token setup, the command-to-route table
+and the exit codes are in [studio-op setup](setup/studio-op.md); the runbooks
+are in the [operator skill](../../.agents/skills/operator/SKILL.md).
+
+| Need | Command |
+|---|---|
+| Wake when a decision is needed; one watcher at a time | `studio-op watch` (watcher lease plus a local lock, decision stream with a saved cursor, exit code per event class) |
+| Batch gate state, pending pushes, eject | `studio-op triage`, `studio-op eject <card>` |
+| Continue round from the card's result ref | `studio-op continue <card> --prompt-file <file>` |
+| Lane moves and acceptance | `studio-op move <card> <lane>`, `studio-op accept <card>` (green evidence and no open decision, OA-D5) |
+| Create cards in Ready, repair titles | `studio-op create --ready`, `studio-op title` |
+| Review step models of all projects | `studio-op routing set-step ... --all` |
+| Quota and fallback | `studio-op capacity`, `studio-op routing` |
+| Check before restart or deploy, server-first plan | `studio-op preflight restart\|deploy`, `studio-op deploy plan` |
+| Write down why | `studio-op log append`, `studio-op log` |
+| Know what it may do | `studio-op auth status` |
+
+Card writes take the attention lease and send `If-Match` as described below.
+`studio-op move` refuses the accepted lanes; acceptance goes through
+`studio-op accept`, which reads the card and
+`GET /api/tasks/{id}/review-projection` first and refuses red, missing or
+disputed evidence, decision cards and open decisions with exit 7.
+
+## Capacity
+
+`GET /api/operator/capacity` (OP-5) is a read-only view for the operator agent.
+`quota[]` has one cached snapshot per CLI subscription, with `fresh`,
+`freshUntil`, and `exhausted` alongside the quota windows. `activeFallbacks[]`
+names the card, source CLI and model, target CLI and model, reason, and the
+central model selection `settingKey` and `settingHref`. `waitingCards[]` names
+the card, reset time, reason, and its effective wait policy (`enabled`,
+`thresholdMinutes`, `scope`). `modelRoutingPins[]` lists explicit project
+consumer and pipeline-step pins, including pin mode.
+
+The route accepts an operator or viewer token with `project.read`. Card
+fallbacks, waits, and pins are limited to projects it can read. A principal
+without installation-wide `workspace.operate` receives cached quota only,
+with raw CLI samples removed, exactly as on `GET /api/cli/quota`. An
+installation-wide reader gets the same background refresh behavior as that
+quota route. Reading capacity does not change routing.
+
+## Operator log and card attention
+
+`POST /api/operator/log` appends an entry with `project`, `kind` (`observed`,
+`decided`, `did`, or `handoff`), `text`, `cardKeys[]`, and `auditIds[]`. Owner
+sessions and operator credentials may append within their project scope.
+Operator sessions need a standing grant for `operator-log.append` (T1).
+`GET /api/operator/log?project=<project>&after=<cursor>` returns `entries[]`
+and the next `cursor`. The log is append-only and redacts Studio-issued
+token-shaped values before storage. A project of `*` is reserved for an Owner
+installation handoff. In the standalone profile, the Task Server stores the
+log beside its orchestrator transcripts. Project and task chats include project
+entries in the usual context budget and cite `operator-log:<project>` in their
+context receipt.
+
+`POST /api/tasks/{id}/attention` grants or renews a 10-minute attention lease
+and returns its `lease` and current `revision`. The active holder appears on
+the card header. Operator sessions need a `card.attention` standing grant (T1).
+An operator API token must hold the lease and send
+`If-Match: <revision>` on card writes. No lease returns 409
+`attention-lease-required`; an absent revision returns 428; a stale revision
+returns 412 `stale-card-revision`. Read the card's `ETag` or acquire attention
+to get the current revision. The Owner can act at any time; an Owner action
+ends an operator lease and appends a `handoff` entry to the log. An operator
+cannot replace another actor's active lease.
+Operator API tokens use the single-card move route; the batch move route
+cannot carry a separate revision for each card and refuses API tokens.
+
+## Deploy and restart preflight
+
+`GET /api/operator/preflight/restart` and `GET /api/operator/preflight/deploy`
+check every configured project before a control-plane restart or deploy. An
+installation-wide reader is required so a scoped token cannot miss a blocker
+in another project. A clear preflight returns 200 with `allowed: true`; a
+blocked one returns 409 with `allowed: false` and `blockers[]`. Each blocker
+has a stable `code`, `project`, `subject`, and `detail`:
+
+| Code | Existing fact that blocks the operation |
+|---|---|
+| `pending-push` | An integration push is still pending, regardless of its age. |
+| `flight-publishing` | A batch flight is in its publishing phase. |
+| `card-mid-commit` | A card pipeline has a running commit or merge step. |
+
+Read preflight again immediately before acting. A clear response is an
+observation, not a reservation. `POST /api/operator/deploy/plan` accepts
+`targetVersion` and `windowMinutes` (5 to 120, default 30), rechecks deploy
+preflight, and returns an ordered plan with `createdAtUtc`, `expiresAtUtc`,
+the Task Server's reported current version and protocol (or the local release
+in a single-process installation), target version, and observed host versions.
+The steps are `drain`, `task-server`, `readiness`, `engine`, `hosts` in one
+window. A plan expires at `expiresAtUtc`; no route here executes a host update.
+
+`POST /api/operator/preflight/{restart|deploy}/override` is a T2 operation.
+An operator session with installation scope first receives `approval-required`;
+the Owner approves the exact request in Studio after step-up. Repeating it with
+`X-Operator-Approval` returns `allowed: true`, the current blockers and
+`overrideApprovalId`. The approval is single use and its result is audited.
+An API token or direct human call cannot redeem it. Passing
+`overrideBlocker=true` to a read or plan route returns 403
+`override-requires-t2-request`. The override response is evidence for the
+manual runbook decision; the plan route continues to enforce preflight.
+
 ## Batch triage
 
 `GET /api/operator/batch-triage` (OP-4) answers "what is the batch gate doing,

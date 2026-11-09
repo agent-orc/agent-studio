@@ -8,6 +8,7 @@ using AgentStudio.Tasks;
 using AgentStudio.AdHoc;
 using AgentStudio.Prompts;
 using AgentStudio.Tokens;
+using AgentStudio.Cli;
 
 namespace AgentStudio.Runner;
 
@@ -492,6 +493,7 @@ public class OrchestratorChatService
     private readonly AgentMessageBusBridge? _bus;
     private readonly AdHocUsageRecorder? _chatUsage;
     private readonly LocalChatUsageTracker? _localChatUsage;
+    private readonly AgentStudio.Operator.OperatorCoordinationStore? _operatorLog;
     private readonly string? _taskRepositoryRoot;
     private readonly bool _networked;
 
@@ -525,7 +527,8 @@ public class OrchestratorChatService
         AgentMessageBusBridge? bus = null,
         AdHocUsageRecorder? chatUsage = null,
         LocalChatUsageTracker? localChatUsage = null,
-        V1ReviewExecutorRegistry? remoteHosts = null)
+        V1ReviewExecutorRegistry? remoteHosts = null,
+        AgentStudio.Operator.OperatorCoordinationStore? operatorLog = null)
     {
         _pricing = pricing;
         _chat = chat;
@@ -538,6 +541,7 @@ public class OrchestratorChatService
         _bus = bus;
         _chatUsage = chatUsage;
         _localChatUsage = localChatUsage;
+        _operatorLog = operatorLog;
         _identityStore = identityStore;
         _contextDigests = contextDigests;
         _componentRouting = componentRouting;
@@ -659,13 +663,13 @@ public class OrchestratorChatService
                 var fullPrompt = prompt;
                 if (remoteRoute != null && _remoteWork != null)
                 {
-                    var quotaPlan = _quotaAdmission?.Plan(new QuotaAdmissionRequest(
+                    var quotaPlan = _quotaAdmission?.Selection.Select(ModelSelectionCall.FromAdmission(new QuotaAdmissionRequest(
                         CliTypes.Codex,
                         requestedModel,
                         thinkingLevel,
                         projectName,
                         OccupiedSlots: 0,
-                        ExecutionPath: "remote-project-chat"));
+                        ExecutionPath: "remote-project-chat"))).Admission;
                     if (quotaPlan is not null && !quotaPlan.ShouldLaunch)
                     {
                         _quotaAdmissionRecorder?.EmitProjectAdmissionDecision(
@@ -758,12 +762,19 @@ public class OrchestratorChatService
                 }
                 else
                 {
-                    result = _networked
-                        ? new OrchestratorDecisionResult(false, "", requestedModel, null, null,
-                            "No remote runner is configured for this project. Project chat cannot run on the Studio host in the networked profile.")
-                        : await _runner.DecideCodexAsync(
-                            fullPrompt, requestedModel, thinkingLevel, workingDirectory,
-                            ct, projectName, watchPath);
+                    if (_networked)
+                    {
+                        result = new OrchestratorDecisionResult(false, "", requestedModel, null, null,
+                            "No remote runner is configured for this project. Project chat cannot run on the Studio host in the networked profile.");
+                    }
+                    else
+                    {
+                        result = await RunLocalSelectedRouteAsync(_runner, _quotaAdmission?.Selection,
+                            requestedModel, thinkingLevel, fullPrompt, workingDirectory,
+                            projectName, watchPath, ct,
+                            plan => _quotaAdmissionRecorder?.EmitProjectAdmissionDecision(
+                                watchPath, projectName, plan, "remote-project-chat"));
+                    }
                 }
             }
             catch (Exception ex)
@@ -885,6 +896,41 @@ public class OrchestratorChatService
     }
 
     /// <summary>Preserve the planner's CLI when an unreachable remote chat runs locally.</summary>
+    internal static async Task<OrchestratorDecisionResult> RunLocalSelectedRouteAsync(
+        OrchestratorRunner runner, IModelSelectionService? selection,
+        string requestedModel, string? thinkingLevel, string prompt,
+        string workingDirectory, string projectName, string watchPath,
+        CancellationToken ct, Action<QuotaAdmissionPlan>? recordDecision = null)
+    {
+        var plan = selection?.Select(ModelSelectionCall.FromAdmission(
+            new QuotaAdmissionRequest(CliTypes.Codex, requestedModel, thinkingLevel,
+                projectName, OccupiedSlots: 0, ExecutionPath: "remote-project-chat"))).Admission;
+        if (plan is { ShouldLaunch: false })
+        {
+            recordDecision?.Invoke(plan);
+            return new OrchestratorDecisionResult(false, "", requestedModel, null, null, plan.Reason)
+            {
+                CliType = CliTypes.Codex,
+                ConfiguredModel = requestedModel,
+            };
+        }
+        if (plan?.IsFallback == true)
+            recordDecision?.Invoke(plan);
+        var outcome = await RunLocalPlannedRouteAsync(runner,
+            plan?.CliType ?? CliTypes.Codex,
+            plan?.Model ?? requestedModel,
+            plan?.ThinkingLevel ?? thinkingLevel,
+            prompt, workingDirectory, projectName, watchPath, ct);
+        return outcome with
+        {
+            CliType = plan?.CliType ?? CliTypes.Codex,
+            ConfiguredModel = requestedModel,
+            QuotaFallback = plan?.IsFallback == true,
+            QuotaFallbackReason = plan?.IsFallback == true ? plan.Reason : null,
+        };
+    }
+
+    /// <summary>Run the CLI and model already admitted for chat.</summary>
     internal static Task<OrchestratorDecisionResult> RunLocalPlannedRouteAsync(
         OrchestratorRunner runner, string cliType, string model, string? thinkingLevel,
         string prompt, string workingDirectory, string projectName, string watchPath,
@@ -1026,6 +1072,28 @@ public class OrchestratorChatService
         await ResolveAutomaticContextAsync(
             automatic, projectName, watchPath, req, clientId, context, envelope, ct)
             .ConfigureAwait(false);
+        if (_operatorLog is not null && envelope.Scope.Kind != "workbench")
+        {
+            try
+            {
+                var entries = (await _operatorLog.ReadAsync(projectName, 0, ct)).TakeLast(50).ToArray();
+                if (entries.Length > 0)
+                    automatic.Add(ResolvedContextBlock.Included(
+                        $"operator-log:{projectName}", "operator-log",
+                        string.Join('\n', entries.Select(entry =>
+                            $"{entry.TimeUtc:O} {entry.Actor} {entry.Kind}: {entry.Text} "
+                            + $"cards=[{string.Join(',', entry.CardKeys)}] audits=[{string.Join(',', entry.AuditIds)}]")),
+                        entries[^1].Cursor.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        "current", isExplicit: false));
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(exception, "operator_log_context_unavailable project={Project}", projectName);
+                automatic.Add(ResolvedContextBlock.Unavailable($"operator-log:{projectName}",
+                    "operator-log", "unavailable", "The operator log could not be read."));
+            }
+        }
         ResolveExplicitContext(explicitBlocks, projectName, watchPath, envelope);
         if (req.Attachments is { Count: > 0 })
         {

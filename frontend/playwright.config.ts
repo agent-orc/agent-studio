@@ -62,7 +62,8 @@ export default defineConfig({
       },
       {
         command: `node scripts/serve-prebuilt-frontend.mjs dist/frontend/browser ${frontendPort} http://127.0.0.1:${backendPort}`,
-        url: `http://127.0.0.1:${frontendPort}/`,
+        url: `${profile === 'public-demo' ? 'https' : 'http'}://127.0.0.1:${frontendPort}/`,
+        ignoreHTTPSErrors: profile === 'public-demo',
         timeout: 15_000,
         reuseExistingServer: true,
         gracefulShutdown: { signal: 'SIGTERM' as const, timeout: 5_000 },
@@ -77,6 +78,7 @@ export default defineConfig({
     actionTimeout: 10_000,
     navigationTimeout: 15_000,
     serviceWorkers: 'block',
+    ignoreHTTPSErrors: profile === 'public-demo',
   },
   projects: [
     {
@@ -86,16 +88,21 @@ export default defineConfig({
           : profile === 'ref-drift' ? '**/system/crash-recovery-prompt.spec.ts'
           : profile === 'first-run' ? '**/settings/first-run-journey.spec.ts'
           : profile === 'networked-monolith' ? '**/settings/first-run-networked-monolith.spec.ts'
-          : profile === 'demo' ? '**/usage-cockpit/cockpit-integration-matrix.spec.ts' : '**/*.spec.ts',
+          : profile === 'operator-cli' ? '**/operator/studio-op-operator-cli.spec.ts'
+          : profile === 'demo' ? '**/usage-cockpit/cockpit-integration-matrix.spec.ts'
+          : profile === 'public-demo' ? '**/system/public-demo-shell.spec.ts' : '**/*.spec.ts',
         testIgnore: profile === 'standard'
-          ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts/
+          ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts/
           : /visual-evidence\//,
       } : { testIgnore: /visual-evidence\// }),
       use: { ...devices['Desktop Chrome'], channel: undefined },
     },
     {
       name: 'visual-evidence',
-      testMatch: profile === 'standard' ? /visual-evidence\/.*\.spec\.ts/ : /$^/,
+      testMatch: profile === 'standard' ? /visual-evidence\/.*\.spec\.ts/
+        : profile === 'demo' && process.env.PW_A11Y_PINNED_DEMO === '1'
+          ? /visual-evidence\/accessibility-pinned-demo\.spec\.ts/ : /$^/,
+      testIgnore: profile === 'standard' ? /accessibility-pinned-demo\.spec\.ts/ : undefined,
       use: { ...devices['Desktop Chrome'], channel: undefined, video: 'retain-on-failure' },
     },
   ],

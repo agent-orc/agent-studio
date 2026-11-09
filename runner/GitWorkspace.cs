@@ -34,10 +34,9 @@ public sealed class GitWorkspace
     private PushProtectionCause? _pushProtectionRecovery;
 
     private const int MaxSalvagePublishAttempts = 3;
-    private int _refusedPushRetries;
-
-    /// <summary>Fresh tokens and the wait between pushes the remote refused.</summary>
+    /// <summary>The bounded wait between transient remote push failures.</summary>
     internal RepositoryPushRecovery PushRecovery { get; init; } = RepositoryPushRecovery.Host;
+    internal Action<string>? PushRetryRecorded { get; set; }
 
     public GitWorkspace(
         RunnerOptions options,
@@ -1111,6 +1110,7 @@ public sealed class GitWorkspace
         }
 
         string? immutableResultRef = null;
+        string? immutableResultFailure = null;
         if (!quarantine && !string.IsNullOrWhiteSpace(sourceRunAttemptId))
         {
             var candidateRef = _fencingToken.HasValue
@@ -1136,6 +1136,7 @@ public sealed class GitWorkspace
                 // escalating. The already verified salvage fence remains the
                 // delivery proof and recovery source.
                 _log($"immutable-result-ref-push-failed ref={candidateRef} path={RepoPath} error={OneLine(ex.Message)}; completing without result envelope");
+                immutableResultFailure = OneLine(ex.Message);
             }
         }
         if (removeAfterSecure)
@@ -1150,7 +1151,8 @@ public sealed class GitWorkspace
                 ResultSha: head,
                 Reconciliation: reconciliation,
                 ImmutableResultRef: immutableResultRef,
-                DeliveryProof: deliveryProof)
+                DeliveryProof: deliveryProof,
+                ResultRefFailure: immutableResultFailure)
             : new WorktreeTeardownResult(
                 false,
                 null,
@@ -1158,7 +1160,8 @@ public sealed class GitWorkspace
                 null,
                 ResultSha: head,
                 ImmutableResultRef: immutableResultRef,
-                DeliveryProof: deliveryProof);
+                DeliveryProof: deliveryProof,
+                ResultRefFailure: immutableResultFailure);
     }
 
     private async Task<SalvageReconciliationResult> PublishImmutableSalvageAsync(
@@ -1302,6 +1305,10 @@ public sealed class GitWorkspace
                 _log($"worktree-salvage-reconciled kind=divergent canonicalRef=refs/heads/{_workBranch} canonicalSha={remoteHead} localSha={localHead} recoveryRef=refs/heads/{recoveryBranch} recoverySha={localHead} authoritativeBaseRef=refs/heads/{_workBranch} authoritativeBaseSha={remoteHead}");
                 return result;
             }
+            catch (RepositoryPushFailedException)
+            {
+                throw;
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 lastError = ex;
@@ -1401,32 +1408,29 @@ public sealed class GitWorkspace
     }
 
     /// <summary>
-    /// One push of this worktree. A refusal for authorization asks for fresh
-    /// repository tokens and pushes again; the retries are shared by every push
-    /// of this workspace, so the salvage retry loop cannot multiply them.
+    /// Retry a transient server failure on the same refspec while the caller
+    /// retains the worktree and its lease heartbeat remains active.
     /// </summary>
     private async Task PushAsync(string refspec, CancellationToken ct)
     {
         IReadOnlyList<string> args = ["push", "origin", refspec];
+        var retries = 0;
         while (true)
         {
             var result = await ProjectGitAsync(args, RepoPath, ct);
             if (result.Success) return;
             var failure = $"git {string.Join(' ', args)} failed ({result.ExitCode}): {result.StdErr.Trim()}";
-            if (RepositoryPushRecoveryPolicy.NextDelay($"{result.StdErr}\n{result.StdOut}", _refusedPushRetries) is not { } delay)
-                throw new InvalidOperationException(failure);
-            _refusedPushRetries++;
-            _log($"worktree-push-refused refspec={refspec} retry={_refusedPushRetries}/{RepositoryPushRecoveryPolicy.Delays.Count} " +
-                 $"delaySeconds={(int)delay.TotalSeconds} path={RepoPath} error={OneLine(result.StdErr)}; refreshing repository credentials");
+            var output = $"{result.StdErr}\n{result.StdOut}";
+            if (RepositoryPushRecoveryPolicy.NextDelay(output, retries) is not { } delay)
+                throw new RepositoryPushFailedException(RepositoryPushRecoveryPolicy.IsTransient(output)
+                    ? $"{failure}; transient push retries exhausted after {retries} retries"
+                    : failure);
+            retries++;
+            var eventLine = $"worktree-push-transient-retry refspec={refspec} retry={retries}/{RepositoryPushRecoveryPolicy.Delays.Count} " +
+                $"delaySeconds={(int)delay.TotalSeconds} path={RepoPath} error={OneLine(result.StdErr)}";
+            _log(eventLine);
+            PushRetryRecorded?.Invoke("[runner] " + eventLine);
             await PushRecovery.DelayAsync(delay, ct);
-            bool refreshed;
-            try { refreshed = await PushRecovery.RefreshAsync(ct); }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                refreshed = false;
-                _log($"worktree-push-credential-refresh-failed path={RepoPath} error={OneLine(exception.Message)}");
-            }
-            _log($"worktree-push-credentials-refreshed path={RepoPath} appTokens={refreshed.ToString().ToLowerInvariant()}");
         }
     }
 
@@ -1628,7 +1632,8 @@ public sealed record WorktreeTeardownResult(
     string? ResultSha = null,
     SalvageReconciliationResult? Reconciliation = null,
     string? ImmutableResultRef = null,
-    RemoteDeliveryProof? DeliveryProof = null)
+    RemoteDeliveryProof? DeliveryProof = null,
+    string? ResultRefFailure = null)
 {
     public static WorktreeTeardownResult NoWork { get; } = new(false, null, null, null, null);
     public static WorktreeTeardownResult NoResult { get; } = new(false, null, null, null, null);

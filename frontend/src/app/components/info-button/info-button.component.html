@@ -22,7 +22,9 @@
       } @else if (errorMessage(); as msg) {
         <p class="info-btn__error">{{ msg }}</p>
       } @else if (body(); as md) {
-        <cac-markdown [source]="md" />
+        @defer (on immediate) {
+        <app-info-button-markdown-body [source]="md" />
+        }
       }
     </div>
   </app-dialog>

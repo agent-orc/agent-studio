@@ -3,9 +3,8 @@ using AgentStudio.Runner;
 namespace AgentStudio.Pipeline;
 
 /// <summary>
-/// AGT-3466: per-task fallback gates share the gate host with the batch, a
-/// formed batch that never started keeps its members together when the base
-/// moves, and every per-task gate records why it left the batch route.
+/// Per-task fallback gates share the gate host with the batch. A formed
+/// batch keeps compatible members together when its base moves.
 /// </summary>
 public sealed partial class BatchGatePilotService
 {
@@ -71,48 +70,99 @@ public sealed partial class BatchGatePilotService
     }
 
     /// <summary>
-    /// A formed batch that never replayed is only a membership on an old base.
-    /// When the base moved, the same members close again on the new base and
-    /// keep their batch: before AGT-3466 they returned to planning with their
-    /// old review times, past every deadline, and the planner sent the ones it
-    /// did not batch at once to per-task gates. Returns false when a member is
-    /// no longer eligible; the caller then returns the members to planning.
+    /// A closed manifest is immutable. Probe each still-admitted review against
+    /// the new base and close one linked successor containing only survivors.
+    /// The successor starts with no replay, run or verdict evidence.
     /// </summary>
     private bool ReformOnMovedBase(BatchGateManifest manifest,
-        IReadOnlyDictionary<string, BatchGatePendingRecord> pending, string newBase, long fence)
+        IReadOnlyDictionary<string, BatchGatePendingRecord> pending, string repo,
+        string newBase, long fence, ISet<string> conflictKeys)
     {
         if (_store.ListRuns(manifest.BatchId).Count > 0
             || manifest.Members.Any(member => _store.TryReadReplay(manifest.BatchId, member.TaskKey) is not null))
             return false;
         var options = _settings.Get(manifest.Scope.Project).BatchGate;
-        // The members are owned by this manifest; ownership moves with them.
-        var members = manifest.Members.Select(member =>
-            Refresh(pending[member.TaskKey]).Subject with { OwningBatchId = null }).ToArray();
-        if (members.Any(member => BatchGatePolicy.Exclusion(member, manifest.Scope, options) is not null))
-            return false;
-        var successor = manifest with
+        var kept = new List<BatchGateSubject>();
+        var rejected = new Dictionary<string, string>(StringComparer.Ordinal);
+        var conflicts = new List<(BatchGatePendingRecord Pending, AgentStudio.Git.BatchReplayResult Replay)>();
+        var tip = newBase;
+        foreach (var member in manifest.Members)
+        {
+            if (!pending.TryGetValue(member.TaskKey, out var item))
+            {
+                rejected[member.TaskKey] = "superseded-review";
+                continue;
+            }
+            var subject = Refresh(item).Subject with { OwningBatchId = null };
+            var exclusion = BatchGatePolicy.Exclusion(subject, manifest.Scope, options);
+            if (_store.HasEject(manifest.Scope.Project, member.TaskKey)
+                || exclusion is not null)
+            {
+                rejected[member.TaskKey] = !subject.CurrentGeneration
+                    ? "superseded-review" : "ineligible:" + (exclusion?.ToString() ?? "operator-eject");
+                continue;
+            }
+            var replay = _git.ReplayBatchMember(repo, subject.ResultRef, subject.ResultSha, tip);
+            if (replay.ConflictedFiles.Count > 0)
+            {
+                rejected[member.TaskKey] = "merge-conflict";
+                conflicts.Add((item, replay));
+                continue;
+            }
+            switch (BatchGatePolicy.ReplayDisposition(replay))
+            {
+                case BatchReplayDisposition.Pause:
+                    throw new IOException(replay.Error ?? "Batch base-move probe failed.");
+                case BatchReplayDisposition.EjectUnattributable:
+                    rejected[member.TaskKey] = replay.Route == AgentStudio.Git.BatchReplayRoute.AlreadyContained
+                        ? "already-contained" : "unattributable-replay";
+                    continue;
+                default:
+                    kept.Add(subject);
+                    tip = replay.TipSha!;
+                    break;
+            }
+        }
+        var successor = kept.Count < options.MinimumSize ? null : manifest with
         {
             BatchId = Guid.NewGuid().ToString("N"),
             BaseSha = newBase,
-            MembershipDigest = BatchGatePolicy.MembershipDigest(newBase, manifest.Scope, members),
+            MembershipDigest = BatchGatePolicy.MembershipDigest(newBase, manifest.Scope, kept),
             ClosedAtUtc = _time.GetUtcNow(),
-            Members = members,
+            Members = kept.ToArray(),
+            EligibleKeys = kept.Select(member => member.TaskKey).ToArray(),
+            ReformedFromBatchId = manifest.BatchId,
         };
-        State(manifest, BatchPhase.Abandoned, null, fence,
-            $"base moved before replay; re-formed as {successor.BatchId} on {Short(newBase)}");
+        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Abandoned, null, fence, _time.GetUtcNow(),
+            successor is null ? "base moved before replay; compatible members below minimum size"
+                : $"base moved before replay; re-formed as {successor.BatchId} on {Short(newBase)}",
+            BaseMoveToSha: newBase, BaseMoveOutcome: successor is null ? "abandoned" : "kept",
+            SuccessorBatchId: successor?.BatchId, BaseMoveMemberReasons: rejected));
         ReturnToPending(manifest);
-        _store.CloseManifest(successor);
-        foreach (var member in members)
+        foreach (var (item, replay) in conflicts)
+        {
+            _store.RecordReplay(new BatchGateReplayRecord(
+                manifest.BatchId, manifest.MembershipDigest, item.Subject.TaskKey,
+                item.Subject.ResultSha, newBase, null, replay.Replacements,
+                replay.ConflictedFiles, "conflict", _time.GetUtcNow(), Reason: replay.Error));
+            conflictKeys.Add(item.Subject.TaskKey);
+        }
+        if (successor is not null) _store.CloseManifest(successor);
+        foreach (var member in successor?.Members ?? [])
         {
             var item = pending[member.TaskKey];
             var task = _scanner.FindJob(member.TaskKey, item.WatchPath);
             if (task is not null)
                 BatchGateOwnershipStore.Write(task.FolderPath,
-                    new BatchGateOwnership(item.ReviewAttemptId, member, successor.BatchId));
+                    new BatchGateOwnership(item.ReviewAttemptId, member, successor!.BatchId));
         }
+        foreach (var (key, reason) in rejected)
+            if (reason == "superseded-review" && pending.TryGetValue(key, out var item))
+                ResolveSuperseded(item, reason);
         _logger.LogInformation(
-            "batch-gate-reformed batch={BatchId} successor={SuccessorId} base={BaseSha} members={Members}",
-            manifest.BatchId, successor.BatchId, newBase, string.Join(',', members.Select(member => member.TaskKey)));
+            "batch-gate-base-move batch={BatchId} successor={SuccessorId} base={BaseSha} kept={Kept} rejected={Rejected}",
+            manifest.BatchId, successor?.BatchId, newBase, kept.Count, rejected.Count);
         return true;
     }
 

@@ -329,9 +329,10 @@ export interface NeedsInputStatus {
 export interface TaskDependencyReference {
   key: string;
   releaseGate?: boolean;
+  requiresCompletion?: boolean;
 }
 
-/** Legacy edges stay strings; only release-gated edges need the object shape. */
+/** Plain edges stay strings; completion and release gates use the object shape. */
 export type TaskDependency = string | TaskDependencyReference;
 
 export function taskDependencyKey(dependency: TaskDependency): string {
@@ -409,6 +410,8 @@ export interface WaitsOnItem {
   resolved: boolean;
   fulfilled: boolean;
   releaseGate?: boolean;
+  requiresCompletion?: boolean;
+  fulfillmentRule?: 'completion' | 'explicit-release' | 'integrated-delivery' | 'delivery-integration';
   targetReleased?: boolean;
   waitingForRelease?: boolean;
   /**
@@ -584,6 +587,7 @@ export interface BetterCandidateNote {
 }
 
 export interface TaskInfo {
+  attentionHolder?: string | null;
   qualityStudioVerdict?: 'pass' | 'concerns' | 'block' | string | null;
   id: string;
   taskKey: string;

@@ -181,8 +181,23 @@ checklist cancels a queued or running session. A runner on that host claims the
 command through its outbound Task Server channel, holds a local provider login
 lock and starts `codex login --device-auth` or `claude setup-token` in its own
 service account through `DeviceLoginExecutor`, the only device-login launcher.
-The child gets a closed stdin pipe. The runner reports the URL and code without
-logging child output. While the CLI runs, the runner reads the session state
+Codex gets a closed stdin pipe. The runner reports the URL and code without
+logging child output. The URL must come from the provider's sign-in origin:
+`auth.openai.com` or `login.openai.com` for Codex; `claude.com` and
+`platform.claude.com` (Claude Code 2.x) or `claude.ai` and
+`console.anthropic.com` (earlier releases) for Claude. One list,
+`DeviceLoginSessions.ProviderOrigin`, serves the runner and the server.
+Headless `claude setup-token` waits for the authorization code its callback
+page shows (AGT-3243). After the runner publishes a Claude URL, the session
+reports `codeState: awaiting`. The Owner signs in, pastes the code into the
+first-run checklist, and the browser posts it once with its session key
+(`POST /api/v1/management/device-logins/{handle}/code`). The server keeps it
+only in memory and hands it once to the claiming runner
+(`POST /api/v1/runners/{runnerId}/device-login/{handle}/code`), which writes it
+to the CLI's stdin and then closes stdin. The code is never logged, audited,
+echoed in a response or written to disk; cancel, timeout and completion drop a
+code no runner took. A code the CLI refuses ends the session with
+"Claude did not accept the authorization code." While the CLI runs, the runner reads the session state
 every 2 seconds (`GET /api/v1/runners/{runnerId}/device-login/{handle}`, state
 only). A Studio cancel, a Task Server timeout or a failed instruction publish
 stops the process tree, accepts no credential and reports `failed`; on runner
@@ -298,6 +313,15 @@ in the [Execution hosts runbook](../../operations/remote-hosts.md#prelaunch-infr
   and runner decision rationale.
 
 ## Key Code
+
+The coding runner samples load per core before each claim. Once load stays above
+`RUNNER_CLAIM_MAX_LOAD_PER_CORE` for the configured sustained interval, it stops
+new claims while active slots continue. The capability telemetry snapshot carries
+the gate state, measured load, threshold, duration, close time, and active slots.
+Task Server retains that snapshot and records one stream event on each close and
+open transition, including the elapsed closed interval on recovery. A transition
+forces the runner's next capability advertisement rather than waiting for its
+normal minute cadence.
 
 Coding claims carry the effective emergency process limit and its source from
 project setting, workspace default, or the 24-hour platform constant. The
@@ -1388,6 +1412,12 @@ unreported claim expires with its lease and is queued again.
   boundary: the Task Server never substitutes its checkout or local
   `session-events.jsonl` for the ReviewSubject. Legacy tasks without attempt
   authority continue through the established local compatibility path.
+- The Auto Review stranding watchdog runs in both Monolith and Engine modes.
+  After the configured threshold it recovers a card without a running step,
+  active review, batch entry, or queued round, and records an intervention on
+  the card timeline and stall feed. A stale delivery verdict refreshes the
+  subject from the current completed run, integrates that delivery, and only
+  then requests another review. A merge conflict starts a merge round.
 - ReviewAttempt claimability is also bound to the current task lane. A
   successful transition into `6-completed` or `7-archive` supersedes every open
   ReviewAttempt for that task before another claim can cross the lifecycle
@@ -1646,10 +1676,14 @@ unreported claim expires with its lease and is queued again.
   metadata is available, and Ready-card wait reasons. One shared classifier
   accepts only explicit provider-login signatures as authentication failures.
   Tool failures and indeterminate non-zero exits retain last-good; rate limits
-  use the limited state. Two consecutive explicit failures are required before
-  sign-in is blocked, and a later positive probe clears that provider circuit
-  without a runner restart. Provider-limit evidence is suppressed only by an
-  independently recorded termination fact. The legacy process boundary records
+  use the limited state. Two consecutive explicit login-probe failures are
+  required before sign-in is blocked, and a later positive probe clears that
+  provider circuit without a runner restart. Provider-limit evidence is
+  suppressed only by an independently recorded termination fact. A run classified
+  `ProviderUnauthorized` drains only that provider's capability on the
+  reporting host immediately; `GET /api/v1/management/remote-hosts` shows
+  `healthState: draining` until a positive provider-auth probe clears it.
+  Other providers and hosts remain claimable. The legacy process boundary records
   Bash's child wait status before it returns a conventional high exit code;
   CAR does not infer a signal from an exit number. A voluntary exit 137 remains
   eligible evidence, while recorded SIGTERM, SIGKILL, operator stop, and host
@@ -1882,11 +1916,15 @@ unreported claim expires with its lease and is queued again.
   escalation, and lane movement.
 - Waits-on gate (AGT-2029): the ready-lane pickup gate
   (`ProjectRunner.IsReadyPickupCandidate`) skips a `2-ready` card whose
-  `references.dependsOn` targets have not all reached `6-completed`/`7-archive`.
+  `references.dependsOn` targets have neither reached `6-completed`/`7-archive`
+  nor had their current delivery integrated into the successor's target branch.
+  A newer pending predecessor delivery closes the edge until it is integrated.
+  `requiresCompletion: true` retains the terminal-lane rule per edge, and
+  concept and research predecessors use it by default.
   A dependency object with `releaseGate: true` additionally requires the
   terminal target card to carry its explicit `released: true` flag. Completion
   does not infer release, and legacy string dependencies retain the existing
-  terminal-state-only behavior.
+  completion or current-delivery integration behavior.
   Fulfillment is resolved cross-project and archive-inclusive
   (`TaskReferenceIndex` built from `ScanAllJobsWithArchive()`, shared with the
   read-time card overlay via `WaitsOnEvaluator`). A skipped card falls out of the
@@ -2063,6 +2101,11 @@ unreported claim expires with its lease and is queued again.
   the exact result to
   `refs/heads/agent-studio/results/<run-attempt-id>/<result-sha>`. Cleanup then requires
   the Task Server acknowledgement for the matching canonical envelope digest.
+  Transient Git server push faults (5xx, internal server error, commit_refs failure,
+  or connection reset) retry each salvage or result ref after 30 seconds, 2 minutes,
+  5 minutes, and 15 minutes while the worktree and lease remain active. Each retry
+  is recorded on the card. Exhaustion names the retries in the failure reason;
+  authorization, permission, push protection, and non-fast-forward failures do not retry.
   A process restart replays the original outbox before new claims and never
   starts the coding CLI. Transfer failure stays `transfer-recovery`, retains the
   worktree, and consumes no coding or completion budget.

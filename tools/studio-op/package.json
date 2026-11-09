@@ -1,0 +1,16 @@
+{
+  "name": "studio-op",
+  "version": "1.0.0",
+  "description": "Operator CLI for Agent Studio: watch, triage, continue, accept, preflight and deploy plans over the documented REST API.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "studio-op": "studio-op.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

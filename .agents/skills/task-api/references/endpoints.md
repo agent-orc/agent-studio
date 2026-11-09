@@ -409,3 +409,37 @@ recorded in the control plane audit with the previous holder.
   `409 watcher-lease-lost` names the new holder after a take-over.
 - `DELETE /api/operator/watcher/lease/{leaseId}` releases it.
 - Viewer tokens may read the lease and the stream but not take the lease.
+
+## Operator access (networked profile)
+
+An operator agent or script authenticates with an API token the Owner creates
+under `POST /api/auth/api-tokens`:
+
+```json
+{ "name": "operator laptop", "role": "operator", "projects": ["*"] }
+```
+
+`expiresAt` is optional: without it the token expires after 30 days, and it
+can be at most 365 days away. The response shows the `api.` secret once. Store
+it in `~/.config/agent-studio/operator-token` with `chmod 600`; the reference
+scripts read it only from there (see the skill's server contract).
+
+An `operator` token binds the `operator-agent` role, shown under that name in
+Settings > Access. It reaches the operator surface:
+
+| Need | Routes |
+|---|---|
+| Board, cards, decisions | `GET /api/tasks/grouped`, `GET /api/tasks/{id}`, `GET /api/runner/{project}/pending-decisions`, `GET /api/projects/{project}/review-decisions-pending`, `GET /api/watcher/*`, `GET /api/runner/orchestrator-feed` |
+| Batch gate | `GET /api/projects/{project}/batch-gate/state`, `/report`, `/queue-stalls`; `POST .../batch-gate/members/{key}/eject`, `POST .../batch-gate/close-now` |
+| Continue and steer | `POST /api/tasks/{id}/continue` (`mode`: `continue` or `steer`) |
+| Lane moves and acceptance | `POST /api/tasks/{id}/move`, `POST /api/tasks/batch-move` |
+| Create and title | `POST /api/tasks`, `PUT /api/tasks/{id}/title` |
+| Review step models | `PUT /api/projects/{project}/pipeline-step` |
+| Quota and routing | `GET /api/cli/quota`, `GET /api/cli/quota/model-routes` |
+| Deploys | `GET /api/deploy/matrix`, `GET /api/projects/{project}/deploy/*`, `POST /api/projects/{project}/environments/releases` (stage) |
+
+It is refused with 403 for secret writes and secret value reads, production
+approvals and production deploys, access administration (`/api/auth/*`), and
+installation-wide settings. An operator override completion
+(`operatorOverride` on a move to `6-completed`) and decision cards stay with
+the Owner. A project-scoped token reaches only its projects.

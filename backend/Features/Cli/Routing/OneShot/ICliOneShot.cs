@@ -254,9 +254,9 @@ public sealed class CliOneShotRegistry
             _quotaRecorder?.EmitAdmissionDecision(task, plan, source);
         else if (!string.IsNullOrWhiteSpace(request.WatchPath))
             _quotaRecorder?.EmitProjectAdmissionDecision(
-                request.WatchPath, request.Project, plan, source);
+                request.WatchPath, request.Project, plan, source, request.CliType, request.Model);
         else
-            _quotaRecorder?.EmitUnscopedAdmissionDecision(plan, source);
+            _quotaRecorder?.EmitUnscopedAdmissionDecision(plan, source, request.CliType, request.Model, request.Project);
 
         if (!plan.ShouldLaunch)
         {
@@ -377,7 +377,7 @@ public sealed class CliOneShotRegistry
                 Pins = new SelectionPins(request.CliType, request.Model, request.ThinkingLevel),
                 Required = new SelectionRequirements(SameClassOnly: SelectionConsumers.IsReview(consumer)),
             },
-            source);
+            source, RecordEveryCall: true);
     }
 
     /// <summary>Admit a CLI whose aspect adapter does not use the one-shot protocol.</summary>
@@ -445,5 +445,7 @@ public static class CliOneShotCompatibility
                 cache_creation_input_tokens = result.Usage.CacheCreationTokens,
             },
             model = result.EffectiveModel ?? result.Usage?.Model ?? configuredModel,
+            quotaDeferred = result.QuotaDeferred,
+            error = result.Error,
         });
 }

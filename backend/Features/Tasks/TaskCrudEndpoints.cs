@@ -382,7 +382,7 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, TaskTokenUsageCache tokenCache, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, ILoggerFactory loggerFactory) =>
+        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, TaskTokenUsageCache tokenCache, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, AgentStudio.Operator.OperatorCoordinationStore attention, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest("tasks/detail",
                 loggerFactory.CreateLogger("TaskDetail"), includeNested: true);
@@ -420,7 +420,7 @@ public static class TaskCrudEndpoints
                     .Where(job => !job.Fixture)
                 : Enumerable.Empty<TaskInfo>();
             var dependencyLookups = TaskSwitchTrace.Run("dependencies", () => BuildDependencyGraphLookups(
-                new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority));
+                new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority, gitProjection, projectSettings));
             var withRuntime = WithRuntime(pricing, detail, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters);
             withRuntime = TaskSwitchTrace.Run("runtime", () => withRuntime with
             {
@@ -441,6 +441,11 @@ public static class TaskCrudEndpoints
                 } };
             if (AcceptanceAttemptLineagePolicy.ReadGap(withRuntime.Info, attemptAuthority) is { } attemptGap)
                 withRuntime = withRuntime with { Info = withRuntime.Info with { AcceptanceAttemptGap = attemptGap } };
+            context.Response.Headers.ETag = AgentStudio.Operator.OperatorCoordinationStore.Revision(withRuntime.Info.FolderPath);
+            withRuntime = withRuntime with { Info = withRuntime.Info with
+            {
+                AttentionHolder = attention.Current(withRuntime.Info.TaskKey)?.Holder,
+            } };
             return Results.Ok(withRuntime);
         });
 
@@ -1227,15 +1232,17 @@ public static class TaskCrudEndpoints
 
         group.MapPut("/{jobId}/model", (string jobId, string? project, string? watchPath, SetJobModelRequest req, TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
         {
+            if (req.PinMode is not ("preference" or "hard")) return Results.BadRequest(new { error = "pinMode must be preference or hard." });
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var success = mutations.SetJobModel(jobId, req?.Model, watchPath);
+            var success = mutations.SetJobModel(jobId, req.Model, watchPath, req.PinMode);
             return success ? Results.Ok() : Results.NotFound();
         });
 
         group.MapPut("/{jobId}/thinking-level", (string jobId, string? project, string? watchPath, SetJobThinkingLevelRequest req, TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
         {
+            if (req.PinMode is not ("preference" or "hard")) return Results.BadRequest(new { error = "pinMode must be preference or hard." });
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var success = mutations.SetJobThinkingLevel(jobId, req?.ThinkingLevel, watchPath);
+            var success = mutations.SetJobThinkingLevel(jobId, req.ThinkingLevel, watchPath, req.PinMode);
             return success ? Results.Ok() : Results.NotFound();
         });
 
@@ -1243,11 +1250,10 @@ public static class TaskCrudEndpoints
         {
             if (req is null || !CliTypes.IsValid(req.CliType))
                 return Results.BadRequest(new { error = $"cliType must be one of {string.Join(", ", CliTypes.All)}" });
+            if (req.PinMode is not ("preference" or "hard")) return Results.BadRequest(new { error = "pinMode must be preference or hard." });
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var ok = mutations.SetJobCliType(jobId, req.CliType, watchPath);
+            var ok = mutations.SetJobCliType(jobId, req.CliType, watchPath, req.PinMode, req.UseOwnSession);
             if (!ok) return Results.NotFound();
-            if (req.UseOwnSession.HasValue)
-                mutations.SetJobUseOwnSession(jobId, req.UseOwnSession.Value, watchPath);
             return Results.Ok();
         });
 
@@ -1561,6 +1567,21 @@ public static class TaskCrudEndpoints
         {
             var card = scanner.FindJob(jobId, watchPath);
             if (card is null) return Results.NotFound();
+            var attention = context.RequestServices.GetRequiredService<AgentStudio.Operator.OperatorCoordinationStore>();
+            var actor = AgentStudio.Operator.OperatorEndpoints.Actor(context);
+            var owner = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                && human.User.Role == StudioRoles.Owner;
+            if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem]
+                is ServiceAccountPrincipal { Origin: ServiceAccountOrigins.ApiToken })
+            {
+                if (attention.Current(card.TaskKey)?.Holder != actor)
+                    return Results.Conflict(new { error = "attention-lease-required" });
+                if (context.Request.Headers.IfMatch.Count == 0)
+                    return Results.Json(new { error = "card-revision-required" }, statusCode: StatusCodes.Status428PreconditionRequired);
+                if (!string.Equals(context.Request.Headers.IfMatch.ToString(),
+                        AgentStudio.Operator.OperatorCoordinationStore.Revision(card.FolderPath), StringComparison.Ordinal))
+                    return Results.Json(new { error = "stale-card-revision" }, statusCode: StatusCodes.Status412PreconditionFailed);
+            }
             // AGT-3483: a requeue would replace the delivery an isolating batch
             // is probing. Eject is the member action until isolation ends.
             if (AgentStudio.Pipeline.BatchIsolationGuardPolicy.IsRequeue(card.State, request.TargetState)
@@ -1581,6 +1602,8 @@ public static class TaskCrudEndpoints
                 cause: OperatorActor(context), reason: request.Reason,
                 operatorOverride: request.OperatorOverride,
                 archiveOverride: request.ArchiveOverride);
+            if (moved.Status == MoveJobStatus.Success && owner)
+                await attention.OwnerActionAsync(card.TaskKey, card.ProjectName, actor, ct);
             if (moved.Status == MoveJobStatus.Success && live?.AttemptId is { } attemptId
                 && intent == RunMoveIntent.Revoke)
             {

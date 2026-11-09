@@ -60,6 +60,8 @@ public sealed record BuildTestGateRequest(
     public string? LedgerType { get; init; }
     public string? LedgerRunId { get; init; }
     public string? LedgerProfile { get; init; }
+    public DateTimeOffset? LedgerRequestedAtUtc { get; init; }
+    public DateTimeOffset? LedgerLeaseAcquiredAtUtc { get; init; }
     public string? AttemptChainId { get; init; }
     public string? SubjectRef { get; init; }
     /// <summary>Explicit project directories from a frozen test plan; null checks out the complete tree.</summary>

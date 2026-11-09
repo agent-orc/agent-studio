@@ -202,6 +202,25 @@ public sealed class WaitsOnPickupGateTests : IDisposable
     }
 
     [Fact]
+    public void IntegratedDependency_IsListedAndPickedWithTheSameCurrentVerdict()
+    {
+        WriteJob(_libWatch, TaskStates.HumanReview, "dep", "LIB-1", order: 1);
+        WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1", order: 1,
+            dependsOn: ["LIB-1"]);
+
+        // Both status and pickup consume one confirmed Git projection.
+        var runner = BuildRunnerWithStack(App, _appWatch, stack: null,
+            integrationStatus: new TaskIntegrationStatus
+            {
+                Status = IntegrationStatuses.Integrated,
+                IntegrationBranch = "develop",
+            }).Runner;
+
+        Assert.Equal(["consumer"], runner.GetStatus().QueuedJobIds);
+        Assert.Equal("consumer", runner.GetNextReadyJob()?.Id);
+    }
+
+    [Fact]
     public void ReleaseGate_ExplicitReleasedFlag_AllowsPickup()
     {
         WriteJob(_libWatch, TaskStates.Completed, "dep", "LIB-1", order: 1, released: true);
@@ -341,7 +360,8 @@ public sealed class WaitsOnPickupGateTests : IDisposable
         string project,
         string watchPath,
         (TaskScannerService Scanner, TaskIndexCache Cache)? stack,
-        ILogger<ProjectRunner>? logger = null)
+        ILogger<ProjectRunner>? logger = null,
+        TaskIntegrationStatus? integrationStatus = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -380,6 +400,24 @@ public sealed class WaitsOnPickupGateTests : IDisposable
         var orchestratorLog = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
         var indexCache = stack?.Cache ?? new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
         scanner.SetIndexCache(indexCache);
+        TaskListGitProjectionCache? dependencyProjection = null;
+        if (integrationStatus is not null)
+        {
+            var predecessor = scanner.ScanAllJobs().Single(task => task.Key == "LIB-1");
+            dependencyProjection = new TaskListGitProjectionCache();
+            dependencyProjection.SetSnapshot(predecessor.WatchPath,
+                TaskListGitProjection.Empty with
+                {
+                    Integration = new Dictionary<string, TaskIntegrationStatus>
+                    {
+                        [predecessor.TaskKey] = integrationStatus,
+                    },
+                    Signatures = new Dictionary<string, string>
+                    {
+                        [predecessor.TaskKey] = TaskGitSignature.For(predecessor),
+                    },
+                }, DateTimeOffset.UnixEpoch);
+        }
         var taskAccess = new AgentStudio.TaskAccess.TaskAccessService(
             scanner, mutations, states, transitions, indexCache,
             NullLogger<AgentStudio.TaskAccess.TaskAccessService>.Instance);
@@ -408,7 +446,8 @@ public sealed class WaitsOnPickupGateTests : IDisposable
             summary, prompts, transitions, chatLog, mutations,
             orchestratorLog, orchestratorRunner, orchestratorSessions,
             settings, quotaService, quotaCaps, git, pickupFailures, infraBreaker, taskAccess, bus: null,
-            localCodingAdmission: AllowLocalCodingForTests.Instance);
+            localCodingAdmission: AllowLocalCodingForTests.Instance,
+            dependencyGitProjection: dependencyProjection);
         return (runner, scanner, indexCache);
     }
 

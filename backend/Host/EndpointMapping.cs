@@ -27,12 +27,17 @@ public static class EndpointMapping
         var mapsLocalV1 = MapsLocalV1(app.Configuration);
         if (!mapsLocalV1) app.MapTaskServerPlaneProxy();
         app.MapAccessSecurityEndpoints();
+        app.MapHostCertificateEndpoints();
+        app.MapHostOperationEndpoints();
         app.MapQualityStudioEndpoints();
         app.MapSecretEndpoints();
         app.MapPullGateEndpoints();
+        app.MapGateCapacityEndpoints();
         var tasks = app.MapGroup("/api/tasks")
-            .AddEndpointFilter<TaskOperationTimingFilter>();
+            .AddEndpointFilter<TaskOperationTimingFilter>()
+            .AddEndpointFilter<OperatorAttentionFilter>();
         tasks.MapTaskCrudEndpoints();
+        tasks.MapTaskAttentionEndpoints();
         tasks.MapTaskCoreEndpoint();
         tasks.MapTaskDetailResources();
         tasks.MapBatchMoveEndpoints();
@@ -69,6 +74,9 @@ public static class EndpointMapping
         app.MapAcceptanceRailEndpoints();
         app.MapWatcherEndpoints();
         app.MapOperatorEndpoints();
+        app.MapOperatorCapacityEndpoints();
+        app.MapOperatorLogEndpoints();
+        app.MapDeployPreflightEndpoints();
         app.MapOrchestratorSessionEndpoints();
         app.MapOrchestratorContextEndpoints();
         app.MapOrchestrationRolloutEndpoints();

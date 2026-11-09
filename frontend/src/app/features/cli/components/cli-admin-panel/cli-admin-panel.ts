@@ -7,6 +7,7 @@ import { QuotaApiService, QuotaForecastPanelComponent } from '../../../../featur
 import { CliModelsPanelComponent } from '../cli-models-panel/cli-models-panel';
 import { CliContractsPanelComponent } from '../cli-contracts-panel/cli-contracts-panel';
 import { WatcherContingentStripComponent } from '../../../../features/watcher';
+import { ModelSelectionViewComponent } from '../model-selection-view/model-selection-view.component';
 
 interface CapsResponse {
   defaultCapPct: number;
@@ -42,7 +43,7 @@ interface CapRow {
 @Component({
   selector: 'app-cli-admin-panel',
   standalone: true,
-  imports: [FormsModule, CliModelsPanelComponent, CliContractsPanelComponent, WatcherContingentStripComponent, QuotaForecastPanelComponent],
+  imports: [FormsModule, CliModelsPanelComponent, CliContractsPanelComponent, WatcherContingentStripComponent, QuotaForecastPanelComponent, ModelSelectionViewComponent],
   templateUrl: './cli-admin-panel.html',
   styleUrl: './cli-admin-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush

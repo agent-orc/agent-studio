@@ -492,6 +492,7 @@ public sealed class RemoteTaskRunner
             _log,
             outbox,
             authority);
+        workspace.PushRetryRecorded = line => shipper.Add("system", line);
         var shipperTask = shipper.RunAsync(TimeSpan.FromSeconds(5), stopRun.Token);
         var artifactLimits = await _client.GetArtifactTransferLimitsAsync(taskKey, stopRun.Token);
         _log(
@@ -1587,7 +1588,32 @@ public sealed class RemoteTaskRunner
                             $"[runner] provider rejected model request provider={invocation.CliType}; provider-auth capability unchanged");
                         if (!string.IsNullOrWhiteSpace(invocation.Model)
                             && RunnerModelAcceptanceProbe.IsModelRejection(processResult, invocation.Model))
+                        {
                             RunnerModelAcceptanceProbe.Shared.RecordRejection(invocation.CliType, invocation.Model);
+                            var recorded = await _client.PostModelSelectionEventAsync(new
+                            {
+                                id = TaskServerClient.NewModelSelectionId(), at = DateTimeOffset.UtcNow,
+                                kind = "health-marked", consumer = "remote-coding-run", host = _options.RunnerId,
+                                taskKey = slot.TaskKey, attemptId = slot.AttemptId,
+                                @from = new { cliType = invocation.CliType, model = invocation.Model, thinkingLevel = invocation.ThinkingLevel },
+                                rule = "provider-rejection", reason = "The provider refused the selected model on this host.",
+                                evidence = new
+                                {
+                                    excerpt = processResult.StdErr is { Length: > 300 } message
+                                        ? message[..300] : processResult.StdErr,
+                                    classifierKind = "model-unavailable",
+                                },
+                            }, waitStop.Token);
+                            if (!recorded) _log("model-selection health receipt could not reach Studio after bounded retry");
+                        }
+                    }
+                    else if (providerAccess.Kind == ProviderAccessEvidenceKind.ModelCapacity
+                             && !string.IsNullOrWhiteSpace(invocation.Model))
+                    {
+                        RunnerModelAcceptanceProbe.Shared.RecordCapacity(
+                            invocation.CliType, invocation.Model, providerAccess.LimitedUntil);
+                        shipper.Add("system",
+                            $"[runner] model-health-marked provider={invocation.CliType} model={invocation.Model} kind=capacity ttl=15m; provider-auth capability unchanged");
                     }
                     var capacityRetry = classified.Decision.Outcome == ExecutionOutcomeKind.TransientModelCapacity
                         && classified.Decision.RecoveryAction == ExecutionRecoveryAction.ResumeSameSession;
@@ -2417,7 +2443,10 @@ public sealed class RemoteTaskRunner
             BuildEnvelopeCompletionFields(teardown, baseSha, artifactManifestDigest);
         return new RemoteRunCompletionRequest(
             taskKey, lease.LeaseId, lease.FencingToken, options.RunnerId,
-            outcome.Kind.ToString(), outcome.Reason, options.RunnerName,
+            outcome.Kind.ToString(), teardown.ResultRefFailure is null
+                ? outcome.Reason
+                : $"{outcome.Reason} [runner-result-ref-push-failed: {teardown.ResultRefFailure}]",
+            options.RunnerName,
             SalvageBranch: teardown.Branch,
             SalvageCommitSha: teardown.CommitSha,
             SalvageBranchUrl: teardown.BranchUrl,
@@ -2698,7 +2727,8 @@ public sealed class RemoteTaskRunner
 
     internal static string BuildUnsecuredWorktreeReason(WorktreeSalvageException ex)
         => ex.PushProtection?.Summary
-           ?? $"Remote runner retained unsecured worktree at {ex.WorktreePath}; intended branch {ex.Branch}.";
+           ?? $"Remote runner retained unsecured worktree at {ex.WorktreePath}; intended branch {ex.Branch}. " +
+              $"Push failure: {OneLine(ex.InnerException?.Message ?? ex.Message)}";
 
     private async Task<bool> ReleaseAsync(
         RunLeaseInfoDto lease,

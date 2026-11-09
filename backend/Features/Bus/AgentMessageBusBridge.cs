@@ -114,7 +114,10 @@ public sealed class AgentMessageBusBridge
         };
         foreach (var p in participants)
         {
-            try { await _store.RegisterParticipantAsync(ws!, p, ct).ConfigureAwait(false); }
+            ct.ThrowIfCancellationRequested();
+            // A cancelled async write can truncate the participant JSON. Finish the
+            // current small file, then stop before starting another participant.
+            try { await _store.RegisterParticipantAsync(ws!, p, CancellationToken.None).ConfigureAwait(false); }
             catch (Exception ex) { _logger.LogDebug(ex, "Bus participant seed skipped for {Id}", p.Id); }
         }
     }
@@ -834,6 +837,29 @@ public sealed class AgentMessageBusBridge
             payload: new { code, message, sequence },
             tags: new[] { "control-plane-audit", $"alert:{code}" });
         return EmitAsync(msg, ct);
+    }
+
+    /// <summary>
+    /// Tells the Owner about one use of the operator kill switch (security
+    /// model SM-2): all operator access ended, one session ended, or a drill
+    /// that passed or failed. One use is one event. Returns whether the event
+    /// was appended, so the caller can send it again later.
+    /// </summary>
+    public Task<bool> EmitOperatorKillSwitchAsync(string kind, string trigger, string summary, bool acute, object payload,
+        CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: ParticipantRuntime,
+            role: "system",
+            kind: "observation",
+            severity: acute ? "High" : "Info",
+            project: null,
+            jobId: null,
+            topic: "operator_kill_switch",
+            summary: TruncateSummary(summary),
+            payload: payload,
+            tags: new[] { "operator-kill-switch", $"kind:{kind}", $"trigger:{trigger}" });
+        return TryEmitAsync(msg, ct);
     }
 
     /// <summary>

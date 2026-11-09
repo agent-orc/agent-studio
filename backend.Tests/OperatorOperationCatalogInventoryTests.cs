@@ -29,9 +29,15 @@ public sealed class OperatorOperationCatalogInventoryTests : IDisposable
         { OperatorOperationIds.HostInspect, OperatorTier.T0 },
         { OperatorOperationIds.CardRequeue, OperatorTier.T1 },
         { OperatorOperationIds.CardSteer, OperatorTier.T1 },
+        { OperatorOperationIds.CardAttention, OperatorTier.T1 },
+        { OperatorOperationIds.OperatorLogAppend, OperatorTier.T1 },
         { OperatorOperationIds.ServiceRestart, OperatorTier.T1 },
         { OperatorOperationIds.HostDrain, OperatorTier.T1 },
         { OperatorOperationIds.HostResume, OperatorTier.T1 },
+        { OperatorOperationIds.HostLogsCollect, OperatorTier.T0 },
+        { OperatorOperationIds.HostConfigurationApply, OperatorTier.T1 },
+        { OperatorOperationIds.HostCertificateIssue, OperatorTier.T1 },
+        { OperatorOperationIds.HostCertificateRevoke, OperatorTier.T1 },
         { OperatorOperationIds.GateRerun, OperatorTier.T1 },
         { OperatorOperationIds.StageDeploy, OperatorTier.T1 },
         { OperatorOperationIds.ProductionPromote, OperatorTier.T1 },
@@ -45,6 +51,7 @@ public sealed class OperatorOperationCatalogInventoryTests : IDisposable
         { OperatorOperationIds.AccessChange, OperatorTier.T2 },
         { OperatorOperationIds.GrantChange, OperatorTier.T2 },
         { OperatorOperationIds.CatalogueChange, OperatorTier.T2 },
+        { OperatorOperationIds.DeployBlockerOverride, OperatorTier.T2 },
     };
 
     [Theory]

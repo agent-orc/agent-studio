@@ -209,6 +209,7 @@ public static class RoutePermissionCatalog
 
         // --- Runner and engine service routes (credential scopes decide) ----
         Add("R", IamPermissions.RunnerService, "/api/quota/admission/{}");
+        Add("POST", IamPermissions.RunnerService, "/api/model-selection/events");
         Add("POST", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/claim");
         Add("PUT", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/report");
         Add("POST", IamPermissions.RunnerService, "/api/v1/runners/{}/review-package-claims");
@@ -341,9 +342,13 @@ public static class RoutePermissionCatalog
         // lease is one per installation; holding it needs a binding that may
         // operate runs in at least one project.
         Add("R", IamPermissions.ProjectRead,
-            "/api/operator/decisions", "/api/operator/decisions/stream", "/api/operator/watcher/lease");
+            "/api/operator/decisions", "/api/operator/decisions/stream", "/api/operator/watcher/lease",
+            "/api/operator/capacity");
         AddProjectChecked("W", IamPermissions.ProjectRunsOperate,
             "/api/operator/watcher/lease", "/api/operator/watcher/lease/{}", "/api/operator/watcher/lease/{}/heartbeat");
+        Add("R", IamPermissions.ProjectRead, "/api/operator/log");
+        AddProjectChecked("POST", IamPermissions.ProjectCardsWrite, "/api/operator/log");
+        Add("POST", IamPermissions.ProjectCardsWrite, "/api/tasks/{}/attention");
 
         // --- Workspace administration, settings, and operation -------------
         Add("PUT", IamPermissions.WorkspaceAdminister, "/api/workspaces/{}/usage-calendar");
@@ -354,6 +359,7 @@ public static class RoutePermissionCatalog
             "/api/workspaces/**", "/api/watch-paths/**", "/api/tags/**", "/api/admin/**",
             "/api/cli/quota/caps", "/api/cli/quota/fallback-preference", "/api/cli/quota/model-routes",
             "/api/cli/quota/wait-policy", "/api/cli/maintenance-model", "/api/cli/model-routing/**",
+            "/api/model-selection/policy/consumers/{}",
             "/api/clients/{}/defaults", "/api/clients/{}/runner-capacity", "/api/git/branch-sweep/settings",
             "/api/orchestration/rollout/**");
         Add("POST", IamPermissions.WorkspaceRead, "/api/token-pricing/calculate", "/api/component-routing/resolve");
@@ -369,6 +375,9 @@ public static class RoutePermissionCatalog
         Add("R", IamPermissions.WorkspaceRead,
             "/api/cli/types", "/api/cli/contracts", "/api/cli/model-migrations");
         Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/effective");
+        Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/active");
+        Add("R", IamPermissions.WorkspaceRead, "/api/model-selection/policy");
+        Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/events", "/api/model-selection/active");
         // These return configuration or cached data without reading sessions.
         Add("R", IamPermissions.WorkspaceRead,
             "/api/cli/{}/models", "/api/cli/maintenance-model", "/api/cli/{}/effective-mode",
@@ -382,8 +391,9 @@ public static class RoutePermissionCatalog
             "/api/watcher/**", "/api/crash-recovery/**", "/api/cause-breakers/**",
             "/api/workspace/summary", "/api/workspaces/{}/quota/**",
             "/api/workspaces/{}/projects/{}/quota", "/api/auto-review/status",
-            "/api/system/execution-infrastructure", "/api/system/gate-slots", "/api/system/readiness", "/api/agent-rules", "/api/adhoc-usage/**");
+            "/api/system/execution-infrastructure", "/api/system/gate-capacity", "/api/system/gate-slots", "/api/system/readiness", "/api/agent-rules", "/api/adhoc-usage/**");
         Add("POST", IamPermissions.WorkspaceOperate, "/api/system/readiness/refresh");
+        Add("PUT", IamPermissions.WorkspaceAdminister, "/api/system/gate-capacity");
         Add("W", IamPermissions.WorkspaceOperate,
             "/api/cli/quota/refresh/**", "/api/clients/**",
             "/api/crash-recovery/**", "/api/git/branch-sweep/**", "/api/git/cleanup/**", "/api/git/branch-reclaim/**",
@@ -443,16 +453,21 @@ public static class RoutePermissionCatalog
             "execution/proposal", "checkout/**", "gate-result-cache", "urls/{}/start", "urls/test", "urls/{}/process");
         Add("POST", IamPermissions.WorkspaceOperate, "/api/projects/{}/operator-candidate-verifications");
         Add("POST", IamPermissions.ProjectRunsOperate, "/api/projects/{}/batch-gate/queue-stalls/release");
+        Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/failed-tests");
 
         // --- Documents -----------------------------------------------------
         Under("W", IamPermissions.ProjectDocsWrite, "/api/projects/{}",
             "wiki/**", "workbenches/**", "security/files/**", "security/meta");
 
         // --- Project settings ----------------------------------------------
+        // One step override at a time; the operator agent changes review step
+        // models here without the rest of the project settings (OP-1).
+        Add("PUT", IamPermissions.ProjectPipelineWrite, "/api/projects/{}/pipeline-step");
         // Only project settings writers may enable shadow package review.
         Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/review-package");
         Add("W", IamPermissions.ProjectSettingsWrite, "/api/projects/{}");
         Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/*");
+        Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/model-selection-overrides/{}");
         Under("W", IamPermissions.ProjectSettingsWrite, "/api/projects/{}",
             "areas/{}/glossary", "build-profile", "build-profile/validate", "execution/override", "test-execution",
             "publish/automation", "urls", "urls/**", "ownership-mappings/**", "pipeline-definition/**");

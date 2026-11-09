@@ -1,5 +1,6 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, effect, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
+import { QualityStudioService } from '../../../../services/quality-studio.service';
 import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { ProjectDeployReleaseNotesComponent } from '../project-deploy-release-notes/project-deploy-release-notes';
@@ -15,6 +16,8 @@ import { formatAge, type DeployPanel, type EnvironmentCardView, type Release } f
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ProjectDeployReleasesComponent {
+  private readonly qualityStudio = inject(QualityStudioService);
+  readonly projectName = input.required<string>();
   readonly panel = input.required<DeployPanel<Release[]>>();
   readonly environments = input.required<readonly EnvironmentCardView[]>();
   readonly now = input.required<number>();
@@ -48,4 +51,13 @@ export class ProjectDeployReleasesComponent {
   select(id: string): void { this.selectedId.set(id); }
   age(iso: string): string | null { return formatAge(iso, this.now()); }
   shortSha(sha: string): string { return sha.slice(0, 8); }
+  verdictLabel(verdict: string): string {
+    return verdict === 'not-reviewed' ? 'Not reviewed' : verdict[0].toUpperCase() + verdict.slice(1);
+  }
+  openRange(release: Release): void {
+    const range = release.quality?.range;
+    if (!range) return;
+    if (range.requiresConfirmation && !window.confirm('Open the first release using the repository root commit as the range base?')) return;
+    this.qualityStudio.openRange(this.projectName(), range.repositoryId, range.baseSha, range.headSha);
+  }
 }

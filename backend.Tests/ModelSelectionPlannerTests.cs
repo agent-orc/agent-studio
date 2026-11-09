@@ -34,6 +34,37 @@ public sealed class ModelSelectionPlannerTests
         Assert.Equal(97, result.Quota?.UsedPct);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Ordered_policy_fallback_skips_exhausted_or_rejected_provider_and_logs_chosen_route(bool rejected)
+    {
+        var request = Request();
+        var facts = Facts(97) with
+        {
+            ConfiguredFallbacks =
+            [
+                new SelectionRoute(CliTypes.Codex, ModelIds.Gpt56Sol, "high"),
+                new SelectionRoute(CliTypes.Gemini, ModelIds.Gemini25Pro, "high"),
+            ],
+            SnapshotFor = cli => cli == CliTypes.Codex && !rejected
+                ? Snapshot(CliTypes.Codex, 99) : Snapshots(97)(cli),
+            HostAcceptsFallback = rejected
+                ? (cli, _) => cli != CliTypes.Codex
+                : null,
+        };
+
+        var result = ModelSelectionPlanner.Plan(request, facts);
+        var entry = SelectionLedgerEntry.For(request, result, "local-coding-launch", "ordered", Now);
+
+        Assert.Equal(SelectionOutcome.Fallback, result.Outcome);
+        Assert.Equal(new SelectionRoute(CliTypes.Gemini, ModelIds.Gemini25Pro, "high"), result.Route);
+        Assert.Equal("policy", result.Equivalence?.Source);
+        Assert.Contains("selected configured fallback 2 of 2", result.Reason);
+        Assert.Equal(result.Route, entry?.To);
+        Assert.Contains("selected configured fallback 2 of 2", entry?.Reason);
+    }
+
     [Fact]
     public void Healthy_primary_launches_on_the_pin()
     {
@@ -61,6 +92,37 @@ public sealed class ModelSelectionPlannerTests
         Assert.Equal(Now.AddDays(3), result.RetryAt);
         Assert.Null(result.Fallback);
         Assert.StartsWith("waiting: hard pin keeps claude/claude-opus-5", result.Reason);
+    }
+
+    [Fact]
+    public void Preference_pin_switch_is_logged_while_hard_pin_waits_with_reason()
+    {
+        var preference = Request() with
+        {
+            Pins = new SelectionPins(CliTypes.Claude, ModelIds.ClaudeOpus5, "high",
+                SelectionPinMode.Preference),
+        };
+        var hard = preference with { Pins = preference.Pins with { Mode = SelectionPinMode.Hard } };
+        var switched = ModelSelectionPlanner.Plan(preference, Facts(claudeUsed: 97));
+        var waiting = ModelSelectionPlanner.Plan(hard, Facts(claudeUsed: 97));
+        var switchEntry = SelectionLedgerEntry.For(preference, switched, "local-coding-launch", "switch", Now);
+        var waitEntry = SelectionLedgerEntry.For(hard, waiting, "local-coding-launch", "wait", Now);
+        Assert.Equal(SelectionLedgerKinds.Switched, switchEntry?.Kind);
+        Assert.Equal(SelectionRules.QuotaCap, switchEntry?.Rule);
+        Assert.Equal(SelectionLedgerKinds.Waiting, waitEntry?.Kind);
+        Assert.Contains("hard pin", waitEntry?.Reason);
+
+        var operatorFacts = Facts(claudeUsed: 30) with
+        {
+            OperatorSwitch = new CliFallbackPreference(CliTypes.Claude, true, Now.AddMinutes(-5), Now.AddDays(2)),
+        };
+        var operatorSwitch = ModelSelectionPlanner.Plan(preference, operatorFacts);
+        var hardHold = ModelSelectionPlanner.Plan(hard, operatorFacts);
+        Assert.Equal(SelectionRules.OperatorSwitch, operatorSwitch.Rule);
+        Assert.Equal(SelectionLedgerKinds.Switched,
+            SelectionLedgerEntry.For(preference, operatorSwitch, "local-coding-launch", "operator", Now)?.Kind);
+        Assert.Equal(SelectionOutcome.Wait, hardHold.Outcome);
+        Assert.Contains("hard pin", hardHold.Reason);
     }
 
     [Fact]
@@ -125,6 +187,14 @@ public sealed class ModelSelectionPlannerTests
         Assert.Equal(result.Route, entry.To);
         Assert.Equal(SelectionRules.QuotaCap, entry.Rule);
         Assert.Equal(Now.AddDays(3), entry.ReturnToPrimaryAt);
+    }
+
+    [Fact]
+    public void Legacy_admission_keeps_the_planner_receipt_id()
+    {
+        var selected = ModelSelectionPlanner.Plan(Request(), Facts(claudeUsed: 97))
+            with { LedgerId = "selection-1" };
+        Assert.Equal("selection-1", QuotaAdmissionPlan.From(selected).SelectionEventId);
     }
 
     [Theory]

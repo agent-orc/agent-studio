@@ -21,7 +21,7 @@ Both variants share `.pane-tab`, `.pane-tab__badge`, `.pane-tab__icon`, `.pane-t
 
 **`<app-pane-tabs>` is the only canonical tab component and is correctly used by the two highest-traffic surfaces** (prompt-pane, protocol-pane). The studio-shell editor tab strip and the top-header project switcher each have their own implementation; both predate F38 and the per-feature requirements (drag-reorder for the editor strip, brand-coloured chips for the project switcher) made converging on `<app-pane-tabs>` not worthwhile at the time.
 
-Pick-one-of-N preferences and view switches use `<app-segmented-control>` with `role="group"` and `aria-pressed`. Real tabs and navigation stay on their tab or navigation contracts. The template gate in `frontend/scripts/check-segmented-controls.mjs` pins documented exceptions by button signature.
+Pick-one-of-N preferences and view switches use `<app-segmented-control>` with `role="group"` and `aria-pressed`. Real tabs and navigation stay on their tab or navigation contracts. The template gate in `frontend/scripts/check-segmented-controls.mjs` pins documented exceptions by control identity and count.
 
 Two open questions:
 

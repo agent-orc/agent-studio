@@ -219,6 +219,8 @@ test('decision chain and cost of deciding render on the card and in project usag
   await overviewTab.click();
 
   const chain = page.getByTestId('overview-decision-chain');
+  const deferredChain = page.getByTestId('overview-decision-chain-placeholder');
+  if (await deferredChain.count()) await deferredChain.scrollIntoViewIfNeeded();
   await expect(chain).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId('escalation-summary')).toHaveCount(1);
   await expect(page.getByTestId('escalation-title')).toHaveText('Escalation');

@@ -34,9 +34,15 @@ public static class OperatorOperationIds
     public const string HostInspect = "host.inspect";
     public const string CardRequeue = "card.requeue";
     public const string CardSteer = "card.steer";
+    public const string CardAttention = "card.attention";
+    public const string OperatorLogAppend = "operator-log.append";
     public const string ServiceRestart = "service.restart";
     public const string HostDrain = "host.drain";
     public const string HostResume = "host.resume";
+    public const string HostLogsCollect = "host.logs.collect";
+    public const string HostConfigurationApply = "host.configuration.apply";
+    public const string HostCertificateIssue = "host.certificate.issue";
+    public const string HostCertificateRevoke = "host.certificate.revoke";
     public const string GateRerun = "gate.rerun";
     public const string StageDeploy = "stage.deploy";
     public const string ProductionPromote = "production.promote";
@@ -50,6 +56,7 @@ public static class OperatorOperationIds
     public const string AccessChange = "access.change";
     public const string GrantChange = "grant.change";
     public const string CatalogueChange = "catalogue.change";
+    public const string DeployBlockerOverride = "deploy.blocker-override";
 }
 
 /// <summary>One catalogued operation: exactly one tier and the kind of scope it acts on.</summary>
@@ -104,9 +111,18 @@ public static class OperatorOperationCatalog
         new(OperatorOperationIds.HostInspect, OperatorTier.T0, OperatorScopeKinds.Host, "Inspect a host"),
         new(OperatorOperationIds.CardRequeue, OperatorTier.T1, OperatorScopeKinds.Project, "Requeue a card"),
         new(OperatorOperationIds.CardSteer, OperatorTier.T1, OperatorScopeKinds.Project, "Steer a card's run"),
+        new(OperatorOperationIds.CardAttention, OperatorTier.T1, OperatorScopeKinds.Project, "Take card attention"),
+        new(OperatorOperationIds.OperatorLogAppend, OperatorTier.T1, OperatorScopeKinds.Project, "Append an operator log entry"),
         new(OperatorOperationIds.ServiceRestart, OperatorTier.T1, OperatorScopeKinds.Host, "Restart an allowlisted service"),
         new(OperatorOperationIds.HostDrain, OperatorTier.T1, OperatorScopeKinds.Host, "Drain a host"),
         new(OperatorOperationIds.HostResume, OperatorTier.T1, OperatorScopeKinds.Host, "Resume a host"),
+        new(OperatorOperationIds.HostLogsCollect, OperatorTier.T0, OperatorScopeKinds.Host, "Collect allowlisted host logs"),
+        new(OperatorOperationIds.HostConfigurationApply, OperatorTier.T1, OperatorScopeKinds.Host,
+            "Apply a reviewed host configuration file"),
+        new(OperatorOperationIds.HostCertificateIssue, OperatorTier.T1, OperatorScopeKinds.Host,
+            "Issue a short host certificate"),
+        new(OperatorOperationIds.HostCertificateRevoke, OperatorTier.T1, OperatorScopeKinds.Host,
+            "Revoke a host certificate"),
         new(OperatorOperationIds.GateRerun, OperatorTier.T1, OperatorScopeKinds.Project, "Re-run a gate"),
         new(OperatorOperationIds.StageDeploy, OperatorTier.T1, OperatorScopeKinds.Environment,
             "Deploy a gate-verified commit to stage"),
@@ -123,6 +139,8 @@ public static class OperatorOperationCatalog
         new(OperatorOperationIds.GrantChange, OperatorTier.T2, OperatorScopeKinds.Workspace, "Change standing grants"),
         new(OperatorOperationIds.CatalogueChange, OperatorTier.T2, OperatorScopeKinds.Workspace,
             "Change the operation catalogue"),
+        new(OperatorOperationIds.DeployBlockerOverride, OperatorTier.T2, OperatorScopeKinds.Workspace,
+            "Override a deploy or restart preflight blocker"),
     ];
 
     /// <summary>Typed host operations of the Operations Server, by their definition id.</summary>
@@ -130,6 +148,10 @@ public static class OperatorOperationCatalog
     {
         [OperationCatalogue.HostInspect.Id] = OperatorOperationIds.HostInspect,
         [OperationCatalogue.ServiceRestart.Id] = OperatorOperationIds.ServiceRestart,
+        [OperationCatalogue.HostDrain.Id] = OperatorOperationIds.HostDrain,
+        [OperationCatalogue.HostResume.Id] = OperatorOperationIds.HostResume,
+        [OperationCatalogue.HostLogsCollect.Id] = OperatorOperationIds.HostLogsCollect,
+        [OperationCatalogue.HostConfigurationApply.Id] = OperatorOperationIds.HostConfigurationApply,
     };
 
     /// <summary>Lanes a requeue may move a card into: ahead of a run, never past the gate.</summary>
@@ -147,8 +169,16 @@ public static class OperatorOperationCatalog
         new("POST", "/api/tasks/{}/move", OperatorOperationIds.CardRequeue, OperatorRouteRefinement.CardMove),
         new("POST", "/api/tasks/{}/restore-from-failed-pickup", OperatorOperationIds.CardRequeue),
         new("POST", "/api/tasks/{}/continue", OperatorOperationIds.CardSteer),
-        new("POST", "/api/clients/{}/drain", OperatorOperationIds.HostDrain),
-        new("POST", "/api/clients/{}/revive", OperatorOperationIds.HostResume),
+        new("POST", "/api/tasks/{}/attention", OperatorOperationIds.CardAttention),
+        new("POST", "/api/operator/log", OperatorOperationIds.OperatorLogAppend),
+        new("POST", "/api/hosts/{}/certificates", OperatorOperationIds.HostCertificateIssue),
+        new("POST", "/api/hosts/{}/certificates/{}/revoke", OperatorOperationIds.HostCertificateRevoke),
+        new("POST", "/api/hosts/{}/inspect", OperatorOperationIds.HostInspect),
+        new("POST", "/api/hosts/{}/restart", OperatorOperationIds.ServiceRestart),
+        new("POST", "/api/hosts/{}/drain", OperatorOperationIds.HostDrain),
+        new("POST", "/api/hosts/{}/resume", OperatorOperationIds.HostResume),
+        new("POST", "/api/hosts/{}/logs", OperatorOperationIds.HostLogsCollect),
+        new("POST", "/api/hosts/{}/configuration", OperatorOperationIds.HostConfigurationApply),
         new("POST", "/api/tasks/{}/integration/retry", OperatorOperationIds.GateRerun),
         new("POST", "/api/tasks/{}/pipeline/steps/{}/run", OperatorOperationIds.GateRerun),
         new("POST", "/api/projects/{}/environments/releases", OperatorOperationIds.StageDeploy,
@@ -195,6 +225,7 @@ public static class OperatorOperationCatalog
         new("W", "/api/auth/iam/groups/**", OperatorOperationIds.AccessChange),
         new("W", "/api/auth/iam/service-accounts/**", OperatorOperationIds.AccessChange),
         new("W", "/api/auth/iam/operator-agents/**", OperatorOperationIds.AccessChange),
+        new("POST", "/api/operator/preflight/{}/override", OperatorOperationIds.DeployBlockerOverride),
     ];
 
     private static readonly Dictionary<string, OperatorOperation> ById =

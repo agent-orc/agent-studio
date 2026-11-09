@@ -165,7 +165,6 @@ wall-clock backend.Tests/StaleProgressArchiverTests.cs 5
 wall-clock backend.Tests/SteerTimeoutMonitorTests.cs 3
 wall-clock backend.Tests/SteeringDocsSummaryDriftServiceTests.cs 2
 wall-clock backend.Tests/StepPromptLogTests.cs 9
-wall-clock backend.Tests/SummaryGenerationFinalizationTests.cs 1
 wall-clock backend.Tests/SummaryGenerationValidationTests.cs 1
 wall-clock backend.Tests/SupersededCommitSweepTests.cs 1
 wall-clock backend.Tests/SupervisorContractTests.cs 1
@@ -360,7 +359,6 @@ fixed-date backend.Tests/ObservationParsingTests.cs
 fixed-date backend.Tests/OrchestratorChatNavigationContextTests.cs
 fixed-date backend.Tests/OrchestratorContextDigestServiceTests.cs
 fixed-date backend.Tests/OrchestratorContextEndpointsTests.cs
-fixed-date backend.Tests/OrchestratorContextEnvelopeTests.cs
 fixed-date backend.Tests/OrchestratorSessionRegistryTests.cs
 fixed-date backend.Tests/OrchestratorTaskPromptContextComposerTests.cs
 fixed-date backend.Tests/OrchestratorWorkbenchPromptContextComposerTests.cs

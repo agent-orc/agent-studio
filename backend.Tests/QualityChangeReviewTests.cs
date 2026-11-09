@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Pipeline;
+using AgentStudio.Deploy;
 using AgentStudio.QualityStudio;
 using AgentStudio.Shared;
 using AgentStudio.TaskServer.Contracts;
@@ -19,6 +20,82 @@ public sealed class QualityChangeReviewTests : IDisposable
     private readonly string root = Path.Combine(Path.GetTempPath(), "quality-change-" + Guid.NewGuid().ToString("N"));
     private string Repo => Path.Combine(root, "repo");
     private string Card => Path.Combine(root, "card");
+
+    [Fact]
+    public void Release_range_uses_only_a_stored_decisive_verdict_for_its_exact_range()
+    {
+        var baseSha = new string('a', 40);
+        var headSha = new string('b', 40);
+        var previous = new Release("previous", "demo", "1", baseSha, [], "1", "1", [],
+            Now.AddDays(-1), "default");
+        var current = new Release("current", "demo", "2", headSha, [], "1", "1", [], Now, "default");
+        var response = JsonSerializer.SerializeToElement(new
+        {
+            records = new object[]
+            {
+                new { decisive = false, document = new { verdict = "block" } },
+                new { decisive = true, document = new { verdict = "concerns" } },
+            },
+        });
+        Assert.Equal("concerns", QualityReleaseRangeVerdictClient.StoredVerdict(response));
+        var calls = new List<(string Repository, string Base, string Head)>();
+        var projected = ReleaseQualityProjection.Project([current, previous], [], "repo",
+            (_, _) => baseSha, [current], storedVerdict: (repository, rangeBase, rangeHead) =>
+            {
+                calls.Add((repository, rangeBase, rangeHead));
+                return QualityReleaseRangeVerdictClient.StoredVerdict(response);
+            });
+        Assert.Equal("concerns", Assert.Single(projected).Quality!.RangeVerdict);
+        Assert.Equal([("repo", baseSha, headSha)], calls);
+        Assert.Null(QualityReleaseRangeVerdictClient.StoredVerdict(
+            JsonSerializer.SerializeToElement(new { records = Array.Empty<object>() })));
+    }
+
+    [Fact]
+    public void Release_quality_uses_current_card_artifacts_and_fixture_merge_base()
+    {
+        Init();
+        File.WriteAllText(Path.Combine(Repo, "base.txt"), "base\n");
+        Git("add", "."); Git("commit", "-m", "base");
+        var common = Git("rev-parse", "HEAD");
+        Git("checkout", "-b", "previous");
+        File.WriteAllText(Path.Combine(Repo, "previous.txt"), "previous\n");
+        Git("add", "."); Git("commit", "-m", "previous release");
+        var previousSha = Git("rev-parse", "HEAD");
+        Git("checkout", "main");
+        File.WriteAllText(Path.Combine(Repo, "current.txt"), "current\n");
+        Git("add", "."); Git("commit", "-m", "current release");
+        var currentSha = Git("rev-parse", "HEAD");
+
+        var tasks = new[] { "pass", "concerns", "block" }.Select((verdict, index) =>
+        {
+            var folder = Path.Combine(root, "release-card-" + index);
+            var evidence = Path.Combine(folder, "results", "quality-studio");
+            Directory.CreateDirectory(evidence);
+            File.WriteAllText(Path.Combine(evidence, "review-" + index + ".json"),
+                JsonSerializer.Serialize(new QualityChangeReviewRound(1, "review-" + index,
+                    "run-" + index, "repo", common, currentSha, 1, "decide", Now,
+                    JsonSerializer.SerializeToElement(new { verdict })),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            return new TaskInfo { Key = "CARD-" + index, TaskKey = "CARD-" + index,
+                FolderPath = folder, State = "5-human-review" };
+        }).ToArray();
+        var previous = new Release("previous", "demo", "1", previousSha, [], "1", "1", [],
+            Now.AddDays(-1), "default");
+        var current = new Release("current", "demo", "2", currentSha, [], "1", "1",
+            tasks.Select(task => task.Key!).ToArray(), Now, "default");
+        var projected = ReleaseQualityProjection.Project([current, previous], tasks, "repo",
+            (left, right) => Git("merge-base", left, right), rootCommit: head => Git("rev-list", "--max-parents=0", head));
+        var quality = Assert.IsType<ReleaseQuality>(projected[0].Quality);
+        Assert.Equal((1, 1, 1, 0), (quality.Pass, quality.Concerns, quality.Block, quality.NotReviewed));
+        Assert.Equal("block", quality.WorstVerdict);
+        Assert.Equal(quality.Cards.Count, quality.Pass + quality.Concerns + quality.Block + quality.NotReviewed);
+        Assert.Equal("not-reviewed", quality.RangeVerdict);
+        Assert.Equal(common, quality.Range!.BaseSha);
+        Assert.Equal(currentSha, quality.Range.HeadSha);
+        Assert.Equal(common, projected[1].Quality!.Range!.BaseSha);
+        Assert.True(projected[1].Quality!.Range!.RequiresConfirmation);
+    }
 
     [Fact]
     public async Task Two_rounds_keep_their_reviewed_merge_base_and_equal_no_ff_landed_patch()

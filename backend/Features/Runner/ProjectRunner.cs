@@ -98,6 +98,8 @@ public class ProjectRunner
 
     private readonly ILogger _logger;
     private readonly TaskScannerService _scanner;
+    private readonly TaskIntegrationStatusService? _dependencyIntegration;
+    private readonly TaskListGitProjectionCache? _dependencyGitProjection;
     private readonly TaskStateMachine _states;
     private readonly TaskSessionLog _sessions;
     // ADR-0049: per-job timeline.jsonl ledger. Optional so existing test
@@ -430,6 +432,8 @@ public class ProjectRunner
     private readonly ILocalCodingAdmissionPolicy? _localCodingAdmission;
     private readonly bool _networked;
     private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
+    private readonly ModelSelectionLedger? _selectionLedger;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _selectionIdsByJob = new(StringComparer.Ordinal);
 
     /// <summary>Workspace or project quota refusal for a new local run; null admits it.</summary>
     internal RunRejection? WorkspaceQuotaRefusal()
@@ -492,12 +496,17 @@ public class ProjectRunner
         ReviewInputDecisionGateway? reviewInputDecisions = null,
         AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null,
         bool networked = false,
-        IModelSelectionService? modelSelection = null)
+        ModelSelectionLedger? selectionLedger = null,
+        IModelSelectionService? modelSelection = null,
+        TaskIntegrationStatusService? dependencyIntegration = null,
+        TaskListGitProjectionCache? dependencyGitProjection = null)
     {
         ProjectName = projectName;
         Entry = entry;
         _logger = logger;
         _scanner = scanner;
+        _dependencyIntegration = dependencyIntegration;
+        _dependencyGitProjection = dependencyGitProjection;
         _states = states;
         _sessions = sessions;
         _router = router;
@@ -515,6 +524,7 @@ public class ProjectRunner
         _quotaCaps = quotaCaps;
         _quotaFallback = quotaFallback;
         _quotaAdmission = quotaAdmission;
+        _selectionLedger = selectionLedger;
         _modelSelection = modelSelection ?? quotaAdmission?.Selection;
         _quotaWaitPolicy = quotaWaitPolicy;
         _providerLimits = providerLimits ?? new ProviderLimitRegistry();
@@ -889,14 +899,25 @@ public class ProjectRunner
     /// legacy planner adapter with the same rules.
     /// </summary>
     private QuotaAdmissionPlan PlanQuotaAdmission(TaskInfo info)
-        => _modelSelection?.Select(new ModelSelectionCall(
+    {
+        var pending = info.PendingIntent?.ModelFallback;
+        var (cli, model, thinking) = RequestedRoute(
+            info.CliType, info.Model, info.ThinkingLevel, pending);
+        var plan = _modelSelection?.Select(new ModelSelectionCall(
                new AgentStudio.TaskServer.Contracts.SelectionRequest
                {
                    Consumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.Coding,
                    Project = ProjectName,
                    TaskKey = info.Key ?? (string.IsNullOrEmpty(info.TaskKey) ? info.Id : info.TaskKey),
                    Pins = new AgentStudio.TaskServer.Contracts.SelectionPins(
-                       info.CliType, info.Model, info.ThinkingLevel),
+                       cli,
+                       pending is not null ? model : info.PinMode != "hard" && info.PreferenceExpiresAt > DateTime.UtcNow
+                           ? info.PreferenceModel ?? info.Model : info.Model,
+                       pending is not null ? thinking : info.PinMode != "hard" && info.PreferenceExpiresAt > DateTime.UtcNow
+                           ? info.PreferenceThinkingLevel ?? info.ThinkingLevel : info.ThinkingLevel,
+                       info.PinMode == "hard" ? AgentStudio.TaskServer.Contracts.SelectionPinMode.Hard
+                           : AgentStudio.TaskServer.Contracts.SelectionPinMode.Preference),
+                   IsExplicitPin = info.ModelExplicit,
                    TaskType = info.TaskType,
                },
                "local-coding-launch",
@@ -905,12 +926,30 @@ public class ProjectRunner
                    _modelQualification.CorrectnessFloor(info,
                        ReadPromptText(Path.Combine(info.FolderPath, "prompt.md"))))).Admission
            ?? QuotaAdmissionPlanner.Plan(
-               info.CliType, info.Model, info.ThinkingLevel,
+               cli, model, thinking,
                _quotaFallback, _quotaCaps,
                c => string.IsNullOrWhiteSpace(c) ? null : _quotaService.GetCachedFor(c!),
                DateTime.UtcNow,
                _activeRuns.Count,
                _quotaWaitPolicy?.Resolve(_projectSettings.Get(ProjectName)));
+        return ApplyPendingModelRoute(plan, pending);
+    }
+
+    internal static (string? Cli, string? Model, string? Thinking) RequestedRoute(
+        string? cli, string? model, string? thinking, ModelFallbackInfo? pending)
+        => (pending?.CliType ?? cli, pending?.To ?? model, pending?.ThinkingLevel ?? thinking);
+
+    internal static QuotaAdmissionPlan ApplyPendingModelRoute(
+        QuotaAdmissionPlan plan, ModelFallbackInfo? pending)
+        => pending is not null && plan.ShouldLaunch
+            ? plan with
+            {
+                Outcome = QuotaAdmissionOutcome.LaunchFallback,
+                IsFallback = true,
+                Reason = $"Pending model continuation selected {plan.CliType}/{plan.Model}.",
+                ModelFallback = pending,
+            }
+            : plan;
 
     private void RecordNearbyQuotaWait(TaskInfo info, QuotaAdmissionPlan plan)
     {
@@ -1015,6 +1054,8 @@ public class ProjectRunner
             info,
             OrchestratorMessageKind.Decision,
             $"[quota-wait] {limit.Reason}. The task is waiting and will resume automatically; other CLI providers remain eligible.");
+        var selectionEventId = RecordLocalSelection(info, "waiting", "provider-limit-wait", cliType,
+            "provider-limited", limit.Reason, limit.LimitedUntil);
         _timeline?.Append(
             info.FolderPath,
             TimelineEventKinds.QuotaAdmissionDecision,
@@ -1027,6 +1068,7 @@ public class ProjectRunner
                 ["cli"] = cliType,
                 ["resetAt"] = limit.LimitedUntil.ToString("o"),
                 ["resetTimeReported"] = limit.ResetTimeReported ? "true" : "false",
+                ["selectionEventId"] = selectionEventId,
             });
         NotifyStatus();
     }
@@ -1132,11 +1174,34 @@ public class ProjectRunner
             warning?.Reason, plan.Reason);
 
         var key = $"{plan.Outcome}|{plan.CliType}|{plan.Model}|{plan.ThinkingLevel}|{plan.Reason}|{plan.BetterCandidates?.EvidenceSnapshot}";
+        bool repeated;
         lock (_lastAdmissionDecisionByJob)
         {
-            if (_lastAdmissionDecisionByJob.TryGetValue(info.Id, out var prev) && prev == key) return;
-            _lastAdmissionDecisionByJob[info.Id] = key;
+            repeated = _lastAdmissionDecisionByJob.TryGetValue(info.Id, out var prev) && prev == key;
+            if (!repeated) _lastAdmissionDecisionByJob[info.Id] = key;
         }
+        if (repeated && !plan.IsDeferred) return;
+        string? selectionEventId = plan.SelectionEventId;
+        if (selectionEventId is null && _selectionLedger is not null && (plan.IsFallback || plan.IsDeferred || warning is not null))
+        {
+            var selection = new ModelSelectionEvent
+            {
+                Kind = plan.IsFallback ? "switched" : plan.IsDeferred ? "waiting" : "health-marked",
+                Consumer = "local-coding-launch", Project = ProjectName, TaskKey = info.TaskKey,
+                From = new ModelSelectionRoute(info.CliType, info.Model, info.ThinkingLevel),
+                To = plan.IsFallback ? new ModelSelectionRoute(plan.CliType, plan.Model, plan.ThinkingLevel) : null,
+                Rule = plan.ModelFallback?.Reason ?? (plan.IsFallback ? "quota-cap" : plan.Outcome.ToString()),
+                Reason = plan.Reason, ReturnToPrimaryAt = plan.NextResetAt,
+                Quota = proj is null ? null : new ModelSelectionQuota(info.CliType, proj.WindowLabel,
+                    proj.CurrentUsedPct, proj.CapPct, proj.ProjectedUsedPct, proj.ResetAt, null),
+            };
+            if (_selectionLedger.Append(selection)) selectionEventId = selection.Id;
+        }
+        else if (selectionEventId is null && _selectionLedger is not null && plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary)
+            selectionEventId = _selectionLedger.ReturnToPrimary("local-coding-launch", ProjectName, info.TaskKey,
+                new ModelSelectionRoute(plan.CliType, plan.Model, plan.ThinkingLevel), plan.Reason)?.Id;
+        if (selectionEventId is not null) _selectionIdsByJob[info.Id] = selectionEventId;
+        if (repeated) return;
 
         // Persist normal and notable decisions alike. This gives the token
         // report an explicit interval boundary when candidates disappear.
@@ -1155,7 +1220,7 @@ public class ProjectRunner
         // surfaces unless a benchmark candidate needs to be shown.
         if (plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary
             && warning is null
-            && plan.BetterCandidates is null) return;
+            && plan.BetterCandidates is null && selectionEventId is null) return;
 
         _chatLog.Append(info, OrchestratorMessageKind.Decision, "[quota-admission] " + plan.Reason);
         _timeline?.Append(
@@ -1182,6 +1247,7 @@ public class ProjectRunner
                 ["modelFallback"] = plan.ModelFallback is null
                     ? string.Empty
                     : System.Text.Json.JsonSerializer.Serialize(plan.ModelFallback),
+                ["selectionEventId"] = selectionEventId ?? string.Empty,
             });
 
         // AGT-2055 req 3 ("+ Feed-Zeile") + req 7: every load-steering decision
@@ -1190,6 +1256,19 @@ public class ProjectRunner
         // numbers. That feed is the data source for the separate
         // load-distribution view, so the switch / throttle / wait is never a
         // silent decision the operator has to reconstruct from logs.
+    }
+
+    private string RecordLocalSelection(TaskInfo info, string kind, string consumer, string cli,
+        string rule, string reason, DateTime? returnAt)
+    {
+        if (_selectionLedger is null) return string.Empty;
+        var entry = new ModelSelectionEvent
+        {
+            Kind = kind, Consumer = consumer, Project = ProjectName, TaskKey = info.TaskKey,
+            From = new ModelSelectionRoute(cli, info.Model, info.ThinkingLevel),
+            Rule = rule, Reason = reason, ReturnToPrimaryAt = returnAt,
+        };
+        return _selectionLedger.Append(entry) ? entry.Id : string.Empty;
     }
 
     /// <summary>
@@ -1509,7 +1588,9 @@ public class ProjectRunner
             // next reset (the scheduler re-ticks and wakes on its own). The
             // switch/throttle/wait decision is emitted (de-duplicated per job) so
             // the load-steering is never silent.
-            var providerLimit = ActiveProviderLimit(candidate.Info.CliType, DateTime.UtcNow);
+            var providerLimit = ActiveProviderLimit(
+                candidate.Info.PendingIntent?.ModelFallback?.CliType ?? candidate.Info.CliType,
+                DateTime.UtcNow);
             if (providerLimit is not null)
             {
                 _lastPickReason =
@@ -3143,6 +3224,7 @@ public class ProjectRunner
                         ["modelFallback"] = admissionPlan.ModelFallback is null
                             ? string.Empty
                             : System.Text.Json.JsonSerializer.Serialize(admissionPlan.ModelFallback),
+                        ["selectionEventId"] = _selectionIdsByJob.GetValueOrDefault(info.Id) ?? string.Empty,
                     });
             }
 
@@ -3948,6 +4030,8 @@ public class ProjectRunner
                     if (info.State == TaskStates.Progress)
                         _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.QuotaWaiting);
                     _chatLog.Append(info, OrchestratorMessageKind.Decision, "[quota-wait] " + reason);
+                    var selectionEventId = RecordLocalSelection(info, "waiting", "library-quota-wait",
+                        cliType, "quota-wait", reason, quotaWaitStarted.ResetAt);
                     _timeline?.Append(
                         info.FolderPath,
                         TimelineEventKinds.QuotaAdmissionDecision,
@@ -3959,6 +4043,7 @@ public class ProjectRunner
                             ["decision"] = "library-quota-wait-started",
                             ["cli"] = cliType,
                             ["resetAt"] = quotaWaitStarted.ResetAt.ToString("o"),
+                            ["selectionEventId"] = selectionEventId,
                         });
                 }
             }
@@ -3976,12 +4061,14 @@ public class ProjectRunner
                     if (info.State == TaskStates.Progress)
                         _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.ExecutionRunning);
                     _chatLog.Append(info, OrchestratorMessageKind.Decision, "[quota-wait] reset reached; restarting the same request");
+                    var selectionEventId = RecordLocalSelection(info, "returned", "library-quota-wait",
+                        run?.CliType ?? "unknown", "quota-reset", "Quota reset reached; restarting the same request", null);
                     _timeline?.Append(
                         info.FolderPath,
                         TimelineEventKinds.QuotaAdmissionDecision,
                         TimelineActors.System,
                         summary: "Quota reset reached; restarting the same request",
-                        details: new() { ["decision"] = "library-quota-wait-ended" });
+                        details: new() { ["decision"] = "library-quota-wait-ended", ["selectionEventId"] = selectionEventId });
                 }
             }
             catch (Exception ex) { _logger.LogWarning(ex, "Could not project quota-wait end for {TaskKey}", jobKey); }
@@ -9018,7 +9105,8 @@ public class ProjectRunner
     /// <summary>
     /// AGT-2029 waits-on pickup gate. Returns true when <paramref name="job"/>
     /// must not be auto-picked because a dependency it waits on is unfulfilled
-    /// (its target has not reached 6-completed/7-archive, or the key is unknown
+    /// (its target has neither completed nor integrated its current delivery,
+    /// or the key is unknown
     /// / not yet created) or because its dependsOn edges form a cycle. A cycle
     /// is a configuration error that can never be satisfied: it is reported once
     /// per card (structured warning + the card's waits-on status drives an error
@@ -9031,7 +9119,12 @@ public class ProjectRunner
     {
         if (job.References == null || job.References.DependsOn.Count == 0) return false;
 
-        var status = waitsOnIndex.EvaluateWaitsOn(job);
+        var targets = waitsOnIndex.DependencyTargets([job]);
+        var integration = _dependencyGitProjection is not null
+            ? _dependencyGitProjection.ReadDependencyIntegration(targets)
+            : _dependencyIntegration?.BuildLookup(targets);
+        var status = waitsOnIndex.EvaluateWaitsOn(job, integration,
+            _projectSettings.Get(job.ProjectName).IntegrationBranch);
         var cardKey = job.Key ?? job.Id;
 
         if (status.CycleDetected)
@@ -9074,9 +9167,10 @@ public class ProjectRunner
 
         if (status.Blocked)
         {
-            var open = string.Join(", ", status.Items.Where(i => !i.Fulfilled).Select(i => i.Key));
+            var open = string.Join(", ", status.Items.Where(i => !i.Fulfilled)
+                .Select(i => $"{i.Key} ({i.FulfillmentRule})"));
             _logger.LogDebug(
-                "[taskboard] waits-on hold on {Job} ({Project}): waiting on {Open} to reach completed/archive before auto-pickup",
+                "[taskboard] waits-on hold on {Job} ({Project}): waiting on {Open} before auto-pickup",
                 cardKey, ProjectName, open);
             return true;
         }
@@ -10655,11 +10749,11 @@ public class ProjectRunner
         // for all runners; only the in-memory crash backoff is applied here.
         var orders = publishedOnly
             ? _scanner.ReadPublishedGeneration(
-                DisplayedReadyOrderProjection, _projectSettings.Version,
-                publication => BuildDisplayedReadyOrders(publication, _projectSettings))
+                DisplayedReadyOrderProjection, HashCode.Combine(_projectSettings.Version, _dependencyGitProjection?.Generation ?? 0),
+                publication => BuildDisplayedReadyOrders(publication, _projectSettings, _dependencyGitProjection))
             : _scanner.ReadPerGeneration(
-                DisplayedReadyOrderProjection, _projectSettings.Version,
-                publication => BuildDisplayedReadyOrders(publication, _projectSettings));
+                DisplayedReadyOrderProjection, HashCode.Combine(_projectSettings.Version, _dependencyGitProjection?.Generation ?? 0),
+                publication => BuildDisplayedReadyOrders(publication, _projectSettings, _dependencyGitProjection));
         if (!orders.TryGetValue(ProjectName, out var ordered)) return [];
         return ordered
             .Where(job => !IsInRapidCrashBackoff(job.Id))
@@ -10688,9 +10782,12 @@ public class ProjectRunner
     /// </summary>
     internal static IReadOnlyDictionary<string, IReadOnlyList<TaskInfo>> BuildDisplayedReadyOrders(
         TaskIndexPublication publication,
-        ProjectSettingsService projectSettings)
+        ProjectSettingsService projectSettings,
+        TaskListGitProjectionCache? dependencyGitProjection = null)
     {
         var orders = new Dictionary<string, IReadOnlyList<TaskInfo>>(StringComparer.Ordinal);
+        var targets = publication.AutomationReferences.DependencyTargets(publication.Live);
+        var integration = dependencyGitProjection?.ReadDependencyIntegration(targets);
         foreach (var project in publication.Live
                      .Where(job => !job.Fixture && job.State == TaskStates.Ready)
                      .GroupBy(job => job.ProjectName ?? "", StringComparer.Ordinal))
@@ -10698,7 +10795,8 @@ public class ProjectRunner
             var settings = projectSettings.Get(project.Key);
             var intakeEnabled = settings.IntakeEnabled == true;
             orders[project.Key] = LaneSortApplier.Sort(
-                    project.Where(job => IsSnapshotReadyCandidate(job, intakeEnabled, publication.AutomationReferences)),
+                    project.Where(job => IsSnapshotReadyCandidate(job, intakeEnabled, publication.AutomationReferences, integration,
+                        settings.IntegrationBranch)),
                     TaskStates.Ready,
                     _ => settings)
                 .ToList();
@@ -10711,7 +10809,8 @@ public class ProjectRunner
     /// gate except the in-memory crash backoff, without the pickup path's
     /// once-per-card warnings (those stay with pickup).
     /// </summary>
-    private static bool IsSnapshotReadyCandidate(TaskInfo job, bool intakeEnabled, TaskReferenceIndex waitsOnIndex)
+    private static bool IsSnapshotReadyCandidate(TaskInfo job, bool intakeEnabled, TaskReferenceIndex waitsOnIndex,
+        IReadOnlyDictionary<string, TaskIntegrationStatus>? integration, string? targetBranch)
         => AgentTypes.IsAutoPickupEligible(job.Agent)
            && !job.Fixture
            && !job.WaitingForEngineDecision
@@ -10719,12 +10818,14 @@ public class ProjectRunner
            && !RetiredContainerTask.IsRetired(job)
            && !TaskSlugs.IsHumanDecisionNeeded(job.Id)
            && IsPickupAllowed(job, intakeEnabled)
-           && !HoldsOnWaitsOn(job, waitsOnIndex);
+           && !HoldsOnWaitsOn(job, waitsOnIndex, integration, targetBranch);
 
-    private static bool HoldsOnWaitsOn(TaskInfo job, TaskReferenceIndex waitsOnIndex)
+    private static bool HoldsOnWaitsOn(TaskInfo job, TaskReferenceIndex waitsOnIndex,
+        IReadOnlyDictionary<string, TaskIntegrationStatus>? integration,
+        string? targetBranch)
     {
         if (job.References == null || job.References.DependsOn.Count == 0) return false;
-        var status = waitsOnIndex.EvaluateWaitsOn(job);
+        var status = waitsOnIndex.EvaluateWaitsOn(job, integration, targetBranch);
         return status.CycleDetected || status.UnsatisfiableGate || status.Blocked;
     }
 

@@ -28,13 +28,6 @@ export type {
   UsageAlarmStep,
   UsageSourceObservation,
 } from './usage-alarm.policy';
-export { UsageDetailPanelComponent } from './components/usage-detail-panel/usage-detail-panel';
-export {
-  UsageDetailSurfaceComponent,
-  USAGE_PHONE_QUERY,
-  USAGE_TRIGGER_ATTR,
-  usageTriggerKey,
-} from './components/usage-detail-surface/usage-detail-surface';
 export {
   buildUsageDetailView,
   CLI_MANAGEMENT_HREF,

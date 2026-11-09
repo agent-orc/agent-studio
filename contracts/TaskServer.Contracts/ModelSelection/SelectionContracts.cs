@@ -103,6 +103,7 @@ public sealed record SelectionRequest
     public string? AttemptId { get; init; }
     public int? Round { get; init; }
     public SelectionPins Pins { get; init; } = new();
+    public bool IsExplicitPin { get; init; }
     public string? TaskType { get; init; }
     /// <summary>The card's correctness floor; a fallback below it waits instead (rule 7).</summary>
     public ModelRoutingTier? CorrectnessFloor { get; init; }
@@ -168,6 +169,8 @@ public sealed record SelectionFacts
     public Func<string?, QuotaSnapshot?> SnapshotFor { get; init; } = _ => null;
     /// <summary>Null when no routing map is configured: the planner then never switches.</summary>
     public SelectionRoutingFacts? Routing { get; init; }
+    /// <summary>Ordered consumer or project routes, tried before catalogue routing.</summary>
+    public IReadOnlyList<SelectionRoute>? ConfiguredFallbacks { get; init; }
     public int OccupiedSlots { get; init; }
     public ResolvedCliQuotaWaitPolicy? WaitPolicy { get; init; }
     /// <summary>The operator switch ("conserve provider X until its reset") for the requested CLI.</summary>
@@ -187,14 +190,23 @@ public sealed record SelectionFacts
     /// only for the cards that switch.
     /// </summary>
     public Func<ModelRoutingTier?>? CorrectnessFloor { get; init; }
+    /// <summary>The open switch for this consumer and card, if any.</summary>
+    public SelectionLedgerEntry? ActiveSwitch { get; init; }
+    public int ReturnBelowCapPoints { get; init; } = 10;
+    public int MinDwellMinutes { get; init; } = 30;
+    public double CostGuardFactor { get; init; } = 2.0;
+    /// <summary>Comparable input plus output price per million tokens. Null means unpriced.</summary>
+    public Func<string?, decimal?> PricePerMTok { get; init; } = _ => null;
 }
 
 /// <summary>Ledger kinds of a selection event.</summary>
 public static class SelectionLedgerKinds
 {
+    public const string Selected = "selected";
     public const string Switched = "switched";
     public const string Waiting = "waiting";
     public const string Refused = "refused";
+    public const string Returned = "returned";
 }
 
 /// <summary>
@@ -224,6 +236,9 @@ public sealed record SelectionLedgerEntry(
     DateTime? RetryAt,
     DateTime? ReturnToPrimaryAt)
 {
+    public string? ClosesId { get; init; }
+    public decimal? FromPricePerMTok { get; init; }
+    public decimal? ToPricePerMTok { get; init; }
     /// <summary>The ledger event for a result, or null for a plain primary launch.</summary>
     public static SelectionLedgerEntry? For(
         SelectionRequest request, SelectionResult result, string executionPath, string id, DateTime at)

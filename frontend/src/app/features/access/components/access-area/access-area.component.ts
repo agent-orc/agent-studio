@@ -6,11 +6,13 @@ import { OperatorAgentsService } from '../../services/operator-agents.service';
 import { OperatorApprovalsService } from '../../services/operator-approvals.service';
 import { StandingGrantsService } from '../../services/standing-grants.service';
 import { AccessBindingsComponent } from '../access-bindings/access-bindings.component';
+import { AccessBreakGlassComponent } from '../access-break-glass/access-break-glass';
 import { AccessGroupsComponent } from '../access-groups/access-groups.component';
 import { AccessInviteFormComponent } from '../access-invite-form/access-invite-form.component';
 import { AccessOperatorActivityComponent } from '../access-operator-activity/access-operator-activity.component';
 import { AccessOperatorAgentsComponent } from '../access-operator-agents/access-operator-agents.component';
 import { AccessOperatorApprovalsComponent } from '../access-operator-approvals/access-operator-approvals.component';
+import { AccessOperatorKillSwitchComponent } from '../access-operator-kill-switch/access-operator-kill-switch.component';
 import { AccessRunnersComponent } from '../access-runners/access-runners.component';
 import { AccessServiceAccountsComponent } from '../access-service-accounts/access-service-accounts.component';
 import { AccessStandingGrantsComponent } from '../access-standing-grants/access-standing-grants.component';
@@ -22,16 +24,16 @@ import { StatusIndicatorComponent, type StatusTone } from '../../../../component
  * accounts (API tokens included), runner enrollments, and runners. A
  * single-user installation sees the same views with its one Owner. The
  * Owner also sees operator agents, their approval requests, standing grants,
- * and audit trail; the server refuses those reads for everyone else, which
- * hides them.
+ * kill switch, and audit trail; the server refuses those reads for everyone
+ * else, which hides them.
  */
 @Component({
   selector: 'app-access-area',
   standalone: true,
   imports: [
-    AccessBindingsComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessOperatorActivityComponent,
-    AccessOperatorAgentsComponent, AccessOperatorApprovalsComponent, AccessRunnersComponent, AccessServiceAccountsComponent,
-    AccessStandingGrantsComponent, SessionManagerComponent, StatusIndicatorComponent,
+    AccessBindingsComponent, AccessBreakGlassComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessOperatorActivityComponent,
+    AccessOperatorAgentsComponent, AccessOperatorApprovalsComponent, AccessOperatorKillSwitchComponent, AccessRunnersComponent,
+    AccessServiceAccountsComponent, AccessStandingGrantsComponent, SessionManagerComponent, StatusIndicatorComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-area.component.html',
@@ -85,6 +87,7 @@ export class AccessAreaComponent implements OnInit {
     void this.operators.load();
     void this.standingGrants.load();
     void this.approvals.load();
+    if (this.operators.killSwitch()) void this.operators.loadKillSwitch();
     const activity = this.operators.activityState();
     if (activity === 'ready' || activity === 'error') void this.operators.loadActivity();
   }

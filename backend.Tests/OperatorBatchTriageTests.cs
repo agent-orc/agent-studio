@@ -1,9 +1,12 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Diagnostics;
+using AgentStudio.Cli;
 using AgentStudio.Operator;
 using AgentStudio.Pipeline;
+using AgentStudio.Runner;
 using AgentStudio.Security;
 using AgentStudio.Shared;
 using Microsoft.AspNetCore.Hosting;
@@ -25,6 +28,136 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class OperatorBatchTriageTests : IDisposable
 {
+    [Fact]
+    public async Task Capacity_reads_cached_quota_and_redacts_scoped_tokens()
+    {
+        var now = _clock.UtcDateTime;
+        var hidden = WriteCapacityCard("beta", "BETA-1", TaskStates.Ready);
+        QuotaWaitMarker.Write(hidden, new QuotaWaitRecord
+        {
+            CliType = "codex", StartedAt = now, ResetAt = now.AddHours(1),
+            ThresholdMinutes = 10, Reason = "hidden wait",
+        });
+        var quotaConfig = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["TaskRepository"] = _workspace }).Build();
+        new QuotaCacheStore(quotaConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<QuotaCacheStore>.Instance)
+            .Write([new QuotaSnapshot { CliType = "codex", SubscriptionKey = "test-subscription", FetchedAt = now,
+                RawSample = "private sample", Windows = [new QuotaWindow
+                    { Label = "Weekly", UsedPct = 99, ResetAt = now.AddDays(1) }] }]);
+        using var factory = BuildFactory();
+        Assert.Contains(factory.Services.GetRequiredService<QuotaService>().GetCached().Snapshots,
+            snapshot => snapshot.CliType == "codex" && snapshot.RawSample == "private sample");
+        using var client = BearerClient(factory, CreateToken(factory, StudioRoles.Operator, ["alpha"]));
+        using var response = await client.GetAsync("/api/operator/capacity");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Contains(body.RootElement.GetProperty("quota").EnumerateArray(), row =>
+            row.GetProperty("cliType").GetString() == "codex"
+            && row.GetProperty("snapshot").GetProperty("rawSample").ValueKind == JsonValueKind.Null);
+        Assert.DoesNotContain("BETA-1", body.RootElement.GetRawText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Capacity_names_exhausted_cli_active_fallback_and_waiting_card()
+    {
+        var now = _clock.UtcDateTime;
+        var quotaConfig = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["TaskRepository"] = _workspace }).Build();
+        new QuotaCacheStore(quotaConfig, Microsoft.Extensions.Logging.Abstractions.NullLogger<QuotaCacheStore>.Instance)
+            .Write([new QuotaSnapshot { CliType = "claude", SubscriptionKey = "test-subscription",
+                FetchedAt = now, Windows = [new QuotaWindow
+                    { Label = "Weekly", UsedPct = 99, ResetAt = now.AddDays(1) }] }]);
+        using var factory = BuildFactory();
+        factory.Services.GetRequiredService<AgentStudio.Tasks.TaskIndexCache>().GetSnapshot();
+        var running = WriteCapacityCard("alpha", "ALPHA-1", TaskStates.Progress);
+        var scanner = factory.Services.GetRequiredService<AgentStudio.Tasks.TaskScannerService>();
+        QuotaFallbackMarker.Write(running, new QuotaFallbackRecord
+        {
+            CliType = "codex", Model = "gpt-6-sol", Reason = "weekly cap",
+            ModelFallback = new ModelFallbackInfo(
+                "claude-opus-5", "gpt-6-sol", "weekly cap"), ActivatedAt = now,
+        });
+        var waiting = WriteCapacityCard("alpha", "ALPHA-2", TaskStates.Ready);
+        QuotaWaitMarker.Write(waiting, new QuotaWaitRecord
+        {
+            CliType = "claude", StartedAt = now, ResetAt = now.AddDays(1),
+            ThresholdMinutes = 20, Reason = "hard pin",
+        });
+        // These cards are created after the host's first index publication.
+        // Publish each completed folder as the task creation path does.
+        scanner.PublishCreatedFromFolder(running, ProjectPath("alpha"), "alpha", TaskStates.Progress);
+        scanner.PublishCreatedFromFolder(waiting, ProjectPath("alpha"), "alpha", TaskStates.Ready);
+        var resident = scanner.GetResidentIdentityFacts();
+        var runningFact = Assert.Single(resident, task => task.Key == "ALPHA-1");
+        Assert.Equal(("alpha", TaskStates.Progress, "gpt-6-sol"),
+            (runningFact.ProjectName, runningFact.State, runningFact.QuotaFallback?.Model));
+        Assert.Contains(resident, task => task.Key == "ALPHA-2" && task.QuotaWait?.ThresholdMinutes == 20);
+        var scans = scanner.RawScanCalls;
+        using var client = BearerClient(factory, CreateToken(factory, StudioRoles.Operator, ["alpha"]));
+        using var response = await client.GetAsync("/api/operator/capacity");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(scans, scanner.RawScanCalls);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Contains(body.RootElement.GetProperty("quota").EnumerateArray(), row =>
+            row.GetProperty("cliType").GetString() == "claude" && row.GetProperty("exhausted").GetBoolean());
+        Assert.Contains(body.RootElement.GetProperty("waitingCards").EnumerateArray(),
+            row => row.GetProperty("cardKey").GetString() == "ALPHA-2");
+        var fallback = Assert.Single(body.RootElement.GetProperty("activeFallbacks").EnumerateArray(),
+            row => row.GetProperty("cardKey").GetString() == "ALPHA-1");
+        Assert.Equal("ALPHA-1", fallback.GetProperty("cardKey").GetString());
+        Assert.Equal("claude-opus-5", fallback.GetProperty("sourceModel").GetString());
+        Assert.Equal("gpt-6-sol", fallback.GetProperty("targetModel").GetString());
+        Assert.Contains("weekly cap", fallback.GetProperty("reason").GetString());
+        var wait = Assert.Single(body.RootElement.GetProperty("waitingCards").EnumerateArray());
+        Assert.Equal("ALPHA-2", wait.GetProperty("cardKey").GetString());
+        Assert.Equal(20, wait.GetProperty("waitPolicy").GetProperty("thresholdMinutes").GetInt32());
+    }
+
+    private string WriteCapacityCard(string project, string key, string state)
+    {
+        var folder = Path.Combine(ProjectPath(project), "tasks", "000", key);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = key, key, title = key, state, order = 1, agent = "codex", kind = "task",
+        }));
+        File.WriteAllText(Path.Combine(folder, "prompt.md"), "Fixture card.");
+        return folder;
+    }
+    [Fact]
+    public async Task Restart_preflight_names_a_pending_push_and_passes_after_clear()
+    {
+        using var factory = BuildFactory();
+        using var client = BearerClient(factory, CreateToken(factory, StudioRoles.Operator, ["*"]));
+        MarkPush(factory);
+
+        using var blocked = await client.GetAsync("/api/operator/preflight/restart");
+        Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
+        using var body = JsonDocument.Parse(await blocked.Content.ReadAsStringAsync());
+        Assert.Contains(body.RootElement.GetProperty("blockers").EnumerateArray(),
+            item => item.GetProperty("code").GetString() == "pending-push"
+                && item.GetProperty("project").GetString() == "alpha");
+
+        factory.Services.GetRequiredService<BatchIntegrationReservationService>()
+            .MarkPushVerified("alpha", "alpha-push-job", ResultSha);
+        using var clear = await client.GetAsync("/api/operator/preflight/restart");
+        Assert.Equal(HttpStatusCode.OK, clear.StatusCode);
+    }
+
+    [Fact]
+    public async Task Deploy_plan_orders_server_before_engine_and_hosts()
+    {
+        using var factory = BuildFactory();
+        using var client = BearerClient(factory, CreateToken(factory, StudioRoles.Operator, ["*"]));
+        using var response = await client.PostAsJsonAsync("/api/operator/deploy/plan",
+            new { targetVersion = "1.1.0", windowMinutes = 30 });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(["drain", "task-server", "readiness", "engine", "hosts"],
+            body.RootElement.GetProperty("steps").EnumerateArray()
+                .Select(step => step.GetProperty("kind").GetString()));
+    }
+
     private const string Password = "correct horse battery staple!";
     private const int AlertMinutes = 5;
     private static readonly string BaseSha = new('b', 40);

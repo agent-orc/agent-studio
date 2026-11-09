@@ -15,8 +15,6 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -323,8 +321,7 @@ public sealed class NetworkedEdgeHardeningOwnHostTests : NetworkedEdgeHardeningT
         var resultsPath = Path.Combine(_workspace, "projects", ProjectName, "3-progress", TaskKey, "results");
         Directory.CreateDirectory(resultsPath);
         File.WriteAllText(Path.Combine(resultsPath, "report.html"), "<html><body>report</body></html>");
-        using (var source = new Image<Rgba32>(16, 16, new Rgba32(32, 80, 140)))
-            source.SaveAsPng(Path.Combine(resultsPath, "image.png"));
+        PngFixture.Write(Path.Combine(resultsPath, "image.png"), 16, 16);
         File.WriteAllText(Path.Combine(resultsPath, "..", "x.html"), "<html><body><script>alert(document.cookie)</script></body></html>");
         Directory.CreateDirectory(Path.Combine(_workspace, "projects", ProjectName, "docs"));
         File.WriteAllText(Path.Combine(_workspace, "projects", ProjectName, "docs", "diagram.svg"),
@@ -381,11 +378,11 @@ public sealed class NetworkedEdgeHardeningOwnHostTests : NetworkedEdgeHardeningT
             Assert.Equal("no-store", Header(image, "Cache-Control"));
         }
 
-        using (var thumbnail = await SendAsync(client, HttpMethod.Get,
-                   $"/api/tasks/{TaskKey}/thumbnail?path=image.png", owner.SessionToken))
+        using (var listing = await SendAsync(client, HttpMethod.Get,
+                   $"/api/tasks/{TaskKey}/screenshots", owner.SessionToken))
         {
-            Assert.Equal(HttpStatusCode.OK, thumbnail.StatusCode);
-            Assert.Equal("no-store", Header(thumbnail, "Cache-Control"));
+            Assert.Equal(HttpStatusCode.OK, listing.StatusCode);
+            Assert.Equal("no-store", Header(listing, "Cache-Control"));
         }
 
         // A signed-in member reads card files through the route permission. Stored

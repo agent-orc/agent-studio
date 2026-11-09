@@ -178,6 +178,41 @@ public sealed class StandingGrantTests : IDisposable
         Assert.True(_store.ControlPlaneAudit.VerifyChain().Ok);
     }
 
+    [Fact]
+    public void A_session_kill_keeps_the_grants_and_ending_all_operator_access_revokes_every_live_grant()
+    {
+        var grant = Issue();
+        var session = _store.StartOperatorSession(_agentId, new StartOperatorSessionRequest(null, null), _ownerId);
+        _store.KillOperatorSession(_agentId, session.Session.Id, _ownerId);
+        Assert.Null(_store.ListStandingGrants().Single().RevokedAt);
+        var start = _store.ControlPlaneAudit.HeadSequence;
+
+        var ended = _store.EndOperatorAccess(null, OperatorKillActor.Owner(_ownerId));
+
+        Assert.Equal([grant.Id], ended.StandingGrantIds);
+        var revoked = _store.ListStandingGrants().Single();
+        Assert.Equal((Now, _ownerId), (revoked.RevokedAt!.Value, revoked.RevokedBy));
+        Assert.Equal(OperatorPolicyReasons.GrantRequired, Admit().Reason);
+        var entry = Assert.Single(_store.ControlPlaneAudit.Read(start + 1, 10));
+        Assert.Equal(("standing-grant.revoke", $"standing-grant:{grant.Id}"), (entry.Operation, entry.Target));
+    }
+
+    [Fact]
+    public async Task The_out_of_band_kill_revokes_every_live_grant_with_the_api_stopped()
+    {
+        var grant = Issue();
+
+        Assert.Equal(OperatorKillSwitchCommand.ExitOk,
+            await OperatorKillSwitchCommand.RunAsync(["--reason", "Studio unreachable"], new StringWriter(), _config, _clock));
+
+        var restarted = new AccessSecurityStore(_config, NullLogger<AccessSecurityStore>.Instance, _clock);
+        var revoked = restarted.ListStandingGrants().Single(item => item.Id == grant.Id);
+        Assert.Equal(OperatorKillActors.OutOfBand, revoked.RevokedBy);
+        Assert.Equal(OperatorPolicyReasons.GrantRequired, restarted.AdmitOperatorGrant(_agentId, Requeue, Alpha, Same).Reason);
+        Assert.Contains(restarted.ControlPlaneAudit.ReadNewest(entry => entry.Operation == "standing-grant.revoke", 10),
+            entry => entry.Target == $"standing-grant:{grant.Id}");
+    }
+
     private OperatorPolicyDecision Admit() => _store.AdmitOperatorGrant(_agentId, Requeue, Alpha, Same);
 
     private StandingGrant Issue(int? days = null, int rate = 10)

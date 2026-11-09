@@ -53,6 +53,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Product installer for Windows and Linux | [operations/setup/install.md](../operations/setup/install.md) |
 | Hosted app database binding, retained volumes, scheduled backups and restore (IP-D5 option A) | [operations/hosted-data/](../operations/hosted-data/README.md) |
 | Studio website on a dedicated VM | [operations/setup/studio-website.md](../operations/setup/studio-website.md) |
+| Server-first networked deploy, duration journal and rollback | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
 | Studio website encrypted off-host backups, secret store key copy, restore into an empty stack, and the restore drill (AGT-3365) | [operations/setup/studio-backup-restore.md](../operations/setup/studio-backup-restore.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
 | Windows process spawn safety and repository guards | [operations/windows-process-spawn-safety.md](../operations/windows-process-spawn-safety.md) |
@@ -66,6 +67,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Runtime prompt registry, review companions, call telemetry, and costs | [contracts/runtime-prompts.md](../system/contracts/runtime-prompts.md) |
 | Workspace repository lifecycle and backlog recovery | [operations/workspace-repository-lifecycle.md](../operations/workspace-repository-lifecycle.md) |
 | Board read model on the Task Server: `Board:Source` shadow and cutover, change feed, differences card and 7-day gate (pipeline delivery target M1 and M2, AGT-3317) | [operations/board-source-cutover.md](../operations/board-source-cutover.md) |
+| Board card window: generated 20, 830 and 3,000-card browser measurements and comparison limits (AGT-3534) | [operations/board-window-performance-2026-11-05.md](../operations/board-window-performance-2026-11-05.md) |
 | Temp and cache hygiene on a runner host: the suite temp root, the review executor's per-command purge, the bounded product-owned preparation cache, and how to reset each (AGT-2858) | [operations/temp-and-cache-hygiene.md](../operations/temp-and-cache-hygiene.md) |
 | API stalls on a real-size workspace: measured causes, numbers before and after, the `api-stall` warning and the Operations stall panel (AGT-3369) | [operations/api-stalls.md](../operations/api-stalls.md) |
 | Torn NuGet preparation cache: recognition, automatic eviction, and integration replay (AGT-2901) | [operations/common-problems/torn-preparation-cache/](../operations/common-problems/torn-preparation-cache/README.md) |
@@ -89,8 +91,11 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Selectable Studio header prompt guide | [header-zones.md](../quality/header-zones.md) |
 | CLI | [domains/cli.md](../system/domains/cli.md) |
 | Model routing policy (model, thinking level, risk floors, benchmark evidence) | [domains/model-routing-policy.md](../system/domains/model-routing-policy.md) |
+| Central model selection and fallback Dossier (MS-1 to MS-8, AGT-3473 to AGT-3480) | [decision Dossier](../model-selection-and-fallback/index.html) |
+| Model selection ledger API (events, active fallbacks, effective routes, runner ingestion) | [contracts/model-selection-api.md](../system/contracts/model-selection-api.md) |
 | Model routing by assessed complexity: analysis and implementation plan as pipeline steps, Token Economy as the measuring authority for the (complexity class, model, level) pair table, reported-versus-achieved feedback (AGT-2815) | [decision dossier](../model-routing-by-complexity/index.html) |
 | Task switch performance: measured baseline, bounded core, progressive detail and Git snapshots (AGT-W64; source AGT-2910) | [decision Dossier](../task-switch-performance/index.html) |
+| Card detail deferred loading: interleaved DEMO-9 fixture and live seeded API comparisons (AGT-3536) | [measurement](../operations/performance/card-detail-deferred-loading-2026-11-05.md) |
 | Tokens | [domains/tokens.md](../system/domains/tokens.md) |
 | Areas and tags (classification vocabulary, glossaries, tag filters; AGT-2803) | [domains/areas-and-tags.md](../system/domains/areas-and-tags.md) |
 | Proposed tagging golden set: 60 cards, 20 Dossiers, item rationales and area glossaries (AGT-2804) | [quality/tagging-golden-set/index.html](../quality/tagging-golden-set/index.html) |
@@ -108,6 +113,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Tunnel-loss and fenced recovery drill for coding and review: bounded authority, exact re-adoption, quarantine, replay once (AGT-2937, AGT-W65 D9) | [operations/testing/tunnel-loss-drill.md](../operations/testing/tunnel-loss-drill.md) |
 | Tunnel-loss drill evidence: correlated synthetic outage report, raw decisions, and step receipts (AGT-2937) | [operations/testing/tunnel-loss-drill-evidence/tunnel-drill-report.md](../operations/testing/tunnel-loss-drill-evidence/tunnel-drill-report.md) |
 | Build/test gate recovery: targeted flaky re-runs, budget environment retries, contention thresholds, and slow-test evidence (AGT-2853, AGT-2872) | [operations/testing/build-test-gate-flaky-rerun.md](../operations/testing/build-test-gate-flaky-rerun.md) |
+| Backend test class durations: complete before and after rankings, three fixture changes, and project wall time under contention (AGT-3507) | [operations/testing/backend-test-class-durations-2026-11-05.md](../operations/testing/backend-test-class-durations-2026-11-05.md) |
 | ADR archive | [architecture/decisions/adr-archive.md](../system/architecture/decisions/adr-archive.md) |
 | Architecture model | [architecture/model.md](../system/architecture/model.md) |
 | Architecture and Quality layer (Project Map, mapped guides, analysis inventory, component grading) | [concept](../concepts/architecture-quality-layer.md) · [interactive Dossier](../quality/architecture-quality-layer/index.html) |
@@ -131,6 +137,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Deck icon alternatives for a multi-faceted project console (AGT-2355, Round 2) | [interactive Dossier](../operations/deck-icon-exploration/index.html) · [standalone SVG proof](../operations/deck-icon-exploration/results/deck-icon-options-round-2.svg) |
 | Guided installer story for an all-Docker install on a fresh Linux or Windows machine, with per-step failure modes and a test protocol template (AGT-2503) | [interactive Dossier](../operations/installer-story/index.html) |
 | Open gap: why the Connector (D4b) cannot be the root compose's LAN-reachable Studio backend as built, and the options for the next Docker-deployable card (AGT-2736) | [gap note](../operations/setup/docker-compose-connector-gap.md) |
+| Networked server-first deploy: manifest, host adapter, snapshot, switch, health and rollback procedure (AGT-3513) | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
 | Global Orchestrator Watcher decision dossier: triggers, recovery authority, Activity visibility, model economy, and observe-first slices (AGT-2557) | [decision dossier](../operations/orchestrator-waechter/index.html) |
 | Organization-wide telemetry layer: current signals, shared event model, local-first hybrid bus, orchestrator action rules, Agent Studio operations-hub boundary, and rollout slices (AGT-2661) | [decision dossier](../operations/telemetry-layer/index.html) |
 | Observation theme Dossier: the four-layer observation stack (file, cluster, case, projection), merging the Global Orchestrator Watcher, the organization-wide telemetry layer and the project feed, with ten open decisions (AGT-2800) | [decision dossier](../operations/observation/index.html) |
@@ -211,7 +218,9 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Docker one-box install and operations | [operations/setup/docker.md](../operations/setup/docker.md) |
 | Identity and project bootstrap: first owner, recovery, host enrolment, project registration and repository probe (standalone Task Server, I05) | [operations/setup/identity-and-project-bootstrap.md](../operations/setup/identity-and-project-bootstrap.md) |
 | Operator agent: own Studio identity and sessions, own OS user without the Owner's SSH keys, off-host audit sink (security model SM-1) | [operations/setup/operator-agent.md](../operations/setup/operator-agent.md) |
+| Operator agent level Dossier (OP-1 to OP-9 delivered, AGT-3481 to AGT-3489; OP-10 website page in progress) | [decision Dossier](../operator-agent-level/index.html) |
 | Operator API reference: routes for the operator agent, cross-project batch triage and next safe member operation (AGT-3462 OP-4) | [operations/operator-api.md](../operations/operator-api.md) |
+| studio-op operator CLI: installation, Owner token file setup, commands and their routes, watcher lock and lease, accept check, stable exit codes (AGT-3462 OP-8) | [operations/setup/studio-op.md](../operations/setup/studio-op.md) |
 | Installation connectivity manifest, resolved ports and single RunnerLinks owner (I04) | [operations/setup/connectivity-manifest.md](../operations/setup/connectivity-manifest.md) |
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
 | Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |
@@ -227,6 +236,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Workstation runner-host profile (Windows roots, tools, preview evidence, same Task Server authority) | [operations/setup/workstation-runner-host.md](../operations/setup/workstation-runner-host.md) |
 | Guided multi-machine setup (Control Plane, join token, Agent Hosts) | [operations/setup/multi-machine.md](../operations/setup/multi-machine.md) |
 | Website onboarding source copy (Demo, Single Machine, Multi Machine) | [operations/setup/website-onboarding-template.md](../operations/setup/website-onboarding-template.md) |
+| Coding-agent operator website page source and pinned demo captures (OP-10) | [website/operator-agent/index.html](../website/operator-agent/index.html) |
 | Runner-host resource governance (Linux cgroups, coding/review role defaults, AIMD capacity boundary) | [target architecture](../operations/haertung-verteilte-ausfuehrung/target-architecture/resource-governance.md) |
 | Execution hosts operator lifecycle | [operations/remote-hosts.md](../operations/remote-hosts.md) |
 | Review lane runbook: capabilities a Review Executor registers, the typed empty-claim reason (`unclaimable-plan-requirements`), and the `lane-drain-stalled` review-claim alarm (AGT-2987) | [operations/review-lane-runbook.md](../operations/review-lane-runbook.md) |

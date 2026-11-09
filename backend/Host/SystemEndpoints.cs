@@ -70,6 +70,7 @@ public static class SystemEndpoints
         app.MapGet("/api/system/execution-infrastructure", (IConfiguration config,
             AgentStudio.Pipeline.GateSlotUsageTracker gateSlots,
             AgentStudio.Pipeline.PullGateStore pullGates,
+            AgentStudio.Pipeline.GateCapacitySettings capacity,
             AgentStudio.Runner.OrchestrationEngineReadiness engine) =>
         {
             var pullHost = pullGates.HealthyHosts().FirstOrDefault();
@@ -85,6 +86,7 @@ public static class SystemEndpoints
                 gate = new { host, transport = pullHost is null ? "ssh" : "pull",
                     busy = pullHost?.Busy ?? slots.Busy,
                     total = pullHost?.Slots ?? slots.Total, reachability,
+                    capacity = capacity.Current(), capacitySource = capacity.HasOverride ? "stored" : "configuration",
                     lastReachedAt = pullHost?.LastHeartbeat ?? reached, lastFailureAt = failed,
                     workers },
                 taskServer = TaskServerLabel(config),

@@ -146,9 +146,10 @@ public sealed class ManagementApiTests : IClassFixture<ManagementApiTests.Host>
             snapshot.Capabilities,
             capability => capability.Key == "provider-auth:claude"
                           && capability.AdvertisedStatus == "ready"
-                          && capability.HealthState == Contract.CapabilityHealthStates.Suspect
+                          && capability.HealthState == Contract.CapabilityHealthStates.Draining
                           && capability.ConsecutiveFailures == 1
-                          && capability.FirstFailureAt is not null);
+                          && capability.FirstFailureAt is not null
+                          && capability.CooldownUntil == DateTime.MaxValue);
 
         var expiresAt = DateTime.UtcNow.AddDays(10);
         registry.AdvertiseCapabilities(
@@ -182,7 +183,7 @@ public sealed class ManagementApiTests : IClassFixture<ManagementApiTests.Host>
         Assert.Equal(expiresAt, recoveredAuth.ExpiresAt);
         Assert.Contains(
             recoveredAuth.RecoveryHistory,
-            item => item.FromState == Contract.CapabilityHealthStates.Suspect
+            item => item.FromState == Contract.CapabilityHealthStates.Draining
                     && item.ToState == Contract.CapabilityHealthStates.Healthy);
     }
 
@@ -424,8 +425,9 @@ public sealed class ManagementApiTests : IClassFixture<ManagementApiTests.Host>
 
     /// <summary>
     /// The management host of every class in this file: the workspace is the
-    /// only watch path, the backups and backend logs sit beside it, and no
-    /// hosted service runs. The optional arguments are the configurations the
+    /// only watch path, and the backups and backend logs sit beside it. The
+    /// startup migration and bus seed run; all other hosted services are removed.
+    /// The optional arguments are the configurations the
     /// tests of <see cref="ManagementApiOwnHostTests"/> each need.
     /// </summary>
     internal static void Configure(
@@ -470,6 +472,8 @@ public sealed class ManagementApiTests : IClassFixture<ManagementApiTests.Host>
         builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<IHostedService>();
+            services.AddHostedService<AgentStudio.ProjectChat.ProjectChatStartupService>();
+            services.AddHostedService<AgentStudio.Bus.AgentMessageBusSeedHostedService>();
             if (statisticsCache is not null) services.AddSingleton(statisticsCache);
             if (stableRelease is not null)
             {
@@ -1336,8 +1340,8 @@ public sealed class ManagementApiOwnHostTests : IDisposable
 
     private async Task WaitForStartupMigrationAsync(WebApplicationFactory<Program> factory, TimeSpan timeout)
     {
-        // Program starts project chat migration after the test host has begun
-        // answering requests. Its state file is created by Begin and cleared
+        // The hosted service starts project chat migration during host startup.
+        // Its state file is created by Begin and cleared
         // by Complete, so an absent file is not evidence that boot settled.
         var stateFile = Path.Combine(_root, ".metadata", "migrations.json");
         var migrations = factory.Services.GetRequiredService<MigrationStateStore>();

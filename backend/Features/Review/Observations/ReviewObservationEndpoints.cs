@@ -6,6 +6,19 @@ public static class ReviewObservationEndpoints
 {
     public static void MapReviewObservationEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/projects/{projectName}/review-concerns/daily", (
+            string projectName, int? days, TaskScannerService scanner,
+            AgentStudio.Pipeline.BatchGateStore batchStore) =>
+        {
+            if (!scanner.GetWatchPaths().Any(item =>
+                    string.Equals(item.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound();
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var rows = ReviewConcernMetrics.Read(scanner, batchStore, projectName, days ?? 30, today);
+            return Results.Ok(new { project = projectName, days = Math.Clamp(days ?? 30, 1, 90),
+                daily = ReviewConcernMetrics.Summarize(rows) });
+        });
+
         app.MapGet("/api/projects/{projectName}/token-usage/review-observations", (
             string projectName, TaskScannerService scanner, ReviewObservationStore observations) =>
         {

@@ -88,6 +88,16 @@
         </section>
       }
 
+      <section class="access__section" aria-labelledby="access-kill-switch-title">
+        <header><h3 id="access-kill-switch-title">Kill switch</h3><p class="access-hint">End all operator access in one step, end one runaway session from its row above, and see the drills that prove the switch works.</p></header>
+        @defer (on immediate) { <app-access-operator-kill-switch /> }
+      </section>
+
+      <section class="access__section" aria-labelledby="access-break-glass-title">
+        <header><h3 id="access-break-glass-title">Break-glass windows</h3><p class="access-hint">Emergency authority for named sessions, capped at two hours and reviewed after closure.</p></header>
+        @defer (on immediate) { <app-access-break-glass /> }
+      </section>
+
       <section class="access__section" aria-labelledby="access-operator-activity-title">
         <header><h3 id="access-operator-activity-title">Operator activity</h3><p class="access-hint">Audit entries of operator sessions in a hash chain, with its verification and off-host forwarding.</p></header>
         @defer (on immediate) { <app-access-operator-activity /> }

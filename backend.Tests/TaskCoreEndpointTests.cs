@@ -54,6 +54,14 @@ public sealed class TaskCoreEndpointTests : IDisposable
         Assert.True(TaskJsonFile.UpdateField(other.FolderPath, "title", "Other changed", NullLogger.Instance));
         index.PublishCore(other with { Title = "Other changed" });
 
+        var completedReads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var observedReads = 0;
+        factory.Services.GetRequiredService<TaskDetailLatencyMetrics>().ObservationRecorded += () =>
+        {
+            if (Interlocked.Increment(ref observedReads) >= 2)
+                completedReads.TrySetResult();
+        };
+
         using var detail = await client.GetAsync($"/api/tasks/AGT-target?project={project.Id}");
         detail.EnsureSuccessStatusCode();
         Assert.Equal("ready", detail.Headers.GetValues("X-Task-Detail-Freshness").Single());
@@ -69,6 +77,8 @@ public sealed class TaskCoreEndpointTests : IDisposable
         after.EnsureSuccessStatusCode();
         using var changed = JsonDocument.Parse(await after.Content.ReadAsStringAsync());
         Assert.Equal("Target changed", changed.RootElement.GetProperty("info").GetProperty("title").GetString());
+
+        await completedReads.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         using var latency = await client.GetAsync("/api/runtime/task-detail-latency");
         latency.EnsureSuccessStatusCode();

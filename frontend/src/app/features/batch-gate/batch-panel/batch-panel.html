@@ -1,14 +1,20 @@
 <div class="batch-panel-backdrop" (click)="close()" aria-hidden="true"></div>
-<aside class="batch-panel" role="dialog" aria-modal="true" aria-labelledby="batch-panel-title" data-testid="batch-panel">
+<section class="batch-panel" role="dialog" aria-modal="true" aria-labelledby="batch-panel-title" data-testid="batch-panel">
   <header class="batch-panel__header">
     <div><h2 id="batch-panel-title">Batch verification</h2><p>{{ project() }}</p></div>
     <button #closeButton type="button" aria-label="Close batch panel" (click)="close()">Close</button>
   </header>
-  <div class="batch-panel__body">
+  <div #body class="batch-panel__body" tabindex="0" (keydown)="onBodyKeydown($event)">
     @if (error(); as message) { <p class="batch-panel__error" role="alert">{{ message }} <button type="button" (click)="gate.refresh(project())">Retry</button></p> }
     @if (state(); as data) {
       @if (data.gateSlots; as slots) {
         <p data-testid="batch-gate-slot-usage">Gate slots: {{ slots.busy }}/{{ slots.total }} busy</p>
+      }
+      @if (data.gateCapacity; as capacity) {
+        <p data-testid="batch-gate-capacity">Capacity: {{ capacity.slots }} slots · {{ capacity.processorsPerGate }} processors per gate
+          @if (capacity.hostCores) { · {{ capacity.hostCores }} host cores }
+          @if (capacity.allowOversubscription) { · oversubscription allowed }
+        </p>
       }
       @if (data.pushWait; as wait) {
         <p data-testid="batch-integration-push-wait" role="status">
@@ -17,6 +23,41 @@
         </p>
       }
       <p class="batch-panel__pre-check-counters" data-testid="batch-pre-check-counters">Pre-checks: {{ data.preChecksRun ?? 0 }} run · {{ data.preChecksRed ?? 0 }} red · {{ data.preCheckMinutesSaved ?? 0 }} estimated gate minutes saved</p>
+      <section aria-labelledby="batch-failures-title" data-testid="batch-failed-tests">
+        <h3 id="batch-failures-title">Recurring failed tests</h3>
+        @if (actionError() && !confirm()) { <p class="batch-panel__error" role="alert">{{ actionError() }}</p> }
+        @if (failures(); as report) {
+          <p>Ranked over the last {{ report.windowDays }} days.</p>
+          @if (report.pendingEvidenceRuns) {
+            <p role="status" data-testid="batch-failure-evidence-pending">Ranking is incomplete: evidence for {{ report.pendingEvidenceRuns }} batch {{ report.pendingEvidenceRuns === 1 ? 'run is' : 'runs are' }} temporarily unavailable. Reopen this panel to retry.</p>
+          }
+          @if (report.tests.length) {
+            <ol class="batch-panel__failures">@for (test of report.tests; track test.testName) {
+              <li>
+                <strong class="batch-panel__test-name">{{ test.testName }}</strong>
+                @if (test.flakySuspect) { <span class="batch-panel__suspect">Flaky suspect</span> }
+                <p class="batch-panel__metrics">{{ test.batches }} batches · {{ test.runs }} runs · {{ test.distinctMemberSets }} member sets
+                  @if (test.flakyRerunPassed) { · rerun passed }
+                </p>
+                <p>First {{ date(test.firstFailureUtc) }} · Latest {{ date(test.lastFailureUtc) }}</p>
+                @if (test.latestErrorExcerpt) { <pre>{{ test.latestErrorExcerpt }}</pre> }
+                <p class="batch-panel__links">Batches:
+                  @for (id of test.batchIds; track id) {
+                    <a [href]="'#batch-' + id" (click)="$event.preventDefault(); openBatch(id)">{{ id }}</a>
+                  }
+                </p>
+                @if (test.flakySuspect) {
+                  <button type="button" [attr.aria-label]="'Create fix card for ' + test.testName"
+                    [disabled]="openingFix() !== null" [appPendingButton]="openingFix() === test.testName"
+                    pendingLabel="Opening fix card…"
+                    (click)="createFixCard(test)">Create fix card</button>
+                }
+              </li>
+            }</ol>
+          } @else if (!report.pendingEvidenceRuns) { <p>No failed tests in this window.</p> }
+        } @else if (failureError()) { <p role="status">Failed-test history is unavailable.</p> }
+        @else { <p>Loading failed-test history…</p> }
+      </section>
       <section aria-labelledby="batch-plan-title">
         <h3 id="batch-plan-title">Current plan</h3>
         <p><strong>{{ data.plan.decision }}</strong> · {{ data.plan.reason }}</p>
@@ -55,17 +96,33 @@
           }</ul>
         } @else { <p>No cards are waiting for a batch.</p> }
       </section>
+      @if (data.reviewFixWaits?.length) {
+        <section aria-labelledby="batch-review-fix-title" data-testid="batch-review-fix-waits">
+          <h3 id="batch-review-fix-title">Waiting for review fixes</h3>
+          <ul>@for (wait of data.reviewFixWaits; track wait.taskKey) {
+            <li>{{ wait.taskKey }} · concern fix round {{ wait.round }} of {{ wait.maximum }} · {{ wait.aspects.join(', ') }}</li>
+          }</ul>
+        </section>
+      }
       <section aria-labelledby="batch-history-title">
         <h3 id="batch-history-title">Running and recent batches</h3>
-        @if (data.batches.length) {
-          @for (batch of data.batches; track batch.batchId) {
-            <article class="batch-panel__batch" [attr.data-phase]="batch.phase">
+        @if (batches().length) {
+          @for (batch of batches(); track batch.batchId) {
+            <article class="batch-panel__batch" [id]="'batch-' + batch.batchId" [attr.data-phase]="batch.phase">
               <h4>Batch {{ batch.batchId }} @if (batch.parentBatchId) { <small>from {{ batch.parentBatchId }}</small> }</h4>
               <p class="batch-panel__timeline" aria-label="Batch phases">@for (phase of phases; track phase) {
                 <span [class.batch-panel__phase-current]="batch.phase === phase">{{ phaseLabel(phase) }}</span>
               }</p>
               @if (!phases.includes(batch.phase)) { <p>Phase: {{ batch.phase }}</p> }
               <p><strong>{{ batch.phase }}</strong>@if (batch.phaseReason) { · {{ batch.phaseReason }} }</p>
+              @if (batch.formationReason) { <p>{{ batch.formationReason }}</p> }
+              @if (batch.exclusions?.length) {
+                <ul aria-label="Cards placed in another batch">
+                  @for (exclusion of batch.exclusions; track exclusion.taskKey) {
+                    <li>{{ exclusion.taskKey }} · {{ exclusion.detail ?? exclusion.reason }}</li>
+                  }
+                </ul>
+              }
               <p>Members: @for (member of batch.members; track member.taskKey) { <span>{{ member.taskKey }} ({{ replayLabel(member.replay) }}{{ member.released ? ', released' : '' }}) </span> }</p>
               <p>Base {{ batch.baseSha }} · Candidate {{ batch.candidateSha ?? 'not created' }}
                 @if (publishedSha(batch.publication); as sha) { · Published {{ sha }} }
@@ -90,4 +147,4 @@
       <button type="button" [disabled]="busy()" (click)="confirm.set(null)">Cancel</button>
     </div>
   }
-</aside>
+</section>

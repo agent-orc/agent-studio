@@ -34,6 +34,22 @@ public sealed class ProjectSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void Clearing_last_step_model_override_prunes_empty_parent_maps()
+    {
+        var svc = Build();
+        svc.SetModelSelectionStepOverride("demo", "task", "aspect-code-quality",
+            new ModelSelectionOverride
+            {
+                Primary = new AgentStudio.TaskServer.Contracts.SelectionRoute("claude", "claude-opus-5", "high"),
+            });
+
+        svc.SetModelSelectionStepOverride("demo", "task", "aspect-code-quality", null);
+
+        Assert.Null(svc.Get("demo").ModelSelectionOverrides);
+        Assert.Null(Build().Get("demo").ModelSelectionOverrides);
+    }
+
+    [Fact]
     public void ChatMetadataOverride_PersistsAndCanBeCleared()
     {
         var svc = Build();
@@ -993,6 +1009,44 @@ public sealed class ProjectSettingsServiceTests : IDisposable
         var s = svc.Get("runbook");
         Assert.Equal("manual", s.RunnerMode);
         Assert.Equal("auto-single", s.DesiredRunnerMode); // the operator's toggle, not the system flips
+    }
+
+    [Fact]
+    public void Model_selection_migration_converts_only_equal_pins_across_twelve_projects_and_three_pipeline_types()
+    {
+        var service = Build();
+        var types = new[] { PipelineTypes.Task, PipelineTypes.Bug, PipelineTypes.Feature };
+        for (var project = 0; project < 12; project++)
+        foreach (var type in types)
+        {
+            service.SetPipelineStep($"project-{project}", type, "aspect-code-quality",
+                new PipelineStepSetting { CliType = "claude", Model = "claude-opus-5", Enabled = false });
+            service.SetPipelineStep($"project-{project}", type, "post-code-review-grade",
+                new PipelineStepSetting { CliType = "claude", Model = "claude-sonnet-4-5", Mode = "warn" });
+        }
+        var old = new Dictionary<string, AgentStudio.Cli.CliModelRouteProfile>
+        {
+            ["claude"] = new() { CliType = "claude", PrimaryModel = "claude-opus-5" },
+        };
+
+        var result = service.MigrateModelSelectionSteps(old);
+
+        Assert.Equal(36, result.InheritedSteps);
+        Assert.Equal(36, result.ExplicitSteps);
+        Assert.Equal(12, result.Projects);
+        var reloaded = Build();
+        foreach (var project in Enumerable.Range(0, 12))
+        foreach (var type in types)
+        {
+            var settings = PipelineTypeSettings.ForType(reloaded.Get($"project-{project}"), type)!;
+            var inherited = settings.PipelineSteps!["aspect-code-quality"];
+            var retained = settings.PipelineSteps["post-code-review-grade"];
+            Assert.Null(inherited.Model);
+            Assert.False(inherited.Enabled);
+            Assert.Null(inherited.CliType);
+            Assert.Equal("claude-sonnet-4-5", retained.Model);
+            Assert.Equal("warn", retained.Mode);
+        }
     }
 
     private ProjectSettingsService Build(IAtomicJsonFileWriter? fileWriter = null)

@@ -6,6 +6,144 @@ Status: Canonical policy, initial hypothesis based on the 2026-07-23 historical 
 
 Owner: Pipeline and CLI domains
 
+## Networked one-shot custody
+
+In a networked installation, the API selects and admits each short model call,
+then submits a bounded one-shot job to the standalone Task Server. This covers
+Result summaries, post-summary assessment, tagging and maintenance, commit
+message review, and other calls through `CliOneShotRegistry`. The job carries a
+prompt of at most 220,000 UTF-8 bytes, a timeout of at most 300 seconds, and an
+output cap of 65,536 bytes. Up to four inline images may travel with the job,
+with a combined base64 limit of 5.6 million characters. A coding or review host
+claims it only while its current instance has fresh, ready
+`model-acceptance:<cli>:<model>`
+evidence. Claims and completions bind the runner's current instance and the
+claim token. A restarted runner cannot complete a prior instance's claim.
+The host runs the provider from an
+isolated temporary directory with read-only model execution and reports bounded
+text and usage. The API container does not need a provider login.
+
+The selection ledger records each one-shot route, including an ordinary primary
+selection. When no host advertises the route, Result finalization reports
+`waiting for a host with <capability>` and schedules a retry without consuming
+the summary retry budget. The task server publishes the model as a short-lived
+probe demand in capability advertisement responses, so a host can discover and
+advertise a newly requested route. Pending jobs expire after their timeout plus
+30 seconds. A claim starts a fresh timeout plus 30 seconds; the API follows the
+Task Server's queue expiry and starts its own run timer when it observes the
+claim.
+
+### Task Server one-shot job API
+
+These routes use the standalone Task Server's `/api/v1` prefix and camel-case
+JSON properties. Studio uses `tasks:write` to submit and read jobs. A runner
+uses its bound identity and the run or review claim/write scopes. Studio owns
+model selection and quota admission. A missing host returns `waiting` without
+creating a job, so Studio can retry after capability evidence changes.
+The public-demo profile denies job creation, claim, and completion with the
+typed `execution-disabled` response; reading an existing job remains read-only.
+
+| Method and route | Request | Response |
+|---|---|---|
+| `POST /one-shot-jobs` | `cli` (`claude` or `codex`), `model`, `prompt`, optional `thinkingLevel`, `timeoutSeconds`, `maxOutputBytes`, and optional `images` entries with `base64` and `mediaType`. | `jobId`, `status` (`pending` or `waiting`), `capability`, and optional `error`. Waiting has an empty `jobId` and `error: "waiting for a host with <capability>"`. |
+| `GET /one-shot-jobs/{jobId}` | No body. | `jobId`, `status` (`pending`, `claimed`, `completed`, or `failed`), `capability`, optional `text`, `error`, and `usage`. An unknown id returns JSON `null`; an expired job reads as `failed` with a timeout error. |
+| `POST /one-shot-jobs/claim` | `runnerId`, `instanceId`. | `jobId`, `claimToken`, and the original `request`, or JSON `null` when no eligible job exists. Claim requires a fresh ready `model-acceptance:<cli>:<model>` capability for the runner's current instance. |
+| `POST /one-shot-jobs/complete` | `runnerId`, `instanceId`, `jobId`, `claimToken`, `success`, optional `text`, `error`, and `usage` (`inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheCreationTokens`, `model`). | JSON `true` when the active fenced claim from the runner's current instance is settled, otherwise `false`. Text over the requested byte cap becomes a failed job with an output-cap error. |
+
+The server rejects an empty or over-220,000-byte UTF-8 prompt, a timeout outside
+1-300 seconds, an output cap outside 1-65,536 bytes, more than four images,
+unsupported image media types, or over 5.6 million combined base64 characters
+with HTTP 400. A runner identity mismatch or insufficient scope returns HTTP
+403. Pending jobs expire 30 seconds after their requested timeout. Claiming a
+job starts a fresh run deadline: the job expires after its requested timeout
+plus 30 seconds, and its claim token expires after the timeout plus 20 seconds.
+Studio starts its run deadline when it first observes the claim. The runner
+counts raw stdout and stderr bytes before decoding either stream and reports
+timeout and output cap failures through `failed`.
+
+## Consumer policy and project overrides (AGT-3479)
+
+The workspace policy is `model-selection-policy.json` under `TaskRepository`.
+It holds consumer-class primary and ordered fallback routes, cap values, the
+cost-guard factor, and hysteresis parameters. `GET /api/model-selection/policy`
+returns the policy and the one-time migration count. The CLI Management editor
+updates one consumer row with `PUT /api/model-selection/policy/consumers/{consumer}`.
+
+`ProjectSettings.ModelSelectionOverrides` can replace the route for a consumer,
+pipeline type, or step. `PUT /api/projects/{projectName}/pipeline-step` continues
+to store its compatibility fields and writes the matching step override. On the
+first policy read, step model pins equal to the old global primary model become
+inherited; other pins remain explicit. The migration emits `policy-migrated`
+to the selection ledger. The old `cli-model-routing.json` is read once and
+remains read only during this compatibility release.
+
+Card and project pins default to `preference`. A `hard` pin waits with a reason
+when the route cannot launch. Provider-refusal continuation stores a temporary
+preference with an expiry instead of replacing the operator's card pin.
+The policy declares `gpt-6-sol:xhigh` to `claude-opus-5:xhigh` as the explicit
+cross-provider fallback recommended in D5 of the concept Dossier.
+
+### Model selection API contract
+
+The routes below use JSON property names as sent on the wire. A policy route
+uses `{ "cli": "claude", "model": "claude-opus-5", "thinking": "high" }`;
+an effective or project override route uses `cliType` and `thinkingLevel`
+instead. `fallbacks` in a consumer policy is either `"catalogue"` or an
+ordered array of policy routes. A consumer can use `route: "qualification"`
+instead of a fixed `primary`. Consumer keys include `coding`, `review-aspect`,
+`review-deep`, `review-grade`, `concept-fit`, `chat`, `one-shot`,
+`merge-resolver`, and `card-creation`.
+
+| Method and route | Request | Successful response and effect |
+|---|---|---|
+| `GET /api/model-selection/policy` | None. | The full `ModelSelectionPolicy`: `version`, `consumers`, `caps`, `costGuardFactor`, `hysteresis`, `modelFallbacks`, `legacyProfiles`, and `migration`. The first read creates the file and performs the one-time migration. `migration` contains `inheritedSteps`, `explicitSteps`, `projects`, and `applied`. |
+| `PUT /api/model-selection/policy/consumers/{consumer}` | One complete `ConsumerModelPolicy` with optional `primary`, `route`, `fallbacks`, `sameClassOnly`, `stickyWithinCard`, and per-consumer `costGuardFactor`. | The full updated policy. The consumer must exist; route CLI ids must be valid and a supplied cost factor must be positive. |
+| `GET /api/model-selection/effective?project={projectName}&pipelineType={pipelineType}` | Both query parameters are optional; `pipelineType` must be valid when supplied. | `{ "project": ..., "pipelineType": ..., "routes": [...] }`. Each route has `consumer`, nullable `stepId`, `configured`, nullable `effective`, `rule`, and nullable `reason`. `configured` and `effective` use `cliType`, `model`, and `thinkingLevel`; a null `effective` means admission would wait. The preview does not launch a model. |
+| `GET /api/model-selection/active` | None. | `ModelSelectionEvent[]` lists open switch and unexpired health entries. A `returned` event with `closesId` removes the matching switch from this projection. |
+| `GET /api/model-selection/events` | Optional `provider`, `project`, `consumer`, `rule`, model `from` and `to`, `taskKey`, `eventId`, ISO timestamps `since` and `until`, and page `cursor`. | `{ "events": [...], "nextCursor": ... }`, newest first. The CLI Management view keeps its provider, project, consumer, rule, period, card, and event filters in the URL query. A card timeline receipt links to the view using `msCard` and `msEvent`; an event link ignores the default period so older receipts remain reachable. |
+| `PUT /api/projects/{projectName}/model-selection-overrides/{consumer}` | `{ "pipelineType": null, "override": { "primary": { "cliType": "codex", "model": "gpt-6-sol", "thinkingLevel": "high" }, "fallbacks": [], "pinMode": "preference" } }`. `pipelineType` selects a type-specific override; omit or set it to null for the consumer-wide override. Set `override` to null to clear that scope. | `{ "projectName": ..., "modelSelectionOverrides": ... }`. Unknown projects or consumers are rejected; `pinMode` must be `preference` or `hard`. Overrides can also contain `byPipelineType` and `byStep` maps. |
+| `PUT /api/projects/{projectName}/pipeline-step` | The existing step body with `pipelineType`, `stepId`, optional `cliType`, `model`, `thinkingLevel`, and `pinMode` (default `preference`), alongside the other step settings. | The existing step response gains `modelSelectionOverrides`. A model or CLI selection writes the matching step override; clearing both removes it. The compatibility step fields remain readable. |
+| `PUT /api/tasks/{jobId}/model`, `/thinking-level`, `/cli-type` | Respectively `{ "model": ..., "pinMode": "preference" }`, `{ "thinkingLevel": ..., "pinMode": "preference" }`, and `{ "cliType": ..., "pinMode": "preference", "useOwnSession": ... }`. `pinMode` may be omitted and then defaults to `preference`. | `200 OK` for a saved card pin, `404` when the card is absent; invalid pin modes return `400`. The CLI route also validates `cliType`. These pins affect later attempts, not a running CLI session. |
+
+The project override map is `ModelSelectionOverrides[consumerClass]`, with
+optional `byPipelineType[pipelineType]` and `byStep[stepId]` entries. Each entry
+may supply `primary`, ordered `fallbacks`, and `pinMode`.
+Explicit fallback routes are tried in order. A route whose provider is capped,
+whose model is rejected by the claiming host, or whose capability or correctness
+floor is insufficient is skipped. The chosen route and its position in the
+ordered list appear in the selection ledger's switch reason. The policy maps
+retain case-insensitive consumer, provider, window, and model keys after reload.
+The migration compares old step models with the old global primary for their CLI. Matching models
+inherit; different models become explicit step overrides. The policy response
+reports the counts, and the selection ledger receives one `policy-migrated`
+entry. `cli-model-routing.json` is only read during that initial migration and
+is not written by the new policy editor.
+
+This slice implements the Dossier's recommended working choices for its scope:
+D2 makes pins preferences with a hard opt-in; D3 keeps the 95 percent cap and
+records the 10-point, 30-minute return hysteresis; D5 declares the Sol/xhigh to
+Opus 5/xhigh fallback; D8 sets the cost guard factor to 2.0. The consumer
+policy retains D4's same-class review rule and D6's sticky review setting.
+The Dossier implementation log records decisions handled by the other slices.
+
+### Return and cost guard (AGT-3480)
+
+A quota switch remains active while the primary's window is near its cap. It
+returns at the window reset when quota admission allows the primary, or after a
+trusted reading is at least `returnBelowCapPoints` below every cap for
+`minDwellMinutes` since the switch. The defaults are 10 points and 30 minutes.
+Suspicious readings do not clear a switch. The fallback target must also pass
+the projected cap check; a blocked target makes the selection wait.
+
+The planner compares the primary and fallback's input plus output catalogue
+price per million tokens. A route above the consumer's `costGuardFactor`
+(default 2.0) waits with rule `cost-guard`. An explicitly configured policy
+fallback or an operator switch authorizes the higher price. Unpriced routes
+have no ratio to compare. Switches and matching returns are recorded in daily
+JSONL files under `.runtime/model-selection/`; the active projection replays
+the last 14 days at startup. Event files are retained for 90 days; daily
+provider, rule, and consumer summaries are retained for 400 days.
+
 This page is the authoritative answer to two questions:
 
 1. Which model and thinking level should perform a task or bounded pipeline
@@ -15,8 +153,21 @@ This page is the authoritative answer to two questions:
 
 The policy selects the cheapest tier that clears the required capability floor.
 It does not claim that a larger model repairs a vague task, a broken gate, or
-missing evidence. Explicit operator pins still win, but the UI or orchestrator
-should explain when a pin is below the policy floor.
+missing evidence. A preference pin wins over defaults but may switch under
+quota or operator rules. A hard pin waits instead of switching. The UI or
+orchestrator should explain when a pin is below the policy floor.
+
+## Provider model health during coding claims
+
+A capacity refusal marks the selected model on its execution host for 15 minutes,
+or until a later provider retry hint. It does not mark the provider account as
+rate limited. A model-unavailable refusal stays scoped to that model and host
+until the next catalogue refresh; an unauthorized provider response holds
+that provider on the affected host until a successful provider probe. After
+bounded same-session capacity retries, a fresh attempt first tries the declared
+same-provider sibling, then a host-accepted cross-provider equivalent that
+clears the card's correctness floor. Sol/xhigh uses the declared Opus 5/xhigh
+policy route. A running process keeps its selected model.
 
 ## Routing tiers
 
@@ -548,7 +699,8 @@ economy state, correctness floor, and reason.
 Step 3's "equivalent-capability provider route" is code, not operator
 judgment, as of AGT-2751. [CliQuotaFallbackService](../../../backend/Features/Cli/Quota/CliQuotaFallbackService.cs)
 derives it from [IModelEquivalenceCatalog](../../../backend/Features/Cli/Quota/ModelEquivalenceCatalog.cs)
-when no explicit `cli-model-routing.json` fallback is configured, and the
+when no explicit fallback is configured in the workspace policy (including a
+migrated legacy profile), and the
 application-wide [QuotaAdmissionService](../../../backend/Features/Cli/Quota/QuotaAdmissionService.cs)
 applies the same switch, throttle, or wait decision before every execution path
 that launches a coding-agent CLI. The exhaustive path-to-source and
@@ -661,13 +813,12 @@ adapters until MS-6. A hard pin and a same-session continuation never switch;
 they wait with rule `pin`.
 
 `ModelSelectionService` (`IModelSelectionService`) collects the facts, asks
-the planner and writes every non-primary result to the selection ledger seam
-(`IModelSelectionLedger`; an interim `model_selection_event` log line until the
-MS-2 store). Local runs, remote coding claims and the one-shot registry
+the planner and writes every non-primary result through
+`IModelSelectionLedger` into the shared JSONL ledger and active projection.
+Local runs, remote coding claims and the one-shot registry
 dispatch call it. The Task Server takes the refusal sibling and the runner the
 claimed run route from the same planner. `ModelSelectionBoundaryTests` fails on
-a CLI start or `CliRouter.Get(...)` outside its allow-lists; the pending list
-names the merge resolver for MS-6.
+a CLI start or `CliRouter.Get(...)` outside its allow-lists.
 
 ### Provider request refusals
 

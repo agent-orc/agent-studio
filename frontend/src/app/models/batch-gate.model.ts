@@ -1,5 +1,5 @@
 export type BatchDecision = 'wait' | 'close' | 'per-task' | 'idle' | 'disabled';
-export type BatchMemberStatus = 'pending' | 'in-batch' | 'published' | 'fallback' | 'pre-check-red';
+export type BatchMemberStatus = 'pending' | 'in-batch' | 'published' | 'fallback' | 'pre-check-red' | 'review-fix';
 
 export interface BatchGateSettings {
   enabled: boolean;
@@ -32,10 +32,13 @@ export interface BatchGateConfiguration {
 }
 
 export interface BatchGateState {
+  reviewFixWaits?: { taskKey: string; reviewAttemptId: string; round: number; maximum: number; aspects: string[] }[];
   preChecksRun?: number;
   preChecksRed?: number;
   preCheckMinutesSaved?: number;
   gateSlots?: { busy: number; total: number } | null;
+  gateCapacity?: { slots: number; processorsPerGate: number; hostCores: number | null;
+    allowOversubscription: boolean } | null;
   pushWait?: BatchGatePushWait | null;
   pushWaits?: BatchGatePushWait[];
   plan: {
@@ -53,6 +56,8 @@ export interface BatchGateState {
     parentBatchId?: string | null;
     phase: string;
     phaseReason?: string | null;
+    formationReason?: string | null;
+    exclusions?: { taskKey: string; reason: string; detail?: string | null }[];
     baseSha: string;
     candidateSha?: string | null;
     members: { taskKey: string; replay: BatchReplay; released: boolean }[];
@@ -150,6 +155,28 @@ export interface BatchGateReport {
   meanBatchSize: number | null;
   batchGreenRate: number | null;
   constructionEjectionRate: number | null;
+}
+
+export interface BatchTestFailureRank {
+  testName: string;
+  batches: number;
+  runs: number;
+  distinctMemberSets: number;
+  firstFailureUtc: string;
+  lastFailureUtc: string;
+  latestErrorExcerpt: string;
+  flakyRerunPassed: boolean;
+  flakySuspect: boolean;
+  batchIds: string[];
+  failures: { testName: string; batchId: string; runId: string; members: string[];
+    atUtc: string; errorExcerpt: string; flakyRerunPassed: boolean }[];
+}
+
+export interface BatchTestFailureReport {
+  project: string;
+  windowDays: number;
+  tests: BatchTestFailureRank[];
+  pendingEvidenceRuns: number;
 }
 
 /** AGT-3219: cards parked by a machine gate queue overrun, from `/batch-gate/queue-stalls`. */

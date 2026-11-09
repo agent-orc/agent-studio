@@ -24,6 +24,8 @@ namespace AgentStudio.Tasks;
 public class TaskScannerService : ITaskScanner
 {
     private readonly object _fullScanGate = new();
+    private long _rawScanCalls;
+    internal long RawScanCalls => Interlocked.Read(ref _rawScanCalls);
     private const int ScanParallelism = 4;
     private readonly IConfiguration _config;
     private readonly ILogger<TaskScannerService> _logger;
@@ -184,6 +186,13 @@ public class TaskScannerService : ITaskScanner
         _statsMetadataCache?.Invalidate();
     }
 
+    /// <summary>Reconcile one watch path when a caller reports a task change
+    /// without the changed card folder. The folder index probes stamps and
+    /// reloads only changed cards; it does not start a raw workspace scan.</summary>
+    internal void InvalidateIndexForExternalTaskChange(string watchPath)
+        => _indexCache?.Invalidate(TaskIndexCache.InvalidationSource.External,
+            changedPath: watchPath);
+
     /// <summary>
     /// Takes one published index generation for a board read without running
     /// a disk walk on the caller's thread (AGT-3088). Null when no cache is
@@ -262,6 +271,30 @@ public class TaskScannerService : ITaskScanner
         if (_indexCache is null) return;
         var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
         _indexCache.PublishCoreFromFolder(folder, () => ScanJobFolder(folder, entry, state, bypassMemo: true));
+    }
+
+    /// <summary>Publish a routing edit to both resident projections after its durable write.</summary>
+    public void PublishRoutingFromFolder(string folder, string watchPath, string projectName, string state)
+    {
+        if (_indexCache is null) return;
+        var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
+        var info = ScanJobFolder(folder, entry, state, bypassMemo: true);
+        if (info is not null) _indexCache.PublishRoutingMutation(info);
+        else _indexCache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+    }
+
+    /// <summary>Publish a newly created card into the resident board and core indexes.</summary>
+    public void PublishCreatedFromFolder(string folder, string watchPath, string projectName, string state)
+    {
+        // The stats index has its own archived-inclusive snapshot. The old
+        // InvalidateCache call dirtied it as well as the board index; keep that
+        // contract when publishing a new card directly into the board.
+        _statsMetadataCache?.Invalidate();
+        if (_indexCache is null) return;
+        var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
+        var info = ScanJobFolder(folder, entry, state, bypassMemo: true);
+        if (info is not null) _indexCache.PublishCreatedMutation(info);
+        else _indexCache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
     }
 
     public void RemoveCore(TaskInfo info) => _indexCache?.RemoveCore(info);
@@ -584,6 +617,18 @@ public class TaskScannerService : ITaskScanner
         return ScanAllJobsRaw();
     }
 
+    /// <summary>Archive-inclusive task facts for background indexers. Wait for
+    /// a pending folder refresh so a task event joins the newest publication.</summary>
+    internal List<TaskInfo> ScanAllJobsWithArchiveForBackgroundIndex()
+    {
+        if (_indexCache is null) return ScanAllJobsRaw();
+        var (live, archived) = _indexCache.GetCleanSnapshotPartitions();
+        var combined = new List<TaskInfo>(live.Count + archived.Count);
+        combined.AddRange(live);
+        combined.AddRange(archived);
+        return combined;
+    }
+
     /// <summary>Archive-inclusive counterpart of <see cref="ScanAllAutomationJobs"/>.</summary>
     public List<TaskInfo> ScanAllAutomationJobsWithArchive()
         => ScanAllJobsWithArchive().Where(task => !task.Fixture).ToList();
@@ -628,6 +673,7 @@ public class TaskScannerService : ITaskScanner
     /// </summary>
     public List<TaskInfo> ScanAllJobsRaw()
     {
+        Interlocked.Increment(ref _rawScanCalls);
         // A full walk is expensive on a busy shared filesystem. Serialize it so
         // concurrent cache refreshes and background sweeps cannot each occupy
         // their own group of worker threads.
@@ -741,6 +787,20 @@ public class TaskScannerService : ITaskScanner
     public virtual TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state,
         bool bypassMemo = false)
         => ScanJobFolder(jobDir, entry, state, bypassMemo, rereadIfMoved: true);
+
+    /// <summary>The scanner's own file and directory stamp, without parsing a card.</summary>
+    internal object? CaptureFolderStamp(string folder)
+    {
+        var taskJson = new FileInfo(Path.Combine(folder, "task.json"));
+        return taskJson.Exists ? ComputeLiveFingerprint(folder, taskJson) : null;
+    }
+
+    internal bool FolderStampIsSettled(string folder)
+    {
+        var taskJson = new FileInfo(Path.Combine(folder, "task.json"));
+        return taskJson.Exists && TaskFolderMemoPolicy.IsMemoizable(
+            taskJson.LastWriteTimeUtc, DateTime.UtcNow, TaskFolderMemoPolicy.DefaultTimestampGranularity);
+    }
 
     private TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state,
         bool bypassMemo, bool rereadIfMoved)
@@ -888,6 +948,11 @@ public class TaskScannerService : ITaskScanner
                 // legacy and is conservatively treated as an explicit pin.
                 ModelExplicit = !raw.TryGetProperty("modelExplicit", out var modelExplicit)
                     || modelExplicit.ValueKind != JsonValueKind.False,
+                PinMode = raw.TryGetProperty("pinMode", out var pinMode) ? pinMode.GetString() ?? "preference" : "preference",
+                PreferenceModel = raw.TryGetProperty("preferenceModel", out var preferenceModel) ? preferenceModel.GetString() : null,
+                PreferenceThinkingLevel = raw.TryGetProperty("preferenceThinkingLevel", out var preferenceThinking) ? preferenceThinking.GetString() : null,
+                PreferenceExpiresAt = raw.TryGetProperty("preferenceExpiresAt", out var preferenceExpiry)
+                    && preferenceExpiry.TryGetDateTime(out var expiry) ? expiry : null,
                 ThinkingLevel = raw.TryGetProperty("thinkingLevel", out var tl) ? tl.GetString() : null,
                 ThinkingLevelExplicit = !raw.TryGetProperty("thinkingLevelExplicit", out var thinkingExplicit)
                     || thinkingExplicit.ValueKind != JsonValueKind.False,

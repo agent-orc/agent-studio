@@ -350,7 +350,7 @@ public sealed class TaskTransitionService
         if (targetState == TaskStates.Completed
             && fromState != TaskStates.Completed)
         {
-            completionIntegrationStatus = _integrationStatus?.BuildForCompletion(info);
+            completionIntegrationStatus = _integrationStatus?.BuildForAcceptance(info);
             completionContract = DecideCompletionContract(
                 info,
                 settings,
@@ -397,6 +397,25 @@ public sealed class TaskTransitionService
                 ContentMissing = contentEvidence.Missing,
                 RanAspects = contentEvidence.RanAspects,
                 SkippedAspects = contentEvidence.SkippedAspects,
+            };
+        }
+        if (contentClaim?.Basis == CompletionClaimBases.IntegratedDelivery
+            && completionIntegrationStatus?.Verification is { State: IntegrationVerificationStates.Verified } gate)
+        {
+            var gateStep = string.Equals(completionIntegrationStatus.IntegrationBranch, "main", StringComparison.OrdinalIgnoreCase)
+                ? "pre-main-test-gate" : AgentStudio.Pipeline.IntegrationGateJournal.PreDevelopBuildGateStep;
+            var gateName = gate.Evidence == IntegrationVerificationEvidence.PublishedGate
+                ? gate.Reason
+                : gate.Evidence is IntegrationVerificationEvidence.MergeGate
+                    or IntegrationVerificationEvidence.GateRun
+                    or IntegrationVerificationEvidence.GateReceipt
+                    ? $"Gate {gateStep} of {info.Key ?? info.TaskKey} returned {gate.GateVerdict ?? "verified"} on "
+                      + $"{completionIntegrationStatus.IntegrationBranch} tree {gate.Sha}."
+                    : $"Verification record {gate.Evidence} on {completionIntegrationStatus.IntegrationBranch} "
+                      + $"tree {gate.Sha}: {gate.Reason}";
+            contentClaim = contentClaim with
+            {
+                Evidence = $"{contentClaim.Evidence} {gateName}",
             };
         }
         var boundCompletionClaim = contentClaim is null
@@ -2041,15 +2060,14 @@ public sealed class TaskTransitionService
     {
         verification = null;
         if (_integrationStatus == null) return false;
-        var lookup = _integrationStatus.BuildLookup([job]);
-        if (lookup.TryGetValue(job.TaskKey, out var found)) verification = found.Verification;
+        var status = _integrationStatus.BuildForAcceptance(job);
+        verification = status.Verification;
         // AGT-2849: the merge is the acceptance boundary; publishing it is the
         // push step's job and is recovered by the integration push backstop. A
         // delivery that is merged but not pushed yet must therefore not be sent
         // back to Human Review - its badge says merged-locally until the push
         // lands, which is exactly the honesty this distinction is for.
-        return lookup.TryGetValue(job.TaskKey, out var status)
-               && (_guardedDelivery
+        return (_guardedDelivery
                    ? status.Status == IntegrationStatuses.Integrated
                    : IntegrationStatuses.IsMerged(status.Status));
     }

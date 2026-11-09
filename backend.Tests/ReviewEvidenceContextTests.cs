@@ -166,6 +166,72 @@ public class ReviewEvidenceContextTests : IDisposable
         Assert.Contains("and 3 more file(s).", inventory);
     }
 
+    [Fact]
+    public void ReviewEvidence_QuotesMeasurementsThatExistOnlyInResults()
+    {
+        var results = Path.Combine(_jobFolder, "results");
+        Directory.CreateDirectory(results);
+        File.WriteAllText(Path.Combine(results, "duration-comparison.md"),
+            "Before: 120 seconds. After: 80 seconds.\n");
+        File.WriteAllText(Path.Combine(results, "class-before-after.csv"),
+            "class,before,after\nSuite,120,80\n");
+        File.WriteAllBytes(Path.Combine(results, "screenshot.png"), [1, 2, 3]);
+
+        var evidence = ResultsInventory.RenderForReview(_jobFolder);
+
+        Assert.Contains("Before: 120 seconds. After: 80 seconds.", evidence);
+        Assert.Contains("class,before,after", evidence);
+        Assert.Contains("results/screenshot.png (3 bytes)", evidence);
+        Assert.DoesNotContain("Head of results/screenshot.png", evidence);
+    }
+
+    [Fact]
+    public void ReviewEvidence_MissingResultsStatesAbsence()
+    {
+        Assert.Equal("No results/ folder present for this task.",
+            ResultsInventory.RenderForReview(_jobFolder));
+    }
+
+    [Fact]
+    public void ReviewEvidence_BoundsTextAndNamesButHashesEveryFile()
+    {
+        var results = Path.Combine(_jobFolder, "results");
+        Directory.CreateDirectory(results);
+        File.WriteAllText(Path.Combine(results, "a-report.md"), new string('x', 30_000));
+        for (var i = 0; i < 42; i++)
+            File.WriteAllText(Path.Combine(results, $"evidence-{i:00}.csv"), "value\n1\n");
+        var first = ResultsInventory.RenderForReview(_jobFolder);
+        File.AppendAllText(Path.Combine(results, "evidence-41.csv"), "2\n");
+        var second = ResultsInventory.RenderForReview(_jobFolder);
+
+        Assert.Contains("... and 3 more file(s)", first);
+        Assert.Contains("(truncated", first);
+        Assert.True(first.Length < 30_000);
+        Assert.NotEqual(first, second);
+        Assert.DoesNotContain("results/evidence-41.csv (", first);
+    }
+
+    [Fact]
+    public void ReviewEvidence_ExcludesHistoryAndLinksOutsideResults()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var results = Path.Combine(_jobFolder, "results");
+        Directory.CreateDirectory(results);
+        File.WriteAllText(Path.Combine(_jobFolder, "outside.md"), "outside secret");
+        File.CreateSymbolicLink(Path.Combine(results, "linked.md"), Path.Combine(_jobFolder, "outside.md"));
+        var history = Path.Combine(results, "history");
+        Directory.CreateDirectory(history);
+        File.WriteAllText(Path.Combine(history, "old.md"), "old evidence");
+        File.WriteAllText(Path.Combine(results, "current.md"), "current evidence");
+
+        var evidence = ResultsInventory.RenderForReview(_jobFolder);
+
+        Assert.Contains("current evidence", evidence);
+        Assert.DoesNotContain("outside secret", evidence);
+        Assert.DoesNotContain("linked.md", evidence);
+        Assert.DoesNotContain("old evidence", evidence);
+    }
+
     [Theory]
     [InlineData("planning")]
     [InlineData("research")]

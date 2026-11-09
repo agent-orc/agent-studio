@@ -122,7 +122,7 @@ test.describe('studio-shell · active tab remains visible in the scrolling strip
     await page.getByTestId('studio-titlebar-settings').click();
 
     const active = page.getByTestId('studio-tab-workspace-settings');
-    await expect(active).toHaveAttribute('aria-selected', 'true');
+    await expect(active.getByRole('tab')).toHaveAttribute('aria-selected', 'true');
     await expectSmoothNearestScroll(page, 'workspace-settings');
     await expectInsideStrip(active, page.getByTestId('studio-tab-list'));
     await captureStrip(page, testInfo, 'active-tab-off-screen-visible');
@@ -135,7 +135,7 @@ test.describe('studio-shell · active tab remains visible in the scrolling strip
 
     const active = page.getByTestId('studio-tab-workspace-settings');
     await active.click();
-    await expect(active).toHaveAttribute('aria-selected', 'true');
+    await expect(active.getByRole('tab')).toHaveAttribute('aria-selected', 'true');
     await page.evaluate(() => new Promise<void>(resolve => {
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
     }));

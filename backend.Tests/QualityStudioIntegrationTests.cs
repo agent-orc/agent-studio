@@ -209,6 +209,47 @@ public sealed class QualityStudioIntegrationTests : IDisposable
         public HttpClient CreateClient(string name) => client;
     }
 
+    [Fact]
+    public void Release_range_reader_uses_only_the_stored_range_get()
+    {
+        Directory.CreateDirectory(_root);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["TaskRepository"] = _root }).Build();
+        var connections = new QualityStudioConnectionStore(configuration);
+        connections.Set(new QualityStudioConnection("http://quality.test", "https://quality.test", "agent-studio"));
+        var handler = new RangeHandler();
+        using var client = new HttpClient(handler);
+        var reader = new QualityReleaseRangeVerdictClient(connections, new FixedSecretProvider(),
+            new FixedClientFactory(client));
+        var baseSha = new string('a', 40);
+        var headSha = new string('b', 40);
+        Assert.Equal("block", reader.Read("repo", baseSha, headSha));
+        Assert.Equal($"/api/v1/repos/repo/change-reviews?base={baseSha}&head={headSha}", handler.Path);
+        Assert.Equal(HttpMethod.Get, handler.Method);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    private sealed class RangeHandler : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+        public string? Path { get; private set; }
+        public HttpMethod? Method { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(Send(request, cancellationToken));
+
+        protected override HttpResponseMessage Send(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Calls++;
+            Path = request.RequestUri!.PathAndQuery;
+            Method = request.Method;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"records\":[{\"decisive\":true,\"document\":{\"verdict\":\"block\"}}]}")
+            };
+        }
+    }
+
     private sealed class FixedSecretProvider : ISecretProvider
     {
         public Task<ResolvedSecret> GetForPlatformAsync(SecretReference reference, string purpose, CancellationToken ct = default)

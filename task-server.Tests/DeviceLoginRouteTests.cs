@@ -22,9 +22,11 @@ public sealed class DeviceLoginRouteTests
         "POST /api/v1/management/device-logins",
         "GET /api/v1/management/device-logins/{handle}",
         "POST /api/v1/management/device-logins/{handle}/cancel",
+        "POST /api/v1/management/device-logins/{handle}/code",
         "POST /api/v1/runners/{runnerId}/device-login/claim",
         "GET /api/v1/runners/{runnerId}/device-login/{handle}",
         "POST /api/v1/runners/{runnerId}/device-login/{handle}/instructions",
+        "POST /api/v1/runners/{runnerId}/device-login/{handle}/code",
         "POST /api/v1/runners/{runnerId}/device-login/{handle}/completion",
     ];
 

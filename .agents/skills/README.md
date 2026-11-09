@@ -12,6 +12,7 @@ add `scripts/`, `references/`, and `tests/` siblings.
 
 | Skill | When to invoke | Folder |
 |-------|----------------|--------|
+| **Operator** | Operate a Studio installation with the `studio-op` CLI: watch, triage, continue, accept, routing, preflight, and the four runbooks (server-first deploy, base-verdict quarantine, stuck batch flight, lost pending push). | [`operator/`](operator/SKILL.md) |
 | **Task API** | Create / move / triage tasks via HTTP. Required reading for any CLI work that touches the task queue. | [`task-api/`](task-api/SKILL.md) |
 | **Regenerate README** | Rewrite `README.md` from current product reality (after a load-bearing change). | [`regenerate-readme/`](regenerate-readme/SKILL.md) |
 | **Runtime log analysis** | Inspect backend / runner / CLI logs after an incident. | [`runtime-log-analysis/`](runtime-log-analysis/SKILL.md) |

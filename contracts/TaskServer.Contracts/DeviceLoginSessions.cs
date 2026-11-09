@@ -117,8 +117,68 @@ public sealed class DeviceLoginSessions
                 throw new ArgumentException("Device sign-in instructions are invalid.");
             session.VerificationUrl = request.VerificationUrl;
             session.UserCode = request.UserCode;
+            // Headless `claude setup-token` waits for the code its callback page shows (AGT-3243).
+            if (session.Provider == "claude") session.CodeState ??= "awaiting";
             return true;
         }
+    }
+
+    /// <summary>
+    /// Takes the authorization code the Owner pasted after the Claude browser sign-in. Only the
+    /// initiating browser session may submit, once per session, after the runner published the
+    /// sign-in URL. The code lives only in memory until the claiming runner takes it. Returns
+    /// false for an unknown session or a wrong key. Throws <see cref="ArgumentException"/> for
+    /// a malformed code and <see cref="InvalidOperationException"/> when no code is awaited.
+    /// </summary>
+    public bool SubmitCode(string handle, string sessionKey, DeviceLoginCodeRequest request)
+    {
+        if (!IsAuthorizationCode(request.Code))
+            throw new ArgumentException("Paste the complete authorization code shown after the Claude sign-in.");
+        lock (_gate)
+        {
+            ExpireLocked();
+            if (!_sessions.TryGetValue(handle, out var session)
+                || !string.Equals(session.SessionKey, sessionKey, StringComparison.Ordinal)) return false;
+            if (session.State != "running" || session.CodeState != "awaiting")
+                throw new InvalidOperationException("This sign-in is not waiting for an authorization code.");
+            session.AuthorizationCode = request.Code!.Trim();
+            session.CodeState = "submitted";
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Hands a submitted authorization code to the runner that claimed the session, exactly
+    /// once, and forgets it. False when the session is not running for this runner;
+    /// <paramref name="code"/> stays null until the Owner submits one.
+    /// </summary>
+    public bool TakeCode(string handle, string runnerId, out string? code)
+    {
+        code = null;
+        lock (_gate)
+        {
+            ExpireLocked();
+            if (!_sessions.TryGetValue(handle, out var session) || session.RunnerId != runnerId
+                || session.State != "running") return false;
+            if (session.AuthorizationCode is null) return true;
+            code = session.AuthorizationCode;
+            session.AuthorizationCode = null;
+            session.CodeState = "delivered";
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// The shape Claude prints on its callback page: <c>code#state</c> in URL-safe characters.
+    /// Whitespace and control characters are refused, so a code cannot inject a second stdin line.
+    /// </summary>
+    public static bool IsAuthorizationCode(string? value)
+    {
+        var code = value?.Trim();
+        return code is { Length: >= 8 and <= 1024 }
+            && code.Count(character => character == '#') <= 1
+            && code.All(character => char.IsAsciiLetterOrDigit(character)
+                || character is '-' or '_' or '.' or '~' or '#');
     }
 
     public async Task<bool> CompleteAsync(string handle, string runnerId,
@@ -135,8 +195,7 @@ public sealed class DeviceLoginSessions
             if (session.State != "running") return false;
             session.State = request.Result;
             session.Detail = request.Detail;
-            session.UserCode = null;
-            session.VerificationUrl = null;
+            ForgetInstructions(session);
             _pendingAudits.Enqueue((session, request.Result));
             changed = true;
         }
@@ -163,8 +222,7 @@ public sealed class DeviceLoginSessions
                 || session.State is not ("queued" or "running")) return false;
             session.State = "failed";
             session.Detail = "The sign-in was cancelled.";
-            session.UserCode = null;
-            session.VerificationUrl = null;
+            ForgetInstructions(session);
             _pendingAudits.Enqueue((session, "cancelled"));
         }
         await SweepAsync(ct);
@@ -200,8 +258,7 @@ public sealed class DeviceLoginSessions
             if (session.ExpiresAt > now || session.State is not ("queued" or "running")) continue;
             session.State = "failed";
             session.Detail = "The sign-in timed out.";
-            session.UserCode = null;
-            session.VerificationUrl = null;
+            ForgetInstructions(session);
             _pendingAudits.Enqueue((session, "timeout"));
         }
         foreach (var handle in _sessions.Where(pair => pair.Value.ExpiresAt.AddMinutes(30) <= now)
@@ -213,12 +270,25 @@ public sealed class DeviceLoginSessions
             new StudioProviderAuthEventRequest(session.HostId, session.Provider, result),
             session.Actor, ct);
 
-    private static bool ProviderOrigin(string provider, string host) => provider switch
+    /// <summary>
+    /// The sign-in hosts each CLI prints. Claude Code 2.x authorizes on <c>claude.com</c> (subscription)
+    /// and <c>platform.claude.com</c> (Console); earlier releases used <c>claude.ai</c> and
+    /// <c>console.anthropic.com</c>. The runner applies the same list before it publishes a URL.
+    /// </summary>
+    public static bool ProviderOrigin(string provider, string host) => provider switch
     {
         "codex" => host is "auth.openai.com" or "login.openai.com",
-        "claude" => host is "claude.ai" or "console.anthropic.com",
+        "claude" => host is "claude.com" or "platform.claude.com" or "claude.ai" or "console.anthropic.com",
         _ => false,
     };
+
+    private static void ForgetInstructions(Session session)
+    {
+        session.UserCode = null;
+        session.VerificationUrl = null;
+        session.AuthorizationCode = null;
+        session.CodeState = null;
+    }
 
     private static bool SafeQuery(string query)
     {
@@ -233,7 +303,8 @@ public sealed class DeviceLoginSessions
         => new(session.Handle, session.State, session.ExpiresAt,
             includeCode ? session.VerificationUrl : null,
             includeCode ? session.UserCode : null, session.Detail,
-            HostId: session.HostId, Provider: session.Provider);
+            HostId: session.HostId, Provider: session.Provider,
+            CodeState: includeCode ? session.CodeState : null);
 
     private sealed class Session(string handle, string sessionKey, string hostId,
         string provider, string actor, DateTime expiresAt, string? targetRunnerId)
@@ -249,6 +320,9 @@ public sealed class DeviceLoginSessions
         public string? RunnerId { get; set; }
         public string? VerificationUrl { get; set; }
         public string? UserCode { get; set; }
+        /// <summary>The pasted Claude code until the claiming runner takes it; never audited or viewed.</summary>
+        public string? AuthorizationCode { get; set; }
+        public string? CodeState { get; set; }
         public string? Detail { get; set; }
     }
 }

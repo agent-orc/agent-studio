@@ -9,6 +9,8 @@ public record TaskInfo
     [JsonIgnore] internal string TokenReceiptStamp { get; init; } = "none";
     public string Id { get; init; } = "";
     public string TaskKey { get; init; } = "";
+    /// <summary>The active short attention lease holder, projected at detail read time.</summary>
+    public string? AttentionHolder { get; init; }
     /// <summary>Current card preview, projected from its sidecar rather than task.json.</summary>
     public TaskPreview? Preview { get; init; }
     /// <summary>
@@ -80,6 +82,10 @@ public record TaskInfo
     /// execution model unexpectedly.
     /// </summary>
     public bool ModelExplicit { get; init; } = true;
+    public string PinMode { get; init; } = "preference";
+    public string? PreferenceModel { get; init; }
+    public string? PreferenceThinkingLevel { get; init; }
+    public DateTime? PreferenceExpiresAt { get; init; }
     /// <summary>Optional thinking / reasoning effort level for the selected CLI model.</summary>
     public string? ThinkingLevel { get; init; }
     /// <summary>

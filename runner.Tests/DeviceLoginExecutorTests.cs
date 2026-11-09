@@ -613,6 +613,207 @@ public sealed class DeviceLoginExecutorTests
         Assert.Equal(claudeToken, DeviceLoginExecutor.ClaudeToken(claudeToken));
     }
 
+    [Fact]
+    public async Task Claude_setup_token_gets_the_pasted_code_on_stdin_once_and_completes()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 8, 9, 0, 0, TimeSpan.Zero));
+        var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var previous = Environment.GetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken);
+        try
+        {
+            var code = PastedCode();
+            var token = "sk-ant-" + new string('p', 32);
+            var tokenFile = DeviceLoginExecutor.ClaudeTokenPath(directory);
+            var cli = CodeWaitingClaude(directory, code, token);
+            var logs = new List<string>();
+            var takes = 0;
+            DeviceLoginInstructionsRequest? instructions = null;
+            var run = new DeviceLoginExecutor(cli, tokenFile, _ => Task.FromResult(true), clock, provider: "claude",
+                log: line => { lock (logs) logs.Add(line); },
+                takeCode: _ => Task.FromResult(Interlocked.Increment(ref takes) == 1 ? null : code))
+                .RunAsync((message, _) => { instructions = message; return Task.CompletedTask; }, default);
+
+            await WaitUntilAsync(() =>
+            {
+                clock.Advance(DeviceLoginPoller.PollInterval);
+                return run.IsCompleted;
+            });
+            var result = await run;
+            Assert.Equal("completed", result.Result);
+            Assert.Equal(2, Volatile.Read(ref takes));
+            Assert.StartsWith("https://claude.com/cai/oauth/authorize?", instructions?.VerificationUrl);
+            Assert.Equal(token, (await File.ReadAllTextAsync(tokenFile)).Trim());
+            Assert.DoesNotContain(code, result.Detail, StringComparison.Ordinal);
+            lock (logs) Assert.DoesNotContain(logs, line => line.Contains(code, StringComparison.Ordinal));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken, previous);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Wrong_claude_code_ends_the_sign_in_with_a_clear_message_and_accepts_nothing()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 8, 9, 0, 0, TimeSpan.Zero));
+        var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var previous = Environment.GetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken);
+        try
+        {
+            Environment.SetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken, "previous-token");
+            var tokenFile = DeviceLoginExecutor.ClaudeTokenPath(directory);
+            var cli = CodeWaitingClaude(directory, PastedCode(), "sk-ant-" + new string('w', 32));
+            var probed = false;
+            var run = new DeviceLoginExecutor(cli, tokenFile, _ => { probed = true; return Task.FromResult(true); },
+                clock, provider: "claude", takeCode: _ => Task.FromResult<string?>(PastedCode()))
+                .RunAsync((_, _) => Task.CompletedTask, default);
+
+            await WaitUntilAsync(() =>
+            {
+                clock.Advance(DeviceLoginPoller.PollInterval);
+                return run.IsCompleted;
+            });
+            var result = await run;
+            Assert.Equal("failed", result.Result);
+            Assert.Equal("Claude did not accept the authorization code.", result.Detail);
+            Assert.False(probed);
+            Assert.False(File.Exists(tokenFile));
+            Assert.Equal("previous-token", Environment.GetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken, previous);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Claude_login_waiting_for_a_code_times_out_and_stops_the_cli()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 8, 9, 0, 0, TimeSpan.Zero));
+        var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var pidFile = Path.Combine(directory, "cli.pid");
+            var cli = CodeWaitingClaude(directory, PastedCode(), "sk-ant-" + new string('t', 32), pidFile);
+            var takes = 0;
+            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(5), clock);
+            var instructions = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var run = new DeviceLoginExecutor(cli, DeviceLoginExecutor.ClaudeTokenPath(directory),
+                _ => Task.FromResult(true), clock, provider: "claude",
+                takeCode: _ => { Interlocked.Increment(ref takes); return Task.FromResult<string?>(null); })
+                .RunAsync((_, _) => { instructions.TrySetResult(true); return Task.CompletedTask; }, cancel.Token);
+            await instructions.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var pid = await ReadPidAsync(pidFile);
+            await WaitUntilAsync(() =>
+            {
+                clock.Advance(DeviceLoginPoller.PollInterval);
+                return Volatile.Read(ref takes) > 0;
+            });
+            clock.Advance(TimeSpan.FromSeconds(6));
+
+            var result = await run.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal("failed", result.Result);
+            Assert.Contains("timed out", result.Detail);
+            await WaitUntilAsync(() => !Alive(pid));
+            Assert.False(File.Exists(DeviceLoginExecutor.ClaudeTokenPath(directory)));
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Poller_hands_the_server_code_to_the_claude_cli_and_reports_completion_without_it()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 8, 9, 0, 0, TimeSpan.Zero));
+        var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var previous = Environment.GetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken);
+        try
+        {
+            var code = PastedCode();
+            var token = "sk-ant-" + new string('q', 32);
+            var cli = CodeWaitingClaude(directory, code, token);
+            var probe = new ProviderAuthProbe(clock: clock.GetUtcNow);
+            probe.UseRealRequest((_, _, _) => Task.FromResult(new ProcessResult(
+                ProviderAuthEnvironment.ClaudeTokenForChild() == token ? 0 : 1, "OK", "")), null!);
+            var server = new FakeDeviceLoginServer(clock, "claude");
+            using var http = server.Client();
+            using var client = new TaskServerClient(http, "runner-a", usesDurableTaskServer: true);
+            var logs = new List<string>();
+            using var stop = new CancellationTokenSource();
+            var run = new DeviceLoginPoller(client, line => { lock (logs) logs.Add(line); }, directory,
+                claudeBinary: cli, clock: clock, authProbe: probe).RunAsync(stop.Token);
+
+            await server.Instructions.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            server.PastedCode = code; // The Owner pasted the code in Studio.
+            await WaitUntilAsync(() =>
+            {
+                clock.Advance(DeviceLoginPoller.PollInterval);
+                return server.Completion.Task.IsCompleted;
+            });
+            var completion = await server.Completion.Task;
+            Assert.Equal("completed", completion.Result);
+            Assert.Equal(1, server.CodeDeliveries);
+            Assert.Equal(token, (await File.ReadAllTextAsync(DeviceLoginExecutor.ClaudeTokenPath(directory))).Trim());
+            Assert.DoesNotContain(code, completion.Detail, StringComparison.Ordinal);
+            lock (logs) Assert.DoesNotContain(logs, line => line.Contains(code, StringComparison.Ordinal)
+                || line.Contains(token, StringComparison.Ordinal));
+            stop.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken, previous);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Extracts_the_claude_sign_in_urls_of_cli_2()
+    {
+        foreach (var url in new[]
+        {
+            "https://claude.com/cai/oauth/authorize?code=true&client_id=studio&state=s",
+            "https://platform.claude.com/oauth/authorize?code=true&client_id=studio&state=s",
+        })
+            Assert.Equal(url, DeviceLoginExecutor.SafeVerificationUrl("Use the url below to sign in: " + url, "claude"));
+        Assert.Null(DeviceLoginExecutor.SafeVerificationUrl("https://claude.com.evil.example/cai/oauth/authorize", "claude"));
+        Assert.Null(DeviceLoginExecutor.SafeVerificationUrl("https://platform.claude.com/oauth/authorize", "codex"));
+    }
+
+    /// <summary>
+    /// A headless <c>claude setup-token</c>: prints the authorize URL, waits for one stdin line and
+    /// prints a setup token only for the expected code. It fails if stdin stays open after that line.
+    /// </summary>
+    private static string CodeWaitingClaude(string directory, string expectedCode, string token, string? pidFile = null)
+    {
+        var cli = Path.Combine(directory, "fake-claude-setup-token");
+        File.WriteAllText(cli, "#!/bin/sh\n"
+            + (pidFile is null ? "" : $"echo $$ > '{pidFile}'\n")
+            + "[ \"$*\" = setup-token ] || exit 9\n"
+            + "printf '%s\\n' 'Browser did not open? Use the url below to sign in:' "
+            + "'https://claude.com/cai/oauth/authorize?code=true&client_id=studio&response_type=code&state=s1'\n"
+            + "printf 'Paste code here if prompted > '\n"
+            + "IFS= read -r line || exit 3\n"
+            + $"[ \"$line\" = '{expectedCode}' ] || {{ echo 'OAuth error: Invalid code'; exit 1; }}\n"
+            + "if IFS= read -r extra; then exit 4; fi\n"
+            + $"printf '\\n%s\\n' '{token}'\n");
+        File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return cli;
+    }
+
+    /// <summary>The <c>code#state</c> shape of Claude's callback page, built at runtime.</summary>
+    private static string PastedCode()
+        => Convert.ToHexString(Guid.NewGuid().ToByteArray()) + "#" + Guid.NewGuid().ToString("N");
+
     /// <summary>Prints the instructions, records its PID and parks like a CLI waiting for the browser.</summary>
     private static string ParkedCli(string directory, string pidFile, string url, string secondLine)
     {
@@ -744,6 +945,9 @@ public sealed class DeviceLoginExecutorTests
         public volatile string State = "running";
         public bool RejectCompletion { get; init; }
         public bool LoseCompletionResponse { get; init; }
+        /// <summary>The code the Owner pasted; handed out once, like the Task Server does.</summary>
+        public string? PastedCode;
+        public int CodeDeliveries;
         public List<string> Paths { get; } = [];
         public TaskCompletionSource<bool> Instructions { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<DeviceLoginCompletionRequest> Completion { get; } =
@@ -764,6 +968,13 @@ public sealed class DeviceLoginExecutorTests
                 return new HttpResponseMessage(HttpStatusCode.OK)
                     { Content = JsonContent.Create(new DeviceLoginRunnerStateDto(State)) };
             if (path.EndsWith("/instructions", StringComparison.Ordinal)) Instructions.TrySetResult(true);
+            if (path.EndsWith("/code", StringComparison.Ordinal))
+            {
+                if (Interlocked.Exchange(ref PastedCode, null) is not { } code)
+                    return new HttpResponseMessage(HttpStatusCode.NoContent);
+                Interlocked.Increment(ref CodeDeliveries);
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new DeviceLoginCodeDto(code)) };
+            }
             if (path.EndsWith("/completion", StringComparison.Ordinal))
             {
                 Completion.TrySetResult((await request.Content!.ReadFromJsonAsync<DeviceLoginCompletionRequest>())!);

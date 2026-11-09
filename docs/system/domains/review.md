@@ -1,6 +1,6 @@
 # Review Domain Map
 
-Version: 2026-11-03
+Version: 2026-11-05
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 ## Aspect prompt cache
@@ -39,6 +39,18 @@ the first aspect's creation size with only a small creation count of its own
 roughly one prefix plus four small suffixes. A later aspect that again creates
 about the full prefix, or a runner log line `review-aspect-cache-unconfirmed`,
 means the cache was not shared for that review.
+
+Remote coding plans freeze a bounded `results/` evidence view beside the brief
+and diff context. It lists up to 40 active files with sizes, quotes heads of
+small text and CSV/JSON summaries and tails of logs within 12 files, 4,000
+characters per file and 24,000 characters total, and names image files. A
+SHA-256 over every eligible file's path, size and content makes the sealed
+aspect digest change even when the changed file falls outside the excerpt
+budget. `results/history/` and filesystem links are excluded. Credential
+redaction applies to displayed names and excerpts. Requirement-fit and
+tests-and-evidence may cite `results/<file>`; a missing-evidence finding names
+the inspected diff and results inventory or files. Truncated excerpts do not
+establish absence from a full artifact.
 
 ## Review report transport budget
 
@@ -269,6 +281,16 @@ and Remote Review. A blocking verdict uses the review-finding route while its
 lifetime budget remains available. A real,
 actionable `concerns` verdict gets one automatic coding round by default; the
 project setting `maxReviewConcernRounds` sets the bound and `0` disables it.
+Actionable means the reviewer names a file or symbol in the delivery and a
+missing or wrong behavior. Style, naming, duplication without a behavioral gap,
+and findings with no named location remain advisory. The same classification
+applies to a block downgraded for missing review-material citation. The fix
+round uses the reviewer summary and `missing` text as quoted data. It must also
+fit the card-round and lifetime delivered-review budgets. The batch gate state
+lists cards in Ready or Progress that wait for this fix, with the review attempt,
+aspect, and round limit. `GET /api/projects/{projectName}/review-concerns/daily?days=30`
+reports daily actionable and advisory verdict counts, plus counts whose settled
+delivery integration reached `develop`.
 Set these project controls with `PUT /api/projects/{projectName}/review-follow-up`.
 The JSON body uses `maxConcernRounds` (integer, default `1`, clamped to `0..10`),
 `scopedReviewAfterFinding` (boolean, default `true`), and
@@ -348,6 +370,31 @@ completed immutable run, no canonical ReviewAttempt, and no durable park gets
 one idempotent replacement attempt. A scheduled ReviewInfra retry is canonical
 authority and is never treated as missing.
 
+The per-card Auto Review stranding watchdog runs every 30 seconds. After
+`AutoReviewStranding:ThresholdMinutes` (30 by default), it checks for a running
+pipeline step, a pending or leased ReviewAttempt, a pending or active formed
+batch, a queued round, and a queued post-processing step. A card with none gets
+a durable intervention receipt in the existing stall-intervention feed and
+its timeline. Report-only cards restart post-processing; coding cards with a
+completed run request a fresh ReviewAttempt; a passed review resumes delivery
+integration or re-enters the batch gate only when its source RunAttempt and
+result SHA match the current completed delivery and the completed review tested
+that SHA. Pending and active formed batches own a card only when their run and
+result SHA match the current delivery; a pending entry must also match its
+current review attempt. An older review starts a fresh review for the new
+delivery. If no safe step can be started, the
+card moves to Escalated with the reason. Each intervention in a lane visit has
+its own receipt. After a successful intervention, the watchdog waits another
+threshold interval before intervening again. It can advance from review recovery
+to batch recovery in the same visit. If the same recovery leaves the card
+ownerless again, it escalates the card with the reason.
+
+When the delivery-chain reconciler finds a stale acceptance or integration
+verdict, it returns the card to Auto Review and requests a fresh review at
+once. A delivery conflict queues the existing integration recovery round,
+which steers the next coding attempt against `develop` and records the round
+on the timeline.
+
 ## Versioned review-library steps
 
 Concept cards on the remote plane receive one semantic `concept-fit` aspect in
@@ -423,6 +470,47 @@ be written only into a pending attempt or a new eligible attempt; a leased
 attempt keeps its plan through report retry and worker adoption.
 
 ## Review material contract
+
+### Screenshot-backed visual review
+
+The standard feature, bug, and task review plans include `aspect-visual-review`
+when the delivery changes a file under `frontend/` ending in `.html`, `.scss`,
+or `.css`. The aspect is recorded in the same pipeline catalogue and verdict
+ledger as requirement fit, code quality, documentation impact, and tests and
+evidence. Its catalogue route selects the Codex image-capable support model
+through the central pipeline model resolver; project step overrides remain
+subject to the normal CLI/model compatibility check.
+
+The executor fetches bounded image artifacts from the source run's `results/`
+delivery, preserves the screenshot names, and places read-only copies beside
+the exact-SHA review checkout. The visual prompt receives those paths, the
+authoritative diff, the hard visual rules, and the relevant admin design rules.
+After screenshots take priority over before screenshots at both the remote
+100-image cap and the local eight-image attachment cap. Both caps count only
+images with valid bounded headers, so unavailable or invalid artifacts cannot
+crowd out a later valid after screenshot. Each artifact read is isolated, so a
+failed remote artifact cannot stop later images from loading.
+The prompt lists readable image paths first, then up to eight artifact failure
+details and a count of further failures, so corrupt artifacts cannot bury a
+valid screenshot path in the review context.
+An artifact must have a PNG, JPEG, or WebP header matching its extension before
+it uses an image slot; matching size and digest alone do not prove the header is
+valid. The server does not decode pixels, so later image viewing can still
+reject damaged payloads.
+Name delivered screenshots under `results/` by surface, stage, viewport width,
+and theme, for example `bars/before-1920-light.png` and
+`bars/after-1920-light.png`. Use the same suffix for matching before and after
+views. A `before` path segment or filename marker (`before-`, `-before`, or
+equivalent underscore or dot separators) marks baseline evidence. An unmarked
+image counts as an after view. At least one readable after image is required;
+include both light and dark themes and a narrow viewport when those surfaces
+change.
+It opens each screenshot, compares matching before and after views, and checks
+layout, spacing, separation, alignment, clipping, and contrast across available
+themes and widths. A visual concern or block cites both the screenshot and the
+affected region. If a frontend template or style changed without a readable
+screenshot, or only before screenshots, the executor guarantees a `concerns`
+verdict naming the missing after evidence. Nonvisual changes skip this aspect.
 
 `runner/RemoteReviewWorkspace.cs` materializes the immutable delivery
 Result-SHA in a disposable candidate checkout. Before the first semantic aspect
@@ -1069,6 +1157,20 @@ that verdict.
 | Clean repeat green without history, or required evidence unavailable | `unclassified-first-occurrence` | no |
 | Clean repeat green, baseline red on cached state, clean baseline repeat green | `DependencyCacheDefect` or `BaselineResultCacheDefect` | no |
 | Reviewer block without evidence against a changed path | `concern` | no |
+
+**Missing test reports.** A test-failures baseline must report at least one
+completed test, even when it exits zero. The review host retries a baseline
+with no parseable result once and records both attempts. If it still has no
+result, it settles as `ReviewInfra/BaselineUnavailable` and names the captured
+stdout artifact path. A delivery run that exits zero without a test result is
+also retried once. If its retry still has no result, it settles as
+`ReviewInfra/TestReportUnavailable`, unless the delivery changed test
+configuration, the runner or reporter, or added, removed, or renamed a spec. In
+that case the missing report is a product finding that cites the changed setup
+path. The result parser accepts Vitest's `Test Files N passed` summary as well
+as its `Tests N passed` summary. If Angular finished bundling but Vitest did not
+report a run, the infrastructure summary says so and points to the captured
+stdout artifact.
 
 **Red baseline on cached state (AGT-3430).** A baseline that ran on a
 dependency-cache hit, or a baseline result reused from the baseline result

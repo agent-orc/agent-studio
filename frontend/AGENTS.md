@@ -168,7 +168,8 @@ option test IDs and tooltips in `SegmentedOption`. Pill `pane-tabs` keep tab
 semantics while sharing the same track and thumb mixins. The structure lint
 checks templates for hand-built selection buttons; each exception in
 [`scripts/segmented-baseline.json`](scripts/segmented-baseline.json) needs a
-written reason and a pinned button signature.
+written reason and a pinned control identity. The gate compares the number
+of matching buttons, so another control with the same class still fails.
 
 ## Side-sheet layout contract (`<app-orchestrator-side-sheet>`, `<app-kanban-filter-sidesheet>`)
 
@@ -270,7 +271,7 @@ themes).
 
 The frontend is organised by **feature** under `app/features/<name>/` with a uniform shape: `models/`, `state/`, `components/`, `services/`, plus a top-level `index.ts` barrel. Cross-cutting capabilities (e.g. `polling/`) follow the same shape.
 
-**Hard rule for cross-feature imports**: import from the **barrel**, not from internal paths.
+**Hard rule for cross-feature imports**: import from the feature's public entrypoint (`index.ts`, `runtime.ts`, or `lazy.ts`), not from internal paths. Keep components used only after navigation out of startup entrypoints.
 
 ```ts
 // ✅ correct — uses the barrel
@@ -286,7 +287,7 @@ Why: the barrel is the feature's **public API**. Anything not exported from it i
 
 **Inside the same feature**, use relative imports (`./components/...`, `../services/...`) as usual — barrels are about the cross-feature boundary.
 
-When you add a new component or service that needs to be reachable from outside its feature, add it to that feature's `index.ts`. If you find yourself wanting a deep import from outside, that's a signal: either (a) the symbol belongs in the barrel, or (b) what you're trying to do should live inside the target feature, not at the call site.
+When you add a new component or service that needs to be reachable from outside its feature, export it from the entrypoint matching its load phase. If you find yourself wanting a deep import from outside, that's a signal: either (a) the symbol belongs in a public entrypoint, or (b) what you're trying to do should live inside the target feature, not at the call site.
 
 Existing deep imports across the codebase still work (they're just paths). Convert them to barrel imports as you touch the surrounding code; don't churn for its own sake.
 
@@ -351,8 +352,9 @@ directive in `src/app/components/tooltip/`. Keep `[cacTooltip]` inside library
 surfaces and at existing library integration points; do not recreate the old
 chat-owned tooltip controller or component in the host app.
 
-Host wiring (all in `src/app/app.config.ts`):
-- `provideCodingAgentChat({ taskReferences: TaskReferenceNavigationService, mediaLightbox: MediaLightboxService })` — markdown task-key auto-linking + click-to-enlarge images.
+Host wiring:
+- Markdown-capable views provide `TASK_REFERENCE_CHAT_PROVIDER` from `services/task-reference-chat.provider.ts`, which binds the public `CHAT_TASK_REFERENCE_PROVIDER` token to `TaskReferenceNavigationService` when the view opens. This keeps the Markdown renderer out of board startup.
+- `src/app/app.config.ts` provides `CHAT_MEDIA_LIGHTBOX` from `coding-agent-chat/shared` with `MediaLightboxService`. This is the same public host seam as `provideCodingAgentChat`.
 - `PROJECT_CHAT_DATA_SOURCE` → `ProjectChatDataSourceAdapter` (`services/project-chat-data-source.adapter.ts`) over `TaskService`'s `/api/projects/{p}/chat/*` endpoints.
 - `CHAT_HISTORY_CONFIRM` → `ConfirmDialogService` (structural match).
 

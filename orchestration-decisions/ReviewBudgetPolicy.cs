@@ -30,6 +30,10 @@ public static class ReviewBudgetPolicy
             facts.MaximumDeliveredRounds, facts.ConsecutiveBlockRounds, facts.PriorReissues, facts.MaximumReissues);
         var concern = facts.Outcome == ReviewOutcomeKinds.Pass && followUp.Action == ReviewFollowUpAction.ReviewConcernRound;
         var card = CardRoundBudgetPolicy.DecideForReview(facts.CardBudget, blocked, concern);
+        if (!facts.AcceptedReplay && concern && round.RoundNumber >= round.MaximumRounds)
+            round = new(round.RoundNumber, round.MaximumRounds,
+                followUp.Findings.Select(item => item.Aspect).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                "lifetime-review-round-budget");
         if (!facts.AcceptedReplay && card == CardRoundBudgetAction.DegradeToFollowUp
             && (facts.Outcome == ReviewOutcomeKinds.ProductFailure || concern))
             round = new(round.RoundNumber, round.MaximumRounds,
@@ -38,7 +42,7 @@ public static class ReviewBudgetPolicy
                 "card-round-budget");
         var degrade = !repeatedDeepBlock && !facts.AcceptedReplay
             && ((facts.Outcome == ReviewOutcomeKinds.ProductFailure && round.Degrade)
-            || (concern && card == CardRoundBudgetAction.DegradeToFollowUp));
+            || (concern && (card == CardRoundBudgetAction.DegradeToFollowUp || round.Degrade)));
         if (degrade)
         {
             var adjusted = findings.Select(item => round.DegradedAspects.Contains(item.Aspect,

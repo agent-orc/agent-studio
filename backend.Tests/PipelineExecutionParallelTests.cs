@@ -134,12 +134,15 @@ public class PipelineExecutionParallelTests : IDisposable
         // it on its own (the orchestrator owns lifecycle).
         var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         pipelineLog.Begin(_jobFolder, PipelineCatalogue.Standard, project: "demo", jobId: "test-job");
+        var results = Path.Combine(_jobFolder, "results");
+        Directory.CreateDirectory(results);
+        PngFixture.Write(Path.Combine(results, "after-pipeline.png"), 2, 2);
 
         var runner = BuildRunner(_ => Task.FromResult("[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]"),
             pipelineLog: pipelineLog);
 
         await runner.RunAsync(BuildInputs(),
-            new[] { "requirement-fit", "code-quality", "documentation-impact", "tests-and-evidence" },
+            new[] { "requirement-fit", "code-quality", "documentation-impact", "tests-and-evidence", "visual-review" },
             "claude", "claude-haiku-4-5", TimeSpan.FromSeconds(5), CancellationToken.None);
 
         pipelineLog.Complete(_jobFolder);

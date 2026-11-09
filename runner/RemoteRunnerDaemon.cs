@@ -409,6 +409,20 @@ public sealed class RemoteRunnerDaemon
         HostTelemetrySample? latestTelemetry = telemetry.SampleIfDue(
             active.Count,
             connectivity.Snapshot);
+        var loadGate = new RunnerLoadGate(
+            _options.ClaimMaxLoadPerCore,
+            TimeSpan.FromSeconds(_options.LoadGateSustainedSeconds));
+        RunnerLoadGateDecision? lastLoadDecision = loadGate.Observe(latestTelemetry, DateTime.UtcNow);
+        AgentStudio.TaskServer.Contracts.ClaimLoadGateDto? ClaimLoadGateSnapshot()
+            => lastLoadDecision is { } decision
+                ? new AgentStudio.TaskServer.Contracts.ClaimLoadGateDto(
+                    decision.Throttle ? "closed" : "open",
+                    decision.LoadPerCore,
+                    _options.ClaimMaxLoadPerCore,
+                    decision.Throttle ? (long)decision.SustainedFor.TotalSeconds : 0,
+                    decision.Since,
+                    active.Count)
+                : null;
         await CapabilityAdvertisementRecovery.ExecuteAsync(
             "capability advertisement",
             async ct =>
@@ -420,7 +434,8 @@ public sealed class RemoteRunnerDaemon
                         gitCapability.CanPushWorkflows,
                         gitCapability.Detail,
                         connectivity: connectivity.Snapshot),
-                    RunnerCapabilityProbe.Telemetry(latestTelemetry, salvageStore: salvage?.Current),
+                    RunnerCapabilityProbe.Telemetry(latestTelemetry, salvageStore: salvage?.Current,
+                        claimLoadGate: ClaimLoadGateSnapshot()),
                     capabilityGeneration,
                     ct);
             },
@@ -458,9 +473,6 @@ public sealed class RemoteRunnerDaemon
             _client,
             state,
             _log);
-        var loadGate = new RunnerLoadGate(
-            _options.ClaimMaxLoadPerCore,
-            TimeSpan.FromSeconds(_options.LoadGateSustainedSeconds));
         var nextCapabilityAdvertisement = DateTime.UtcNow.AddMinutes(1);
         HostTelemetrySample? TakeTelemetry(bool force = false)
         {
@@ -483,6 +495,7 @@ public sealed class RemoteRunnerDaemon
         var interactiveChat = new InteractiveChatAdmission(_options, _client, _log);
         var interactivePoll = interactiveChat.PollAsync(auxiliaryStop.Token);
         var decisionPoll = new OrchestratorDecisionJobAdmission(_options, _client, _log).PollAsync(auxiliaryStop.Token);
+        var oneShotPoll = new OneShotJobAdmission(_options, _client, _log).PollAsync(auxiliaryStop.Token);
         var repositoryProbePoll = new RunnerProjectRepositoryProbe(_options, _client,
             new PlatformRepositoryGitProof(_ => null, _options.StateDir), _log).PollAsync(auxiliaryStop.Token);
         var gitSetupPoll = new RunnerGitSetupAgent(_options, _client, _log).PollAsync(auxiliaryStop.Token);
@@ -624,7 +637,8 @@ public sealed class RemoteRunnerDaemon
                                 gitCapability.CanPushWorkflows,
                                 gitCapability.Detail,
                                 connectivity: connectivity.Snapshot),
-                            RunnerCapabilityProbe.Telemetry(capabilityTelemetry, salvageStore: salvage?.Current),
+                            RunnerCapabilityProbe.Telemetry(capabilityTelemetry, salvageStore: salvage?.Current,
+                                claimLoadGate: ClaimLoadGateSnapshot()),
                             generation,
                             ct),
                         async ct =>
@@ -651,6 +665,24 @@ public sealed class RemoteRunnerDaemon
                 var loadDecision = loadGate.Observe(
                     TakeTelemetry(),
                     DateTime.UtcNow);
+                lastLoadDecision = loadDecision;
+                if (loadDecision.EmitEvent || loadDecision.EmitOpenEvent)
+                {
+                    var generation = ++capabilityGeneration;
+                    await CapabilityAdvertisementRecovery.ExecuteAsync(
+                        "claim load gate transition",
+                        ct => _client.AdvertiseCapabilitiesAsync(
+                            RunnerCapabilityProbe.Advertise(
+                                _options, gitCapability.CanPush, gitCapability.CanPushWorkflows,
+                                gitCapability.Detail, connectivity: connectivity.Snapshot),
+                            RunnerCapabilityProbe.Telemetry(latestTelemetry, salvageStore: salvage?.Current,
+                                claimLoadGate: ClaimLoadGateSnapshot()),
+                            generation, ct),
+                        async ct => { _ = await RegisterAsync(ct); },
+                        connectivity, () => active.Count, _options.PollSeconds,
+                        TimeSpan.FromSeconds(_options.ServerRequestTimeoutSeconds), _log, shutdown);
+                    nextCapabilityAdvertisement = DateTime.UtcNow.AddMinutes(1);
+                }
                 if (loadDecision.EmitEvent)
                 {
                     inventory.Report(new RunnerInvariantReport(
@@ -659,6 +691,15 @@ public sealed class RemoteRunnerDaemon
                         DateTime.UtcNow,
                         "claim-stopped",
                         $"Claim admission stopped after load/core {loadDecision.LoadPerCore:0.00} remained high for {loadDecision.SustainedFor.TotalSeconds:0}s."));
+                }
+                if (loadDecision.EmitOpenEvent)
+                {
+                    inventory.Report(new RunnerInvariantReport(
+                        $"inv_{Guid.NewGuid():N}",
+                        "load-invariant",
+                        DateTime.UtcNow,
+                        "claim-resumed",
+                        $"Claim admission resumed after {loadDecision.SustainedFor.TotalSeconds:0}s closed; load/core {loadDecision.LoadPerCore:0.00} is below {_options.ClaimMaxLoadPerCore:0.00}."));
                 }
                 AgentStudio.TaskServer.Contracts.HostReportResponse? hostReport = null;
                 if (_client.UsesHostOrchestrator)
@@ -1010,6 +1051,7 @@ public sealed class RemoteRunnerDaemon
             await Task.WhenAll(codingHandoffs);
         await interactivePoll;
         await decisionPoll;
+        await oneShotPoll;
         await repositoryProbePoll;
         await gitSetupPoll;
         await sourceFactsPoll;

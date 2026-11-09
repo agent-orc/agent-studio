@@ -1,5 +1,6 @@
 using AgentStudio.Pipeline;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Cli;
 
 namespace AgentStudio.Runner;
 
@@ -19,7 +20,7 @@ public sealed record ProviderRejectionContinuationPlan(
 /// <summary>
 /// Pure policy for a provider refusal. A declared sibling may finish salvaged
 /// work only when it clears the card's correctness floor. The second refusal
-/// of the configured model makes that sibling the card's explicit route.
+/// of the configured model stores an expiring preference for the sibling.
 /// </summary>
 public static class ProviderRejectionContinuationPolicy
 {
@@ -102,6 +103,7 @@ public sealed class ProviderRejectionContinuationService
     private readonly TaskTransitionService _transitions;
     private readonly TimelineLog _timeline;
     private readonly ILogger<ProviderRejectionContinuationService> _logger;
+    private readonly ModelSelectionLedger? _selectionLedger;
     private readonly Func<TaskInfo, AttemptWriteReference, CancellationToken, Task<MoveJobOutcome>> _moveToReady;
 
     public ProviderRejectionContinuationService(
@@ -110,7 +112,8 @@ public sealed class ProviderRejectionContinuationService
         TaskStateMachine states,
         TaskTransitionService transitions,
         TimelineLog timeline,
-        ILogger<ProviderRejectionContinuationService> logger)
+        ILogger<ProviderRejectionContinuationService> logger,
+        ModelSelectionLedger? selectionLedger = null)
     {
         _scanner = scanner;
         _mutations = mutations;
@@ -118,6 +121,7 @@ public sealed class ProviderRejectionContinuationService
         _transitions = transitions;
         _timeline = timeline;
         _logger = logger;
+        _selectionLedger = selectionLedger;
         _moveToReady = MoveToReadyAsync;
     }
 
@@ -164,7 +168,7 @@ public sealed class ProviderRejectionContinuationService
         var fallbackInfo = new ModelFallbackInfo(
             fallback.FromModel,
             fallback.ToModel,
-            "provider-rejection",
+            rejection.Code == "model_capacity" ? "model-capacity" : "provider-rejection",
             fallback.CliType,
             thinkingLevel);
         if (_mutations.SavePendingIntent(
@@ -181,8 +185,8 @@ public sealed class ProviderRejectionContinuationService
 
         if (pinCard)
         {
-            if (!_mutations.SetJobModel(task.Id, fallback.ToModel, task.WatchPath)
-                || !_mutations.SetJobThinkingLevel(task.Id, thinkingLevel, task.WatchPath))
+            if (!_mutations.SetJobPreferencePin(task.Id, fallback.ToModel, thinkingLevel,
+                    DateTime.UtcNow.AddMinutes(30), task.WatchPath))
             {
                 return RollBackAndFail(checkpoint, "The sibling route could not be pinned on the card.");
             }
@@ -208,7 +212,18 @@ public sealed class ProviderRejectionContinuationService
         var folder = queued?.FolderPath ?? move.NewFolderPath ?? task.FolderPath;
         var summary =
             $"Provider refused the request ({ProviderRejectionContinuationPolicy.Describe(rejection)}); continued on {fallback.ToModel}."
-            + (pinCard ? $" Card pinned to {fallback.ToModel} after {ProviderRejectionContinuationPolicy.RefusalsBeforePin} refusals." : string.Empty);
+            + (pinCard ? $" Temporary preference for {fallback.ToModel} expires in 30 minutes after {ProviderRejectionContinuationPolicy.RefusalsBeforePin} refusals." : string.Empty);
+        var selectionEvent = new ModelSelectionEvent
+        {
+            Kind = "switched", Consumer = "provider-rejection-continuation", Project = task.ProjectName,
+            TaskKey = task.TaskKey, AttemptId = attemptId,
+            From = new ModelSelectionRoute(fallback.CliType, fallback.FromModel, thinkingLevel),
+            To = new ModelSelectionRoute(fallback.CliType, fallback.ToModel, thinkingLevel),
+            Rule = "provider-rejection", Reason = summary,
+            Evidence = new ModelSelectionEvidence(rejection.Message, ProviderRejectionContinuationPolicy.Describe(rejection)),
+            Equivalence = new ModelSelectionEquivalence(null, null, "sibling"),
+        };
+        _selectionLedger?.Append(selectionEvent);
         _timeline.Append(
             folder,
             TimelineEventKinds.ProviderRejectionContinuationStarted,
@@ -227,7 +242,22 @@ public sealed class ProviderRejectionContinuationService
                 ["salvageBranch"] = salvage.Branch,
                 ["salvageCommitSha"] = salvage.CommitSha,
                 ["cardPinned"] = pinCard ? "true" : "false",
+                ["pinMode"] = pinCard ? "preference" : "none",
                 ["runAttemptId"] = attemptId,
+                ["selectionEventId"] = _selectionLedger is null ? string.Empty : selectionEvent.Id,
+            });
+        _timeline.Append(folder, "model.switched", TimelineActors.System,
+            _selectionLedger is null
+                ? $"Switched from {fallback.FromModel} to {fallback.ToModel} for the next attempt."
+                : $"Model selection event {selectionEvent.Id}.",
+            runId: attemptId,
+            details: new Dictionary<string, string>
+            {
+                ["fromModel"] = fallback.FromModel,
+                ["toModel"] = fallback.ToModel,
+                ["provider"] = fallback.CliType,
+                ["rule"] = fallbackInfo.Reason,
+                ["selectionEventId"] = _selectionLedger is null ? string.Empty : selectionEvent.Id,
             });
         _logger.LogWarning(
             "provider-rejection-continuation task={TaskKey} attempt={AttemptId} from={FromModel} to={ToModel} code={Code} parameter={Parameter} pinned={Pinned}",

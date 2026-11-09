@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using AgentStudio.Git;
 using AgentStudio.Shared;
+using AgentStudio.TaskServer.Contracts.BatchGate;
 
 namespace AgentStudio.Pipeline;
 
@@ -43,6 +44,13 @@ public enum BatchExclusionReason
     ActivePerTaskGate,
     NotDocumentationOnly,
     NextBatch,
+    OverlapSeparate,
+    MaximumSize,
+    NoLongerPending,
+    AlreadyIntegrated,
+    ReplayConflict,
+    UnattributableReplay,
+    PreCheckNotAdmitted,
 }
 
 public sealed record BatchGateScope(
@@ -59,7 +67,8 @@ public sealed record BatchGateSubject(
     bool DocumentationOnly, DateTimeOffset ReviewCompletedAtUtc,
     long EnqueueSequence);
 
-public sealed record BatchGateExclusion(string TaskKey, BatchExclusionReason Reason);
+public sealed record BatchGateExclusion(string TaskKey, BatchExclusionReason Reason,
+    string? Detail = null);
 
 public sealed record BatchGateFormationOptions(
     bool Enabled = false, int CloseSize = 4, int MaximumSize = 8,
@@ -70,7 +79,8 @@ public sealed record BatchGateFormationOptions(
     IReadOnlyList<string>? UrgentTags = null, string RiskPolicy = "balanced",
     string Overlap = "adjacent", string ReviewTestLevel = "work-package",
     int GateTimeoutMinutes = 150, BatchGateAdvisorOptions? Advisor = null,
-    bool? PreCheckEnabled = null)
+    bool? PreCheckEnabled = null, string Calibration = "empirical",
+    string Stacking = "off")
 {
     public bool PreCheckFor(string project) => PreCheckEnabled
         ?? string.Equals(project, "Agent Studio", StringComparison.OrdinalIgnoreCase);
@@ -87,6 +97,8 @@ public sealed record BatchGateFormationOptions(
         Planner == "threshold" && (PressureSize < 1 || PressureSize > CloseSize) ? "pressureSize" :
         ReviewQueuePressure < 1 ? "reviewQueuePressure" :
         RiskPolicy is not ("conservative" or "balanced" or "aggressive") ? "riskPolicy" :
+        Calibration is not ("legacy" or "empirical") ? "calibration" :
+        Stacking is not ("off" or "1") ? "stacking" :
         Overlap is not ("adjacent" or "separate") ? "overlap" :
         ReviewTestLevel is not ("work-package" or "build-only") ? "reviewTestLevel" :
         GateTimeoutMinutes is < 1 or > 360 ? "gateTimeoutMinutes" :
@@ -111,7 +123,11 @@ public sealed record BatchGateManifest(
     DateTimeOffset ClosedAtUtc, IReadOnlyList<BatchGateSubject> Members,
     IReadOnlyList<BatchGateExclusion> Exclusions,
     IReadOnlyList<string> EligibleKeys,
-    string? ParentBatchId = null);
+    string? ParentBatchId = null, string? FormationReason = null,
+    IReadOnlyList<BatchPlanCard>? PlanningCards = null,
+    bool Diagnostic = false,
+    string? ReformedFromBatchId = null,
+    string? StackedOnBatchId = null);
 
 public sealed record BatchGateFormation(
     BatchGateManifest? Manifest, IReadOnlyList<BatchGateExclusion> Exclusions,
@@ -152,7 +168,8 @@ public static class BatchGatePolicy
         string baseSha, BatchGateFormationOptions options,
         DateTimeOffset now, int reviewQueueLength = 0, bool loadThrottled = false,
         bool gateBacklog = false, bool baseRed = false,
-        IReadOnlySet<string>? priorityKeys = null, int queuedPartners = 0)
+        IReadOnlySet<string>? priorityKeys = null, int queuedPartners = 0,
+        bool projectGateBusy = false)
     {
         if (!options.IsValid) throw new ArgumentOutOfRangeException(nameof(options));
         var eligible = new List<BatchGateSubject>();
@@ -191,11 +208,19 @@ public static class BatchGatePolicy
         // only lack their pre-check; they join it at their own deadline.
         if (eligible.Count == 1 && deadline && queuedPartners > 0)
             return new(null, exclusions, keys, false);
+        // A gate already using this project's slot gives a due card time to
+        // meet the next partner. Starting its own gate would queue another run.
+        if (eligible.Count == 1 && deadline && projectGateBusy)
+            return new(null, exclusions, keys, false);
         if (eligible.Count == 1 && deadline)
             return new(null, exclusions, keys, !gateBacklog || reviewQueueLength == 0
                 || AgentStudio.Runner.MonolithTransitionAdapter.BatchBacklogAgedOut(
                     eligible[0].ReviewCompletedAtUtc, now, options.DeadlineMinutes),
                 "oldest eligible card reached deadline without a batch partner");
+
+        if (eligible.Count < options.MinimumSize)
+            return new(null, exclusions, keys, false,
+                "eligible members below minimum batch size");
 
         var selected = eligible.Take(options.MaximumSize).ToArray();
         exclusions.AddRange(eligible.Skip(options.MaximumSize)

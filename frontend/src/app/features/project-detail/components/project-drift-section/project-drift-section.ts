@@ -63,7 +63,16 @@ export class ProjectDriftSectionComponent implements OnInit, OnDestroy {
   readonly actionMessage = signal<string | null>(null);
 
   readonly statuses: DriftFindingStatus[] = ['New', 'Tracked', 'Accepted', 'Ignored', 'Resolved'];
-  statusOptions(row: { element: { elementId: string } }) { return this.statuses.map(value => ({ value, label: value, testid: 'project-drift-action-mark-' + value.toLowerCase() + '-' + row.element.elementId })); }
+  private readonly statusOptionsByElement = new Map<string, readonly { value: DriftFindingStatus; label: string; testid: string }[]>();
+  statusOptions(row: MarbleRow): readonly { value: DriftFindingStatus; label: string; testid: string }[] {
+    const id = row.element.elementId;
+    let options = this.statusOptionsByElement.get(id);
+    if (!options) {
+      options = this.statuses.map(value => ({ value, label: value, testid: `project-drift-action-mark-${value.toLowerCase()}-${id}` }));
+      this.statusOptionsByElement.set(id, options);
+    }
+    return options;
+  }
 
   readonly marbleRows = computed<MarbleRow[]>(() => {
     const m = this.model();
@@ -335,4 +344,3 @@ and decide whether the work belongs in a single task or several.
     return e.error?.error ?? e.message ?? fallback;
   }
 }
-

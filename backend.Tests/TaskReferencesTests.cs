@@ -202,12 +202,14 @@ public class TaskReferencesTests : IDisposable
             [
                 new TaskDependencyReference(" ATP-2 "),
                 new TaskDependencyReference("atp-2", releaseGate: true),
+                new TaskDependencyReference("Atp-2", requiresCompletion: true),
             ],
         });
 
         var edge = Assert.Single(norm.DependsOn);
         Assert.Equal("ATP-2", edge.Key);
         Assert.True(edge.ReleaseGate);
+        Assert.True(edge.RequiresCompletion);
     }
 
     // ---- reverse index --------------------------------------------------
@@ -379,17 +381,18 @@ public class TaskReferencesTests : IDisposable
             DependsOn =
             [
                 new TaskDependencyReference(keyB, releaseGate: true),
-                new TaskDependencyReference(keyC),
+                new TaskDependencyReference(keyC, requiresCompletion: true),
             ],
         }, _watchPath);
 
         var info = scanner.FindJob("a", _watchPath)!;
         Assert.True(info.References.DependsOn.Single(edge => edge.Key == keyB).ReleaseGate);
         Assert.False(info.References.DependsOn.Single(edge => edge.Key == keyC).ReleaseGate);
+        Assert.True(info.References.DependsOn.Single(edge => edge.Key == keyC).RequiresCompletion);
 
         var disk = File.ReadAllText(Path.Combine(info.FolderPath, "task.json"));
         Assert.Contains("\"releaseGate\": true", disk);
-        Assert.Contains($"\"{keyC}\"", disk);
+        Assert.Contains("\"requiresCompletion\": true", disk);
     }
 
     // ---- helpers --------------------------------------------------------

@@ -53,6 +53,12 @@ startup if the product exceeds online cores. Local gates use
 `LocalGate:GateSlots` (environment variable `LocalGate__GateSlots`), also
 defaulting to one.
 
+Operators can change installation gate capacity in Workspace Settings,
+Environment, without restarting the API. The saved override applies to new
+gates; running gates keep their grant. The
+[gate capacity API contract](../system/domains/pipeline.md#gate-capacity-api-contract)
+defines the request, validation, permissions, response, and audit record.
+
 Each gate has a private GUID source and worktree directory. Preparation uses
 private run folders and locks shared published cache entries; verification npm
 cache paths are separated by slot. Playwright uses its isolated workspace and

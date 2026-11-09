@@ -73,6 +73,23 @@ public sealed class TaskListGitProjectionCacheTests
     }
 
     [Fact]
+    public async Task BuildProjectionAsync_SynchronousLookupsShareOneWorker()
+    {
+        var task = Job("worker", "watch-a");
+        var threads = new System.Collections.Concurrent.ConcurrentBag<int>();
+        void Record() => threads.Add(Environment.CurrentManagedThreadId);
+        await TaskListGitProjectionCache.BuildProjectionAsync(
+            [task],
+            _ => { Record(); return new Dictionary<string, TaskMergeSignal>(); },
+            _ => { Record(); return new Dictionary<string, TaskIntegrationStatus>(); },
+            _ => { Record(); return new Dictionary<string, TaskPublishSignal>(); },
+            _ => { Record(); return new Dictionary<string, TaskTestRunEvidence>(); },
+            _ => { Record(); return new Dictionary<string, AgentStudio.Review.ReviewProjectionView>(); });
+        Assert.Equal(5, threads.Count);
+        Assert.Single(threads.Distinct());
+    }
+
+    [Fact]
     public async Task BuildProjectionAsync_RepositoryWideLookupFailure_ReportsATypedRepositoryFailureInsteadOfThrowing()
     {
         var jobs = Enumerable.Range(0, 10).Select(i => Job($"card-{i}", "watch-a")).ToArray();
@@ -177,6 +194,41 @@ public sealed class TaskListGitProjectionCacheTests
         var freshness = cache.ReadFreshness([task]);
         Assert.Equal(stateAt, freshness.GitStateAt);
         Assert.False(freshness.Stale);
+    }
+
+    [Fact]
+    public void DependencyIntegration_HoldsChangedOrRefreshingDelivery()
+    {
+        var task = Job("predecessor", "watch-a") with { State = TaskStates.HumanReview };
+        var cache = new TaskListGitProjectionCache();
+        cache.SetSnapshot(task.WatchPath, TaskListGitProjection.Empty with
+        {
+            Integration = new Dictionary<string, TaskIntegrationStatus>
+            {
+                [task.TaskKey] = new()
+                {
+                    Status = IntegrationStatuses.Integrated,
+                    IntegrationBranch = "develop",
+                },
+            },
+            Signatures = new Dictionary<string, string>
+            {
+                [task.TaskKey] = TaskGitSignature.For(task),
+            },
+        }, SnapshotTime);
+
+        Assert.Equal(IntegrationStatuses.Integrated,
+            cache.ReadDependencyIntegration([task])[task.TaskKey].Status);
+
+        var newer = task with { Commits = [new TaskCommitInfo
+        {
+            Sha = "abcdef0123456789abcdef0123456789abcdef01",
+            FilesChanged = 1,
+        }] };
+        Assert.Empty(cache.ReadDependencyIntegration([newer]));
+
+        cache.MarkRefreshing(task.WatchPath);
+        Assert.Empty(cache.ReadDependencyIntegration([task]));
     }
 
     [Fact]

@@ -73,6 +73,7 @@ public sealed class TaskIntegrationStatusService
     private readonly ProjectRegistry? _registry;
     private readonly Func<string, string?> _readOriginUrl;
     private readonly GitReachabilityIndex? _reachability;
+    private readonly BatchGateStore _batchGates;
 
     /// <summary>The delivered lanes this verdict applies to. Cards outside get no entry.</summary>
     internal static readonly HashSet<string> DeliveredLanes = new(StringComparer.Ordinal)
@@ -91,6 +92,8 @@ public sealed class TaskIntegrationStatusService
     private readonly GenerationSingleFlightCache<RepoIntegration> _cache;
     private readonly GenerationSingleFlightCache<bool?> _contentCache;
     private readonly GenerationSingleFlightCache<IReadOnlyList<string>> _pathCache;
+    private readonly ConcurrentDictionary<string, (long Version, IntegrationVerificationRecord? Record)> _verificationRecords
+        = new(FileSystemPathComparer.Instance);
     private int _computationCount;
     private int _lookupCount;
 
@@ -103,9 +106,10 @@ public sealed class TaskIntegrationStatusService
         ILogger<TaskIntegrationStatusService> logger,
         ProjectRegistry? registry = null,
         GitOriginStore? originStore = null,
-        GitReachabilityIndex? reachability = null)
+        GitReachabilityIndex? reachability = null,
+        BatchGateStore? batchGates = null)
         : this(git, settings, pipelineLog, logger, TimeProvider.System, registry,
-            originStore: originStore, reachability: reachability)
+            originStore: originStore, reachability: reachability, batchGates: batchGates)
     {
     }
 
@@ -118,7 +122,8 @@ public sealed class TaskIntegrationStatusService
         ProjectRegistry? registry = null,
         Func<string, string?>? readOriginUrl = null,
         GitOriginStore? originStore = null,
-        GitReachabilityIndex? reachability = null)
+        GitReachabilityIndex? reachability = null,
+        BatchGateStore? batchGates = null)
     {
         _git = git;
         _settings = settings;
@@ -132,6 +137,7 @@ public sealed class TaskIntegrationStatusService
         // reachability index, so a moved ref costs one incremental rev-list and
         // card classification shares it with provenance and the integration view.
         _reachability = reachability;
+        _batchGates = batchGates ?? new BatchGateStore();
         _cache = new GenerationSingleFlightCache<RepoIntegration>(timeProvider);
         _contentCache = new GenerationSingleFlightCache<bool?>(timeProvider);
         _pathCache = new GenerationSingleFlightCache<IReadOnlyList<string>>(timeProvider);
@@ -146,15 +152,120 @@ public sealed class TaskIntegrationStatusService
     public Dictionary<string, TaskIntegrationStatus> BuildLookup(IReadOnlyCollection<TaskInfo> jobs)
         => BuildLookupCore(jobs, deliveredOnly: true);
 
+    internal Dictionary<string, TaskIntegrationStatus> BuildProjectionLookup(IReadOnlyCollection<TaskInfo> jobs)
+        => BuildLookupCore(jobs, deliveredOnly: true, memoizeVerification: true);
+
     /// <summary>
     /// Computes the completion verdict for one card regardless of its source lane.
-    /// Board projection continues to use <see cref="BuildLookup"/> and its lane filter.
+    /// Board projection uses the same lane filter through <see cref="BuildProjectionLookup"/>.
     /// </summary>
     public TaskIntegrationStatus BuildForCompletion(TaskInfo job)
         => BuildLookupCore([job], deliveredOnly: false)[job.TaskKey];
 
+    /// <summary>Acceptance also checks gates on publications after the delivery's verified tree.</summary>
+    public TaskIntegrationStatus BuildForAcceptance(TaskInfo job)
+    {
+        var status = BuildForCompletion(job);
+        var verification = status.Verification;
+        if (status.Status != IntegrationStatuses.Integrated
+            || verification?.State != IntegrationVerificationStates.Verified
+            || !ReviewSubjectStore.IsValidResultSha(verification.Sha)) return status;
+
+        var root = _git.ResolveRepoRootForWatchPath(job.WatchPath);
+        // Keep the earlier verdict when the repository cannot be inspected.
+        // Missing local facts do not disprove a gate that already passed.
+        if (root is null) return status;
+        var branch = status.IntegrationBranch;
+        var tip = _git.GetBranchTip(root, _git.HasOriginRemote(root)
+            ? $"refs/remotes/origin/{branch}" : $"refs/heads/{branch}");
+        if (!ReviewSubjectStore.IsValidResultSha(tip)) return status;
+        if (string.Equals(verification.Sha, tip, StringComparison.OrdinalIgnoreCase)) return status;
+
+        var laterCommits = _git.GetFirstParentRange(root, verification.Sha!, tip!);
+        if (laterCommits is null) return status with { Verification = UnverifiedAcceptance(tip,
+            "The first-parent integration range could not be read for publication gate verification.") };
+        var ancestry = IntegrationPublicationGatePolicy.Check(verification.Sha!, tip!, laterCommits, []);
+        if (ancestry.MissingAncestry)
+            return status with { Verification = UnverifiedAcceptance(tip,
+                $"The recorded verification tree {verification.Sha} is not on the first-parent integration line at {tip}.") };
+
+        try
+        {
+            var publications = new List<IntegrationPublicationGatePolicy.Publication>();
+            var laterBySha = laterCommits.ToDictionary(item => item.Sha,
+                item => item.ParentSha, StringComparer.OrdinalIgnoreCase);
+            foreach (var gate in PublishedGateEvidenceStore.Read(job.WatchPath))
+            {
+                if (!gate.Passed || !IntegrationVerificationProjection.SameBranch(gate.IntegrationBranch, branch)
+                    || !ReviewSubjectStore.IsValidResultSha(gate.TreeSha)
+                    || !string.Equals(gate.TreeSha, gate.PublishedSha, StringComparison.OrdinalIgnoreCase)
+                    || !laterBySha.TryGetValue(gate.TreeSha, out var parent)) continue;
+                publications.Add(new(gate.TreeSha, parent, gate.Describe()));
+            }
+            var batches = _batchGates;
+            IntegrationPublicationGatePolicy.Publication? mappedBatchGate = null;
+            foreach (var manifest in batches.ListManifests()
+                .Where(item => string.Equals(item.Scope.Project, job.ProjectName, StringComparison.Ordinal)
+                    && IntegrationVerificationProjection.SameBranch(item.Scope.IntegrationBranch, branch)))
+            {
+                var publication = batches.ReadPublication(manifest.BatchId);
+                if (publication is null || publication.MembershipDigest != manifest.MembershipDigest
+                    || publication.PreTipSha != manifest.BaseSha
+                    || !laterBySha.ContainsKey(publication.TestedCandidateSha)
+                    || publication.VerifiedRemoteSha != publication.TestedCandidateSha
+                    || batches.ReadVerdict(manifest.BatchId, publication.BatchRunId) is not { Outcome: "pass" } verdict
+                    || verdict.BatchRunId != publication.BatchRunId
+                    || verdict.MembershipDigest != publication.MembershipDigest
+                    || verdict.TestedCandidateSha != publication.TestedCandidateSha
+                    || !File.Exists(verdict.EvidencePath)) continue;
+                var baseSha = publication.PreTipSha;
+                var crossesMappedTree = !laterBySha.ContainsKey(baseSha)
+                    && !string.Equals(baseSha, verification.Sha, StringComparison.OrdinalIgnoreCase)
+                    && job.IntegrationRecords.Any(record =>
+                        record.Classification == IntegrationRecordClasses.CuratedMapping
+                        && record.Id.StartsWith(
+                            $"batch-map:{manifest.BatchId}:{publication.BatchRunId}:",
+                            StringComparison.Ordinal)
+                        && string.Equals(record.IntegrationSha, verification.Sha,
+                            StringComparison.OrdinalIgnoreCase));
+                if (crossesMappedTree) baseSha = verification.Sha!;
+                var batchGate = new IntegrationPublicationGatePolicy.Publication(
+                    publication.TestedCandidateSha, baseSha,
+                    $"batch gate {manifest.BatchId} run {publication.BatchRunId}");
+                publications.Add(batchGate);
+                if (crossesMappedTree) mappedBatchGate = batchGate;
+            }
+            var decision = IntegrationPublicationGatePolicy.Check(verification.Sha!, tip!,
+                laterCommits, publications);
+            if (!decision.Verified)
+                return status with { Verification = UnverifiedAcceptance(tip,
+                    $"The later publication {decision.MissingTree} has no passed gate on the first-parent integration line.") };
+            if (mappedBatchGate is not null)
+                return status with { Verification = verification with
+                {
+                    Reason = $"{verification.Reason} {mappedBatchGate.Gate} verified published tree {mappedBatchGate.TreeSha}.",
+                } };
+            return status;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException
+            or System.Text.Json.JsonException)
+        {
+            SilentCatch.Note(ex, "TaskIntegrationStatusService: publication gate evidence is unavailable");
+            return status with { Verification = UnverifiedAcceptance(tip,
+                "Later publication gate evidence could not be read.") };
+        }
+    }
+
+    private static TaskIntegrationVerification UnverifiedAcceptance(string? sha, string reason) => new()
+    {
+        State = IntegrationVerificationStates.Unverified,
+        Sha = sha,
+        Evidence = IntegrationVerificationEvidence.None,
+        Reason = reason,
+    };
+
     private Dictionary<string, TaskIntegrationStatus> BuildLookupCore(
-        IReadOnlyCollection<TaskInfo> jobs, bool deliveredOnly)
+        IReadOnlyCollection<TaskInfo> jobs, bool deliveredOnly, bool memoizeVerification = false)
     {
         Interlocked.Increment(ref _lookupCount);
         var result = new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal);
@@ -251,7 +362,7 @@ public sealed class TaskIntegrationStatusService
                         CurrentIntegrationSha(classified, card, reaches),
                         classified.IntegrationBranch,
                         CurrentReviewSubject(job)?.ResultSha ?? classified.Sha,
-                        BranchHistory(classified, card, reaches))
+                        BranchHistory(classified, card, reaches), memoizeVerification)
                     : null,
             };
         }
@@ -495,12 +606,14 @@ public sealed class TaskIntegrationStatusService
         string? currentIntegrationSha,
         string currentIntegrationBranch,
         string? currentDeliverySha,
-        Func<string, bool>? branchHistory)
+        Func<string, bool>? branchHistory,
+        bool memoizeVerification)
     {
         try
         {
             var projected = IntegrationVerificationProjection.Resolve(
-                IntegrationVerificationStore.Read(job.FolderPath),
+                memoizeVerification ? ReadVerificationRecord(job.FolderPath)
+                    : IntegrationVerificationStore.Read(job.FolderPath),
                 ReadLatestMergeStep(job),
                 job.IntegrationRecords,
                 currentIntegrationSha,
@@ -546,6 +659,18 @@ public sealed class TaskIntegrationStatusService
                 Reason = "The integration verification evidence could not be read for the current tree.",
             };
         }
+    }
+
+    internal IntegrationVerificationRecord? ReadVerificationRecord(string folder)
+    {
+        var path = IntegrationVerificationStore.PathFor(folder);
+        var version = SidecarFileGeneration.Observe(path).Version;
+        if (_verificationRecords.TryGetValue(path, out var cached) && cached.Version == version)
+            return cached.Record;
+        var record = IntegrationVerificationStore.Read(folder);
+        if (_verificationRecords.Count >= 8192) _verificationRecords.Clear();
+        _verificationRecords[path] = (version, record);
+        return record;
     }
 
     /// <summary>

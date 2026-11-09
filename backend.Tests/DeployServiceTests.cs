@@ -6,10 +6,12 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AgentStudio.Deploy;
+using AgentStudio.Git;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
 using AgentStudio.Security;
 using AgentStudio.TestSupport;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -37,6 +39,49 @@ public sealed class DeployServiceTests : IDisposable
     private ProjectSettingsService? _settings;
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    public void Warm_release_page_uses_cached_quality_without_git_or_archive_scan()
+    {
+        var (deploy, environments, store) = Build();
+        _settings!.SetQualityStudioRepositoryId("demo", "repo");
+        var first = CreateRelease(deploy, Artifact('a'), Head());
+        var secondSha = Commit("second release");
+        Card("DEMO-10", secondSha);
+        var second = CreateRelease(deploy, Artifact('b'), secondSha);
+        Assert.Contains("DEMO-10", second.CardKeys);
+        var indexedCard = _scanner!.ScanAllJobsWithArchive().Single(task => task.Key == "DEMO-10");
+        Assert.Equal("demo", indexedCard.ProjectName);
+        var scans = 0;
+        var qualityDeploy = new DeployService(environments, store, _git!, _scanner!, _clock,
+            NullLogger<DeployService>.Instance, null, projectSettings: _settings,
+            qualityTaskScan: () => { scans++; return _scanner!.ScanAllJobsWithArchive(); });
+        var cold = qualityDeploy.ReleasePage("demo", 0, 25)!;
+        Assert.Equal(1, scans);
+        Assert.Equal(second.Id, cold.Items[0].Id);
+        Assert.Equal(first.Id, cold.Items[1].Id);
+        Assert.NotNull(cold.Items[0].Quality!.Range);
+
+        using (var scope = GitReadRequestGuard.BeginRead("GET", "/api/projects/{projectName}/deploy/releases/page"))
+        {
+            var warm = qualityDeploy.ReleasePage("demo", 0, 25)!;
+            Assert.Equal(0, scope.Spawns);
+            Assert.Equal(cold.Items[0].Quality, warm.Items[0].Quality);
+        }
+        Assert.Equal(1, scans);
+
+        var qualityFolder = Path.Combine(indexedCard.FolderPath, "results", "quality-studio");
+        Directory.CreateDirectory(qualityFolder);
+        File.WriteAllText(Path.Combine(qualityFolder, "latest-review-index.json"), "{}");
+        qualityDeploy.ReleasePage("demo", 0, 25);
+        Assert.Equal(2, scans);
+
+        var thirdSha = Commit("third release");
+        CreateRelease(deploy, Artifact('c'), thirdSha);
+        qualityDeploy.ReleasePage("demo", 0, 25);
+        Assert.Equal(3, scans);
+    }
+
+    [Fact]
     public void Delivery_columns_read_does_not_write_environment_state()
     {
         var (deploy, _, _) = Build();
@@ -44,6 +89,176 @@ public sealed class DeployServiceTests : IDisposable
         Assert.False(File.Exists(path));
         Assert.NotNull(deploy.DeliveryColumns("demo"));
         Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public async Task Delivery_columns_reuse_verification_map_and_reconcile_external_changes()
+    {
+        var (_, environments, store) = Build();
+        var sha = Head();
+        Card("DEMO-1", sha);
+        Card("DEMO-2", sha);
+        var reads = 0;
+        var deploy = new DeployService(environments, store, _git!, _scanner!, _clock,
+            NullLogger<DeployService>.Instance, null,
+            deliveryVerificationRead: folder =>
+            {
+                reads++;
+                return IntegrationVerificationStore.Read(folder);
+            });
+        Assert.Equal(2, deploy.DeliveryColumns("demo")!.Columns[0].Landed.Count);
+        reads = 0;
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(deploy);
+        await using var app = builder.Build();
+        app.MapDeployEndpoints();
+        await app.StartAsync();
+        using var client = app.GetTestClient();
+        for (var index = 0; index < 120; index++)
+        {
+            using var response = await client.GetAsync("/api/projects/demo/deploy/lanes");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+        Assert.Equal(0, reads);
+
+        var folder = Path.Combine(_watch, "6-completed", "demo-1");
+        var verified = IntegrationVerificationStore.Read(folder)!;
+        IntegrationVerificationStore.Write(folder, verified with { State = IntegrationVerificationStates.Unverified });
+        Assert.Equal(["DEMO-2"], deploy.DeliveryColumns("demo")!.Columns[0].Landed.Select(card => card.Key));
+        IntegrationVerificationStore.Write(folder, verified);
+        Assert.Equal(2, deploy.DeliveryColumns("demo")!.Columns[0].Landed.Count);
+        IntegrationVerificationStore.Delete(folder);
+        Assert.Equal(["DEMO-2"], deploy.DeliveryColumns("demo")!.Columns[0].Landed.Select(card => card.Key));
+
+        File.WriteAllText(IntegrationVerificationStore.PathFor(folder), JsonSerializer.Serialize(verified));
+        Assert.Single(deploy.DeliveryColumns("demo")!.Columns[0].Landed);
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        Assert.Equal(2, deploy.DeliveryColumns("demo")!.Columns[0].Landed.Count);
+        File.Delete(IntegrationVerificationStore.PathFor(folder));
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        Assert.Equal(["DEMO-2"], deploy.DeliveryColumns("demo")!.Columns[0].Landed.Select(card => card.Key));
+    }
+
+    [Fact]
+    public void Verification_publications_remain_bounded_and_a_lagging_project_reconciles()
+    {
+        var (_, environments, store) = Build();
+        Card("DEMO-1", Head());
+        var deploy = new DeployService(environments, store, _git!, _scanner!, _clock,
+            NullLogger<DeployService>.Instance, null);
+        Assert.Single(deploy.DeliveryColumns("demo")!.Columns[0].Landed);
+
+        var cardFolder = Path.Combine(_watch, "6-completed", "demo-1");
+        File.Delete(IntegrationVerificationStore.PathFor(cardFolder));
+        var record = new IntegrationVerificationRecord { State = IntegrationVerificationStates.Unverified };
+        for (var index = 0; index < 5000; index++)
+            IntegrationVerificationStore.Write(Path.Combine(_root, "unrelated-verifications", $"card-{index:0000}"), record);
+
+        Assert.Equal(4096, IntegrationVerificationStore.PublicationCount);
+        Assert.Empty(deploy.DeliveryColumns("demo")!.Columns[0].Landed);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Older_verification_snapshot_cannot_replace_newer_delivery_response(bool columns)
+    {
+        var (_, environments, store) = Build();
+        Card("DEMO-1", Head());
+        using var captured = new ManualResetEventSlim();
+        using var resume = new ManualResetEventSlim();
+        var pauseNext = 0;
+        var deploy = new DeployService(environments, store, _git!, _scanner!, _clock,
+            NullLogger<DeployService>.Instance, null,
+            deliveryVerificationCaptured: () =>
+            {
+                if (Interlocked.Exchange(ref pauseNext, 0) != 1) return;
+                captured.Set();
+                Assert.True(resume.Wait(TimeSpan.FromSeconds(10)));
+            });
+
+        string[] Keys() => columns
+            ? deploy.DeliveryColumns("demo")!.Columns[0].Landed.Select(card => card.Key).ToArray()
+            : deploy.DeliveryLanes("demo")!.Lanes.Single(lane => lane.EnvironmentId is null)
+                .Cards.Select(card => card.Key).ToArray();
+
+        Assert.Equal(["DEMO-1"], Keys());
+        Interlocked.Exchange(ref pauseNext, 1);
+        var older = Task.Run(Keys);
+        try
+        {
+            Assert.True(captured.Wait(TimeSpan.FromSeconds(10)));
+            var folder = Path.Combine(_watch, "6-completed", "demo-1");
+            IntegrationVerificationStore.Delete(folder);
+            Assert.Empty(Keys());
+        }
+        finally
+        {
+            resume.Set();
+        }
+        Assert.Empty(await older);
+        Assert.Empty(Keys());
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Delivery_columns_three_thousand_card_fixture_measurement()
+    {
+        var (_, environments, store) = Build();
+        var sha = Head();
+        for (var index = 0; index < 3000; index++) Card($"DEMO-{index:0000}", sha);
+        var lockHolds = new List<double>();
+        var deploy = new DeployService(environments, store, _git!, _scanner!, _clock,
+            NullLogger<DeployService>.Instance, null,
+            deliveryLockHoldObserved: elapsed => lockHolds.Add(elapsed.TotalMilliseconds));
+        Assert.NotNull(deploy.DeliveryColumns("demo"));
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(deploy);
+        await using var app = builder.Build();
+        app.MapDeployEndpoints();
+        await app.StartAsync();
+        using var client = app.GetTestClient();
+        lockHolds.Clear();
+
+        var newRequests = new List<double>();
+        var newLockHolds = new List<double>();
+        for (var iteration = 0; iteration < 20; iteration++)
+        {
+            var watch = Stopwatch.StartNew();
+            using var response = await client.GetAsync("/api/projects/demo/deploy/lanes");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            watch.Stop();
+            newRequests.Add(watch.Elapsed.TotalMilliseconds);
+            newLockHolds.Add(lockHolds[^1]);
+        }
+
+        static double Median(IEnumerable<double> values)
+        {
+            var ordered = values.Order().ToArray();
+            return (ordered[ordered.Length / 2 - 1] + ordered[ordered.Length / 2]) / 2;
+        }
+        var newRequest = Median(newRequests);
+        var newHold = Median(newLockHolds);
+        var report = $"""
+            # Delivery columns, 3,000-card generated fixture
+
+            20 warm reads in one test process. Milliseconds, median.
+
+            | Path | Request | Deploy lock hold |
+            | --- | ---: | ---: |
+            | After, measured | {newRequest:F2} | {newHold:F2} |
+
+            The row measures the current service. The repository documentation records
+            a separate measured baseline on the same generated fixture and host.
+            """;
+        var results = Environment.GetEnvironmentVariable("JOB_RESULTS_DIR");
+        if (!string.IsNullOrWhiteSpace(results))
+        {
+            Directory.CreateDirectory(results);
+            File.WriteAllText(Path.Combine(results, "delivery-columns-benchmark.md"), report);
+        }
     }
 
     [Fact]

@@ -123,7 +123,7 @@ public sealed class GitStateIndexService : BackgroundService
             {
                 tasks = TaskProjectionCards.Select(tasks, logger);
                 var projection = await TaskListGitProjectionCache.BuildProjectionAsync(
-                    tasks, mergeStatus.BuildLookup, integrationStatus.BuildLookup,
+                    tasks, mergeStatus.BuildLookup, integrationStatus.BuildProjectionLookup,
                     publishStatus.BuildLookup, testRuns.BuildLookup,
                     reviewProjection.BuildLookup, logger).ConfigureAwait(false);
                 var commits = new Dictionary<string, IReadOnlyList<TaskCommitInfo>>(StringComparer.Ordinal);
@@ -304,7 +304,10 @@ public sealed class GitStateIndexService : BackgroundService
     /// </summary>
     public void RequestRefresh(string projectName, string trigger)
     {
-        if (_repos.TryGetValue(projectName, out var state)) RequestRefreshCore(state, trigger);
+        if (!_repos.TryGetValue(projectName, out var state)) return;
+        if (trigger == "task-event")
+            _scanner.InvalidateIndexForExternalTaskChange(state.WatchPath);
+        RequestRefreshCore(state, trigger);
     }
 
     private void OpenFactStore()
@@ -496,8 +499,15 @@ public sealed class GitStateIndexService : BackgroundService
 
     private void OnTaskSidecarChanged(string path)
     {
-        if (!IsGitRelevantSidecar(path)) return;
-        if (!_projectionCache.MarkTaskInputChanged(path)) return;
+        var fileName = Path.GetFileName(path);
+        var sidecar = FileSystemPathComparer.Instance.Equals(fileName, AgentStudio.Runner.ReviewRoundBudgetStore.FileName)
+            || FileSystemPathComparer.Instance.Equals(fileName, IntegrationVerificationStore.FileName);
+        if (sidecar) SidecarFileGeneration.Changed(path);
+        else
+        {
+            SidecarFileGeneration.MarkFolderChanged(path);
+            if (!IsGitRelevantSidecar(path) || !_projectionCache.MarkTaskInputChanged(path)) return;
+        }
         OnTaskChanged(path);
     }
 
@@ -521,9 +531,10 @@ public sealed class GitStateIndexService : BackgroundService
     private async Task SweepAsync(CancellationToken stoppingToken)
     {
         DiscoverRepositories();
-        // The safety sweep observes every repository, but the task tree only
-        // needs one disk scan for the whole pass.
-        var allTasks = _scanner.ScanAllJobsRaw();
+        SidecarFileGeneration.Repair(256);
+        // Task facts come from the published folder index. The Git sweep must
+        // never force a workspace-wide raw scan on its 45-second cadence.
+        var allTasks = _scanner.ScanAllJobsWithArchiveForBackgroundIndex();
         foreach (var state in _repos.Values)
         {
             await _repoSlots.WaitAsync(stoppingToken).ConfigureAwait(false);
@@ -743,6 +754,7 @@ public sealed class GitStateIndexService : BackgroundService
         }
         using var budget = GitProcessBudget.Begin(deadline.Token);
         var tasksForRepo = TaskProjectionCards.Select(ReadTasks(state), _logger);
+        SidecarFileGeneration.Repair();
         var effectiveConfig = ResolveConfig(state, run);
         PublishOrigin(state, effectiveConfig);
         using var configScope = GitConfigScope.Begin(state.RepositoryPath, effectiveConfig.OriginUrl);
@@ -1049,7 +1061,9 @@ public sealed class GitStateIndexService : BackgroundService
     }
 
     private TaskInfo[] ReadTasks(RepoState state)
-        => _scanner.ScanWatchPathRaw(state.WatchPath).ToArray();
+        => _scanner.ScanAllJobsWithArchiveForBackgroundIndex()
+            .Where(task => WatchPathComparison.PathsEqual(task.WatchPath, state.WatchPath))
+            .ToArray();
 
     private RepoInput CaptureInput(RepoState state, TaskInfo[] tasks, string configSignature)
     {
@@ -1091,8 +1105,8 @@ public sealed class GitStateIndexService : BackgroundService
     internal static (string Tasks, string Durable) CaptureTaskInputSignatures(TaskInfo[] tasks,
         TaskListGitProjectionCache cache)
     {
-        var parts = new StringBuilder("schema=4;");
-        var durable = new StringBuilder("durable=1;");
+        var parts = new StringBuilder("schema=5;");
+        var durable = new StringBuilder("durable=2;");
         foreach (var task in tasks.OrderBy(task => task.TaskKey, StringComparer.Ordinal))
         {
             var start = parts.Length;
@@ -1101,6 +1115,9 @@ public sealed class GitStateIndexService : BackgroundService
             cache.SeedTaskInput(subject);
             AppendFileFact(parts, subject);
             durable.Append(parts, start, parts.Length - start);
+            AppendSidecarFact(parts, durable,
+                Path.Combine(task.FolderPath, AgentStudio.Runner.ReviewRoundBudgetStore.FileName));
+            AppendSidecarFact(parts, durable, IntegrationVerificationStore.PathFor(task.FolderPath));
             parts.Append(cache.SubjectVersion(task.FolderPath)).Append(';');
         }
         return (Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(parts.ToString()))),
@@ -1111,6 +1128,20 @@ public sealed class GitStateIndexService : BackgroundService
     {
         var (exists, hash) = TaskListGitProjectionCache.SidecarStamp(path);
         parts.Append(exists ? '1' : '0').Append('/').Append(hash).Append(';');
+    }
+
+    private static void AppendSidecarFact(StringBuilder parts, StringBuilder durable, string path)
+    {
+        var observed = SidecarFileGeneration.Observe(path);
+        static void AppendStamp(StringBuilder target, SidecarFileGeneration.Stamp stamp)
+        {
+            target.Append(stamp.Exists ? '1' : '0').Append('/')
+                .Append(stamp.Length).Append('/').Append(stamp.WriteTicks).Append('/')
+                .Append(stamp.Hash).Append(';');
+        }
+        AppendStamp(parts, observed.Stamp);
+        AppendStamp(durable, observed.Stamp);
+        parts.Append(observed.Version).Append(';');
     }
 
     private async Task RetryAfterBackoffAsync(RepoState state, int failureCount)

@@ -114,6 +114,12 @@ export interface DeviceLoginStartResponse {
   expiresAt: string;
 }
 
+/**
+ * The Claude code-return step (AGT-3243): `awaiting` once the host published the sign-in URL,
+ * `submitted` after the Owner pasted the authorization code, `delivered` after the host took it.
+ */
+export type DeviceLoginCodeState = 'awaiting' | 'submitted' | 'delivered';
+
 export interface DeviceLoginStatusResponse {
   handle: string;
   state: 'queued' | 'running' | 'completed' | 'failed';
@@ -121,6 +127,8 @@ export interface DeviceLoginStatusResponse {
   verificationUrl: string | null;
   userCode: string | null;
   expiresAt: string;
+  /** Absent for a session that takes no code back, such as Codex. */
+  codeState?: DeviceLoginCodeState | null;
 }
 
 export interface ClaudeSignInTarget {

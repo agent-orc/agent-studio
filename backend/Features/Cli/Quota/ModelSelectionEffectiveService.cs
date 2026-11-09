@@ -1,6 +1,7 @@
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
 using AgentStudio.Runner;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Cli;
 
@@ -59,7 +60,7 @@ public sealed class ModelSelectionEffectiveService(
                     PipelineStepModelDefaults.RuntimeDefaultThinkingLevelFor(step));
             }
             rows.Add(Select(consumer, step.Id, cli, model, thinking, project,
-                resolution.Source != PipelineStepConfigResolver.ModelSourceRuntime));
+                resolution.Source == PipelineStepConfigResolver.ModelSourceStep, pipelineType));
         }
 
         var deepSetting = settings?.PipelineSteps?.GetValueOrDefault("post-deep-review");
@@ -68,32 +69,40 @@ public sealed class ModelSelectionEffectiveService(
             ?? (deepModel.StartsWith("claude-", StringComparison.OrdinalIgnoreCase) ? CliTypes.Claude : CliTypes.Codex);
         rows.Add(Select("review-deep", "post-deep-review", deepCli, deepModel,
             deepSetting?.ThinkingLevel ?? "medium",
-            project, deepSetting is not null));
+            project, deepSetting is not null, pipelineType));
         rows.Add(Select("chat", null, CliTypes.Codex,
-            ModelMetadataRegistry.DefaultForCli(CliTypes.Codex), null, project, false));
+            ModelMetadataRegistry.DefaultForCli(CliTypes.Codex), null, project, false, pipelineType));
         rows.Add(Select("one-shot:title", "title-generation", CliTypes.Claude,
             configuration["TitleGeneration:Model"] ?? configuration["ClaudeCli:SummaryModel"]
                 ?? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku),
-            null, project, false));
+            null, project, false, pipelineType));
         rows.Add(Select("one-shot:tags", "periodic-tag-maintenance", CliTypes.Claude,
-            ModelFamilyResolver.Resolve(ModelFamilies.ClaudeSonnet), "high", project, false));
+            ModelFamilyResolver.Resolve(ModelFamilies.ClaudeSonnet), "high", project, false, pipelineType));
         var autoTag = AgentStudio.Tags.AutoTagClassifier.ResolveRoute(
             string.IsNullOrWhiteSpace(project) ? null : projects.Get(project));
         rows.Add(Select("one-shot:auto-tag", AgentStudio.Tags.AutoTagClassifier.StepId,
-            autoTag.Cli, autoTag.Model, null, project, false));
+            autoTag.Cli, autoTag.Model, null, project, false, pipelineType));
         rows.Add(Select("card-creation", null, CliTypes.Claude,
-            ModelMetadataRegistry.DefaultForCli(CliTypes.Claude), null, project, false));
+            ModelMetadataRegistry.DefaultForCli(CliTypes.Claude), null, project, false, pipelineType));
         rows.Add(Select("coding", null, CliTypes.Claude,
-            ModelMetadataRegistry.DefaultForCli(CliTypes.Claude), null, project, false));
+            ModelMetadataRegistry.DefaultForCli(CliTypes.Claude), null, project, false, pipelineType));
         return rows;
     }
 
     private EffectiveModelSelection Select(string consumer, string? stepId, string cli,
-        string? model, string? thinking, string? project, bool pinned)
+        string? model, string? thinking, string? project, bool pinned, string? pipelineType)
     {
         var configured = new EffectiveModelRoute(cli, model, thinking);
-        var plan = admission.Plan(new QuotaAdmissionRequest(cli, model, thinking, project, 0,
-            $"effective:{consumer}", SameClassOnly: consumer.StartsWith("review-", StringComparison.Ordinal)));
+        var plan = admission.Selection.Select(new ModelSelectionCall(new SelectionRequest
+        {
+            Consumer = consumer,
+            Project = project,
+            PipelineType = pipelineType,
+            StepId = stepId,
+            IsExplicitPin = pinned,
+            Pins = new SelectionPins(cli, model, thinking),
+            Required = new SelectionRequirements(SameClassOnly: consumer.StartsWith("review-", StringComparison.Ordinal)),
+        }, $"effective:{consumer}")).Admission;
         var rule = plan.IsFallback
             ? plan.ModelFallback?.Reason == "operator-preference" ? "operator-switch" : "quota-cap"
             : admission.IsOperatorSwitchActive(cli) ? "operator-switch"

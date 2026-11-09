@@ -33,6 +33,7 @@ public sealed class ProviderRejectionContinuationTests : IDisposable
     private readonly TaskMutationService _mutations;
     private readonly TaskTransitionService _transitions;
     private readonly TimelineLog _timeline;
+    private readonly ModelSelectionLedger _selectionLedger;
 
     public ProviderRejectionContinuationTests()
     {
@@ -64,6 +65,7 @@ public sealed class ProviderRejectionContinuationTests : IDisposable
         _transitions = new TaskTransitionService(
             _scanner, _states, _mutations, git, settings, NullLogger<TaskTransitionService>.Instance);
         _timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        _selectionLedger = new ModelSelectionLedger(config);
     }
 
     public void Dispose()
@@ -126,6 +128,10 @@ public sealed class ProviderRejectionContinuationTests : IDisposable
             default);
 
         Assert.True(result.Started, result.Reason);
+        var selection = Assert.Single(_selectionLedger.Query(provider: CliTypes.Codex,
+            consumer: "provider-rejection-continuation", rule: "provider-rejection",
+            from: ModelIds.Gpt6Astra, to: ModelIds.Gpt56Sol).Events);
+        Assert.Equal("attempt-1", selection.AttemptId);
         var queued = _scanner.FindJob(JobId, _watchPath)!;
         Assert.Equal(TaskStates.Ready, queued.State);
         Assert.Equal(ModelIds.Gpt6Astra, queued.Model);
@@ -139,7 +145,7 @@ public sealed class ProviderRejectionContinuationTests : IDisposable
     }
 
     [Fact]
-    public async Task Second_refusal_pins_the_card_to_the_sibling()
+    public async Task Second_refusal_sets_expiring_preference_without_overwriting_operator_pin()
     {
         WriteJob();
         var result = await BuildService().StartAsync(
@@ -156,9 +162,12 @@ public sealed class ProviderRejectionContinuationTests : IDisposable
         Assert.True(result.Started, result.Reason);
         Assert.True(result.CardPinned);
         var queued = _scanner.FindJob(JobId, _watchPath)!;
-        Assert.Equal(ModelIds.Gpt56Sol, queued.Model);
+        Assert.Equal(ModelIds.Gpt6Astra, queued.Model);
         Assert.Equal("high", queued.ThinkingLevel);
-        Assert.Contains("Card pinned", result.Reason, StringComparison.Ordinal);
+        Assert.Equal(ModelIds.Gpt56Sol, queued.PreferenceModel);
+        Assert.Equal("high", queued.PreferenceThinkingLevel);
+        Assert.NotNull(queued.PreferenceExpiresAt);
+        Assert.Contains("Temporary preference", result.Reason, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -225,7 +234,8 @@ public sealed class ProviderRejectionContinuationTests : IDisposable
         _states,
         _transitions,
         _timeline,
-        NullLogger<ProviderRejectionContinuationService>.Instance);
+        NullLogger<ProviderRejectionContinuationService>.Instance,
+        _selectionLedger);
 
     private static AttemptWriteReference Write(string attemptId)
         => new(attemptId, 7, 1, $"lane-completion:{attemptId}");

@@ -8,6 +8,23 @@ namespace AgentRunner.Tests;
 public class TaskServerClientHealthTests
 {
     [Fact]
+    public async Task Host_refuses_an_older_task_server_even_if_it_claims_compatibility()
+    {
+        var server = new ProtocolRangeDto(RunnerOptions.ProtocolVersion - 1, 1,
+            RunnerOptions.ProtocolVersion - 1, "1.0.0", "server-1", ["runner"]);
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new ProtocolCompatibilityResponse(true, server))),
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        using var client = new TaskServerClient(http, "runner-v1", usesDurableTaskServer: true);
+
+        var refusal = await Assert.ThrowsAsync<TaskServerException>(() =>
+            client.EnsureCompatibleAsync(CancellationToken.None));
+        Assert.Equal(426, refusal.StatusCode);
+    }
+
+    [Fact]
     public async Task Provider_comparison_reads_only_safe_runner_scoped_metadata()
     {
         var at = new DateTimeOffset(2026, 9, 26, 12, 0, 0, TimeSpan.Zero);

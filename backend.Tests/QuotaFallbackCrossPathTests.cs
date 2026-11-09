@@ -33,6 +33,75 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class QuotaFallbackCrossPathTests : IDisposable
 {
+    [Theory]
+    [InlineData(false, CliTypes.Codex, ModelIds.Gpt56Sol)]
+    [InlineData(true, CliTypes.Claude, ModelIds.ClaudeSonnet5)]
+    public async Task Monolith_claim_switches_capacity_model_on_one_host(
+        bool siblingAlsoAtCapacity, string expectedCli, string expectedModel)
+    {
+        const string taskKey = "AGT-CAPACITY-CLAIM";
+        SeedTask(TaskStates.Ready, taskKey, "Capacity claim", "Do the configured thing.",
+            cliType: CliTypes.Codex, model: ModelIds.Gpt6Sol, thinkingLevel: "medium");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/capacity-claim.git");
+        var health = factory.Services.GetRequiredService<V1ReviewExecutorRegistry>();
+        health.MarkModelCapacity(RunnerId, CliTypes.Codex, ModelIds.Gpt6Sol);
+        if (siblingAlsoAtCapacity)
+            health.MarkModelCapacity(RunnerId, CliTypes.Codex, ModelIds.Gpt56Sol);
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner",
+            IdempotencyKey: $"capacity-{siblingAlsoAtCapacity}"));
+
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        Assert.Equal(expectedCli, claim.RunSpec?.CliType);
+        Assert.Equal(expectedModel, claim.RunSpec?.Model);
+        var switchReceipt = factory.Services.GetRequiredService<ModelSelectionLedger>()
+            .Query(project: ProjectName).Events.First(entry =>
+                entry.Kind == "switched" && entry.To?.Model == expectedModel
+                && entry.From?.Model == ModelIds.Gpt6Sol);
+        Assert.Equal(claim.TaskKey, switchReceipt.TaskKey);
+        Assert.Equal(ModelIds.Gpt6Sol, switchReceipt.From?.Model);
+        Assert.False(string.IsNullOrWhiteSpace(switchReceipt.Reason));
+        Assert.Equal(ModelIds.Gpt6Sol,
+            factory.Services.GetRequiredService<TaskScannerService>()
+                .FindJob(taskKey, _watchPath)?.Model);
+    }
+
+    [Fact]
+    public async Task Unauthorized_codex_on_claim_host_switches_only_that_host_to_claude()
+    {
+        const string taskKey = "AGT-UNAUTHORIZED-CLAIM";
+        SeedTask(TaskStates.Ready, taskKey, "Unauthorized provider claim", "Do the configured thing.",
+            cliType: CliTypes.Codex, model: ModelIds.Gpt6Sol, thinkingLevel: "medium");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/unauthorized-claim.git");
+        var health = factory.Services.GetRequiredService<V1ReviewExecutorRegistry>();
+        var instance = health.CurrentInstanceId(RunnerId)!;
+        health.ReportCapabilityFailure(RunnerId, new Contract.CapabilityFailureRequest(
+            RunnerId, instance, Contract.CapabilityProtocol.ProviderAuthentication(CliTypes.Codex),
+            "ProviderUnauthorized", "Codex returned 401", DateTime.UnixEpoch,
+            "unauthorized-codex-claim"));
+        Assert.True(health.IsProviderUnauthorized(RunnerId, CliTypes.Codex));
+        Assert.False(health.IsProviderUnauthorized(RunnerId, CliTypes.Claude));
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner",
+            IdempotencyKey: "unauthorized-claim"));
+
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        Assert.Equal(CliTypes.Claude, claim.RunSpec?.CliType);
+        Assert.Equal(ModelIds.ClaudeSonnet5, claim.RunSpec?.Model);
+    }
+
     private const string ProjectName = "quota-fallback-cross-path";
     private const string RunnerId = "quota-fallback-runner";
 
@@ -172,6 +241,10 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
         Assert.Equal("quota-cap", marker.ModelFallback?.Reason);
         Assert.Equal("5-hour", marker.ModelFallback?.Window);
         Assert.Contains("TokenEconomy", marker.ModelFallback?.CatalogueVersion);
+        var ledgerPage = await http.GetFromJsonAsync<ModelSelectionEventPage>(
+            $"/api/model-selection/events?provider={expectedCli}&project={ProjectName}&consumer=coding&rule=quota-cap&from={configuredModel}&to={expectedModel}");
+        var selection = Assert.Single(ledgerPage!.Events);
+        Assert.Equal(selection.Id, fallbackEvent.Details["selectionEventId"]);
     }
 
     // ── Test B: review-claim (/api/v1/runners/{id}/review-claims) re-resolves ──
@@ -421,6 +494,7 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
                  {
                      (CliTypes.Claude, ModelIds.ClaudeOpus5),
                      (CliTypes.Claude, ModelIds.ClaudeSonnet5),
+                     (CliTypes.Codex, ModelIds.Gpt6Sol),
                      (CliTypes.Codex, ModelIds.Gpt56Sol),
                  })
             capabilities.Add(new Contract.AdvertisedCapabilityDto(

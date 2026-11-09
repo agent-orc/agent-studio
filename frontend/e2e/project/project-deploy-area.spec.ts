@@ -186,6 +186,70 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
+  test('shows release card verdicts and opens the stored release range in both themes', async ({ page }) => {
+    const releases = deployReleasesFixture();
+    const release = releases[0];
+    release.cardKeys = ['WEB-35', 'WEB-36', 'WEB-37'];
+    release.quality = {
+      cards: [{ key: 'WEB-35', verdict: 'pass' }, { key: 'WEB-36', verdict: 'concerns' },
+        { key: 'WEB-37', verdict: 'block' }],
+      pass: 1, concerns: 1, block: 1, notReviewed: 0, worstVerdict: 'block',
+      rangeVerdict: 'not-reviewed',
+      range: { repositoryId: 'repo-website', baseSha: 'a'.repeat(40), headSha: release.commitSha, requiresConfirmation: false },
+      rangeUnavailableReason: null,
+    };
+    let reviewRequests = 0;
+    let openedUrl: string | null = null;
+    await page.route(/\/change-review(?:\?|$)/, route => {
+      reviewRequests++;
+      return route.fulfill({ status: 500, body: 'Unexpected review request' });
+    });
+    await page.context().route('**/api/integrations/quality-studio/open**', route => {
+      openedUrl = route.request().url();
+      return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>Opened</title>' });
+    });
+    await openDeploy(page, fullMocks({ releases }));
+    await page.getByTestId('deploy-tab-releases').click();
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await expect(page.getByTestId(`deploy-release-quality-${release.id}`)).toContainText('Quality: Block · 1 pass, 1 concerns, 1 block, 0 not reviewed');
+      await expect(page.getByTestId('deploy-release-quality-counts')).toContainText('1 pass · 1 concerns · 1 block · 0 not reviewed');
+      await expect(page.getByRole('list', { name: 'Card Quality verdicts' }).getByRole('listitem')).toHaveCount(3);
+      await expect(page.getByTestId('deploy-release-range-verdict')).toContainText('Not reviewed');
+      await capture(page, `deploy-release-quality-${theme}`);
+    }
+    await page.getByTestId('deploy-release-open-quality').click();
+    await expect.poll(() => openedUrl).not.toBeNull();
+    const target = new URL(new URL(openedUrl!).searchParams.get('return')!, 'https://quality.example');
+    expect(target.searchParams.get('base')).toBe('a'.repeat(40));
+    expect(target.searchParams.get('head')).toBe(release.commitSha);
+    expect(reviewRequests).toBe(0);
+  });
+
+  test('shows a stored release range verdict in both themes without starting a review', async ({ page }) => {
+    const releases = deployReleasesFixture();
+    releases[0].quality = {
+      cards: [], pass: 0, concerns: 0, block: 0, notReviewed: 0,
+      worstVerdict: 'not-reviewed', rangeVerdict: 'concerns',
+      range: { repositoryId: 'repo-website', baseSha: 'a'.repeat(40),
+        headSha: releases[0].commitSha, requiresConfirmation: false },
+      rangeUnavailableReason: null,
+    };
+    let reviewRequests = 0;
+    await page.route(/\/change-review(?:\?|$)/, route => {
+      reviewRequests++;
+      return route.fulfill({ status: 500, body: 'Unexpected review request' });
+    });
+    await openDeploy(page, fullMocks({ releases }));
+    await page.getByTestId('deploy-tab-releases').click();
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await expect(page.getByTestId('deploy-release-range-verdict')).toContainText('Release range: Concerns');
+      await capture(page, `deploy-release-stored-range-${theme}`);
+    }
+    expect(reviewRequests).toBe(0);
+  });
+
   test('shows the pre-delivery verdict and candidate SHA on the release header', async ({ page }) => {
     const releases = deployReleasesFixture();
     releases[0].preDeliveryVerdict = { project: PROJECT, commitSha: 'c'.repeat(40),

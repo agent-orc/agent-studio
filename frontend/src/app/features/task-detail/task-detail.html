@@ -109,8 +109,13 @@
         [history]="detail().promptHistory || []"
         [titleHistory]="detail().titleHistory || []"
         [reviewEvidence]="detail().reviewEvidence || []"
+        [resourceStates]="jobSelection.resourceStates()"
         [screenshots]="screenshots()"
         [artifacts]="artifacts()"
+        [screenshotsLoadError]="screenshotsPoll.loadError()"
+        [artifactsLoadError]="artifactsService.loadError()"
+        (retryScreenshots)="screenshotsPoll.refresh()"
+        (retryArtifacts)="artifactsService.refresh()"
         [job]="detail().info"
         [maximized]="maximizedPane() === 'prompt'"
         [weight]="paneWeights().prompt"
@@ -133,6 +138,7 @@
         (referencesChanged)="fileSaved.emit()"
         (titleSaved)="fileSaved.emit()"
         (activeTabChange)="detailTabChange.emit($event)"
+        (retryResource)="jobSelection.retryResource($event)"
         (reviewAttemptRequested)="openReviewAttempt($event)" />
     }
 

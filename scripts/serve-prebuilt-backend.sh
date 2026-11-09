@@ -29,7 +29,11 @@ git -C "${REPO_ROOT}" worktree add --detach "${PW_E2E_CHECKOUT}" HEAD
 export PORT="${PW_E2E_BACKEND_PORT}"
 export API_PORT_OVERRIDE=1
 export ATP_WORKTREE_TEST_BACKEND=1
-export API_PREBUILT_DIR="${REPO_ROOT}/backend/bin/e2e-publish"
+if [[ "${PW_E2E_PROFILE:-}" == public-demo ]]; then
+  export API_PREBUILT_DIR="${REPO_ROOT}/backend/bin/e2e-publish-public-demo"
+else
+  export API_PREBUILT_DIR="${REPO_ROOT}/backend/bin/e2e-publish"
+fi
 export API_REQUIRE_PREBUILT=1
 export API_START_TIMEOUT_SECS="${API_START_TIMEOUT_SECS:-90}"
 export TaskRepository="${PW_E2E_WORKSPACE}"
@@ -43,7 +47,9 @@ export WatchPaths__0__RepositoryPath="${PW_E2E_CHECKOUT}"
 
 case "${PW_E2E_PROFILE:-standard}" in
   standard) ;;
-  networked-monolith)
+  # operator-cli: a fresh networked monolith of its own, so the studio-op spec
+  # bootstraps its Owner and API token without sharing first-run state.
+  networked-monolith|operator-cli)
     export Security__Profile=networked
     export Security__TrustedProxyAddresses=127.0.0.1
     export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
@@ -83,7 +89,7 @@ case "${PW_E2E_PROFILE:-standard}" in
     export WatchPaths__0__RootPath="${recovery_repo}"
     export WatchPaths__0__RepositoryPath="${recovery_repo}"
     ;;
-  demo)
+  demo|public-demo)
     node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}"
     export WatchPaths__0__Name='Demo App'
     export WatchPaths__0__Path="${PW_E2E_WORKSPACE}/projects/demo-app"
@@ -95,6 +101,13 @@ case "${PW_E2E_PROFILE:-standard}" in
     export WatchPaths__1__RepositoryPath="${WatchPaths__1__Path}"
     export DeliveryChain__Guarded=false
     export ReviewDecisionOrchestrator__BootDelaySeconds=3600
+    if [[ "${PW_E2E_PROFILE}" == public-demo ]]; then
+      export Security__Profile=public-demo-readonly
+      export Security__TrustedProxyAddresses=127.0.0.1
+      # This override is scoped to the disposable Playwright backend. The
+      # production public-demo rate limit remains unchanged.
+      export Security__PublicDemoEdge__RateLimit__PermitLimit=2000
+    fi
     ;;
   first-run)
     source "${REPO_ROOT}/scripts/first-run-e2e-fixture.sh"

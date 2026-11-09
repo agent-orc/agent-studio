@@ -9,5 +9,7 @@
   }
 }
 @if (panelProject(); as project) {
-  <app-batch-panel [project]="project" [closed]="closePanel" />
+  @defer (on immediate) {
+    <app-batch-panel [project]="project" [closed]="closePanel" />
+  }
 }

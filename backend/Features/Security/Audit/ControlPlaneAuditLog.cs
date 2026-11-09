@@ -34,6 +34,10 @@ public sealed class ControlPlaneAuditLog
     private readonly object _gate = new();
     private readonly SemaphoreSlim _appended = new(0, 1);
     private (long Sequence, string Hash)? _head;
+    // The file length after this process last read or wrote it. A longer file means another process (the
+    // out-of-band kill switch while the API was stopped or starting) appended; a shorter one keeps the cached
+    // head, so a truncation still shows up as a gap below HighestWritten.
+    private long _knownLength;
     private long _highestWritten;
     private bool _tornTail;
 
@@ -222,17 +226,20 @@ public sealed class ControlPlaneAuditLog
 
     private (long Sequence, string Hash) HeadLocked()
     {
-        if (_head is { } head) return head;
+        if (_head is { } head && CurrentLength() <= _knownLength) return head;
         var last = (0L, GenesisHash);
         if (File.Exists(FilePath))
             foreach (var line in File.ReadLines(FilePath))
                 if (Parse(line) is { } entry && TrySplit(line, out _, out var hash))
                     last = (entry.Sequence, hash);
         _head = last;
+        _knownLength = CurrentLength();
         _highestWritten = Math.Max(_highestWritten, last.Item1);
         _tornTail = EndsWithoutNewline();
         return last;
     }
+
+    private long CurrentLength() => File.Exists(FilePath) ? new FileInfo(FilePath).Length : 0;
 
     private void WriteLineLocked(string line)
     {
@@ -246,6 +253,7 @@ public sealed class ControlPlaneAuditLog
             stream.Write(Encoding.UTF8.GetBytes((_tornTail ? "\n" : "") + line + "\n"));
             _tornTail = false;
             stream.Flush(flushToDisk: true);
+            _knownLength = stream.Length;
         }
         if (created) Restrict(FilePath);
     }

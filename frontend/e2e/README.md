@@ -39,6 +39,24 @@ First-time browser install (already done in dev setup, but if the
 npx --prefix frontend playwright install chromium
 ```
 
+### Public demo shell check
+
+Run `npm --prefix frontend run e2e -- e2e/system/public-demo-shell.spec.ts` from
+the task worktree. The spec selects the `public-demo` Playwright profile, which
+seeds an isolated demo workspace and starts the backend with
+`Security:Profile=public-demo-readonly`. Its frontend proxy serves a temporary
+localhost HTTPS certificate, forwards the secure scheme to the backend, and
+lets Chromium retain the Secure viewer cookie. Playwright ignores certificate
+errors only for this isolated profile. The disposable backend raises its
+per-IP request budget to 2000 for browser automation; the normal public demo
+rate limit and HTTPS requirement stay unchanged outside this test process.
+This profile publishes the backend in Debug to a separate test output path, so
+the local browser check does not require a production Six Labors license.
+
+The spec covers the desktop project picker and the narrow-screen **More →
+Switch project** path at 1280 and 390 px in both themes. With
+`JOB_RESULTS_DIR` set, it writes four screenshots there for review.
+
 ## Suite layout
 
 Specs are grouped by domain under `e2e/<folder>/`, mirroring the feature
@@ -452,7 +470,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | Spec | Summary |
 |------|---------|
 | `appearance-layout-toggles.spec.ts` | Settings - Appearance/Layout segmented toggles |
-| `operator-agents.spec.ts` | AGT-3372 · Access operator agents: create, one-time session token, audited activity, chain and forwarding strip, light and dark (mocked) |
+| `operator-agents.spec.ts` | AGT-3372 · Access operator agents: create, one-time session token, audited activity, chain and forwarding strip; AGT-3373 · kill switch: end one session, end all operator access, drill, acute states; light and dark (mocked) |
 | `quota-forecast.spec.ts` | AGT-3001 · CLI Management quota forecast: curve, rate, 100% time, session gauge, armed fallback (mocked) |
 | `remote-hosts.spec.ts` | Execution Hosts settings section |
 | `settings-consolidation.spec.ts` | Settings consolidation (AGT-2035) |

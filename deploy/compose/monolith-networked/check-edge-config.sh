@@ -23,7 +23,8 @@ for service in ('api', 'frontend', 'edge'):
     body = match.group(1)
     checks = (
         ('digest', r'^    image: [^\n]+@sha256:\$\{STUDIO_[A-Z_]+_DIGEST:\?'),
-        ('non-root', r"^    user: '10001:10001'$"),
+        ('non-root', r"^    user: '10001:1654'$" if service == 'api'
+         else r"^    user: '10001:10001'$"),
         ('read-only root', r'^    read_only: true$'),
         ('cap_drop', r'^    cap_drop: \[ALL\]$'),
         ('no-new-privileges', r'^    security_opt: \[no-new-privileges:true\]$'),
@@ -48,6 +49,51 @@ for service in ('api', 'frontend', 'edge'):
     if service == 'edge':
         if not re.search(r"^      net.ipv4.ip_unprivileged_port_start: '0'$", body, re.M):
             sys.exit('edge: missing unprivileged port setting')
+for service in ('operations-bootstrap', 'operations-server', 'operations-agent'):
+    match = re.search(r'^  ' + service + r':\n(.*?)(?=^  [a-z-]+:|^networks:)', compose, re.M | re.S)
+    if not match:
+        sys.exit(f'{service}: service missing')
+    body = match.group(1)
+    image_key = 'STUDIO_OPERATIONS_AGENT_DIGEST' if service == 'operations-agent' else 'STUDIO_OPERATIONS_SERVER_DIGEST'
+    if not re.search(r'^    image: [^\n]+@sha256:\$\{' + image_key + r':\?', body, re.M):
+        sys.exit(f'{service}: missing digest')
+    for reason, pattern in (
+        ('read-only root', r'^    read_only: true$'),
+        ('cap_drop', r'^    cap_drop: \[ALL\]$'),
+        ('no-new-privileges', r'^    security_opt: \[no-new-privileges:true\]$'),
+    ):
+        if not re.search(pattern, body, re.M):
+            sys.exit(f'{service}: missing {reason}')
+    if service == 'operations-server' and not re.search(r"^    ports: \['127\.0\.0\.1:5081:5081'\]$", body, re.M):
+        sys.exit('operations-server: public port exposure')
+    if service != 'operations-server' and re.search(r'^    ports:', body, re.M):
+        sys.exit(f'{service}: public port exposure')
+addresses = {
+    'edge': '172.30.83.2',
+    'frontend': '172.30.83.3',
+    'api': '172.30.83.4',
+    'quality-studio': '172.30.83.5',
+    'operations-server': '172.30.83.6',
+    'operations-agent': '172.30.83.7',
+}
+for service, address in addresses.items():
+    match = re.search(r'^  ' + service + r':\n(.*?)(?=^  [a-z-]+:|^networks:)', compose, re.M | re.S)
+    if not match or not re.search(r'^    networks:\n      website:\n        ipv4_address: ' + re.escape(address) + r'$', match.group(1), re.M):
+        sys.exit(f'{service}: address is outside the protected website subnet')
+    if not re.search(r'^    restart: \$\{STUDIO_RESTART_POLICY:-on-failure\}$', match.group(1), re.M):
+        sys.exit(f'{service}: public restart policy is not firewall-gated')
+if not re.search(r'^    network_mode: none$',
+                 re.search(r'^  operations-bootstrap:\n(.*?)(?=^  [a-z-]+:|^networks:)', compose, re.M | re.S).group(1), re.M):
+    sys.exit('operations-bootstrap: must not join a network')
+if 'subnet: 172.30.83.0/24' not in compose or 'com.docker.network.bridge.name: br-studio-web' not in compose:
+    sys.exit('website: subnet or bridge is not covered by the Docker firewall')
+rules = (stack / 'apply-cloudflare-docker-firewall.sh').read_text()
+verifier = (stack / 'verify-cloudflare-docker-firewall.sh').read_text()
+installer = (stack / 'install-cloudflare-docker-firewall.sh').read_text()
+if '-I DOCKER-USER 1 -d 172.30.83.0/24 -j STUDIO-CF-V4' not in rules or 'br-studio-web' not in rules:
+    sys.exit('website: Docker firewall does not cover the website bridge')
+if '172.30.83.0/24' not in verifier or 'ExecStartPre=/bin/bash $stack_dir/verify-cloudflare-docker-firewall.sh' not in installer:
+    sys.exit('website: firewall rule is not checked before Compose starts')
 for name in ('Caddyfile.public', 'Caddyfile.cloudflare'):
     caddy = (stack / name).read_text()
     if not re.search(r'forward_auth \{\$STUDIO_ACCESS_AUTH_URL\} \{\s*uri /verify\s*\}', caddy):
@@ -70,7 +116,7 @@ if [ "$baseline_only" = true ]; then exit 0; fi
 release_dir="${1:?Usage: check-edge-config.sh <matching-release-stack-directory>}"
 release_dir="$(cd "$release_dir" && pwd)"
 
-for file in compose.yaml Caddyfile.public Caddyfile.cloudflare Caddyfile.private Caddyfile.frontend cloudflare-ips.caddy backup-encrypted.sh restore-to-scratch.sh monitor-baseline.py; do
+for file in compose.yaml Caddyfile.public Caddyfile.cloudflare Caddyfile.private Caddyfile.frontend cloudflare-ips.caddy backup-encrypted.sh restore-to-scratch.sh monitor-baseline.py apply-cloudflare-docker-firewall.sh verify-cloudflare-docker-firewall.sh install-cloudflare-docker-firewall.sh; do
   if ! cmp -s "$stack_dir/$file" "$release_dir/$file"; then
     echo "Stale $file; copy it from $release_dir" >&2
     exit 1
@@ -102,7 +148,7 @@ if ! grep -Fq '0.0.0.0:443:443' "$stack_dir/compose.yaml"; then
 fi
 
 if [ -f "$stack_dir/.env" ]; then
-  for key in STUDIO_API_DIGEST STUDIO_WEB_DIGEST STUDIO_EDGE_DIGEST; do
+  for key in STUDIO_API_DIGEST STUDIO_WEB_DIGEST STUDIO_EDGE_DIGEST STUDIO_OPERATIONS_SERVER_DIGEST STUDIO_OPERATIONS_AGENT_DIGEST; do
     digest="$(sed -n "s/^${key}=//p" "$stack_dir/.env" | tail -n 1)"
     if ! [[ "$digest" =~ ^[0-9a-f]{64}$ ]]; then
       echo "$key must be a 64-character lowercase image digest" >&2

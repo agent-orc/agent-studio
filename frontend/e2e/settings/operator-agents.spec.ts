@@ -5,8 +5,10 @@ import { setTheme } from '../helpers/theme';
 
 /**
  * SM-1 (AGT-3372): the Owner manages operator agents and reads their audit
- * trail in Settings > Access. Every operator and audit route is mocked so the
- * flow is deterministic; screenshots land in JOB_RESULTS_DIR for review.
+ * trail in Settings > Access. SM-2 (AGT-3373): the Owner ends one session,
+ * ends all operator access with the kill switch, and runs a drill. Every
+ * operator, kill switch, and audit route is mocked so the flow is
+ * deterministic; screenshots land in JOB_RESULTS_DIR for review.
  */
 const resultDir = process.env.JOB_RESULTS_DIR ?? join('test-results', 'operator-agents');
 const json = (route: Route, body: unknown, status = 200) =>
@@ -57,6 +59,36 @@ function operatorState() {
       lastForwardedAt: '2026-11-02T08:30:00Z' as string | null, oldestPendingAt: '2026-11-02T08:39:12Z' as string | null,
       lastError: null as string | null, alert: false,
     },
+    killSwitch: {
+      kills: [] as Record<string, unknown>[],
+      drills: [drill('drill_oct', 'scheduled-drill', '2026-11-01T03:00:00Z', 418.4, true, null)] as Record<string, unknown>[],
+      nextDrillAt: '2026-12-01T03:00:00Z' as string | null,
+      drillIntervalHours: 720,
+      operationsServerConfigured: true,
+      outOfBandRequestPending: false,
+    },
+  };
+}
+
+function drill(id: string, trigger: string, startedAt: string, durationMs: number, passed: boolean, failure: string | null) {
+  return {
+    id, trigger, startedAt, durationMs, studioRefusedMs: passed ? 2.6 : null, operationsServerState: passed ? 'revoked' : 'pending',
+    operationsServerMs: passed ? durationMs - 3 : null, otherSessionsKept: true, passed, failure, operatorAgentId: 'opa_drill',
+  };
+}
+
+function kill(id: string, kind: 'all' | 'session', at: string, agentIds: string[], sessionIds: string[], reason: string | null, operationsState: string,
+  ended: { standingGrantIds?: string[]; approvalIds?: string[] } = {}) {
+  return {
+    id, kind, trigger: 'studio', actor: 'human:usr_owner', reason, at, operatorAgentIds: agentIds, sessionIds,
+    standingGrantIds: ended.standingGrantIds ?? [], approvalIds: ended.approvalIds ?? [], allOperators: kind === 'all',
+    operationsServer: {
+      state: operationsState, attempts: operationsState === 'not-required' ? 0 : 1, lastAttemptAt: at,
+      lastError: operationsState === 'pending' ? 'http-503' : null,
+      revokedPrincipalIds: operationsState === 'revoked' ? ['release-console'] : [], cancelledOperations: operationsState === 'revoked' ? 1 : 0,
+      completedAt: operationsState === 'revoked' ? at : null,
+    },
+    notifiedAt: at,
   };
 }
 
@@ -93,6 +125,7 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof operato
   await page.route('**/api/auth/runners', route => json(route, []));
   await stubGrantRoutes(page);
   await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-approvals'), route => json(route, []));
+  await page.route(url => url.pathname.startsWith('/api/auth/iam/break-glass'), route => json(route, []));
   return stubOperatorRoutes(page, operatorState());
 }
 
@@ -119,7 +152,38 @@ async function stubOperatorRoutes(page: Page, state: ReturnType<typeof operatorS
         actor: `operator-agent:${agent.id}/session:ses_e2e`, delegatedBy: 'usr_owner', expiresAt,
       });
     }
+    if (request.method() === 'POST' && path[1] === 'sessions' && path[3] === 'kill') {
+      const agent = state.agents.find(candidate => candidate.id === path[0])!;
+      agent.sessions = agent.sessions.map(item => item.id === path[2] ? { ...item, state: 'revoked' as SessionState, revokedAt: '2026-11-02T09:10:00Z' } : item);
+      const record = kill('kill_session', 'session', '2026-11-02T09:10:00Z', [agent.id], [path[2]], null, 'not-required',
+        { approvalIds: ['apr_morning'] });
+      state.killSwitch.kills.unshift(record);
+      return json(route, record);
+    }
     return json(route, { message: 'Unexpected operator route in the e2e stub.' }, 400);
+  });
+  await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-kill-switch'), route => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === 'GET') return json(route, state.killSwitch);
+    if (path.endsWith('/end-all')) {
+      const body = request.postDataJSON() as { reason?: string };
+      const live = state.agents.flatMap(agent => agent.sessions.filter(item => item.state === 'active').map(item => item.id));
+      state.agents = state.agents.map(agent => ({
+        ...agent, disabledAt: '2026-11-02T09:12:00Z',
+        sessions: agent.sessions.map(item => item.state === 'active' ? { ...item, state: 'revoked' as SessionState, revokedAt: '2026-11-02T09:12:00Z' } : item),
+      }));
+      const record = kill('kill_all', 'all', '2026-11-02T09:12:00Z', state.agents.map(agent => agent.id), live, body.reason ?? null, 'revoked',
+        { standingGrantIds: ['grant_release'], approvalIds: ['apr_release'] });
+      state.killSwitch.kills.unshift(record);
+      return json(route, record);
+    }
+    if (path.endsWith('/drills')) {
+      const result = drill('drill_manual', 'manual-drill', '2026-11-02T09:14:00Z', 236.9, true, null);
+      state.killSwitch.drills.unshift(result);
+      return json(route, result);
+    }
+    return json(route, { message: 'Unexpected kill switch route in the e2e stub.' }, 400);
   });
   await page.route(url => url.pathname === '/api/auth/audit/operator-activity', route => {
     const sessionId = new URL(route.request().url()).searchParams.get('sessionId');
@@ -220,6 +284,68 @@ test('the activity status strip turns acute only for a server alert', async ({ p
   await expect(activity.getByTestId('access-audit-forwarding')).toContainText('No off-host sink configured');
   await expect(activity.getByTestId('access-audit-forwarding')).not.toHaveAttribute('data-tone', 'alert');
   await shoot(page, '[data-testid="access-audit-status"]', 'operator-activity-alert');
+});
+
+test('owner ends one session, then all operator access, and runs a drill', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1400 });
+  await stubNetworkedOwner(page);
+  const access = await openAccess(page);
+  const operators = access.getByTestId('access-operator-agents');
+  const killSwitch = access.getByTestId('access-operator-kill-switch');
+
+  await expect(access.getByRole('heading', { name: 'Kill switch' })).toBeVisible();
+  await expect(killSwitch.getByTestId('access-kill-last')).toContainText('Never used');
+  await expect(killSwitch.getByTestId('access-kill-drill')).toHaveAttribute('data-state', 'passed');
+  await expect(killSwitch.getByTestId('access-kill-drill-result')).toContainText('Drill passed in 418 ms');
+  await expect(killSwitch.getByTestId('access-kill-next-drill')).toContainText('Next scheduled drill');
+
+  // Per-session kill: only the runaway session ends.
+  await operators.getByTestId('access-operator-session-kill-ses_morning').click();
+  await expect(page.getByTestId('confirm-dialog-detail')).toContainText('release-operator: Morning check');
+  await page.getByTestId('confirm-dialog-confirm').click();
+  await expect(operators.getByTestId('access-operator-session-ses_morning')).toHaveAttribute('data-state', 'revoked');
+  await expect(operators.getByTestId('access-operator-agent-opa_release')).not.toContainText('Disabled');
+  await expect(killSwitch.getByTestId('access-kill-kill_session')).toContainText('1 session, 1 approval request');
+
+  // Every operator agent is disabled by the switch.
+  await killSwitch.getByTestId('access-kill-reason').fill('Unexpected restarts overnight');
+  await killSwitch.getByTestId('access-kill-end-all').click();
+  await expect(page.getByTestId('confirm-dialog-detail')).toContainText('Unexpected restarts overnight');
+  await page.getByTestId('confirm-dialog-confirm').click();
+  await expect(operators.getByTestId('access-operator-agent-opa_release')).toContainText('Disabled');
+  await expect(killSwitch.getByTestId('access-kill-last')).toContainText('All operator access, Studio, 1 agent');
+  await expect(killSwitch.getByTestId('access-kill-last')).toContainText('1 standing grant, 1 approval request');
+  await expect(killSwitch.getByTestId('access-kill-last-operations')).toContainText('Operations Server principals revoked');
+  await expect(killSwitch.getByTestId('access-kill-last')).not.toHaveAttribute('data-tone', 'alert');
+  await expect(killSwitch.getByTestId('access-kill-reason')).toHaveValue('');
+
+  await killSwitch.getByTestId('access-kill-run-drill').click();
+  await expect(killSwitch.getByTestId('access-kill-drill-result')).toContainText('Drill passed in 237 ms');
+  await expect(killSwitch.getByTestId('access-kill-drill')).toContainText('Manual drill');
+  await shoot(page, 'section[aria-labelledby="access-kill-switch-title"]', 'operator-kill-switch');
+});
+
+test('the kill switch turns acute only for a pending revocation, a pending host command, or a failed drill', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  const state = await stubNetworkedOwner(page);
+  state.killSwitch = {
+    ...state.killSwitch,
+    kills: [kill('kill_oob', 'all', '2026-11-02T09:20:00Z', ['opa_release'], ['ses_morning'], 'Studio unreachable', 'pending')],
+    drills: [drill('drill_failed', 'scheduled-drill', '2026-11-02T03:00:00Z', 10_412.5, false, 'operations-server-unreachable')],
+    outOfBandRequestPending: true,
+  };
+  state.killSwitch.kills[0] = { ...state.killSwitch.kills[0], trigger: 'out-of-band', actor: 'system:control-plane-host' };
+  const access = await openAccess(page);
+  const killSwitch = access.getByTestId('access-operator-kill-switch');
+
+  await expect(killSwitch.getByTestId('access-kill-pending')).toContainText('A host command is ending all operator access.');
+  await expect(killSwitch.getByTestId('access-kill-last')).toHaveAttribute('data-tone', 'alert');
+  await expect(killSwitch.getByTestId('access-kill-last')).toContainText('Host command');
+  await expect(killSwitch.getByTestId('access-kill-last-operations')).toContainText('Operations Server revocation pending (http-503)');
+  await expect(killSwitch.getByTestId('access-kill-drill')).toHaveAttribute('role', 'alert');
+  await expect(killSwitch.getByTestId('access-kill-drill-result')).toContainText('Drill failed: operations-server-unreachable');
+  await expect(killSwitch.getByTestId('access-kill-kill_oob')).toContainText('Control plane host');
+  await shoot(page, 'section[aria-labelledby="access-kill-switch-title"]', 'operator-kill-switch-alert');
 });
 
 /** SM-4 (AGT-3375): the operation catalogue and the Owner's standing grants, with a step-up per issue or renewal. */
@@ -465,4 +591,50 @@ test('owner reviews a T2 request with its digest and source, and approves or rej
   await expect(section.getByTestId('access-approval-linked')).toContainText('rejected: Change secrets');
   expect(approvals.stepUps).toHaveLength(2);
   await shoot(page, 'section[aria-labelledby="access-approvals-title"]', 'operator-approvals-decided');
+});
+
+test('owner opens and closes a break-glass window with two fresh factor checks', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1400 });
+  await stubNetworkedOwner(page);
+  const windows: Array<Record<string, unknown>> = [];
+  const checks: unknown[] = [];
+  const sealed = ['bg', Math.random().toString(36).slice(2), Math.random().toString(36).slice(2)].join('.');
+  await page.route(url => url.pathname === '/api/auth/step-up', route => {
+    checks.push(route.request().postDataJSON());
+    return json(route, {});
+  });
+  await page.route(url => url.pathname.startsWith('/api/auth/iam/break-glass'), route => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === 'GET') return json(route, windows);
+    if (path.endsWith('/credential')) return json(route, { credential: sealed });
+    if (path.endsWith('/close')) {
+      windows[0].closedAt = '2026-11-04T09:30:00Z';
+      windows[0].reviewCardId = 'AGT-9000';
+      return json(route, windows[0]);
+    }
+    const body = request.postDataJSON() as { credential: string; sessionIds: string[]; project: string; lifetimeHours: number };
+    expect(body).toEqual({ credential: sealed, sessionIds: ['ses_morning'], project: 'PROJ-001', lifetimeHours: 2 });
+    windows.push({ id: 'bgw_demo', sessionIds: body.sessionIds, project: body.project,
+      openedAt: '2026-11-04T09:00:00Z', expiresAt: '2026-11-04T11:00:00Z', closedAt: null, reviewCardId: null });
+    return json(route, windows[0]);
+  });
+  const access = await openAccess(page);
+  const section = access.getByTestId('access-break-glass');
+  await expect(section).toBeVisible();
+  const code = String(100_000 + Math.floor(Math.random() * 899_999));
+  await section.getByTestId('break-glass-code').fill(code);
+  await section.getByTestId('break-glass-issue').click();
+  await expect(section.getByTestId('break-glass-issued')).toContainText(sealed);
+  await section.getByTestId('break-glass-credential').fill(sealed);
+  await section.getByTestId('break-glass-sessions').fill('ses_morning');
+  await section.getByTestId('break-glass-project').fill('PROJ-001');
+  await section.getByTestId('break-glass-code').fill(code);
+  await section.getByTestId('break-glass-open').click();
+  await expect(section.getByTestId('break-glass-windows')).toContainText('ses_morning');
+  expect(checks).toEqual([{ code }, { code }]);
+  await shoot(page, 'section[aria-labelledby="access-break-glass-title"]', 'break-glass-open');
+  await section.getByRole('button', { name: 'Close' }).click();
+  await expect(section.getByTestId('break-glass-windows')).toContainText('AGT-9000');
+  await shoot(page, 'section[aria-labelledby="access-break-glass-title"]', 'break-glass-closed');
 });

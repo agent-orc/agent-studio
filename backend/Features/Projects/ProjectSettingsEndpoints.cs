@@ -90,6 +90,7 @@ public record SetRequireDifferentReviewHostRequest
 
 /// <summary><c>review.package</c> mode (AGT-3400 S4): <c>off</c> or <c>shadow</c>.</summary>
 public sealed record ReviewPackageSettingRequest(string? Mode);
+public sealed record ModelSelectionOverrideRequest(string? PipelineType, ModelSelectionOverride? Override);
 
 /// <summary>AGT-W57 cause breaker parameters for one project.</summary>
 public record SetCauseBreakerRequest
@@ -337,6 +338,8 @@ public static class ProjectSettingsEndpoints
                         ?? Array.Empty<string>(),
                     pipelineStepsByType = kv.Value.PipelineStepsByType
                         ?? new Dictionary<string, Dictionary<string, PipelineStepSetting>>(),
+                    modelSelectionOverrides = kv.Value.ModelSelectionOverrides
+                        ?? new Dictionary<string, ModelSelectionOverride>(),
                     pipelineStepOrderByType = kv.Value.PipelineStepOrderByType
                         ?? new Dictionary<string, IReadOnlyList<string>>(),
                     // Resolved per-CLI permission mode + source for all four CLIs
@@ -462,6 +465,8 @@ public static class ProjectSettingsEndpoints
                     model = s.Model,
                     resolvedModel = resolved?.Model,
                     modelSource = resolved?.Source,
+                    overridesWorkspace = configured is { Model: not null } or { CliType: not null } or { ThinkingLevel: not null }
+                        || ProjectSettingsService.HasModelSelectionOverride(projectSettings, type, s.Id),
                     resolvedThinkingLevel = thinking?.ThinkingLevel,
                     thinkingLevelSource = thinking?.Source,
                     // The core agent run cannot be disabled or model-overridden
@@ -527,6 +532,24 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(result);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
 
+        app.MapPut("/api/projects/{projectName}/model-selection-overrides/{consumer}",
+            (string projectName, string consumer, ModelSelectionOverrideRequest request,
+                ProjectSettingsService settings, TaskScannerService scanner,
+                AgentStudio.Cli.ModelSelectionPolicyStore policy) =>
+        {
+            if (!scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (!policy.Get().Consumers.ContainsKey(consumer))
+                return Results.BadRequest(new { error = "Unknown consumer class." });
+            if (request.PipelineType is not null && !PipelineTypes.IsValid(request.PipelineType))
+                return Results.BadRequest(new { error = "Unknown pipeline type." });
+            if (request.Override is { PinMode: not ("preference" or "hard") })
+                return Results.BadRequest(new { error = "pinMode must be preference or hard." });
+            var updated = settings.SetModelSelectionOverride(projectName, consumer, request.Override,
+                request.PipelineType is null ? null : PipelineTypes.Normalize(request.PipelineType));
+            return Results.Ok(new { projectName, modelSelectionOverrides = updated.ModelSelectionOverrides });
+        });
+
         // Per-project pipeline-step override. Sets enabled / mode / model for
         // one step; an all-null body clears the override (revert to default).
         app.MapPut("/api/projects/{projectName}/pipeline-step", (
@@ -547,6 +570,8 @@ public static class ProjectSettingsEndpoints
                 return Results.BadRequest(new { error = "stepId is required" });
             if (!PipelineTypes.IsValid(req.PipelineType))
                 return Results.BadRequest(new { error = $"Unknown pipeline type '{req.PipelineType}'" });
+            if (req.PinMode is not ("preference" or "hard"))
+                return Results.BadRequest(new { error = "pinMode must be preference or hard." });
             var pipelineType = PipelineTypes.Normalize(req.PipelineType);
 
             // Reject step ids the catalogue does not know so a typo fails loud
@@ -635,11 +660,22 @@ public static class ProjectSettingsEndpoints
                 CliType = req.CliType,
                 Model = req.Model,
                 ThinkingLevel = req.ThinkingLevel,
+                PinMode = req.PinMode,
                 Prompt = normalizedPrompt,
                 PromptBaseDefaultSha = promptBaseDefaultSha,
                 PromptBaseDefaultContent = promptBaseDefaultContent,
                 Condition = req.Condition,
             });
+            settings.SetModelSelectionStepOverride(projectName, pipelineType, stepId,
+                string.IsNullOrWhiteSpace(req.Model) && string.IsNullOrWhiteSpace(req.CliType)
+                    ? null
+                    : new ModelSelectionOverride
+                    {
+                        Primary = new AgentStudio.TaskServer.Contracts.SelectionRoute(
+                            req.CliType ?? (req.Model?.StartsWith("gpt-", StringComparison.OrdinalIgnoreCase) == true ? "codex" : "claude"),
+                            req.Model, req.ThinkingLevel),
+                        PinMode = req.PinMode,
+                    });
             ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
             return Results.Ok(new
             {
@@ -649,6 +685,7 @@ public static class ProjectSettingsEndpoints
                     ?? new Dictionary<string, PipelineStepSetting>(),
                 pipelineStepsByType = settings.Get(projectName).PipelineStepsByType
                     ?? new Dictionary<string, Dictionary<string, PipelineStepSetting>>(),
+                modelSelectionOverrides = settings.Get(projectName).ModelSelectionOverrides,
             });
         });
 
@@ -1283,6 +1320,17 @@ public static class ProjectSettingsEndpoints
             scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
                 ? Results.Ok(pilot.Report(projectName))
                 : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
+        app.MapGet("/api/projects/{projectName}/batch-gate/failed-tests", (string projectName,
+            int? windowDays, BatchGateStore store, TaskScannerService scanner, TimeProvider clock) =>
+        {
+            var project = scanner.GetWatchPaths().FirstOrDefault(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (project is null)
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (windowDays is < 1 or > 90)
+                return Results.BadRequest(new { error = "windowDays must be between 1 and 90." });
+            return Results.Ok(store.FailedTestRanking(project.Name, clock.GetUtcNow(), windowDays ?? 7));
+        });
         app.MapGet("/api/projects/{projectName}/batch-gate/ledger", (string projectName,
             DateOnly? day, string? type, int? page, int? pageSize,
             GateRunLedger ledger, TaskScannerService scanner) =>
@@ -1642,6 +1690,8 @@ public static class ProjectSettingsEndpoints
             value.LookAheadMinutes,
             urgentTags = value.EffectiveUrgentTags,
             value.RiskPolicy,
+            value.Calibration,
+            value.Stacking,
             value.Overlap,
             value.ReviewTestLevel,
             value.GateTimeoutMinutes,

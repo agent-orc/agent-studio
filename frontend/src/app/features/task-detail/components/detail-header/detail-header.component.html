@@ -87,6 +87,9 @@
                   [cacTooltip]="'This follow-up was raised automatically from pipeline failure evidence.'">Created by Orchestrator</span>
           }
           <app-execution-location-badge [execution]="info().executionLocation" />
+          @if (info().attentionHolder; as holder) {
+            <span class="detail__meta-item" data-testid="detail-attention-holder">Attention: {{ holder }}</span>
+          }
         </div>
         <app-remote-dispatch-rejection [execution]="info().executionLocation" />
       }

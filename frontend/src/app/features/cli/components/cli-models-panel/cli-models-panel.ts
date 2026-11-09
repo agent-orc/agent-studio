@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, OnInit, computed, forwardRef, inject, signal } from '@angular/core';
+import { DatePipe } from '@angular/common';
 import { CLI_TYPES, type CliType } from '../../../../models/task.model';
 import type { CliModelInfo } from '../../models/cli.model';
 import { CliCatalogStore } from '../../services/cli-catalog.store';
@@ -7,7 +8,9 @@ import { ModelMigrationBadgeComponent } from '../../../../components/model-migra
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import { QuotaApiService, type CliFallbackState, type CliModelFallbackRoute, type CliModelRouteProfile, type ModelRoutingPolicyView } from '../../../quota';
-import type { EffectiveModelSelection } from '../../../quota/services/quota-api.service';
+import type { ActiveModelSwitch, EffectiveModelSelection } from '../../../quota/services/quota-api.service';
+import { ConsumerModelPolicyComponent } from '../consumer-model-policy/consumer-model-policy.component';
+import { scrollCliModelsTable } from './cli-models-table-keyboard';
 import { TaskService } from '../../../../services/task.service';
 import {
   WorkspaceOrchestratorSettingsService,
@@ -22,12 +25,9 @@ interface CliModelGroup {
 }
 
 /**
- * Per-CLI model catalog overview for the CLI Management page (rows since
- * AGT-2101): each known CLI is one compact, stacked row that answers "what's
- * present" at a glance - the primary model and the fallback-route state - and
- * expands to reveal the route editor (primary / fallback CLI + model + thinking)
- * and the full discovered model list. Data is the live `/api/cli/{type}/models`
- * catalog, read through the process-wide {@link CliCatalogStore} so the page
+ * CLI Management rows show each CLI's primary model and fallback route, then
+ * expand to the route editor and discovered models. Data comes from the live
+ * `/api/cli/{type}/models` catalog through {@link CliCatalogStore}; the page
  * reuses the boot-time hydration instead of issuing its own per-CLI requests.
  * The refresh button forces a re-probe of one CLI's catalog (bypasses the store
  * TTL).
@@ -37,7 +37,7 @@ interface CliModelGroup {
   standalone: true,
   // The badge reads the migration store through the CLI barrel. Defer it so
   // file-order-dependent barrel evaluation cannot leave Angular an undefined dependency.
-  imports: [forwardRef(() => ModelMigrationBadgeComponent), DisclosureMarkerComponent],
+  imports: [forwardRef(() => ModelMigrationBadgeComponent), DisclosureMarkerComponent, ConsumerModelPolicyComponent, DatePipe],
   templateUrl: './cli-models-panel.html',
   styleUrl: './cli-models-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -53,6 +53,7 @@ export class CliModelsPanelComponent implements OnInit {
   readonly fallbackRoutes = signal<CliModelFallbackRoute[]>([]);
   readonly fallbackStates = signal<Record<string, CliFallbackState>>({});
   readonly effectiveRoutes = signal<EffectiveModelSelection[]>([]);
+  readonly activeSwitches = signal<ActiveModelSwitch[]>([]);
   readonly catalogueVersion = signal<string | null>(null);
   readonly callersCannotReroute = signal<{ caller: string; cliType: string; reason: string }[]>([]);
   readonly preferenceSaving = signal<string | null>(null);
@@ -111,8 +112,13 @@ export class CliModelsPanelComponent implements OnInit {
       next: (policy) => this.policy.set(policy),
     });
     this.refreshEffectiveRoutes();
+    this.routesApi.getActiveModelSwitches().subscribe({
+      next: response => this.activeSwitches.set(response.filter(item =>
+        (item.kind === 'switched' || item.kind === 'operator-switch') && item.from && item.to)),
+    });
     this.loadWorkspaceAutoApply();
   }
+
 
   /** AGT-2716 — resolve the registry's default workspace, then load its
    *  auto-apply-model-migrations toggle. */
@@ -160,6 +166,8 @@ export class CliModelsPanelComponent implements OnInit {
     else next.add(cliType);
     this.expanded.set(next);
   }
+
+  readonly onTableScrollKeydown = scrollCliModelsTable;
 
   isExpanded(cliType: CliType): boolean {
     return this.expanded().has(cliType);

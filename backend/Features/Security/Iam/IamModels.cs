@@ -125,6 +125,14 @@ public sealed record ServiceAccount
     public List<ServiceAccountToken> Tokens { get; init; } = [];
     /// <summary>Operator agent sessions; <c>null</c> for every other origin.</summary>
     public List<OperatorAgentSession>? Sessions { get; init; }
+    /// <summary><see cref="ServiceAccountPurposes.KillSwitchDrill"/> for a drill's test principal; <c>null</c> otherwise.</summary>
+    public string? Purpose { get; init; }
+}
+
+public static class ServiceAccountPurposes
+{
+    /// <summary>The test principal a kill switch drill creates and ends (security model SM-2); hidden from the operator list.</summary>
+    public const string KillSwitchDrill = "kill-switch-drill";
 }
 
 /// <summary>
@@ -194,7 +202,7 @@ public sealed record OneTimeServiceAccountTokenResponse(
     string ServiceAccountId, string TokenId, string Token, DateTime? ExpiresAt);
 public sealed record IamRoleResponse(
     string Id, string DisplayName, string Description, IReadOnlyList<string> Permissions,
-    IReadOnlyList<IamScopeKind> BindableScopes, bool ServiceAccountBindable);
+    IReadOnlyList<IamScopeKind> BindableScopes, bool ServiceAccountBindable, bool UserBindable = true);
 public sealed record IamPermissionResponse(string Name, PermissionLevel Level, string Description);
 public sealed record IamInvitationResponse(string Id, string UserId, DateTime ExpiresAt, bool Used);
 public sealed record IamOverviewResponse(

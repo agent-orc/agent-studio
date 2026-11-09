@@ -1,4 +1,5 @@
 using AgentStudio.Security;
+using AgentStudio.Operator;
 
 namespace AgentStudio.Tasks;
 
@@ -6,17 +7,26 @@ public static class BatchMoveEndpoints
 {
     public static void MapBatchMoveEndpoints(this RouteGroupBuilder group)
     {
-        group.MapPost("/batch-move", (
+        group.MapPost("/batch-move", async (
             BatchMoveRequest req,
             HttpContext context,
             BatchMoveJobCoordinator jobs,
             TaskScannerService scanner,
-            AgentStudio.Registry.ProjectRegistry projects) =>
+            AgentStudio.Registry.ProjectRegistry projects,
+            OperatorCoordinationStore attention,
+            CancellationToken ct) =>
         {
             if (req?.Items is null || req.Items.Count == 0)
                 return Results.BadRequest(new { error = "items is required and must contain at least one entry" });
             if (req.Items.Count > 500)
                 return Results.BadRequest(new { error = "items must contain no more than 500 entries" });
+
+            // A batch has one HTTP revision header but may touch many cards.
+            // API tokens use the single-card route for each guarded move.
+            var service = context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] as ServiceAccountPrincipal;
+            if (service is { Origin: ServiceAccountOrigins.ApiToken })
+                return Results.Conflict(new { error = "attention-lease-required",
+                    message = "Use a single-card move with attention and If-Match." });
 
             var projectNames = req.Items
                 .Select(item => scanner.FindJob(
@@ -31,6 +41,15 @@ public static class BatchMoveEndpoints
                 return Results.Json(
                     new { error = "project-scope-denied", message = "This account is not a member of every task in the batch." },
                     statusCode: StatusCodes.Status403Forbidden);
+            }
+
+            if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem]
+                is HumanPrincipal { User.Role: StudioRoles.Owner })
+            {
+                foreach (var item in req.Items)
+                    if (scanner.FindJob(item.JobId, item.WatchPath) is { } card)
+                        await attention.OwnerActionAsync(card.TaskKey, card.ProjectName,
+                            OperatorEndpoints.Actor(context), ct);
             }
 
             var clientId = context.Items["ClientId"] as string

@@ -1,63 +1,57 @@
 namespace AgentRunner;
 
-/// <summary>
-/// A push the remote refused for authorization is often a credential that has
-/// just been replaced, as on 1 November 2026, when a review role's read token
-/// replaced the coding role's write token. Before the run escalates a retained
-/// worktree, the host asks for fresh repository tokens and pushes again, for a
-/// bounded time.
-/// </summary>
+/// <summary>Classifies remote push failures before a bounded retry of the same refspec.</summary>
 internal static class RepositoryPushRecoveryPolicy
 {
-    /// <summary>The waits before each retry. Their sum bounds the recovery of one workspace.</summary>
     public static readonly IReadOnlyList<TimeSpan> Delays =
     [
-        TimeSpan.FromSeconds(5),
-        TimeSpan.FromSeconds(15),
         TimeSpan.FromSeconds(30),
-        TimeSpan.FromSeconds(60),
+        TimeSpan.FromMinutes(2),
+        TimeSpan.FromMinutes(5),
+        TimeSpan.FromMinutes(15),
     ];
 
-    private static readonly string[] RefusalMarkers =
+    private static readonly string[] FinalMarkers =
     [
-        "The requested URL returned error: 403",
-        "The requested URL returned error: 401",
-        "Write access to repository not granted",
-        "Authentication failed for",
-        "Invalid username or password",
-        "could not read Username",
+        "returned error: 401", "returned error: 403", "authentication failed",
+        "invalid username or password", "could not read username", "permission denied",
+        "write access to repository not granted", "non-fast-forward", "fetch first",
+        "protected branch", "repository rule violations", "push protection",
     ];
 
-    /// <summary>
-    /// The wait before the next push, or null when the failure is no refusal or
-    /// this workspace has used up its retries. A push-protection or workflow-scope
-    /// rejection is final: fresh tokens cannot change the pushed content.
-    /// </summary>
     public static TimeSpan? NextDelay(string failure, int retriesSoFar)
     {
-        if (!IsRefusal(failure) || retriesSoFar < 0 || retriesSoFar >= Delays.Count) return null;
+        if (!IsTransient(failure) || retriesSoFar < 0 || retriesSoFar >= Delays.Count) return null;
         return Delays[retriesSoFar];
     }
 
-    public static bool IsRefusal(string failure)
+    public static bool IsTransient(string failure)
     {
         if (string.IsNullOrWhiteSpace(failure)
             || PushProtection.ParseGitHubRejection(failure) is not null
-            || GitPushProbe.IsWorkflowScopeFailure(failure))
+            || GitPushProbe.IsWorkflowScopeFailure(failure)
+            || FinalMarkers.Any(marker => failure.Contains(marker, StringComparison.OrdinalIgnoreCase)))
             return false;
-        if (RefusalMarkers.Any(marker => failure.Contains(marker, StringComparison.OrdinalIgnoreCase)))
+        if (failure.Contains("Internal Server Error", StringComparison.OrdinalIgnoreCase)
+            || failure.Contains("fatal error in commit_refs", StringComparison.OrdinalIgnoreCase)
+            || failure.Contains("connection reset", StringComparison.OrdinalIgnoreCase))
             return true;
-        var permission = failure.IndexOf("Permission to ", StringComparison.OrdinalIgnoreCase);
-        return permission >= 0 && failure.IndexOf(" denied", permission, StringComparison.OrdinalIgnoreCase) > 0;
+        for (var code = 500; code <= 599; code++)
+        {
+            if (failure.Contains($"returned error: {code}", StringComparison.OrdinalIgnoreCase)
+                || failure.Contains($"HTTP {code}", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 }
 
-/// <summary>The side effects of one recovery: fresh tokens and a wait. Tests replace both.</summary>
-internal sealed record RepositoryPushRecovery(
-    Func<CancellationToken, Task<bool>> RefreshAsync,
-    Func<TimeSpan, CancellationToken, Task> DelayAsync)
+/// <summary>The wait between pushes, replaceable by tests.</summary>
+internal sealed record RepositoryPushRecovery(Func<TimeSpan, CancellationToken, Task> DelayAsync)
 {
-    public static RepositoryPushRecovery Host { get; } = new(
-        RepositoryCredentialRouting.RefreshAsync,
-        (delay, ct) => Task.Delay(delay, ct));
+    public static RepositoryPushRecovery Host { get; } = new((delay, ct) => Task.Delay(delay, ct));
+}
+
+internal sealed class RepositoryPushFailedException(string message) : InvalidOperationException(message)
+{
 }

@@ -86,7 +86,9 @@ public sealed class BatchGateSnapshotBuilder
         return new BatchPlanInput(now, ready, reviews.Concat(coding).ToArray(),
             options.MinimumSize, options.MaximumSize, options.DeadlineMinutes,
             options.LookAheadMinutes, options.EffectiveUrgentTags, options.RiskPolicy,
-            options.Overlap, closeNow, idleGateHost, gateBacklog, queuedPartners);
+            options.Overlap, closeNow, idleGateHost, gateBacklog, queuedPartners,
+            options.Calibration, options.Calibration == "empirical"
+                ? _store.ListPlanObservations(project) : null);
     }
 
     /// <summary>
@@ -124,6 +126,11 @@ public sealed class BatchGateSnapshotBuilder
         foreach (var item in waiting.Where(item => PendingExclusion(item) is null))
             Diff(item.RepositoryPath, branch, item.Subject.TaskKey, item.Subject.ResultSha, now);
     }
+
+    /// <summary>Planner-owned changed paths, including the unknown-diff case.</summary>
+    public IReadOnlyList<string>? Paths(BatchGatePendingRecord item, DateTimeOffset now)
+        => Diff(item.RepositoryPath, item.Subject.IntegrationBranch,
+            item.Subject.TaskKey, item.Subject.ResultSha, now)?.Paths;
 
     internal string? PendingExclusion(BatchGatePendingRecord pending)
     {
