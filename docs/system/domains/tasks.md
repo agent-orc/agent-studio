@@ -45,6 +45,16 @@ the matching GET supplies the Deck status panel.
 `task.json` once with all related fields, then publish that card into the
 resident core and board generations. `POST /api/tasks` publishes the new card
 after its task file, derived layout index, and timeline have been written.
+Routing writes hold the card's file lock through publication and use the
+latest published card under that lock before deriving related fields. Publication reads
+the written card under the index publication lock. This keeps concurrent
+routing writes in durable order across board, core, and detail readers; the
+new board generation also changes board validators and deploy projections.
+Git projections retain their snapshot because routing fields do not enter the
+Git input signature.
+On a cold host, the background Git indexer awaits the first task publication
+asynchronously before reading clean task partitions, so a held startup scan
+does not consume a worker in the index refresh gate.
 These paths do not invalidate the whole task index for a routine API write.
 The watcher ignores a `task.json` event when its file stamp matches the
 version already published by the API; an external edit still invalidates the
@@ -53,7 +63,8 @@ counter, and derived layout index.
 
 The `task-operation-timing` line for these four routes carries a `breakdown`
 JSON object. It reports request wall time, `mutation.lookup`,
-`mutation.write`, `mutation.publish`, and the creation-only `mutation.lock`, `mutation.key`,
+`mutation.lock`, `mutation.read-current`, `mutation.write`, `mutation.publish`,
+and the creation-only `mutation.key`,
 `mutation.index`, and `mutation.timeline` spans, plus workspace scans and Git
 process count. The spans are stage costs; their sum can be below wall time
 because validation and response coordination are outside them.

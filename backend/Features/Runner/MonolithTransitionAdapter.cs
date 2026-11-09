@@ -119,6 +119,22 @@ public static class MonolithTransitionAdapter
     public static bool PerTaskGateSlotFree(int perTaskGates, int slotsTotal)
         => BatchGateLookAheadPlanner.PerTaskGateSlotFree(perTaskGates, slotsTotal);
 
+    public static IReadOnlyList<string> BatchStartOrder(IEnumerable<BatchGateStartCandidate> formed,
+        DateTimeOffset nowUtc)
+        => BatchGateStartPolicy.Order(formed, nowUtc);
+
+    public static bool BatchFlightLeaseDeadlinePassed(DateTimeOffset startedAtUtc, bool leaseClaimed,
+        DateTimeOffset nowUtc, int deadlineMinutes)
+        => BatchGateStartPolicy.LeaseDeadlinePassed(startedAtUtc, leaseClaimed, nowUtc, deadlineMinutes);
+
+    public static bool BatchFlightStartsNext(bool cancelledAtLeaseDeadline, bool batchStillFormed,
+        bool batchRetired, bool gateRan, bool reformedIntoSuccessor, bool followsCompletedFlight)
+        => BatchGateStartPolicy.StartsNextAfterFlight(cancelledAtLeaseDeadline, batchStillFormed,
+            batchRetired, gateRan, reformedIntoSuccessor, followsCompletedFlight);
+
+    public static string BatchFlightLeaseDeadlineReason(int deadlineMinutes)
+        => BatchGateStartPolicy.LeaseDeadlineReason(deadlineMinutes);
+
     public static GateQueueAssessment GateQueue(GateQueueFacts facts) => GateQueueStallPolicy.Assess(facts);
 
     /// <summary>AGT-3400 S4: shadow review package formation; no lane, verdict or settlement effect.</summary>

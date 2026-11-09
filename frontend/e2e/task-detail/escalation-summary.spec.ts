@@ -154,13 +154,13 @@ const CODE_REVIEW_LIST = {
         createdAt: '2026-07-09T19:22:03Z',
         reviewFileName: 'code-review-grade-2026-07-09T19-22-02Z.md',
         grade: 'B',
-        disposition: 'Escalate',
+        disposition: 'escalate',
         summary: `Escalate 4 open review findings; loop budget exhausted.\n\n${LONG_COUNCIL_CONTEXT}`,
         assessments: [
-          { finding: 'Preserve the complete council response.', action: 'Escalate', reason: 'Review-loop budget exhausted.' },
-          { finding: 'Render every grade document.', action: 'Escalate', reason: 'Review-loop budget exhausted.' },
-          { finding: 'Keep artifact history reachable.', action: 'Escalate', reason: 'Review-loop budget exhausted.' },
-          { finding: 'Verify the three-round card.', action: 'Escalate', reason: 'Review-loop budget exhausted.' },
+          { finding: 'Preserve the complete council response.', action: 'escalate', reason: 'Review-loop budget exhausted.' },
+          { finding: 'Render every grade document.', action: 'escalate', reason: 'Review-loop budget exhausted.' },
+          { finding: 'Keep artifact history reachable.', action: 'escalate', reason: 'Review-loop budget exhausted.' },
+          { finding: 'Verify the three-round card.', action: 'escalate', reason: 'Review-loop budget exhausted.' },
         ],
         startsNewRound: false,
         targetJobId: null,
@@ -179,11 +179,11 @@ const CODE_REVIEW_LIST = {
         createdAt: '2026-07-09T18:22:03Z',
         reviewFileName: 'code-review-grade-2026-07-09T18-22-02Z.md',
         grade: 'C',
-        disposition: 'Reissue',
+        disposition: 'reissue',
         summary: 'Fix two review findings in the next round.',
         assessments: [
-          { finding: 'Show all findings.', action: 'FixNextRound', reason: 'Concrete review deficiency.' },
-          { finding: 'Add browser evidence.', action: 'FixNextRound', reason: 'Concrete review deficiency.' },
+          { finding: 'Show all findings.', action: 'fixNextRound', reason: 'Concrete review deficiency.' },
+          { finding: 'Add browser evidence.', action: 'fixNextRound', reason: 'Concrete review deficiency.' },
         ],
         startsNewRound: true,
         targetJobId: JOB_ID,
@@ -202,10 +202,10 @@ const CODE_REVIEW_LIST = {
         createdAt: '2026-07-09T17:22:03Z',
         reviewFileName: 'code-review-grade-2026-07-09T17-22-02Z.md',
         grade: 'D',
-        disposition: 'Reissue',
+        disposition: 'reissue',
         summary: 'Fix one review finding in the next round.',
         assessments: [
-          { finding: 'Replace raw Markdown in the banner.', action: 'FixNextRound', reason: 'Concrete review deficiency.' },
+          { finding: 'Replace raw Markdown in the banner.', action: 'fixNextRound', reason: 'Concrete review deficiency.' },
         ],
         startsNewRound: true,
         targetJobId: JOB_ID,
@@ -484,6 +484,11 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
 
     await expect(page.locator('[data-testid="escalation-gate-items"] li')).toHaveCount(4);
     await expect(page.getByTestId('escalation-gate-source')).toContainText('Council reaction');
+    // AGT-3578: the camelCase wire action `escalate` renders as an open danger chip, not "accepted".
+    const chips = page.locator('[data-testid="escalation-gate-items"] .escalation-details__verdict');
+    await expect(chips).toHaveText(['escalate', 'escalate', 'escalate', 'escalate']);
+    await expect(chips.first()).toHaveAttribute('data-tone', 'danger');
+    await expect(page.getByTestId('escalation-gate-count')).toHaveText('4 open');
 
     const council = page.getByTestId('escalation-council-follow-up');
     await council.locator('summary').first().click();
