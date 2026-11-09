@@ -27,6 +27,24 @@ function text(route: Route, body: string): Promise<void> {
   });
 }
 
+async function selectDocsTab(page: Page): Promise<void> {
+  const body = page.getByTestId('pane-prompt-body');
+  const inline = page.getByTestId('prompt-tab-description');
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (await body.getAttribute('data-active-tab') === 'description') break;
+    try {
+      if (await inline.isVisible()) await inline.click({ force: true, timeout: 2000 });
+      else {
+        await page.getByTestId('pane-tabs-overflow').click({ force: true, timeout: 2000 });
+        await page.getByRole('menuitem', { name: 'Docs', exact: true }).click({ force: true, timeout: 2000 });
+      }
+    } catch { /* Tab widths can change while the detail paints; use the current layout. */ }
+  }
+  await expect(body).toHaveAttribute('data-active-tab', 'description');
+  const backdrop = page.getByTestId('app-menu-backdrop');
+  if (await backdrop.isVisible()) await backdrop.click();
+}
+
 function detail(statusMarkdown = '') {
   return {
     info: {
@@ -66,6 +84,41 @@ async function installRoutes(page: Page): Promise<void> {
   const idEsc = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
   await page.route('**/api/**', (route) => json(route, []));
+
+  await page.route(new RegExp(`/api/tasks/${idEsc}/core(\\?|$)`), (route) => json(route, {
+    state: 'ready', projectId: PROJECT, projectName: PROJECT,
+    id: JOB_ID, taskKey: `${WATCH_PATH}::${JOB_ID}`, key: JOB_ID,
+    watchPath: WATCH_PATH, folderPath: `${WATCH_PATH}/.orchestrator/jobs/2-ready/${JOB_ID}`,
+    title: 'File source history fixture', kind: 'task', taskType: 'chore',
+    lane: '2-ready', archiveState: null, enteredLaneAt: '2026-06-09T12:00:00Z',
+    order: 1, mode: 'coding', released: false, pendingIntent: false,
+    coreVersion: '1', runtimeVersion: '1',
+    pins: { model: 'claude-haiku-4-5', modelExplicit: false, thinkingLevel: null,
+      thinkingLevelExplicit: false, cliType: 'claude', contextMode: null,
+      useOwnSession: null, allowWebAccess: false, noBranchExpected: false },
+    actions: { canEdit: true, canMove: true, canDelete: true, canContinue: true },
+    blocking: { blockerType: null, blockerCondition: null, blockerStatus: null,
+      blockerDescription: null, needsInput: null, dependencyBlocked: false,
+      dependencyState: 'ready', dependencies: [] },
+    runtime: { attemptId: null, runnerId: null, runnerName: null,
+      hostname: null, executionStatus: null, location: 'none',
+      heartbeatAt: null, leaseState: 'none', leaseId: null },
+    statusSummary: { state: 'ready', text: null, originalBytes: 0, hash: null, cursor: null },
+    prompt: { state: 'ready', text: '# Current prompt\n\nThe current task prompt.',
+      originalBytes: 47, hash: 'prompt', cursor: null },
+    timeline: { state: 'ready', events: [], cursor: null, continuationUrl: null },
+  }));
+  await page.route(new RegExp(`/api/tasks/${idEsc}/details/documents(\\?|$)`), (route) => {
+    const name = new URL(route.request().url()).searchParams.get('name');
+    return json(route, {
+      id: JOB_ID, taskKey: `${WATCH_PATH}::${JOB_ID}`, projectId: PROJECT,
+      attemptId: null, coreVersion: '1', resource: 'documents', version: '1',
+      computedAt: '2026-06-09T12:00:00Z', state: 'ready', reason: null,
+      data: { name, markdown: name === 'prompt'
+        ? '# Current prompt\n\nThe current task prompt.' : '' },
+    });
+  });
+
   await page.route('**/api/v1/studio/auth/status', (route) => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
@@ -187,6 +240,18 @@ async function installRoutes(page: Page): Promise<void> {
 async function installStatusRoutes(page: Page): Promise<void> {
   const idEsc = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+  await page.route(new RegExp(`/api/tasks/${idEsc}/details/documents(\\?|$)`), (route) => {
+    const name = new URL(route.request().url()).searchParams.get('name');
+    return json(route, {
+      id: JOB_ID, taskKey: `${WATCH_PATH}::${JOB_ID}`, projectId: PROJECT,
+      attemptId: null, coreVersion: '1', resource: 'documents', version: '1',
+      computedAt: '2026-06-09T12:00:00Z', state: 'ready', reason: null,
+      data: { name, markdown: name === 'prompt'
+        ? '# Current prompt\n\nThe current task prompt.'
+        : '# Status\n\n- Result: Success\n- Case: feature\n\n## What Was Done\n\n- The current protocol summary.' },
+    });
+  });
+
   await page.route(new RegExp(`/api/tasks/${idEsc}/files/status\\.md/history(\\?|$)`), (route) => json(route, [
     {
       sha: '4444444',
@@ -256,13 +321,13 @@ test.describe('File source history viewer', () => {
     await installRoutes(page);
 
     await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
-    await expect(page.getByTestId('prompt-tab-description')).toBeVisible({ timeout: 10_000 });
-    await page.getByTestId('prompt-tab-description').click();
+    await expect(page.getByTestId('pane-prompt-body')).toBeVisible({ timeout: 10_000 });
+    await selectDocsTab(page);
 
     const promptCard = page.getByTestId('file-card-prompt.md');
     await expect(promptCard).toBeVisible();
     await promptCard.getByTestId('file-card-expand-prompt.md').click();
-    await expect(promptCard.getByTestId('file-source-history-toggle')).toBeVisible();
+    await expect(promptCard.getByTestId('file-card-details-prompt.md')).toBeVisible();
     await expect(promptCard).toContainText('The current task prompt.');
     await expect(promptCard.getByTestId('file-source-history-timeline')).toHaveCount(0);
     await expect(promptCard.getByTestId('file-source-version-select')).toHaveCount(0);
@@ -274,7 +339,9 @@ test.describe('File source history viewer', () => {
       await promptCard.screenshot({ path: join(EVIDENCE_DIR, `after-default-current-${theme}--mocked.png`) });
     }
     await setTheme(page, 'light');
-    await promptCard.getByTestId('file-source-history-toggle').click();
+    await promptCard.getByTestId('file-card-details-prompt.md').click();
+    await promptCard.getByTestId('file-card-history-prompt.md').click();
+    await promptCard.getByTestId('file-card-details-prompt.md').click();
 
     await expect(promptCard.getByTestId('file-source-history-timeline')).toContainText('Run #2');
     await expect(promptCard.getByTestId('file-source-history-timeline')).toContainText('pass');
@@ -297,9 +364,9 @@ test.describe('File source history viewer', () => {
 
     await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
 
-    // Protocol is the default inspector tab; its toolbar carries the view menu.
-    await expect(page.getByTestId('protocol-toolbar')).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByTestId('protocol-beautiful-results')).toBeVisible();
+    // The Result inspector carries the view menu.
+    await page.getByTestId('inspector-tab-protocol').click();
+    await expect(page.getByTestId('protocol-beautiful-results')).toBeVisible({ timeout: 10_000 });
 
     await page.getByTestId('protocol-more-actions').click();
     await page.getByTestId('protocol-context-menu-item-view-history').click();
@@ -321,13 +388,19 @@ test.describe('File source history viewer', () => {
     await installRoutes(page);
     await installStatusRoutes(page);
     await installPreviousResultRoutes(page);
+    let historyReads = 0;
+    page.on('request', request => {
+      if (new URL(request.url()).pathname === `/api/tasks/${JOB_ID}/result-history`) historyReads++;
+    });
 
     await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
     const result = page.getByTestId('protocol-beautiful-results');
     await expect(result).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByTestId('previous-results-toggle')).toContainText('2');
+    expect(historyReads).toBe(0);
 
     await page.getByTestId('previous-results-toggle').click();
+    await expect(page.getByTestId('previous-results-toggle')).toContainText('2');
+    expect(historyReads).toBe(1);
     const list = page.getByTestId('previous-results-list');
     await expect(list).toContainText('review attempt #2');
     await expect(list).toContainText('Result: Success');
@@ -348,6 +421,8 @@ test.describe('File source history viewer', () => {
     await page.getByTestId('previous-results-current').click();
     await expect(page.getByTestId('previous-result-banner')).toHaveCount(0);
     await expect(result).toContainText('The current protocol summary.');
+    await page.getByTestId('previous-results-toggle').click();
+    expect(historyReads).toBe(1);
   });
 
   test('Result tab says older results are loading or failed instead of claiming there are none', async ({ page }) => {
@@ -355,12 +430,12 @@ test.describe('File source history viewer', () => {
     await installStatusRoutes(page);
     const idEsc = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // AGT-3086: the legacy git backfill runs in the background. The first
-    // answer is pending, and the open menu looks once more.
-    let menuOpened = false;
+    // selected read is pending, and reopening the menu looks once more.
+    let reads = 0;
     let release!: () => void;
     const refetchHeld = new Promise<void>(resolve => { release = resolve; });
     await page.route(new RegExp(`/api/tasks/${idEsc}/result-history(\\?|$)`), async route => {
-      const legacy = menuOpened ? 'failed' : 'pending';
+      const legacy = ++reads > 1 ? 'failed' : 'pending';
       if (legacy === 'failed') await refetchHeld;
       await route.fulfill({
         status: 200,
@@ -375,7 +450,6 @@ test.describe('File source history viewer', () => {
     await expect(page.getByTestId('previous-results-toggle')).toBeEnabled();
 
     mkdirSync(EVIDENCE_DIR, { recursive: true });
-    menuOpened = true;
     await page.getByTestId('previous-results-toggle').click();
     const list = page.getByTestId('previous-results-list');
     await expect(list.getByTestId('previous-results-legacy-hint')).toHaveText('Older results are still loading.');
@@ -387,6 +461,8 @@ test.describe('File source history viewer', () => {
       });
     }
 
+    await page.getByTestId('previous-results-toggle').click();
+    await page.getByTestId('previous-results-toggle').click();
     release();
     await expect(list.getByTestId('previous-results-legacy-hint'))
       .toHaveText('Older results could not be loaded. Studio retries later.');
@@ -397,5 +473,38 @@ test.describe('File source history viewer', () => {
         path: join(EVIDENCE_DIR, `previous-results-legacy-failed-${theme}--mocked.png`),
       });
     }
+  });
+
+  test('Result tab loads previous results on first disclosure and retries a failed list', async ({ page }) => {
+    await installRoutes(page);
+    await installStatusRoutes(page);
+    const idEsc = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    let reads = 0;
+    await page.route(new RegExp(`/api/tasks/${idEsc}/result-history(\\?|$)`), route => {
+      reads++;
+      return reads === 1
+        ? route.fulfill({ status: 503, contentType: 'application/json',
+          body: JSON.stringify({ error: 'Previous results offline' }) })
+        : json(route, []);
+    });
+
+    await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+    await expect(page.getByTestId('protocol-beautiful-results')).toBeVisible({ timeout: 10_000 });
+    expect(reads).toBe(0);
+    await page.getByTestId('previous-results-toggle').click();
+    await expect(page.getByTestId('previous-results-list').getByRole('alert'))
+      .toContainText('Previous results offline');
+    mkdirSync(EVIDENCE_DIR, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.getByTestId('pane-protocol').screenshot({
+        path: join(EVIDENCE_DIR, `previous-results-error-${theme}--mocked.png`),
+      });
+    }
+    await page.getByTestId('previous-results-retry').click();
+    await expect(page.getByTestId('previous-results-list')).toContainText('No previous results found.');
+    await page.getByTestId('previous-results-toggle').click();
+    await page.getByTestId('previous-results-toggle').click();
+    expect(reads).toBe(2);
   });
 });

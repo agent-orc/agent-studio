@@ -549,6 +549,8 @@ internal static class PromptDescriptionCatalog
             "Remote Review aspect that checks a Dossier against the current concept brief.", "Review"),
         ["review-aspect-tests-and-evidence.md"] = new("Aspect: tests & evidence",
             "Review aspect that checks for adequate tests and verification evidence.", "Review"),
+        ["review-aspect-visual-review.md"] = new("Aspect: visual review",
+            "Review aspect that inspects delivered screenshots for visual regressions.", "Review"),
         ["review-aspect-documentation-impact.md"] = new("Aspect: documentation impact",
             "Review aspect that checks whether docs need updating for the change.", "Review"),
         ["review-aspect-cross-card-consistency.md"] = new("Aspect: cross-card consistency",

@@ -36,6 +36,7 @@ public sealed class RemoteReviewWorkspace
     private bool _baselineCachePruned;
     private bool _verifyCachePruned;
     private bool _dirtyBefore;
+    private string _visualScreenshotEvidence = "No delivered screenshots were attached to this run.";
 
     public RemoteReviewWorkspace(
         RunnerOptions options,
@@ -246,6 +247,10 @@ public sealed class RemoteReviewWorkspace
         _dirtyBefore = (await GitValueAsync("status", "--porcelain", "--untracked-files=all", ct)).Length > 0;
         if (_dirtyBefore)
             throw new ReviewInfrastructureException("DirtyBefore", "Fresh review workspace is dirty before review.");
+        if (client is not null && _subject.Plan.Commands.Any(command =>
+                string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase)))
+            _visualScreenshotEvidence = await VisualReviewScreenshotBundle.CaptureAsync(
+                client, _subject.SourceRunId, AttemptRoot, _log, ct);
         _log($"review subject ready repository={repositoryId} head={head} tree={_initialTree} dirty=false");
         return Proof(repositoryId!, head, _initialTree, false);
     }
@@ -492,6 +497,9 @@ public sealed class RemoteReviewWorkspace
                         ReviewMaterialMaximumFiles,
                         ReviewMaterialMaximumLines,
                         ct));
+                if (string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase))
+                    prompt += VisualReviewScreenshotBundle.PromptSection(
+                        _visualScreenshotEvidence, RepositoryPath);
                 var budget = ReviewAspectBudgetPolicy.Derive(
                     command.CliType,
                     command.Model,
@@ -755,6 +763,58 @@ public sealed class RemoteReviewWorkspace
                 }
             }
 
+            if (!ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                && execution.Signal is null
+                && execution.Process.ExitCode == 0
+                && ReviewTestReportPolicy.Missing(command, execution.Process))
+            {
+                commands.Add(await AddCommandEvidenceAsync(
+                    command.StepId, command.Aspect, command.FileName, command.Arguments,
+                    headBefore, treeBefore, execution.Process, execution.StartedAt,
+                    execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
+                    "verification", "candidate-report-first", null, null, false, false, null,
+                    artifacts, ct, command));
+                _log($"review candidate step={command.StepId} produced no test report; retrying once");
+                execution = await RunCommandAsync(command, RepositoryPath, ct);
+                retryPerformed = true;
+                if (execution.Signal is null && ReviewTestReportPolicy.Missing(command, execution.Process))
+                {
+                    commands.Add(await AddCommandEvidenceAsync(
+                        command.StepId, command.Aspect, command.FileName, command.Arguments,
+                        headBefore, treeBefore, execution.Process, execution.StartedAt,
+                        execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
+                        "verification", "candidate", null, null, true, false, null,
+                        artifacts, ct, command));
+                    var baseline = await ResolveBaselineShaAsync(ct);
+                    var diff = await ProcessRunner.RunAsync(
+                        "git", ["diff", "--name-status", baseline, _subject.ExpectedResultSha],
+                        RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+                    var reason = diff.Success
+                        ? ReviewTestReportPolicy.SetupChangeReason(diff.StdOut.Split(
+                            ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+                        : null;
+                    var reportPath = Path.Combine(ArtifactPath, ArtifactName("candidate", command.StepId, "stdout"));
+                    var summary = $"Review test step '{command.StepId}' exited {execution.Process.ExitCode} " +
+                        $"without a parseable test report after one retry; " +
+                        $"{ReviewTestReportPolicy.MissingPhase(execution.Process)}; report path: {reportPath}.";
+                    if (reason is null)
+                    {
+                        SaveCaches(candidateCache);
+                        throw await InfrastructureFailureAsync(
+                            ReviewTestReportPolicy.MissingReportClassification,
+                            summary, commands, artifacts, ct);
+                    }
+                    verdicts.Add(new ReviewVerdictDto(
+                        command.Aspect, "block", ReviewTestReportPolicy.MissingReportClassification,
+                        summary + " Delivery changed " + reason + ".",
+                        $"command:{command.StepId}; path:{reason.Split(':')[^1].Trim()}",
+                        "a parseable test report",
+                        new DeliveryFailureDiagnosisResult(
+                            DeliveryFailureDiagnosis.Product, 1, [reason])));
+                    return;
+                }
+            }
+
             BaselineComparison? comparison = null;
             CommandExecution? cleanRepeat = null;
             if (!ReviewCommandKinds.IsAgent(command.ExecutionKind) && !execution.Process.Success)
@@ -1007,6 +1067,12 @@ public sealed class RemoteReviewWorkspace
             var verdict = comparison is null
                 ? ParseVerdict(command, execution.Process)
                 : BaselineVerdict(command, comparison);
+            if (string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase))
+            {
+                verdict = VisualReviewEvidence.EnforceMissingScreenshots(verdict,
+                    await ChangedPathsAgainstBaselineAsync(ct),
+                    VisualReviewScreenshotBundle.HasReadableAfterScreenshot(AttemptRoot));
+            }
             verdicts.Add(ReviewVerdictCitationPolicy.Normalize(
                 verdict,
                 ReviewCommandKinds.IsAgent(command.ExecutionKind)));
@@ -1240,6 +1306,7 @@ public sealed class RemoteReviewWorkspace
                 if (!ReviewCommandKinds.IsAgent(command.ExecutionKind)
                     || !decisions.TryGetValue(command.Aspect, out var decision)
                     || decision.Run
+                    || string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase)
                     || !previous.TryGetValue(command.Aspect, out var prior))
                 {
                     if (ReviewCommandKinds.IsAgent(command.ExecutionKind)
@@ -2201,18 +2268,28 @@ public sealed class RemoteReviewWorkspace
             if (baselineCache is not null)
                 foreach (var message in baselineCache.Save()) _log(message);
         }
+        if (ReviewTestReportPolicy.Missing(command, execution.Process))
+        {
+            _log($"review baseline step={command.StepId} produced no test report; retrying once");
+            execution = await RunCommandAsync(command, baselinePath, ct, environment);
+            commands.Add(await AddCommandEvidenceAsync(
+                command.StepId, command.Aspect, command.FileName, command.Arguments,
+                baselineHead, baselineTree, execution.Process, execution.StartedAt,
+                execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
+                "verification", workspaceRole + "-report-retry", baselineSha, null, true, false, null,
+                artifacts, ct));
+        }
         var failures = BaselineFailures(command, execution.Process);
-        if (!ReviewBaselineModes.IsExitStatus(command.BaselineMode)
-            && ((execution.Process.ExitCode != 0 && failures.Count == 0)
-                || !ReviewBaselineTestResultPolicy.HasResult(
-                    failures, execution.Process.StdOut, execution.Process.StdErr)))
+        if (ReviewTestReportPolicy.Missing(command, execution.Process))
         {
             // A merge-base test command must report a test result, including
             // when it exits zero. A nonzero run also needs failure names for
             // the comparison; otherwise an unrun suite could be cached and
             // cited as the merge base's measured state.
             var unavailable = BaselineUnavailable(
-                UnrunBaselineSummary(command, execution.Process),
+                UnrunBaselineSummary(command, execution.Process) +
+                $"; {ReviewTestReportPolicy.MissingPhase(execution.Process)}" +
+                $"; report path: {Path.Combine(ArtifactPath, ArtifactName(workspaceRole + "-report-retry", command.StepId, "stdout"))}",
                 baselineSha,
                 command);
             throw await InfrastructureFailureAsync(

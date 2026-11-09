@@ -15,6 +15,7 @@ export default defineConfig({
     name: 'mocked-api',
     testMatch: [
       '**/board/card-state-pill-matches-lane.spec.ts',
+      '**/board/large-board-window.spec.ts',
       '**/board/failed-pickup-lane.spec.ts',
       '**/board/stalled-progress-card.spec.ts',
       '**/task-detail/pipeline-column-headers.spec.ts',
@@ -28,6 +29,7 @@ export default defineConfig({
       '**/cli/consumer-model-policy.spec.ts',
       '**/task-detail/task-detail-instant-navigation.spec.ts',
       '**/perf/board-bundle-lazy.spec.ts',
+      '**/perf/board-window-benchmark.spec.ts',
     ],
     use: { ...devices['Desktop Chrome'], channel: undefined, serviceWorkers: 'block' },
   }],

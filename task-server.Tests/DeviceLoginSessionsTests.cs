@@ -209,6 +209,150 @@ public sealed class DeviceLoginSessionsTests
         Assert.Equal(("claude", "timeout"), Assert.Single(audit));
     }
 
+    /// <summary>The authorize URLs Claude Code 2.x prints, per its shipped OAuth configuration.</summary>
+    [Theory]
+    [InlineData("https://claude.com/cai/oauth/authorize")]
+    [InlineData("https://platform.claude.com/oauth/authorize")]
+    [InlineData("https://claude.ai/oauth/authorize")]
+    [InlineData("https://console.anthropic.com/oauth/authorize")]
+    public void Claude_accepts_the_sign_in_origins_the_cli_prints(string authorize)
+    {
+        var sessions = Sessions(Clock());
+        var login = sessions.Start("host-a", "claude", "owner");
+        sessions.Claim("host-a", "runner-a");
+        var url = authorize + "?code=true&client_id=studio-client&response_type=code"
+            + "&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback"
+            + "&scope=user%3Ainference&code_challenge=challenge&code_challenge_method=S256&state=state-value";
+        Assert.True(sessions.Instructions(login.Handle, "runner-a", new DeviceLoginInstructionsRequest(url, null)));
+        Assert.Equal(url, sessions.Get(login.Handle, login.SessionKey!)?.VerificationUrl);
+    }
+
+    [Theory]
+    [InlineData("https://claude.com.evil.example/cai/oauth/authorize")]
+    [InlineData("https://evilclaude.com/cai/oauth/authorize")]
+    [InlineData("https://platform.claude.com.evil.example/oauth/authorize")]
+    [InlineData("https://api.anthropic.com/oauth/authorize")]
+    [InlineData("http://platform.claude.com/oauth/authorize")]
+    public void Claude_rejects_lookalike_or_non_sign_in_origins(string url)
+    {
+        var sessions = Sessions(Clock());
+        var login = sessions.Start("host-a", "claude", "owner");
+        sessions.Claim("host-a", "runner-a");
+        Assert.Throws<ArgumentException>(() => sessions.Instructions(login.Handle, "runner-a",
+            new DeviceLoginInstructionsRequest(url, null)));
+    }
+
+    [Fact]
+    public void Owner_code_is_taken_once_from_the_initiating_session_and_handed_to_the_claiming_runner_once()
+    {
+        var sessions = Sessions(Clock());
+        var code = PastedCode();
+        var login = sessions.Start("host-a", "claude", "owner");
+        Assert.Throws<InvalidOperationException>(() =>
+            sessions.SubmitCode(login.Handle, login.SessionKey!, new DeviceLoginCodeRequest(code)));
+        sessions.Claim("host-a", "runner-a");
+        Assert.Null(sessions.Get(login.Handle, login.SessionKey!)?.CodeState);
+        Assert.Throws<InvalidOperationException>(() =>
+            sessions.SubmitCode(login.Handle, login.SessionKey!, new DeviceLoginCodeRequest(code)));
+        Assert.True(sessions.Instructions(login.Handle, "runner-a",
+            new DeviceLoginInstructionsRequest("https://claude.com/cai/oauth/authorize?code=true", null)));
+        Assert.Equal("awaiting", sessions.Get(login.Handle, login.SessionKey!)?.CodeState);
+
+        Assert.False(sessions.SubmitCode(login.Handle, "another-session", new DeviceLoginCodeRequest(code)));
+        Assert.True(sessions.TakeCode(login.Handle, "runner-a", out var none));
+        Assert.Null(none);
+        Assert.True(sessions.SubmitCode(login.Handle, login.SessionKey!, new DeviceLoginCodeRequest(" " + code + " ")));
+        var submitted = sessions.Get(login.Handle, login.SessionKey!);
+        Assert.Equal("submitted", submitted?.CodeState);
+        Assert.DoesNotContain(code, System.Text.Json.JsonSerializer.Serialize(submitted), StringComparison.Ordinal);
+        Assert.Throws<InvalidOperationException>(() =>
+            sessions.SubmitCode(login.Handle, login.SessionKey!, new DeviceLoginCodeRequest(code)));
+
+        Assert.False(sessions.TakeCode(login.Handle, "runner-b", out var stolen));
+        Assert.Null(stolen);
+        Assert.True(sessions.TakeCode(login.Handle, "runner-a", out var delivered));
+        Assert.Equal(code, delivered);
+        Assert.True(sessions.TakeCode(login.Handle, "runner-a", out var again));
+        Assert.Null(again);
+        Assert.Equal("delivered", sessions.Get(login.Handle, login.SessionKey!)?.CodeState);
+    }
+
+    [Fact]
+    public void Codex_sessions_never_wait_for_a_pasted_code()
+    {
+        var sessions = Sessions(Clock());
+        var login = sessions.Start("host-a", "codex", "owner");
+        sessions.Claim("host-a", "runner-a");
+        Assert.True(sessions.Instructions(login.Handle, "runner-a",
+            new DeviceLoginInstructionsRequest("https://auth.openai.com/codex/device", "ABCD-EFGH")));
+        Assert.Null(sessions.Get(login.Handle, login.SessionKey!)?.CodeState);
+        Assert.Throws<InvalidOperationException>(() =>
+            sessions.SubmitCode(login.Handle, login.SessionKey!, new DeviceLoginCodeRequest(PastedCode())));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("short")]
+    [InlineData("abc def#state-value")]
+    [InlineData("abcdefgh#state\nsecond-line")]
+    [InlineData("abcdefgh#state#extra")]
+    [InlineData("abcdefgh;rm -rf")]
+    public void Malformed_codes_are_refused_before_any_session_lookup(string? code)
+    {
+        var sessions = Sessions(Clock());
+        var login = sessions.Start("host-a", "claude", "owner");
+        Assert.False(DeviceLoginSessions.IsAuthorizationCode(code));
+        Assert.Throws<ArgumentException>(() =>
+            sessions.SubmitCode(login.Handle, login.SessionKey!, new DeviceLoginCodeRequest(code)));
+    }
+
+    [Fact]
+    public async Task Cancel_completion_and_expiry_forget_a_pasted_code_that_no_runner_took()
+    {
+        var clock = Clock();
+        var audit = new List<string>();
+        var sessions = new DeviceLoginSessions(clock, (evt, actor, _) =>
+        {
+            audit.Add(System.Text.Json.JsonSerializer.Serialize(evt) + actor);
+            return Task.CompletedTask;
+        });
+        var code = PastedCode();
+        DeviceLoginSessionDto Pasted()
+        {
+            var login = sessions.Start("host-a", "claude", "owner");
+            sessions.Claim("host-a", "runner-a");
+            sessions.Instructions(login.Handle, "runner-a",
+                new DeviceLoginInstructionsRequest("https://platform.claude.com/oauth/authorize", null));
+            Assert.True(sessions.SubmitCode(login.Handle, login.SessionKey!, new DeviceLoginCodeRequest(code)));
+            return login;
+        }
+
+        var cancelled = Pasted();
+        Assert.True(await sessions.CancelAsync(cancelled.Handle, cancelled.SessionKey!, default));
+        Assert.False(sessions.TakeCode(cancelled.Handle, "runner-a", out var afterCancel));
+        Assert.Null(afterCancel);
+        Assert.Null(sessions.Get(cancelled.Handle, cancelled.SessionKey!)?.CodeState);
+
+        var completed = Pasted();
+        Assert.True(await sessions.CompleteAsync(completed.Handle, "runner-a",
+            new DeviceLoginCompletionRequest("failed", "Claude did not accept the authorization code."), default));
+        Assert.False(sessions.TakeCode(completed.Handle, "runner-a", out var afterCompletion));
+        Assert.Null(afterCompletion);
+
+        var expired = Pasted();
+        clock.Advance(TimeSpan.FromMinutes(16));
+        Assert.False(sessions.TakeCode(expired.Handle, "runner-a", out var afterExpiry));
+        Assert.Null(afterExpiry);
+        await sessions.SweepAsync(default);
+        Assert.Equal(3, audit.Count);
+        Assert.DoesNotContain(audit, line => line.Contains(code, StringComparison.Ordinal));
+    }
+
+    /// <summary>The <c>code#state</c> shape of Claude's callback page, built at runtime.</summary>
+    private static string PastedCode()
+        => Convert.ToHexString(Guid.NewGuid().ToByteArray()) + "#" + Guid.NewGuid().ToString("N");
+
     private static DeviceLoginSessions Sessions(ManualTimeProvider clock)
         => new(clock, (_, _, _) => Task.CompletedTask);
 

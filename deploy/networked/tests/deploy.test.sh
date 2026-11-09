@@ -183,6 +183,7 @@ assert [step['step'] for step in record['steps'] if step['step'].startswith('rol
     'rollback:review', 'rollback:coding', 'rollback:engine', 'rollback:server', 'rollback:gate']
 PY
 export FAKE_LEGACY_SNAPSHOT=1
+[[ ! -e "$scratch/legacy.json" ]]
 bash "$root/deploy.sh" deploy "$commit" --manifest "$MANIFEST" --journal "$scratch/legacy.json" >"$scratch/legacy.out"
 python3 - "$scratch/legacy.json" <<'PY'
 import json, sys

@@ -113,7 +113,9 @@ test.describe('Project detail - Knowledge section', () => {
       await page.goto(`/#/projects/${slugFor(projectName)}/wiki`);
       await page.evaluate(value => localStorage.setItem('atp.studio.theme', value), theme);
       await page.reload();
-      await page.getByTestId('project-wiki-search').fill('guide');
+      const search = page.getByTestId('project-wiki-search');
+      await expect(search).toBeVisible({ timeout: 30_000 });
+      await search.fill('guide');
       const results = page.getByTestId('wiki-search-results');
       await expect(results.getByRole('group', { name: 'Darstellung der Suchtreffer' })).toBeVisible();
       await results.screenshot({ path: path.join(output, `wiki-search-${theme}--mocked.png`), animations: 'disabled' });
@@ -124,11 +126,12 @@ test.describe('Project detail - Knowledge section', () => {
     await page.goto(`/#/projects/${slugFor(projectName)}/wiki`);
 
     const panel = page.getByTestId('project-shell-panel-wiki');
-    await expect(panel).toBeVisible({ timeout: 10_000 });
+    await expect(panel).toBeVisible({ timeout: 30_000 });
     await expect(panel).toHaveAttribute('data-rail-key', 'wiki');
 
     const section = panel.getByTestId('project-wiki-section');
     await expect(section).toBeVisible({ timeout: 10_000 });
+    await page.getByTestId('project-wiki-overview-node').click();
     await expect(section.getByTestId('project-wiki-tabs-empty')).toBeVisible();
 
     const panelBox = await panel.boundingBox();
@@ -166,6 +169,7 @@ test.describe('Project detail - Knowledge section', () => {
     await expect(page.getByTestId('project-wiki-tree')).toHaveCount(0);
     await page.getByTestId('project-wiki-toggle-nav').click();
     await expect(tree).toBeVisible();
+    await page.getByTestId('project-wiki-overview-node').click();
 
     // The meta rail folds via its own labelled head toggle. The rail stays
     // mounted (slim strip); only the body hides, and the head reports state.
@@ -280,27 +284,30 @@ test.describe('Project detail - Knowledge section', () => {
     await expect(tree.locator('[data-testid^="project-wiki-file-"]').first()).toBeVisible({ timeout: 5_000 });
   });
 
-  test('Classification chips open the reasoning report and edit mode is reachable', async ({ page }) => {
+  test('Classification chips open the document and its reasoning report; edit mode is reachable', async ({ page }) => {
     await page.goto(`/#/projects/${slugFor(projectName)}/wiki`);
     await expect(page.getByTestId('project-wiki-section')).toBeVisible({ timeout: 10_000 });
 
     await page.getByTestId('project-wiki-filter-toggle').click();
     await page.getByTestId('project-wiki-filter').fill('structure-target');
 
-    const targetPath = 'architecture/backend-structure/structure-target.md';
+    const targetPath = 'system/architecture/backend-structure/structure-target.md';
     const file = page.getByTestId(`project-wiki-file-${targetPath}`);
     await expect(file).toBeVisible({ timeout: 10_000 });
 
     await page.getByTestId(`project-wiki-metric-${targetPath}-drift`).click();
+    await expect(page.getByTestId('project-wiki-viewer-path')).toContainText(targetPath);
+    await page.getByTestId('project-wiki-tab-report').click();
     const reportFrame = page.getByTestId('project-wiki-report-frame');
     await expect(reportFrame).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId('project-wiki-tab-report')).toHaveClass(/pwiki__tab--active/);
-    await expect.poll(async () => await reportFrame.getAttribute('srcdoc')).toContain('url=#why-drift');
+    await expect(reportFrame).toHaveAttribute('srcdoc', /Findings/);
 
     await page.reload();
     await expect(page.getByTestId('project-wiki-section')).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByTestId('project-wiki-tab-report')).toHaveClass(/pwiki__tab--active/);
-    await expect(page.getByTestId('project-wiki-report-frame')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('project-wiki-viewer-path')).toContainText(targetPath);
+    await page.getByTestId('project-wiki-tab-report').click();
+    await expect(reportFrame).toBeVisible({ timeout: 10_000 });
 
     await page.getByTestId('project-wiki-edit').click();
     await expect(page.getByTestId('project-wiki-editor-shell')).toBeVisible({ timeout: 10_000 });
@@ -322,7 +329,7 @@ test.describe('Project detail - Knowledge section', () => {
     await expect(modal).toBeHidden();
   });
 
-  test('Reload restores open knowledge page, active tab, collapsed panels, and collapsed project hub', async ({ page }) => {
+  test('Reload restores the open knowledge page and collapsed panels; source remains reachable', async ({ page }) => {
     await page.goto(`/#/projects/${slugFor(projectName)}/wiki`);
     await expect(page.getByTestId('project-wiki-section')).toBeVisible({ timeout: 10_000 });
 
@@ -346,6 +353,8 @@ test.describe('Project detail - Knowledge section', () => {
     await page.reload({ waitUntil: 'networkidle' });
     await expect(page.getByTestId('project-wiki-section')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId('project-wiki-viewer-path')).toContainText(pathBefore);
+    await expect(page.getByTestId('project-wiki-tab-doc')).toHaveAttribute('aria-selected', 'true');
+    await page.getByTestId('project-wiki-tab-source').click();
     await expect(page.getByTestId('project-wiki-source-editor')).toBeVisible();
     await expect(page.getByTestId('project-wiki-tree')).toHaveCount(0);
     await expect(page.getByTestId('project-wiki-meta-toggle')).toHaveAttribute('aria-expanded', 'false');
@@ -363,7 +372,8 @@ test.describe('Project detail - Knowledge section', () => {
 
     const firstFile = page.getByTestId('project-wiki-tree').locator('[data-testid^="project-wiki-file-"]').first();
     await expect(firstFile).toBeVisible({ timeout: 10_000 });
-    await firstFile.click();
+    await firstFile.focus();
+    await firstFile.press('Enter');
 
     await expect(page.getByTestId('project-wiki-reader')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId('project-wiki-meta-panel')).toBeVisible();

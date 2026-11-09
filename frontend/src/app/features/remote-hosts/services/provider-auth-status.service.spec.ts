@@ -36,6 +36,17 @@ describe('ProviderAuthStatusService', () => {
     http.verify();
   });
 
+  it('sends the pasted authorization code with the initiating session key only', () => {
+    const http = TestBed.inject(HttpTestingController);
+    service.submitDeviceLoginCode('dlogin_a', 'key-a', 'pasted-code#state').subscribe();
+    const submit = http.expectOne('/api/v1/management/device-logins/dlogin_a/code');
+    expect(submit.request.method).toBe('POST');
+    expect(submit.request.body).toEqual({ code: 'pasted-code#state' });
+    expect(submit.request.headers.get('X-Device-Login-Session')).toBe('key-a');
+    submit.flush(null);
+    http.verify();
+  });
+
   it('notifies only when a previously OK provider becomes unavailable', () => {
     service.ingest([snapshot('ready')]);
     expect(notifications.notifications()).toHaveLength(0);

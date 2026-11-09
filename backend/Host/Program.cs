@@ -472,7 +472,6 @@ builder.Services.AddSingleton<OrchestratorConfigService>();
 builder.Services.AddSingleton<WorkspaceManagementService>();
 builder.Services.AddSingleton<TaskScannerService>();
 builder.Services.AddMemoryCache(options => options.SizeLimit = 64 * 1024 * 1024);
-builder.Services.AddSingleton<ArtifactThumbnailService>();
 builder.Services.AddSingleton<AgentStudio.Shared.ITaskScanner>(sp => sp.GetRequiredService<TaskScannerService>());
 builder.Services.AddSingleton<CliOutputLogMaintenanceService>();
 // F45a: workspace / project registries + jobKey resolver. Additive layer;
@@ -2227,8 +2226,11 @@ taskScanner.SetStatsMetadataCache(jobStatsMetadataCache);
 taskScanner.SetOrchestrationStore(app.Services.GetRequiredService<MonolithOrchestrationStore>());
 watcher.OnJobChanged += path =>
 {
-    if (!jobIndexCache.IsCurrentTaskJson(path))
-        jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External);
+    var taskJson = string.Equals(Path.GetFileName(path), "task.json", StringComparison.OrdinalIgnoreCase)
+        ? path : Path.Combine(path, "task.json");
+    if (!jobIndexCache.IsCurrentTaskJson(taskJson))
+        jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External,
+            changedPath: path);
 };
 // AGT-3088: board reads serve the last published snapshot and refresh it in
 // the background; once that refresh catches up with an invalidation a board

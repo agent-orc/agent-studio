@@ -13,11 +13,22 @@
                   [attr.aria-label]="'Open image ' + artifact.path"
                   [cacTooltip]="artifact.path"
                   (click)="openImage(artifact)">
-            <img class="artifact-thumb__image"
-                 [src]="artifact.thumbnailUrl || artifact.url"
-                 [alt]="artifact.label"
-                 loading="lazy"
-                 decoding="async" />
+            @if (metadataPending()) {
+              <span class="artifact-thumb__placeholder">Loading image details</span>
+            } @else if (isLarge(artifact)) {
+              <span class="artifact-thumb__placeholder" data-testid="artifact-gallery-large-placeholder">
+                <span>Large image · {{ fileSize(artifact) }}</span>
+                <span>Open original</span>
+              </span>
+            } @else {
+              <img class="artifact-thumb__image"
+                   [src]="artifact.url"
+                   [alt]="artifact.label"
+                   [attr.width]="metadataFor(artifact).width"
+                   [attr.height]="metadataFor(artifact).height"
+                   loading="lazy"
+                   decoding="async" />
+            }
           </button>
           <figcaption class="artifact-thumb__caption">
             <span class="artifact-thumb__name">{{ artifact.fileName }}</span>

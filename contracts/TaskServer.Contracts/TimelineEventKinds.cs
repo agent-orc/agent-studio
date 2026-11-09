@@ -269,6 +269,8 @@ public static class TimelineEventKinds
     /// <c>status</c> and <c>undo</c>.
     /// </summary>
     public const string StallInterventionRecorded = "stall_intervention_recorded";
+    /// <summary>A stale delivery verdict caused a fresh ReviewAttempt request.</summary>
+    public const string DeliveryReviewRequested = "delivery_review_requested";
     /// <summary>
     /// The task was completed out-of-band (operator chat, external agent, a
     /// remote host) and reconciled through

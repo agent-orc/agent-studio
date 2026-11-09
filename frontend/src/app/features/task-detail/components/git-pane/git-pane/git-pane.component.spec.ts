@@ -436,7 +436,7 @@ describe('GitPaneComponent', () => {
     fixture.detectChanges();
 
     const root = fixture.nativeElement as HTMLElement;
-    const unified = root.querySelector<HTMLButtonElement>('[data-testid="git-diff-mode-toggle"]');
+    const unified = root.querySelector<HTMLButtonElement>('[data-testid="git-unified-option"]');
     const sideBySide = root.querySelector<HTMLButtonElement>('[data-testid="git-side-by-side-option"]');
     expect(unified).not.toBeNull();
     // Default: side-by-side, pressed.
@@ -464,7 +464,7 @@ describe('GitPaneComponent', () => {
 
     expect(fixture.componentInstance.diffViewMode()).toBe('line-by-line');
     const root = fixture.nativeElement as HTMLElement;
-    const unified = root.querySelector<HTMLButtonElement>('[data-testid="git-diff-mode-toggle"]');
+    const unified = root.querySelector<HTMLButtonElement>('[data-testid="git-unified-option"]');
     expect(unified?.getAttribute('aria-pressed')).toBe('true');
   });
 
@@ -523,7 +523,7 @@ describe('GitPaneComponent', () => {
     fixture.detectChanges();
 
     const root = fixture.nativeElement as HTMLElement;
-    const toggle = root.querySelector<HTMLButtonElement>('[data-testid="git-preview-toggle"]');
+    const toggle = root.querySelector<HTMLButtonElement>('[data-testid="git-preview-option"]');
     expect(toggle).not.toBeNull();
     expect(toggle?.textContent?.trim()).toBe('Preview');
     // Diff shown by default; the preview surface is absent.
@@ -538,7 +538,7 @@ describe('GitPaneComponent', () => {
     // Preview surface takes over; the raw diff + layout toggle step aside.
     expect(root.querySelector('[data-testid="git-preview"]')).not.toBeNull();
     expect(root.querySelector('[data-testid="git-preview-markdown"]')).not.toBeNull();
-    expect(root.querySelector('[data-testid="git-diff-mode-toggle"]')).toBeNull();
+    expect(root.querySelector('[data-testid="git-unified-option"]')).toBeNull();
   });
 
   it('renders the html preview in a script-enabled opaque-origin sandbox (AGT-2008)', async () => {
@@ -553,7 +553,7 @@ describe('GitPaneComponent', () => {
     fixture.detectChanges();
 
     const root = fixture.nativeElement as HTMLElement;
-    root.querySelector<HTMLButtonElement>('[data-testid="git-preview-toggle"]')?.click();
+    root.querySelector<HTMLButtonElement>('[data-testid="git-preview-option"]')?.click();
     fixture.detectChanges();
 
     const frame = root.querySelector<HTMLIFrameElement>('[data-testid="git-preview-html"]');
@@ -572,7 +572,7 @@ describe('GitPaneComponent', () => {
     fixture.detectChanges();
 
     const root = fixture.nativeElement as HTMLElement;
-    expect(root.querySelector('[data-testid="git-preview-toggle"]')).toBeNull();
+    expect(root.querySelector('[data-testid="git-preview-option"]')).toBeNull();
   });
 
   it('previewKindOf classifies md/html and rejects others', () => {

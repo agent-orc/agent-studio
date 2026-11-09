@@ -192,9 +192,9 @@ def main(request):
             running_env = run(["docker", "inspect", "--format", '{{range .Config.Env}}{{println .}}{{end}}',
                                containers["api"]]).splitlines()
             worker = next((line.split("=", 1)[1] for line in running_env
-                           if line.startswith("RemoteGate__WorkerPath=")), None)
+                           if line.startswith("RemoteGate__WorkerPath=")), None) or None
             gate_host = next((line.split("=", 1)[1] for line in running_env
-                              if line.startswith("RemoteGate__SshHost=")), None)
+                              if line.startswith("RemoteGate__SshHost=")), None) or None
             return {"value": {"apiImage": images["api"]["image"],
                               "webImage": images["frontend"]["image"],
                               "apiDigest": images["api"]["digest"],

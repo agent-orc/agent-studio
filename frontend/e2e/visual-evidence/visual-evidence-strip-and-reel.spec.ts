@@ -336,12 +336,13 @@ test.describe('Visual evidence: per-task strip + lightbox + workspace reel', () 
     // clicking — the detail view loads the prompt pane asynchronously.
     const evidenceTab = page.getByTestId('prompt-tab-evidence');
     await expect(evidenceTab).toBeVisible({ timeout: 10_000 });
-    const evidenceBadge = page.getByTestId('prompt-tab-evidence-badge');
-    await expect(evidenceBadge).toHaveText('3');
-    await expect(evidenceBadge.locator('.count-badge')).toBeVisible();
+    // Screenshot polling begins when the Evidence view is selected.
     await evidenceTab.click();
+    const evidenceBadge = page.getByTestId('prompt-tab-evidence-badge');
+    await expect(evidenceBadge).toHaveText('3', { timeout: 15_000 });
+    await expect(evidenceBadge.locator('.count-badge')).toBeVisible();
     const strip = page.getByTestId('evidence-view').getByTestId('screenshot-strip');
-    await expect(strip).toBeVisible({ timeout: 7_000 });
+    await expect(strip).toBeVisible({ timeout: 15_000 });
     await dismissDevErrorDialog(page);
 
     const thumbs = strip.locator('[data-testid="screenshot-thumb"]');

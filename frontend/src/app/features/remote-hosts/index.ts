@@ -6,6 +6,7 @@ export type { ReviewQueueSnapshot } from './services/review-queue.service';
 export { ProviderAuthStatusService } from './services/provider-auth-status.service';
 export { CodexSignInDialogService } from './services/codex-sign-in-dialog.service';
 export { ClaudeSignInDialogService } from './services/claude-sign-in-dialog.service';
+export { DeviceLoginCodeEntryComponent } from './components/device-login-code-entry/device-login-code-entry';
 export * from './models/provider-auth.model';
 export { seedRemoteHosts } from './services/remote-hosts.seed';
 export {

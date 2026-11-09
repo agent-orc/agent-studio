@@ -16,7 +16,8 @@ public sealed record DeliveryChainOperatorFacts(
     bool Integrated,
     bool RequiresEscalation,
     bool AcceptedDeliveryStale,
-    bool CompletedReopenLimitReached);
+    bool CompletedReopenLimitReached,
+    bool RecoverableConflict = false);
 
 public enum DeliveryChainAction
 {
@@ -27,6 +28,9 @@ public enum DeliveryChainAction
 
     /// <summary>Integrate the current delivery and repeat review.</summary>
     ReturnToAutoReview,
+
+    /// <summary>Queue a bounded agent round to reconcile the delivery with develop.</summary>
+    QueueMergeRound,
 
     /// <summary>The integration failed; a person recovers the delivery.</summary>
     Escalate,
@@ -40,6 +44,7 @@ public static class DeliveryChainReasons
     public const string IntegrationFailed = "integration-failed";
     public const string IntegrationPending = "integration-pending";
     public const string VerdictStale = "delivery-verdict-stale";
+    public const string MergeRoundQueued = "delivery-merge-round";
     public const string AcceptedDeliveryStale = "accepted-delivery-stale";
     public const string AcceptedDeliveryCurrent = "accepted-delivery-current";
     public const string CompletedReopenLimit = "completed-reopen-limit";
@@ -65,13 +70,16 @@ public static class DeliveryChainPolicy
             if (facts.Integrated)
                 return new(DeliveryChainAction.PromoteToHumanReview, DeliveryChainReasons.Integrated,
                     "The integrated delivery waits for the human verdict.");
+            if (facts.RecoverableConflict) return MergeRound();
             return facts.RequiresEscalation
                 ? Escalate()
                 : new(DeliveryChainAction.Leave, DeliveryChainReasons.IntegrationPending,
                     "The integration is still running.");
         }
         if (facts.State == TaskStates.HumanReview && !facts.Integrated)
-            return facts.RequiresEscalation
+            return facts.RecoverableConflict
+                ? MergeRound()
+                : facts.RequiresEscalation
                 ? Escalate()
                 : new(DeliveryChainAction.ReturnToAutoReview, DeliveryChainReasons.VerdictStale,
                     "Integrate the current delivery and repeat review.");
@@ -81,9 +89,11 @@ public static class DeliveryChainPolicy
         if (!facts.AcceptedDeliveryStale)
             return new(DeliveryChainAction.Leave, DeliveryChainReasons.AcceptedDeliveryCurrent,
                 "The acceptance matches the current delivery.");
-        return facts.CompletedReopenLimitReached
-            ? new(DeliveryChainAction.Leave, DeliveryChainReasons.CompletedReopenLimit,
-                "Too many Delivered cards would reopen in one pass; the whole batch stops.")
+        if (facts.CompletedReopenLimitReached)
+            return new(DeliveryChainAction.Leave, DeliveryChainReasons.CompletedReopenLimit,
+                "Too many Delivered cards would reopen in one pass; the whole batch stops.");
+        return facts.RecoverableConflict
+            ? MergeRound()
             : new(DeliveryChainAction.ReturnToAutoReview, DeliveryChainReasons.AcceptedDeliveryStale,
                 "Integrate the current delivery and repeat review.");
     }
@@ -91,4 +101,8 @@ public static class DeliveryChainPolicy
     private static DeliveryChainVerdict Escalate()
         => new(DeliveryChainAction.Escalate, DeliveryChainReasons.IntegrationFailed,
             "Recover the delivery, resolve the integration failure and rerun the gate.");
+
+    private static DeliveryChainVerdict MergeRound()
+        => new(DeliveryChainAction.QueueMergeRound, DeliveryChainReasons.MergeRoundQueued,
+            "Queue a merge round against develop, then review the new delivery.");
 }

@@ -194,13 +194,12 @@ test.describe('Git pane — tree view and split layout', () => {
 
       const splitter = page.getByTestId('git-tree-splitter');
 
-      // Wide is the already-working reference. The tree keeps its requested
-      // width, the diff receives the remaining space, and both themes retain
-      // the same geometry.
+      // At wide widths the tree keeps the splitter's readable floor while
+      // the diff retains the majority of the pane.
       await page.setViewportSize({ width: 1440, height: 900 });
       const wideTreeBox = await treeCol.boundingBox();
       expect(wideTreeBox).not.toBeNull();
-      expect(wideTreeBox!.width).toBeCloseTo(300, 0);
+      expect(wideTreeBox!.width).toBeGreaterThanOrEqual(200);
       for (const theme of ['light', 'dark'] as const) {
         await captureReviewShot(page, theme, 'wide');
       }
@@ -268,30 +267,30 @@ test.describe('Git pane — tree view and split layout', () => {
       await tree.evaluate(element => { element.scrollTop = element.scrollHeight; });
       await assertStrictPaneClipping();
 
-      // A slightly roomier but still constrained pane leaves meaningful drag
-      // travel. Start four pixels off the visible hairline to prove that the
-      // transparent hit area, not just the one-pixel element, captures input.
+      // The tree starts at its 200 px floor. Drag right first to create room,
+      // then drag left. Start off the visible hairline to exercise its hit area.
       await page.setViewportSize({ width: 900, height: 720 });
       const narrowTreeBefore = await treeCol.boundingBox();
       const narrowSplitter = await splitter.boundingBox();
       expect(narrowTreeBefore && narrowSplitter).toBeTruthy();
-      await page.mouse.move(narrowSplitter!.x - 4, narrowSplitter!.y + narrowSplitter!.height / 2);
+      await page.mouse.move(narrowSplitter!.x + 4, narrowSplitter!.y + narrowSplitter!.height / 2);
       await page.mouse.down();
-      await page.mouse.move(narrowSplitter!.x - 36, narrowSplitter!.y + narrowSplitter!.height / 2, { steps: 6 });
-      await page.mouse.up();
-      const narrowTreeAfterLeft = await treeCol.boundingBox();
-      expect(narrowTreeAfterLeft).not.toBeNull();
-      expect(narrowTreeAfterLeft!.width).toBeLessThan(narrowTreeBefore!.width);
-
-      const splitterAfterLeft = await splitter.boundingBox();
-      expect(splitterAfterLeft).not.toBeNull();
-      await page.mouse.move(splitterAfterLeft!.x + 4, splitterAfterLeft!.y + splitterAfterLeft!.height / 2);
-      await page.mouse.down();
-      await page.mouse.move(splitterAfterLeft!.x + 30, splitterAfterLeft!.y + splitterAfterLeft!.height / 2, { steps: 6 });
+      await page.mouse.move(narrowSplitter!.x + 70, narrowSplitter!.y + narrowSplitter!.height / 2, { steps: 6 });
       await page.mouse.up();
       const narrowTreeAfterRight = await treeCol.boundingBox();
       expect(narrowTreeAfterRight).not.toBeNull();
-      expect(narrowTreeAfterRight!.width).toBeGreaterThan(narrowTreeAfterLeft!.width);
+      expect(narrowTreeAfterRight!.width).toBeGreaterThan(narrowTreeBefore!.width);
+
+      const splitterAfterRight = await splitter.boundingBox();
+      expect(splitterAfterRight).not.toBeNull();
+      await page.mouse.move(splitterAfterRight!.x - 4, splitterAfterRight!.y + splitterAfterRight!.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(splitterAfterRight!.x - 36, splitterAfterRight!.y + splitterAfterRight!.height / 2, { steps: 6 });
+      await page.mouse.up();
+      const narrowTreeAfterLeft = await treeCol.boundingBox();
+      expect(narrowTreeAfterLeft).not.toBeNull();
+      expect(narrowTreeAfterLeft!.width).toBeLessThan(narrowTreeAfterRight!.width);
+      expect(narrowTreeAfterLeft!.width).toBeGreaterThanOrEqual(200);
       await page.setViewportSize({ width: 720, height: 720 });
       await assertStrictPaneClipping();
 

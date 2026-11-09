@@ -132,10 +132,25 @@ public sealed class TaskWatcherServiceTests : IDisposable
         _watcher.HandleChange(_watchPath, taskJson, WatcherChangeTypes.Changed);
 
         Assert.Equal(0, Volatile.Read(ref fired));
-        Assert.Equal(taskJson, await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.Equal(Path.GetDirectoryName(taskJson), await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(2)));
         Assert.True(quietWindow.Elapsed >= TimeSpan.FromMilliseconds(60));
         await Task.Delay(120);
         Assert.Equal(1, Volatile.Read(ref fired));
+    }
+
+    [Fact]
+    public async Task FlatJobTaskJsonChange_DispatchesCardFolder()
+    {
+        var folder = Path.Combine(_watchPath, TaskStorageLayout.JobsDirName, "000", "ATP-42");
+        Directory.CreateDirectory(folder);
+        var taskJson = Path.Combine(folder, "task.json");
+        File.WriteAllText(taskJson, "{\"id\":\"ATP-42\",\"title\":\"Changed\"}");
+        var dispatched = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _watcher.OnJobChanged += path => dispatched.TrySetResult(path);
+
+        _watcher.HandleChange(_watchPath, taskJson, WatcherChangeTypes.Changed);
+
+        Assert.Equal(folder, await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(10)));
     }
 
     [Trait("Category", "MachineBound")]

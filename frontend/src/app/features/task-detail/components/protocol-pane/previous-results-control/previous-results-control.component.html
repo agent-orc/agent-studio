@@ -3,13 +3,14 @@
     <button type="button"
             class="previous-results__toggle"
             data-testid="previous-results-toggle"
-            [disabled]="loading() && entries().length === 0"
             [attr.aria-expanded]="open()"
             [attr.aria-controls]="open() ? 'previous-results-list' : null"
             (click)="toggle()">
       <app-disclosure-marker [open]="open()" [size]="10" />
       <span>Previous results</span>
-      <span class="previous-results__count">{{ entries().length }}</span>
+      @if (loaded()) {
+        <span class="previous-results__count">{{ entries().length }}</span>
+      }
     </button>
     @if (selected()) {
       <button type="button"
@@ -21,7 +22,9 @@
 
   @if (open()) {
     <div class="previous-results__menu" id="previous-results-list" data-testid="previous-results-list">
-      @if (entries().length === 0 && legacy() === 'complete') {
+      @if (loading() && !loaded()) {
+        <p class="previous-results__hint">Loading previous results…</p>
+      } @else if (entries().length === 0 && legacy() === 'complete' && loaded() && !error()) {
         <p class="previous-results__empty">No previous results found.</p>
       } @else if (entries().length > 0) {
         <ol>
@@ -45,6 +48,10 @@
       } @else if (legacy() === 'failed') {
         <p class="previous-results__hint" data-testid="previous-results-legacy-hint">Older results could not be loaded. Studio retries later.</p>
       }
+      @if (error()) {
+        <p class="previous-results__error" role="alert">{{ error() }}</p>
+        <button type="button" class="previous-results__current" data-testid="previous-results-retry" (click)="retry()">Retry</button>
+      }
     </div>
   }
 
@@ -54,8 +61,5 @@
          data-testid="previous-result-banner">
       Previous result from {{ timestamp(previous.timestamp) }} · {{ previous.producer }} · {{ previous.lane }}
     </div>
-  }
-  @if (error()) {
-    <p class="previous-results__error" role="alert">{{ error() }}</p>
   }
 </section>

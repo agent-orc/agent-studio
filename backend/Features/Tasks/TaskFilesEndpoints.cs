@@ -256,32 +256,6 @@ public static class TaskFilesEndpoints
             return resolved is null ? Results.NotFound() : Results.File(resolved, contentType);
         });
 
-        // The Activity artifact gallery must not download full-size evidence
-        // into its thumbnail grid. Path resolution reuses the screenshot
-        // boundary above; the derived WebP is cached and the existing result
-        // route remains the full-size lightbox source.
-        group.MapGet("/{jobId}/thumbnail", (
-            string jobId,
-            string? path,
-            int? width,
-            string? project,
-            string? watchPath,
-            HttpContext http,
-            ScreenshotIndexService screenshots,
-            ArtifactThumbnailService thumbnails,
-            AgentStudio.Registry.ProjectRegistry projects) =>
-        {
-            watchPath = ResolveWatchPath(projects, project, watchPath);
-            if (string.IsNullOrWhiteSpace(path)) return Results.BadRequest(new { error = "path is required" });
-            var (resolved, _) = screenshots.ResolveScreenshotFile(jobId, path, watchPath);
-            if (resolved is null) return Results.NotFound();
-
-            var thumbnail = thumbnails.Create(resolved, width);
-            if (thumbnail is null) return Results.NotFound();
-            http.Response.Headers.CacheControl = "private, max-age=3600";
-            http.Response.Headers.LastModified = thumbnail.LastModified.ToString("R");
-            return Results.Bytes(thumbnail.Bytes, thumbnail.ContentType);
-        });
     }
 
     /// <summary>

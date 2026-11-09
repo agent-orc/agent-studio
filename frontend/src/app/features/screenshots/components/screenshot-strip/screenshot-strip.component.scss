@@ -58,6 +58,18 @@
   background: var(--studio-bg-elevated);
 }
 
+.strip__large {
+  display: flex;
+  width: 100%;
+  height: 120px;
+  align-items: center;
+  justify-content: center;
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg-muted);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
 // The status sits on top of the screenshot image, so the indicator gets an
 // opaque surface backing that stays legible on any image in both themes.
 .strip__badge {

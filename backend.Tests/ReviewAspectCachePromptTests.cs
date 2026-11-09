@@ -71,4 +71,27 @@ public sealed class ReviewAspectCachePromptTests
         Assert.Equal(1, prompt.Split("Branch diff").Length - 1);
         Assert.Equal(1, prompt.Split("results/proof.txt").Length - 1);
     }
+
+    [Theory]
+    [InlineData("requirement-fit")]
+    [InlineData("tests-and-evidence")]
+    public void MissingEvidenceFindingMustNameTheInspectedMaterial(string aspect)
+    {
+        var prompts = new RuntimePromptService(new ConfigurationBuilder().Build(),
+            NullLogger<RuntimePromptService>.Instance);
+        var service = new AspectRunnerService(prompts, NullLogger<AspectRunnerService>.Instance);
+        var inputs = new AspectRunInputs("Project", "AGT-1", "Evidence review", "/tmp/AGT-1",
+            "Require measurements", "", "No diff", "")
+        {
+            ResultsInventory = "No results/ folder present for this task.",
+        };
+
+        var prompt = service.BuildAspectPrompt(AspectRunnerService.Catalogue[aspect], inputs,
+            "claude-opus-5");
+
+        Assert.Contains("evidence_checked", prompt);
+        Assert.Contains("results/", prompt);
+        Assert.Contains("truncated excerpt", prompt);
+        Assert.Contains("missing item", prompt);
+    }
 }
