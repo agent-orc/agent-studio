@@ -55,6 +55,7 @@ import { EscalationSummaryComponent } from './components/escalation-summary/esca
 import { ParkedBlockerComponent } from './components/parked-blocker/parked-blocker.component';
 import { DecisionCardPanelComponent } from './components/decision-card-panel/decision-card-panel.component';
 import { DecisionBlockedNoticeComponent } from './components/decision-blocked-notice/decision-blocked-notice.component';
+import { CauseBreakerRecheckComponent } from './components/cause-breaker-recheck/cause-breaker-recheck.component';
 import { decisionBlockReason, decisionBlockers } from '../../models/decision-card-presentation';
 import { DetailHeaderComponent } from './components/detail-header/detail-header.component';
 import { TaskLiveStatusComponent } from '../../components/task-live-status/task-live-status.component';
@@ -88,7 +89,7 @@ import { TASK_REFERENCE_CHAT_PROVIDER } from '../../services/task-reference-chat
     EscalationSummaryComponent,
     ParkedBlockerComponent,
     DecisionCardPanelComponent,
-    DecisionBlockedNoticeComponent,
+    DecisionBlockedNoticeComponent, CauseBreakerRecheckComponent,
     DetailHeaderComponent,
     TaskLiveStatusComponent,
     TaskPreviewComponent,
