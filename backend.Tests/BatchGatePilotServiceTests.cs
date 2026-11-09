@@ -28,8 +28,73 @@ namespace AgentStudio.Tests;
 /// attempt authority, task lanes, Git publication and the review-report
 /// endpoint. Only the gate runner is scripted, and the pilot's background
 /// tick is removed so each test owns the tick order.
+/// This fixture holds no tests. Its tests sit in sealed classes, one per
+/// topic, because the gate shards a suite by class and one class of 234
+/// tests set the length of its shard (AGT-3566).
 /// </summary>
-public sealed partial class BatchGatePilotServiceTests : IDisposable
+public abstract partial class BatchGatePilotServiceTests : IDisposable
+{
+    private protected const string ProjectName = "batch-pilot";
+    private protected const string RepositoryId = "batch-pilot-repo";
+    private protected const string ReviewRunnerId = "batch-review-runner";
+    private protected const string ReviewInstance = "batch-review-host:7001";
+
+    private protected readonly string _workspace;
+    private protected readonly string _watchPath;
+    private protected readonly string _repo;
+    private protected readonly string _origin;
+    private protected readonly ScriptedGate _gate = new();
+    private protected readonly ErrorLog _errors = new();
+    private protected DateTimeOffset _clock = new(2026, 9, 27, 10, 0, 0, TimeSpan.Zero);
+
+    public BatchGatePilotServiceTests()
+    {
+        _workspace = Path.Combine(Path.GetTempPath(), "atp-batch-pilot-" + Guid.NewGuid().ToString("N"));
+        _watchPath = Path.Combine(_workspace, "projects", ProjectName);
+        _repo = Path.Combine(_workspace, "repo");
+        _origin = Path.Combine(_workspace, "origin.git");
+        foreach (var state in TaskStates.All)
+            Directory.CreateDirectory(Path.Combine(_watchPath, state));
+        GitRepositoryTemplate.CopyTo("batch-gate-pilot:repo-and-origin:v1", _workspace, SeedRepositoryAndOrigin);
+    }
+
+    // Built once per test process; each test starts from a copy (AGT-3419).
+    private protected static void SeedRepositoryAndOrigin(string root)
+    {
+        var repo = Path.Combine(root, "repo");
+        var origin = Path.Combine(root, "origin.git");
+        Directory.CreateDirectory(repo);
+        Git(root, "init", "-q", "--bare", "--initial-branch=develop", origin);
+        Git(repo, "init", "-q", "-b", "develop");
+        Git(repo, "config", "user.email", "batch-test@example.invalid");
+        Git(repo, "config", "user.name", "Batch Test");
+        Directory.CreateDirectory(Path.Combine(repo, ".agent-studio"));
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "prepare"), "#!/bin/sh\nexit 0\n");
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "project.yml"),
+            "schemaVersion: 1\nstack: [custom]\ntoolVersions:\ncommands:\n"
+            + "  prepare: .agent-studio/prepare\n  build:\n  test: [echo test]\n"
+            + "  lint:\ntestSuites:\ncachePaths:\ncapabilities: [linux]\nenvironment:\n");
+        File.WriteAllText(Path.Combine(repo, "README.md"), "Batch pilot.\n");
+        Git(repo, "add", ".");
+        Git(repo, "commit", "-qm", "base");
+        Git(repo, "remote", "add", "origin", origin);
+        Git(repo, "push", "-q", "origin", "develop");
+        // Publication fast-forwards the local integration ref; keep it unchecked-out.
+        Git(repo, "checkout", "-q", "--detach");
+    }
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_workspace, recursive: true); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SilentCatch.Note(ex, "BatchGatePilotServiceTests: temporary workspace cleanup failed");
+        }
+    }
+}
+
+/// <summary>Operator lane moves and explicit batch withdrawal.</summary>
+public sealed class BatchGatePilotOperatorMoveTests : BatchGatePilotServiceTests
 {
     [Theory]
     [InlineData(false)]
@@ -114,64 +179,14 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         AssertLane(member.Key, TaskStates.Backlog);
         Assert.Empty(factory.Services.GetRequiredService<BatchGateStore>().ListManifests());
     }
-    private const string ProjectName = "batch-pilot";
-    private const string RepositoryId = "batch-pilot-repo";
-    private const string ReviewRunnerId = "batch-review-runner";
-    private const string ReviewInstance = "batch-review-host:7001";
+}
 
-    private readonly string _workspace;
-    private readonly string _watchPath;
-    private readonly string _repo;
-    private readonly string _origin;
-    private readonly ScriptedGate _gate = new();
-    private readonly ErrorLog _errors = new();
-    private DateTimeOffset _clock = new(2026, 9, 27, 10, 0, 0, TimeSpan.Zero);
-
-    public BatchGatePilotServiceTests()
-    {
-        _workspace = Path.Combine(Path.GetTempPath(), "atp-batch-pilot-" + Guid.NewGuid().ToString("N"));
-        _watchPath = Path.Combine(_workspace, "projects", ProjectName);
-        _repo = Path.Combine(_workspace, "repo");
-        _origin = Path.Combine(_workspace, "origin.git");
-        foreach (var state in TaskStates.All)
-            Directory.CreateDirectory(Path.Combine(_watchPath, state));
-        GitRepositoryTemplate.CopyTo("batch-gate-pilot:repo-and-origin:v1", _workspace, SeedRepositoryAndOrigin);
-    }
-
-    // Built once per test process; each test starts from a copy (AGT-3419).
-    private static void SeedRepositoryAndOrigin(string root)
-    {
-        var repo = Path.Combine(root, "repo");
-        var origin = Path.Combine(root, "origin.git");
-        Directory.CreateDirectory(repo);
-        Git(root, "init", "-q", "--bare", "--initial-branch=develop", origin);
-        Git(repo, "init", "-q", "-b", "develop");
-        Git(repo, "config", "user.email", "batch-test@example.invalid");
-        Git(repo, "config", "user.name", "Batch Test");
-        Directory.CreateDirectory(Path.Combine(repo, ".agent-studio"));
-        File.WriteAllText(Path.Combine(repo, ".agent-studio", "prepare"), "#!/bin/sh\nexit 0\n");
-        File.WriteAllText(Path.Combine(repo, ".agent-studio", "project.yml"),
-            "schemaVersion: 1\nstack: [custom]\ntoolVersions:\ncommands:\n"
-            + "  prepare: .agent-studio/prepare\n  build:\n  test: [echo test]\n"
-            + "  lint:\ntestSuites:\ncachePaths:\ncapabilities: [linux]\nenvironment:\n");
-        File.WriteAllText(Path.Combine(repo, "README.md"), "Batch pilot.\n");
-        Git(repo, "add", ".");
-        Git(repo, "commit", "-qm", "base");
-        Git(repo, "remote", "add", "origin", origin);
-        Git(repo, "push", "-q", "origin", "develop");
-        // Publication fast-forwards the local integration ref; keep it unchecked-out.
-        Git(repo, "checkout", "-q", "--detach");
-    }
-
-    public void Dispose()
-    {
-        try { Directory.Delete(_workspace, recursive: true); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            SilentCatch.Note(ex, "BatchGatePilotServiceTests: temporary workspace cleanup failed");
-        }
-    }
-
+/// <summary>
+/// Settings and state API, look-ahead snapshots, review verification minutes
+/// and the delivery a card enqueues.
+/// </summary>
+public sealed class BatchGatePilotPlanningTests : BatchGatePilotServiceTests
+{
     [Fact]
     public async Task Batch_gate_settings_and_state_api_follow_the_shared_shape()
     {
@@ -438,12 +453,6 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             record.RouteTemplate == "/api/projects/{projectName}/batch-gate/state").ToArray();
         Assert.Equal(2, reads.Length);
         Assert.All(reads, record => Assert.Empty(record.Commands));
-    }
-
-    private sealed class GitReadRecorder : AgentStudio.Git.IGitReadRequestObserver
-    {
-        public System.Collections.Concurrent.ConcurrentQueue<AgentStudio.Git.GitReadRequestRecord> Records { get; } = new();
-        public void OnCompleted(AgentStudio.Git.GitReadRequestRecord record) => Records.Enqueue(record);
     }
 
     [Fact]
@@ -752,7 +761,14 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Contains($"task={seeded.Subject.TaskKey} sha={seeded.Subject.ResultSha}", entry);
         Assert.Equal(1, builder.DiffReadCount);
     }
+}
 
+/// <summary>
+/// Formation and close decisions of the planner and the per-task fallback
+/// level of a card.
+/// </summary>
+public sealed class BatchGatePilotFormationTests : BatchGatePilotServiceTests
+{
     [Fact]
     public async Task Operator_close_now_overrides_an_advisor_veto_hold()
     {
@@ -1273,41 +1289,14 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Equal(TestExecutionLevels.Full, level);
     }
 
-    // The single per-task gate request's test level.
-    private string? FallbackLevel()
-        => Assert.Single(_gate.Requests, request => request.Executor == "batch-fallback").RequiredTestLevel;
+}
 
-    // The build-only level needs a non-test command to run: the integration
-    // branch's project definition gains a build command.
-    private void WithBuildStep()
-    {
-        Git(_repo, "checkout", "-q", "--detach", "refs/remotes/origin/develop");
-        File.WriteAllText(Path.Combine(_repo, ".agent-studio", "project.yml"),
-            "schemaVersion: 1\nstack: [custom]\ntoolVersions:\ncommands:\n"
-            + "  prepare: .agent-studio/prepare\n  build: [echo build]\n  test: [echo test]\n"
-            + "  lint:\ntestSuites:\ncachePaths:\ncapabilities: [linux]\nenvironment:\n");
-        Git(_repo, "add", ".");
-        Git(_repo, "commit", "-qm", "build step");
-        Git(_repo, "push", "-q", "origin", "HEAD:develop");
-        Git(_repo, "fetch", "-q", "origin");
-    }
-
-    // A disabled pilot hands every queued member to its per-task gate.
-    private static void DisableBatchGate(WebApplicationFactory<Program> factory)
-        => factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
-            .SetBatchGate(ProjectName, new BatchGateFormationOptions(Enabled: false));
-
-    // A code commit on top of origin's develop that is not published there.
-    private string CodeCommit(string path)
-    {
-        Git(_repo, "checkout", "-q", "--detach", RemoteTip());
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(_repo, path))!);
-        File.WriteAllText(Path.Combine(_repo, path), "class Code {}\n");
-        Git(_repo, "add", ".");
-        Git(_repo, "commit", "-qm", "code " + path);
-        return Git(_repo, "rev-parse", "HEAD");
-    }
-
+/// <summary>
+/// Members that leave without a gate, patch-equivalent containment, green
+/// publication and red isolation.
+/// </summary>
+public sealed class BatchGatePilotPublicationTests : BatchGatePilotServiceTests
+{
     [Fact]
     public async Task Member_already_on_the_integration_branch_leaves_as_integrated_without_a_gate()
     {
@@ -1588,27 +1577,6 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Equal(containedIn, RemoteTip());
         Assert.Equal(0, _gate.BatchRuns);
         Assert.Equal(0, _gate.FallbackRuns);
-    }
-
-    /// <summary>Publishes the result's patch on top of unrelated work, under another SHA.</summary>
-    private string PublishPatchEquivalent(string resultSha)
-    {
-        Git(_repo, "checkout", "-q", "--detach", "origin/develop");
-        File.WriteAllText(Path.Combine(_repo, "unrelated.txt"), "other published work\n");
-        Git(_repo, "add", "unrelated.txt");
-        Git(_repo, "commit", "-qm", "unrelated publication");
-        Git(_repo, "cherry-pick", resultSha);
-        Git(_repo, "push", "-q", "origin", "HEAD:develop");
-        var tip = RemoteTip();
-        Assert.NotEqual(resultSha, tip);
-        return tip;
-    }
-
-    private TaskInfo Card(WebApplicationFactory<Program> factory, string key)
-    {
-        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
-        scanner.InvalidateCache();
-        return scanner.FindJob(key, _watchPath)!;
     }
 
     [Fact]
@@ -1922,39 +1890,14 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         }
     }
 
-    // A merged member keeps every delivery SHA: the candidate merge has the
-    // tip before it and the untouched result SHA as its exact parents, so the
-    // result maps to that merge and no commit of the card is rewritten.
-    private void AssertMergedMember(BatchGateStore store, string batchId, string runId,
-        SeededMember member)
-    {
-        var replay = store.ReadReplay(batchId, member.Key);
-        Assert.Equal("admitted", replay.Outcome);
-        Assert.Equal("merge", replay.Strategy);
-        var replacement = Assert.Single(replay.Replacements);
-        Assert.Equal(member.ResultSha, replacement.OriginalSha);
-        Assert.Equal(replay.TipAfterSha, replacement.RebasedSha);
-        Assert.Equal($"{replay.TipAfterSha} {replay.TipBeforeSha} {member.ResultSha}",
-            Git(_repo, "rev-list", "--parents", "-n", "1", replay.TipAfterSha!));
-        Git(_origin, "merge-base", "--is-ancestor", member.ResultSha, "refs/heads/develop");
-        var record = store.TryReadMember(batchId, member.Key, runId);
-        Assert.NotNull(record);
-        Assert.Equal([replay.TipAfterSha!], record!.ReplacementShas);
-        AssertLane(member.Key, TaskStates.HumanReview);
-        var task = JsonDocument.Parse(File.ReadAllText(Path.Combine(
-            _watchPath, TaskStates.HumanReview, member.Key, "task.json"))).RootElement;
-        Assert.All(task.GetProperty("commits").EnumerateArray(), commit =>
-            Assert.False(commit.TryGetProperty("supersededBySha", out var by)
-                && by.ValueKind == JsonValueKind.String));
-        Assert.Contains(task.GetProperty("integrationRecords").EnumerateArray(), item =>
-            item.GetProperty("classification").GetString() == "curated-mapping"
-            && item.GetProperty("sourceSha").GetString() == member.ResultSha
-            && item.GetProperty("integrationSha").GetString() == replay.TipAfterSha);
-    }
+}
 
-    private bool TreeHas(string sha, string path)
-        => Git(_repo, "ls-tree", "--name-only", sha, path).Length > 0;
-
+/// <summary>
+/// Base checks of a red candidate, push markers, publication recovery,
+/// superseded members, lost coordinator leases and emergency fallbacks.
+/// </summary>
+public sealed class BatchGatePilotRecoveryTests : BatchGatePilotServiceTests
+{
     [Fact]
     public async Task Broken_published_manifest_does_not_block_the_next_batch()
     {
@@ -3497,54 +3440,6 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         AssertLane(removed.Key, TaskStates.AutoReview);
     }
 
-    private BatchGateManifest ClosePendingBatch(WebApplicationFactory<Program> factory)
-    {
-        var store = factory.Services.GetRequiredService<BatchGateStore>();
-        var pending = store.ListPending();
-        var first = pending[0].Subject;
-        var scope = new BatchGateScope(first.Project, first.Repository, first.IntegrationBranch,
-            first.GateProfile, first.GateProfileDigest, first.PlatformVersion);
-        var formed = BatchGatePolicy.Close(pending.Select(item => item.Subject), scope,
-            RemoteTip(), Settings(factory), pending.Select(item => item.Subject.TaskKey).ToArray(), _clock);
-        var manifest = Assert.IsType<BatchGateManifest>(formed.Manifest);
-        store.CloseManifest(manifest);
-        foreach (var item in pending)
-            BatchGateOwnershipStore.Write(item.JobFolderPath,
-                new BatchGateOwnership(item.ReviewAttemptId, item.Subject, manifest.BatchId));
-        return manifest;
-    }
-
-    private static void ReplaceDelivery(WebApplicationFactory<Program> factory, SeededMember member)
-    {
-        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
-        var run = authority.AcquireRun(member.Key, RepositoryId, null, "coding-runner",
-            "coding-host", 600, "replacement-" + member.Key).RunAttempt!;
-        var sha = new string('b', 40);
-        var settled = authority.SettleRun(new SettleRunAttemptRequest
-        {
-            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch,
-                "replacement-settle-" + member.Key),
-            Outcome = "done", ResultSha = sha,
-            ResultEnvelope = new Contract.ImmutableResultEnvelope(RepositoryId, run.AttemptId,
-                member.ResultSha, sha, "refs/heads/agent-studio/results/replacement-" + member.Key,
-                null, new string('a', 64)),
-        });
-        Assert.True(settled.Accepted, settled.Message);
-    }
-
-    private void SaveContinuation(WebApplicationFactory<Program> factory, SeededMember member)
-    {
-        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
-        var task = scanner.FindJob(member.Key, _watchPath)!;
-        File.WriteAllText(Path.Combine(task.FolderPath, "pending-intent.json"),
-            JsonSerializer.Serialize(new PendingIntent
-            {
-                Prompt = "Fix the review findings.", SavedAt = _clock.UtcDateTime,
-            }));
-        scanner.InvalidateCache();
-        Assert.NotNull(scanner.FindJob(member.Key, _watchPath)!.PendingIntent);
-    }
-
     [Fact]
     [Trait("Category", "MachineBound")]
     public void New_delivery_returns_to_planning_after_its_review_passes()
@@ -3569,30 +3464,95 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
 
         Assert.Equal(old.Key, Assert.Single(BuildSnapshot(factory).Waiting).TaskKey);
     }
+}
 
-    private sealed record SeededMember(string Key, string RunAttemptId, string ReviewAttemptId, string ResultSha);
+public abstract partial class BatchGatePilotServiceTests
+{
+    private protected BatchGateManifest ClosePendingBatch(WebApplicationFactory<Program> factory)
+    {
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = store.ListPending();
+        var first = pending[0].Subject;
+        var scope = new BatchGateScope(first.Project, first.Repository, first.IntegrationBranch,
+            first.GateProfile, first.GateProfileDigest, first.PlatformVersion);
+        var formed = BatchGatePolicy.Close(pending.Select(item => item.Subject), scope,
+            RemoteTip(), Settings(factory), pending.Select(item => item.Subject.TaskKey).ToArray(), _clock);
+        var manifest = Assert.IsType<BatchGateManifest>(formed.Manifest);
+        store.CloseManifest(manifest);
+        foreach (var item in pending)
+            BatchGateOwnershipStore.Write(item.JobFolderPath,
+                new BatchGateOwnership(item.ReviewAttemptId, item.Subject, manifest.BatchId));
+        return manifest;
+    }
 
-    private SeededMember SeedMember(WebApplicationFactory<Program> factory, string key,
+    private protected static void ReplaceDelivery(WebApplicationFactory<Program> factory, SeededMember member)
+    {
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var run = authority.AcquireRun(member.Key, RepositoryId, null, "coding-runner",
+            "coding-host", 600, "replacement-" + member.Key).RunAttempt!;
+        var sha = new string('b', 40);
+        var settled = authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch,
+                "replacement-settle-" + member.Key),
+            Outcome = "done", ResultSha = sha,
+            ResultEnvelope = new Contract.ImmutableResultEnvelope(RepositoryId, run.AttemptId,
+                member.ResultSha, sha, "refs/heads/agent-studio/results/replacement-" + member.Key,
+                null, new string('a', 64)),
+        });
+        Assert.True(settled.Accepted, settled.Message);
+    }
+
+    private protected void SaveContinuation(WebApplicationFactory<Program> factory, SeededMember member)
+    {
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var task = scanner.FindJob(member.Key, _watchPath)!;
+        File.WriteAllText(Path.Combine(task.FolderPath, "pending-intent.json"),
+            JsonSerializer.Serialize(new PendingIntent
+            {
+                Prompt = "Fix the review findings.", SavedAt = _clock.UtcDateTime,
+            }));
+        scanner.InvalidateCache();
+        Assert.NotNull(scanner.FindJob(member.Key, _watchPath)!.PendingIntent);
+    }
+
+    private protected sealed record SeededMember(string Key, string RunAttemptId, string ReviewAttemptId, string ResultSha);
+
+    private protected SeededMember SeedMember(WebApplicationFactory<Program> factory, string key,
         string changedFile, bool settleReview = true, string? parentSha = null,
         bool deferredPlan = true, string? taskId = null,
         Contract.ReviewCommandDto? verificationCommand = null, string? content = null,
         string? mergeFrom = null, string generation = "",
         string initialState = TaskStates.AutoReview)
     {
-        var baseSha = Git(_repo, "rev-parse", "origin/develop");
+        var tips = Git(_repo, "rev-parse", "origin/develop", "HEAD").Split('\n');
+        var baseSha = tips[0].Trim();
         var resultRef = "refs/heads/agent-studio/results/" + key;
-        Git(_repo, "checkout", "-q", "--detach", parentSha ?? baseSha);
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(_repo, changedFile))!);
-        File.WriteAllText(Path.Combine(_repo, changedFile), content ?? key + "\n");
-        Git(_repo, "add", ".");
-        Git(_repo, "commit", "-qm", key);
-        // A fix round told to "merge current origin/develop first" leaves a
-        // merge commit inside its delivery range.
-        if (mergeFrom is not null)
+        string resultSha;
+        if (mergeFrom is null)
+        {
+            // One fast-import writes the commit and the remote-tracking ref a
+            // fetch of the pushed result would write (AGT-3566).
+            resultSha = ImportCommit(parentSha ?? baseSha, changedFile, content ?? key + "\n", key,
+                $"refs/remotes/origin/agent-studio/results/{key}");
+            Git(_repo, "push", "-q", "origin", $"{resultSha}:{resultRef}");
+            Assert.Empty(Git(_repo, "for-each-ref", resultRef));
+            if (tips[1].Trim() != baseSha) Git(_repo, "checkout", "-q", "--detach", baseSha);
+        }
+        else
+        {
+            Git(_repo, "checkout", "-q", "--detach", parentSha ?? baseSha);
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(_repo, changedFile))!);
+            File.WriteAllText(Path.Combine(_repo, changedFile), content ?? key + "\n");
+            Git(_repo, "add", ".");
+            Git(_repo, "commit", "-qm", key);
+            // A fix round told to "merge current origin/develop first" leaves a
+            // merge commit inside its delivery range.
             Git(_repo, "merge", "-q", "--no-ff", "--no-edit", mergeFrom);
-        var resultSha = Git(_repo, "rev-parse", "HEAD");
-        PublishResult(key, resultSha);
-        Git(_repo, "checkout", "-q", "--detach", baseSha);
+            resultSha = Git(_repo, "rev-parse", "HEAD");
+            PublishResult(key, resultSha);
+            Git(_repo, "checkout", "-q", "--detach", baseSha);
+        }
 
         var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
         var run = authority.AcquireRun(key, RepositoryId, null, "coding-runner", "coding-host",
@@ -3667,7 +3627,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     // The production Studio checkout only holds what the completion fetch
     // stores: the result commit under refs/remotes/origin, never a local
     // refs/heads result ref. Replay fetches that ref itself.
-    private void PublishResult(string key, string resultSha)
+    private protected void PublishResult(string key, string resultSha)
     {
         Git(_repo, "push", "-q", "origin", $"{resultSha}:refs/heads/agent-studio/results/{key}");
         Git(_repo, "fetch", "-q", "--no-tags", "origin",
@@ -3675,7 +3635,26 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Empty(Git(_repo, "for-each-ref", $"refs/heads/agent-studio/results/{key}"));
     }
 
-    private BatchPlanInput BuildSnapshot(WebApplicationFactory<Program> factory,
+    // The commit a clean checkout of the parent plus one written file would
+    // commit, without the checkout, add, commit and rev-parse processes.
+    private string ImportCommit(string parentSha, string changedFile, string content, string message, string targetRef)
+    {
+        var body = System.Text.Encoding.UTF8.GetBytes(content);
+        var subject = System.Text.Encoding.UTF8.GetBytes(message + "\n");
+        using var script = new MemoryStream();
+        void Write(string text) => script.Write(System.Text.Encoding.UTF8.GetBytes(text));
+        Write($"commit {targetRef}\nmark :1\n");
+        // As git commit, git stamps the commit with its own clock.
+        Write("author Batch Test <batch-test@example.invalid> now\n");
+        Write("committer Batch Test <batch-test@example.invalid> now\n");
+        Write($"data {subject.Length}\n"); script.Write(subject);
+        Write($"from {parentSha}\nM 100644 inline {changedFile.Replace('\\', '/')}\n");
+        Write($"data {body.Length}\n"); script.Write(body);
+        Write("\nget-mark :1\n");
+        return GitWithInput(_repo, script.ToArray(), "fast-import", "--quiet", "--force", "--date-format=now");
+    }
+
+    private protected BatchPlanInput BuildSnapshot(WebApplicationFactory<Program> factory,
         bool idleGateHost = false)
     {
         var store = factory.Services.GetRequiredService<BatchGateStore>();
@@ -3689,7 +3668,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             idleGateHost: idleGateHost);
     }
 
-    private static ReviewAttemptDto Settle(WebApplicationFactory<Program> factory,
+    private protected static ReviewAttemptDto Settle(WebApplicationFactory<Program> factory,
         SeededMember member, ReviewTerminalOutcome outcome)
     {
         var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
@@ -3704,23 +3683,23 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         return settled.ReviewAttempt!;
     }
 
-    private static Contract.ReviewCommandDto VerificationCommand()
+    private protected static Contract.ReviewCommandDto VerificationCommand()
         => new("verify-build", "review-verification", "dotnet", ["build"]);
 
-    private static Contract.ReviewCommandEvidenceDto Evidence(string sha, string workspaceRole,
+    private protected static Contract.ReviewCommandEvidenceDto Evidence(string sha, string workspaceRole,
         DateTimeOffset startedAt, double minutes)
         => new("verify-build", "review-verification", "dotnet", ["build"], sha, sha,
             new string('c', 64), startedAt.UtcDateTime, startedAt.AddMinutes(minutes).UtcDateTime,
             0, null, new string('d', 64), new string('e', 64), WorkspaceRole: workspaceRole);
 
-    private static void Supersede(AttemptAuthorityService authority, string key)
+    private protected static void Supersede(AttemptAuthorityService authority, string key)
     {
         var reissued = authority.AcquireRun(key, RepositoryId, null, "coding-runner",
             "coding-host", 600, "reissue-" + key);
         Assert.True(reissued.Accepted, reissued.Message);
     }
 
-    private static void EnableBatchGate(WebApplicationFactory<Program> factory, int closeSize,
+    private protected static void EnableBatchGate(WebApplicationFactory<Program> factory, int closeSize,
         string scope = "documentation")
     {
         var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
@@ -3730,30 +3709,30 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             MinimumSize: Math.Min(2, closeSize), PressureSize: 1));
     }
 
-    private static BatchGateSnapshotBuilder Builder(WebApplicationFactory<Program> factory,
+    private protected static BatchGateSnapshotBuilder Builder(WebApplicationFactory<Program> factory,
         ILogger? logger = null)
         => new(factory.Services.GetRequiredService<BatchGateStore>(),
             factory.Services.GetRequiredService<AttemptAuthorityService>(),
             factory.Services.GetRequiredService<TaskScannerService>(),
             factory.Services.GetRequiredService<AgentStudio.Git.GitService>(), logger);
 
-    private static BatchGateFormationOptions Settings(WebApplicationFactory<Program> factory)
+    private protected static BatchGateFormationOptions Settings(WebApplicationFactory<Program> factory)
         => factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
             .Get(ProjectName).BatchGate;
 
     // A fresh builder per call so a moved integration ref is read again.
-    private BatchPlanInput Snapshot(WebApplicationFactory<Program> factory)
+    private protected BatchPlanInput Snapshot(WebApplicationFactory<Program> factory)
         => Builder(factory).Build(ProjectName, "develop",
             factory.Services.GetRequiredService<BatchGateStore>().ListPending(),
             Settings(factory), _clock);
 
-    private int DeliveryLines(WebApplicationFactory<Program> factory, SeededMember member)
+    private protected int DeliveryLines(WebApplicationFactory<Program> factory, SeededMember member)
         => BatchGateDeliveryDiff.Read(factory.Services.GetRequiredService<AgentStudio.Git.GitService>(),
             _repo, "develop", member.ResultSha)!.Lines;
 
     // Moves origin's develop past every seeded card while the local develop
     // branch stays where the fixture left it, as on the Studio checkout.
-    private void AdvanceOriginDevelop(string changedFile)
+    private protected void AdvanceOriginDevelop(string changedFile)
     {
         var restore = Git(_repo, "rev-parse", "HEAD");
         Git(_repo, "checkout", "-q", "--detach", "refs/remotes/origin/develop");
@@ -3767,7 +3746,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Git(_repo, "checkout", "-q", "--detach", restore);
     }
 
-    private BatchGateOwnership? Ownership(string key)
+    private protected BatchGateOwnership? Ownership(string key)
         => TaskStates.All.Select(state => Path.Combine(_watchPath, state, key))
             .Where(Directory.Exists)
             .Select(BatchGateOwnershipStore.Read)
@@ -3777,7 +3756,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     /// The per-task gate can open its own shadow occurrence for the seeded card;
     /// claims keep other occurrences leased until the batch occurrence is claimed.
     /// </summary>
-    private static Contract.OrchestrationClaimResponse ClaimShadow(
+    private protected static Contract.OrchestrationClaimResponse ClaimShadow(
         MonolithOrchestrationStore orchestration, string runId)
     {
         for (var attempt = 0; attempt < 5; attempt++)
@@ -3792,22 +3771,22 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     // A patch-equal member is not an ancestor of the branch, so the Auto
     // Review delivery resume can still write into its old lane folder while
     // the release moves it. That race predates AGT-3143; read the released lane.
-    private BatchGateOwnership? HumanReviewOwnership(string key)
+    private protected BatchGateOwnership? HumanReviewOwnership(string key)
     {
         var folder = Path.Combine(_watchPath, TaskStates.HumanReview, key);
         Assert.True(Directory.Exists(folder), $"{key} did not reach {TaskStates.HumanReview}. Errors: {_errors}");
         return BatchGateOwnershipStore.Read(folder);
     }
 
-    private void AssertLane(string key, string expected)
+    private protected void AssertLane(string key, string expected)
     {
         var lane = Assert.Single(TaskStates.All, state => Directory.Exists(Path.Combine(_watchPath, state, key)));
         Assert.True(lane == expected, $"{key} is in {lane}, expected {expected}. Errors: {_errors}");
     }
 
-    private string RemoteTip() => Git(_origin, "rev-parse", "refs/heads/develop");
+    private protected string RemoteTip() => Git(_origin, "rev-parse", "refs/heads/develop");
 
-    private static BatchGateState AssertPhase(BatchGateStore store, string batchId, BatchPhase expected)
+    private protected static BatchGateState AssertPhase(BatchGateStore store, string batchId, BatchPhase expected)
     {
         var state = store.LatestState(batchId);
         Assert.True(state.Phase == expected, $"Expected {expected}, got {state.Phase}: {state.Reason}");
@@ -3816,11 +3795,11 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
 
     // Bounds a hang only. Every wait below completes on an explicit signal or
     // on durable state the awaited step writes, never on elapsed time.
-    private static readonly TimeSpan HangGuard = TimeSpan.FromMinutes(2);
+    private protected static readonly TimeSpan HangGuard = TimeSpan.FromMinutes(2);
 
     // Polls durable state that only an unobservable step writes: the parked
     // Git hook or the fire-and-forget re-plan of the settings endpoint.
-    private static async Task WaitForAsync(Func<bool> condition)
+    private protected static async Task WaitForAsync(Func<bool> condition)
     {
         var elapsed = Stopwatch.StartNew();
         while (!condition())
@@ -3831,23 +3810,23 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         }
     }
 
-    private static BuildTestGateResult Green(string? sha)
+    private protected static BuildTestGateResult Green(string? sha)
         => new(BuildTestGateVerdict.Ok, 0, 1, "ok", "ok", false, false) { TestedSha = sha };
 
-    private static BuildTestGateResult Red(string? sha)
+    private protected static BuildTestGateResult Red(string? sha)
         => new(BuildTestGateVerdict.Fail, 1, 1, "failed", "deterministic-suite-red", false, false)
         {
             TestedSha = sha,
             FailureKind = BuildTestGateFailureKind.Code,
         };
 
-    private static BuildTestGateResult Infrastructure()
+    private protected static BuildTestGateResult Infrastructure()
         => new(BuildTestGateVerdict.Fail, null, 1, "host lost", "GateInfra", false, false)
         {
             FailureKind = BuildTestGateFailureKind.Environment,
         };
 
-    private async Task RegisterReviewExecutorAsync(HttpClient http)
+    private protected async Task RegisterReviewExecutorAsync(HttpClient http)
     {
         var registration = await http.PutAsJsonAsync(
             $"/api/v1/runners/{ReviewRunnerId}",
@@ -3864,7 +3843,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         registration.EnsureSuccessStatusCode();
     }
 
-    private static Contract.ReviewReportRequest PassingReport(
+    private protected static Contract.ReviewReportRequest PassingReport(
         Contract.ReviewClaimResponse claim, string idempotencyKey)
     {
         var lease = claim.Lease!;
@@ -3885,7 +3864,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             lease.AuthorityEpoch);
     }
 
-    private WebApplicationFactory<Program> BuildFactory(
+    private protected WebApplicationFactory<Program> BuildFactory(
         IReadOnlyDictionary<string, string?>? configuration = null, Action<IServiceCollection>? testServices = null)
     {
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
@@ -3900,6 +3879,9 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
                     ["WatchPaths:0:RootPath"] = _repo,
                     ["WatchPaths:0:RepositoryPath"] = _repo,
                     ["ReviewDecisionOrchestrator:Enabled"] = "false",
+                    // Each test drives one reader at a time, so a refresh has no
+                    // concurrent readers to wait for (AGT-3566).
+                    ["TaskIndexCache:RefreshCoalesceMilliseconds"] = "0",
                     // These tests drive the suite through the fake build/test gate runner.
                     [ClaimedBatchGateRunner.ExecutionKey] = ClaimedBatchGateRunner.BridgeMode,
                 }).AddInMemoryCollection(configuration ?? new Dictionary<string, string?>()));
@@ -3937,12 +3919,12 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         return factory;
     }
 
-    private sealed class PilotTimeProvider(Func<DateTimeOffset> now) : TimeProvider
+    private protected sealed class PilotTimeProvider(Func<DateTimeOffset> now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now();
     }
 
-    private static string Git(string cwd, params string[] args)
+    private protected static string Git(string cwd, params string[] args)
     {
         var start = new ProcessStartInfo("git")
         {
@@ -3960,7 +3942,28 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         return output.Trim();
     }
 
-    private sealed class CapturingLog : ILogger
+    private static string GitWithInput(string cwd, byte[] input, params string[] args)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = cwd,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        using var process = Process.Start(start)!;
+        var error = process.StandardError.ReadToEndAsync();
+        var output = process.StandardOutput.ReadToEndAsync();
+        process.StandardInput.BaseStream.Write(input);
+        process.StandardInput.Close();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, $"git {string.Join(' ', args)}: {error.Result}");
+        return output.Result.Trim();
+    }
+
+    private protected sealed class CapturingLog : ILogger
     {
         private readonly System.Collections.Concurrent.ConcurrentQueue<string> _entries = new();
         public IReadOnlyList<string> Entries => _entries.ToArray();
@@ -3971,7 +3974,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             => _entries.Enqueue(formatter(state, exception));
     }
 
-    private sealed class ErrorLog : ILoggerProvider, ILogger
+    private protected sealed class ErrorLog : ILoggerProvider, ILogger
     {
         private readonly System.Collections.Concurrent.ConcurrentQueue<string> _entries = new();
         public ILogger CreateLogger(string categoryName) => this;
@@ -3986,7 +3989,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         public override string ToString() => string.Join(" | ", _entries);
     }
 
-    private sealed class ScriptedGate : IBuildTestGateRunner
+    private protected sealed class ScriptedGate : IBuildTestGateRunner
     {
         public Func<BuildTestGateRequest, BuildTestGateResult> Batch { get; set; }
             = _ => throw new InvalidOperationException("No batch gate result is scripted.");
@@ -4056,4 +4059,99 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             return FallbackAsync?.Invoke(request, ct) ?? Task.FromResult(Fallback(request));
         }
     }
+
+    private protected sealed class GitReadRecorder : AgentStudio.Git.IGitReadRequestObserver
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<AgentStudio.Git.GitReadRequestRecord> Records { get; } = new();
+        public void OnCompleted(AgentStudio.Git.GitReadRequestRecord record) => Records.Enqueue(record);
+    }
+
+    // The single per-task gate request's test level.
+    private protected string? FallbackLevel()
+        => Assert.Single(_gate.Requests, request => request.Executor == "batch-fallback").RequiredTestLevel;
+
+    // The build-only level needs a non-test command to run: the integration
+    // branch's project definition gains a build command.
+    private protected void WithBuildStep()
+    {
+        Git(_repo, "checkout", "-q", "--detach", "refs/remotes/origin/develop");
+        File.WriteAllText(Path.Combine(_repo, ".agent-studio", "project.yml"),
+            "schemaVersion: 1\nstack: [custom]\ntoolVersions:\ncommands:\n"
+            + "  prepare: .agent-studio/prepare\n  build: [echo build]\n  test: [echo test]\n"
+            + "  lint:\ntestSuites:\ncachePaths:\ncapabilities: [linux]\nenvironment:\n");
+        Git(_repo, "add", ".");
+        Git(_repo, "commit", "-qm", "build step");
+        Git(_repo, "push", "-q", "origin", "HEAD:develop");
+        Git(_repo, "fetch", "-q", "origin");
+    }
+
+    // A disabled pilot hands every queued member to its per-task gate.
+    private protected static void DisableBatchGate(WebApplicationFactory<Program> factory)
+        => factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetBatchGate(ProjectName, new BatchGateFormationOptions(Enabled: false));
+
+    // A code commit on top of origin's develop that is not published there.
+    private protected string CodeCommit(string path)
+    {
+        Git(_repo, "checkout", "-q", "--detach", RemoteTip());
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(_repo, path))!);
+        File.WriteAllText(Path.Combine(_repo, path), "class Code {}\n");
+        Git(_repo, "add", ".");
+        Git(_repo, "commit", "-qm", "code " + path);
+        return Git(_repo, "rev-parse", "HEAD");
+    }
+
+    /// <summary>Publishes the result's patch on top of unrelated work, under another SHA.</summary>
+    private protected string PublishPatchEquivalent(string resultSha)
+    {
+        Git(_repo, "checkout", "-q", "--detach", "origin/develop");
+        File.WriteAllText(Path.Combine(_repo, "unrelated.txt"), "other published work\n");
+        Git(_repo, "add", "unrelated.txt");
+        Git(_repo, "commit", "-qm", "unrelated publication");
+        Git(_repo, "cherry-pick", resultSha);
+        Git(_repo, "push", "-q", "origin", "HEAD:develop");
+        var tip = RemoteTip();
+        Assert.NotEqual(resultSha, tip);
+        return tip;
+    }
+
+    private protected TaskInfo Card(WebApplicationFactory<Program> factory, string key)
+    {
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        scanner.InvalidateCache();
+        return scanner.FindJob(key, _watchPath)!;
+    }
+
+    // A merged member keeps every delivery SHA: the candidate merge has the
+    // tip before it and the untouched result SHA as its exact parents, so the
+    // result maps to that merge and no commit of the card is rewritten.
+    private protected void AssertMergedMember(BatchGateStore store, string batchId, string runId,
+        SeededMember member)
+    {
+        var replay = store.ReadReplay(batchId, member.Key);
+        Assert.Equal("admitted", replay.Outcome);
+        Assert.Equal("merge", replay.Strategy);
+        var replacement = Assert.Single(replay.Replacements);
+        Assert.Equal(member.ResultSha, replacement.OriginalSha);
+        Assert.Equal(replay.TipAfterSha, replacement.RebasedSha);
+        Assert.Equal($"{replay.TipAfterSha} {replay.TipBeforeSha} {member.ResultSha}",
+            Git(_repo, "rev-list", "--parents", "-n", "1", replay.TipAfterSha!));
+        Git(_origin, "merge-base", "--is-ancestor", member.ResultSha, "refs/heads/develop");
+        var record = store.TryReadMember(batchId, member.Key, runId);
+        Assert.NotNull(record);
+        Assert.Equal([replay.TipAfterSha!], record!.ReplacementShas);
+        AssertLane(member.Key, TaskStates.HumanReview);
+        var task = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            _watchPath, TaskStates.HumanReview, member.Key, "task.json"))).RootElement;
+        Assert.All(task.GetProperty("commits").EnumerateArray(), commit =>
+            Assert.False(commit.TryGetProperty("supersededBySha", out var by)
+                && by.ValueKind == JsonValueKind.String));
+        Assert.Contains(task.GetProperty("integrationRecords").EnumerateArray(), item =>
+            item.GetProperty("classification").GetString() == "curated-mapping"
+            && item.GetProperty("sourceSha").GetString() == member.ResultSha
+            && item.GetProperty("integrationSha").GetString() == replay.TipAfterSha);
+    }
+
+    private protected bool TreeHas(string sha, string path)
+        => Git(_repo, "ls-tree", "--name-only", sha, path).Length > 0;
 }

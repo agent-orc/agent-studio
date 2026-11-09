@@ -1309,6 +1309,20 @@ public static class TaskCrudEndpoints
             return success ? Results.Ok(new { released = req?.Released == true }) : Results.NotFound();
         });
 
+        // AGT-3580: the "Re-offer the card" way out of a dispatch-rejection hold.
+        // Clears only the recorded refusal; the next dispatch tick offers the
+        // card again and records a fresh refusal if the runner still refuses.
+        group.MapDelete("/{jobId}/dispatch-rejection", (string jobId, string? project, string? watchPath,
+            TaskScannerService scanner, AgentStudio.Runner.RemoteDispatchRejectionStore rejections,
+            AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var card = scanner.FindJob(jobId, watchPath);
+            if (card is null) return Results.NotFound();
+            rejections.Clear(card);
+            return Results.Ok(new { message = "The refusal is cleared; the next dispatch tick offers the card again." });
+        });
+
         group.MapPost("/{jobId}/decision", async (HttpContext ctx, string jobId, string? project, string? watchPath,
             DecideCardRequest req, DecisionCardService decisions, AgentStudio.Registry.ProjectRegistry projects,
             CancellationToken ct) =>
