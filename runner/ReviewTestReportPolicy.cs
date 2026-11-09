@@ -12,9 +12,21 @@ internal static partial class ReviewTestReportPolicy
     internal static bool Missing(ReviewCommandDto command, ProcessResult result)
     {
         if (!command.CompareToBaseline || ReviewBaselineModes.IsExitStatus(command.BaselineMode)) return false;
+        // A successful custom command can prove its exit status without using
+        // one of the test reporters we parse. Keep incomplete known runners
+        // visible as infrastructure failures rather than treating them as green.
+        if (result.Success && !HasExplicitMissingReport(result)
+            && !LooksLikeIncompleteRunner(result)) return false;
         var failures = RemoteReviewWorkspace.ParsedTestFailures(result);
         return (result.ExitCode != 0 && failures.Count == 0)
                || !ReviewBaselineTestResultPolicy.HasResult(failures, result.StdOut, result.StdErr);
+    }
+
+    private static bool LooksLikeIncompleteRunner(ProcessResult result)
+    {
+        var output = result.StdOut + "\n" + result.StdErr;
+        return output.Contains("Application bundle generation complete", StringComparison.Ordinal)
+               && !ReviewBaselineTestResultPolicy.HasResult([], result.StdOut, result.StdErr);
     }
 
     internal static string MissingPhase(ProcessResult result)
