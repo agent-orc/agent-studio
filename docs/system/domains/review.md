@@ -17,6 +17,15 @@ Status: System-of-record map for Remote Review material, semantic verdicts, and 
 
 ## Aspect prompt cache
 
+The review worker bounds every per-card and package agent aspect's final prompt to 800,000
+characters after it adds the authoritative delivery diff. It keeps changed
+template and style files first, limits each diff file to 40,000 characters,
+and limits the total diff to 580,000 characters. Visual review includes at
+most 12 screenshots of at most 2 MiB each. The prompt names omissions, and
+the command's review evidence carries a `review-input-budget-<step>.txt`
+artifact when material was omitted. A CLI refusal before a model verdict,
+including `input_too_large`, is `ReviewInfra` with a named cause.
+
 The four stock Claude aspects freeze a common review-context prefix containing
 the brief, delivery acceptance scope, project and card context, diff summary,
 and results inventory. The review host inserts the authoritative merge-base diff
@@ -1548,6 +1557,10 @@ usually exists only under `refs/remotes/origin` in the Studio checkout.
 - `runner/RemoteReviewWorkspace.cs`: exact checkout, integration-ref fetch,
   merge-base, bounded review material, aspect parsing, executor-side citation
   downgrade, and the per-attempt process environment.
+- `runner/ReviewAspectInputBudget.cs` and `runner/ReviewCliRefusalPolicy.cs`:
+  final aspect input limits and pre-model CLI refusal attribution, covered by
+  `runner.Tests/ReviewAspectInputBudgetTests.cs` and
+  `runner.Tests/RemoteReviewAspectParallelismTests.cs`.
 - `runner/RemoteReviewExecutor.cs` (`Write`, `ReapSlot`): the single durable
   slot write and the terminal reap that a late heartbeat renewal cannot undo,
   covered by
