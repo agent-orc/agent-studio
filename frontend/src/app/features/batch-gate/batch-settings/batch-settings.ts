@@ -23,6 +23,8 @@ export class BatchSettingsComponent {
   readonly error = signal<string | null>(null);
   readonly fieldError = signal<string | null>(null);
   readonly saved = signal(false);
+  /** Set when enabling switched a documentation scope to code, so the form says so. */
+  readonly scopeDefaulted = signal(false);
 
   constructor() {
     effect(() => this.load(this.project()));
@@ -37,6 +39,7 @@ export class BatchSettingsComponent {
         this.tagsDraft.set(data.settings.urgentTags.join(', '));
         this.maximum.set(data.limits.hardMaximumSize);
         this.advisorEffective.set(data.advisorEffective ?? null);
+        this.scopeDefaulted.set(false);
         this.loading.set(false);
       },
       error: () => { this.error.set('Could not load batch settings.'); this.loading.set(false); },
@@ -46,6 +49,20 @@ export class BatchSettingsComponent {
     this.settings.update(current => current ? { ...current, [key]: value } : current);
     this.fieldError.set(null);
     this.saved.set(false);
+  }
+  /**
+   * Enabling the gate on the documentation scope would leave code cards on the
+   * per-task gate, so enabling defaults the scope to code and says so (AGT-3592).
+   */
+  setEnabled(enabled: boolean): void {
+    const switchScope = enabled && this.settings()?.enabled === false && this.settings()?.scope === 'documentation';
+    this.update('enabled', enabled);
+    if (switchScope) this.update('scope', 'code');
+    this.scopeDefaulted.set(switchScope);
+  }
+  setScope(scope: BatchGateSettings['scope']): void {
+    this.update('scope', scope);
+    this.scopeDefaulted.set(false);
   }
   advisor(key: keyof BatchGateSettings['advisor'], value: string | number): void {
     this.settings.update(current => current ? { ...current, advisor: { ...current.advisor, [key]: value } } : current);
