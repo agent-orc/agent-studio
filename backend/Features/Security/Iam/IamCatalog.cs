@@ -34,6 +34,7 @@ public static class IamPermissions
     public const string WorkspaceAdminister = "workspace.administer";
     public const string AccessRead = "access.read";
     public const string AccessManage = "access.manage";
+    public const string SecurityPostureRead = "security.posture.read";
 
     public const string ProjectRead = "project.read";
     public const string ProjectCardsWrite = "project.cards.write";
@@ -62,6 +63,8 @@ public static class IamPermissions
         new(WorkspaceAdminister, PermissionLevel.Workspace, "Installation-wide changes reserved to the Owner, such as path import."),
         new(AccessRead, PermissionLevel.Workspace, "See users, groups, service accounts, and role bindings."),
         new(AccessManage, PermissionLevel.Workspace, "Invite users and change groups, service accounts, and role bindings."),
+        new(SecurityPostureRead, PermissionLevel.Workspace,
+            "Read the installation security view: exposure, credential metadata, second factor coverage, versions, audit anomalies, and security cards. Never secret values."),
         new(ProjectRead, PermissionLevel.Project, "Read cards, runs, chats, documents, and project reports."),
         new(ProjectCardsWrite, PermissionLevel.Project, "Create, edit, order, and move cards."),
         new(ProjectRunsOperate, PermissionLevel.Project, "Start, stop, and continue runs, pipeline steps, merges, and integrations."),
@@ -143,13 +146,15 @@ public static class IamRoles
     /// board and card reads, lane moves, continue and steer, create, title,
     /// batch gate eject and close-now, quota and routing reads, review step
     /// models, installation operation reads such as the watcher, and stage
-    /// deploys. No secret, production, access, or installation setting.
+    /// deploys. No secret, production, access, or installation setting. It
+    /// reads the security view (AGT-3575) so it can watch expiries and audit
+    /// anomalies without the Owner's access administration.
     /// </summary>
     private static readonly string[] OperatorAgentSet =
     [
         IamPermissions.WorkspaceRead, IamPermissions.ProjectRead, IamPermissions.ProjectCardsWrite,
         IamPermissions.ProjectRunsOperate, IamPermissions.ProjectPipelineWrite, IamPermissions.WorkspaceOperate,
-        IamPermissions.EnvironmentDeploy,
+        IamPermissions.EnvironmentDeploy, IamPermissions.SecurityPostureRead,
     ];
 
     public static readonly IReadOnlyList<RoleDefinition> All =

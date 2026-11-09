@@ -977,6 +977,15 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
 
+        // AGT-3582: the read-only check the task detail asks before it offers
+        // the action agrees with the POST below.
+        using var check = await client.GetAsync(
+            $"/api/tasks/{Slug}/failure/continue?watchPath={Uri.EscapeDataString(_watchPath)}")
+            .WaitAsync(AsyncTestDeadline);
+        Assert.True(check.StatusCode == HttpStatusCode.OK, await check.Content.ReadAsStringAsync());
+        using (var checkPayload = JsonDocument.Parse(await check.Content.ReadAsStringAsync()))
+            Assert.True(checkPayload.RootElement.GetProperty("available").GetBoolean(), checkPayload.RootElement.ToString());
+
         using var response = await client.PostAsJsonAsync(
             $"/api/tasks/{Slug}/failure/continue?watchPath={Uri.EscapeDataString(_watchPath)}",
             new { }).WaitAsync(AsyncTestDeadline);

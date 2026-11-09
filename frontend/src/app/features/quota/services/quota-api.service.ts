@@ -237,9 +237,13 @@ export class QuotaApiService {
     );
   }
 
-  getEffectiveModelSelection() {
+  /** Workspace routes, or the routes of one project and pipeline type when scoped. */
+  getEffectiveModelSelection(scope: { project?: string; pipelineType?: string } = {}) {
+    const params: Record<string, string> = {};
+    if (scope.project) params['project'] = scope.project;
+    if (scope.pipelineType) params['pipelineType'] = scope.pipelineType;
     return this.http.get<{ routes: EffectiveModelSelection[] }>(
-      `${this.baseUrl}/model-selection/effective`,
+      `${this.baseUrl}/model-selection/effective`, { params },
     );
   }
 

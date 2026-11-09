@@ -418,6 +418,7 @@ builder.Services.AddSingleton<ClientIdentityStore>();
 builder.Services.AddSingleton<AccessSecurityStore>();
 builder.Services.AddControlPlaneAudit();
 builder.Services.AddOperatorKillSwitch();
+builder.Services.AddSecurityPosture();
 builder.Services.AddBreakGlassWindows();
 builder.Services.AddHostedService<AgentStudio.Diagnostics.LastSeenPersistenceService>();
 builder.Services.AddSingleton<IKeyEncryptionKeySource, ConfiguredKeyEncryptionKeySource>();
