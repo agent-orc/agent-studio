@@ -1412,6 +1412,12 @@ unreported claim expires with its lease and is queued again.
   boundary: the Task Server never substitutes its checkout or local
   `session-events.jsonl` for the ReviewSubject. Legacy tasks without attempt
   authority continue through the established local compatibility path.
+- The Auto Review stranding watchdog runs in both Monolith and Engine modes.
+  After the configured threshold it recovers a card without a running step,
+  active review, batch entry, or queued round, and records an intervention on
+  the card timeline and stall feed. A stale delivery verdict refreshes the
+  subject from the current completed run, integrates that delivery, and only
+  then requests another review. A merge conflict starts a merge round.
 - ReviewAttempt claimability is also bound to the current task lane. A
   successful transition into `6-completed` or `7-archive` supersedes every open
   ReviewAttempt for that task before another claim can cross the lifecycle

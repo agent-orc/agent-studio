@@ -23,6 +23,8 @@ public static class OrchestrationLoopRegistration
         // worker below, so a card never depends on an in-memory retry counter to
         // reach its integration.
         services.AddSingleton<AutoReviewDeliveryResumeService>();
+        services.AddSingleton<AutoReviewStrandingWatchdog>();
+        services.AddHostedService(provider => provider.GetRequiredService<AutoReviewStrandingWatchdog>());
         services.AddHostedService<AutoReviewPostProcessingWorker>();
         services.AddHostedService<AutoReviewPostProcessingRecoveryService>();
         services.AddHostedService<PostWorkSubjectReconcilerService>();
