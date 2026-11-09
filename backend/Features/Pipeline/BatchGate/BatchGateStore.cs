@@ -650,11 +650,12 @@ public sealed partial class BatchGateStore
             if (_deliveryIndex is not null) AddToDeliveryIndex(manifest);
         }
         // The first record claims every member by its queued review attempt.
-        // The tick's reconciliation may have written it between the two writes.
+        // The tick's reconciliation may have written it between the two writes
+        // and even advanced the batch since; formation still succeeded.
         var formed = TryTransition(new BatchGateState(
             manifest.BatchId, manifest.MembershipDigest, BatchPhase.Formed,
             null, 0, DateTimeOffset.UtcNow), expectedVersion: 0);
-        if (!formed.Accepted && formed.Record is not { Version: 1, State.Phase: BatchPhase.Formed })
+        if (!formed.Accepted && !WasFormed(manifest.BatchId))
             throw new BatchPhaseTransitionRefusedException(manifest.BatchId,
                 formed.Record?.State.Phase, BatchPhase.Formed, formed.Refusal);
     }

@@ -199,6 +199,30 @@ public sealed class BatchGateStorePhaseRecordTests : IDisposable
         Assert.Equal([1L], History(manifest));
     }
 
+    [Theory]
+    [InlineData(BatchPhase.Formed)]
+    [InlineData(BatchPhase.Assembling)]
+    [InlineData(BatchPhase.Abandoned)]
+    public void Formation_accepts_a_batch_a_concurrent_reconciliation_formed_and_advanced(BatchPhase advanced)
+    {
+        var manifest = Formation();
+        var file = Path.Combine(_store.BatchDirectory(manifest.BatchId), "manifest.json");
+        var reconciler = new BatchGateStore(_root);
+        BatchGateDurableWrites.ObserverForTesting = (path, stage) =>
+        {
+            if (stage != BatchGateWriteStage.Completed || path != file) return;
+            Assert.True(reconciler.InitializeFormed(manifest, Now));
+            reconciler.AppendState(State(manifest, advanced));
+        };
+
+        _store.CloseManifest(manifest);
+        BatchGateDurableWrites.ObserverForTesting = null;
+
+        var record = _store.ReadPhaseRecord(manifest.BatchId)!;
+        Assert.Equal((2L, advanced), (record.Version, record.State.Phase));
+        Assert.Equal([1L, 2], History(manifest));
+    }
+
     private BatchGateManifest Close()
     {
         var manifest = Formation();

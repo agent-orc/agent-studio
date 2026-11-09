@@ -84,6 +84,17 @@ public sealed partial class BatchGateStore
             BatchPhase.Formed, null, 0, nowUtc), expectedVersion: 0).Accepted;
 
     /// <summary>
+    /// True when the first state history entry of the batch is formed. A
+    /// refused change writes its current entry first, so once a record exists
+    /// the first entry exists too.
+    /// </summary>
+    private bool WasFormed(string batchId)
+    {
+        var path = HistoryPath(BatchDirectory(batchId), 1);
+        return File.Exists(path) && Read<BatchGateState>(path).Phase == BatchPhase.Formed;
+    }
+
+    /// <summary>
     /// Start-of-tick repair of one batch folder: a record whose state history
     /// entry a crash left out gets that entry, and a closed manifest without
     /// any state gets its first record. Settled folders cost two file checks
