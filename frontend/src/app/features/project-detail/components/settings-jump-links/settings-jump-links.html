@@ -1,0 +1,5 @@
+<nav class="settings-jump" aria-label="Settings sections">
+  @for (link of links(); track link.target) {
+    <button type="button" class="settings-jump__link" [attr.data-testid]="link.testId" (click)="jump(link.target)">{{ link.label }} →</button>
+  }
+</nav>

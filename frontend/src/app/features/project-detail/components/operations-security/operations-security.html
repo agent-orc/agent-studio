@@ -1,0 +1,60 @@
+@if (!hidden()) {
+  <section class="operations-security" data-testid="operations-security" aria-labelledby="operations-security-title">
+    <header class="operations-security__head">
+      <div>
+        <h2 id="operations-security-title">Security</h2>
+        <p>Exposure, credentials, second factor, versions, audit and security cards of this installation. Values of secrets are never shown.</p>
+      </div>
+      <button type="button" class="operations-security__refresh" data-testid="operations-security-refresh" (click)="load()">Refresh</button>
+    </header>
+    @if (error(); as message) { <p role="alert" class="operations-security__error">{{ message }}</p> }
+    @if (posture(); as view) {
+      <dl class="operations-security__summary" data-testid="operations-security-summary">
+        <div><dt>Entries</dt><dd data-testid="operations-security-total">{{ view.summary.total }}</dd></div>
+        @for (band of bands(); track band.severity) {
+          <div [attr.data-severity]="band.severity"><dt>{{ severity(band.severity).label }}</dt><dd>{{ band.count }}</dd></div>
+        }
+        <div><dt>Needs action soon</dt><dd data-testid="operations-security-action-count">{{ view.summary.actionSoon }}</dd></div>
+      </dl>
+
+      @if (actionSoon().length) {
+        <section class="operations-security__soon" data-testid="operations-security-action-soon" aria-labelledby="operations-security-soon-title">
+          <h3 id="operations-security-soon-title">Needs action soon</h3>
+          <ol class="operations-security__list">
+            @for (finding of actionSoon(); track finding.id) {
+              <li class="operations-security__row" [attr.data-testid]="'security-soon-' + finding.id">
+                <span class="operations-security__rank" aria-label="Rank">#{{ finding.rank }}</span>
+                <app-status-indicator [tone]="severity(finding.severity).tone" [label]="severity(finding.severity).label + ' · ' + finding.score" [compact]="true" />
+                <span class="operations-security__title"><strong>{{ finding.title }}</strong><small>{{ finding.detail }}</small></span>
+                <span class="operations-security__meta">{{ areaLabel(finding.area) }}@if (finding.dueAt) { · due <time [attr.datetime]="finding.dueAt">{{ finding.dueAt | date:'d MMM y':'UTC' }}</time> }</span>
+              </li>
+            }
+          </ol>
+        </section>
+      }
+
+      <section class="operations-security__ranked" aria-labelledby="operations-security-ranked-title">
+        <h3 id="operations-security-ranked-title">All entries by severity</h3>
+        @if (!view.findings.length) {
+          <p role="status" class="operations-security__empty" data-testid="operations-security-clear">No security entries. Every fact below is in its expected state.</p>
+        } @else {
+          <ol class="operations-security__list" data-testid="operations-security-findings">
+            @for (finding of view.findings; track finding.id) {
+              <li class="operations-security__row" [attr.data-testid]="'security-finding-' + finding.id" [attr.data-severity]="finding.severity">
+                <span class="operations-security__rank" aria-label="Rank">#{{ finding.rank }}</span>
+                <app-status-indicator [tone]="severity(finding.severity).tone" [label]="severity(finding.severity).label + ' · ' + finding.score" [compact]="true" />
+                <span class="operations-security__title"><strong>{{ finding.title }}</strong><small>{{ finding.detail }}</small></span>
+                <span class="operations-security__meta">{{ areaLabel(finding.area) }}@if (finding.actionSoon) { · needs action soon }</span>
+              </li>
+            }
+          </ol>
+        }
+      </section>
+
+      <app-operations-security-facts [posture]="view" (openCard)="openCard($event)" />
+      <p class="operations-security__stamp">Read <time [attr.datetime]="view.generatedAt">{{ view.generatedAt | date:'d MMM y, HH:mm':'UTC' }} UTC</time></p>
+    } @else if (!error()) {
+      <app-loading-surface kind="list" label="Loading the security view…" />
+    }
+  </section>
+}

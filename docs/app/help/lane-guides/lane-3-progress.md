@@ -1,6 +1,6 @@
 # In Progress
 
-The `3-progress` lane holds jobs that the orchestrator is actively running, or has been running and intends to resume. Cards here are not "queued"; they are either streaming output right now or paused between attempts. The orchestrator picks up work strictly oldest-first within this lane before it ever looks at `2-ready`, so a stuck card here blocks the whole project pipeline. That is by design: the product runs one task at a time per project, on purpose.
+The `3-progress` lane holds jobs that the orchestrator is actively running, or has been running and intends to resume. Cards here are not "queued"; they are either streaming output right now or paused between attempts. The orchestrator picks up work strictly oldest-first within this lane before it ever looks at `2-ready`, so a stuck card here holds the project's run slot. By default a project has one slot and runs one task at a time; a project with parallel slots (`maxParallelism`) runs one task per slot.
 
 ## What an active run looks like
 

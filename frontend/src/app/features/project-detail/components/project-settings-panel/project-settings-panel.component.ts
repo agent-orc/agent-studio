@@ -36,6 +36,7 @@ import { ProjectBuildProfileContradictionNoticeComponent } from '../project-buil
 import { RetentionRulesTableComponent } from '../../../retention/components/retention-rules-table/retention-rules-table.component';
 import { ProjectExecutionDefinitionComponent } from '../project-execution-definition/project-execution-definition';
 import { BatchSettingsComponent } from '../../../batch-gate/batch-settings/batch-settings';
+import { SettingsJumpLinksComponent } from '../settings-jump-links/settings-jump-links';
 import { AUTONOMY_STOPS } from '../autonomy-slider/autonomy-slider';
 // By path, not the barrel: the editor renders only inside @defer (initial bundle budget).
 import { WorkspaceQuotaComponent } from '../../../quota/components/workspace-quota/workspace-quota.component';
@@ -99,7 +100,7 @@ interface WorkspaceListItemLite {
     ProjectBuildProfileContradictionNoticeComponent,
     RetentionRulesTableComponent,
     ProjectExecutionDefinitionComponent,
-    BatchSettingsComponent,
+    BatchSettingsComponent, SettingsJumpLinksComponent,
     WorkspaceQuotaComponent,
     QualityStudioConnectionSettingsComponent,
   ],
@@ -362,9 +363,7 @@ export class ProjectSettingsPanelComponent implements OnInit {
   }
 
   /** Open the global Workspace-settings home (where the default agent lives). */
-  openWorkspaceSettings(): void {
-    this.overlays.openSettings();
-  }
+  openWorkspaceSettings(): void { this.overlays.openSettings(); }
 
   /** Open the global Workspace-settings usage-caps section directly. */
   openUsageCaps(): void {

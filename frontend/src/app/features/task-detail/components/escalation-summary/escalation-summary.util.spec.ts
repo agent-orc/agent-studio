@@ -26,13 +26,44 @@ describe('latestParkedAttempt', () => {
     { ts: '2026-10-06T04:22:53Z', kind: 'agent_run_finished', actor: 'agent', summary: 'Run failed', details: { status: 'failed' } },
   ];
 
-  it('shows the fresh parked attempt and its current reason', () => {
+  it('shows the fresh parked attempt without repeating the park reason', () => {
     expect(latestParkedAttempt(info({
       state: '5e-escalated',
       parkedBlocker: { parkedAt: '2026-10-06T04:22:54Z', reason: 'Push protection rejected the branch.' },
     } as Partial<TaskInfo>), timeline)).toBe(
-      'Latest attempt ended 2026-10-06 04:22 UTC: Push protection rejected the branch.',
+      'Latest attempt ended 2026-10-06 04:22 UTC and parked this card.',
     );
+  });
+
+  // AGT-3586 (F11): DEMO-6 joined a three-month-old run end with today's
+  // acceptance-audit reason. The attempt did not cause that park.
+  it('omits the attempt when the recorded cause is not the run', () => {
+    expect(latestParkedAttempt(info({
+      state: '5e-escalated',
+      parkedBlocker: {
+        parkedAt: '2026-10-06T04:22:54Z',
+        reason: 'missing-delivery: Recover the delivery, resolve the integration failure and rerun the gate.',
+        cause: 'acceptance-integration-failed',
+        causeDetail: 'missing-delivery',
+      },
+    } as Partial<TaskInfo>), timeline)).toBeNull();
+  });
+
+  it('keeps the attempt when the run outcome parked the card, however late the park landed', () => {
+    expect(latestParkedAttempt(info({
+      state: '5e-escalated',
+      parkedBlocker: {
+        parkedAt: '2026-10-06T06:00:00Z', reason: '[agent-blocked] Needs credentials.',
+        cause: 'escalated', causeDetail: 'agent-blocked',
+      },
+    } as Partial<TaskInfo>), timeline)).toBe('Latest attempt ended 2026-10-06 04:22 UTC and parked this card.');
+  });
+
+  it('without a recorded cause, omits a park that came long after the run ended', () => {
+    expect(latestParkedAttempt(info({
+      state: '5e-escalated',
+      parkedBlocker: { parkedAt: '2026-11-09T08:23:00Z', reason: 'Parked much later.' },
+    } as Partial<TaskInfo>), timeline)).toBeNull();
   });
 
   it('uses the latest run record when the remote attempt has no task-ledger run events', () => {
@@ -139,14 +170,62 @@ function reviewProjection(over: Partial<ReviewProjectionView> = {}): ReviewProje
 describe('gateItemsFromCouncil', () => {
   it('projects typed council actions without inspecting Markdown', () => {
     const items = gateItemsFromCouncil([
-      { finding: 'Fix the regression.', action: 'FixNextRound', reason: 'Required next round.' },
-      { finding: 'Accepted tradeoff.', action: 'Accept', reason: 'Operator-safe.' },
-      { finding: 'Budget exhausted.', action: 'Escalate', reason: 'Needs a human.' },
+      { finding: 'Fix the regression.', action: 'fixNextRound', reason: 'Required next round.' },
+      { finding: 'Accepted tradeoff.', action: 'accept', reason: 'Operator-safe.' },
+      { finding: 'Budget exhausted.', action: 'escalate', reason: 'Needs a human.' },
     ]);
     expect(items).toEqual([
       { id: 'council-0-Fix the regression.', text: 'Fix the regression.', detail: 'Required next round.', checked: false, verdict: 'fix next round', tone: 'warn' },
       { id: 'council-1-Accepted tradeoff.', text: 'Accepted tradeoff.', detail: 'Operator-safe.', checked: true, verdict: 'accepted', tone: 'ok' },
       { id: 'council-2-Budget exhausted.', text: 'Budget exhausted.', detail: 'Needs a human.', checked: false, verdict: 'escalate', tone: 'danger' },
+    ]);
+  });
+});
+
+/**
+ * Captured `/api/tasks/{id}/code-review/list` entry (AGT-3578, demo data from
+ * AGT-3561). The API serializes the council enums in camelCase.
+ */
+const CAPTURED_CODE_REVIEW_LIST_JSON = `{"entries":[{
+  "fileName":"code-review-grade-2026-11-09T10-12-40Z.md","verdict":"concerns","grade":"C",
+  "summary":"Two findings remain after the review-loop budget.","model":"claude-opus-4-8","cliType":"claude",
+  "runAt":"2026-11-09T10:12:40Z",
+  "councilReaction":{
+    "createdAt":"2026-11-09T10:12:41Z","reviewFileName":"code-review-grade-2026-11-09T10-12-40Z.md",
+    "grade":"C","disposition":"escalate","summary":"Escalate 2 open review findings; loop budget exhausted.",
+    "assessments":[
+      {"finding":"Live probe missing.","action":"escalate","reason":"Review-loop budget exhausted."},
+      {"finding":"Dark-theme screenshot missing.","action":"fixNextRound","reason":"Concrete review deficiency."},
+      {"finding":"Naming nit.","action":"accept","reason":"Cosmetic only."}
+    ],
+    "startsNewRound":false,"targetJobId":null,"targetRunAttempt":null
+  }
+}]}`;
+
+describe('council wire format (AGT-3578)', () => {
+  const captured = (JSON.parse(CAPTURED_CODE_REVIEW_LIST_JSON) as { entries: CodeReviewListEntry[] }).entries;
+
+  it('labels camelCase actions by their own decision; only accepted findings are checked', () => {
+    const items = gateItemsFromCouncil(captured[0].councilReaction?.assessments ?? []);
+    expect(items.map(({ verdict, tone, checked }) => ({ verdict, tone, checked }))).toEqual([
+      { verdict: 'escalate', tone: 'danger', checked: false },
+      { verdict: 'fix next round', tone: 'warn', checked: false },
+      { verdict: 'accepted', tone: 'ok', checked: true },
+    ]);
+  });
+
+  it('names the escalation "Council review escalated" from a camelCase disposition', () => {
+    expect(escalationReasonClass([], null, captured)).toBe('Council review escalated');
+  });
+
+  it('still reads an older PascalCase sidecar and never labels an unknown action accepted', () => {
+    const items = gateItemsFromCouncil([
+      { finding: 'Old escalate.', action: 'Escalate', reason: 'r' },
+      { finding: 'Unknown.', action: 'defer', reason: 'r' },
+    ] as unknown as Parameters<typeof gateItemsFromCouncil>[0]);
+    expect(items.map(({ verdict, tone, checked }) => ({ verdict, tone, checked }))).toEqual([
+      { verdict: 'escalate', tone: 'danger', checked: false },
+      { verdict: 'defer', tone: 'neutral', checked: false },
     ]);
   });
 });
@@ -200,9 +279,9 @@ describe('resolveGateItems priority', () => {
           createdAt: '2026-07-09T19:22:03Z',
           reviewFileName: 'code-review-grade-2026-07-09T19-22-02Z.md',
           grade: 'B',
-          disposition: 'Escalate',
+          disposition: 'escalate',
           summary: 'Escalate one finding.',
-          assessments: [{ finding: 'do the thing', action: 'Escalate', reason: 'budget exhausted' }],
+          assessments: [{ finding: 'do the thing', action: 'escalate', reason: 'budget exhausted' }],
           startsNewRound: false,
           targetJobId: null,
           targetRunAttempt: null,
@@ -374,11 +453,11 @@ describe('buildEscalationSummaryView', () => {
           createdAt: '2026-07-09T19:22:03Z',
           reviewFileName: 'code-review-grade-2026-07-09T19-22-02Z.md',
           grade: 'B',
-          disposition: 'Escalate',
+          disposition: 'escalate',
           summary: 'Escalate two findings.',
           assessments: [
-            { finding: 'Frontend verification missing.', action: 'Escalate', reason: 'Budget exhausted.' },
-            { finding: 'Live probe missing.', action: 'Escalate', reason: 'Budget exhausted.' },
+            { finding: 'Frontend verification missing.', action: 'escalate', reason: 'Budget exhausted.' },
+            { finding: 'Live probe missing.', action: 'escalate', reason: 'Budget exhausted.' },
           ],
           startsNewRound: false,
           targetJobId: null,
@@ -597,6 +676,25 @@ describe('deriveEscalationClass', () => {
     expect(cls?.kind).toBe('gave-up');
     expect(cls?.category).toBe('infra-crash');
     expect(cls?.reason).toBe('aspect runner died');
+  });
+
+  // AGT-3586: the park panel above states the reason; the banner keeps its category.
+  it('drops a give-up reason the park panel already states', () => {
+    const view = buildEscalationSummaryView({
+      info: info({
+        orchestratorVerdict: 'escalate',
+        parkedBlocker: {
+          parkedAt: '2026-10-06T04:22:54Z', reason: '[infra-crash] process died at exit -1.',
+          cause: 'escalated', causeDetail: 'infra-crash',
+        } as TaskInfo['parkedBlocker'],
+      }),
+      statusMarkdown: '# Status\n- Category: infra-crash\n- Reason: process died at exit -1.',
+      reviewEvidence: [],
+      codeReviews: [],
+      timeline: [],
+      ...noSteer,
+    });
+    expect(view.escalation).toMatchObject({ kind: 'gave-up', categoryLabel: 'Infra crash', reason: null });
   });
 
   it('treats an escalate verdict with no give-up category as a logical NeedsReview', () => {

@@ -1,0 +1,16 @@
+<section class="batch-isolation" [attr.aria-labelledby]="'batch-isolation-' + batchId()" data-testid="batch-isolation">
+  <h5 [id]="'batch-isolation-' + batchId()">Isolation by member</h5>
+  <ul class="batch-isolation__rows">
+    @for (row of rows(); track row.taskKey) {
+      <li class="batch-isolation__row" data-testid="batch-isolation-member" [attr.data-task-key]="row.taskKey" [attr.data-status]="row.status">
+        <div class="batch-isolation__head">
+          <strong>{{ row.taskKey }}</strong>
+          <app-status-indicator [tone]="tone(row.status)" [label]="label(row.status)" [compact]="true" testId="batch-isolation-status" />
+        </div>
+        @if (row.finding; as finding) {
+          @if (row.status === 'proven-red') { <app-batch-proven-red [project]="project()" [finding]="finding" /> }
+        }
+      </li>
+    }
+  </ul>
+</section>
