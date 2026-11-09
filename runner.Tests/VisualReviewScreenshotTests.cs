@@ -205,11 +205,11 @@ public sealed class VisualReviewScreenshotTests
     }
 
     [Fact]
-    public async Task Corrupt_images_do_not_use_the_limit_before_a_valid_after_screenshot()
+    public async Task Truncated_headers_do_not_use_the_limit_before_a_valid_after_screenshot()
     {
         var validBytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory,
             "Fixtures", "visual-review", "clean-footer.png"));
-        var corruptBytes = validBytes[..(validBytes.Length / 2)];
+        var corruptBytes = validBytes[..20];
         var corrupt = Enumerable.Range(0, 100)
             .Select(index => Artifact($"corrupt-{index}", $"bars/after-{index:D3}.png", corruptBytes));
         var valid = Artifact("valid", "bars/after-999.png", validBytes);

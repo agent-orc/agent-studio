@@ -1,7 +1,5 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
 
 using Xunit;
 
@@ -164,13 +162,7 @@ public class AspectRunnerTests : IDisposable
         Assert.Single(LocalVisualScreenshotEvidence.Images(_jobFolder));
     }
 
-    private static byte[] ValidPng()
-    {
-        using var image = new Image<Rgba32>(1, 1);
-        using var output = new MemoryStream();
-        image.SaveAsPng(output);
-        return output.ToArray();
-    }
+    private static byte[] ValidPng() => PngFixture.Create(1, 1);
 
     [Fact]
     public async Task Local_aspect_preserves_evidence_checked_for_scoped_rereview()

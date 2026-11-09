@@ -1,8 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
 
 using Xunit;
 
@@ -138,8 +136,7 @@ public class PipelineExecutionParallelTests : IDisposable
         pipelineLog.Begin(_jobFolder, PipelineCatalogue.Standard, project: "demo", jobId: "test-job");
         var results = Path.Combine(_jobFolder, "results");
         Directory.CreateDirectory(results);
-        using (var screenshot = new Image<Rgba32>(2, 2))
-            screenshot.SaveAsPng(Path.Combine(results, "after-pipeline.png"));
+        PngFixture.Write(Path.Combine(results, "after-pipeline.png"), 2, 2);
 
         var runner = BuildRunner(_ => Task.FromResult("[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]"),
             pipelineLog: pipelineLog);
