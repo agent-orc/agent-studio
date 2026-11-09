@@ -370,6 +370,28 @@ completed immutable run, no canonical ReviewAttempt, and no durable park gets
 one idempotent replacement attempt. A scheduled ReviewInfra retry is canonical
 authority and is never treated as missing.
 
+The per-card Auto Review stranding watchdog runs every 30 seconds. After
+`AutoReviewStranding:ThresholdMinutes` (30 by default), it checks for a running
+pipeline step, a pending or leased ReviewAttempt, a pending or active formed
+batch, a queued round, and a queued post-processing step. A card with none gets
+a durable intervention receipt in the existing stall-intervention feed and
+its timeline. Report-only cards restart post-processing; coding cards with a
+completed run request a fresh ReviewAttempt; a passed review resumes delivery
+integration or re-enters the batch gate only when its source RunAttempt and
+result SHA match the current completed delivery. An older review starts a fresh
+review for the new delivery. If no safe step can be started, the
+card moves to Escalated with the reason. Each intervention in a lane visit has
+its own receipt. After a successful intervention, the watchdog waits another
+threshold interval before intervening again. It can advance from review recovery
+to batch recovery in the same visit. If the same recovery leaves the card
+ownerless again, it escalates the card with the reason.
+
+When the delivery-chain reconciler finds a stale acceptance or integration
+verdict, it returns the card to Auto Review and requests a fresh review at
+once. A delivery conflict queues the existing integration recovery round,
+which steers the next coding attempt against `develop` and records the round
+on the timeline.
+
 ## Versioned review-library steps
 
 Concept cards on the remote plane receive one semantic `concept-fit` aspect in

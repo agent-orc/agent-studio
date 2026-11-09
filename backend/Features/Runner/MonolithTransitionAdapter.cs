@@ -8,6 +8,9 @@ namespace AgentStudio.Runner;
 /// <summary>Host boundary for the shared decision library. No transition rules belong here.</summary>
 public static class MonolithTransitionAdapter
 {
+    public static AutoReviewStrandingAction AutoReviewStranding(AutoReviewStrandingFacts facts)
+        => AutoReviewStrandingPolicy.Decide(facts);
+
     public static TransitionDecision Decide(TransitionFacts facts) => TransitionDecisionPolicy.Decide(facts);
     public static RedDevelopRepairDecision RedDevelopRepair(RedDevelopRepairFacts facts)
         => RedDevelopRepairPolicy.Decide(facts);
