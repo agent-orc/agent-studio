@@ -2606,6 +2606,14 @@ export interface ParkedBlockerStatus {
   /** The original freetext park reason, verbatim. */
   reason: string;
   /**
+   * Lane-change cause that parked the card (`acceptance-integration-failed`,
+   * `escalated`, ...). AGT-3586: the park copy is chosen from it. Absent on
+   * markers written before the field existed.
+   */
+  cause?: string | null;
+  /** Short qualifier of `cause`, e.g. `missing-delivery` or an escalation category. */
+  causeDetail?: string | null;
+  /**
    * Latest sweep verdict: `blocked`, `recallable`, or `undeterminable`.
    * Absent on board cards; /details/overview carries it.
    */
