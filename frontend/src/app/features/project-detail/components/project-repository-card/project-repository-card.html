@@ -1,0 +1,41 @@
+<article class="repository-card" data-testid="project-repository-card">
+  <div class="repository-card__head">
+    <span class="repository-card__icon" aria-hidden="true">⎇</span>
+    <span class="repository-card__title">Repository</span>
+  </div>
+  <p class="repository-card__desc">
+    How Remote Review reaches the repository, and the branch task worktrees
+    branch off and integrate back into.
+  </p>
+
+  <fieldset class="repository-card__field" data-setting-key="repository-visibility"
+            data-testid="project-repository-visibility">
+    <legend>Repository visibility</legend>
+    <app-segmented-control [options]="visibilityOptions" [value]="visibility() ?? ''" [disabled]="saving()"
+                           ariaLabel="Repository visibility" (valueChange)="setVisibility($any($event))" />
+    @if (visibility() === null) {
+      <small data-testid="project-repository-visibility-unrecorded">
+        Not recorded. Remote Review treats the repository as public until you choose.
+      </small>
+    }
+  </fieldset>
+
+  <div class="repository-card__field" data-setting-key="integration-branch" data-testid="project-integration-branch">
+    <label for="project-integration-branch-input">Integration branch</label>
+    <div class="repository-card__branch">
+      <input id="project-integration-branch-input" type="text" spellcheck="false" placeholder="origin/HEAD"
+             data-testid="project-integration-branch-input" [value]="branch()" [disabled]="saving()"
+             (input)="branch.set($any($event.target).value)" (keydown.enter)="saveBranch()" />
+      <button type="button" data-testid="project-integration-branch-save"
+              [disabled]="saving() || branch().trim() === savedBranch()" (click)="saveBranch()">Save</button>
+    </div>
+    <small>Leave empty to follow the repository's origin/HEAD.</small>
+  </div>
+
+  @if (error(); as message) {
+    <p class="repository-card__error" role="alert">{{ message }}</p>
+  }
+  @if (notice(); as message) {
+    <p class="repository-card__notice" role="status" data-testid="project-repository-notice">{{ message }}</p>
+  }
+</article>
