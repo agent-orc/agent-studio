@@ -342,7 +342,8 @@ public static class RoutePermissionCatalog
         // lease is one per installation; holding it needs a binding that may
         // operate runs in at least one project.
         Add("R", IamPermissions.ProjectRead,
-            "/api/operator/decisions", "/api/operator/decisions/stream", "/api/operator/watcher/lease",
+            "/api/operator/decisions", "/api/operator/decisions/stream", "/api/operator/attention",
+            "/api/operator/watcher/lease",
             "/api/operator/capacity", "/api/operator/backups");
         AddProjectChecked("W", IamPermissions.ProjectRunsOperate,
             "/api/operator/watcher/lease", "/api/operator/watcher/lease/{}", "/api/operator/watcher/lease/{}/heartbeat");
