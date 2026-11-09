@@ -143,15 +143,18 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
             status?.Failure?.Code == AcceptedIntegrationFailureCodes.MergeConflict
                 || status?.Failure?.ConflictReport is not null);
 
-    /// <summary>The fact behind an acceptance park, without a slug prefix or a next step.</summary>
+    /// <summary>
+    /// The fact behind an acceptance park, without a slug prefix or a next step.
+    /// The recorded failure reason is kept whenever there is one.
+    /// </summary>
     internal static string IntegrationParkReason(string category, TaskIntegrationStatus? status)
     {
-        if (category == "missing-delivery")
-            return "No delivery branch was found for this card, so its work cannot be integrated.";
+        var fact = category == "missing-delivery"
+            ? "No delivery branch was found for this card, so its work cannot be integrated"
+            : "The delivery could not be integrated";
         var failure = status?.Failure?.Reason?.Trim();
-        return string.IsNullOrEmpty(failure)
-            ? "The delivery could not be integrated."
-            : $"The delivery could not be integrated: {failure}";
+        if (string.IsNullOrEmpty(failure)) return fact + ".";
+        return failure[^1] is '.' or '!' or '?' ? $"{fact}: {failure}" : $"{fact}: {failure}.";
     }
 
     private static string SubjectKey(TaskInfo card, DeliveryChainOperatorFacts facts)

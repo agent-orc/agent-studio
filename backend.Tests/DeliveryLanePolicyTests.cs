@@ -224,4 +224,21 @@ public sealed class DeliveryLanePolicyTests
             DeliveryChainReconciler.IntegrationParkReason("integration-failed", null));
         Assert.DoesNotContain("rerun", missing + failed);
     }
+
+    // AGT-3586 review: the recorded failure detail is never discarded, also
+    // on a missing-delivery park, and the sentence always ends.
+    [Fact]
+    public void AcceptanceParkReason_KeepsTheRecordedFailureDetail()
+    {
+        var status = new TaskIntegrationStatus
+        {
+            Failure = new TaskIntegrationFailure { Reason = "Branch agent/AGT-1 was deleted on origin" },
+        };
+        Assert.Equal(
+            "No delivery branch was found for this card, so its work cannot be integrated: "
+            + "Branch agent/AGT-1 was deleted on origin.",
+            DeliveryChainReconciler.IntegrationParkReason("missing-delivery", status));
+        Assert.Equal("The delivery could not be integrated: Branch agent/AGT-1 was deleted on origin.",
+            DeliveryChainReconciler.IntegrationParkReason("merge-conflict", status));
+    }
 }

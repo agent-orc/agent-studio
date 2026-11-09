@@ -247,6 +247,27 @@ describe('park copy from the recorded cause', () => {
       .toBe('No verify command is defined. Then use Retry integration.');
   });
 
+  it('keeps the recorded integration failure after a category prefix', () => {
+    const conflict = parkCauseView('acceptance-integration-failed', 'merge-conflict');
+    expect(parkReasonSentence('merge-conflict: Merge conflict in src/app.ts', conflict))
+      .toBe('Merge conflict in src/app.ts.');
+    expect(parkReasonSentence('integration-failed: verify exited 1 in backend.Tests',
+      parkCauseView('acceptance-integration-failed', 'integration-failed')))
+      .toBe('Verify exited 1 in backend.Tests.');
+    expect(parkReasonSentence('The delivery could not be integrated: Merge conflict in src/app.ts.', conflict))
+      .toBe('The delivery could not be integrated: Merge conflict in src/app.ts.');
+  });
+
+  it('replaces only the detail-free legacy audit instruction, and fills an unstated audit reason', () => {
+    const failed = parkCauseView('acceptance-integration-failed', 'integration-failed');
+    expect(parkReasonSentence(
+      'integration-failed: Recover the delivery, resolve the integration failure and rerun the gate.', failed,
+    )).toBe('The delivery could not be integrated.');
+    expect(parkReasonSentence('missing-delivery', parkCauseView('acceptance-integration-failed', 'missing-delivery')))
+      .toBe('No delivery branch was found for this card, so its work cannot be integrated.');
+    expect(parkReasonSentence('', failed)).toBe('The delivery could not be integrated.');
+  });
+
   it('states a reason once, as a sentence, never as a bare slug', () => {
     const unknown = parkCauseView(null, null);
     expect(parkReasonSentence('[agent-blocked] the agent stopped', unknown)).toBe('The agent stopped.');

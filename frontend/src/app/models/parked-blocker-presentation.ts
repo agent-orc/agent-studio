@@ -266,11 +266,14 @@ const SLUG = /^[a-z0-9]+(?:[-_][a-z0-9]+)+$/;
  * dropped: the cause already names it, and a slug is not a sentence. A reason
  * that is only slugs (the `cause: detail` fallback) reads as unrecorded.
  *
- * The acceptance audit used to write `<category>: <instruction>`, and the
- * instruction ("rerun the gate") named no button the lane offers. That legacy
- * shape is replaced by the fact the category stands for.
+ * The acceptance audit used to write `<category>: <instruction>` with one
+ * fixed instruction ("rerun the gate") that named no button the lane offers
+ * and carried no failure detail. Only that exact legacy shape is replaced by
+ * the fact the category stands for; any other text after the prefix is the
+ * recorded failure and is kept.
  */
 export function parkReasonSentence(reason: string | null | undefined, cause: ParkCauseView): string {
+  const audit = cause.origin === 'acceptance-audit';
   let text = reason?.trim() ?? '';
   const bracket = /^\[([^\]]+)\]\s*/.exec(text);
   if (bracket) {
@@ -279,18 +282,22 @@ export function parkReasonSentence(reason: string | null | undefined, cause: Par
     const colon = /^([A-Za-z0-9_-]+):\s+/.exec(text);
     const head = colon?.[1].toLowerCase();
     if (colon && head && (SLUG.test(head) || head === cause.causeDetail || head === cause.cause)) {
-      // The legacy audit shape: `<category>: <instruction>`.
-      if (cause.origin === 'acceptance-audit' && head === cause.causeDetail) return acceptanceAuditFact(head);
       text = text.slice(colon[0].length);
+      if (audit && LEGACY_AUDIT_INSTRUCTION.test(text.trim())) return acceptanceAuditFact(head);
     }
   }
   text = text.trim();
-  if (!text || SLUG.test(text) || /^[a-z0-9-]+: [a-z0-9-]+$/.test(text)) return UNSTATED_REASON;
+  if (!text || SLUG.test(text) || /^[a-z0-9-]+: [a-z0-9-]+$/.test(text)) {
+    return audit ? acceptanceAuditFact(cause.causeDetail) : UNSTATED_REASON;
+  }
   text = text.charAt(0).toUpperCase() + text.slice(1);
   return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
-function acceptanceAuditFact(category: string): string {
+/** The one instruction the acceptance audit wrote before AGT-3586; it held no failure detail. */
+const LEGACY_AUDIT_INSTRUCTION = /^Recover the delivery, resolve the integration failure and rerun the gate\.?$/i;
+
+function acceptanceAuditFact(category: string | null): string {
   if (category === 'missing-delivery') {
     return 'No delivery branch was found for this card, so its work cannot be integrated.';
   }
