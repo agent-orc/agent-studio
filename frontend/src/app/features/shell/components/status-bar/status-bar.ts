@@ -31,6 +31,7 @@ import {
 import { StatusbarItemComponent } from '../statusbar-item/statusbar-item.component';
 import { CrashRecoveryPromptComponent } from '../crash-recovery-prompt/crash-recovery-prompt.component';
 import { summarizeStatusBarHostLoad, summarizeStatusBarSlotsByRole } from './status-bar-host-load';
+import { describeStatusBarReviewLane, summarizeStatusBarReviewLane } from './status-bar-review-lane';
 import { withRouteSegment } from '../../../../services/url-hash.util';
 
 const HOST_LOAD_REFRESH_MS = 30_000;
@@ -162,8 +163,19 @@ export class StatusBarComponent implements OnInit, OnDestroy {
     return review.hasUtilization ? review.active : this.reviewActiveJobs();
   });
 
-  /** Cards waiting in the post-processing queue but not yet running. */
-  readonly reviewWaiting = computed(() => this.reviewSnapshot()?.queueDepth ?? 0);
+  /**
+   * AGT-3589: Post Processing cards as the board draws them. The auto-review
+   * queue snapshot only counts cards already in the local slot queue and read
+   * "review idle" while the lane held ten waiting cards.
+   */
+  readonly reviewLane = computed(() =>
+    summarizeStatusBarReviewLane(this.jobService.grouped().autoReview ?? []));
+
+  /** Post Processing cards that wait for review: the lane minus those under review. */
+  readonly reviewWaiting = computed(() => {
+    const lane = this.reviewLane();
+    return lane.waiting + lane.stalled;
+  });
 
   /**
    * ATTENTION: cards are queued but nothing is draining. The operator sees an
@@ -192,11 +204,11 @@ export class StatusBarComponent implements OnInit, OnDestroy {
   /** Tooltip for the review plane item. */
   readonly reviewTooltip = computed(() => {
     const snap = this.reviewSnapshot();
-    const slotDetail = this.planeHostDetail('Review', this.slotsByRole().review);
-    if (!snap) return `Auto-review queue data unavailable. ${slotDetail}`;
-    const { activeJobs, queueDepth, isStagnant, stagnantThresholdMinutes } = snap;
-    const base = `Auto-review queue: ${activeJobs} processing, ${queueDepth} waiting. ${slotDetail}`;
-    if (isStagnant) return `${base} Warning: queue has not drained for >${stagnantThresholdMinutes} minutes.`;
+    const base = `${describeStatusBarReviewLane(this.reviewLane())} `
+      + this.planeHostDetail('Review', this.slotsByRole().review);
+    if (snap?.isStagnant) {
+      return `${base} Warning: the review queue has not drained for >${snap.stagnantThresholdMinutes} minutes.`;
+    }
     return base;
   });
 
