@@ -25,6 +25,7 @@ test('board explains an active batch refusal before explicit withdrawal', async 
     await page.goto('/');
     await expect(page.locator('.column__title').first()).toBeVisible();
     await expect(page.getByText(title, { exact: true })).toBeVisible();
+    await expect(page.getByTestId('offline-banner')).toBeHidden({ timeout: 30_000 });
     await page.evaluate(cardTitle => {
       const columns = Array.from(document.querySelectorAll('.column')) as HTMLElement[];
       const ready = columns.find(column => column.querySelector('.column__title')?.textContent?.trim() === 'Ready');
