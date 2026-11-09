@@ -41,7 +41,7 @@ public static class PickupHoldResolutionKinds
 
     /// <summary>Drop one explicitly named edge that currently participates in a dependency cycle.</summary>
     public const string DropCycleEdge = "drop-cycle-edge";
-    /// <summary>Grant the target's explicit release flag (<c>PUT /api/tasks/{id}/release</c>).</summary>
+    /// <summary>Grant the target's explicit release flag (<see cref="RemedyApiActions.ReleaseTask"/>).</summary>
     public const string ReleaseTarget = "release-target";
 
     /// <summary>Drop the <c>releaseGate</c> edge and re-plan the dependent.</summary>
@@ -49,9 +49,6 @@ public static class PickupHoldResolutionKinds
 
     /// <summary>Finish, or drop the edge to, a target that has not reached a terminal lane.</summary>
     public const string AwaitTarget = "await-target";
-
-    /// <summary>Create the referenced key, or remove the edge that names it.</summary>
-    public const string CreateOrDropTarget = "create-or-drop-target";
 
     /// <summary>Give the runner the missing capability, or route the card elsewhere.</summary>
     public const string RestoreRunnerCapability = "restore-runner-capability";
@@ -82,12 +79,17 @@ public static class PickupHoldResolutionKinds
 /// <param name="Detail">One sentence naming what the operator is deciding.</param>
 /// <param name="TargetKey">The stable target key the resolution acts on, when it has one.</param>
 /// <param name="SourceKey">The stable source key for an edge decision; null means the waiting card.</param>
+/// <param name="Action">
+/// AGT-3580 - the typed action the UI renders as a button or a link. Every kind
+/// carries one; <paramref name="Detail"/> stays prose and never holds a command.
+/// </param>
 public sealed record PickupHoldResolution(
     string Kind,
     string Label,
     string Detail,
     string? TargetKey = null,
-    string? SourceKey = null);
+    string? SourceKey = null,
+    RemedyAction? Action = null);
 
 /// <summary>
 /// AGT-2818 - read-time projection of the queued-but-unpickable state of a card
@@ -212,7 +214,8 @@ public static class PickupHoldPolicy
                 new PickupHoldResolution(
                     PickupHoldResolutionKinds.AssignAgent,
                     "Assign a CLI agent",
-                    "Change the card's agent from human to a CLI agent, or start the run by hand."));
+                    "Change the card's agent from human to a CLI agent so the runner can pick it up.",
+                    Action: RemedyAction.Api(RemedyApiActions.SetCliType, task.ProjectName)));
 
         if (task.Fixture)
             return Hold(
@@ -228,7 +231,8 @@ public static class PickupHoldPolicy
                 new PickupHoldResolution(
                     PickupHoldResolutionKinds.DecideEscalation,
                     "Decide it in the escalated lane",
-                    "Move the card to 5e-escalated and record the decision there."));
+                    "Move the card to the escalated lane and record the decision there.",
+                    Action: RemedyAction.Api(RemedyApiActions.MoveToEscalated, task.ProjectName)));
 
         if (facts.CrashBackoffUntilUtc is { } until && until > facts.NowUtc)
             return Hold(
@@ -238,7 +242,8 @@ public static class PickupHoldPolicy
                 new PickupHoldResolution(
                     PickupHoldResolutionKinds.WaitOutBackoff,
                     "Wait out the cooldown",
-                    "The cooldown expires on its own; start the run by hand if the crash cause is already fixed."));
+                    "The cooldown expires on its own; start the run by hand if the crash cause is already fixed.",
+                    Action: RemedyAction.Api(RemedyApiActions.StartRun, task.ProjectName)));
 
         if (facts.IntakeEnabled && task.Phase != LifecyclePhases.IntakePassed)
             return Hold(
@@ -248,7 +253,8 @@ public static class PickupHoldPolicy
                 new PickupHoldResolution(
                     PickupHoldResolutionKinds.PassIntake,
                     "Let intake pass the card",
-                    "Resolve what intake is blocking on, or disable the intake gate for this project."));
+                    "Run intake on the card now; if it still blocks, resolve what intake names or disable the intake gate for this project.",
+                    Action: RemedyAction.Api(RemedyApiActions.RunIntake, task.ProjectName)));
 
         var dependency = DependencyHold(facts, laneEntry);
         if (dependency != null) return dependency;
@@ -264,7 +270,9 @@ public static class PickupHoldPolicy
                 new PickupHoldResolution(
                     PickupHoldResolutionKinds.RouteToRemoteRunner,
                     "Choose an execution runner",
-                    "Open Project Settings and choose an available runner under Execution location."));
+                    "Open Project Settings and choose an available runner under Execution location.",
+                    TargetKey: string.IsNullOrWhiteSpace(facts.SuggestedRemoteRunnerId) ? null : facts.SuggestedRemoteRunnerId,
+                    Action: RemedyAction.Setting(ProjectSettingKeys.ExecutionRunner, task.ProjectName)));
         }
 
         // Dated from the refusal, not from the lane entry: that is the moment the
@@ -279,11 +287,13 @@ public static class PickupHoldPolicy
                 new PickupHoldResolution(
                     PickupHoldResolutionKinds.RestoreRunnerCapability,
                     "Restore the runner capability",
-                    $"Give {Describe(rejection.RunnerName, rejection.RunnerId)} what it reported missing, or route this project at a runner that has it."),
+                    $"Give {Describe(rejection.RunnerName, rejection.RunnerId)} what it reported missing, or route this project at a runner that has it.",
+                    Action: RemedyAction.Route(RemedyRoutes.ExecutionHosts, task.ProjectName)),
                 new PickupHoldResolution(
                     PickupHoldResolutionKinds.RetryDispatch,
                     "Re-offer the card",
-                    "The refusal stays visible until a later dispatch succeeds or an operator clears it."));
+                    "Clears the recorded refusal so the next dispatch tick offers the card again; a new refusal is recorded if the runner still refuses.",
+                    Action: RemedyAction.Api(RemedyApiActions.ClearDispatchRejection, task.ProjectName)));
 
         return null;
     }
@@ -303,7 +313,7 @@ public static class PickupHoldPolicy
                 PickupHoldMechanisms.DependencyGate,
                 "This card's dependsOn chain forms a cycle, so no order of completions can ever fulfil it.",
                 laneEntry, facts.NowUtc, unsatisfiable: true,
-                CycleDecisions(waitsOn.CyclePath).ToArray());
+                CycleDecisions(facts.Task, waitsOn.CyclePath).ToArray());
 
         var openDependencies = waitsOn.Items
             .Where(item => !item.Fulfilled)
@@ -328,7 +338,7 @@ public static class PickupHoldPolicy
                 PickupHoldMechanisms.DependencyGate,
                 reason + reasonSuffix,
                 laneEntry, facts.NowUtc, unsatisfiable: true,
-                DependencyDecisions(open.Key).ToArray()) with
+                DependencyDecisions(facts.Task, open.Key).ToArray()) with
             {
                 AttentionTargetKey = open.Key,
             };
@@ -343,12 +353,14 @@ public static class PickupHoldPolicy
                     PickupHoldResolutionKinds.ReleaseTarget,
                     $"Release {open.Key}",
                     "Releasing states that the validation this gate stands for no longer has to happen. Only an operator may decide that.",
-                    open.Key),
+                    open.Key,
+                    Action: RemedyAction.Api(RemedyApiActions.ReleaseTask, facts.Task.ProjectName, open.Key)),
                 new PickupHoldResolution(
                     PickupHoldResolutionKinds.DropReleaseGate,
                     $"Drop the release gate on {open.Key}",
-                    "Remove the releaseGate edge through this card's references and re-plan the card.",
-                    open.Key)) with
+                    "Remove the release-gate edge from this card's dependencies and re-plan the card.",
+                    open.Key,
+                    Action: RemedyAction.Api(RemedyApiActions.EditWaitsOn, facts.Task.ProjectName))) with
             {
                 AttentionTargetKey = open.Key,
             };
@@ -375,7 +387,8 @@ public static class PickupHoldPolicy
                         : completionRule
                             ? "The gate opens when the predecessor reaches 6-completed or 7-archive."
                             : "The gate opens when the current delivery reaches the target branch or the predecessor completes.",
-                    open.Key));
+                    open.Key,
+                    Action: RemedyAction.Route(RemedyRoutes.Task, facts.Task.ProjectName, open.Key)));
         return hold with
         {
             AttentionTargetKey = open.Key,
@@ -437,26 +450,30 @@ public static class PickupHoldPolicy
         return $"Waiting on {target.Key}: no active review attempt{since}.";
     }
 
-    private static IEnumerable<PickupHoldResolution> DependencyDecisions(string? targetKey)
+    private static IEnumerable<PickupHoldResolution> DependencyDecisions(TaskInfo task, string? targetKey)
     {
+        var editWaitsOn = RemedyAction.Api(RemedyApiActions.EditWaitsOn, task.ProjectName);
         yield return new PickupHoldResolution(
             PickupHoldResolutionKinds.DropDependency,
             "Drop the dependency",
             "Remove this waits-on edge. The platform never takes this decision automatically.",
-            targetKey);
+            targetKey,
+            Action: editWaitsOn);
         yield return new PickupHoldResolution(
             PickupHoldResolutionKinds.RepointDependency,
             "Point to a successor card",
             "Replace the edge with the stable key of the card that now owns the prerequisite.",
-            targetKey);
+            targetKey,
+            Action: editWaitsOn);
         yield return new PickupHoldResolution(
             PickupHoldResolutionKinds.ArchiveWaitingCard,
             "Archive this waiting card",
             "Close the waiting card without changing the prerequisite.",
-            targetKey);
+            targetKey,
+            Action: RemedyAction.Api(RemedyApiActions.ArchiveTask, task.ProjectName));
     }
 
-    private static IEnumerable<PickupHoldResolution> CycleDecisions(IReadOnlyList<string> cyclePath)
+    private static IEnumerable<PickupHoldResolution> CycleDecisions(TaskInfo task, IReadOnlyList<string> cyclePath)
     {
         for (var index = 0; index + 1 < cyclePath.Count; index++)
         {
@@ -467,7 +484,8 @@ public static class PickupHoldPolicy
                 $"Drop {source} → {target}",
                 $"Remove the waits-on edge from {source} to {target}, then re-evaluate the cycle.",
                 target,
-                source);
+                source,
+                RemedyAction.Api(RemedyApiActions.EditWaitsOn, task.ProjectName, source));
         }
     }
 

@@ -310,7 +310,7 @@ task store to perform it.
 | `409 shortCode ... is already used` | Choose another 2 to 6 character code. Codes are case-insensitively unique. |
 | `400 repositoryPath ...` | Use an existing absolute local Git checkout. For a repository available only to a remote runner, omit the local path and provide `repositoryUrl`. |
 | `404 Unknown workspaceId` | Read `GET /api/workspaces` and use a current workspace id. |
-| Project exists but auto-pickup is unavailable | A board-only project has no local working directory, or the selected remote host is not ready. Set a valid working directory in Project Settings and restart the backend to instantiate a local runner, or complete [remote host onboarding](./linux-runner-host.md). |
+| Project exists but auto-pickup is unavailable | Check **Project Settings → Execution location** for a connected runner host with a source checkout, then check **Pickup mode**. If no host is available, complete [runner host onboarding](./linux-runner-host.md) next to the checkout. A local working directory on the orchestrator does not enable local coding. |
 | Project is missing from the board after `201` | Refresh once and inspect `GET /api/workspaces`. If the API listing is also missing, inspect structured `project-onboarded` and `watch-path-activated` log events. No restart should be required. |
 | Old project uses `.orchestrator/jobs` | Treat it as legacy. Follow the migration outline above; do not onboard a duplicate project or push that folder. |
 

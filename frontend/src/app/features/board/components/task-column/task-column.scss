@@ -80,7 +80,7 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    // One count treatment for the lane total, review sub-groups and the
+    // One count treatment for the lane total and the
     // collapsed rail (HUC-S6); the numbers come from --studio-count-* tokens.
     @mixin count-badge {
       display: inline-flex;
@@ -177,20 +177,6 @@
     .column__subsection + .column__subsection {
       padding-top: var(--studio-spacing-3);
       border-top: 1px solid var(--studio-border);
-    }
-    .column__subsection-title {
-      margin: 0;
-      display: flex;
-      align-items: center;
-      gap: var(--studio-spacing-2);
-      font-size: var(--studio-lane-header-secondary-size);
-      font-weight: 600;
-      color: var(--studio-fg-dim);
-    }
-    .column__subsection-icon { font-size: 13px; line-height: 1; }
-    .column__subsection-count {
-      @include count-badge;
-      margin-left: auto;
     }
     @include drop.styles;
     .column__add {
