@@ -39,6 +39,14 @@ public static class CapabilityProtocol
     public const string ZonePolicy = "zone-policy";
 
     /// <summary>
+    /// SM-11: the host's per-attempt containment decision (executor and
+    /// reason). Advertised by every host; a claim requirement only after the
+    /// host's work-container canary verdict is go, so a host that lost a
+    /// containment prerequisite stops claiming instead of running unconfined.
+    /// </summary>
+    public const string AttemptContainment = "attempt-containment";
+
+    /// <summary>
     /// The runner can execute a card through the named coding CLI binary.
     /// Authentication remains a separate capability so binary loss and expired
     /// provider credentials stay independently diagnosable.
@@ -89,7 +97,10 @@ public sealed record AdvertisedCapabilityDto(
     // Runner-local causal order of model-acceptance evidence. A ready entry
     // carries the sequence its verdict was written at; any other entry carries
     // the runner's current sequence. Comparable only within one instance.
-    long? ProbeSequence = null)
+    long? ProbeSequence = null,
+    DateTime? Since = null,
+    int? HttpStatus = null,
+    string? Request = null)
 {
     // Keep the previous in-process constructor available during rolling
     // upgrades. Rich fields are negotiated on the HTTP wire separately.
@@ -158,7 +169,20 @@ public sealed record HostTelemetrySnapshotDto(
     int? DotnetProcesses = null,
     int? StaleBuildNodes = null,
     long? StaleBuildNodesReaped = null,
-    DateTime? BuildNodeSweepAt = null);
+    DateTime? BuildNodeSweepAt = null,
+    IReadOnlyList<HostContainerSummaryDto>? Containers = null,
+    ClaimLoadGateDto? ClaimLoadGate = null);
+
+/// <summary>Current coding claim admission, observed by the runner process.</summary>
+public sealed record ClaimLoadGateDto(
+    string State,
+    double LoadPerCore,
+    double Threshold,
+    long SustainedSeconds,
+    DateTime? Since,
+    int ActiveSlots);
+
+public sealed record HostContainerSummaryDto(string Name, string? ImageDigest, string State);
 
 /// <summary>
 /// The coding host's salvage store (AGT-2999): the tarball directory the
@@ -284,7 +308,10 @@ public sealed record CapabilityHealthDto(
     IReadOnlyList<string>? EvidenceRefs = null,
     string? HealthOutcome = null,
     string? ServiceAvailability = null,
-    string? CredentialHealth = null)
+    string? CredentialHealth = null,
+    DateTime? Since = null,
+    int? HttpStatus = null,
+    string? Request = null)
 {
     [JsonConstructor]
     public CapabilityHealthDto(
@@ -372,7 +399,8 @@ public sealed record RunnerCapabilitySnapshotDto(
     HostCliUpdateDto? CliUpdate = null,
     RunnerReleaseIdentityDto? Release = null,
     int ActiveGateCount = 0,
-    IReadOnlyList<ConfiguredModelRouteDto>? ConfiguredModelRoutes = null);
+    IReadOnlyList<ConfiguredModelRouteDto>? ConfiguredModelRoutes = null,
+    IReadOnlyList<HostContainerSummaryDto>? Containers = null);
 
 /// <summary>
 /// The latest non-ready model-acceptance entry a host advertised after the

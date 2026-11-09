@@ -1,11 +1,13 @@
-
+using AgentStudio.Operator;
 using AgentStudio.Deploy;
 using AgentStudio.GitHubApp;
+using AgentStudio.HostSetup;
 using AgentStudio.Search;
 using AgentStudio.Proposals;
 using AgentStudio.Quota;
 using AgentStudio.Telemetry;
 using AgentStudio.Review;
+using AgentStudio.QualityStudio;
 
 namespace AgentStudio.Host;
 
@@ -25,11 +27,18 @@ public static class EndpointMapping
         var mapsLocalV1 = MapsLocalV1(app.Configuration);
         if (!mapsLocalV1) app.MapTaskServerPlaneProxy();
         app.MapAccessSecurityEndpoints();
+        app.MapSecurityPostureEndpoints();
+        app.MapHostCertificateEndpoints();
+        app.MapHostOperationEndpoints();
+        app.MapQualityStudioEndpoints();
         app.MapSecretEndpoints();
         app.MapPullGateEndpoints();
+        app.MapGateCapacityEndpoints();
         var tasks = app.MapGroup("/api/tasks")
-            .AddEndpointFilter<TaskOperationTimingFilter>();
+            .AddEndpointFilter<TaskOperationTimingFilter>()
+            .AddEndpointFilter<OperatorAttentionFilter>();
         tasks.MapTaskCrudEndpoints();
+        tasks.MapTaskAttentionEndpoints();
         tasks.MapTaskCoreEndpoint();
         tasks.MapTaskDetailResources();
         tasks.MapBatchMoveEndpoints();
@@ -65,6 +74,11 @@ public static class EndpointMapping
         app.MapAcceptedIntegrationBackstopEndpoints();
         app.MapAcceptanceRailEndpoints();
         app.MapWatcherEndpoints();
+        app.MapOperatorEndpoints();
+        app.MapOperatorCapacityEndpoints();
+        app.MapOperatorBackupEndpoints();
+        app.MapOperatorLogEndpoints();
+        app.MapDeployPreflightEndpoints();
         app.MapOrchestratorSessionEndpoints();
         app.MapOrchestratorContextEndpoints();
         app.MapOrchestrationRolloutEndpoints();
@@ -73,9 +87,11 @@ public static class EndpointMapping
         if (mapsLocalV1)
         {
             app.MapV1ReviewPlaneEndpoints();
+            app.MapReviewPackagePlaneEndpoints();
             app.MapMonolithOrchestrationEndpoints();
             app.MapMonolithGateEndpoints();
             app.MapGitHubAppEndpoints();
+            app.MapHostSetupEndpoints();
         }
         // Studio keeps the decision receipt plane in both profiles. With a
         // standalone Task Server, rule and host-occurrence routes refuse with 409.
@@ -96,6 +112,7 @@ public static class EndpointMapping
         app.MapWorkspaceSettingsEndpoints();
         app.MapWorkspaceQuotaEndpoints();
         app.MapProjectSettingsEndpoints();
+        app.MapOperatorBatchTriageEndpoints();
         app.MapProjectCheckoutEndpoints();
         app.MapCrashRecoveryEndpoints();
         app.MapProjectRegressionRadarEndpoints();
@@ -110,6 +127,7 @@ public static class EndpointMapping
         app.MapProjectTokenUsageEndpoints();
         app.MapReviewStatisticsEndpoints();
         app.MapReviewObservationEndpoints();
+        app.MapReviewPackageEndpoints();
         app.MapUsageCockpitEndpoints();
         app.MapTokenAnalysisEndpoints();
         app.MapPipelineHealthEndpoints();
@@ -135,6 +153,7 @@ public static class EndpointMapping
         app.MapPublishEndpoints();
         if (SecurityProfiles.IsLocal(app.Configuration)) app.MapFilesystemLayerEndpoints();
         app.MapSystemEndpoints();
+        AgentStudio.Readiness.ServerReadinessEndpoints.MapServerReadinessEndpoints(app);
         app.MapCliEndpoints();
         if (SecurityProfiles.IsLocal(app.Configuration)) app.MapDevToolsEndpoints();
         app.MapAdminConfigEndpoints();
@@ -143,6 +162,7 @@ public static class EndpointMapping
         app.MapBranchSweepEndpoints();
         app.MapSupervisorEndpoints();
         if (SecurityProfiles.IsLocal(app.Configuration)) app.MapDiagnosticsEndpoints();
+        app.MapApiStallEndpoints();
         if (SecurityProfiles.IsLocal(app.Configuration)) app.MapInternalProbeEndpoints();
         app.MapTitleGenerationEndpoints();
         app.MapPromptEnhancementEndpoints();

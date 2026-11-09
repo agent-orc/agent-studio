@@ -1,7 +1,10 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text;
 using System.Text.RegularExpressions;
 using AgentStudio.Pipeline;
+using AgentStudio.Shared;
+using AgentStudio.Runner;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AgentStudio.Review;
@@ -12,7 +15,9 @@ namespace AgentStudio.Review;
 /// <c>summary-assessment.json</c> by handing the tail of the CLI output log and
 /// the card's evidence bundle to a one-shot CLI call whose CLI, model and
 /// thinking level come from the project's pipeline step settings (default
-/// Claude Opus 5.5, low). Normal completion awaits the bounded
+/// Claude Opus 5.5, low). The log, task prompt head, deliverables and final
+/// agent messages are fitted into the orchestrator prompt limit by
+/// <see cref="SummaryPromptFit"/>. Normal completion awaits the bounded
 /// Result-finalization gate. State is in-memory only; after a
 /// backend restart, jobs fall back to <c>None|Ready|Degraded</c> based on the
 /// presence and provenance marker of <c>status.md</c> on disk.
@@ -20,7 +25,9 @@ namespace AgentStudio.Review;
 public sealed class SummaryGenerationService
 {
     public const int DefaultFinalizationMaxAttempts = 3;
-    private const int MaxLogChars = 60_000;
+    /// <summary>Kept below the boundary limit for the boundary's own credential markers.</summary>
+    private const int PromptHeadroomBytes = 256;
+    private const int MaxTaskPromptReadBytes = 256 * 1024;
     private const int ModelTimeoutSeconds = 180;
     private const int MaxProtocolAttempts = 2;
     private static readonly Regex ProtocolImagePathRegex = new(
@@ -37,6 +44,9 @@ public sealed class SummaryGenerationService
     private readonly ProjectSettingsService? _projectSettings;
     private readonly TimelineLog? _timeline;
     private readonly ConcurrentDictionary<string, TaskSummaryState> _states = new();
+    private readonly ConcurrentDictionary<string, int> _promptBytes = new();
+    private int _shortenedPrompts;
+    private int _degradedSummaries;
 
     public SummaryGenerationService(ILogger<SummaryGenerationService> logger, IConfiguration configuration)
         : this(logger, configuration, new RuntimePromptService(configuration, NullLogger<RuntimePromptService>.Instance), null)
@@ -71,6 +81,12 @@ public sealed class SummaryGenerationService
 
     public TaskSummaryState? GetState(string jobKey)
         => _states.TryGetValue(jobKey, out var s) ? s : null;
+
+    /// <summary>Summary prompts shortened to fit the limit since start; logged with each one.</summary>
+    public int ShortenedPromptCount => Volatile.Read(ref _shortenedPrompts);
+
+    /// <summary>Result finalizations that ended degraded since start; logged with each one.</summary>
+    public int DegradedSummaryCount => Volatile.Read(ref _degradedSummaries);
 
     /// <summary>
     /// Pure inflight check used by <see cref="GenerateAsync"/> and exposed
@@ -111,6 +127,8 @@ public sealed class SummaryGenerationService
             10);
         string? error = null;
         var attempts = 0;
+        // The degraded log reports the size of this finalization's prompt only.
+        _promptBytes.TryRemove(info.TaskKey, out _);
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             attempts = attempt;
@@ -140,9 +158,12 @@ public sealed class SummaryGenerationService
             }
 
             error = state?.ErrorMessage ?? "Generated status.md is missing.";
+            if (error.StartsWith("waiting for a host with ", StringComparison.Ordinal)) break;
             // Structural failures have already consumed their one retry with
             // identical inputs. Do not multiply that budget in finalization.
             if (error.StartsWith(SummaryProtocolValidation.ErrorPrefix, StringComparison.Ordinal)) break;
+            // The boundary refuses the same prompt again (AGT-3410).
+            if (ResultFinalizationPolicy.IsInputRefusal(error)) break;
             _logger.LogWarning(
                 "Result finalization retry taskKey={TaskKey} jobId={JobId} attempt={Attempt}/{MaxAttempts} error={Error}",
                 info.TaskKey,
@@ -153,6 +174,22 @@ public sealed class SummaryGenerationService
         }
 
         var previous = GetState(info.TaskKey) ?? new TaskSummaryState();
+        if (TaskModes.IsReportOnly(info.Mode)
+            && TryUseAgentReportStatus(info, error, out var fallback))
+        {
+            _states[info.TaskKey] = previous with
+            {
+                Status = TaskSummaryStatus.Ready,
+                FinishedAt = DateTime.UtcNow,
+                ErrorMessage = error,
+                Attempt = attempts,
+                MaxAttempts = maxAttempts,
+            };
+            _logger.LogWarning(
+                "Result finalization used agent-authored {Source} for {JobId} after summary failure: {Error}",
+                fallback, info.Id, error);
+            return new ResultFinalizationOutcome(TaskSummaryStatus.Ready, attempts, maxAttempts, error);
+        }
         _states[info.TaskKey] = previous with
         {
             Status = TaskSummaryStatus.Degraded,
@@ -161,17 +198,88 @@ public sealed class SummaryGenerationService
             Attempt = attempts,
             MaxAttempts = maxAttempts,
         };
+        var degradedTotal = Interlocked.Increment(ref _degradedSummaries);
         _logger.LogWarning(
-            "Result finalization degraded taskKey={TaskKey} jobId={JobId} attempts={Attempts} error={Error}",
+            "Result finalization degraded taskKey={TaskKey} jobId={JobId} attempts={Attempts} promptBytes={PromptBytes} limitBytes={LimitBytes} degradedTotal={DegradedTotal} error={Error}",
             info.TaskKey,
             info.Id,
             attempts,
+            _promptBytes.TryGetValue(info.TaskKey, out var promptBytes) ? promptBytes : null,
+            OrchestratorPromptBoundary.MaxPromptBytes,
+            degradedTotal,
             error);
         return new ResultFinalizationOutcome(
             TaskSummaryStatus.Degraded,
             attempts,
             maxAttempts,
             error);
+    }
+
+    private bool TryUseAgentReportStatus(TaskInfo info, string? error, out string source)
+    {
+        var restored = TryRestoreAgentReportStatus(info, out source, _resultVersions);
+        if (restored)
+        {
+            try
+            {
+                _timeline?.Append(info.FolderPath, TimelineEventKinds.ResultSummaryPending,
+                    TimelineActors.System,
+                    $"Summary assessment failed ({ResultFinalizationPolicy.Limit(error) ?? "unknown error"}); using {source} for review.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not record report summary fallback event for {JobId}", info.Id);
+            }
+        }
+        return restored;
+    }
+
+    /// <summary>Restore agent-authored report evidence after a failed summary, including on a later recovery pass.</summary>
+    public static bool TryRestoreAgentReportStatus(
+        TaskInfo info, out string source, ResultVersionStore? resultVersions = null)
+    {
+        source = string.Empty;
+        try
+        {
+            var target = Path.Combine(info.FolderPath, "status.md");
+            var candidate = Path.Combine(info.FolderPath, "results", "status.md");
+            string? markdown = null;
+            if (File.Exists(candidate)
+                && BoundedFileRead.TryReadAllText(candidate, BoundedFileRead.EvidenceTextBytes, out var agentStatus)
+                && !string.IsNullOrWhiteSpace(agentStatus))
+            {
+                markdown = agentStatus;
+                source = "results/status.md";
+            }
+            if (markdown is null)
+            {
+                var logPath = TaskPaths.CliOutputLog(info.FolderPath);
+                if (File.Exists(logPath))
+                {
+                    var lines = BoundedFileRead.ReadTailLines(logPath, ReviewDecisionEvidenceReader.SourceWindowBytes);
+                    markdown = SummaryPromptFit.LatestAgentMessage(lines);
+                    if (!string.IsNullOrWhiteSpace(markdown)) source = "final agent message";
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(markdown)) return false;
+            markdown = SummaryPromptFit.ClipHead(markdown.Trim(), BoundedFileRead.EvidenceTextBytes);
+            if (!File.Exists(target)
+                || !BoundedFileRead.TryReadAllText(target, BoundedFileRead.EvidenceTextBytes, out var current)
+                || !string.Equals(current, markdown, StringComparison.Ordinal))
+            {
+                if (resultVersions is not null)
+                    resultVersions.Replace(info.FolderPath, markdown, ResultProducer.RunAttempt(),
+                        info.State, DateTime.UtcNow, TimelineActors.Agent);
+                else
+                    File.WriteAllText(target, markdown);
+            }
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     public async Task GenerateAsync(TaskInfo info, TerminalRunOutcome? runOutcome,
@@ -210,14 +318,11 @@ public sealed class SummaryGenerationService
             }
 
             var rawLog = await File.ReadAllTextAsync(logPath, ct);
-            var truncated = TruncateTail(rawLog, MaxLogChars);
             runOutcome ??= TerminalRunOutcomeClassifier.TryClassifyRenderedLog(rawLog)?.Outcome;
             var outcomeLabel = runOutcome?.ProtocolResult ?? "unknown";
             var selection = ResolveStepSelection(info);
             var evidence = SummaryEvidenceAssembler.ReadFromFolder(info, _pipelineLog, _timeline, outcomeLabel);
-            var prompt = _prompts.Render(RuntimePromptService.SummaryProtocol,
-                BuildSummarySlots(info, truncated, outcomeLabel, evidence),
-                new PromptCallContext(info.ProjectName, PipelineCatalogue.SummaryAssessmentStepId, selection.Model));
+            var prompt = BuildPrompt(info, rawLog, outcomeLabel, evidence, selection);
 
             var result = await RunValidatedSummaryAsync(prompt, info, selection, recordPipeline: true, ct);
             if (!result.Ok || string.IsNullOrWhiteSpace(result.Summary))
@@ -326,14 +431,11 @@ public sealed class SummaryGenerationService
             return InterimSummaryResult.Failure("cli-output.log is empty - the agent hasn't streamed any output yet.");
         }
 
-        var truncated = TruncateTail(rawLog, MaxLogChars);
         // Interim peek: the run is still alive, so there is no terminal outcome
         // to feed the classifier. Say so explicitly instead of guessing one.
         var selection = ResolveStepSelection(info);
         var evidence = SummaryEvidenceAssembler.ReadFromFolder(info, _pipelineLog, _timeline, "in progress");
-        var prompt = _prompts.Render(RuntimePromptService.SummaryProtocol,
-            BuildSummarySlots(info, truncated, "in progress", evidence),
-            new PromptCallContext(info.ProjectName, PipelineCatalogue.SummaryAssessmentStepId, selection.Model));
+        var prompt = BuildPrompt(info, rawLog, "in progress", evidence, selection);
 
         var sw = Stopwatch.StartNew();
         var result = await RunValidatedSummaryAsync(prompt, info, selection, recordPipeline: false, ct);
@@ -363,11 +465,67 @@ public sealed class SummaryGenerationService
         };
     }
 
-    private static string TruncateTail(string text, int maxChars)
+    /// <summary>
+    /// Renders the summary prompt with its <c>{{log}}</c> slot fitted into the
+    /// bytes the rest of the prompt leaves under
+    /// <see cref="OrchestratorPromptBoundary.MaxPromptBytes"/>. A shortened
+    /// prompt is logged with its size and the running count.
+    /// </summary>
+    private string BuildPrompt(
+        TaskInfo info, string rawLog, string outcome, SummaryEvidenceBundle evidence, SummaryStepSelection selection)
     {
-        if (text.Length <= maxChars) return text;
-        var tail = text[^maxChars..];
-        return "[earlier output truncated]\n" + tail;
+        var slots = BuildSummarySlots(info, "", outcome, evidence);
+        var fixedBytes = Encoding.UTF8.GetByteCount(
+            _prompts.RenderUnrecorded(RuntimePromptService.SummaryProtocol, slots));
+        var excerpt = SummaryPromptFit.Fit(
+            ReadLogSources(info, rawLog),
+            OrchestratorPromptBoundary.MaxPromptBytes - fixedBytes - PromptHeadroomBytes);
+        slots["log"] = excerpt.Text;
+        var prompt = _prompts.Render(RuntimePromptService.SummaryProtocol, slots,
+            new PromptCallContext(info.ProjectName, PipelineCatalogue.SummaryAssessmentStepId, selection.Model));
+        var promptBytes = Encoding.UTF8.GetByteCount(prompt);
+        _promptBytes[info.TaskKey] = promptBytes;
+        if (excerpt.Shortened)
+        {
+            _logger.LogInformation(
+                "Summary prompt shortened taskKey={TaskKey} jobId={JobId} promptBytes={PromptBytes} limitBytes={LimitBytes} fixedBytes={FixedBytes} sourceLogBytes={SourceLogBytes} shortenedTotal={ShortenedTotal} omissions={Omissions}",
+                info.TaskKey,
+                info.Id,
+                promptBytes,
+                OrchestratorPromptBoundary.MaxPromptBytes,
+                fixedBytes,
+                excerpt.SourceLogBytes,
+                Interlocked.Increment(ref _shortenedPrompts),
+                string.Join("; ", excerpt.Omissions));
+        }
+        return prompt;
+    }
+
+    /// <summary>Reads the task prompt and the <c>results/</c> inventory; an unreadable source stays empty.</summary>
+    private SummaryLogSources ReadLogSources(TaskInfo info, string rawLog)
+    {
+        string? taskPrompt = null;
+        var deliverables = new List<SummaryDeliverable>();
+        try
+        {
+            var promptPath = Path.Combine(info.FolderPath, "prompt.md");
+            if (File.Exists(promptPath))
+                taskPrompt = BoundedFileRead.ReadHeadText(promptPath, MaxTaskPromptReadBytes);
+            var resultsDir = TaskPaths.ResultsDir(info.FolderPath);
+            foreach (var file in TaskPaths.ResultArtifacts(info.FolderPath))
+            {
+                var name = Path.GetFileName(file);
+                if (name is TaskPaths.ReviewEvidenceFileName or TaskPaths.ReviewObservationsFileName) continue;
+                deliverables.Add(new SummaryDeliverable(
+                    Path.Combine(TaskPaths.ResultsDirName, Path.GetRelativePath(resultsDir, file)),
+                    new FileInfo(file).Length));
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Summary prompt sources partly unreadable for {JobId}", info.Id);
+        }
+        return new SummaryLogSources(rawLog, taskPrompt, deliverables);
     }
 
     /// <summary>

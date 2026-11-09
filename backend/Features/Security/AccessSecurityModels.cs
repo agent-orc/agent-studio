@@ -97,7 +97,12 @@ public sealed record StudioUser
     public bool MustChangePassword { get; init; }
     public DateTime CreatedAt { get; init; }
     public DateTime PasswordChangedAt { get; init; }
+    public string? TotpSecret { get; init; }
+    public List<string> RecoveryCodeHashes { get; init; } = [];
+    public List<StudioPasskey> Passkeys { get; init; } = [];
 }
+
+public sealed record StudioPasskey(string Id, string Name, string PublicKey, uint SignCount, DateTime CreatedAt);
 
 public sealed record StudioSession
 {
@@ -109,6 +114,10 @@ public sealed record StudioSession
     public required DateTime LastSeenAt { get; init; }
     public required DateTime ExpiresAt { get; init; }
     public required DateTime AbsoluteExpiresAt { get; init; }
+    public string? Device { get; init; }
+    public string? Address { get; init; }
+    public bool SecondFactorEnrollmentOnly { get; init; }
+    public DateTime? StepUpVerifiedAt { get; init; }
 }
 
 public sealed record RunnerCredential
@@ -127,6 +136,12 @@ public sealed record RunnerServiceIdentity
     public required string Id { get; init; }
     public required string Name { get; init; }
     public required DateTime CreatedAt { get; init; }
+    /// <summary>
+    /// The projects this runner may claim, read and review (SM-9). Empty grants
+    /// none and <c>*</c> grants all. Null marks an identity enrolled before
+    /// project binding: it keeps all projects and its owner sees a notice.
+    /// </summary>
+    public List<string>? Projects { get; init; }
     public DateTime? RevokedAt { get; init; }
     public DateTime? DrainRequestedAt { get; init; }
     public DateTime? RetireRequestedAt { get; init; }
@@ -148,6 +163,11 @@ public sealed record RunnerEnrollment
     public required DateTime ExpiresAt { get; init; }
     public DateTime? CredentialExpiresAt { get; init; }
     public DateTime? UsedAt { get; init; }
+    /// <summary>
+    /// The projects the enrolled runner is bound to; see <see cref="RunnerServiceIdentity.Projects"/>.
+    /// Null only on a code created before project binding.
+    /// </summary>
+    public List<string>? Projects { get; init; }
 }
 
 public sealed record SecurityState
@@ -172,6 +192,13 @@ public sealed record SecurityState
     /// </summary>
     public List<StudioApiToken> ApiTokens { get; init; } = [];
     public List<TelemetryIngestToken> TelemetryIngestTokens { get; init; } = [];
+    /// <summary>Operator agents' T1 authority (security model SM-4); only the Owner changes it.</summary>
+    public List<StandingGrant> StandingGrants { get; init; } = [];
+    /// <summary>Owner approvals of T2 operator requests (security model SM-5).</summary>
+    public List<OperatorApproval> OperatorApprovals { get; init; } = [];
+    /// <summary>Hash of the Owner's once-shown offline break-glass credential.</summary>
+    public string? BreakGlassCredentialHash { get; set; }
+    public List<BreakGlassWindow> BreakGlassWindows { get; init; } = [];
 }
 
 public sealed record StudioInvitation
@@ -217,12 +244,13 @@ public sealed record TelemetryIngestToken
 }
 
 public sealed record ApiTokenPrincipal(StudioApiToken Token, StudioUser User);
-public sealed record CreateApiTokenRequest(string Name, string Role, IReadOnlyList<string>? Projects, DateTime ExpiresAt);
+/// <summary><see cref="ExpiresAt"/> is optional: without it a token lives 30 days, at most 365 (OP-1).</summary>
+public sealed record CreateApiTokenRequest(string Name, string Role, IReadOnlyList<string>? Projects, DateTime? ExpiresAt = null);
 public sealed record ApiTokenResponse(string Id, string Name, string Role, IReadOnlyList<string> Projects,
     string CreatedBy, DateTime CreatedAt, DateTime ExpiresAt, DateTime? LastUsedAt, DateTime? RevokedAt);
 public sealed record CreatedApiTokenResponse(ApiTokenResponse Token, string Secret);
 public sealed record RunnerEnrollmentResponse(string Id, string Name, IReadOnlyList<string> Scopes,
-    DateTime CreatedAt, DateTime ExpiresAt, DateTime? UsedAt);
+    DateTime CreatedAt, DateTime ExpiresAt, DateTime? UsedAt, IReadOnlyList<string>? Projects = null);
 public static class TelemetrySignals
 {
     public const string Metrics = "metrics";
@@ -233,12 +261,26 @@ public static class TelemetrySignals
 public sealed record TelemetryIngestPrincipal(string TokenId, string Project, string Environment, IReadOnlySet<string> Signals);
 
 public sealed record HumanPrincipal(StudioUser User, StudioSession Session);
-public sealed record RunnerPrincipal(string RunnerId, string RunnerName, string CredentialId, IReadOnlySet<string> Scopes);
+/// <summary>
+/// An authenticated runner credential with its SM-9 binding: the enrolled host
+/// identity, its scopes (the role) and the projects it may work on.
+/// </summary>
+public sealed record RunnerPrincipal(string RunnerId, string RunnerName, string CredentialId, IReadOnlySet<string> Scopes)
+{
+    /// <summary>Bound projects; <c>*</c> grants every project. The default keeps hand-built principals unbound.</summary>
+    public IReadOnlyList<string> Projects { get; init; } = [];
+    public DateTime? CredentialExpiresAt { get; init; }
+}
 
-public sealed record AuthStatusResponse(string Profile, bool BootstrapRequired, bool Authenticated, AuthUserResponse? User = null, string? CsrfToken = null, bool BootstrapCodeRequired = false);
+public sealed record AuthStatusResponse(string Profile, bool BootstrapRequired, bool Authenticated, AuthUserResponse? User = null, string? CsrfToken = null, bool BootstrapCodeRequired = false, bool SecondFactorEnrollmentRequired = false);
 public sealed record AuthUserResponse(string Id, string Username, string DisplayName, string Role, IReadOnlyList<string> Projects, bool Disabled, bool MustChangePassword, IReadOnlyList<string>? ProductionApprovalProjects = null);
 public sealed record BootstrapRequest(string Username, string Password, string? DisplayName, string? BootstrapCode = null);
-public sealed record LoginRequest(string Username, string Password);
+public sealed record LoginRequest(string Username, string Password, string? SecondFactorCode = null,
+    PasskeyAssertionProof? Passkey = null);
+public sealed record ConfirmTotpRequest(string Code);
+public sealed record PasskeyAssertionOptionsRequest(string Username);
+public sealed record StepUpRequest(string? Code = null, PasskeyAssertionProof? Passkey = null);
+public sealed record SessionResponse(string Id, string? Device, string? Address, DateTime CreatedAt, DateTime LastUseAt, bool Current);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 public sealed record CreateUserRequest(string Username, string DisplayName, string Role, IReadOnlyList<string>? Projects, string? TemporaryPassword, IReadOnlyList<IamGrantRequest>? Bindings = null);
 public sealed record UpdateUserRequest(string? DisplayName, string? Role, IReadOnlyList<string>? Projects, bool? Disabled, IReadOnlyList<string>? ProductionApprovalProjects = null);
@@ -249,11 +291,14 @@ public sealed record UpdateUserRequest(string? DisplayName, string? Role, IReadO
 public sealed record InviteUserRequest(string Username, string DisplayName, string Role, IReadOnlyList<string>? Projects, IReadOnlyList<IamGrantRequest>? Bindings = null);
 public sealed record AcceptInvitationRequest(string Token, string NewPassword);
 public sealed record PasswordResetRequest(string? TemporaryPassword);
-public sealed record RunnerEnrollmentRequest(string Name, IReadOnlyList<string>? Scopes, DateTime? ExpiresAt, DateTime? CredentialExpiresAt);
+public sealed record RunnerEnrollmentRequest(string Name, IReadOnlyList<string>? Scopes, DateTime? ExpiresAt, DateTime? CredentialExpiresAt,
+    IReadOnlyList<string>? Projects = null);
+public sealed record RunnerProjectsRequest(IReadOnlyList<string>? Projects);
 public sealed record RunnerEnrollRequest(string Code);
 public sealed record RunnerRotateRequest(IReadOnlyList<string>? Scopes, DateTime? ExpiresAt);
 public sealed record OneTimeSecretResponse(string RunnerId, string RunnerName, string CredentialId, string Secret, IReadOnlyList<string> Scopes, DateTime? ExpiresAt);
-public sealed record OneTimeEnrollmentResponse(string EnrollmentCode, string Name, IReadOnlyList<string> Scopes, DateTime ExpiresAt);
+public sealed record OneTimeEnrollmentResponse(string EnrollmentCode, string Name, IReadOnlyList<string> Scopes, DateTime ExpiresAt,
+    IReadOnlyList<string>? Projects = null);
 public sealed record PasswordResetResponse(string UserId, string TemporaryPassword, bool MustChangePassword);
 
 internal sealed record LoginAttempt(int Failures, DateTime WindowStartedAt, DateTime? LockedUntil);

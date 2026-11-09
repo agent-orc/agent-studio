@@ -54,6 +54,14 @@ public sealed class TaskCoreEndpointTests : IDisposable
         Assert.True(TaskJsonFile.UpdateField(other.FolderPath, "title", "Other changed", NullLogger.Instance));
         index.PublishCore(other with { Title = "Other changed" });
 
+        var completedReads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var observedReads = 0;
+        factory.Services.GetRequiredService<TaskDetailLatencyMetrics>().ObservationRecorded += () =>
+        {
+            if (Interlocked.Increment(ref observedReads) >= 2)
+                completedReads.TrySetResult();
+        };
+
         using var detail = await client.GetAsync($"/api/tasks/AGT-target?project={project.Id}");
         detail.EnsureSuccessStatusCode();
         Assert.Equal("ready", detail.Headers.GetValues("X-Task-Detail-Freshness").Single());
@@ -69,6 +77,8 @@ public sealed class TaskCoreEndpointTests : IDisposable
         after.EnsureSuccessStatusCode();
         using var changed = JsonDocument.Parse(await after.Content.ReadAsStringAsync());
         Assert.Equal("Target changed", changed.RootElement.GetProperty("info").GetProperty("title").GetString());
+
+        await completedReads.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         using var latency = await client.GetAsync("/api/runtime/task-detail-latency");
         latency.EnsureSuccessStatusCode();
@@ -217,6 +227,10 @@ public sealed class TaskCoreEndpointTests : IDisposable
             JsonSerializer.Serialize(new { id = occupiedKey, title = "Legacy key collision",
                 state = TaskStates.Ready, order = 1 }));
         await WarmIndexAsync(factory, "AGT-transfer");
+        // The collision folder lands after the host started, so the warm index
+        // may not hold it yet; only a resident card reserves its key.
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        await WaitForResidentAsync(factory, occupiedKey, destination);
 
         using (var move = await client.PostAsJsonAsync(
             $"/api/tasks/AGT-transfer/change-project?project={source.Id}",
@@ -226,7 +240,6 @@ public sealed class TaskCoreEndpointTests : IDisposable
             Assert.Equal(HttpStatusCode.NotFound, old.StatusCode);
         using (var oldCore = await client.GetAsync($"/api/tasks/AGT-transfer/core?project={source.Id}"))
             Assert.Equal(HttpStatusCode.NotFound, oldCore.StatusCode);
-        var index = factory.Services.GetRequiredService<TaskIndexCache>();
         Assert.Single(index.GetAllResidentTasks(), task => task.Id == "AGT-transfer");
         using (var moved = await client.GetAsync($"/api/tasks/AGT-transfer?project={target.Id}"))
         {
@@ -807,6 +820,26 @@ public sealed class TaskCoreEndpointTests : IDisposable
         {
             var remaining = deadline - clock.GetUtcNow();
             Assert.True(remaining > TimeSpan.Zero, $"Task index did not warm for {identity}.");
+            if (index.RefreshInFlight is { } refresh)
+                await refresh.WaitAsync(remaining, clock);
+            else
+                await Task.Delay(TimeSpan.FromMilliseconds(10) < remaining
+                    ? TimeSpan.FromMilliseconds(10) : remaining, clock);
+        }
+    }
+
+    private static async Task WaitForResidentAsync(
+        WebApplicationFactory<Program> factory, string identity, string watchPath)
+    {
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        var clock = factory.Services.GetRequiredService<TimeProvider>();
+        var deadline = clock.GetUtcNow().AddSeconds(30);
+        while (!index.GetAllResidentTasks().Any(task => task.Id == identity))
+        {
+            var remaining = deadline - clock.GetUtcNow();
+            Assert.True(remaining > TimeSpan.Zero, $"Task index did not adopt {identity}.");
+            index.Invalidate();
+            _ = index.GetCore(identity, watchPath);
             if (index.RefreshInFlight is { } refresh)
                 await refresh.WaitAsync(remaining, clock);
             else

@@ -4,7 +4,7 @@
       <h2 class="cli-admin__title">CLI Management</h2>
       <p class="cli-admin__subtitle">
         Manage the CLI types and models available to the workspace, inspect
-        their runtime contracts and sessions, and control usage in one place.
+        their runtime contracts, and control usage in one place.
       </p>
     </div>
     <button class="cli-admin__refresh"
@@ -20,6 +20,14 @@
   @if (errorMsg(); as err) {
     <div class="cli-admin__error" data-testid="cli-admin-error">{{ err }}</div>
   }
+
+  <section class="cli-admin__section" data-testid="cli-admin-model-selection">
+    @defer (on viewport) {
+      <app-model-selection-view />
+    } @placeholder {
+      <div>Model selection</div>
+    }
+  </section>
 
   <section class="cli-admin__section" data-testid="cli-admin-models">
     <header class="cli-admin__section-head">
@@ -44,9 +52,9 @@
     </header>
 
     @if (rows().length === 0) {
-      <div class="cli-admin__empty">
-        No quota windows reported yet. Open the CLI Usage panel and
-        refresh to populate quota data.
+      <div class="cli-admin__empty" data-testid="cli-admin-caps-empty">
+        No quota windows reported yet. Open a usage entry in the footer to
+        check each subscription; its windows appear here once the CLI reports them.
       </div>
     }
 
@@ -161,8 +169,4 @@
     <app-cli-contracts-panel />
   </section>
 
-  <p class="cli-admin__seealso" data-testid="cli-admin-seealso">
-    Looking for the session inventory or on-disk locations? They live on their
-    own pages now: <strong>CLI sessions</strong> and <strong>CLI paths</strong>.
-  </p>
 </div>

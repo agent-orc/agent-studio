@@ -1,5 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { concatMap, finalize, from, tap, type Observable } from 'rxjs';
+import { QuotaApiService, type EffectiveModelSelection } from '../../../quota';
 import { TaskService } from '../../../../services/task.service';
 import { CLI_TYPES, type CliType } from '../../../../models/task.model';
 import type { PipelineCatalogueStep, PipelineStepSetting, PipelineStepCondition,
@@ -29,14 +31,20 @@ import {
 } from './pipeline-config.util';
 import { PipelineStepFocusDirective } from './pipeline-step-focus.directive';
 import { PipelineHealthBlockComponent } from '../pipeline-health-block/pipeline-health-block';
+import { GateSlotBoardComponent } from '../gate-slot-board/gate-slot-board';
 import { PipelineStepExecutionComponent } from './pipeline-step-execution/pipeline-step-execution.component';
 import { PipelineTypePickerComponent } from './pipeline-type-picker/pipeline-type-picker.component';
 import { PipelineStepRowStateComponent } from './pipeline-step-row-state/pipeline-step-row-state.component';
+import { PipelineStepEffectiveRouteComponent } from './pipeline-step-effective-route/pipeline-step-effective-route.component';
+import { AspectModelBulkApplyComponent, type AspectAgentSelection } from './aspect-model-bulk-apply/aspect-model-bulk-apply.component';
+type StepPatch = Partial<{ enabled: boolean; economyModel: boolean; cliType: string; model: string; thinkingLevel: string | null;
+  prompt: string | null; mode: string; condition: PipelineStepCondition | null; pinMode: 'preference' | 'hard' }>;
 /** Per-type project pipeline editor for ordering, activation, agents, prompts, gates, and usage. */
 @Component({
   selector: 'app-project-pipeline-panel', standalone: true,
-  imports: [FormsModule, CliModelSelectorComponent, TooltipDirective, PipelineHealthBlockComponent, PipelineStepExecutionComponent,
-    PipelineTypePickerComponent, PipelineStepRowStateComponent, ModelMigrationBadgeComponent],
+  imports: [FormsModule, CliModelSelectorComponent, TooltipDirective, PipelineHealthBlockComponent, GateSlotBoardComponent,
+    PipelineStepExecutionComponent, PipelineTypePickerComponent, PipelineStepRowStateComponent, ModelMigrationBadgeComponent,
+    PipelineStepEffectiveRouteComponent, AspectModelBulkApplyComponent],
   hostDirectives: [{ directive: PipelineStepFocusDirective, inputs: ['focusStepId'] }],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-pipeline-panel.component.html',
@@ -46,7 +54,12 @@ export class ProjectPipelinePanelComponent {
   readonly projectName = input.required<string>();
   /** Deep-link to the Prompts registry rail (content is managed there). */
   readonly openPrompts = output<void>();
+  /** The Pipeline health block links to the project's flow-health view. */
+  readonly openFlowHealth = output<void>();
   private readonly jobService = inject(TaskService);
+  private readonly quotaApi = inject(QuotaApiService);
+  /** Launch route per step id from `GET /api/model-selection/effective` for this project and type. */
+  readonly effectiveRoutes = signal<ReadonlyMap<string, EffectiveModelSelection>>(new Map());
   readonly catalogue = signal<readonly PipelineCatalogueStep[]>([]);
   readonly pipelineType = signal<PipelineType>('task');
   readonly overrides = signal<Record<string, PipelineStepSetting>>({});
@@ -116,6 +129,8 @@ export class ProjectPipelinePanelComponent {
         effectiveCliType: ov?.cliType ?? step.cliType ?? (step.usesModel ? 'claude' : ''),
         effectiveModel: ov?.model ?? step.resolvedModel ?? step.model ?? '',
         effectiveModelSource: ov?.model ? 'step' : (step.modelSource ?? ''),
+        overridesWorkspace: step.overridesWorkspace === true || !!ov?.model || !!ov?.cliType || !!ov?.thinkingLevel,
+        pinMode: ov?.pinMode ?? 'preference',
         effectiveThinkingLevel: ov?.thinkingLevel ?? step.resolvedThinkingLevel ?? '',
         prompt: ov?.prompt ?? '',
         promptTemplate: step.promptTemplate ?? '',
@@ -151,6 +166,7 @@ export class ProjectPipelinePanelComponent {
   private load(project: string, pipelineType: PipelineType): void {
     this.catalogue.set([]);
     this.conditionDraft.set({});
+    this.effectiveRoutes.set(new Map());
     this.jobService.getPipelineCatalogue(project, pipelineType).subscribe({
       next: (cat) => {
         if (this.pipelineType() !== pipelineType) return;
@@ -161,6 +177,7 @@ export class ProjectPipelinePanelComponent {
         this.loadError.set('Could not load the pipeline catalogue.'); },
     });
     this.refreshOverrides(project, pipelineType);
+    this.refreshEffective(project, pipelineType);
     this.jobService.getProjectPipelineCost(project, this.tokenWindowDays).subscribe({
       next: (t) => this.pipelineCost.set(t),
       error: () => { /* tokens are a secondary read; leave null -> chips just hide */ },
@@ -178,6 +195,26 @@ export class ProjectPipelinePanelComponent {
       error: () => { /* keep last known overrides */ },
     });
   }
+
+  refreshEffective(project: string = this.projectName(), pipelineType: PipelineType = this.pipelineType()): void {
+    this.quotaApi.getEffectiveModelSelection({ project, pipelineType }).subscribe({
+      next: (res) => { if (this.pipelineType() === pipelineType && this.projectName() === project)
+        this.effectiveRoutes.set(new Map(res.routes.filter(r => r.stepId).map(r => [r.stepId!, r]))); },
+      error: () => { /* secondary read: without it the rows show the configured route only */ },
+    });
+  }
+
+  /** Sequential step writes, so each PUT merges onto the entry the previous one saved. */
+  readonly applyAspectAgent = (selection: AspectAgentSelection): Observable<unknown> => {
+    const project = this.projectName();
+    const pipelineType = this.pipelineType();
+    const ids = this.rows().filter(row => row.phase === 'aspect' && row.usesModel).map(row => row.id);
+    const patch = { economyModel: false, ...selection };
+    return from(ids).pipe(
+      concatMap(id => this.jobService.setProjectPipelineStep(project, this.stepRequest(id, patch, pipelineType))),
+      tap(res => { if (this.pipelineType() === pipelineType) this.overrides.set(res.pipelineSteps ?? {}); }),
+      finalize(() => { this.refreshOverrides(project, pipelineType); this.refreshEffective(project, pipelineType); }));
+  };
 
   onStepEnabledChange(stepId: string, enabled: boolean): void {
     this.writeStep(stepId, { enabled });
@@ -325,6 +362,10 @@ export class ProjectPipelinePanelComponent {
       model: selection.model, thinkingLevel: selection.thinkingLevel });
   }
 
+  onStepPinModeChange(stepId: string, pinMode: 'preference' | 'hard'): void {
+    this.writeStep(stepId, { pinMode });
+  }
+
   /**
    * The condition <select> changed. A non-value token persists immediately;
    * a value-bearing token (task-type / tag) keeps a draft until a value
@@ -388,49 +429,16 @@ export class ProjectPipelinePanelComponent {
    * resent). `enabled` is sent as null when it equals the built-in default
    * so an at-default step clears its entry instead of leaving a dead one.
    */
-  writeStep(
-    stepId: string,
-    patch: {
-      enabled?: boolean;
-      economyModel?: boolean;
-      cliType?: string;
-      model?: string;
-      thinkingLevel?: string | null;
-      prompt?: string | null;
-      mode?: string;
-      condition?: PipelineStepCondition | null;
-    },
-  ): void {
-    const cur = this.overrides()[stepId] ?? {};
-    const defaultEnabled = this.catalogue().find(s => s.id === stepId)?.defaultEnabled ?? true;
-    const enabled = patch.enabled ?? (cur.enabled ?? defaultEnabled);
-    const economyModel = patch.economyModel ?? (cur.economyModel ?? false);
-    const model = (patch.model ?? cur.model ?? '').trim();
-    const cliType = (patch.cliType ?? cur.cliType ?? '').trim();
-    const thinkingLevel = (patch.thinkingLevel !== undefined ? patch.thinkingLevel : (cur.thinkingLevel ?? ''))?.trim() ?? '';
-    const prompt = (patch.prompt !== undefined ? patch.prompt : (cur.prompt ?? ''))?.trim() ?? '';
-    const mode = (patch.mode ?? cur.mode ?? '').trim();
-    const condition = patch.condition !== undefined ? patch.condition : (cur.condition ?? null);
+  writeStep(stepId: string, patch: StepPatch): void {
     const pipelineType = this.pipelineType();
-
     this.stepBusy[stepId] = true;
-    this.jobService.setProjectPipelineStep(this.projectName(), {
-      pipelineType,
-      stepId,
-      enabled: enabled === defaultEnabled ? null : enabled,
-      economyModel: economyModel || null,
-      cliType: cliType || null,
-      model: model || null,
-      thinkingLevel: thinkingLevel || null,
-      prompt: prompt || null,
-      mode: mode || null,
-      condition: condition ?? null,
-    }).subscribe({
+    this.jobService.setProjectPipelineStep(this.projectName(), this.stepRequest(stepId, patch, pipelineType)).subscribe({
       next: (res) => {
         this.stepBusy[stepId] = false;
         if (this.pipelineType() !== pipelineType) return;
         this.overrides.set(res.pipelineSteps ?? {});
         this.clearConditionDraft(stepId);
+        if (patch.cliType !== undefined || patch.model !== undefined || patch.pinMode !== undefined) this.refreshEffective();
       },
       error: () => {
         this.stepBusy[stepId] = false;
@@ -438,6 +446,28 @@ export class ProjectPipelinePanelComponent {
         if (this.pipelineType() === pipelineType) this.clearConditionDraft(stepId);
       },
     });
+  }
+
+  private stepRequest(stepId: string, patch: StepPatch, pipelineType: PipelineType) {
+    const cur = this.overrides()[stepId] ?? {};
+    const defaultEnabled = this.catalogue().find(s => s.id === stepId)?.defaultEnabled ?? true;
+    const enabled = patch.enabled ?? (cur.enabled ?? defaultEnabled);
+    const economyModel = patch.economyModel ?? (cur.economyModel ?? false);
+    const thinkingLevel = (patch.thinkingLevel !== undefined ? patch.thinkingLevel : (cur.thinkingLevel ?? ''))?.trim() ?? '';
+    const prompt = (patch.prompt !== undefined ? patch.prompt : (cur.prompt ?? ''))?.trim() ?? '';
+    const condition = patch.condition !== undefined ? patch.condition : (cur.condition ?? null);
+    return {
+      pipelineType, stepId,
+      enabled: enabled === defaultEnabled ? null : enabled,
+      economyModel: economyModel || null,
+      cliType: (patch.cliType ?? cur.cliType ?? '').trim() || null,
+      model: (patch.model ?? cur.model ?? '').trim() || null,
+      thinkingLevel: thinkingLevel || null,
+      prompt: prompt || null,
+      mode: (patch.mode ?? cur.mode ?? '').trim() || null,
+      condition: condition ?? null,
+      pinMode: patch.pinMode ?? cur.pinMode ?? 'preference',
+    };
   }
 
   asCliType(value: string | null | undefined): CliType | null {

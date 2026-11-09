@@ -8,6 +8,9 @@ namespace AgentStudio.Runner;
 /// <summary>Host boundary for the shared decision library. No transition rules belong here.</summary>
 public static class MonolithTransitionAdapter
 {
+    public static AutoReviewStrandingAction AutoReviewStranding(AutoReviewStrandingFacts facts)
+        => AutoReviewStrandingPolicy.Decide(facts);
+
     public static TransitionDecision Decide(TransitionFacts facts) => TransitionDecisionPolicy.Decide(facts);
     public static RedDevelopRepairDecision RedDevelopRepair(RedDevelopRepairFacts facts)
         => RedDevelopRepairPolicy.Decide(facts);
@@ -26,6 +29,11 @@ public static class MonolithTransitionAdapter
     public static IReadOnlyList<ReviewVerdictDto> MergeReviewVerdicts(
         IEnumerable<ReviewVerdictDto> verdicts)
         => ReviewFindingMergePolicy.MergeVerdicts(verdicts);
+    public static ReviewConcernActionability ClassifyReviewFinding(ReviewFollowUpFinding finding)
+        => ReviewFollowUpPolicy.Classify(finding);
+    public static ReviewPreAdmissionDecision ReviewPreAdmission(bool batchDeferredAccepted,
+        ReviewFollowUpAction followUp)
+        => ReviewPreAdmissionPolicy.Decide(batchDeferredAccepted, followUp);
     public static IReadOnlyList<string> BlockingReviewFindingKeys(
         IEnumerable<ReviewFollowUpFinding> findings)
         => ReviewFindingMergePolicy.BlockingFingerprints(findings);
@@ -76,6 +84,9 @@ public static class MonolithTransitionAdapter
         => GateCancellationPolicy.Decide(expectedSha, currentSha, expectedLane, currentLane,
             continuePending, shuttingDown, reportedReason);
 
+    public static int GateStartsAfterCancellation(int startsBeforeThisRun, string? reason, bool serviceStopping)
+        => GateCancellationPolicy.ChargedStartsAfterCancellation(startsBeforeThisRun, reason, serviceStopping);
+
     public static bool GateCancellationOwnsResult(string? expectedSha, string? currentSha,
         string? expectedAttempt, string? currentAttempt,
         string? expectedLane, string? currentLane, bool continuePending)
@@ -105,7 +116,30 @@ public static class MonolithTransitionAdapter
         int slotsBusy, int slotsTotal)
         => BatchGateLookAheadPlanner.GateHostIdle(loadClear, batchRunning, perTaskGates, slotsBusy, slotsTotal);
 
+    public static bool PerTaskGateSlotFree(int perTaskGates, int slotsTotal)
+        => BatchGateLookAheadPlanner.PerTaskGateSlotFree(perTaskGates, slotsTotal);
+
+    public static IReadOnlyList<string> BatchStartOrder(IEnumerable<BatchGateStartCandidate> formed,
+        DateTimeOffset nowUtc)
+        => BatchGateStartPolicy.Order(formed, nowUtc);
+
+    public static bool BatchFlightLeaseDeadlinePassed(DateTimeOffset startedAtUtc, bool leaseClaimed,
+        DateTimeOffset nowUtc, int deadlineMinutes)
+        => BatchGateStartPolicy.LeaseDeadlinePassed(startedAtUtc, leaseClaimed, nowUtc, deadlineMinutes);
+
+    public static bool BatchFlightStartsNext(bool cancelledAtLeaseDeadline, bool batchStillFormed,
+        bool batchRetired, bool gateRan, bool reformedIntoSuccessor, bool followsCompletedFlight)
+        => BatchGateStartPolicy.StartsNextAfterFlight(cancelledAtLeaseDeadline, batchStillFormed,
+            batchRetired, gateRan, reformedIntoSuccessor, followsCompletedFlight);
+
+    public static string BatchFlightLeaseDeadlineReason(int deadlineMinutes)
+        => BatchGateStartPolicy.LeaseDeadlineReason(deadlineMinutes);
+
     public static GateQueueAssessment GateQueue(GateQueueFacts facts) => GateQueueStallPolicy.Assess(facts);
+
+    /// <summary>AGT-3400 S4: shadow review package formation; no lane, verdict or settlement effect.</summary>
+    public static IReadOnlyList<ReviewPackageFormationDecision> ReviewPackageFormation(ReviewPackageFormationInput input)
+        => ReviewPackageFormationPolicy.Plan(input);
 
     public static bool GateQueueStallRaisesEvent(bool episodeOpen) => GateQueueStallPolicy.RaisesStallEvent(episodeOpen);
 

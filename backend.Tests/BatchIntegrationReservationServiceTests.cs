@@ -19,6 +19,26 @@ public sealed class BatchIntegrationReservationServiceTests
     }
 
     [Fact]
+    public void Batch_state_exposes_the_bounded_direct_integration_gate_reservation()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "batch-state-cap-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var state = BatchGateStateSnapshotReader.Read(new BatchGateStore(root),
+                "project", new BatchGateFormationOptions(Enabled: true));
+            var json = JsonSerializer.SerializeToElement(state,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+            Assert.Equal(27, json.GetProperty("integrationGateLeaseCapMinutes").GetDouble());
+            Assert.Equal(TimeSpan.FromMinutes(25), BatchIntegrationReservationService.GateBudget(
+                TimeSpan.FromMinutes(40), reservationHeld: true));
+            Assert.Equal(TimeSpan.FromMinutes(40), BatchIntegrationReservationService.GateBudget(
+                TimeSpan.FromMinutes(40), reservationHeld: false));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public async Task Crash_window_marker_is_reconciled_before_batch_wait()
     {
         var root = Path.Combine(Path.GetTempPath(), "batch-push-" + Guid.NewGuid().ToString("N"));
@@ -45,27 +65,33 @@ public sealed class BatchIntegrationReservationServiceTests
     {
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 12, 10, 0, 0,
             TimeSpan.Zero));
-        var reservation = new BatchIntegrationReservationService(timeProvider: clock,
-            alertAfter: TimeSpan.FromMinutes(15));
+        var reservation = new BatchIntegrationReservationService(timeProvider: clock);
         reservation.MarkPushPending("project", "AGT-42", "abc");
-        clock.Advance(TimeSpan.FromMinutes(16));
+        clock.Advance(TimeSpan.FromMinutes(2));
+        Assert.False(reservation.GetWait("project")!.AgeAlert);
+        clock.Advance(TimeSpan.FromMinutes(2));
         var wait = reservation.GetWait("project");
         Assert.NotNull(wait);
         Assert.True(wait.AgeAlert);
-        Assert.Contains("waiting on push AGT-42@abc since", wait.Reason);
+        Assert.Contains("waiting on approved integration push AGT-42@abc since", wait.Reason);
+        Assert.Equal(4, wait.AgeMinutes);
+        reservation.MarkPushPending("project", "AGT-43", "def");
 
         var root = Path.Combine(Path.GetTempPath(), "batch-state-" + Guid.NewGuid().ToString("N"));
         try
         {
             var state = BatchGateStateSnapshotReader.Read(new BatchGateStore(root),
                 "project", new BatchGateFormationOptions(Enabled: true),
-                pushWait: wait);
+                pushWait: wait, pushWaits: reservation.GetWaits("project"));
             using var json = JsonDocument.Parse(JsonSerializer.Serialize(state,
                 new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-            Assert.Contains("waiting on push AGT-42@abc since",
+            Assert.Contains("waiting on approved integration push AGT-42@abc since",
                 json.RootElement.GetProperty("plan").GetProperty("reason").GetString());
             Assert.True(json.RootElement.GetProperty("pushWait")
                 .GetProperty("ageAlert").GetBoolean());
+            Assert.Equal(4, json.RootElement.GetProperty("pushWait")
+                .GetProperty("ageMinutes").GetDouble());
+            Assert.Equal(2, json.RootElement.GetProperty("pushWaits").GetArrayLength());
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
     }

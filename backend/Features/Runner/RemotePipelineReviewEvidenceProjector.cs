@@ -2,6 +2,7 @@ using System.Text;
 using AgentStudio.GeneratedFiles;
 using AgentStudio.Pipeline;
 using AgentStudio.Tasks;
+using AgentStudio.QualityStudio;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
@@ -23,13 +24,15 @@ public sealed class RemotePipelineReviewEvidenceProjector
     private readonly FileGenerationIndex _files;
     private readonly AgentStudio.Projects.ProjectSettingsService _settings;
     private readonly TaskMutationService? _mutations;
+    private readonly QualityChangeReviewOutbox? _qualityOutbox;
 
     public RemotePipelineReviewEvidenceProjector(ITokenPricing pricing,
         PipelineExecutionLog pipeline,
         TimelineLog timeline,
         FileGenerationIndex files,
         AgentStudio.Projects.ProjectSettingsService settings,
-        TaskMutationService? mutations = null)
+        TaskMutationService? mutations = null,
+        QualityChangeReviewOutbox? qualityOutbox = null)
     {
         _pricing = pricing;
         _pipeline = pipeline;
@@ -37,6 +40,7 @@ public sealed class RemotePipelineReviewEvidenceProjector
         _files = files;
         _settings = settings;
         _mutations = mutations;
+        _qualityOutbox = qualityOutbox;
     }
 
     /// <summary>Receipt participant prefix for remote review attempt usage.</summary>
@@ -90,8 +94,15 @@ public sealed class RemotePipelineReviewEvidenceProjector
             ProjectCarriedAspect(task, review, verdict, receivedAt, execution.Attempt);
         }
         ProjectToolGate(task, review, report, evidenceFile, receivedAt, execution.Attempt);
+        ProjectReviewGrade(task, review, report, receivedAt, execution.Attempt, catalogue);
+        ProjectSkippedAspects(task, review, report, receivedAt, execution.Attempt);
         ProjectTimeline(task, review, report, evidenceFile, receivedAt);
         RecordReviewUsage(task, review, report);
+        var repositoryId = _settings.Get(task.ProjectName).QualityStudioRepositoryId
+            ?? _settings.Get(task.ProjectName).QualityStudio?.RepositoryId;
+        var qualityRound = QualityChangeReviewStore.Project(task, review, report, repositoryId, receivedAt);
+        if (qualityRound?.Document is { } document && repositoryId is not null)
+            _qualityOutbox?.Enqueue(repositoryId, task.TaskKey, qualityRound, document);
     }
 
     /// <summary>
@@ -215,7 +226,7 @@ public sealed class RemotePipelineReviewEvidenceProjector
         var status = remoteVerdict?.Status.ToLowerInvariant() switch
         {
             "pass" => AspectStatus.Pass,
-            "block" or "fail" => AspectStatus.Block,
+            "block" or "blocked" or "fail" or "failed" or "infrastructure" => AspectStatus.Block,
             _ => AspectStatus.Concerns,
         };
         var response = ArtifactText(report.Artifacts, command.StdoutSha256);
@@ -313,6 +324,98 @@ public sealed class RemotePipelineReviewEvidenceProjector
             ? PipelineStepStatus.Failed
             : PipelineStepStatus.Passed;
 
+    private void ProjectReviewGrade(TaskInfo task, ReviewAttemptDto review,
+        Contract.ReviewReportRequest report, DateTime receivedAt, int pipelineAttempt,
+        TaskPipeline catalogue)
+    {
+        var agentCommands = report.Commands
+            .Where(command => Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))
+            .ToArray();
+        var first = agentCommands.MinBy(command => command.StartedAt);
+        var last = agentCommands.MaxBy(command => command.FinishedAt);
+        var passed = string.Equals(report.Outcome, "Pass", StringComparison.OrdinalIgnoreCase);
+        var gradeVerdict = report.Outcome.Trim().ToLowerInvariant() switch
+        {
+            "productfailure" => "product-failure",
+            "reviewinfra" => "review-infra",
+            "integrationbranchdefect" => "integration-branch-defect",
+            var value => value,
+        };
+        var logsDir = TaskPaths.LogsDir(task.FolderPath);
+        var number = Directory.Exists(logsDir)
+            ? Math.Max(1, Directory.EnumerateFiles(logsDir,
+                "remote-review-settlement-*.json").Count())
+            : 1;
+        foreach (var stepId in new[] { PipelineCatalogue.CodeReviewGradeStepId,
+                     PipelineCatalogue.OrchestratorDecisionStepId })
+        {
+            if (!catalogue.AllSteps.Any(step => step.Id == stepId)) continue;
+            if (AlreadyProjected(task.FolderPath, stepId, review.AttemptId)) continue;
+            _pipeline.RecordStep(task.FolderPath, new PipelineStepExecution
+            {
+                StepId = stepId,
+                Kind = StepKind.Orchestrator,
+                Attempt = pipelineAttempt,
+                Status = passed ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
+                StartedAt = first?.StartedAt ?? receivedAt,
+                CompletedAt = receivedAt,
+                DurationMs = first is null || last is null ? 0
+                    : Math.Max(0, (long)(last.FinishedAt - first.StartedAt).TotalMilliseconds),
+                Model = last?.Model,
+                ReviewCli = CliFromExecutable(last?.FileName),
+                Verdict = gradeVerdict,
+                VerdictSummary = report.Summary,
+                Reason = $"Remote Review attempt {number}: {report.Summary ?? report.Outcome}",
+                EvidenceRef = $"remote-review-grade-{review.AttemptId}.md",
+                ExecutionLocation = "remote",
+                ExecutionAttemptId = review.AttemptId,
+                ReviewAttemptNumber = number,
+            });
+        }
+    }
+
+    private void ProjectSkippedAspects(TaskInfo task, ReviewAttemptDto review,
+        Contract.ReviewReportRequest report, DateTime receivedAt, int pipelineAttempt)
+    {
+        foreach (var skipped in report.SkippedAspects ?? [])
+        {
+            var stepId = skipped.Aspect.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
+                ? skipped.Aspect : $"aspect-{skipped.Aspect}";
+            if (!AspectRunnerService.Catalogue.ContainsKey(
+                    stepId.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
+                        ? stepId["aspect-".Length..] : stepId)) continue;
+            if (AlreadyProjected(task.FolderPath, stepId, review.AttemptId)) continue;
+            _pipeline.RecordStep(task.FolderPath, new PipelineStepExecution
+            {
+                StepId = stepId, Kind = StepKind.Aspect, Attempt = pipelineAttempt,
+                Status = PipelineStepStatus.Skipped, StartedAt = receivedAt,
+                CompletedAt = receivedAt, Reason = skipped.Reason,
+                ExecutionLocation = "remote", ExecutionAttemptId = review.AttemptId,
+            });
+        }
+        var deferred = report.Verdicts.Any(verdict => verdict.Aspect == "build-tests"
+            && verdict.Classification == "DeferredToBatch");
+        if (!deferred && report.Commands.Any(command => command.Phase == "verification"
+            && !Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))) return;
+        if (AlreadyProjected(task.FolderPath, PipelineCatalogue.BuildTestGateStepId,
+                review.AttemptId)) return;
+        _pipeline.RecordStep(task.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.BuildTestGateStepId, Kind = StepKind.Tool,
+            Attempt = pipelineAttempt, Status = PipelineStepStatus.Skipped,
+            StartedAt = receivedAt, CompletedAt = receivedAt,
+            Verdict = deferred ? "deferred-to-batch" : "not-run",
+            Reason = deferred ? "Build and tests deferred to the batch gate."
+                : "This Remote Review did not run build or test commands.",
+            ExecutionLocation = "batch", ExecutionAttemptId = review.AttemptId,
+        });
+    }
+
+    private bool AlreadyProjected(string folder, string stepId, string reviewAttemptId)
+        => _pipeline.Read(folder)?.Steps.Any(step => step.StepId == stepId
+            && step.ExecutionAttemptId == reviewAttemptId
+            && StepCostMeasurement.IsTerminal(step.Status)) == true;
+
     private void ProjectToolGate(
         TaskInfo task,
         ReviewAttemptDto review,
@@ -342,9 +445,11 @@ public sealed class RemotePipelineReviewEvidenceProjector
             StartedAt = first.StartedAt,
             CompletedAt = receivedAt,
             DurationMs = Math.Max(0, (long)(last.FinishedAt - first.StartedAt).TotalMilliseconds),
-            Reason = passed
+            Reason = (passed
                 ? $"{tools.Length} remote tool gate command(s) passed at the immutable Result-SHA."
-                : "A remote tool gate command failed at the immutable Result-SHA.",
+                : "A remote tool gate command failed at the immutable Result-SHA.")
+                + (review.Subject.Plan?.BuildTestDeferralDisabledReason is { } reason
+                    ? $" Batch deferral disabled: {reason}" : string.Empty),
             Verdict = passed ? "pass" : "block",
             ReviewFindings = !passed && citedProductFailure
                 && string.Equals(report.Outcome, "ProductFailure", StringComparison.OrdinalIgnoreCase)

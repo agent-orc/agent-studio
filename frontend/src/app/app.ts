@@ -17,7 +17,6 @@ import { forkJoin } from 'rxjs';
 import { FormsModule } from '@angular/forms';
 import {
   BoardFiltersService, ActiveBoardFiltersComponent,
-  CreateTaskDialogComponent,
   DossierGroupBoardComponent,
   FiltersDropdownComponent,
   TaskColumnComponent,
@@ -28,7 +27,7 @@ import {
   BoardDragStateService,
   BoardMutationsService,
   CreateTaskFormService,
-  DeliverySectionComponent,
+  DeliverySectionComponent, BoardGroupSwitcherComponent, DELIVERY_GROUP_ID,
   buildFocusLanes,
   buildLaneGroups,
   buildProjectTokenChip,
@@ -38,6 +37,7 @@ import {
   projectAutoInfo,
   projectRunnerIndicator,
 } from './features/board';
+import { CreateTaskDialogComponent } from './features/board/lazy';
 import {
   TaskDetailComponent,
   DetailLoadErrorComponent,
@@ -57,43 +57,41 @@ import {
 } from './features/task-detail/runtime';
 import {
   buildComposerLocationContext,
-  OrchestratorFeedComponent,
   OrchestratorFeedStore,
-  OrchestratorSideSheetComponent,
+  OrchestratorPanelStateService,
+  OrchestratorSideSheetHostComponent,
 } from './features/orchestrator';
+import { OrchestratorFeedComponent } from './features/orchestrator/lazy';
 import {
   DEFAULT_PROJECT_RAIL_KEY,
   ProjectOverlaysService,
   type ProjectRailKey,
-  ProjectUrlPreviewTabComponent,
-  WorkbenchTabHostComponent,
 } from './features/project-detail/runtime';
 import {
   AutoReviewIndicatorComponent,
-  StatusBarComponent,
+  StatusBarComponent, StatusBarUsageHostComponent, AccountControlComponent,
   UiPreferencesService,
   WorkspaceBannerComponent,
-  WorkspaceCreateDialogComponent, OnboardProjectDialogComponent,
   WorkspaceManagerService,
-  WorkspaceOverlaysComponent,
   WorkspaceOverlaysService,
+  WorkspaceOverlaysHostComponent,
   FirstRunLaunchService,
   type WorkspaceSettingsSection,
 } from './features/shell';
+import { WorkspaceCreateDialogComponent, OnboardProjectDialogComponent } from './features/shell/lazy';
 import {
   buildDevtoolsMenuItems,
   DEVTOOLS_MENU_IDS,
-  E2ECleanupDialogComponent,
-  TagManagerDialogComponent,
 } from './features/dev-tools';
+import { E2ECleanupDialogComponent, TagManagerDialogComponent } from './features/dev-tools/lazy';
 import {
   UpdateBlockModalComponent,
   UpdateCenterComponent,
   UpdateVersionBadgeComponent,
 } from './features/update';
-import { VerboseDebugOverlayComponent } from './features/verbose-debug';
+import { VerboseDebugOverlayComponent } from './features/verbose-debug/lazy';
 import {
-  StudioShellComponent,
+  StudioShellComponent, TaskDefaultsControlComponent,
   StudioTabActionsComponent,
   ProjectHubUrlService,
   StudioTabStateService,
@@ -113,7 +111,7 @@ import {
   type TaskDetailRouteTab,
   type TaskInspectorRouteTab,
 } from './features/studio-shell';
-import { ProjectOverlaysComponent } from './features/project-detail/lazy';
+import { ProjectOverlaysComponent, ProjectUrlPreviewTabComponent, WorkbenchTabHostComponent } from './features/project-detail/lazy';
 import { ProjectHubViewComponent, StudioDiffViewComponent, StudioActivityViewComponent } from './features/studio-shell/lazy';
 import { TaskService } from './services/task.service';
 import { ClientService } from './services/client.service';
@@ -130,6 +128,7 @@ import { ErrorDialogComponent } from './components/error-dialog/error-dialog.com
 import { ConfirmDialogComponent } from './components/app-dialog/confirm-dialog/confirm-dialog.component';
 import { NotificationStackComponent } from './components/app-dialog/notification-stack/notification-stack.component';
 import { MediaLightboxComponent } from './components/media-lightbox/media-lightbox.component';
+import { MediaLightboxService } from './services/media-lightbox.service';
 import { OfflineBannerComponent } from './components/offline-banner/offline-banner.component';
 import { PublicDemoBannerComponent } from './components/public-demo-banner/public-demo-banner.component';
 import { UpdateClientService } from './services/update.service';
@@ -149,10 +148,12 @@ import type { RunTimeline } from './features/run-timeline';
 import type { TaskScreenshot } from './features/screenshots';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { MenuComponent, MenuItem, MenuItemClickEvent } from './components/menu';
-import { CostBreakdownDialogComponent, type TaskTokenSummary } from './features/tokens'; // verbose-debug overlay context types
+import { CostBreakdownService, type TaskTokenSummary } from './features/tokens'; // verbose-debug overlay context types
+import { CostBreakdownDialogComponent } from './features/tokens/lazy';
 import { LoadingSurfaceComponent } from './components/async-feedback';
 import { AuthGateComponent, AuthService } from './components/auth-gate/auth-gate';
-import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts';
+import { CodexSignInDialogService, ClaudeSignInDialogService } from './features/remote-hosts';
+import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts/lazy';
 import { ScrollMemoryDirective } from './directives/scroll-memory.directive';
 interface VerboseDebugContext {
   lines: CliOutputLine[];
@@ -169,17 +170,17 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
 @Component({
   selector: 'app-root',
   imports: [
-    DeliverySectionComponent,
+    DeliverySectionComponent, BoardGroupSwitcherComponent,
     TaskColumnComponent,
     ScrollMemoryDirective,
     TaskDetailComponent,
     DetailLoadErrorComponent,
     TaskDetailLoadSectionsComponent,
-    OrchestratorSideSheetComponent,
+    OrchestratorSideSheetHostComponent,
     OrchestratorFeedComponent,
     ProjectOverlaysComponent,
     AutoReviewIndicatorComponent,
-    StatusBarComponent,
+    StatusBarComponent, StatusBarUsageHostComponent, AccountControlComponent,
     FormsModule,
     CreateTaskDialogComponent,
     DossierGroupBoardComponent,
@@ -192,7 +193,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     ProjectTabsComponent,
     E2ECleanupDialogComponent,
     TagManagerDialogComponent,
-    WorkspaceOverlaysComponent,
+    WorkspaceOverlaysHostComponent,
     WorkspaceBannerComponent,
     WorkspaceCreateDialogComponent, OnboardProjectDialogComponent,
     UpdateVersionBadgeComponent,
@@ -203,7 +204,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     KanbanFilterSidesheetComponent, ActiveBoardFiltersComponent, TagFiltersComponent, TagChipsComponent,
     TooltipDirective,
     MenuComponent,
-    StudioShellComponent,
+    StudioShellComponent, TaskDefaultsControlComponent,
     StudioTabActionsComponent,
     ProjectHubViewComponent,
     StudioDiffViewComponent,
@@ -285,19 +286,22 @@ export class App implements OnInit, OnDestroy {
     return buildRunActivityBadge(info, this.nowTick());
   });
   @ViewChild('jobDetail') private jobDetailRef?: TaskDetailComponent;
-  @ViewChild('orchSideSheet') private orchSideSheetRef?: OrchestratorSideSheetComponent;
   private readonly jobDetailSig = viewChild<TaskDetailComponent>('jobDetail');
   readonly studioTriageActingId = computed(() => this.jobDetailSig()?.triageActingId() ?? null);
   readonly shellPanesVisible = computed<ShellPanesVisible>(
     () => this.jobDetailSig()?.panesVisible() ?? SHELL_PANES_FALLBACK,
   );
-  /**
-   * Signal-form view child for the orchestrator side-sheet. Lets the
-   * `effectiveCompactCards` computed react when the rail opens/closes
-   * (F4) without a manual subscription bridge. The legacy @ViewChild
-   * above stays for the imperative `toggle()` call sites.
-   */
-  private readonly orchSideSheetSig = viewChild<OrchestratorSideSheetComponent>('orchSideSheet');
+  private readonly orchestratorPanel = inject(OrchestratorPanelStateService);
+  readonly orchestratorPanelOpen = this.orchestratorPanel.open;
+  readonly costBreakdownOpen = inject(CostBreakdownService).open;
+  readonly mediaLightboxOpen = inject(MediaLightboxService).active;
+  readonly workspaceOverlaysOpen = inject(WorkspaceOverlaysService).anyOpen;
+  readonly codexSignInRequest = inject(CodexSignInDialogService).request;
+  readonly claudeSignInRequest = inject(ClaudeSignInDialogService).request;
+  readonly chatProjectRequest = signal<{ projectName: string } | null>(null);
+  onChatProjectRequestHandled(request: { projectName: string }): void {
+    if (this.chatProjectRequest() === request) this.chatProjectRequest.set(null);
+  }
   /** Records the lane the user was triaging in. When the open job's state
    *  diverges from this (e.g. an external client moved it) we treat that as
    *  an auto-advance and toast accordingly. */
@@ -563,6 +567,26 @@ export class App implements OnInit, OnDestroy {
   readonly laneGroups = computed<BoardLaneGroup[]>(
     () => buildLaneGroups(this.displayGrouped(), this.boardDrag.active()),
   );
+
+  /**
+   * AGT-3590: below tablet width the studio board shows one container at a
+   * time, picked in the group switcher. `studioBoardFocus` is the container
+   * shown alone (null: all of them); on wide boards it is the container focus.
+   */
+  readonly singleGroupBoard = this.laneCollapse.singleGroupLayout;
+  readonly deliveryGroupId = DELIVERY_GROUP_ID;
+  private readonly deliverySection = viewChild(DeliverySectionComponent);
+  readonly visibleDeliveryGroup = computed(() => {
+    const section = this.deliverySection();
+    return section?.visible() ? section.group() : null;
+  });
+  readonly studioBoardFocus = computed(() => this.laneCollapse.boardFocus([
+    ...this.laneGroups().map((g) => g.id),
+    ...(this.visibleDeliveryGroup() ? [DELIVERY_GROUP_ID] : []),
+  ]));
+  selectBoardGroup(id: string): void {
+    this.laneCollapse.selectSingleGroup(id);
+  }
   // Copilot removed: no CLI exposes the inline path/token config card, so the
   // error-dialog "Open CLI config" affordance is permanently disabled.
   readonly selectedJobUsesCopilot = computed(() => false);
@@ -774,8 +798,10 @@ export class App implements OnInit, OnDestroy {
       this.createJobForm.openPageTask(request, this.watchPaths());
     });
     this.pageContext.openChatRequests$.subscribe(context => {
-      this.orchSideSheetRef?.setActiveProject(context.projectName);
-      this.orchSideSheetRef?.show();
+      // Each click is a new command, including a second click for the same
+      // project after the operator has changed the chat scope in the sheet.
+      this.chatProjectRequest.set({ projectName: context.projectName });
+      this.orchestratorPanel.setOpen(true);
     });
 
     // Cycle 10c: bridge TriageController to the TaskDetailComponent's
@@ -1055,7 +1081,7 @@ export class App implements OnInit, OnDestroy {
       const fromHistory = event?.type === 'popstate' || event?.type === 'hashchange';
       this.workspaceOverlays.syncFromHash();
       if (this.featureFlags.vsCodeLayout() && this.workspaceOverlays.settingsOpen()) {
-        this.openWorkspaceSettingsInStudio(this.workspaceOverlays.section());
+        this.studioTabState.open({ kind: 'workspace-settings' });
       }
       const studioHandled = this.syncStudioRouteFromHash(fromHistory);
       if (!studioHandled) this.applyProjectShellHash(fromHistory);
@@ -1393,7 +1419,7 @@ export class App implements OnInit, OnDestroy {
   }
 
   /**
-   * F5: bubble-up from <app-job-card>'s "Pick next" affordance.
+   * F5: bubble-up from <app-job-card>'s "Move to top" affordance.
    * Promotes the card to position 1 in the runner queue. Re-uses the
    * existing `moveJobToTop` round-trip — same endpoint the detail-view
    * "Do Next" already drove. Toasts on success so the operator gets a
@@ -1403,8 +1429,8 @@ export class App implements OnInit, OnDestroy {
     this.jobService.moveJobToTop(job.id, job.watchPath).subscribe({
       next: () => {
         this.notifications.success(
-          `"${job.title || job.id}" is next up`,
-          'Pick next',
+          `"${job.title || job.id}" moved to the top of its project's Ready queue`,
+          'Move to top',
         );
         this.refresh();
       },
@@ -1567,7 +1593,11 @@ export class App implements OnInit, OnDestroy {
   }
 
   toggleOrchestratorChat(): void {
-    this.orchSideSheetRef?.toggle();
+    this.orchestratorPanel.setOpen(!this.orchestratorPanel.open());
+  }
+
+  openOrchestratorChat(): void {
+    this.orchestratorPanel.setOpen(true);
   }
 
   onNavigateToChatContext(contextKey: string): void {
@@ -1849,6 +1879,9 @@ export class App implements OnInit, OnDestroy {
       case 'deployment-dashboard':
         this.studioTabState.open({ kind: 'deployment-dashboard' });
         break;
+      case 'structure':
+        this.studioTabState.open({ kind: 'structure', ...(projectName ? { projectName } : {}) });
+        break;
       case 'task':
         this.routeDetailTab.set(route.tab);
         this.routeInspectorTab.set(route.inspector);
@@ -1996,8 +2029,7 @@ export class App implements OnInit, OnDestroy {
   }
 
   /**
-   * Session task-link chip clicked inside the CLI-Management "CLI sessions"
-   * list: close the global workspace-settings home, then open the owning
+   * Task link clicked in the remote hosts panel: close the global workspace-settings home, then open the owning
    * task's detail panel. Mirrors `onOpenTaskFromReel`; routing through the
    * shell keeps `selectedJob` + the URL query the single owner of detail
    * navigation rather than letting a leaf component drive it.

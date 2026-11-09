@@ -95,6 +95,8 @@
 }
 .client__kind[data-kind='retired'] { color: var(--studio-fg-muted); }
 
+.client__state { flex: 0 0 auto; min-width: 84px; }
+
 .client__seen {
   flex: 0 0 auto;
   color: var(--studio-fg-dim);

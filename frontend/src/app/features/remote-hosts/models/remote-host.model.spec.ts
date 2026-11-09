@@ -109,6 +109,33 @@ describe('remote-host.model helpers', () => {
     expect(taskServerRouteDetail(host)).toContain('Check the tunnel');
   });
 
+  it('keeps a fresh ready route when telemetry records a short failure streak', () => {
+    const host = {
+      id: 'runner', name: 'Runner', role: 'remote', address: null, clientId: 'runner',
+      status: 'online', os: 'Linux', lastHeartbeatAt: '2026-08-01T15:30:00Z',
+      uptimeLabel: null, capabilities: [], cliQuotas: [], stats: null,
+      capabilityHealth: [{
+        key: 'task-server:connectivity', category: 'foundation', advertisedStatus: 'ready',
+        healthState: 'healthy', reason: null, advertisedAt: '2026-08-01T15:30:00Z',
+        freshUntil: '2026-08-01T15:33:00Z', isFresh: true, consecutiveFailures: 0,
+        detail: 'Task Server route has failures since 15:30; 1 consecutive request failures.',
+        affectedClaims: [], recoveryHistory: [],
+      }],
+      taskServerConnection: {
+        status: 'unreachable', observedAt: '2026-08-01T15:30:00Z',
+        failureStartedAt: '2026-08-01T15:30:00Z', consecutiveFailures: 1,
+        escalatedAt: null, lastError: 'origin timeout', lastRecoveredAt: null,
+      },
+    } satisfies RemoteHost;
+    expect(taskServerRouteStatus(host)).toBe('reachable');
+    expect(taskServerRouteDetail(host)).toContain('1 consecutive request failures');
+    const legacy = { ...host, capabilityHealth: [] };
+    expect(taskServerRouteStatus(legacy)).toBe('reachable');
+    expect(taskServerRouteStatus({ ...legacy, taskServerConnection: {
+      ...legacy.taskServerConnection, observedAt: '2026-08-01T15:31:00Z', consecutiveFailures: 3,
+    } })).toBe('unreachable');
+  });
+
   it('does not turn an intentionally retired host into a route outage', () => {
     const host = {
       id: 'runner', name: 'Runner', role: 'remote', address: null, clientId: 'runner',

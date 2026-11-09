@@ -2,6 +2,7 @@ using System.Text.Json;
 using AgentStudio.Runner;
 using AgentStudio.Tasks;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.TestSupport;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -19,8 +20,7 @@ public sealed class MonolithOrchestrationRecoverySupersessionTests : IDisposable
     private const string Project = "recovery-project";
     private const string OtherProject = "other-project";
     private const string Card = "RECOVERY-CARD";
-    private readonly string _workspace = Path.Combine(Path.GetTempPath(),
-        "orchestration-recovery-" + Guid.NewGuid().ToString("N"));
+    private readonly string _workspace = TestTempRoot.Create("orch-recovery");
     private readonly FakeTimeProvider _clock = new(
         new DateTimeOffset(2026, 10, 21, 12, 0, 0, TimeSpan.Zero));
     private string ProjectPath => Path.Combine(_workspace, "projects", Project);
@@ -218,6 +218,7 @@ public sealed class MonolithOrchestrationRecoverySupersessionTests : IDisposable
                 new Dictionary<string, string?>
                 {
                     ["TaskRepository"] = _workspace,
+                    ["Security:Profile"] = "local",
                     ["WatchPaths:0:Name"] = Project,
                     ["WatchPaths:0:Path"] = ProjectPath,
                     ["WatchPaths:0:RootPath"] = ProjectPath,
@@ -243,7 +244,8 @@ public sealed class MonolithOrchestrationRecoverySupersessionTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_workspace)) Directory.Delete(_workspace, recursive: true);
+        Assert.True(TestTempRoot.TryDelete(_workspace),
+            $"Recovery workspace was recreated during teardown: {_workspace}");
     }
 
     private sealed class CountingApplier : IMonolithOrchestrationApplier

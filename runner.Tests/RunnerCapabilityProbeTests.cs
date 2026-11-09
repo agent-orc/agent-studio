@@ -156,6 +156,46 @@ public sealed class RunnerCapabilityProbeTests
     }
 
     [Theory]
+    [InlineData("0.155.0", false)]
+    [InlineData("0.166.0", true)]
+    public async Task Gpt61_acceptance_is_advertised_and_only_probed_at_verified_cli_floor(
+        string version, bool probeable)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var temp = new TempDirectory();
+        var codex = Path.Combine(temp.Path, "codex");
+        await File.WriteAllTextAsync(codex,
+            $"#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli {version}'; else echo '{{\"models\":[]}}'; fi\n");
+        File.SetUnixFileMode(codex, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        var options = new RunnerOptions
+        {
+            ServerUrl = "http://127.0.0.1:5031", RunnerId = "runner-test",
+            RunnerName = "runner-test", Hostname = "host-test", BackendName = "test",
+            Role = "coding", WorkDir = temp.Path, BaseBranch = "main",
+            CodexCliBin = codex,
+            ClaudeCliBin = Path.Combine(temp.Path, "missing-claude"),
+        };
+
+        var candidates = RunnerCapabilityProbe.ModelCandidates(options,
+            [(CliSelection.CodexCli, "gpt-6-sol")]);
+        Assert.Equal(probeable, candidates.Contains((CliSelection.CodexCli, CodexCliRelease.Gpt61Sol)));
+        Assert.Equal(probeable, candidates.Contains((CliSelection.CodexCli, CodexCliRelease.Gpt61Terra)));
+
+        var advertised = RunnerCapabilityProbe.Advertise(options, gitPushReady: false);
+        foreach (var model in new[] { CodexCliRelease.Gpt61Sol, CodexCliRelease.Gpt61Terra })
+        {
+            var capability = Assert.Single(advertised,
+                item => item.Key == CapabilityProtocol.ModelAcceptance("codex", model));
+            if (!probeable)
+            {
+                Assert.Equal("unavailable", capability.Status);
+                Assert.Contains("This CLI version does not offer", capability.Detail);
+            }
+            else Assert.Equal("unknown", capability.Status);
+        }
+    }
+
+    [Theory]
     [InlineData(1, "", "HTTP 401 Missing bearer authentication", true)]
     [InlineData(1, "", "login required", true)]
     [InlineData(1, "", "ordinary product failure", false)]
@@ -175,7 +215,7 @@ public sealed class RunnerCapabilityProbeTests
     [Theory]
     [InlineData("Selected model is at capacity. Please try a different model.")]
     [InlineData("The model is at capacity right now.")]
-    public void Provider_capacity_is_a_bounded_rate_limit_not_authentication_failure(string message)
+    public void Provider_capacity_is_transient_without_a_provider_hold(string message)
     {
         var observedAt = new DateTimeOffset(2026, 8, 31, 6, 45, 42, TimeSpan.Zero);
 
@@ -185,11 +225,44 @@ public sealed class RunnerCapabilityProbeTests
             stderr: message,
             observedAt: observedAt);
 
-        Assert.Equal(ProviderAccessEvidenceKind.RateLimited, evidence.Kind);
-        Assert.Equal(observedAt.Add(ProviderAccessClassifier.UnknownLimitRetry), evidence.LimitedUntil);
+        Assert.Equal(ProviderAccessEvidenceKind.ModelCapacity, evidence.Kind);
+        Assert.Null(evidence.LimitedUntil);
         Assert.False(evidence.ResetTimeReported);
         Assert.False(RunnerCapabilityProbe.IsProviderAuthenticationFailure(
             new ProcessResult(1, "", message)));
+    }
+
+    [Theory]
+    [InlineData("Selected model is at capacity.\nRetry failed: too many requests (HTTP 429).")]
+    [InlineData("Retry failed: too many requests (HTTP 429).\nSelected model is at capacity.")]
+    public void November_capacity_fixture_is_model_scoped_in_either_line_order(string output)
+    {
+        // Synthetic fixture: the 2 November 2026 raw run log is absent from the job folder.
+        var evidence = ProviderAccessClassifier.ClassifyRun(1, null, output);
+        Assert.Equal(ProviderAccessEvidenceKind.ModelCapacity, evidence.Kind);
+        Assert.Null(evidence.LimitedUntil);
+        Assert.Null(AgentStudio.Runner.ProviderLimitDetector.Detect("codex", [output],
+            new DateTime(2026, 11, 2, 15, 37, 0, DateTimeKind.Utc)));
+    }
+
+    [Fact]
+    public void Capacity_with_explicit_quota_reset_is_account_rate_limit()
+    {
+        var evidence = ProviderAccessClassifier.ClassifyRun(1, null,
+            "Selected model is at capacity.\nHTTP 429: usage limit; resets at 2026-11-02T16:00:00Z.");
+        Assert.Equal(ProviderAccessEvidenceKind.RateLimited, evidence.Kind);
+        Assert.True(evidence.ResetTimeReported);
+    }
+
+    [Fact]
+    public void Capacity_uses_provider_retry_hint_without_a_provider_limit()
+    {
+        var now = new DateTimeOffset(2026, 11, 2, 15, 37, 0, TimeSpan.Zero);
+        var evidence = ProviderAccessClassifier.ClassifyRun(1, null,
+            "Selected model is at capacity. Retry after 20 minutes. HTTP 429 too many requests.",
+            observedAt: now);
+        Assert.Equal(ProviderAccessEvidenceKind.ModelCapacity, evidence.Kind);
+        Assert.Equal(now.AddMinutes(20), evidence.LimitedUntil);
     }
 
     [Fact]
@@ -218,6 +291,30 @@ public sealed class RunnerCapabilityProbeTests
 
         Assert.Equal(ProviderAccessEvidenceKind.RequestRejected, evidence.Kind);
     }
+
+    [Fact]
+    public void Failed_run_does_not_treat_tool_output_as_provider_access_evidence()
+    {
+        const string stdout = """
+            {"type":"item.completed","item":{"type":"command_execution","aggregated_output":"401 Unauthorized; not logged in; usage limit"}}
+            {"type":"turn.failed","error":{"message":"The agent stopped after a tool failure."}}
+            """;
+
+        var evidence = ProviderAccessClassifier.ClassifyRun(1, stdout, null);
+
+        Assert.Equal(ProviderAccessEvidenceKind.IndeterminateFailure, evidence.Kind);
+    }
+
+    [Theory]
+    [InlineData("401 Unauthorized", ProviderAccessEvidenceKind.AuthenticationFailure)]
+    [InlineData("not logged in", ProviderAccessEvidenceKind.AuthenticationFailure)]
+    [InlineData("access token expired", ProviderAccessEvidenceKind.AuthenticationFailure)]
+    [InlineData("usage limit reached", ProviderAccessEvidenceKind.RateLimited)]
+    [InlineData("selected model is at capacity", ProviderAccessEvidenceKind.ModelCapacity)]
+    public void Run_stderr_retains_provider_failure_classification(
+        string stderr,
+        ProviderAccessEvidenceKind expected)
+        => Assert.Equal(expected, ProviderAccessClassifier.ClassifyRun(1, null, stderr).Kind);
 
     [Theory]
     [InlineData("/usr/local/bin/codex", "codex")]
@@ -477,6 +574,46 @@ public sealed class RunnerCapabilityProbeTests
         Assert.Equal("unavailable", route.Status);
         Assert.Equal("127.0.0.1:15031", route.Identity);
         Assert.Contains("11 consecutive request failures", route.Detail);
+    }
+
+    [Theory]
+    [InlineData(1, 120, "ready")]
+    [InlineData(2, 120, "ready")]
+    [InlineData(3, 59, "ready")]
+    [InlineData(3, 60, "unavailable")]
+    public void Connectivity_requires_three_failures_and_a_minute(int failures, int seconds, string expected)
+    {
+        var options = new RunnerOptions
+        {
+            ServerUrl = "http://127.0.0.1:15031", RunnerId = "runner-test",
+            RunnerName = "runner-test", Hostname = "test-host", BackendName = "test",
+            WorkDir = Path.GetTempPath(), BaseBranch = "main", ClaudeCliBin = "/bin/sh",
+        };
+        var first = new DateTime(2026, 8, 1, 15, 30, 0, DateTimeKind.Utc);
+        var monitor = new TaskServerConnectivityMonitor(_ => { });
+        for (var index = 0; index < failures; index++)
+            monitor.RecordFailure(first.AddSeconds(index == 0 ? 0 : index == failures - 1 ? seconds : index),
+                "POST /api/runner/claim", new HttpRequestException("origin timeout", null,
+                    (System.Net.HttpStatusCode)524), TimeSpan.Zero, 0);
+        var route = Assert.Single(RunnerCapabilityProbe.Advertise(options, true,
+            connectivity: monitor.Snapshot), item => item.Key == CapabilityProtocol.TaskServerConnectivity);
+        Assert.Equal(expected, route.Status);
+        Assert.Contains($"{failures} consecutive request failures", route.Detail);
+        Assert.Equal(first, route.Since);
+        Assert.Equal(524, route.HttpStatus);
+        Assert.Equal("POST /api/runner/claim", route.Request);
+        var roundTrip = System.Text.Json.JsonSerializer.Deserialize<AdvertisedCapabilityDto>(
+            System.Text.Json.JsonSerializer.Serialize(route))!;
+        Assert.Equal((route.Since, route.HttpStatus, route.Request),
+            (roundTrip.Since, roundTrip.HttpStatus, roundTrip.Request));
+
+        monitor.RecordSuccess(first.AddSeconds(seconds + 1), "POST /api/runner/claim");
+        var recovered = Assert.Single(RunnerCapabilityProbe.Advertise(options, true,
+            connectivity: monitor.Snapshot), item => item.Key == CapabilityProtocol.TaskServerConnectivity);
+        Assert.Equal("ready", recovered.Status);
+        Assert.Null(recovered.Since);
+        Assert.Null(recovered.HttpStatus);
+        Assert.Null(recovered.Request);
     }
 
     [Fact]

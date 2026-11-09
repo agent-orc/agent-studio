@@ -32,7 +32,10 @@ public sealed record PersistedReviewSlot(
     // say which binary produced the verdict it reports. Null means the record
     // predates this provenance and the release is genuinely unknown.
     string? WorkerReleaseId = null,
-    string? WorkerBinaryPath = null)
+    string? WorkerBinaryPath = null,
+    bool ReducedReportSubmitted = false,
+    int ConsecutiveReportBadGateway = 0,
+    int ConsecutiveReducedReportFailures = 0)
 {
     public string AttemptId => Claim.Attempt?.AttemptId
                                ?? throw new InvalidDataException("Persisted review claim has no attempt.");

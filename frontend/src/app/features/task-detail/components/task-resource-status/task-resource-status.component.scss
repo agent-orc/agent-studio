@@ -1,6 +1,4 @@
-:host { display: block; }
-
-.resource-status:empty { display: none; }
+:host { display: contents; }
 
 .resource-status {
   padding-inline: var(--studio-spacing-4);

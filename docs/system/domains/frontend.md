@@ -1,11 +1,28 @@
 # Frontend Domain Map
 
-Version: 2026-10-20
+Version: 2026-11-05
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
+
+## Modal keyboard contract
+
+`ModalStackService` owns Escape ordering and the focus scope of registered true
+modals. A dialog registers its dialog element and the subtree that contains its
+backdrop. While it is open, Tab and Shift+Tab wrap within the dialog, outside
+focus is redirected inside, and the rest of the page is inert. A higher
+nonmodal entry handles Escape first but does not release the modal focus scope.
+A portaled child can register its interactive root with the stack so it stays
+focusable while the page remains inert. Tab traverses that root's controls and
+returns to the first dialog control at its edge; Shift+Tab returns to the last.
+This also contains menus whose rows use `tabindex="-1"`. The caller moves
+initial focus into the dialog after render and returns focus to its opener after
+closing. The batch gate panel, global search palette, and modal workspace
+settings view (including CLI Management) use this contract. Menus and popovers
+remain stack entries for Escape ordering without a modal focus scope; portaled
+menus also register their interactive root.
 
 ## Initial bundle ratchet
 
@@ -25,6 +42,23 @@ and new totals, the reason for the emergency, and a follow-up card to restore
 the ratchet. A delivery that reduces the bundle should lower `maximumError`
 to its measured initial size plus a small build-variance margin; preserve the
 `anyComponentStyle` budgets and component-size baselines.
+
+The board shell, columns, and cards stay eager. Workspace settings and the
+orchestrator sheet mount through small hosts when opened. Their view components
+and the execution-host dialogs use feature `lazy.ts` entry points; keep those
+components out of feature runtime barrels so a board service import cannot
+bring their chunks back into the initial graph. The browser bundle check in
+`frontend/e2e/perf/board-bundle-lazy.spec.ts` covers cold board paint, first
+detail open, route reuse, and first-use settings and chat rendering.
+Create-task, workspace, developer, and usage-detail dialogs use the same
+first-open boundary; the board's visible header and cards stay eager.
+The batch panel and shared media lightbox mount on first open as well.
+The detail Activity conversation renderer loads when that view has activity;
+an empty first detail pane does not fetch chat composer or conversation code.
+Markdown-capable view roots provide the library's task-reference token locally,
+so Markdown rendering code loads with those views. The app-level media token
+uses the library's shared entry point, leaving composer and conversation
+renderers outside the board startup graph.
 
 ## Environment flow
 
@@ -89,6 +123,54 @@ secret masking before stored log lines are returned.
 
 ## Workspace deployment dashboard
 
+The Structure view opens at `#/workspace/operations/structure` from
+the Explorer's workspace Operations entries and at `#/projects/{slug}/operations/structure`
+for a project. The project Operations area embeds it before environment cards;
+Settings › Environment Map embeds the same installation host view. The standalone workspace and project tab component is
+loaded with a dynamic import and `@defer`. Its hash query restores view, level,
+overlay, environment and selected node; Settings List keeps host controls. It reads
+`GET /api/v1/operations/structure?scope=workspace` and projects the same
+declared nodes as a placement-focused host view or a function-grouped container
+view. Detail levels 1 to 3 and node overrides control collapse; the outline
+mirrors visible boxes. Observed health, version, drift and load join by host id,
+runner id, project and environment id. The view refreshes every 15 seconds
+while visible and labels missing values as not observed. Host capability
+reports may include an optional container summary. This exposes undeclared
+containers without requiring older hosts to upgrade. Health uses host
+heartbeats (90 seconds), each check's own
+interval, and gate heartbeats (two minutes). The role-named manifest example is in
+`deploy/connectivity/one-box.json`.
+
+The same view lists library registries declared in schema 2
+`structure.registries` (artifact, provider, package, optional repository and
+private registry `secretRef`). `GET /api/v1/operations/structure/library` returns
+cached channel versions, publish times, lookup state and workspace consumers
+from npm and NuGet lock files. The on-demand refresh endpoint is
+`POST /api/v1/operations/structure/library/refresh`; a control-plane timer also
+refreshes every six hours. Lookup failures preserve the last known channel
+data and show unavailable or stale state. Endpoints expose only whether a
+registry is private, never its credential value.
+
+Layout and link routing are a pure module, `features/structure/structure-layout.ts`
+(AGT-3349 S5, Dossier D2 option A). It computes a deterministic nested flow
+layout for the measured canvas width: boxes are absolutely positioned and
+externals sit in an "Outside the boundary" column, or a row on narrow
+canvases. Links attach to the nearest visible placement (host view) or function
+group (container view). They are routed through 10 px gutters, preferring
+gutter, around and approach-from-above candidates, with a gutter-grid
+Dijkstra search as the fallback. Merged links carry one number in the
+connection key. Level 1 closes placements and function groups. In the
+container view the same unit in one environment merges across placements
+("2 placements", replicas summed). Regions and managed runtimes come from the
+project.yml `structure` section. Managed services render dashed, labelled
+"declared · probed via TLS" or "declared · not observed". `linkCrossings()` is
+the geometry check: `structure-layout.spec.ts` and
+`e2e/workspace/structure-scale.spec.ts` require zero links across an
+instance or collapsed box at levels 1 and 2 for the complex (60 services,
+two regions, staging, development), AGT and workspace fixtures in
+`structure.fixtures.ts`. The same specs hold the complex level-1 layout under
+50 ms and inside one 1440 px screen. The ELK.js fallback router was not needed.
+
 The workspace shell opens a Deployment dashboard at `#/workspace/deployments`.
 It lists projects against Staging and Production, with release version, deploy
 age and state, health, pending approval, and newer release. Project group and
@@ -101,7 +183,16 @@ The project Deploy area reads `/api/projects/{projectName}/deploy/status`,
 `/releases`, and `/deployments` when configured. Its Pipeline view reads the
 parsed project.yml diagram from `/api/projects/{projectName}/pipeline-definition`.
 The release view loads
-`/releases/{releaseId}/notes` from the included cards. The board and task detail
+`/releases/{releaseId}/notes` from the included cards.
+The release response also projects current Quality verdicts from the included
+cards' stored Review Plane artifacts. The visible card rows reconcile with the
+pass, concerns, block, and not reviewed counts; the worst card verdict labels
+the rollup. Studio labels the release range Not reviewed; the Quality Studio
+change view resolves a stored verdict when opened. For releases after
+the first, its Quality Studio jump uses the merge-base of the previous and
+current release commits as base and the current commit as head. The first
+release has no range jump until an operator confirms the repository root range.
+The board and task detail
 share environment badges from `/api/deploy/cards`; the board can filter cards
 that are in Staging only, in Production, not yet in Production, or rolled back.
 Projects without deployment declarations show an empty environment state.
@@ -208,7 +299,10 @@ the suite is independent of the workstation's operating-system locale.
 ### Batch verification
 
 Project settings expose the batch gate's scope, planner, bounds, risk policy,
-review test level, timeout, and advisor mode. Review lane headers summarize
+calibration, stacking, review test level, timeout, and advisor mode. Enabling
+the gate while the scope is Documentation switches the scope to Code and says
+so; the operator can switch it back before saving. A link at the top of the
+project settings page jumps to the section (AGT-3592). Review lane headers summarize
 waiting and running batches; card badges and task detail read membership from
 `GET /api/projects/{project}/batch-gate/state?history=10`, not from board cards.
 The project batch panel shows the planner, look ahead, advisor verdict, pending
@@ -476,8 +570,18 @@ occur. It is not a claim about tunnel transfer time.
   Ordinary task selection reads the bounded `/core` projection first and paints
   identity, lane, pins, execution, status, prompt, and recent events before
   independent detail resources begin. Two documents load after core paint;
-  usage follows the rich view, Git waits for its pane, and review evidence and
-  history wait for explicit tabs. The selection service keeps the pager and
+  usage follows the rich view, Git waits for its pane, and Activity loads its
+  plan and output on selection. Review evidence and history wait for explicit
+  tabs. Neighbor core lookahead starts after the first 1.6 seconds. The event
+  ledger starts when Timeline first
+  opens, the screenshot list when Evidence opens, and the document manifest
+  when Docs opens. Docs reads expanded documents on its first selection and
+  collapsed artifacts when opened, then keeps their bodies through tab switches.
+  Quality and Code Review panels stay mounted
+  for the current task after their first visit. Ready resource replies are
+  reused within the same core generation, including the evidence-bearing review
+  reply. Failed reads in Timeline, Evidence, Quality, Code Review, and Docs
+  files show a retry control in the tab. The selection service keeps the pager and
   public URL identity guards while resource replies carry their own freshness,
   retry state, and task, attempt, and core generation checks. A reference the
   project registry cannot place (a keyless task, a key prefix no project
@@ -510,8 +614,9 @@ occur. It is not a claim about tunnel transfer time.
   and remembers its state for the browser session. Activity and Result retain
   their existing live and settled-run defaults. Activity groups each
   contiguous run of task-result artifacts in an agent message into one mixed
-  block. Multiple PNG, JPEG, WebP, or GIF results use lazy WebP thumbnails from
-  `GET /api/tasks/{jobId}/thumbnail` and open their full sources in the shared
+  block. Multiple PNG, JPEG, WebP, or GIF results use lazy browser-scaled original images from
+  `GET /api/tasks/{jobId}/screenshot`; the screenshot listing provides dimensions and file size
+  from bounded header inspection. Images over 2 MB show a placeholder until opened in the shared
   keyboard-navigable lightbox; a single image keeps the established inline
   treatment. Diff, patch, Markdown, JSON, and log results have typed on-demand
   previews, while HTML delegates to the shared task artifact viewer route and
@@ -560,6 +665,20 @@ occur. It is not a claim about tunnel transfer time.
   `GET .../cycle-time/tasks/{taskKey}`. The stage model, the transition
   taxonomy, and their data sources are documented in
   [concepts/cycle-time-stage-model.md](../../concepts/cycle-time-stage-model.md).
+- `frontend/src/app/features/flow-health/`: the Flow health view of the project
+  Deploy area (tab next to Pipeline, also linked from Pipeline health on Run
+  steps). It joins existing read models only: `GET /api/gate-economics` (7 and
+  30 days, including the all-projects row), `GET .../cycle-time` (7 and 30
+  days), `GET .../pipeline-health`, `GET .../batch-gate/report` and settings,
+  `GET /api/system/execution-infrastructure`, and the host registry signal for
+  review and coding slots. None of these reads starts a Git process; the
+  Git-backed `GET .../batch-gate/state` is deliberately not read. The pure
+  derivation in `state/flow-health.derive.ts` produces the grouping, gate and
+  review figures, the waits per stage, and the main-brake sentence. Every target
+  is named once in `models/flow-health-targets.ts` and printed beside its figure.
+- The Environment host list uses Task Server capability snapshots in the networked
+  profile. Legacy client identities and the local execution seed belong only to
+  the local profile, so an old client name cannot create a second machine row.
 - `frontend/src/app/features/project-detail/`: project shell and project-level
   quality, settings, architecture, runtime, drift, and supervisor panels. The
   left rail (`project-shell`) is a collapsible-segment tree
@@ -843,8 +962,16 @@ occur. It is not a claim about tunnel transfer time.
   the existing `POST /api/auth/invitations` with one initial binding, resets
   passwords, disables users with a `{ disabled }` PUT that leaves bindings
   alone, shows a service-account token or enrollment code once, and reloads
-  after every change. Expiry math reads the injectable `ACCESS_CLOCK`. The
-  rights model is described in
+  after every change. Expiry math reads the injectable `ACCESS_CLOCK`. Its
+  Standing grants panel reads `GET /api/auth/iam/operator-catalogue` and
+  `GET /api/auth/iam/standing-grants`, and issues, renews, and revokes through
+  `POST /api/auth/iam/standing-grants`, `.../{id}/renew`, and
+  `.../{id}/revoke` (security model SM-4), stepping up before an issue or
+  renewal. Its Approval requests panel reads
+  `GET /api/auth/iam/operator-approvals` and decides through
+  `.../{id}/approve` and `.../{id}/reject` (security model SM-5), stepping up
+  before each decision; a `?approval=<id>` query, the target of the push link,
+  puts that request in focus. The rights model is described in
   [docs/operations/security/overview.md](../../operations/security/overview.md).
 - The Retention destination at `#/workspace/settings/retention` owns the
   versioned workspace rule table, dry-run and explicit apply reports, run
@@ -855,36 +982,30 @@ occur. It is not a claim about tunnel transfer time.
   uses `/api/v1/management/retention` and `/api/v1/management/backups/full`, so
   the Orchestrator proxy and direct Task Server deployment share one frontend.
 - The Environment destination at `#/workspace/settings/environment` (old
-  `execution-hosts` and `remote-hosts` routes redirect here) offers a per-user
-  List/Map preference. The map combines runner roles with the read-only
-  management environment snapshot: control machine, configured gate host,
-  engine readiness, manifest routes, and gate slot usage. Unreported service
-  health, repository permission, and installation machines stay unknown.
-  Selecting a runner role opens its existing list detail and actions. Narrow
-  widths show the list. The list
-  uses one sortable machine row for status, host CPU load, activity, and release
-  identity. Its occupied/total slots sum the visible role rows. Matching role releases appear once on the machine row; differing
-  releases appear on their role rows. Coding and Review runner processes
-  advertised with the same host id are role sub-rows with their own slot
-  ceilings and lifecycle actions. The Review row states CPU quota in cores and
-  throttled share separately from host CPU load. Narrow action columns use an
-  overflow menu. Installation checkpoints map active project registry records
-  and group projects without a canonical repository behind a disclosure only in
-  the networked profile. The local profile labels Task Server installation,
-  repository registration, placement, and full backup checkpoints as not
-  applicable and makes no Task Server v1 checkpoint requests. The adjacent
-  infrastructure summary reads the API host, decision boundary, and remote SSH
-  gate identity, slots, and last observed reachability. Review roles require
-  read access and provider authentication, while coding roles require task-branch
-  push capability. Retired
-  roles are hidden until the compact history filter is enabled. The persisted
-  machine disclosure opens first to one-line summaries for identity,
-  connection, capabilities, capacity, project access, host work, and system
-  load; each section discloses its internals independently. Crash recovery
-  pending count occupies a status-bar slot so it cannot cover host actions.
-  Release drift stays paired with the release reported for the same runner
-  generation. An older drift response cannot mark a newer capability release
-  behind Stable.
+  `execution-hosts` and `remote-hosts` routes redirect here) persists a per-user
+  Hosts, Topology, Installation, or History view. Hosts opens with a grouped
+  attention row when current issues exist. Its cause count equals the visible
+  cause rows; repeated role failures group by capability and error code. The
+  machine list keeps one fixed-height row per machine with nested role and gate
+  worker rows, sorted with attention first. Selecting a machine or role opens a
+  flat detail pane with facts, local and relative contact time, and independent
+  identity, connection, capabilities, capacity, project access, work, and load
+  disclosures. The same pane carries setup, link, capacity, provider sign-in,
+  drain, and lifecycle controls. Fresh runner telemetry places claim load gate
+  status beside slot counts. The Environment flow shows the same status, and a
+  Ready card routed to that runner shows a pickup hold while its gate is closed.
+  Retired roles remain behind the Show retired
+  filter. At narrow widths selection replaces the list and a Back control returns
+  to it. The Topology view keeps Task Server as the hub, labels connection health
+  in text as well as line style, and opens a selected machine in Hosts. The
+  Installation view owns checkpoints and infrastructure facts; the Task Server
+  observation is labelled as seen from the browser. History shows settled AI
+  Operator interventions and provider refusals without current-warning tint.
+  Runner roles and the read-only management environment snapshot remain the
+  underlying data sources. Unreported health, repository access, and placement
+  display as unknown. Review roles require read access and provider
+  authentication; coding roles require task-branch push capability. Release
+  drift stays paired with the release reported for the same runner generation.
 - The System prompts destination is the prompt registry and observability
   surface. Its overview groups runtime-step, orchestrator, drift, and framing
   templates, explains application and project pipeline override precedence, and

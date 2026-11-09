@@ -70,12 +70,13 @@ public static class SystemEndpoints
         app.MapGet("/api/system/execution-infrastructure", (IConfiguration config,
             AgentStudio.Pipeline.GateSlotUsageTracker gateSlots,
             AgentStudio.Pipeline.PullGateStore pullGates,
+            AgentStudio.Pipeline.GateCapacitySettings capacity,
             AgentStudio.Runner.OrchestrationEngineReadiness engine) =>
         {
             var pullHost = pullGates.HealthyHosts().FirstOrDefault();
             var workers = pullGates.Hosts();
             var host = pullHost?.Name ?? config["RemoteGate:SshHost"]?.Trim();
-            var slots = gateSlots.Snapshot();
+            var slots = gateSlots.ReportedOrLocalSnapshot();
             var reached = gateSlots.LastReachedAt;
             var failed = gateSlots.LastFailureAt;
             var reachability = pullHost is not null ? "reachable"
@@ -85,14 +86,18 @@ public static class SystemEndpoints
                 gate = new { host, transport = pullHost is null ? "ssh" : "pull",
                     busy = pullHost?.Busy ?? slots.Busy,
                     total = pullHost?.Slots ?? slots.Total, reachability,
+                    capacity = capacity.Current(), capacitySource = capacity.HasOverride ? "stored" : "configuration",
                     lastReachedAt = pullHost?.LastHeartbeat ?? reached, lastFailureAt = failed,
                     workers },
-                taskServer = string.IsNullOrWhiteSpace(config["TaskServer:BaseUrl"])
-                    ? "local monolith" : "remote Task Server",
+                taskServer = TaskServerLabel(config),
                 engine = new { engine.State, engine.Required, engine.LastContact, engine.LastEngineId },
                 workstation = Environment.MachineName,
             });
         });
+
+        // Which slot of the gate host runs what and why a gate waits (AGT-3423).
+        app.MapGet("/api/system/gate-slots", (AgentStudio.Pipeline.GateSlotUsageTracker gateSlots)
+            => Results.Ok(gateSlots.Board()));
 
         // Lists the centrally-managed agent-rule files that are appended as a
         // system-prompt overlay to every Claude job. Used by the Job Detail
@@ -308,4 +313,9 @@ public static class SystemEndpoints
             Results.Text(readiness.State, "text/plain",
                 statusCode: readiness.IsLive ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable));
     }
+
+    public static string TaskServerLabel(IConfiguration configuration)
+        => !string.IsNullOrWhiteSpace(configuration["TaskServer:BaseUrl"])
+            ? "remote Task Server"
+            : SecurityProfiles.IsLocal(configuration) ? "local monolith" : "server monolith";
 }

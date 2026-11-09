@@ -14,6 +14,7 @@ const roles = [
   { id: 'owner', displayName: 'Owner', description: 'Break-glass role of the installation. Holds every permission.', permissions: [], bindableScopes: ['workspace'], serviceAccountBindable: false },
   { id: 'admin', displayName: 'Admin', description: 'Runs the workspace or a project: settings, operation, production deploys, secrets.', permissions: [], bindableScopes: ['workspace', 'project'], serviceAccountBindable: true },
   { id: 'developer', displayName: 'Developer', description: 'Works on cards, runs, chats, and documents; deploys outside production.', permissions: [], bindableScopes: ['workspace', 'project', 'environment'], serviceAccountBindable: true },
+  { id: 'operator-agent', displayName: 'Operator agent', description: 'Operates the board for a coding agent: reads, lane moves, runs, batch gate, review step models, and stage deploys; no secrets, production approval, access, or installation settings.', permissions: [], bindableScopes: ['workspace', 'project'], serviceAccountBindable: true, userBindable: false },
   { id: 'contributor', displayName: 'Product', description: 'Product role: writes and accepts cards in assigned projects.', permissions: [], bindableScopes: ['project'], serviceAccountBindable: false },
   { id: 'viewer', displayName: 'Viewer', description: 'Reads everything in its scope, secret values excluded.', permissions: [], bindableScopes: ['workspace', 'project', 'environment'], serviceAccountBindable: true },
   { id: 'approver', displayName: 'Approver', description: 'Approves or rejects production releases in its scope.', permissions: [], bindableScopes: ['workspace', 'project', 'environment'], serviceAccountBindable: false },
@@ -41,6 +42,7 @@ function accessState() {
       { id: 'rb_approver', principalKind: 'user', principalId: 'usr_product', role: 'approver', scope: { kind: 'environment', project: 'PROJ-001', environment: 'production' }, source: 'migration', createdAt: created },
       { id: 'rb_group', principalKind: 'group', principalId: 'grp_web', role: 'viewer', scope: { kind: 'project', project: 'PROJ-002' }, source: 'manual', createdAt: created },
       { id: 'rb_bot', principalKind: 'service-account', principalId: 'sa_deploy', role: 'developer', scope: { kind: 'environment', project: 'PROJ-001', environment: 'stage' }, source: 'manual', createdAt: created },
+      { id: 'rb_build', principalKind: 'service-account', principalId: 'sa_tok_build', role: 'operator-agent', scope: { kind: 'workspace' }, source: 'migration', createdAt: created },
     ],
     invitations: [] as Array<{ id: string; userId: string; expiresAt: string; used: boolean }>,
   };
@@ -60,6 +62,7 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof accessS
     });
   });
   await page.route('**/api/auth/status', route => json(route, status));
+  await page.route('**/api/auth/sessions', route => json(route, []));
   await page.route('**/api/v1/studio/auth/status', route => json(route, status));
   await page.route('**/api/projects', route => route.request().method() === 'GET'
     ? json(route, [
@@ -68,6 +71,10 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof accessS
     ])
     : route.continue());
   await page.route('**/api/auth/iam', route => json(route, state));
+  // Operator agents and standing grants have their own spec (operator-agents.spec.ts); this server answers without them.
+  await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-agents') || url.pathname.startsWith('/api/auth/audit/')
+    || url.pathname === '/api/auth/iam/operator-catalogue' || url.pathname.startsWith('/api/auth/iam/standing-grants'),
+    route => json(route, { message: 'Not found' }, 404));
   await page.route('**/api/auth/runner-enrollments', route => route.request().method() === 'POST'
     ? json(route, { enrollmentCode, name: 'build-host', scopes: [], expiresAt: '2026-10-20T09:15:00Z' })
     : json(route, []));
@@ -104,7 +111,7 @@ test('owner sees users, groups, service accounts with API tokens, runners, and r
   await stubNetworkedOwner(page);
   const access = await openAccess(page);
 
-  await expect(access.getByTestId('access-summary')).toContainText('5 role bindings');
+  await expect(access.getByTestId('access-summary')).toContainText('6 role bindings');
   await expect(access.getByTestId('access-user-product.lead')).toContainText('Product · Website');
   await expect(access.getByTestId('access-user-product.lead')).toContainText('Viewer · Mobile App (group)');
   await expect(access.getByTestId('access-scope-workspace')).toContainText('Owner');
@@ -122,6 +129,62 @@ test('owner sees users, groups, service accounts with API tokens, runners, and r
     await access.getByTestId('access-bindings').scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(resultDir, `access-area-1440-${theme}-bindings.png`) });
   }
+});
+
+test('an operator API token shows its operator-agent role in both themes', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await stubNetworkedOwner(page);
+  const access = await openAccess(page);
+
+  const token = access.getByTestId('access-service-account-sa_tok_build');
+  await expect(token).toContainText('API token');
+  await expect(access.getByTestId('access-api-token-role-sa_tok_build')).toContainText('Role: Operator agent');
+  await expect(token).toContainText('Operator agent · Workspace');
+  await expect(token).not.toContainText('Admin');
+
+  mkdirSync(resultDir, { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await token.scrollIntoViewIfNeeded();
+    await token.screenshot({ path: join(resultDir, `access-operator-token-role-${theme}.png`) });
+    await page.screenshot({ path: join(resultDir, `access-operator-token-role-1440-${theme}.png`) });
+  }
+});
+
+test('owner verifies a second factor before revoking another user session', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await stubNetworkedOwner(page);
+  let stepUpCount = 0;
+  let revokeCount = 0;
+  await page.route('**/api/auth/users/usr_product/sessions', route => json(route, [{
+    id: 'session-product', device: 'Product browser', address: 'Example address',
+    createdAt: created, lastUseAt: created, current: false,
+  }]));
+  await page.route('**/api/auth/step-up', route => {
+    expect(route.request().postDataJSON()).toEqual({ code: '123456' });
+    stepUpCount++;
+    return json(route, { verified: true });
+  });
+  await page.route('**/api/auth/users/usr_product/sessions/revoke-others', route => {
+    revokeCount++;
+    return json(route, { revoked: true });
+  });
+  const access = await openAccess(page);
+  await access.getByTestId('access-user-product.lead').getByTestId('session-manager-toggle').click();
+  await access.getByTestId('access-user-product.lead').getByRole('button', { name: 'Revoke all other sessions' }).click();
+  const challenge = access.getByTestId('session-step-up');
+  await expect(challenge).toBeVisible();
+  expect(revokeCount).toBe(0);
+  mkdirSync(resultDir, { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(resultDir, `session-step-up-${theme}--mocked.png`) });
+  }
+  await challenge.getByLabel('Authenticator or recovery code').fill('123456');
+  await challenge.getByRole('button', { name: 'Verify and revoke' }).click();
+  await expect(challenge).toHaveCount(0);
+  expect(stepUpCount).toBe(1);
+  expect(revokeCount).toBe(1);
 });
 
 test('owner invites a developer through the invitation flow and issues a service-account token once', async ({ page }) => {
@@ -174,4 +237,68 @@ test('a denied reload clears cached access data and the issued token', async ({ 
     await setTheme(page, theme);
     await page.screenshot({ path: join(resultDir, `access-area-denied-1440-${theme}.png`) });
   }
+});
+
+test('owner binds runners to projects and sees credential expiry and pre-binding notices', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.clock.setFixedTime(new Date('2026-11-02T09:00:00Z'));
+  await stubNetworkedOwner(page);
+  const runners = [
+    { id: 'runner_web', name: 'web-host', createdAt: created, revokedAt: null, projects: ['PROJ-001'],
+      credentials: [{ id: 'cred_web', scopes: ['runner.claim'], expiresAt: '2026-11-30T09:00:00Z' }] },
+    { id: 'runner_soon', name: 'review-host', createdAt: created, revokedAt: null, projects: ['PROJ-002'],
+      credentials: [{ id: 'cred_soon', scopes: ['runner.claim'], expiresAt: '2026-11-06T09:00:00Z' }] },
+    { id: 'runner_old', name: 'old-host', createdAt: created, revokedAt: null, projects: ['*'],
+      projectsNotice: 'Enrolled before project binding: holds all projects until you choose its projects.',
+      credentials: [{ id: 'cred_old', scopes: ['runner.claim'], expiresAt: null,
+        expiryNotice: 'No expiry: issued before the 30-day default. Rotate it to adopt the default.' }] },
+  ];
+  const enrollmentBodies: unknown[] = [];
+  const projectUpdates: unknown[] = [];
+  await page.route('**/api/auth/runners', route => json(route, runners));
+  await page.route('**/api/auth/runners/runner_old/projects', async route => {
+    projectUpdates.push(route.request().postDataJSON());
+    runners[2] = { ...runners[2], projects: ['PROJ-002'], projectsNotice: undefined as never };
+    await json(route, runners[2]);
+  });
+  await page.route('**/api/auth/runner-enrollments', route => {
+    if (route.request().method() !== 'POST') return json(route, []);
+    enrollmentBodies.push(route.request().postDataJSON());
+    return json(route, { enrollmentCode, name: 'build-host', scopes: [], expiresAt: '2026-11-02T09:15:00Z', projects: ['PROJ-001'] });
+  });
+  const access = await openAccess(page);
+  const list = access.getByTestId('access-runners');
+
+  await expect(list.getByTestId('access-runner-projects-runner_web')).toContainText('Website');
+  await expect(list.getByTestId('access-runner-expiry-runner_web')).toContainText('Expires 30 Nov 2026');
+  await expect(list.getByTestId('access-runner-expiry-runner_soon')).toContainText('Expires in 4 days');
+  await expect(list.getByTestId('access-runner-projects-runner_old')).toContainText('Before binding');
+  await expect(list.getByTestId('access-runner-expiry-runner_old')).toContainText('No expiry');
+  await expect(list.getByTestId('access-enrollment-no-project')).toContainText('claims and reads nothing');
+
+  mkdirSync(resultDir, { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await list.scrollIntoViewIfNeeded();
+    await list.screenshot({ path: join(resultDir, `access-runner-binding-1440-${theme}.png`) });
+  }
+
+  await list.getByTestId('access-enrollment-name').fill('build-host');
+  await list.getByTestId('access-enrollment-project-PROJ-001').check();
+  await list.getByTestId('access-enrollment-create').click();
+  await expect(list.getByTestId('access-enrollment-code')).toContainText('expires 30 days after enrollment');
+  expect(enrollmentBodies).toEqual([{ name: 'build-host', projects: ['PROJ-001'] }]);
+
+  await list.getByTestId('access-runner-edit-projects-runner_old').click();
+  await list.getByTestId('access-runner-project-runner_old-PROJ-002').check();
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await list.getByTestId('access-runner-project-editor-runner_old').scrollIntoViewIfNeeded();
+    await list.screenshot({ path: join(resultDir, `access-runner-project-editor-1440-${theme}.png`) });
+  }
+  await list.getByTestId('access-runner-save-projects-runner_old').click();
+  await expect(list.getByTestId('access-runner-project-editor-runner_old')).toHaveCount(0);
+  expect(projectUpdates).toEqual([{ projects: ['PROJ-002'] }]);
+  await expect(list.getByTestId('access-runner-projects-runner_old')).toContainText('Mobile App');
+  await expect(list.getByTestId('access-runner-projects-runner_old')).not.toContainText('Before binding');
 });

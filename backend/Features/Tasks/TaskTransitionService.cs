@@ -300,6 +300,8 @@ public sealed class TaskTransitionService
                 OperatorOverride = operatorOverride,
                 OverrideReason = reason,
             });
+            if (contentEvidence.Settlement is { } settlement)
+                ReportUnusableSettlement(info, settlement, contentDecision);
             if (!contentDecision.Accepted)
                 return new MoveJobOutcome(MoveJobStatus.IntegrationFailed, contentDecision.Message, info.FolderPath);
         }
@@ -348,7 +350,7 @@ public sealed class TaskTransitionService
         if (targetState == TaskStates.Completed
             && fromState != TaskStates.Completed)
         {
-            completionIntegrationStatus = _integrationStatus?.BuildForCompletion(info);
+            completionIntegrationStatus = _integrationStatus?.BuildForAcceptance(info);
             completionContract = DecideCompletionContract(
                 info,
                 settings,
@@ -395,6 +397,25 @@ public sealed class TaskTransitionService
                 ContentMissing = contentEvidence.Missing,
                 RanAspects = contentEvidence.RanAspects,
                 SkippedAspects = contentEvidence.SkippedAspects,
+            };
+        }
+        if (contentClaim?.Basis == CompletionClaimBases.IntegratedDelivery
+            && completionIntegrationStatus?.Verification is { State: IntegrationVerificationStates.Verified } gate)
+        {
+            var gateStep = string.Equals(completionIntegrationStatus.IntegrationBranch, "main", StringComparison.OrdinalIgnoreCase)
+                ? "pre-main-test-gate" : AgentStudio.Pipeline.IntegrationGateJournal.PreDevelopBuildGateStep;
+            var gateName = gate.Evidence == IntegrationVerificationEvidence.PublishedGate
+                ? gate.Reason
+                : gate.Evidence is IntegrationVerificationEvidence.MergeGate
+                    or IntegrationVerificationEvidence.GateRun
+                    or IntegrationVerificationEvidence.GateReceipt
+                    ? $"Gate {gateStep} of {info.Key ?? info.TaskKey} returned {gate.GateVerdict ?? "verified"} on "
+                      + $"{completionIntegrationStatus.IntegrationBranch} tree {gate.Sha}."
+                    : $"Verification record {gate.Evidence} on {completionIntegrationStatus.IntegrationBranch} "
+                      + $"tree {gate.Sha}: {gate.Reason}";
+            contentClaim = contentClaim with
+            {
+                Evidence = $"{contentClaim.Evidence} {gateName}",
             };
         }
         var boundCompletionClaim = contentClaim is null
@@ -1662,6 +1683,29 @@ public sealed class TaskTransitionService
     /// Matches the card's review subject against the attempt authority store.
     /// Null when there is no subject or no authority to match against.
     /// </summary>
+    /// <summary>
+    /// AGT-3467: completion and the acceptance backstop name the settlement
+    /// that gave no content verdict. A journal that reads as repair also
+    /// leaves one timeline diagnostic on the card.
+    /// </summary>
+    private void ReportUnusableSettlement(
+        TaskInfo info, CompletionSettlementProblem settlement, CompletionContentDecision decision)
+    {
+        _logger.LogWarning(
+            "completion-content-settlement-unusable job={JobId} review={ReviewAttemptId} kind={Kind} reason={Reason} accepted={Accepted}",
+            info.Id, settlement.ReviewAttemptId, settlement.Kind, settlement.Reason, decision.Accepted);
+        if (settlement.Kind != CompletionSettlementProblem.JournalRepair
+            || settlement.ReviewAttemptId is not { } attemptId || _timeline is null) return;
+        try
+        {
+            RemoteReviewSettlementDiagnostics.RecordRepairOnce(_timeline, info.FolderPath, attemptId, settlement.Reason);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SilentCatch.Note(ex, "TaskTransitionService: the settlement repair diagnostic is best-effort");
+        }
+    }
+
     private AcceptanceLineageDecision? DecideAcceptanceLineage(TaskInfo reviewed, bool operatorOverride)
     {
         var reviewSubject = TaskIntegrationStatusService.CurrentReviewSubject(reviewed);
@@ -2016,15 +2060,14 @@ public sealed class TaskTransitionService
     {
         verification = null;
         if (_integrationStatus == null) return false;
-        var lookup = _integrationStatus.BuildLookup([job]);
-        if (lookup.TryGetValue(job.TaskKey, out var found)) verification = found.Verification;
+        var status = _integrationStatus.BuildForAcceptance(job);
+        verification = status.Verification;
         // AGT-2849: the merge is the acceptance boundary; publishing it is the
         // push step's job and is recovered by the integration push backstop. A
         // delivery that is merged but not pushed yet must therefore not be sent
         // back to Human Review - its badge says merged-locally until the push
         // lands, which is exactly the honesty this distinction is for.
-        return lookup.TryGetValue(job.TaskKey, out var status)
-               && (_guardedDelivery
+        return (_guardedDelivery
                    ? status.Status == IntegrationStatuses.Integrated
                    : IntegrationStatuses.IsMerged(status.Status));
     }

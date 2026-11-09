@@ -66,6 +66,6 @@ live="$("$runtime" ps --all --quiet --filter "label=agent-studio.host=$host_id" 
 volumes="$("$runtime" volume ls --quiet --filter "label=agent-studio.host=$host_id" | wc -l)"
 printf 'independent check: containers=%s attempt-volumes=%s\n' "$live" "$volumes" | tee -a "$report/proof.log"
 cp -r "$work/state/receipts" "$report/receipts"
-"$runtime" volume ls --quiet | grep -E '^agent-cache-(npm|nuget|repo)-v[0-9]{4,}$' | xargs -r "$runtime" volume rm >/dev/null
+"$runtime" volume ls --quiet | grep -E '^agent-cache-(npm|nuget|repo)-agent-studio-v[0-9]{4,}$' | xargs -r "$runtime" volume rm >/dev/null
 (( live == 0 && volumes == 0 )) || status=1
 exit "$status"

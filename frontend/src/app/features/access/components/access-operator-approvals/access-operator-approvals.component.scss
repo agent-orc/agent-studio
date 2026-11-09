@@ -1,0 +1,48 @@
+@use '../../access-controls' as access;
+
+:host { display: block; min-width: 0; }
+@include access.controls;
+@include access.table;
+.approvals { display: flex; flex-direction: column; gap: var(--studio-spacing-3); }
+.approvals__code-hint { flex: 1; min-width: 16rem; align-self: center; }
+.approvals__code input { min-width: 14rem; }
+.approvals__pending { display: flex; flex-direction: column; gap: var(--studio-spacing-2); margin: 0; padding: 0; list-style: none; }
+// A waiting request is one flat block; a linked request reads through a whole-block tint, never an edge stripe (R1).
+.approvals__request {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: 4px;
+  background: var(--studio-bg-surface);
+}
+.approvals__request[data-focused='true'] { background: color-mix(in srgb, var(--studio-accent) 8%, var(--studio-bg-surface)); }
+.approvals__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--studio-spacing-1) var(--studio-spacing-3); font-size: 0.8rem; }
+.approvals__head strong { color: var(--studio-fg-strong); font-weight: 600; }
+.approvals__meta { color: var(--studio-fg-dim); font-size: 0.78rem; }
+.approvals__facts { display: grid; grid-template-columns: minmax(8rem, max-content) minmax(0, 1fr); gap: var(--studio-spacing-1) var(--studio-spacing-3); margin: 0; font-size: 0.78rem; }
+.approvals__facts dt { color: var(--studio-fg-dim); }
+.approvals__facts dd { margin: 0; min-width: 0; color: var(--studio-fg); overflow-wrap: anywhere; }
+.approvals__facts code, .approvals__scroll code { font-family: var(--studio-mono); font-size: 0.75rem; }
+.approvals__digest { word-break: break-all; }
+.approvals__parameters {
+  margin: 0;
+  padding: var(--studio-spacing-2);
+  max-height: 12rem;
+  overflow: auto;
+  border-radius: 4px;
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg-strong);
+  font-family: var(--studio-mono);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.approvals__note { flex: 1; min-width: 16rem; }
+// Tiers and sources read through tint, never as an alarm (R1, R4).
+.access-badge[data-tier='T2'] { background: color-mix(in srgb, var(--studio-warn) 18%, transparent); color: var(--studio-fg-strong); }
+.access-badge[data-tone='untrusted'] { background: color-mix(in srgb, var(--studio-warn) 18%, transparent); color: var(--studio-fg-strong); }
+.access-badge[data-tone='active'] { background: color-mix(in srgb, var(--studio-success) 16%, transparent); color: var(--studio-fg-strong); }
+.approvals__scroll { overflow-x: auto; }
+tr[data-focused='true'] td { background: color-mix(in srgb, var(--studio-accent) 8%, transparent); }

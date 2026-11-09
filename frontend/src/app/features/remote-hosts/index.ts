@@ -1,16 +1,12 @@
 /** Execution Hosts feature public API (AGT-1921). ADR-0034 barrel. */
-export { RemoteHostsPanelComponent } from './components/remote-hosts-panel/remote-hosts-panel';
-export { RemoteHostCardComponent } from './components/remote-host-card/remote-host-card';
-export { AddHostWizardComponent } from './components/add-host-wizard/add-host-wizard';
-export { RunnerSetupDialogComponent } from './components/runner-setup-dialog/runner-setup-dialog';
 export { RemoteHostsService } from './services/remote-hosts.service';
+export { claimLoadGateLabel } from './models/claim-load-gate';
 export { ReviewQueueService } from './services/review-queue.service';
 export type { ReviewQueueSnapshot } from './services/review-queue.service';
 export { ProviderAuthStatusService } from './services/provider-auth-status.service';
 export { CodexSignInDialogService } from './services/codex-sign-in-dialog.service';
-export { CodexSignInDialogComponent } from './components/codex-sign-in-dialog/codex-sign-in-dialog';
 export { ClaudeSignInDialogService } from './services/claude-sign-in-dialog.service';
-export { ClaudeSignInDialogComponent } from './components/claude-sign-in-dialog/claude-sign-in-dialog';
+export { DeviceLoginCodeEntryComponent } from './components/device-login-code-entry/device-login-code-entry';
 export * from './models/provider-auth.model';
 export { seedRemoteHosts } from './services/remote-hosts.seed';
 export {
@@ -53,3 +49,5 @@ export {
   relativeHeartbeat,
   hostExecutorRole,
 } from './models/remote-host.model';
+export { summarizeStatusBarSlotsByRole } from './models/plane-slots';
+export type { StatusBarPlaneHostSlots, StatusBarPlaneSlots, StatusBarSlotsByRole } from './models/plane-slots';

@@ -405,6 +405,43 @@ public sealed class CycleTimeLaneTransitionTests
         Assert.Equal(2, detailed.Tasks[0].Transitions!.Count);
     }
 
+    [Fact]
+    public void Aggregation_GroupsBackwardMovesIntoReviewGateLeaseRecoveryAndOther()
+    {
+        var rows = new[]
+        {
+            RowWith("A", 3600,
+            [
+                Transition(T0, TaskStates.AutoReview, TaskStates.Ready, TransitionDirections.Backward, 60, TransitionCauses.QualityLoop, "review-concerns", null),
+                Transition(T0.AddMinutes(5), TaskStates.AutoReview, TaskStates.Ready, TransitionDirections.Backward, 60, TransitionCauses.GateFailure, "build-test-gate-fail", null),
+            ]),
+            RowWith("B", 3600,
+            [
+                Transition(T0, TaskStates.Progress, TaskStates.Ready, TransitionDirections.Backward, 60, TransitionCauses.LeaseRecovery, null, null),
+                Transition(T0.AddMinutes(5), TaskStates.AutoReview, TaskStates.Ready, TransitionDirections.Backward, 60, TransitionCauses.IntegrationRecovery, "Conflict", null),
+                Transition(T0.AddMinutes(9), TaskStates.HumanReview, TaskStates.Ready, TransitionDirections.Backward, 60, TransitionCauses.OperatorRequeue, null, null),
+            ]),
+            RowWith("C", 3600,
+            [
+                Transition(T0, TaskStates.Progress, TaskStates.Ready, TransitionDirections.Backward, 60, TransitionCauses.ReviewInfrastructure, null, null),
+                Transition(T0.AddMinutes(1), TaskStates.Ready, TaskStates.Progress, TransitionDirections.Forward, 60, TransitionCauses.Claimed, null, null),
+            ]),
+        };
+
+        var summary = CycleTimeTransitionAggregation.Build(rows);
+
+        Assert.Equal(
+            new[] { BackwardCauseGroups.Review, BackwardCauseGroups.Gate, BackwardCauseGroups.LeaseRecovery, BackwardCauseGroups.Other },
+            summary.BackwardCauseGroups.Select(g => g.Group));
+        Assert.Equal(new[] { 1, 2, 1, 2 }, summary.BackwardCauseGroups.Select(g => g.Count));
+        var gate = summary.BackwardCauseGroups.Single(g => g.Group == BackwardCauseGroups.Gate);
+        Assert.Equal(2, gate.Tasks);
+        Assert.Equal(new[] { TransitionCauses.GateFailure, TransitionCauses.IntegrationRecovery }, gate.Causes.Select(c => c.Outcome));
+        Assert.Equal(summary.BackwardTransitions, summary.BackwardCauseGroups.Sum(g => g.Count));
+        // Only A moved back for a review cause; B and C fell back for other reasons only.
+        Assert.Equal(2, summary.TasksWithoutReviewCause);
+    }
+
     // ---- helpers ------------------------------------------------------------
 
     private static TimelineEvent Event(DateTime at, string kind, Dictionary<string, string>? details, string summary = "") => new()

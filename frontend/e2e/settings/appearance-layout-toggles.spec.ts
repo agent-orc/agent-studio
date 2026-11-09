@@ -36,10 +36,12 @@ test.describe('Settings — Appearance/Layout segmented toggles', () => {
       await expect(page.getByTestId('settings-theme-system')).toHaveAttribute('aria-pressed', 'true');
       await assertSegmentMetrics(page);
       await page.screenshot({ path: join(output, `appearance-system-${width}-dark--real.png`), animations: 'disabled' });
+      await captureBeforeReconstruction(page, join(output, `appearance-system-${width}-dark--before-reconstructed.png`));
       await page.emulateMedia({ colorScheme: 'light' });
       await expect(page.locator('html')).toHaveAttribute('data-studio-theme', 'light');
       await assertSegmentMetrics(page);
       await page.screenshot({ path: join(output, `appearance-system-${width}-light--real.png`), animations: 'disabled' });
+      await captureBeforeReconstruction(page, join(output, `appearance-system-${width}-light--before-reconstructed.png`));
     }
   });
 
@@ -83,7 +85,7 @@ test.describe('Settings — Appearance/Layout segmented toggles', () => {
     await page.waitForLoadState('domcontentloaded');
     // AGT-2035: the gear opens the consolidated Settings view; Theme lives in
     // the Appearance section (Global group).
-    await page.getByTestId('studio-ab-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await page.getByTestId('workspace-settings-rail-appearance').click({ timeout: 10_000 });
 
     const themeGroup = page.getByRole('group', { name: 'Theme' });
@@ -110,7 +112,7 @@ test.describe('Settings — Appearance/Layout segmented toggles', () => {
     });
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
-    await page.getByTestId('studio-ab-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await page.getByTestId('workspace-settings-rail-appearance').click({ timeout: 10_000 });
 
     const abGroup = page.getByRole('group', { name: 'Activity bar' });
@@ -127,6 +129,18 @@ test.describe('Settings — Appearance/Layout segmented toggles', () => {
     await expect(left).toHaveAttribute('aria-pressed', 'false');
   });
 });
+
+async function captureBeforeReconstruction(page: import('@playwright/test').Page, path: string) {
+  // Reproduce the measured old cascade in the live shell for a reviewable
+  // before image. This is a reconstruction, not a historical build capture.
+  const style = await page.addStyleTag({ content: `
+    .studio .segmented.segmented { background: var(--studio-bg-hover); border: 1px solid var(--studio-border-strong); border-radius: 6px; }
+    .studio .segmented.segmented .segmented__option { min-height: 0; padding: 0; color: inherit; font-size: 11px; line-height: 1.2; }
+    .studio .segmented.segmented .segmented__option--active { background: var(--studio-accent); color: var(--studio-on-accent); box-shadow: none; }
+  ` });
+  try { await page.screenshot({ path, animations: 'disabled' }); }
+  finally { await style.evaluate(element => element.remove()); }
+}
 
 async function assertSegmentMetrics(page: import('@playwright/test').Page) {
   const readMetrics = () => page.getByRole('group', { name: 'Theme' }).evaluate(group => {

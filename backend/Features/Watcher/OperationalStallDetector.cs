@@ -21,7 +21,7 @@ public sealed record FleetClaimStallFact(IReadOnlyList<string> PendingCards,
     IReadOnlyList<FleetClaimRefusalFact> Refusals, bool HostsPolling);
 
 public sealed record HostHeartbeatFact(string Host, string Role, DateTime LastSeenUtc,
-    IReadOnlyList<string> WaitingCards, bool Stopped = false);
+    IReadOnlyList<string> WaitingCards, bool Stopped = false, bool RunningAttempt = false);
 
 public sealed record HostStallFact(string Host, DateTime SinceUtc, double? LoadPerCore,
     double? CpuPercent, double? MemoryUsedPercent, double? SwapBytesPerSecond,
@@ -58,7 +58,8 @@ public static class OperationalStallDetector
         {
             if (!heartbeat.Stopped
                 && nowUtc - heartbeat.LastSeenUtc < TimeSpan.FromMinutes(thresholds.HostHeartbeatMinutes)) continue;
-            AddScoped("host-offline", $"host:{heartbeat.Host}:{heartbeat.Role}", "critical",
+            AddScoped("host-offline", $"host:{heartbeat.Host}:{heartbeat.Role}",
+                heartbeat.WaitingCards.Count > 0 || heartbeat.RunningAttempt ? "critical" : "warning",
                 heartbeat.LastSeenUtc, $"{heartbeat.Role} on {heartbeat.Host} "
                     + (heartbeat.Stopped ? "is stopped." : "stopped reporting."),
                 heartbeat.WaitingCards.Count, "Check the host or container and restore its heartbeat.",

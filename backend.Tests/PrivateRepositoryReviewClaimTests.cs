@@ -295,6 +295,47 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
     }
 
     [Fact]
+    public async Task A_review_credential_claims_and_reads_only_reviews_of_its_bound_projects()
+    {
+        var otherWatch = Path.Combine(_workspace, "projects", OtherProject);
+        foreach (var state in TaskStates.All) Directory.CreateDirectory(Path.Combine(otherWatch, state));
+        SeedTask("AGT-1");
+        SeedTask("OTH-1", otherWatch);
+        // SM-9: this review credential is bound to the other project only.
+        var reviewer = new AgentStudio.Security.RunnerPrincipal(RunnerId, RunnerId, "cred-review",
+            new HashSet<string>([AgentStudio.Security.RunnerScopes.Claim], StringComparer.Ordinal))
+        {
+            Projects = [OtherProject],
+        };
+        using var factory = BuildFactory(otherWatch, reviewer);
+        using var http = factory.CreateClient();
+        await RegisterAsync(http, Registration(credentialsFile: null));
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<AgentStudio.Registry.WorkspaceRegistry>().EnsureDefaultWorkspace();
+        var projects = services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
+        if (projects.FindByIdOrDisplayName(ProjectName) is null)
+            projects.EnsureProjectForStorage(_watchPath, ProjectName, workspace.Id);
+        if (projects.FindByIdOrDisplayName(OtherProject) is null)
+            projects.EnsureProjectForStorage(otherWatch, OtherProject, workspace.Id);
+        var authority = services.GetRequiredService<AttemptAuthorityService>();
+        var foreign = CreatePendingReviewAttempt(authority, "AGT-1", new string('1', 40), Plan(privateRepository: false));
+        CreatePendingReviewAttempt(authority, "OTH-1", new string('2', 40), Plan(privateRepository: false),
+            project: OtherProject);
+
+        var first = await ClaimAsync(http);
+        var second = await ClaimAsync(http);
+        var read = await http.GetAsync($"/api/v1/reviews/attempts/{foreign}");
+
+        Assert.Equal("claimed", first.Status);
+        Assert.Equal("OTH-1", first.Attempt!.TaskId);
+        Assert.Equal("empty", second.Status);
+        Assert.Equal(AttemptLifecycleState.Pending, authority.GetReview(foreign)!.State);
+        Assert.Equal(HttpStatusCode.Forbidden, read.StatusCode);
+        Assert.Contains("runner-not-claimant", await read.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.OK, (await http.GetAsync($"/api/v1/reviews/attempts/{first.Attempt.AttemptId}")).StatusCode);
+    }
+
+    [Fact]
     public async Task Workspace_quota_skips_a_blocked_project_and_claims_a_younger_review_of_another_project()
     {
         var otherWatch = Path.Combine(_workspace, "projects", OtherProject);
@@ -432,6 +473,80 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
         }
     }
 
+    // AGT-3408: project setting, what GitHub reports through the App (null: no
+    // adopted installation lists the repository), and the plan's visibility.
+    [Theory]
+    [InlineData(null, true, true)]
+    [InlineData("public", true, true)]
+    [InlineData("private", false, true)]
+    [InlineData(null, false, false)]
+    [InlineData(null, null, false)]
+    [InlineData("private", null, true)]
+    public async Task The_plan_follows_what_GitHub_reports_and_never_plans_its_private_repository_public(
+        string? setting, bool? githubPrivate, bool privateRepository)
+    {
+        SeedTask("WEB-30");
+        var github = new ListingGitHub(githubPrivate);
+        using var factory = BuildFactory(github);
+        var broker = UseRepository(factory, setting);
+        await broker.RefreshRepositoryVisibilityAsync(default, force: true);
+        Assert.Equal(githubPrivate, broker.ReportedPrivate(Website));
+        var task = V1ReviewPlaneEndpoints.FindTask(factory.Services.GetRequiredService<TaskScannerService>(), "WEB-30")!;
+        var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
+
+        var plan = factory.Services.GetRequiredService<RemoteReviewPlanBuilder>().Build(
+            task, repositoryPath: null, settings.Get(ProjectName), "refs/heads/main");
+
+        Assert.Equal(privateRepository, plan.PrivateRepository);
+        var facts = V1ReviewPlaneEndpoints.ClaimRepositoryFacts(["WEB-30"],
+            factory.Services.GetRequiredService<TaskScannerService>(),
+            factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>(), settings,
+            factory.Services.GetRequiredService<AgentStudio.Projects.ProjectRepositoryVisibility>());
+        Assert.Equal(privateRepository, facts["WEB-30"].ProjectPrivate);
+    }
+
+    [Fact]
+    public async Task An_infrastructure_retry_takes_the_visibility_corrected_after_the_failure()
+    {
+        // AGT-3408: the failed attempt was planned public; the operator then
+        // marked the project private. Its retry must not inherit the old plan.
+        SeedTask("WEB-31");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        const string sha = "3131313131313131313131313131313131313131";
+        CreatePendingReviewAttempt(authority, "WEB-31", sha, Plan(privateRepository: false));
+        var leased = authority.ClaimNextReview(
+            RunnerId, "review-host", Instance, 60, Registration(credentialsFile: null)).ReviewAttempt!;
+        var failed = authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(leased.AttemptId, leased.LastFence, leased.AuthorityEpoch, "settle-web-31"),
+            sha, ReviewTerminalOutcome.InfrastructureFailure, "SnapshotUnavailable"));
+        Assert.True(failed.Accepted, failed.Message);
+        (await http.PutAsJsonAsync(
+            $"/api/projects/{ProjectName}/repository-visibility", new { visibility = "private" })).EnsureSuccessStatusCode();
+        Assert.False(authority.GetReview(leased.AttemptId)!.Subject.Plan!.PrivateRepository);
+
+        var successor = factory.Services.GetRequiredService<ReviewInfrastructureRetryScheduler>().CreateFreshSuccessor(
+            authority.GetReview(leased.AttemptId)!,
+            V1ReviewPlaneEndpoints.FindTask(factory.Services.GetRequiredService<TaskScannerService>(), "WEB-31")!,
+            "review-infra-retry:" + leased.AttemptId);
+
+        Assert.True(successor.Accepted, successor.Message);
+        Assert.True(successor.ReviewAttempt!.Subject.Plan!.PrivateRepository);
+        Assert.Equal([WebsiteKey], authority.ListUnclaimableReviews(Registration(credentialsFile: null)).Single().MissingCapabilities);
+    }
+
+    /// <summary>Registers the website as the project's repository and sets its visibility.</summary>
+    private static Contract.GitHubApp.GitHubAppBroker UseRepository(WebApplicationFactory<Program> factory, string? visibility)
+    {
+        var projects = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
+        projects.AddUrl(projects.FindByIdOrDisplayName(ProjectName)!.Id, "Repository", Website);
+        factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetRepositoryVisibility(ProjectName, visibility);
+        return factory.Services.GetRequiredService<Contract.GitHubApp.GitHubAppBroker>();
+    }
+
     private static async Task RegisterAsync(
         HttpClient http,
         IReadOnlyCollection<string> capabilities,
@@ -545,11 +660,29 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
         File.WriteAllText(Path.Combine(taskFolder, "status.md"), "Result: pending.");
     }
 
-    private WebApplicationFactory<Program> BuildFactory(string? otherWatchPath = null) =>
+    private WebApplicationFactory<Program> BuildFactory(ListingGitHub github) =>
+        BuildFactory().WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+        {
+            // The host's own token refresh would write a process-wide Git credential store.
+            services.Remove(services.Single(descriptor =>
+                descriptor.ImplementationType == typeof(AgentStudio.GitHubApp.GitHubAppHostCredentialService)));
+            var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 9, 0, 0, TimeSpan.Zero));
+            services.AddSingleton(new Contract.GitHubApp.GitHubAppBroker(
+                new Contract.GitHubApp.GitHubAppClient(new HttpClient(github), clock),
+                new ConnectedVault(),
+                new FixedCatalog(Website),
+                clock));
+        }));
+
+    private WebApplicationFactory<Program> BuildFactory(string? otherWatchPath = null,
+        AgentStudio.Security.RunnerPrincipal? runner = null) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
+                if (runner is not null)
+                    builder.ConfigureServices(services => services.AddSingleton<Microsoft.AspNetCore.Hosting.IStartupFilter>(
+                        new RunnerPrincipalInjection(runner, "/api/v1/runners", "/api/v1/reviews")));
                 var settings = new Dictionary<string, string?>
                 {
                     ["TaskRepository"] = _workspace,
@@ -568,4 +701,64 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
                 }
                 builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(settings));
             });
+
+    /// <summary>A connected App with one adopted installation.</summary>
+    private sealed class ConnectedVault : Contract.GitHubApp.IGitHubAppVault
+    {
+        private static readonly string Key = CreateKey();
+
+        private static string CreateKey()
+        {
+            using var rsa = System.Security.Cryptography.RSA.Create(2048);
+            return rsa.ExportRSAPrivateKeyPem();
+        }
+
+        public Task<Contract.GitHubApp.GitHubAppConnection?> LoadConnectionAsync(CancellationToken ct)
+            => Task.FromResult<Contract.GitHubApp.GitHubAppConnection?>(new(
+                1, "slug", "name", "client", "owner", "https://github.com/apps/slug", DateTime.UnixEpoch, "owner",
+                ["contents"], [new Contract.GitHubApp.GitHubAppInstallation(11, "RobertMischke", "User", DateTime.UnixEpoch, "owner")]));
+        public Task SaveConnectionAsync(Contract.GitHubApp.GitHubAppConnection connection, CancellationToken ct) => Task.CompletedTask;
+        public Task DeleteConnectionAsync(CancellationToken ct) => Task.CompletedTask;
+        public Task<Contract.GitHubApp.GitHubAppSecrets?> ReadSecretsAsync(CancellationToken ct)
+            => Task.FromResult<Contract.GitHubApp.GitHubAppSecrets?>(new(Key, "client-secret"));
+        public Task WriteSecretsAsync(Contract.GitHubApp.GitHubAppSecrets secrets, string actor, CancellationToken ct) => Task.CompletedTask;
+        public Task DeleteSecretsAsync(string actor, CancellationToken ct) => Task.CompletedTask;
+    }
+
+    private sealed class FixedCatalog(string url) : Contract.GitHubApp.IRegisteredRepositoryCatalog
+    {
+        public Task<IReadOnlyList<Contract.GitHubApp.RegisteredRepository>> ListAsync(CancellationToken ct)
+            => Task.FromResult<IReadOnlyList<Contract.GitHubApp.RegisteredRepository>>([new(ProjectName, url)]);
+    }
+
+    /// <summary>GitHub's installation listing: the website with the given private flag, or nothing.</summary>
+    private sealed class ListingGitHub(bool? websitePrivate) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            object body = path switch
+            {
+                _ when path.EndsWith("/access_tokens", StringComparison.Ordinal) => new
+                {
+                    token = "listing-" + Guid.NewGuid().ToString("N"),
+                    expires_at = "2026-11-02T10:00:00Z",
+                    permissions = new Dictionary<string, string> { ["metadata"] = "read" },
+                },
+                "/installation/repositories" => new
+                {
+                    repositories = websitePrivate is { } flag
+                        ? new[] { new { name = "agent-studio-for-software-website", @private = flag, owner = new { login = "RobertMischke" } } }
+                        : [],
+                },
+                _ when path.EndsWith("/installation", StringComparison.Ordinal) => new { id = 11 },
+                "/installation/token" => new { },
+                _ => throw new InvalidOperationException("Unscripted GitHub call: " + path),
+            };
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(System.Text.Json.JsonSerializer.Serialize(body), System.Text.Encoding.UTF8, "application/json"),
+            });
+        }
+    }
 }

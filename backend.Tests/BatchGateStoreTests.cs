@@ -3,12 +3,41 @@ using AgentStudio.Git;
 using AgentStudio.Pipeline;
 using AgentStudio.TaskServer.Contracts.BatchGate;
 using Microsoft.Extensions.Time.Testing;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace AgentStudio.Tests;
 
 public sealed class BatchGateStoreTests : IDisposable
 {
+    [Fact]
+    public void State_reports_capacity_and_current_slot_use_together()
+    {
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true),
+            gateSlots: new GateSlotUsage(2, 4),
+            gateCapacity: new GateCapacity(4, 6, 24, false)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(2, state.GetProperty("gateSlots").GetProperty("busy").GetInt32());
+        Assert.Equal(4, state.GetProperty("gateCapacity").GetProperty("slots").GetInt32());
+        Assert.Equal(6, state.GetProperty("gateCapacity").GetProperty("processorsPerGate").GetInt32());
+    }
+
+    [Fact]
+    public void State_names_review_fix_wait_before_batch_admission()
+    {
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true),
+            reviewFixWaits: [new BatchGateReviewFixWait("card-7", "review-7", 1, 1,
+                ["code-quality"])]), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        var wait = Assert.Single(state.GetProperty("reviewFixWaits").EnumerateArray());
+        Assert.Equal("card-7", wait.GetProperty("taskKey").GetString());
+        var member = state.GetProperty("members").GetProperty("card-7");
+        Assert.Equal("review-fix", member.GetProperty("status").GetString());
+        Assert.Contains("before batch admission", member.GetProperty("reasonDetail").GetString());
+    }
+
     [Fact]
     public void Base_verdict_is_reused_by_exact_sha_and_profile()
     {
@@ -20,6 +49,98 @@ public sealed class BatchGateStoreTests : IDisposable
         Assert.Equal(verdict, new BatchGateStore(_root)
             .ReadBaseVerdict("project", Base, "profile-a"));
         Assert.Null(_store.ReadBaseVerdict("project", Base, "profile-b"));
+    }
+
+    [Fact]
+    public void Idle_base_verdict_replaces_provisional_red_once()
+    {
+        var provisional = new BatchGateBaseVerdict("project", Base, "profile-a",
+            "fail", "old", "contended", "first.json", Now, Provisional: true);
+        var final = provisional with { Outcome = "pass", FailureFingerprint = null,
+            Reason = "idle", EvidencePath = "second.json", Provisional = false };
+        _store.RecordBaseVerdict(provisional);
+        _store.RecordBaseVerdict(final);
+        _store.RecordBaseVerdict(provisional);
+        Assert.Equal(final, new BatchGateStore(_root).ReadBaseVerdict("project", Base, "profile-a"));
+    }
+
+    [Fact]
+    public void Legacy_contended_base_can_be_marked_for_recheck()
+    {
+        var legacy = new BatchGateBaseVerdict("project", Base, "profile-a",
+            "fail", "old", "red", "evidence.json", Now);
+        _store.RecordBaseVerdict(legacy);
+        _store.MarkBaseVerdictProvisional(legacy);
+        Assert.True(_store.ReadBaseVerdict("project", Base, "profile-a")!.Provisional);
+    }
+
+    [Fact]
+    public void First_candidate_and_isolation_cost_survive_store_restart()
+    {
+        var manifest = Close();
+        _store.RecordFirstCandidate(new BatchFirstCandidateFact(manifest.BatchId,
+            "project", Now, manifest.Members.Count, .42, ["backend"],
+            "disjoint", true, "deterministic-suite-red"));
+        _store.RecordIsolationCost(new BatchIsolationCostFact(manifest.BatchId, 3, 24.5, Now));
+
+        var row = Assert.Single(new BatchGateStore(_root).ListPlanObservations("project"));
+        Assert.Equal(manifest.BatchId, row.BatchId);
+        Assert.Equal(4, row.Size);
+        Assert.True(row.Red);
+        Assert.Equal(3, row.IsolationRuns);
+        Assert.Equal(24.5, row.IsolationMinutes);
+        Assert.Empty(_store.ListPlanObservations("other"));
+    }
+
+    [Fact]
+    public void First_candidate_recorder_skips_successor_manifest()
+    {
+        var original = Close();
+        var successor = original with { BatchId = "successor", ParentBatchId = original.BatchId };
+        _store.CloseManifest(successor);
+        var verdict = new BatchGateRunVerdict("run", successor.BatchId,
+            successor.MembershipDigest, Next, "profile", "fail",
+            "deterministic-suite-red", "evidence", Now);
+
+        BatchGatePilotService.RecordFirstCandidateOutcome(_store, successor.BatchId,
+            verdict, new RecordingLogger());
+
+        Assert.Empty(_store.ListPlanObservations("project"));
+        Assert.Throws<InvalidDataException>(() => _store.RecordFirstCandidate(
+            new BatchFirstCandidateFact(successor.BatchId, "project", Now,
+                successor.Members.Count, .42, ["backend"], "disjoint", true,
+                "deterministic-suite-red")));
+    }
+
+    [Fact]
+    public void Invalid_first_candidate_fact_is_logged_without_throwing()
+    {
+        var original = Close();
+        var malformed = original with
+        {
+            BatchId = "invalid-risk",
+            PlanningCards = [new BatchPlanCard("task-0", Now, 2, ["backend/a.cs"], [])],
+        };
+        _store.CloseManifest(malformed);
+        var verdict = new BatchGateRunVerdict("run", malformed.BatchId,
+            malformed.MembershipDigest, Next, "profile", "pass", "pass", "evidence", Now);
+        var logger = new RecordingLogger();
+
+        BatchGatePilotService.RecordFirstCandidateOutcome(_store, malformed.BatchId,
+            verdict, logger);
+
+        Assert.IsType<InvalidDataException>(logger.Exception);
+        Assert.Empty(_store.ListPlanObservations("project"));
+    }
+
+    private sealed class RecordingLogger : ILogger
+    {
+        public Exception? Exception { get; private set; }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+            => Exception = exception;
     }
 
     [Fact]

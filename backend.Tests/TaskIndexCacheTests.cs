@@ -346,9 +346,10 @@ public class TaskIndexCacheTests : IDisposable
     /// the same folder, driven by a fake clock rather than a sleep.
     /// </summary>
     [Fact]
-    public void SafetyTtl_PicksUpExternalChanges_EvenWithoutInvalidation()
+    public async Task Reconciliation_PicksUpExternalChanges_EvenWithoutInvalidation()
     {
         var config = BuildConfig(safetyTtlSeconds: 1);
+        (config as IConfigurationRoot)!["TaskIndexCache:ReconciliationSeconds"] = "1";
         var time = new FakeTimeProvider();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
@@ -362,11 +363,12 @@ public class TaskIndexCacheTests : IDisposable
         WriteJob("2-ready", "job-2", "Second");
         // No invalidation (simulating a missed FileSystemWatcher event).
         Assert.Single(scanner.ScanAllJobs());
-        // Move past the configured 1 s safety TTL.
+        // The periodic reconciliation runs off the reader's path.
         time.Advance(TimeSpan.FromMilliseconds(1200));
-
+        if (cache.RefreshInFlight is { } refresh) await refresh;
         var fresh = scanner.ScanAllJobs();
         Assert.Equal(2, fresh.Count);
+        Assert.Equal(1, cache.FullRawScans);
     }
 
     [Fact]

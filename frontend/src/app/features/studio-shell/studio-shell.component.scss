@@ -1,23 +1,11 @@
 @use '../../../styles/mixins' as m;
 @use '../../../styles/lane-tone';
-
-// =========================================================================
-// Studio shell — Agent Software Studio (VS-Code-inspired)
-//
-// Design tokens (--studio-*, --severity-*, --lane-*, --diff-*, --elevation-*)
-// live in `src/styles/_tokens-primitives.scss` (Tier 1, raw palette + shadow
-// scale) and `src/styles/_tokens-semantic.scss` (Tier 2, purpose aliases +
-// `[data-studio-theme='light']` overrides). Both files are loaded globally
-// via `styles.scss` so EVERY component reads from `var(--studio-*)` directly.
-//
-// See `docs/quality/frontend/audits/scss-quality.md` for the Tier-1 / Tier-2 contract and
-// the enforced stylelint rules.
-// =========================================================================
+@use './studio-shell-mobile-tabbar' as mobile;
+@use './studio-tab';
 
 .studio {
   display: grid;
-  // The header owns its rows: 44 + 40 px, 48 + 48 px on touch, 48 px on phone.
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   // Single-column track, but explicit minmax(0, 1fr) so the column does
   // NOT grow to the intrinsic min-content of its children. Without
   // this, the implicit `auto` single-column expanded to the
@@ -27,7 +15,7 @@
   // flex track — the editor visually disappeared behind the
   // orchestrator side sheet.
   grid-template-columns: minmax(0, 1fr);
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
   font-family: var(--font-ui);
   font-size: 13px;
@@ -67,8 +55,7 @@
 // Titlebar
 // -------------------------------------------------------------------------
 .studio-titlebar {
-  // Row geometry, surface and hairline belong to <app-usage-cockpit-header>
-  // (HUC-S4); this block only styles the projected navigation controls.
+  // Navigation geometry belongs to the projected header.
   user-select: none;
 
   &__brand {
@@ -177,7 +164,8 @@
   &__actions {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--studio-spacing-1);
+    min-width: 0;
   }
 
   &__iconbtn {
@@ -264,6 +252,11 @@
     color: var(--studio-fg);
   }
 
+  &:focus-visible {
+    outline: 2px solid var(--studio-accent);
+    outline-offset: 2px;
+  }
+
   &--active {
     background: var(--studio-bg-elevated);
     border-color: var(--studio-border-strong);
@@ -329,14 +322,8 @@
   align-items: center;
   gap: 6px;
 }
-// F23: project picker dropdown content moved to the shared <app-menu>
-// component. The `.studio-titlebar__picker-menu` / `__picker-item` blocks
-// previously here are dead — the picker now renders through <app-menu>'s
-// styles in src/app/components/menu/menu.component.scss.
 
-// Auto-pickup toggle next to the project picker. The dot lights up
-// (brand-orange) when auto is enabled. Click cycles auto ⇄ paused via
-// the parent's onToggleAuto handler.
+// Auto-pickup toggle next to the project picker.
 .studio-auto-toggle {
   display: inline-flex;
   align-items: center;
@@ -358,6 +345,11 @@
   &:hover {
     background: var(--studio-bg-hover);
     color: var(--studio-fg);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--studio-accent);
+    outline-offset: 2px;
   }
 
   &__dot {
@@ -383,8 +375,8 @@
   // chip look in favour of a flush "name • dot • count" arrangement
   // so the chip reads as one unit.
   &--inline {
-    height: auto;
-    padding: 0;
+    min-height: 24px;
+    padding: 0 var(--studio-spacing-1);
     margin: 0 2px 0 6px;
     border: 0;
     background: transparent;
@@ -413,6 +405,7 @@
 // -------------------------------------------------------------------------
 .studio-body {
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   // min-width: 0 + explicit width tell the grid container to honour its
   // parent's flex/grid track instead of widening to its intrinsic
@@ -446,14 +439,14 @@
   .studio-body, .studio--sidebar-hidden .studio-body {
     grid-template-columns: var(--studio-activitybar-w) minmax(0, 1fr) auto !important;
   }
-  .studio-sidebar { display: none; }
-  .studio-body:has(> app-orchestrator-side-sheet.is-open) { grid-template-rows: minmax(0, 1fr); }
-  .studio-body:has(> app-orchestrator-side-sheet.is-open) > app-studio-activity-bar > .studio-activitybar {
+  .studio-body > .studio-sidebar { display: none; }
+  .studio-body:has(> app-orchestrator-side-sheet-host > app-orchestrator-side-sheet.is-open) { grid-template-rows: minmax(0, 1fr); }
+  .studio-body:has(> app-orchestrator-side-sheet-host > app-orchestrator-side-sheet.is-open) > app-studio-activity-bar > .studio-activitybar {
     grid-column: 1;
     grid-row: 1;
   }
-  .studio-body:has(> app-orchestrator-side-sheet.is-open) > :is(.studio-sidebar, .studio-editor) { grid-column: 2; grid-row: 1; }
-  .studio-body > app-orchestrator-side-sheet.is-open {
+  .studio-body:has(> app-orchestrator-side-sheet-host > app-orchestrator-side-sheet.is-open) > :is(.studio-sidebar, .studio-editor) { grid-column: 2; grid-row: 1; }
+  .studio-body > app-orchestrator-side-sheet-host > app-orchestrator-side-sheet.is-open {
     grid-column: 1 / -1;
     grid-row: 1;
     min-width: 0;
@@ -773,7 +766,7 @@
 }
 
 
-.studio-button {
+.studio .studio-button {
   margin: 4px 12px;
   padding: 6px 12px;
   border-radius: 4px;
@@ -1559,8 +1552,11 @@
     overflow-y: hidden;
     flex: 1;
     min-width: 0;
-    scrollbar-width: thin;
+    // Keep horizontal tab scrolling, but do not add a second visual row.
+    scrollbar-width: none;
     overscroll-behavior-x: contain;
+
+    &::-webkit-scrollbar { display: none; }
   }
 
   &__actions {
@@ -1897,153 +1893,6 @@
   }
 }
 
-.studio-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-1);
-  padding: 0 var(--studio-spacing-2);
-  height: 100%;
-  min-width: 156px;
-  box-sizing: border-box;
-  flex: 0 0 auto;
-  border-right: 1px solid var(--studio-border);
-  font-size: 12px;
-  line-height: 1.2;
-  color: var(--studio-fg-dim);
-  background: var(--studio-bg-tab-inactive);
-  cursor: pointer;
-  user-select: none;
-  white-space: nowrap;
-  max-width: 320px;
-  position: relative;
-
-  &[data-tab-kind='task'],
-  &[data-tab-kind='hub'] {
-    min-width: 220px;
-  }
-
-  &:hover {
-    color: var(--studio-fg);
-  }
-
-  &--active {
-    background: var(--studio-bg-tab-active);
-    color: var(--studio-fg-strong);
-    box-shadow: inset 0 -2px 0 var(--studio-accent), inset 0 1px 0 var(--studio-border-strong);
-  }
-
-  // While being dragged, fade the source row so the user can read the
-  // insertion marker on the target side without the source visually
-  // jumping. Pointer-events stay enabled because dragover events must
-  // still fire on the source's neighbours when the cursor passes back.
-  &--dragging {
-    opacity: 0.4;
-  }
-
-  // 2-px vertical bar on the leading edge of the drop target. The
-  // before pseudo-element sits over the left border so it lines up
-  // with the existing tab divider rhythm.
-  &--drop-before::before {
-    content: '';
-    position: absolute;
-    left: -1px;
-    top: 4px;
-    bottom: 4px;
-    width: 2px;
-    background: var(--studio-accent);
-    border-radius: 1px;
-    pointer-events: none;
-  }
-
-  // AGT-2034 — small project-colour "Farbklecks" marking the tab's origin.
-  // A rounded square (not a circle) so it stays distinct from status dots.
-  // The 1px ring gives the dot a perceivable edge in either theme: on dark
-  // the pastel fill already clears 5.7:1 against the tab so the ring is a
-  // subtle separator, on light the fill drops below 3:1 so the ring flips to
-  // a defined dark edge (--studio-tab-dot-ring, ~3.9:1 — WCAG 1.4.11). Colour
-  // is never the sole carrier: the shortCode / task-key text sits beside it.
-  &__dot {
-    flex: 0 0 auto;
-    width: 8px;
-    height: 8px;
-    border-radius: 2px;
-    box-shadow: 0 0 0 1px var(--studio-tab-dot-ring);
-  }
-
-  &__prefix,
-  &__num {
-    display: inline-flex;
-    align-items: center;
-    align-self: center;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    line-height: 16px;
-    height: 18px;
-    padding: 0 var(--studio-spacing-1);
-    border: 1px solid var(--studio-border-strong);
-    border-radius: var(--studio-radius-sm);
-    color: var(--studio-fg);
-    background: var(--studio-bg-elevated);
-    flex: 0 0 auto;
-  }
-
-  // Angular component hosts participate in the flex row themselves. Making
-  // the host a centred flex item keeps the SVG glyph on the same optical axis
-  // as the project/task abbreviation and title.
-  app-studio-icon {
-    display: inline-flex;
-    align-items: center;
-    align-self: center;
-    flex: 0 0 auto;
-    line-height: 1;
-  }
-
-  &__title {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  &__close {
-    width: 16px;
-    height: 16px;
-    border-radius: 3px;
-    display: grid;
-    place-items: center;
-    color: var(--studio-fg-muted);
-    font-size: 14px;
-    line-height: 1;
-    flex: 0 0 16px;
-
-    &:hover {
-      background: var(--studio-bg-hover);
-      color: var(--studio-fg-strong);
-    }
-  }
-
-  &--welcome {
-    border-right: 0;
-    cursor: default;
-  }
-
-  // Sticky tabs (default Board) carry a pin glyph in place of the close
-  // X. The pin tints with the accent so the visual rhythm reads "this
-  // tab is permanent" rather than "missing close button".
-  &__pin {
-    width: 16px;
-    height: 16px;
-    display: grid;
-    place-items: center;
-    color: var(--studio-accent);
-    flex: 0 0 auto;
-  }
-
-  &--sticky {
-    cursor: pointer;
-  }
-}
-
 // Trailing drop zone: stretches across the empty space after the last
 // tab so a drag aimed at "the end" lands on something real. The visible
 // indicator only appears while a drag is in flight AND the target is
@@ -2110,10 +1959,12 @@
 }
 .studio-projected-content:has(+ app-studio-welcome) { flex: 0 0 auto; min-height: auto; }
 .studio-projected-content + app-studio-welcome { margin-top: var(--studio-spacing-4); }
-.studio-projected-content:has(+ app-workspace-deployment-dashboard) { display: none; }
+.studio-projected-content:has(+ app-workspace-deployment-dashboard),
+.studio-projected-content--hidden { display: none; }
 app-workspace-deployment-dashboard { flex: 1; min-height: 0; }
-.studio-deployment-entry {
+.studio .studio-deployment-entry {
   width: 100%;
+  min-height: var(--studio-row-min-h-interactive);
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 0;
   border-bottom: 1px solid var(--studio-border);
@@ -2122,8 +1973,8 @@ app-workspace-deployment-dashboard { flex: 1; min-height: 0; }
   text-align: left;
   cursor: pointer;
 }
-.studio-deployment-entry:hover { background: var(--studio-bg-hover); }
-.studio-deployment-entry:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
+.studio .studio-deployment-entry:hover { background: var(--studio-bg-hover); }
+.studio .studio-deployment-entry:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
 
 .studio-chat-rail {
   border-left: 1px solid var(--studio-border);
@@ -2205,3 +2056,15 @@ app-workspace-deployment-dashboard { flex: 1; min-height: 0; }
   color: var(--studio-danger, #e74c3c);
   font-variant-numeric: tabular-nums;
 }
+@media (max-width: 720px) {
+  .studio-titlebar__actions [data-testid='studio-titlebar-settings'] {
+    width: var(--studio-target-coarse-min);
+    min-height: var(--studio-target-coarse-min);
+    justify-content: center;
+    padding-inline: 0;
+    background: transparent;
+  }
+  .studio-titlebar__actions [data-testid='studio-titlebar-settings'] span { display: none; }
+}
+
+@include mobile.tabbar;

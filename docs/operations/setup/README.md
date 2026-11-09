@@ -27,12 +27,16 @@ an agent CLI, first tasks, and troubleshooting.
 | [remote-runner-persistent-connection.md](./remote-runner-persistent-connection.md) | Unattended remote operation: configure the Task Server-owned SSH reverse link, inspect its resource and operator-feed transitions, and use the runner's `--health-check`. The scheduled keeper is an emergency path. |
 | [task-server.md](./task-server.md) | Install, configure, supervise, migrate, manage retention policies, run or schedule archive/restore, and create or restore verified full backup sets for the independently deployed Task Server control plane. |
 | [installation-recovery.md](./installation-recovery.md) | Capture, copy off-host, verify, and restore the installation recovery set onto an empty target; fence stale hosts, pass the resume gate, and measure recovery point and time with the drill. |
+| [studio-op.md](./studio-op.md) | Install the `studio-op` operator CLI, put the operator token into its owner-only file, and look up its commands, routes and stable exit codes (OP-8). |
+| [operator-agent.md](./operator-agent.md) | Give the operator agent its own Studio identity and Owner-started sessions of at most 8 hours, run it under its own OS user without your SSH agent or keys, and configure the off-host audit sink (security model SM-1). |
 | [identity-and-project-bootstrap.md](./identity-and-project-bootstrap.md) | First owner with the installer code, recovery custody, operator accounts, one-time host enrolment, canonical project registration and the host repository probe for the standalone Task Server (I05). |
 | [remote-compose-test-harness.md](./remote-compose-test-harness.md) | Run the isolated Task Server, Agent Runner, and Studio Compose acceptance harness on a remote Docker host, with deterministic partitions, rolling replacements, evidence export, and identity-scoped cleanup. |
+| [networked-deploy.md](./networked-deploy.md) | Configure and run the server-first networked deploy, dry run, timing journal, and rollback from an operator-owned host manifest. |
 | [presentation-capture.md](./presentation-capture.md) | Regenerating deterministic presentation stills and recording safe silent loops or narrated backup footage against the ADR-0056 demo workspace. |
 | [hosted-wiki-publication.md](./hosted-wiki-publication.md) | Publishing the accepted documentation revision to the hosted Wiki: published-revision rules, freshness SLO, read-only fetch credentials, scheduled and forced triggers, atomic promotion, typed deployment failures, and the rehearsed rollback drill. |
 | [docker-compose-connector-gap.md](./docker-compose-connector-gap.md) | Option C decision and the remaining Connector route-coverage limit for the one-box deployment. |
 | [move-studio-to-server.md](./move-studio-to-server.md) | Move Studio from Stable on the workstation to the networked monolith stack on the server with one script: inventory, rehearsal, apply, and rollback. |
+| [studio-backup-restore.md](./studio-backup-restore.md) | Scheduled encrypted backups of the networked website stack, their off-host copy and Operations page state, escrow of the backup and secret store keys, restore onto a new host, and the optional host-level timer. |
 
 ## Related references
 

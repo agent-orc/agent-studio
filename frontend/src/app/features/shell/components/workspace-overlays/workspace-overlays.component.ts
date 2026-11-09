@@ -1,27 +1,22 @@
 ﻿import { NgTemplateOutlet } from '@angular/common';
-import { ChangeDetectionStrategy, Component, DestroyRef, effect, inject, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, Injector, afterNextRender, effect, inject, input, output, signal } from '@angular/core';
 import { WorkspaceOverlaysService } from '../../state/workspace-overlays.service';
 import type { WorkspaceSettingsSection } from '../../state/workspace-overlays.service';
 import { WorkspaceScreenshotsComponent } from '../../../screenshots';
-import { TokenUsageSectionComponent } from '../../../tokens';
-import {
-  CliAdminPanelComponent,
-  CliWorkingMemoryPanelComponent,
-  CliSessionsPanelComponent,
-  CliPathsPanelComponent,
-} from '../../../cli';
-import { RemoteHostsPanelComponent } from '../../../remote-hosts';
+import { TokenUsageSectionComponent } from '../../../tokens/lazy';
+import { CliAdminPanelComponent } from '../../../cli/lazy';
+import { RemoteHostsPanelComponent } from '../../../remote-hosts/lazy';
 import { CredentialInventoryComponent } from '../../../credentials/credential-inventory/credential-inventory.component';
 import { SecretsPanelComponent } from '../../../secrets/secrets-panel/secrets-panel.component';
 import { TaskServerPanelComponent } from '../../../task-server';
-import { DecisionRulesPanelComponent, OrchestratorLogicPanelComponent, PromptAdminPanelComponent, TransitionRolloutPanelComponent } from '../../../orchestrator';
+import { DecisionRulesPanelComponent, OrchestratorLogicPanelComponent, PromptAdminPanelComponent, TransitionRolloutPanelComponent } from '../../../orchestrator/lazy';
 // Direct path (not the studio-shell barrel) so we don't pull StudioShellComponent
 // and re-form the shell <-> studio-shell import cycle (AGT-2035).
 import { AppearanceSettingsComponent } from '../../../studio-shell/components/appearance-settings/appearance-settings.component';
 import { UpdatesSettingsComponent } from '../../../update';
 import { WorkspaceManagementComponent } from '../workspace-management/workspace-management.component';
 import { RetentionAdminComponent } from '../../../retention';
-import { AccessAreaComponent } from '../../../access';
+import { AccessAreaComponent } from '../../../access/lazy';
 import { FirstRunChecklistComponent } from '../first-run-checklist/first-run-checklist.component';
 import { GitHubAppPanelComponent } from '../../../github-app/github-app-panel/github-app-panel.component';
 import type { TaskScreenshot } from '../../../../features/screenshots';
@@ -61,13 +56,12 @@ interface SettingsRailItem {
  * AGT-1812 moved out of their standalone modal). Workspace group
  * (defaults applied across the workspace's projects): CLI Management (the CLI
  * catalog / models / routes / usage caps / completion-contracts hub), CLI
- * sessions and CLI paths (encapsulated pages split out of that hub - AGT-2101),
- * Working memory, System prompts, Token usage, Visual evidence.
+ * System prompts, Token usage, Visual evidence.
  *
  * Each content section re-uses a stable outer test id
  * (`cli-admin-overlay`, `prompt-admin-overlay`, `workspace-tokens-overlay`,
  * `workspace-screenshots-overlay`, `orchestrator-config-overlay`, plus the new
- * appearance/updates/workspaces/working-memory ids) so deep-links and specs
+ * appearance/updates/workspaces ids) so deep-links and specs
  * keep resolving.
  */
 @Component({
@@ -79,9 +73,6 @@ interface SettingsRailItem {
     TokenUsageSectionComponent,
     WorkspaceScreenshotsComponent,
     CliAdminPanelComponent,
-    CliWorkingMemoryPanelComponent,
-    CliSessionsPanelComponent,
-    CliPathsPanelComponent,
     RemoteHostsPanelComponent,
     CredentialInventoryComponent,
     SecretsPanelComponent,
@@ -116,11 +107,13 @@ export class WorkspaceOverlaysComponent {
    *  the Token-usage section's per-project usage rows). */
   readonly openProjectSettings = output<string>();
   /** Task the shell should open in its detail panel (bubbled up from the
-   *  usage-caps CLI-sessions list). */
+   *  remote-hosts panel). */
   readonly openJobDetail = output<{ jobId: string; watchPath: string }>();
 
   private readonly modalStack = inject(ModalStackService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
+  private previousFocus: HTMLElement | null = null;
   private modalDisposer: (() => void) | null = null;
   readonly collapsedGroups = signal<ReadonlySet<SettingsRailGroup>>(new Set());
 
@@ -139,9 +132,6 @@ export class WorkspaceOverlaysComponent {
     { key: 'remote-hosts', label: 'Environment', description: 'Machines, services, connections, health, and repository access.', icon: 'activity', group: 'global' },
     { key: 'orchestrator', label: 'Orchestrator', description: 'Platform-global supervisor, meta-cycle, and auto-intervention lifecycle flags.', icon: 'bot', group: 'global' },
     { key: 'caps', label: 'CLI Management', description: 'What CLIs and models are available, their fallback routes, usage caps and completion contracts.', icon: 'cli', group: 'workspace' },
-    { key: 'cli-sessions', label: 'CLI sessions', description: 'Per-CLI per-project native session inventory.', icon: 'list', group: 'workspace' },
-    { key: 'cli-paths', label: 'CLI paths', description: 'Where each CLI lives on disk: executable path and known project roots.', icon: 'link', group: 'workspace' },
-    { key: 'working-memory', label: 'Working memory', description: 'Per-CLI memory and session state. Auth stays protected.', icon: 'book', group: 'workspace' },
     { key: 'prompts', label: 'System prompts', description: 'Application-wide runtime prompt defaults and overrides.', icon: 'code', group: 'workspace' },
     { key: 'retention', label: 'Retention', description: 'Artifact rules, previews, archive runs, and full backups.', icon: 'archive', group: 'workspace' },
     { key: 'tokens', label: 'Token usage', description: 'The single usage area: token spend across every project.', icon: 'activity', group: 'workspace' },
@@ -188,10 +178,22 @@ export class WorkspaceOverlaysComponent {
         return;
       }
       if (open && !this.modalDisposer) {
-        this.modalDisposer = this.modalStack.push('workspace-settings', () => this.overlays.close());
+        this.previousFocus = document.activeElement as HTMLElement | null;
+        afterNextRender(() => {
+          if (!this.overlays.settingsOpen() || this.inline() || this.modalDisposer) return;
+          this.modalDisposer = this.modalStack.push('workspace-settings', () => this.overlays.close(), {
+            dialog: () => document.querySelector<HTMLElement>('[data-testid="workspace-settings-overlay"] [role="dialog"]'),
+            backgroundRoot: () => document.querySelector<HTMLElement>('[data-testid="workspace-settings-overlay"]'),
+          });
+          document.querySelector<HTMLElement>('[data-testid="workspace-settings-close"]')?.focus();
+          this.modalStack.refreshModalScope();
+        }, { injector: this.injector });
       } else if (!open && this.modalDisposer) {
         this.modalDisposer();
         this.modalDisposer = null;
+        const opener = this.previousFocus;
+        this.previousFocus = null;
+        queueMicrotask(() => { if (opener?.isConnected) opener.focus(); });
       }
     });
     this.destroyRef.onDestroy(() => {
@@ -205,8 +207,6 @@ export class WorkspaceOverlaysComponent {
   panelTestid(): string {
     switch (this.overlays.section()) {
       case 'caps': return 'cli-admin-overlay';
-      case 'cli-sessions': return 'cli-sessions-overlay';
-      case 'cli-paths': return 'cli-paths-overlay';
       case 'prompts': return 'prompt-admin-overlay';
       case 'retention': return 'workspace-retention-overlay';
       case 'tokens': return 'workspace-tokens-overlay';
@@ -222,7 +222,6 @@ export class WorkspaceOverlaysComponent {
       case 'remote-hosts': return 'workspace-remote-hosts-overlay';
       case 'first-run': return 'workspace-first-run-overlay';
       case 'orchestrator': return 'orchestrator-config-overlay';
-      case 'working-memory': return 'workspace-working-memory-overlay';
       case 'overview': return 'workspace-settings-overview-panel';
     }
   }

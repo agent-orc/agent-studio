@@ -400,7 +400,7 @@ public static class StallInterventionPolicy
                 Action = StallInterventionActions.Escalate,
                 Autonomy = AutonomyClass.A1,
                 ReasonCode = InterventionLoop,
-                Done = $"I did not {Verb(plan.Action)} again: it already ran {repeats.Length} times on this subject "
+                Done = $"The AI Operator did not {Verb(plan.Action)} again: it already ran {repeats.Length} times on this subject "
                     + $"in the last {facts.Limits.LoopWindowHours} hours ({string.Join(", ", repeats.Select(item => item.InterventionId))}) "
                     + "and the stall came back. A person decides now.",
                 Why = "Repeating the same intervention would be a loop.",
@@ -458,26 +458,26 @@ public static class StallInterventionPolicy
         // already lowered is never lowered again without a person.
         if (host.AiLoweringId is { } lowering)
             return Propose(facts, host.Host, StallInterventionActions.ProposeMoveWork, "already-lowered", observed,
-                $"I already lowered its admission from {host.AiLoweredFrom?.ToString(CultureInfo.InvariantCulture) ?? "its baseline"} "
-                + $"to {host.Admission?.ToString(CultureInfo.InvariantCulture) ?? "a lower value"} ({lowering}) and do not lower it "
-                + "further without a person. I propose to move work to a host with headroom or to lower the admission by hand "
+                $"The AI Operator lowered its admission from {host.AiLoweredFrom?.ToString(CultureInfo.InvariantCulture) ?? "its baseline"} "
+                + $"to {host.Admission?.ToString(CultureInfo.InvariantCulture) ?? "a lower value"} ({lowering}). Further automatic lowering is held. "
+                + "Move work to a host with headroom or lower the admission by hand "
                 + "(Settings > Capacity).");
         if (host.Admission is not { } admission)
             return Propose(facts, host.Host, StallInterventionActions.ProposeMoveWork, "no-admission-control",
-                observed, $"{host.Host} has no coding admission I can lower, so I propose to move work to a host with headroom for longer.");
+                observed, $"{host.Host} has no coding admission control. Move work to a host with headroom.");
         var step = Math.Max(1, (int)Math.Round(admission * 0.25, MidpointRounding.AwayFromZero));
         var target = Math.Max(facts.Limits.MinAdmission, admission - step);
         if (target >= admission)
             return Propose(facts, host.Host, StallInterventionActions.ProposeMoveWork, "admission-at-floor",
-                observed, $"Admission is already at its floor of {admission}; I propose to move work to another host for longer.");
+                observed, $"Admission is already at its floor of {admission}; move work to another host.");
         return new StallInterventionPlan(StallInterventionActions.LowerAdmission, AutonomyClass.A1,
             facts.Kind, host.Host, observed,
-            $"I lowered its admission from {admission} to {target} parallel runs.",
+            $"The AI Operator lowered its admission from {admission} to {target} parallel runs.",
             "Fewer parallel builds bring the load back under the target; the gates and checks on this host stop timing out.",
             $"admission {admission}, {host.ActiveSlots} runs active",
             $"admission {target}; new work waits, running work continues",
             $"Undo restores {admission} (Settings > Capacity, or Undo on this receipt). "
-            + "I raise it again myself once the load stays below the target.",
+            + "The AI Operator restores it once the load stays below the target.",
             15, TargetAdmission: target, PreviousAdmission: admission, HostId: host.ClientId);
     }
 
@@ -497,11 +497,11 @@ public static class StallInterventionPolicy
             return OrphanedSlots(facts, service.Host, slots, observed);
         if (service.StoppedByOperator)
             return Propose(facts, service.Host, StallInterventionActions.ProposeRestartService, "stopped-by-operator", observed,
-                $"A person stopped {name}; I do not restart it. I propose to start it again or move its work to another host.")
+                $"A person stopped {name}. Start it again or move its work to another host.")
                 with { Service = service.Service };
         if (!service.Restartable)
             return Propose(facts, service.Host, StallInterventionActions.ProposeMoveWork, "not-restartable", observed,
-                $"The Operations Server cannot restart {name}; I propose to move its work to another host.");
+                $"The Operations Server cannot restart {name}; move its work to another host.");
         // docker compose up --force-recreate ends whatever the container runs:
         // restart only an idle worker that has claimable work waiting.
         if (service.BusySlots is not 0 || service.RunningWork)
@@ -509,16 +509,16 @@ public static class StallInterventionPolicy
                 observed + (service.BusySlots is { } busy and > 0 ? $" It still runs {busy} items." : string.Empty)
                 + (service.RunningWork ? " A batch or per-task gate is active." : string.Empty)
                 + (service.BusySlots is null ? " Its running work is unknown." : string.Empty),
-                $"A restart recreates {name} and would end its running work. I propose to restart it once that work "
-                + "finished, or to check it now.") with { Service = service.Service };
+                $"A restart recreates {name} and would end its running work. Restart after that work finishes, "
+                + "or check it now.") with { Service = service.Service };
         if (service.ClaimableWaiting <= 0)
             return Propose(facts, service.Host, StallInterventionActions.ProposeRestartService, "nothing-claimable", observed,
                 $"None of the waiting items can be claimed by {name} (batch gate members wait for the batch plan, "
                 + "review attempts for a host with their capabilities), so a restart would not move them. "
-                + "I propose to check why they wait.") with { Service = service.Service };
+                + "Check why they wait.") with { Service = service.Service };
         return new StallInterventionPlan(StallInterventionActions.RestartService, AutonomyClass.A1,
             facts.Kind, service.Host, observed,
-            $"I restarted {name} through the Operations Server.",
+            $"The AI Operator restarted {name} through the Operations Server.",
             (facts.Kind == StallKinds.HostOffline
                 ? "A stopped heartbeat with claimable waiting work is a stuck process"
                 : "Free slots with claimable waiting work mean the worker no longer claims")
@@ -543,7 +543,7 @@ public static class StallInterventionPolicy
         => Propose(facts, host, StallInterventionActions.ProposeReleaseGateSlots, "orphaned-gate-workers",
             observed + $" The gate host reports {slots.RemoteBusy} of {slots.Total} gate slots busy (0 free) while this "
             + "Studio holds none and runs no batch or per-task gate.",
-            $"Gate workers of an earlier Studio process still hold the slots on {host}. I propose to stop those orphaned "
+            $"Gate workers of an earlier Studio process still hold the slots on {host}. Stop those orphaned "
             + "workers on the gate host; restarting the gate worker would not free them (AGT-3237 adds the automatic release).");
 
     private static StallInterventionPlan ProviderAuth(StallInterventionFacts facts, StallProviderFacts provider)
@@ -561,7 +561,7 @@ public static class StallInterventionPolicy
                     : $"No other host has a valid {provider.Provider} login. ") + renew) with { Provider = provider.Provider };
         return new StallInterventionPlan(StallInterventionActions.RerouteProvider, AutonomyClass.A1,
             "provider-auth-invalid", provider.Host, observed,
-            $"I stopped routing {provider.Provider} attempts to {provider.Host}; "
+            $"The AI Operator stopped routing {provider.Provider} attempts to {provider.Host}; "
             + $"{string.Join(", ", provider.HealthyHosts)} take them.",
             "A host with an invalid login cannot finish an attempt; healthy hosts can.",
             $"{provider.Provider} attempts may go to {provider.Host}",
@@ -582,7 +582,7 @@ public static class StallInterventionPolicy
             return eligible.Length > 0
                 ? Hold(facts, host, CardBound,
                     $"{string.Join(", ", eligible.Select(item => item.Card))} already had a card intervention in the last "
-                    + $"{facts.Limits.LoopWindowHours} hours; I do not pin a base on them again.")
+                    + $"{facts.Limits.LoopWindowHours} hours; no base is pinned again.")
                 : Hold(facts, host, "wait-for-provider-reset",
                     $"The provider is rate limited on {host}; none of the {candidates.Count} affected cards waits in Ready "
                     + "after a rate-limited run with no base or an empty salvage and a reviewed delivery, so they wait for the provider reset.");
@@ -592,7 +592,7 @@ public static class StallInterventionPolicy
             "rate-limit-empty-salvage", host,
             $"{requeue.Length} of the {candidates.Count} affected cards ended their last run on a provider rate limit "
             + $"and wait in Ready: " + string.Join("; ", requeue.Select(item => $"{item.Card} with {BaseText(item)}")) + ".",
-            "I pinned each card's last completed, reviewed delivery as its next run's base: "
+            "The AI Operator pinned each card's last completed, reviewed delivery as its next run's base: "
             + string.Join(", ", requeue.Select(item => $"{item.Card} from {item.LastDeliveryRef} at {Short(item.LastDeliverySha)}")) + ".",
             "Starting without a base or from an empty salvage drops the reviewed work and escalates; the reviewed delivery keeps it.",
             string.Join("; ", requeue.Select(item => $"{item.Card}: {BaseText(item)}")),
@@ -607,7 +607,7 @@ public static class StallInterventionPolicy
         var observed = $"{facts.AffectedCards.Count} attempts cannot be claimed: {reason}.";
         if (reason.StartsWith("toolchain:", StringComparison.Ordinal))
             return Propose(facts, "review-hosts", StallInterventionActions.ProposeReviewToolchain, "missing-toolchain",
-                observed, $"No review host offers {reason}. I propose to add {reason["toolchain:".Length..]} to the review image.");
+                observed, $"No review host offers {reason}. Add {reason["toolchain:".Length..]} to the review image.");
         if (reason.Contains("credential", StringComparison.OrdinalIgnoreCase)
             || reason.StartsWith("provider-auth:", StringComparison.Ordinal))
             return Propose(facts, "review-hosts", StallInterventionActions.ProposeProviderLogin, "credential-refusal",
@@ -647,8 +647,8 @@ public static class StallInterventionPolicy
                     observed + " No member is positively completed or stale and no batch is past its deadline.");
         }
         var done = new List<string>();
-        if (drop.Length > 0) done.Add($"I dropped {string.Join(", ", drop.Select(item => item.Card))} from the gate queue");
-        if (close) done.Add($"I closed batch {gate.OpenBatchId}, whose members waited past the "
+        if (drop.Length > 0) done.Add($"The AI Operator dropped {string.Join(", ", drop.Select(item => item.Card))} from the gate queue");
+        if (close) done.Add($"The AI Operator closed batch {gate.OpenBatchId}, whose members waited past the "
             + $"{facts.Limits.GateMemberDeadlineHours.ToString("0.#", CultureInfo.InvariantCulture)} h deadline");
         return new StallInterventionPlan(StallInterventionActions.ReconcileBatchGate, AutonomyClass.A1,
             "batch-gate-reconcile", $"gate:{gate.Project}", observed, string.Join("; ", done) + ".",
@@ -677,7 +677,7 @@ public static class StallInterventionPolicy
         if (deploy.StartError is not null && deploy.StartRetryAvailable)
             return new StallInterventionPlan(StallInterventionActions.RetryEngineStart, AutonomyClass.A1,
                 "start-failed-retry", deploy.Host, observed,
-                $"I started {name} again through the Operations Server, which validates the configuration before it recreates the container.",
+                $"The AI Operator started {name} again through the Operations Server, which validates the configuration before it recreates the container.",
                 "The old image kept running because the start failed; a validated start uses the current configuration "
                 + "and changes nothing while a value is still missing.",
                 $"running {deploy.RunningVersion ?? "unknown"}",
@@ -709,8 +709,8 @@ public static class StallInterventionPolicy
                 ConditionCleared, host,
                 $"The stall on {facts.Subject} cleared after {Verb(check.Action)} ({check.InterventionId}).",
                 check.Action == StallInterventionActions.RerouteProvider
-                    ? $"The login works again, so I route attempts to {host} again and record {check.InterventionId} as effective."
-                    : $"I recorded {check.InterventionId} as effective.",
+                    ? $"The login works again, so attempts route to {host} again and {check.InterventionId} is recorded as effective."
+                    : $"{check.InterventionId} is recorded as effective.",
                 string.Empty, string.Empty, string.Empty, string.Empty, 0);
         if (facts.ObservedAtUtc < check.DueUtc)
             return Hold(facts, host, FollowUpPending,
@@ -769,7 +769,7 @@ public static class StallInterventionPolicy
             "load-recovered", host,
             $"{host} runs at {Percent(check.LoadPerCoreNow * 100)} load per core, under its "
             + $"{Percent(check.TargetPercent)} target since {Minutes(facts.ObservedAtUtc - check.CalmSinceUtc!.Value)}.",
-            $"I raised its admission from {now} back to {before} parallel runs.",
+            $"The AI Operator raised its admission from {now} back to {before} parallel runs.",
             $"The load is back; the reduction of {check.InterventionId} is no longer needed.",
             $"admission {now}", $"admission {before}",
             $"{before} is your own value again; to lower it, set it in Settings > Capacity.",
@@ -779,15 +779,15 @@ public static class StallInterventionPolicy
     private static StallInterventionPlan Escalation(StallInterventionFacts facts, string host, string reason,
         StallFollowUpFacts check, string observed)
         => new(StallInterventionActions.Escalate, AutonomyClass.A1, reason, host, observed,
-            $"I handed the event to a person with the receipt chain ({check.ChainLength} receipts).",
+            $"The event was handed to an operator with the receipt chain ({check.ChainLength} receipts).",
             "The automatic intervention did not clear the condition in the expected time; repeating it would be a loop.",
             string.Empty, string.Empty, "Nothing was changed by this step.", 0);
 
     private static StallInterventionPlan Propose(StallInterventionFacts facts, string host, string action,
         string reason, string observed, string proposal)
         => new(action, AutonomyClass.A2, reason, host, observed,
-            "I prepared a proposal for a person; nothing was changed.", proposal,
-            string.Empty, string.Empty, "Nothing to undo.", 0, Proposal: proposal);
+            "A proposal is ready for operator review. No action was taken.", proposal,
+            string.Empty, string.Empty, string.Empty, 0, Proposal: proposal);
 
     private static StallInterventionPlan Hold(StallInterventionFacts facts, string host, string reason, string detail)
         => new(StallInterventionActions.None, AutonomyClass.A0, reason, host, detail,

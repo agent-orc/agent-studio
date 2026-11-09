@@ -1,3 +1,6 @@
+import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
+import { TASK_REFERENCE_CHAT_PROVIDER } from '../../../../services/task-reference-chat.provider';
+import { StructureViewComponent } from '../../../structure/structure-view/structure-view.component';
 import { ChangeDetectionStrategy, Component, effect, inject, input, output, signal } from '@angular/core';
 import {
   ProjectShellComponent,
@@ -8,6 +11,8 @@ import {
   UxuiPanelComponent,
   ProjectObservabilityPanelComponent,
   ProjectProductRuntimePanelComponent,
+  ApiStallPanelComponent,
+  OperationsSecurityComponent,
   ProjectSteeringDocsSectionComponent,
   ProjectWikiSectionComponent,
   ProjectUrlsPanelComponent,
@@ -16,13 +21,14 @@ import {
   ProjectProposalsPanelComponent,
   ProjectGraphComponent,
   ProjectTestRunsPanelComponent,
+  QualityStudioPanelComponent,
   OwnershipMappingPanelComponent,
 } from '../../../project-detail';
 import { ProjectDetailComponent } from '../../../project-detail/lazy';
 import { ProjectTokenUsagePanelComponent } from '../../../project-token-usage';
 import { TokenAnalysisViewComponent } from '../../../token-analysis';
 import { ProjectCycleTimePanelComponent } from '../../../project-cycle-time';
-import { PromptAdminPanelComponent } from '../../../orchestrator';
+import { PromptAdminPanelComponent } from '../../../orchestrator/lazy';
 import { WorkspaceScreenshotsComponent } from '../../../screenshots';
 import { RegressionRadarComponent } from '../../../regression-radar';
 import {
@@ -51,6 +57,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
   'drift',
   'uxui',
   'test-quality',
+  'quality-studio',
   'token-usage',
   'cycle-time',
   'agent-activity',
@@ -84,6 +91,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
   selector: 'app-project-hub-view',
   standalone: true,
   imports: [
+    StructureViewComponent,
     ProjectShellComponent,
     ProjectEnvironmentOverviewComponent,
     ProjectDetailComponent,
@@ -97,6 +105,8 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
     ProjectCycleTimePanelComponent,
     ProjectObservabilityPanelComponent,
     ProjectProductRuntimePanelComponent,
+    ApiStallPanelComponent,
+    OperationsSecurityComponent,
     ProjectSteeringDocsSectionComponent,
     ProjectWikiSectionComponent,
     ProjectUrlsPanelComponent,
@@ -105,16 +115,19 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
     ProjectProposalsPanelComponent,
     ProjectGraphComponent,
     ProjectTestRunsPanelComponent,
+    QualityStudioPanelComponent,
     OwnershipMappingPanelComponent,
     PromptAdminPanelComponent,
     WorkspaceScreenshotsComponent,
     RegressionRadarComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  providers: [TASK_REFERENCE_CHAT_PROVIDER],
   templateUrl: './project-hub-view.component.html',
   styleUrl: './project-hub-view.component.scss',
 })
 export class ProjectHubViewComponent {
+  readonly projectSlug = studioProjectSlug;
   private readonly overlays = inject(ProjectOverlaysService);
   private readonly tabState = inject(StudioTabStateService);
 
@@ -143,8 +156,11 @@ export class ProjectHubViewComponent {
   constructor() {
     effect(() => {
       const target = resolveProjectSection(this.initialSection());
-      // The route only records Run steps; other Deploy views stay local.
-      this.deployView.update(view => target.deployView === 'steps' ? 'steps' : (view === 'steps' ? 'overview' : view));
+      const requested = new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('view');
+      const deepLinked = ['history', 'releases', 'operations', 'runbooks'].includes(requested ?? '')
+        ? requested as DeployView : null;
+      this.deployView.update(view => target.deployView === 'steps' ? 'steps' : deepLinked && target.rail === 'deploy'
+        ? deepLinked : (view === 'steps' ? 'overview' : view));
       this.activeRail.set(target.rail);
     });
   }

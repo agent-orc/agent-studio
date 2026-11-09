@@ -40,32 +40,51 @@ public static class IamEndpoints
                     decision.GrantingBindings.Select(binding => binding.Id).ToList(), decision.Reason));
             })).RequirePermission(IamPermissions.AccessRead);
 
-        iam.MapPost("/groups", (CreateGroupRequest request, HttpContext context, AccessSecurityStore store) =>
+        iam.MapPost("/groups", (CreateGroupRequest request, HttpContext context, AccessSecurityStore store,
+            AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
             AccessSecurityEndpoints.Execute(() =>
-                Results.Ok(store.CreateGroup(request, Require(context, store, IamPermissions.AccessManage)))))
+            {
+                var result = store.CreateGroup(request, Require(context, store, IamPermissions.AccessManage));
+                RevokeUsers(store, revokes);
+                return Results.Ok(result);
+            }))
             .RequirePermission(IamPermissions.AccessManage);
 
-        iam.MapPut("/groups/{id}", (string id, UpdateGroupRequest request, HttpContext context, AccessSecurityStore store) =>
+        iam.MapPut("/groups/{id}", (string id, UpdateGroupRequest request, HttpContext context, AccessSecurityStore store,
+            AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
             AccessSecurityEndpoints.Execute(() =>
-                Results.Ok(store.UpdateGroup(id, request, Require(context, store, IamPermissions.AccessManage)))))
+            {
+                var result = store.UpdateGroup(id, request, Require(context, store, IamPermissions.AccessManage));
+                RevokeUsers(store, revokes);
+                return Results.Ok(result);
+            }))
             .RequirePermission(IamPermissions.AccessManage);
 
-        iam.MapDelete("/groups/{id}", (string id, HttpContext context, AccessSecurityStore store) =>
+        iam.MapDelete("/groups/{id}", (string id, HttpContext context, AccessSecurityStore store,
+            AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
             AccessSecurityEndpoints.Execute(() =>
             {
                 store.DeleteGroup(id, Require(context, store, IamPermissions.AccessManage));
+                RevokeUsers(store, revokes);
                 return Results.NoContent();
             })).RequirePermission(IamPermissions.AccessManage);
 
-        iam.MapPost("/bindings", (IamBindingRequest request, HttpContext context, AccessSecurityStore store) =>
+        iam.MapPost("/bindings", (IamBindingRequest request, HttpContext context, AccessSecurityStore store,
+            AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
             AccessSecurityEndpoints.Execute(() =>
-                Results.Ok(store.AddBinding(request, Require(context, store, IamPermissions.AccessManage)))))
+            {
+                var result = store.AddBinding(request, Require(context, store, IamPermissions.AccessManage));
+                RevokeUsers(store, revokes);
+                return Results.Ok(result);
+            }))
             .RequirePermission(IamPermissions.AccessManage);
 
-        iam.MapDelete("/bindings/{id}", (string id, HttpContext context, AccessSecurityStore store) =>
+        iam.MapDelete("/bindings/{id}", (string id, HttpContext context, AccessSecurityStore store,
+            AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
             AccessSecurityEndpoints.Execute(() =>
             {
                 store.RemoveBinding(id, Require(context, store, IamPermissions.AccessManage));
+                RevokeUsers(store, revokes);
                 return Results.NoContent();
             })).RequirePermission(IamPermissions.AccessManage);
 
@@ -99,10 +118,21 @@ public static class IamEndpoints
                 store.DisableServiceAccount(id, Require(context, store, IamPermissions.AccessManage));
                 return Results.NoContent();
             })).RequirePermission(IamPermissions.AccessManage);
+
+        iam.MapOperatorAgentEndpoints();
+        iam.MapOperatorKillSwitchEndpoints();
+        iam.MapStandingGrantEndpoints();
+        iam.MapOperatorApprovalEndpoints();
+        iam.MapBreakGlassWindowEndpoints();
+    }
+
+    private static void RevokeUsers(AccessSecurityStore store, AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes)
+    {
+        foreach (var user in store.ReadIamSnapshot().Users) revokes.EnqueueSub(user.Id);
     }
 
     /// <summary>Returns the acting user's id once the workspace-level permission holds.</summary>
-    private static string Require(HttpContext context, AccessSecurityStore store, string permission)
+    internal static string Require(HttpContext context, AccessSecurityStore store, string permission)
     {
         var human = AccessSecurityEndpoints.RequireHuman(context, store);
         var decision = store.AuthorizeUser(human.User.Id, permission, PermissionTarget.WorkspaceWide);
@@ -114,7 +144,7 @@ public static class IamEndpoints
         IamRoles.All.Select(role => new IamRoleResponse(
             role.Id, role.DisplayName, role.Description,
             role.Permissions.Order(StringComparer.Ordinal).ToList(),
-            role.BindableScopes.Order().ToList(), role.ServiceAccountBindable)).ToList(),
+            role.BindableScopes.Order().ToList(), role.ServiceAccountBindable, role.UserBindable)).ToList(),
         IamPermissions.All.Where(permission => !IamPermissions.IsUnbound(permission.Name)
                 && permission.Name != IamPermissions.RunnerService)
             .Select(permission => new IamPermissionResponse(permission.Name, permission.Level, permission.Description)).ToList(),

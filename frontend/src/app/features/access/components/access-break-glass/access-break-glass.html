@@ -1,0 +1,38 @@
+<div class="break-glass" data-testid="access-break-glass">
+  @if (error(); as message) { <p class="access-error" role="alert">{{ message }}</p> }
+  <p class="access-hint">Open a time-limited emergency window for named operator sessions. Save the issued credential offline. The credential appears only once.</p>
+  <div class="access-row">
+    <label>Second factor code<input data-testid="break-glass-code" autocomplete="one-time-code" placeholder="Empty to use a passkey" [value]="code()" (input)="code.set($any($event.target).value)" /></label>
+    <button type="button" class="access-secondary" data-testid="break-glass-issue" [appPendingButton]="busy()" pendingLabel="Issuing…" (click)="issue()">Issue sealed credential</button>
+  </div>
+  @if (issued()) {
+    <div role="status" data-testid="break-glass-issued">
+      <p>Seal this credential offline. It will not be shown again.</p>
+      <p class="access-secret">{{ issued() }}</p>
+      <button type="button" class="access-secondary" (click)="issued.set('')">Done</button>
+    </div>
+  }
+  <div class="access-row">
+    <label>Sealed credential<input data-testid="break-glass-credential" type="password" autocomplete="off" [value]="credential()" (input)="credential.set($any($event.target).value)" /></label>
+    <label>Operator session IDs, separated by commas<input data-testid="break-glass-sessions" [value]="sessions()" (input)="sessions.set($any($event.target).value)" /></label>
+    <label>Review project ID or short code<input data-testid="break-glass-project" [value]="project()" (input)="project.set($any($event.target).value)" /></label>
+    <label>Hours (maximum 2)<input data-testid="break-glass-hours" type="number" min="1" max="2" [value]="hours()" (input)="hours.set(+$any($event.target).value)" /></label>
+    <button type="button" data-testid="break-glass-open" [appPendingButton]="busy()" pendingLabel="Opening…" (click)="open()">Open window</button>
+  </div>
+  @if (windows().length) {
+    <table data-testid="break-glass-windows">
+      <thead><tr><th scope="col">Opened</th><th scope="col">Expires</th><th scope="col">Sessions</th><th scope="col">Review</th><th scope="col"><span class="visually-hidden">Action</span></th></tr></thead>
+      <tbody>
+        @for (window of windows(); track window.id) {
+          <tr>
+            <td class="access-numeric">{{ time(window.openedAt) }}</td>
+            <td class="access-numeric">{{ time(window.expiresAt) }}</td>
+            <td>{{ window.sessionIds.join(', ') }}</td>
+            <td>{{ window.reviewCardId || (window.closedAt ? 'Pending reconciliation' : 'Open') }}</td>
+            <td>@if (!window.closedAt) { <button type="button" class="access-secondary" [appPendingButton]="busy()" pendingLabel="Closing…" (click)="close(window.id)">Close</button> }</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+</div>

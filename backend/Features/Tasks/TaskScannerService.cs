@@ -23,6 +23,10 @@ namespace AgentStudio.Tasks;
 /// </summary>
 public class TaskScannerService : ITaskScanner
 {
+    private readonly object _fullScanGate = new();
+    private long _rawScanCalls;
+    internal long RawScanCalls => Interlocked.Read(ref _rawScanCalls);
+    private const int ScanParallelism = 4;
     private readonly IConfiguration _config;
     private readonly ILogger<TaskScannerService> _logger;
     private readonly SummaryGenerationService _summaryService;
@@ -182,6 +186,13 @@ public class TaskScannerService : ITaskScanner
         _statsMetadataCache?.Invalidate();
     }
 
+    /// <summary>Reconcile one watch path when a caller reports a task change
+    /// without the changed card folder. The folder index probes stamps and
+    /// reloads only changed cards; it does not start a raw workspace scan.</summary>
+    internal void InvalidateIndexForExternalTaskChange(string watchPath)
+        => _indexCache?.Invalidate(TaskIndexCache.InvalidationSource.External,
+            changedPath: watchPath);
+
     /// <summary>
     /// Takes one published index generation for a board read without running
     /// a disk walk on the caller's thread (AGT-3088). Null when no cache is
@@ -260,6 +271,29 @@ public class TaskScannerService : ITaskScanner
         if (_indexCache is null) return;
         var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
         _indexCache.PublishCoreFromFolder(folder, () => ScanJobFolder(folder, entry, state, bypassMemo: true));
+    }
+
+    /// <summary>Publish a routing edit to both resident projections after its durable write.</summary>
+    public void PublishRoutingFromFolder(string folder, string watchPath, string projectName, string state)
+    {
+        if (_indexCache is null) return;
+        var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
+        _indexCache.PublishRoutingFromFolder(folder,
+            () => ScanJobFolder(folder, entry, state, bypassMemo: true));
+    }
+
+    /// <summary>Publish a newly created card into the resident board and core indexes.</summary>
+    public void PublishCreatedFromFolder(string folder, string watchPath, string projectName, string state)
+    {
+        // The stats index has its own archived-inclusive snapshot. The old
+        // InvalidateCache call dirtied it as well as the board index; keep that
+        // contract when publishing a new card directly into the board.
+        _statsMetadataCache?.Invalidate();
+        if (_indexCache is null) return;
+        var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
+        var info = ScanJobFolder(folder, entry, state, bypassMemo: true);
+        if (info is not null) _indexCache.PublishCreatedMutation(info);
+        else _indexCache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
     }
 
     public void RemoveCore(TaskInfo info) => _indexCache?.RemoveCore(info);
@@ -582,6 +616,18 @@ public class TaskScannerService : ITaskScanner
         return ScanAllJobsRaw();
     }
 
+    /// <summary>Archive-inclusive task facts for background indexers. Wait for
+    /// a pending folder refresh so a task event joins the newest publication.</summary>
+    internal List<TaskInfo> ScanAllJobsWithArchiveForBackgroundIndex()
+    {
+        if (_indexCache is null) return ScanAllJobsRaw();
+        var (live, archived) = _indexCache.GetCleanSnapshotPartitions();
+        var combined = new List<TaskInfo>(live.Count + archived.Count);
+        combined.AddRange(live);
+        combined.AddRange(archived);
+        return combined;
+    }
+
     /// <summary>Archive-inclusive counterpart of <see cref="ScanAllAutomationJobs"/>.</summary>
     public List<TaskInfo> ScanAllAutomationJobsWithArchive()
         => ScanAllJobsWithArchive().Where(task => !task.Fixture).ToList();
@@ -626,6 +672,19 @@ public class TaskScannerService : ITaskScanner
     /// </summary>
     public List<TaskInfo> ScanAllJobsRaw()
     {
+        Interlocked.Increment(ref _rawScanCalls);
+        // A full walk is expensive on a busy shared filesystem. Serialize it so
+        // concurrent cache refreshes and background sweeps cannot each occupy
+        // their own group of worker threads.
+        lock (_fullScanGate) return ScanJobsRaw(watchPath: null);
+    }
+
+    /// <summary>Read one project's task folder for repository indexing.</summary>
+    public List<TaskInfo> ScanWatchPathRaw(string watchPath)
+        => ScanJobsRaw(watchPath);
+
+    private List<TaskInfo> ScanJobsRaw(string? watchPath)
+    {
         TaskSwitchTrace.WorkspaceScan();
         var sw = Stopwatch.StartNew();
 
@@ -637,6 +696,7 @@ public class TaskScannerService : ITaskScanner
         var candidates = new List<(string jobDir, WatchPathEntry entry, string state)>();
         foreach (var entry in GetWatchPaths())
         {
+            if (watchPath != null && !WatchPathComparison.PathsEqual(entry.Path, watchPath)) continue;
             if (!Directory.Exists(entry.Path))
             {
                 // Log-once per path: this runs on every cache refresh, so an
@@ -682,9 +742,10 @@ public class TaskScannerService : ITaskScanner
         // every cache miss (a reorder that dirtied the index, or the
         // click-into-card FindJob right after a sort) paid the whole walk.
         // Result order is irrelevant; every consumer sorts by State/Order.
+        var dop = Math.Min(ScanParallelism, Math.Max(1, Environment.ProcessorCount));
         var jobs = candidates
             .AsParallel()
-            .WithDegreeOfParallelism(Math.Max(2, Environment.ProcessorCount))
+            .WithDegreeOfParallelism(dop)
             .Select(c => ScanJobFolder(c.jobDir, c.entry, c.state))
             .Where(j => j != null)
             .Select(j => j!)
@@ -698,14 +759,14 @@ public class TaskScannerService : ITaskScanner
             .ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         foreach (var archivedPath in _archivedFolders.Keys)
         {
-            if (!candidatePaths.Contains(archivedPath))
+            if (watchPath == null && !candidatePaths.Contains(archivedPath))
                 _archivedFolders.TryRemove(archivedPath, out _);
         }
         // Same bound for the live memo: drop entries whose folder disappeared
         // (lane move to archive, or a delete) so it cannot grow with history.
         foreach (var livePath in _liveFolders.Keys)
         {
-            if (!candidatePaths.Contains(livePath))
+            if (watchPath == null && !candidatePaths.Contains(livePath))
                 _liveFolders.TryRemove(livePath, out _);
         }
 
@@ -717,13 +778,31 @@ public class TaskScannerService : ITaskScanner
             var archived = jobs.Count(j => string.Equals(j.State, TaskStates.Archive, StringComparison.Ordinal));
             _logger.LogInformation(
                 "ScanAllJobsRaw scanned {Count} task folders ({Archived} archived slim-hydrated) in {ElapsedMs}ms (parallel x{Dop})",
-                jobs.Count, archived, sw.ElapsedMilliseconds, Math.Max(2, Environment.ProcessorCount));
+                jobs.Count, archived, sw.ElapsedMilliseconds, dop);
         }
         return jobs;
     }
 
-    public TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state,
+    public virtual TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state,
         bool bypassMemo = false)
+        => ScanJobFolder(jobDir, entry, state, bypassMemo, rereadIfMoved: true);
+
+    /// <summary>The scanner's own file and directory stamp, without parsing a card.</summary>
+    internal object? CaptureFolderStamp(string folder)
+    {
+        var taskJson = new FileInfo(Path.Combine(folder, "task.json"));
+        return taskJson.Exists ? ComputeLiveFingerprint(folder, taskJson) : null;
+    }
+
+    internal bool FolderStampIsSettled(string folder)
+    {
+        var taskJson = new FileInfo(Path.Combine(folder, "task.json"));
+        return taskJson.Exists && TaskFolderMemoPolicy.IsMemoizable(
+            taskJson.LastWriteTimeUtc, DateTime.UtcNow, TaskFolderMemoPolicy.DefaultTimestampGranularity);
+    }
+
+    private TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state,
+        bool bypassMemo, bool rereadIfMoved)
     {
         var jobJsonPath = Path.Combine(jobDir, "task.json");
         // One stat for existence + length + mtime. FileInfo caches the probe, so
@@ -748,8 +827,9 @@ public class TaskScannerService : ITaskScanner
             // parsed TaskInfo is reusable. Only the un-fingerprinted marker files
             // (see ApplyVolatileMarkers) are re-read, keeping quota-wait / park /
             // steer / lifecycle / intent chips live even on a hit.
+            var fingerprint = ComputeLiveFingerprint(jobDir, taskJsonInfo);
             if (!bypassMemo && _liveFolders.TryGetValue(jobDir, out var live)
-                && live.Fingerprint == ComputeLiveFingerprint(jobDir, taskJsonInfo))
+                && live.Fingerprint == fingerprint)
             {
                 return ApplyVolatileMarkers(live.Task, jobDir);
             }
@@ -867,6 +947,11 @@ public class TaskScannerService : ITaskScanner
                 // legacy and is conservatively treated as an explicit pin.
                 ModelExplicit = !raw.TryGetProperty("modelExplicit", out var modelExplicit)
                     || modelExplicit.ValueKind != JsonValueKind.False,
+                PinMode = raw.TryGetProperty("pinMode", out var pinMode) ? pinMode.GetString() ?? "preference" : "preference",
+                PreferenceModel = raw.TryGetProperty("preferenceModel", out var preferenceModel) ? preferenceModel.GetString() : null,
+                PreferenceThinkingLevel = raw.TryGetProperty("preferenceThinkingLevel", out var preferenceThinking) ? preferenceThinking.GetString() : null,
+                PreferenceExpiresAt = raw.TryGetProperty("preferenceExpiresAt", out var preferenceExpiry)
+                    && preferenceExpiry.TryGetDateTime(out var expiry) ? expiry : null,
                 ThinkingLevel = raw.TryGetProperty("thinkingLevel", out var tl) ? tl.GetString() : null,
                 ThinkingLevelExplicit = !raw.TryGetProperty("thinkingLevelExplicit", out var thinkingExplicit)
                     || thinkingExplicit.ValueKind != JsonValueKind.False,
@@ -895,6 +980,8 @@ public class TaskScannerService : ITaskScanner
                     : null,
                 Commit = legacyCommit,
                 Commits = commitChain,
+                QualityStudioVerdict = resolvedState is TaskStates.AutoReview or TaskStates.HumanReview
+                    ? AgentStudio.QualityStudio.QualityChangeReviewStore.LatestVerdict(jobDir) : null,
                 IntegrationRecords = ReadIntegrationRecords(raw),
                 CompletionClaim = ReadCompletionClaim(raw),
                 IntegrationBranch = raw.TryGetProperty("integrationBranch", out var integrationBranch)
@@ -931,13 +1018,23 @@ public class TaskScannerService : ITaskScanner
                 Decision = ReadDecision(raw),
                 Preview = AgentStudio.Deploy.CardPreviewStore.Read(jobDir)?.Preview
             };
-            // Re-stat first so a self-heal this scan performed itself (the
-            // divergent-id repair above, the ownerClientId migration below) is
-            // captured in the fingerprint; otherwise the next scan sees a fresh
-            // mtime and needlessly misses. A write that recent is also the one
-            // case the fingerprint cannot represent, so it is memoized only once
-            // it has aged past the TaskFolderMemoPolicy granule.
+            // Re-stat: a self-heal this scan performed itself (the divergent-id
+            // repair, the ownerClientId migration) or a writer racing it moved
+            // the folder after the facts above were read, last activity among
+            // them. Memoized under the new fingerprint, those facts would be
+            // served as current until the folder moved again; read it once more.
             taskJsonInfo.Refresh();
+            if (ComputeLiveFingerprint(jobDir, taskJsonInfo) != fingerprint)
+            {
+                _liveFolders.TryRemove(jobDir, out _);
+                _archivedFolders.TryRemove(jobDir, out _);
+                return rereadIfMoved
+                    ? ScanJobFolder(jobDir, entry, state, bypassMemo: true, rereadIfMoved: false)
+                    : info;
+            }
+            // A write that recent is the one case the fingerprint cannot
+            // represent, so it is memoized only once it has aged past the
+            // TaskFolderMemoPolicy granule.
             var memoizable = TaskFolderMemoPolicy.IsMemoizable(
                 taskJsonInfo.LastWriteTimeUtc, DateTime.UtcNow, _folderMemoTimestampGranularity);
             if (isArchive)
@@ -963,8 +1060,7 @@ public class TaskScannerService : ITaskScanner
                 _archivedFolders.TryRemove(jobDir, out _);
                 if (memoizable)
                 {
-                    _liveFolders[jobDir] = new LiveFolderSnapshot(
-                        ComputeLiveFingerprint(jobDir, taskJsonInfo), info);
+                    _liveFolders[jobDir] = new LiveFolderSnapshot(fingerprint, info);
                 }
                 else
                 {

@@ -2,6 +2,7 @@ import { test, expect, Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { dismissDevErrorDialog, setTheme, type Theme } from '../helpers/theme';
+import { auditModal } from '../helpers/audit-modal';
 
 /**
  * Global Workspace-settings home ("Dach") - ASS-695.
@@ -9,13 +10,13 @@ import { dismissDevErrorDialog, setTheme, type Theme } from '../helpers/theme';
  * The formerly scattered workspace overlays (CLI usage caps, token
  * timeline, visual-evidence reel, executive summary) now live with
  * system prompts as sections of one rail+panel home, mirroring the
- * project-level settings layout. The status bar exposes a single
+ * project-level settings layout. The header exposes a single
  * "Settings" entry instead of three separate buttons; deep-links still
  * resolve to the right section.
  *
  * This spec stubs every backend route the sections poll so it runs
  * against a clean dev frontend with no backend up. It asserts:
- *   - The status-bar "Settings" button opens the home on the overview.
+ *   - The header "Settings" button opens the home on the overview.
  *   - The overview lists a card per content section.
  *   - The rail navigates between sections and each section keeps its
  *     legacy outer test id + inner component (so old deep-links/specs
@@ -73,7 +74,6 @@ async function stubBackgroundApis(page: Page) {
   await page.route('**/api/cli/usage', json({ entries: [] }));
   await page.route('**/api/cli/contracts', json([]));
   await page.route('**/api/cli/*/models*', json({ models: [], source: 'stubbed' }));
-  await page.route('**/api/cli/*/working-memory*', json({ entries: [] }));
   await page.route('**/api/admin/prompts', json({
     overrideDirectory: 'stubbed',
     items: [
@@ -87,6 +87,11 @@ async function stubBackgroundApis(page: Page) {
         defaultChangedSinceOverride: false,
         slots: [],
         usageCount: 0,
+        calls: {
+          totalCalls: 0, calls7d: 0, lastCalledAt: null, inputTokens: 0,
+          costUsd: 0, costUsd7d: 0, unpricedCalls: 0, unpricedCalls7d: 0,
+          currentVersionCalls: 0, isDead: true, daily: [], versions: [],
+        },
       },
     ],
   }));
@@ -128,7 +133,6 @@ async function stubBackgroundApis(page: Page) {
   await page.route('**/api/workspace/tokens/expensive-jobs*', json({ jobs: [] }));
   await page.route('**/api/workspace/screenshots*', json({ windowHours: 72, projectFilter: null, screenshots: [] }));
   await page.route('**/api/v1/workspaces*', json([]));
-  await page.route('**/api/cli/working-memory*', json({ available: false, root: null, capturedAt: new Date().toISOString(), entries: [] }));
   await page.route('**/api/cli/sessions*', json({ sessions: [] }));
   await page.route('**/api/cli/models*', json({ types: [] }));
   await page.route('**/api/v1/management/retention/policy', json({ scope: 'workspace', version: 0, updatedAt: '', updatedBy: 'platform', rules: [], fullBackups: { daily: 7, weekly: 4, monthly: 12 } }));
@@ -138,16 +142,13 @@ async function stubBackgroundApis(page: Page) {
 }
 
 // AGT-2035 — the consolidated Settings view. Summary was removed; Appearance,
-// Updates, Workspaces (Global) and Working memory (Workspace) were added. Each
+// Updates, Workspaces (Global) were added. Each
 // section keeps a stable outer overlay test id + an inner component test id.
 const SECTIONS: { key: string; overlayTestid: string; innerTestid: string }[] = [
   { key: 'appearance', overlayTestid: 'workspace-appearance-overlay', innerTestid: 'appearance-settings' },
   { key: 'updates', overlayTestid: 'workspace-updates-overlay', innerTestid: 'updates-settings' },
   { key: 'workspaces', overlayTestid: 'workspace-management-overlay', innerTestid: 'workspace-management' },
   { key: 'caps', overlayTestid: 'cli-admin-overlay', innerTestid: 'cli-admin-panel' },
-  { key: 'cli-sessions', overlayTestid: 'cli-sessions-overlay', innerTestid: 'cli-sessions-panel' },
-  { key: 'cli-paths', overlayTestid: 'cli-paths-overlay', innerTestid: 'cli-paths-panel' },
-  { key: 'working-memory', overlayTestid: 'workspace-working-memory-overlay', innerTestid: 'workspace-working-memory' },
   { key: 'prompts', overlayTestid: 'prompt-admin-overlay', innerTestid: 'prompt-admin-panel' },
   { key: 'retention', overlayTestid: 'workspace-retention-overlay', innerTestid: 'retention-admin' },
   { key: 'tokens', overlayTestid: 'workspace-tokens-overlay', innerTestid: 'token-usage-section' },
@@ -170,7 +171,7 @@ test.describe('Workspace settings home (Dach)', () => {
   });
 
   test('Settings button opens the home; overview lists every section', async ({ page }) => {
-    const trigger = page.getByTestId('status-bar-settings');
+    const trigger = page.getByTestId('studio-titlebar-settings');
     await expect(trigger).toBeVisible();
     await trigger.click();
 
@@ -192,15 +193,15 @@ test.describe('Workspace settings home (Dach)', () => {
   });
 
   test('visual settings rail evidence in both themes', async ({ page }) => {
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await expect(settingsHome(page)).toBeVisible();
     if (SETTINGS_SHOT_PHASE === 'after') {
       const rail = page.getByTestId('workspace-settings-rail');
-      const rows = rail.locator('app-tree-row[data-testid^="workspace-settings-rail-"]');
+      const rows = rail.locator('app-tree-row > button[data-testid^="workspace-settings-rail-"]');
       await expect(page.getByTestId('workspace-settings-group-general')).toBeVisible();
       await expect(page.getByTestId('workspace-settings-group-global')).toBeVisible();
       await expect(page.getByTestId('workspace-settings-group-workspace')).toBeVisible();
-      await expect(rows).toHaveCount(15);
+      await expect(rows).toHaveCount(20);
       for (const row of await rows.all()) {
         await expect(row.locator('app-studio-icon')).toHaveCount(1);
         await expect(row.locator('svg')).toHaveAttribute('stroke', 'currentColor');
@@ -218,7 +219,7 @@ test.describe('Workspace settings home (Dach)', () => {
   });
 
   test('rail navigates between sections, each keeping its legacy hook', async ({ page }) => {
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await expect(settingsHome(page)).toBeVisible();
 
     for (const { key, overlayTestid, innerTestid } of SECTIONS) {
@@ -237,7 +238,7 @@ test.describe('Workspace settings home (Dach)', () => {
   });
 
   test('overview card jumps straight into its section', async ({ page }) => {
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await page.getByTestId('workspace-settings-card-tokens').click();
     await expect(page.getByTestId('workspace-tokens-overlay')).toBeVisible();
     await expect(page.getByTestId('workspace-token-timeline')).toBeVisible({ timeout: 5_000 });
@@ -262,7 +263,7 @@ test.describe('Workspace settings home (Dach)', () => {
     }
 
     await page.getByTestId('token-usage-nav-codex').click();
-    await expect(page).toHaveURL(/#\/workspace\/tokens\/codex$/);
+    await expect(page).toHaveURL(/#\/workspace\/settings\/tokens\/codex$/);
     await expect(page.getByTestId('cli-window-analysis-codex')).toContainText('Codex usage windows');
     await page.getByTestId('cli-window-period-7d').click();
     await expect(page.getByTestId('cli-window-period-7d')).toHaveAttribute('aria-pressed', 'true');
@@ -293,10 +294,38 @@ test.describe('Workspace settings home (Dach)', () => {
   });
 
   test('legacy modal close button dismisses the home when modal layout is active', async ({ page }) => {
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await expect(settingsHome(page)).toBeVisible();
     test.skip(await page.getByTestId('workspace-settings-close').count() === 0, 'Studio layout renders Settings inline');
     await page.getByTestId('workspace-settings-close').click();
     await expect(page.getByTestId('workspace-settings-overlay')).toHaveCount(0);
   });
+
+  for (const width of [1280, 390]) {
+    test(`CLI management overlay contains focus and returns it on Escape at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await dismissDevErrorDialog(page);
+      const opener = page.getByTestId('studio-titlebar-settings');
+      await opener.click();
+      const dialog = page.getByTestId('workspace-settings-overlay').getByRole('dialog');
+      await expect(dialog).toBeVisible();
+      await page.getByTestId('workspace-settings-rail-caps').click();
+      await dismissDevErrorDialog(page);
+      await expect(page.getByTestId('cli-admin-panel')).toBeVisible();
+      await auditModal(page, '[data-testid="workspace-settings-overlay"] [role="dialog"]', `cli-management-${width}`);
+      if (process.env.JOB_RESULTS_DIR) {
+        await page.screenshot({ path: join(process.env.JOB_RESULTS_DIR, `cli-management-keyboard-${width}.png`) });
+      }
+      for (let index = 0; index < 12; index++) {
+        await page.keyboard.press('Tab');
+        await expect.poll(() => page.evaluate(() =>
+          !!document.querySelector('[data-testid="workspace-settings-overlay"] [role="dialog"]')?.contains(document.activeElement))).toBe(true);
+      }
+      await dismissDevErrorDialog(page);
+      await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('workspace-settings-overlay')).toHaveCount(0);
+      await expect(opener).toBeFocused();
+    });
+  }
 });

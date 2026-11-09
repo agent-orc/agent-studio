@@ -57,6 +57,10 @@ public sealed class GitHubAppBroker
     private readonly Dictionary<string, GitHubInstallationToken> _tokens = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (long? InstallationId, DateTime CheckedAtUtc)> _coverage = new(StringComparer.Ordinal);
     private (GitHubAppSecrets Secrets, DateTime ReadAtUtc)? _secrets;
+    // What GitHub reports for each repository an adopted installation lists, and which installation listed it.
+    private readonly Dictionary<string, (bool Private, long InstallationId)> _visibility = new(StringComparer.Ordinal);
+    private DateTime _visibilityCheckedAtUtc = DateTime.MinValue;
+    private readonly SemaphoreSlim _visibilityRefresh = new(1, 1);
     private long _generation;
     private DateTime _lastRefreshUtc = DateTime.MinValue;
 
@@ -93,6 +97,8 @@ public sealed class GitHubAppBroker
         if (string.IsNullOrEmpty(organization)) organization = null;
         if (organization is not null && !ValidAccount(organization))
             throw new GitHubAppException("invalid-account", "The organization name is not a valid GitHub account.");
+        // GitHub hands out the private key once, after it created the App: the store must be able to keep it first.
+        await RequireWritableVaultAsync(ct);
         var state = NewFlow(new Flow(FlowKind.Registration, origin, null, null, Now + FlowLifetime));
         var callback = origin + ReturnPath;
         var suffix = (organization ?? Convert.ToHexString(RandomNumberGenerator.GetBytes(3))).ToLowerInvariant();
@@ -242,6 +248,7 @@ public sealed class GitHubAppBroker
                 if (Now - _lastRefreshUtc >= RefreshInterval)
                 {
                     _coverage.Clear();
+                    _visibilityCheckedAtUtc = DateTime.MinValue;
                     _lastRefreshUtc = Now;
                 }
             }
@@ -269,6 +276,18 @@ public sealed class GitHubAppBroker
             {
                 problem ??= "GitHub did not answer in time; some repositories show as unknown.";
             }
+            try { await RefreshRepositoryVisibilityAsync(budget.Token); }
+            catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                // Without an answer the page shows what GitHub reported before.
+            }
+            for (var index = 0; index < repositories.Length; index++)
+                if (repositories[index].State == GitHubAppCoverageStates.Covered
+                    && ReportedPrivate(repositories[index].RepositoryUrl) is { } reported)
+                    repositories[index] = repositories[index] with
+                    {
+                        Visibility = reported ? ReviewRepositoryAccessPolicy.PrivateVisibility : ReviewRepositoryAccessPolicy.PublicVisibility,
+                    };
         }
         return new GitHubAppStatus(true, connection.AppId, connection.Slug, connection.Name, connection.OwnerLogin,
             connection.HtmlUrl, InstallUrl(connection, null), connection.ConnectedAtUtc,
@@ -276,29 +295,110 @@ public sealed class GitHubAppBroker
     }
 
     /// <summary>
+    /// GitHub's private flag for a repository an adopted installation lists, or
+    /// null when no adopted installation lists it or GitHub has not answered yet.
+    /// Never waits for GitHub; <see cref="RefreshRepositoryVisibilityAsync"/> fills it.
+    /// </summary>
+    public bool? ReportedPrivate(string? repositoryUrl)
+    {
+        if (GitHubRepositoryName.TryParse(repositoryUrl) is not { } repository) return null;
+        lock (_cache) return _visibility.TryGetValue(repository.Canonical, out var known) ? known.Private : null;
+    }
+
+    /// <summary>
+    /// Reads the repository list of every adopted installation again, at most once
+    /// per coverage lifetime unless <paramref name="force"/>d. An installation GitHub
+    /// does not answer for keeps what it reported before, so an outage can never
+    /// turn a private repository public. A repository no adopted installation lists
+    /// any more is dropped: its project setting decides again.
+    /// </summary>
+    public async Task RefreshRepositoryVisibilityAsync(CancellationToken ct, bool force = false)
+    {
+        await _visibilityRefresh.WaitAsync(ct);
+        try
+        {
+            var generation = CurrentGeneration();
+            lock (_cache)
+            {
+                if (!force && Now - _visibilityCheckedAtUtc < CoverageLifetime) return;
+            }
+            var connection = await _vault.LoadConnectionAsync(ct);
+            if (connection is null) return;
+            var secrets = await ReadSecretsAsync(ct);
+            if (secrets is null) return;
+            var listed = new Dictionary<string, (bool Private, long InstallationId)>(StringComparer.Ordinal);
+            var unanswered = new HashSet<long>();
+            foreach (var installation in connection.Installations)
+            {
+                try
+                {
+                    foreach (var repository in await _github.ListInstallationRepositoriesAsync(
+                                 connection.AppId, secrets.PrivateKeyPem, installation.Id, ct))
+                        // Two installations listing one repository: private wins.
+                        if (!listed.TryGetValue(repository.Canonical, out var seen) || !seen.Private)
+                            listed[repository.Canonical] = (repository.Private, installation.Id);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    unanswered.Add(installation.Id);
+                }
+            }
+            lock (_cache)
+            {
+                // A disconnect while this ran: what it learned belongs to the old connection.
+                if (generation != _generation) return;
+                foreach (var (key, known) in _visibility)
+                    if (unanswered.Contains(known.InstallationId)
+                        && (!listed.TryGetValue(key, out var fresh) || (known.Private && !fresh.Private)))
+                        listed[key] = known;
+                _visibility.Clear();
+                foreach (var (key, value) in listed) _visibility[key] = value;
+                _visibilityCheckedAtUtc = Now;
+            }
+        }
+        finally { _visibilityRefresh.Release(); }
+    }
+
+    /// <summary>
     /// One token per registered repository the App reaches, reused until it nears
     /// expiry. A repository GitHub refuses is left out, so one bad entry cannot cost
     /// a host its other repositories, and cached tokens never wait for GitHub.
+    /// <paramref name="admits"/> narrows the set to the repositories a host's
+    /// credential is bound to (SM-9); a repository it refuses is never minted.
     /// </summary>
     public async Task<IReadOnlyList<RepositoryCredential>> IssueAllAsync(
-        string access, string? runnerId, CancellationToken ct, bool includeStudioOnly = false)
+        string access, string? runnerId, CancellationToken ct, bool includeStudioOnly = false,
+        Func<RegisteredRepository, bool>? admits = null)
+        => (await IssueAllWithFailuresAsync(access, runnerId, ct, includeStudioOnly, admits)).Credentials;
+
+    /// <summary>
+    /// <see cref="IssueAllAsync"/>, plus the repositories whose token GitHub did not
+    /// issue this round (an error or the round's budget). A repository no
+    /// installation reaches is not a failure. The host's own Git uses it to know
+    /// whether a private repository is still without its token.
+    /// </summary>
+    public async Task<GitHubAppIssueRound> IssueAllWithFailuresAsync(
+        string access, string? runnerId, CancellationToken ct, bool includeStudioOnly = false,
+        Func<RegisteredRepository, bool>? admits = null)
     {
         var level = RepositoryAccess.Normalize(access)
             ?? throw new GitHubAppException("invalid-access", "Access must be 'read' or 'write'.");
         // Before anything is read: what this call learns belongs to this connection.
         var generation = CurrentGeneration();
         var connection = await _vault.LoadConnectionAsync(ct);
-        if (connection is null) return [];
+        if (connection is null) return GitHubAppIssueRound.Empty;
         var repositories = (await _catalog.ListAsync(ct))
             .Where(item => includeStudioOnly || !item.StudioOnly)
+            .Where(item => admits is null || admits(item))
             .Select(item => GitHubRepositoryName.TryParse(item.RepositoryUrl))
             .OfType<GitHubRepositoryName>()
             .DistinctBy(name => name.Canonical, StringComparer.Ordinal)
             .ToArray();
         var secrets = await ReadSecretsAsync(ct);
-        if (secrets is null) return [];
+        if (secrets is null) return GitHubAppIssueRound.Empty;
 
         var slots = new RepositoryCredential?[repositories.Length];
+        var answered = new bool[repositories.Length];
         var missing = new List<int>();
         for (var index = 0; index < repositories.Length; index++)
         {
@@ -319,6 +419,7 @@ public sealed class GitHubAppBroker
                         {
                             if (await IssueAsync(connection, secrets, repositories[index], level, generation, token) is { } issued)
                                 slots[index] = Credential(repositories[index], issued, level);
+                            answered[index] = true;
                         }
                         catch (Exception exception) when (exception is GitHubAppException or HttpRequestException
                                                               or TaskCanceledException && !token.IsCancellationRequested)
@@ -334,11 +435,12 @@ public sealed class GitHubAppBroker
             }
         }
         // A disconnect during this round revoked what it minted, and the host list starts over.
-        if (CurrentGeneration() != generation) return [];
+        if (CurrentGeneration() != generation) return GitHubAppIssueRound.Empty;
         var credentials = slots.OfType<RepositoryCredential>().ToArray();
         if (runnerId is not null)
             _hosts[runnerId + "|" + level] = new GitHubAppHostSync(runnerId, level, credentials.Length, Now);
-        return credentials;
+        var failed = missing.Where(index => !answered[index]).Select(index => repositories[index].Canonical).ToArray();
+        return new GitHubAppIssueRound(credentials, failed);
     }
 
     /// <summary>
@@ -621,17 +723,34 @@ public sealed class GitHubAppBroker
             _generation++;
             _tokens.Clear();
             _coverage.Clear();
+            _visibility.Clear();
+            _visibilityCheckedAtUtc = DateTime.MinValue;
             _secrets = null;
         }
     }
 
     private void ForgetCoverage()
     {
-        lock (_cache) _coverage.Clear();
+        lock (_cache)
+        {
+            _coverage.Clear();
+            _visibilityCheckedAtUtc = DateTime.MinValue;
+        }
     }
 
     private static GitHubAppException AlreadyConnected()
         => new("already-connected", "A GitHub App is already connected. Disconnect it before connecting another one.", 409);
+
+    private async Task RequireWritableVaultAsync(CancellationToken ct)
+    {
+        try { await _vault.EnsureWritableAsync(ct); }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            throw new GitHubAppException("secret-store-unavailable",
+                $"Studio cannot store the App's private key: {exception.Message} "
+                + "Fix the secret store, then connect GitHub again. Nothing was created at GitHub.", 503);
+        }
+    }
 
     private async Task<GitHubAppConnection> RequireConnectionAsync(CancellationToken ct)
         => await _vault.LoadConnectionAsync(ct)
@@ -698,4 +817,12 @@ public sealed class GitHubAppBroker
     private enum FlowKind { Registration, Installation, Authorization }
 
     private sealed record Flow(FlowKind Kind, string Origin, long? InstallationId, string? CodeVerifier, DateTime ExpiresAtUtc);
+}
+
+/// <summary>One issuing round: the credentials, and the repositories GitHub left without one.</summary>
+public sealed record GitHubAppIssueRound(
+    IReadOnlyList<RepositoryCredential> Credentials,
+    IReadOnlyList<string> Failed)
+{
+    public static GitHubAppIssueRound Empty { get; } = new([], []);
 }

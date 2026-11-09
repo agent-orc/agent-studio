@@ -523,8 +523,18 @@ public sealed class RemoteReviewExecutor
                     verdict.Classification is
                         DeliveryFailureDiagnosis.Environment or
                         DeliveryFailureDiagnosis.Intermittent or
-                        DeliveryFailureDiagnosis.FirstOccurrence)?.Classification;
-                var request = new ReviewReportRequest(
+                        DeliveryFailureDiagnosis.FirstOccurrence
+                    || ReviewCachedBaselinePolicy.IsCacheDefect(verdict.Classification))?.Classification;
+                var failedHashes = evidence.Commands
+                    .Where(command => command.ExitCode is { } exitCode && exitCode != 0)
+                    .SelectMany(command => new[] { command.StdoutSha256, command.StderrSha256 })
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var boundedArtifacts = ReviewReportPayloadPolicy.Bound(
+                    evidence.Artifacts, priorityHashes: failedHashes);
+                if (boundedArtifacts.Omitted > 0)
+                    _log($"review-report inline evidence omitted attempt={attempt.AttemptId} " +
+                         $"count={boundedArtifacts.Omitted} reason=request-body-budget");
+                var request = ReviewReportArtifactBudget.Apply(new ReviewReportRequest(
                     lease.ExecutorId,
                     lease.InstanceId,
                     lease.LeaseId,
@@ -538,11 +548,13 @@ public sealed class RemoteReviewExecutor
                         lease,
                         DurableReviewProcess.Provenance(slot)),
                     evidence.Commands,
-                    evidence.Artifacts,
+                    boundedArtifacts.Artifacts,
                     evidence.Verdicts,
                     AuthorityEpoch: lease.AuthorityEpoch,
                     BriefSha256: slot.Claim.Subject?.Plan.BriefSha256,
-                    SkippedAspects: slot.Claim.Subject?.Plan.SkippedAspects);
+                    SkippedAspects: slot.Claim.Subject?.Plan.SkippedAspects));
+                if (slot.ReducedReportSubmitted)
+                    request = ReviewReportArtifactBudget.Reduce(request);
                 var submittedAt = DateTime.UtcNow;
                 slot = SaveSlot(slot with
                 {
@@ -582,12 +594,26 @@ public sealed class RemoteReviewExecutor
                             ct);
                         authorityAdvanced = !SameAuthority(lease, _authority.Lease);
                     }
-                    var action = authorityAdvanced || authorityRecovered
+                    var badGatewayCount = taskServer?.StatusCode == 502
+                        ? slot.ConsecutiveReportBadGateway + 1
+                        : 0;
+                    var reduce = !slot.ReducedReportSubmitted
+                                 && (taskServer?.StatusCode == 413 || badGatewayCount >= 3);
+                    var reducedFailures = slot.ReducedReportSubmitted
+                        ? slot.ConsecutiveReducedReportFailures + 1
+                        : 0;
+                    var action = authorityAdvanced || authorityRecovered || reduce
                         ? ReviewReportSubmissionAction.Retry
-                        : ReviewReportSubmissionPolicy.Decide(
-                            taskServer?.StatusCode,
-                            taskServer?.ErrorCode,
-                            transportFailure);
+                        : slot.ReducedReportSubmitted
+                            ? ReviewReportSubmissionPolicy.DecideReduced(
+                                taskServer?.StatusCode,
+                                taskServer?.ErrorCode,
+                                transportFailure,
+                                reducedFailures)
+                            : ReviewReportSubmissionPolicy.Decide(
+                                taskServer?.StatusCode,
+                                taskServer?.ErrorCode,
+                                transportFailure);
                     var error = exception.Message.Length <= 500
                         ? exception.Message
                         : exception.Message[..500];
@@ -599,10 +625,20 @@ public sealed class RemoteReviewExecutor
                         LastReportStatusCode = taskServer?.StatusCode,
                         LastReportErrorCode = taskServer?.ErrorCode,
                         LastReportError = error,
+                        ReducedReportSubmitted = slot.ReducedReportSubmitted || reduce,
+                        ConsecutiveReportBadGateway = badGatewayCount,
+                        ConsecutiveReducedReportFailures = authorityAdvanced || authorityRecovered
+                            ? 0
+                            : reducedFailures,
                         TerminalClassification = action == ReviewReportSubmissionAction.Retry
                             ? null
                             : ReviewReportSubmissionPolicy.TerminalClassification(action),
                     });
+                    if (reduce)
+                        _log($"review-report-reduced attempt={attempt.AttemptId} " +
+                             $"status={taskServer?.StatusCode} " +
+                             $"originalBytes={ReviewReportArtifactBudget.WireBytes(request)} " +
+                             $"reducedBytes={ReviewReportArtifactBudget.WireBytes(ReviewReportArtifactBudget.Reduce(request))}");
 
                     if (action != ReviewReportSubmissionAction.Retry)
                     {
@@ -616,7 +652,7 @@ public sealed class RemoteReviewExecutor
                             taskServer);
                     }
 
-                    delay = authorityAdvanced || authorityRecovered
+                    delay = authorityAdvanced || authorityRecovered || reduce
                         ? TimeSpan.Zero
                         : ReportRetryDelayOverride?.Invoke(slot.ReportSubmissionAttempts)
                           ?? ReviewReportSubmissionPolicy.RetryDelay(
@@ -1292,7 +1328,8 @@ public sealed class RemoteReviewExecutor
     {
         var baseline = evidence.Verdicts
             .Where(verdict => verdict.Classification is
-                "BaselineCompared" or "NewTestFailures" or ReviewFlakyTestIndex.VerdictClassification)
+                "BaselineCompared" or "NewTestFailures" or ReviewFlakyTestIndex.VerdictClassification
+                || ReviewCachedBaselinePolicy.IsCacheDefect(verdict.Classification))
             .Select(verdict => $"{verdict.Aspect}: {verdict.Summary}")
             .ToArray();
         var skipped = plan?.SkippedAspects is { Count: > 0 }

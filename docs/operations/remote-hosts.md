@@ -4,6 +4,36 @@ This runbook is the operator path for adding, connecting, draining, retiring,
 reviving, and permanently removing a remote agent host. The detailed Linux
 installation reference remains [linux-runner-host.md](setup/linux-runner-host.md).
 
+## Cloudflare request limits
+
+The public host URL has a 100 second request and 100 MB body ceiling. Host
+requests use a 90 second client timeout even if
+`RUNNER_SERVER_REQUEST_TIMEOUT_SECONDS` is configured higher. HTTP 413 is
+`ProxyBodyLimitExceeded`; HTTP 524 is `ProxyOriginTimeout`. Both names appear
+in host errors and the resulting task or host Operations failure detail.
+For artifacts above the default 8 MiB per-file and 100 MiB total budgets,
+raise `TaskServer:ResultArtifactMaxFileBytes` and
+`TaskServer:ResultArtifactMaxTotalBytes` explicitly; the proxy body ceiling
+still applies to each chunk request.
+`GET /api/v1/artifact-limits` reports `MaxFileBytes` as the safe ceiling for
+the single-request JSON upload. `MaxChunkedFileBytes` reports the configured
+file ceiling when the request budget can carry resumable chunks. Older hosts
+that read only `MaxFileBytes` stay within the request body cap.
+
+| Host route | Limit exposure | Handling |
+|---|---|---|
+| `POST /api/v1/runs/{runId}/artifacts` and legacy `/api/runner/artifacts` | Base64 content expands the request body | Versioned uploads above 4 MiB use `GET /artifact-chunks/{sha256}`, `POST /artifact-chunks`, and `POST /artifact-chunks/complete`. Each chunk is at most 4 MiB raw. The server checks the configured file and total limits before staging and checks the assembled size and SHA-256 before the fenced write. A repeated chunk with different bytes is rejected. Legacy uploads remain per-file and bounded by their advertised request-safe limit. |
+| `POST /api/v1/runs/{runId}/events` and legacy `/api/runner/logs` | A batch of long log lines can exceed 100 MB | The host ships at most one million text characters per log batch. |
+| `POST /api/v1/runners/{runnerId}/claims` and legacy `/api/runner/claim` | Claim preparation can take time | Claims return a lease or a refusal; execution and evidence work continue outside the claim request. The host polls for more work. |
+| `POST /api/v1/reviews/attempts/{attemptId}/report` | Review projection can take time; inline command output can enlarge the body | Command capture retains a bounded tail and inline artifact content has a 16 MiB JSON wire budget. The report retains metadata for omitted bodies and the host logs their count. The report acknowledges the fenced verdict before background evidence projection. The host uses a 10 second acknowledgement timeout and replays by idempotency key after a lost response. |
+| `POST /api/v1/runs/{runId}/result-finalization` and legacy artifact finalization | Summary generation can take time | The versioned route bounds generation to `TaskServer:ResultFinalizationGenerationTimeoutSeconds` (60 seconds by default, at most 75), returns `Retryable` on timeout, and the host polls with the next attempt. The legacy route queues a retry if its acknowledgement budget is spent. |
+
+A host on the same machine may set its Task Server URL to a loopback listener,
+avoiding Cloudflare. This is a transport choice, not an authentication bypass:
+in the `networked` profile it must still send its scoped Runner bearer credential.
+Do not expose that listener on a public interface or use the `local` profile's
+unauthenticated loopback management rule as a substitute for Runner identity.
+
 ## Remote build/test gate capacity
 
 The SSH gate worker uses `RemoteGate:GateSlots` numbered file locks on the gate
@@ -22,6 +52,12 @@ memory per suite before raising the slot count. The remote worker warns at
 startup if the product exceeds online cores. Local gates use
 `LocalGate:GateSlots` (environment variable `LocalGate__GateSlots`), also
 defaulting to one.
+
+Operators can change installation gate capacity in Workspace Settings,
+Environment, without restarting the API. The saved override applies to new
+gates; running gates keep their grant. The
+[gate capacity API contract](../system/domains/pipeline.md#gate-capacity-api-contract)
+defines the request, validation, permissions, response, and audit record.
 
 Each gate has a private GUID source and worktree directory. Preparation uses
 private run folders and locks shared published cache entries; verification npm
@@ -135,7 +171,7 @@ On Ubuntu, install the base tools and the agent host dependencies:
 sudo apt-get update
 sudo apt-get install -y git curl build-essential
 sudo npm install --global --prefix /usr/local \
-  @anthropic-ai/claude-code@2.1.269 @openai/codex@0.154.0
+  @anthropic-ai/claude-code@2.1.305 @openai/codex@0.166.0
 npx playwright install --with-deps chromium
 ```
 
@@ -155,6 +191,26 @@ The helper can install only the pinned Codex and Claude packages, probes version
 login status, and models in staging, switches atomically, and restores the old
 prefix if activation fails. Success and failure are host events. Drift produces
 one feed alarm after 24 hours.
+
+For the Codex CLI `0.166.0` release, keep Claude Code at `2.1.305`:
+
+1. On `agent-runner-01`, deploy the updated Task Server target and host
+   hardening assets, then use **Update CLIs**. The managed action drains both
+   `agent-runner.service` and `agent-runner-review.service` before activating
+   `0.166.0` and restarting the units. Active attempts finish during the drain.
+2. On KORI, publish the new `runner/Dockerfile` image for each distributed
+   review container. Drain its review claims and wait for active attempts to
+   finish before replacing the container. Recreating a busy review container
+   interrupts the attempts inside it.
+3. Publish the new `deploy/work-container/Dockerfile` image and promote its
+   immutable digest through the work container image manifest. Existing
+   per-attempt containers keep their old digest and finish; new attempts use
+   the promoted digest. Roll the `backend/Dockerfile` image where the monolith
+   runs local Codex work or review.
+
+Both GPT-6.1 models use cached, bounded host probes on credential changes and
+periodic refresh; the probe does not run per card. A CLI below `0.166.0` advertises the models as
+unavailable with a version explanation without sending provider requests.
 
 ## Host release versus the Stable release
 
@@ -210,13 +266,13 @@ aspects received no diff, every larger delivery drew a code-quality "no unified
 diff" concern, and the drift was found only by reading the host release symlink.
 
 Root SSH with
-`/usr/local/sbin/agent-runner-deploy update-clis 0.154.0 2.1.269` is an emergency
+`/usr/local/sbin/agent-runner-deploy update-clis 0.166.0 2.1.305` is an emergency
 fallback only. Drain first, verify both role rows have zero active slots, and
 retain the `agent-runner-deploy` journal entry as incident evidence. Do not run
 an unpinned global npm update on a managed host. If the helper is unavailable
 during an incident, the 2026-09-12 fallback is a root SSH session followed by
-the exact pinned `npm install --global @openai/codex@0.154.0
-@anthropic-ai/claude-code@2.1.269`, explicit version checks, and both service
+the exact pinned `npm install --global @openai/codex@0.166.0
+@anthropic-ai/claude-code@2.1.305`, explicit version checks, and both service
 restarts. That path has no staged rollback and must be recorded as an incident.
 
 Provision Claude authentication in the wizard, or afterward with **Sign in
@@ -378,8 +434,21 @@ claims and host-orchestrator work permits. The daemon does not resolve or cache
 this list because the server already owns task selection. Removing a project
 stops new admission but never interrupts an active fenced lease.
 
-An absent policy preserves migration compatibility and allows all projects. An
-explicit selected-project policy with an empty list blocks every new claim.
+With authentication on (`AUTH=bearer`), a host without a policy holds no
+project: it claims no card, review or publication, reads no project, and
+receives no repository token (SM-9). Set the policy before the host's first
+claim; an empty claim then names the reason `host-project-policy-missing`. An
+explicit selected-project policy with an empty list blocks every new claim, as
+before. When an existing installation upgrades, every host that had already
+registered receives an explicit all-projects policy, audited as
+`host-project-policy.migrated`, so its work continues until an Owner narrows
+it. The unauthenticated local compatibility store keeps the old rule, in which
+an absent policy admits all projects. `TaskServer:RequireHostProjectPolicy`
+overrides the choice explicitly.
+
+The runner credential is bound to this host on its first registration. A
+registration of the same credential from another host id is refused with
+`runner-host-mismatch`, and a host enrolment names the host outright.
 Creation uses expected version `0`; later writes use the version returned by
 the server:
 

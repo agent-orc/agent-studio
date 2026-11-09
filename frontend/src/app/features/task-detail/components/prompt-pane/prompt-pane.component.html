@@ -10,18 +10,26 @@
     <ng-container tabs>
       <app-pane-tabs variant="header"
                      ariaLabel="Prompt pane tabs"
+                     panelId="pane-prompt-panel"
                      [tabs]="promptTabs()"
                      [activeTabId]="activeTab()"
-                     (click)="focusTabSurface()"
                      (tabChange)="onPromptTabChange($event)" />
     </ng-container>
   </app-pane-header>
   <div class="pane__body"
+       id="pane-prompt-panel"
+       role="tabpanel"
+       [attr.aria-labelledby]="'pane-prompt-panel-tab-' + activeTab()"
        appDetailKeyboardSurface
        [detailKeyboardInitialFocus]="true"
        data-testid="pane-prompt-body"
        [attr.data-active-tab]="activeTab()"
        [attr.aria-label]="activeTab() + ' task detail tab'">
+    @if (evidenceTaskKey() === job()?.taskKey) {
+      <div class="evidence-view evidence-view--quality" [hidden]="activeTab() !== 'evidence'">
+        @if (job(); as j) { <app-quality-panel [job]="j" [evidence]="reviewEvidence()" /> }
+      </div>
+    }
     @switch (activeTab()) {
       @case ('overview') {
         @defer (on immediate) {
@@ -38,12 +46,103 @@
               (agentConfigCommit)="agentConfigCommit.emit($event)"
               (referencesChanged)="referencesChanged.emit()"
               (documentRequested)="openDocument($event)"
+              (reviewAttemptRequested)="reviewAttemptRequested.emit($event)"
               (titleSaved)="titleSaved.emit()" />
           }
         }
       }
 
-      @case ('description') {
+      @case ('timeline') {
+        @if (tabProblem('history'); as reason) {
+          <div class="tab-load-error" role="alert" data-testid="timeline-history-error">
+            Task history could not load: {{ reason }}
+            <button type="button" (click)="retryResource.emit('history')">Retry</button>
+          </div>
+        }
+        <app-task-timeline-pane [job]="job()" />
+      }
+
+      @case ('evidence') {
+        <section class="evidence-view" data-testid="evidence-view">
+          @if (tabProblem('review'); as reason) {
+            <div class="tab-load-error" role="alert" data-testid="evidence-load-error">
+              Review evidence could not load: {{ reason }}
+              <button type="button" (click)="retryResource.emit('review')">Retry</button>
+            </div>
+          }
+          @if (screenshotsLoadError()) {
+            <div class="tab-load-error" role="alert" data-testid="evidence-screenshots-error">
+              Screenshots could not load.
+              <button type="button" (click)="retryScreenshots.emit()">Retry</button>
+            </div>
+          }
+          @if (screenshots().length > 0) {
+            <div class="ev-section" data-testid="ev-section-visual">
+              <div class="ev-section-head">
+                <span class="ev-section-dot ev-section-dot--visual">●</span>
+                <span class="ev-section-title">Visual Evidence</span>
+                <span class="ev-section-count">{{ screenshots().length }}</span>
+              </div>
+              <app-screenshot-strip
+                [screenshots]="screenshots()"
+                variant="task" />
+            </div>
+          }
+          @if (job(); as j) {
+            @if (testEvidence(); as testEvidence) {
+              <div class="ev-section" data-testid="ev-section-test">
+                <div class="ev-section-head">
+                  <span class="ev-section-dot ev-section-dot--test">●</span>
+                  <span class="ev-section-title">Test Evidence</span>
+                  <span class="ev-section-count">{{ testEvidence.sources?.length || 1 }}</span>
+                </div>
+                <app-test-evidence-status
+                  [task]="j"
+                  variant="panel"
+                  testId="evidence-tab-test-evidence" />
+              </div>
+            }
+            <app-review-evidence-panel
+              [entries]="otherReviewEvidence()"
+              [job]="j"
+              (acknowledge)="evidenceAcknowledge.emit($event)"
+              (createFollowup)="evidenceCreateFollowup.emit($event)" />
+          } @else if (evidenceSections().length === 0 && screenshots().length === 0) {
+            <div class="evidence-view__empty">
+              No review evidence captured for this task yet.
+              Security audits, code-review passes, task checks, and
+              screenshots land here as they run.
+            </div>
+          }
+        </section>
+      }
+
+    }
+    @if (codeReviewTaskKey() === job()?.taskKey) {
+        <section class="code-review-view" data-testid="code-review-view" [hidden]="activeTab() !== 'code-review'">
+          @if (tabProblem('review'); as reason) {
+            <div class="tab-load-error" role="alert" data-testid="code-review-load-error">
+              Review information could not load: {{ reason }}
+              <button type="button" (click)="retryResource.emit('review')">Retry</button>
+            </div>
+          }
+          @if (job(); as j) {
+            <app-code-review-panel [job]="j" />
+          } @else {
+            <div class="evidence-view__empty">
+              Code Review needs an active task — open a job from the board first.
+            </div>
+          }
+        </section>
+    }
+    @if (docsTaskKey() === job()?.taskKey) {
+      <div [hidden]="activeTab() !== 'description'">
+        @if (artifactsLoadError()) {
+          <div class="tab-load-error" role="alert" data-testid="docs-artifacts-error">
+            Document list could not load.
+            <button type="button" (click)="retryArtifacts.emit()">Retry</button>
+          </div>
+        }
         @if (job(); as info) {
           <div class="desc-meta-bar" data-testid="desc-meta-bar">
             <div class="desc-meta" data-testid="desc-meta">
@@ -81,6 +180,7 @@
         }
 
         <app-files-pane [artifacts]="artifacts()"
+                        [active]="activeTab() === 'description'"
                         [promptContent]="markdown()"
                         [jobId]="jobId()"
                         [archived]="archived()"
@@ -111,66 +211,7 @@
             }
           </section>
         }
-      }
-
-      @case ('timeline') {
-        <app-task-timeline-pane />
-      }
-
-      @case ('evidence') {
-        <section class="evidence-view" data-testid="evidence-view">
-          @if (screenshots().length > 0) {
-            <div class="ev-section" data-testid="ev-section-visual">
-              <div class="ev-section-head">
-                <span class="ev-section-dot ev-section-dot--visual">●</span>
-                <span class="ev-section-title">Visual Evidence</span>
-                <span class="ev-section-count">{{ screenshots().length }}</span>
-              </div>
-              <app-screenshot-strip
-                [screenshots]="screenshots()"
-                variant="task" />
-            </div>
-          }
-          @if (job(); as j) {
-            @if (testEvidence(); as testEvidence) {
-              <div class="ev-section" data-testid="ev-section-test">
-                <div class="ev-section-head">
-                  <span class="ev-section-dot ev-section-dot--test">●</span>
-                  <span class="ev-section-title">Test Evidence</span>
-                  <span class="ev-section-count">{{ testEvidence.sources?.length || 1 }}</span>
-                </div>
-                <app-test-evidence-status
-                  [task]="j"
-                  variant="panel"
-                  testId="evidence-tab-test-evidence" />
-              </div>
-            }
-            <app-review-evidence-panel
-              [entries]="reviewEvidence()"
-              [job]="j"
-              (acknowledge)="evidenceAcknowledge.emit($event)"
-              (createFollowup)="evidenceCreateFollowup.emit($event)" />
-          } @else if (evidenceSections().length === 0 && screenshots().length === 0) {
-            <div class="evidence-view__empty">
-              No review evidence captured for this task yet.
-              Security audits, code-review passes, task checks, and
-              screenshots land here as they run.
-            </div>
-          }
-        </section>
-      }
-
-      @case ('code-review') {
-        <section class="code-review-view" data-testid="code-review-view">
-          @if (job(); as j) {
-            <app-code-review-panel [job]="j" />
-          } @else {
-            <div class="evidence-view__empty">
-              Code Review needs an active task — open a job from the board first.
-            </div>
-          }
-        </section>
-      }
+      </div>
     }
   </div>
 </section>

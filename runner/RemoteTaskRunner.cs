@@ -492,11 +492,12 @@ public sealed class RemoteTaskRunner
             _log,
             outbox,
             authority);
+        workspace.PushRetryRecorded = line => shipper.Add("system", line);
         var shipperTask = shipper.RunAsync(TimeSpan.FromSeconds(5), stopRun.Token);
         var artifactLimits = await _client.GetArtifactTransferLimitsAsync(taskKey, stopRun.Token);
         _log(
             $"result-artifact-budget task={taskKey} "
-            + $"fileBytes={artifactLimits.MaxFileBytes} totalBytes={artifactLimits.MaxTotalBytes} "
+            + $"fileBytes={artifactLimits.TransferFileLimitBytes} totalBytes={artifactLimits.MaxTotalBytes} "
             + $"requestBytes={artifactLimits.MaxRequestBodyBytes}");
 
         var outcome = new RunOutcome(RunOutcomeKind.Unknown, "Runner ended before a terminal outcome was recorded.");
@@ -1522,11 +1523,13 @@ public sealed class RemoteTaskRunner
                             processResult,
                             result.LaunchFailed,
                             sameSessionResumeAttempts,
-                            invocation);
-                    var providerAccess = ProviderAccessClassifier.Classify(
+                            invocation,
+                            slot.ModelCapacityRetryAttempts);
+                    var providerAccess = ProviderAccessClassifier.ClassifyRun(
                         processResult.ExitCode,
                         processResult.StdOut,
-                        processResult.StdErr);
+                        processResult.StdErr,
+                        completedSuccessfully: classified.Decision.Outcome == ExecutionOutcomeKind.SuccessfulCompletion);
                     var providerAuth = RecordProviderProcessResult(
                         ProviderAuthProbe.Shared,
                         invocation.FileName,
@@ -1542,7 +1545,7 @@ public sealed class RemoteTaskRunner
                     {
                         var provider = invocation.CliType;
                         var claimId = outbox?.Authority.RunId;
-                        var diagnostic = "Unauthorized provider response; diagnosis pending.";
+                        var diagnostic = ProviderAuthenticationFailureReason(providerAccess);
                         // Diagnosis only: the run's own classification and fenced
                         // completion below must survive a server that rejects or
                         // does not mount the capability route.
@@ -1559,7 +1562,7 @@ public sealed class RemoteTaskRunner
                             stopRun);
                         shipper.Add(
                             "system",
-                            $"[runner] capability-failure capability={CapabilityProtocol.ProviderAuthentication(provider)} classification=ProviderUnauthorized");
+                            $"[runner] capability-failure capability={CapabilityProtocol.ProviderAuthentication(provider)} classification=ProviderUnauthorized reason={diagnostic}");
                     }
                     else if (providerAccess.Kind == ProviderAccessEvidenceKind.RateLimited
                              && providerAuth.Status == ProviderAuthProbe.Limited)
@@ -1585,20 +1588,57 @@ public sealed class RemoteTaskRunner
                             $"[runner] provider rejected model request provider={invocation.CliType}; provider-auth capability unchanged");
                         if (!string.IsNullOrWhiteSpace(invocation.Model)
                             && RunnerModelAcceptanceProbe.IsModelRejection(processResult, invocation.Model))
+                        {
                             RunnerModelAcceptanceProbe.Shared.RecordRejection(invocation.CliType, invocation.Model);
+                            var recorded = await _client.PostModelSelectionEventAsync(new
+                            {
+                                id = TaskServerClient.NewModelSelectionId(), at = DateTimeOffset.UtcNow,
+                                kind = "health-marked", consumer = "remote-coding-run", host = _options.RunnerId,
+                                taskKey = slot.TaskKey, attemptId = slot.AttemptId,
+                                @from = new { cliType = invocation.CliType, model = invocation.Model, thinkingLevel = invocation.ThinkingLevel },
+                                rule = "provider-rejection", reason = "The provider refused the selected model on this host.",
+                                evidence = new
+                                {
+                                    excerpt = processResult.StdErr is { Length: > 300 } message
+                                        ? message[..300] : processResult.StdErr,
+                                    classifierKind = "model-unavailable",
+                                },
+                            }, waitStop.Token);
+                            if (!recorded) _log("model-selection health receipt could not reach Studio after bounded retry");
+                        }
                     }
+                    else if (providerAccess.Kind == ProviderAccessEvidenceKind.ModelCapacity
+                             && !string.IsNullOrWhiteSpace(invocation.Model))
+                    {
+                        RunnerModelAcceptanceProbe.Shared.RecordCapacity(
+                            invocation.CliType, invocation.Model, providerAccess.LimitedUntil);
+                        shipper.Add("system",
+                            $"[runner] model-health-marked provider={invocation.CliType} model={invocation.Model} kind=capacity ttl=15m; provider-auth capability unchanged");
+                    }
+                    var capacityRetry = classified.Decision.Outcome == ExecutionOutcomeKind.TransientModelCapacity
+                        && classified.Decision.RecoveryAction == ExecutionRecoveryAction.ResumeSameSession;
                     if (classified.Decision.RecoveryAction == ExecutionRecoveryAction.ResumeSameSession
-                        && slot.InputSessionId is null
-                        && sameSessionResumeAttempts < ExecutionOutcomeAdapter.MaxSameSessionResumeAttempts)
+                        && (capacityRetry || (slot.InputSessionId is null
+                            && sameSessionResumeAttempts < ExecutionOutcomeAdapter.MaxSameSessionResumeAttempts)))
                     {
                         var sessionId = classified.Decision.RawFacts.SessionId!;
+                        var nextCapacityRetry = slot.ModelCapacityRetryAttempts + (capacityRetry ? 1 : 0);
+                        if (capacityRetry)
+                        {
+                            var backoff = ModelCapacityRetryPolicy.DelayForRetry(nextCapacityRetry);
+                            shipper.Add("system",
+                                $"[runner] transient model capacity; same-session retry {nextCapacityRetry}/{ExecutionOutcomeAdapter.MaxModelCapacityRetryAttempts} after {backoff.TotalSeconds:0}s");
+                            slot = _state.Save(slot with { ModelCapacityRetryAttempts = nextCapacityRetry });
+                            await Task.Delay(backoff, waitStop.Token);
+                        }
                         // CAR resumes through the typed ResumeSessionId field.
                         shipper.Add(
                             "system",
-                            $"[runner] bounded same-session resume 1/{ExecutionOutcomeAdapter.MaxSameSessionResumeAttempts}; session={sessionId}");
+                            $"[runner] bounded same-session resume; session={sessionId}");
                         var resumeSlot = _state.Save(slot with
                         {
-                            WorkerDirectory = Path.Combine(slot.WorkerDirectory, "resume-1"),
+                            WorkerDirectory = Path.Combine(slot.WorkerDirectory,
+                                capacityRetry ? $"capacity-retry-{nextCapacityRetry}" : "resume-1"),
                             ProcessId = null,
                             ProcessStartedAtUtc = null,
                             LastOutputSequence = 0,
@@ -1636,7 +1676,7 @@ public sealed class RemoteTaskRunner
                             outbox,
                             stopRun,
                             daemonShutdown,
-                            sameSessionResumeAttempts + 1,
+                            sameSessionResumeAttempts + (capacityRetry ? 0 : 1),
                             operatorStopRequested);
                     }
 
@@ -1795,7 +1835,8 @@ public sealed class RemoteTaskRunner
         ProcessResult result,
         bool launchFailed,
         int sameSessionResumeAttempts,
-        CliSelection.Selection? invocation = null)
+        CliSelection.Selection? invocation = null,
+        int modelCapacityRetryAttempts = 0)
     {
         var provider = ProviderOutputEvidenceExtractor.Extract(result.StdOut);
         var sessionState = !string.IsNullOrWhiteSpace(provider.SessionId)
@@ -1811,6 +1852,7 @@ public sealed class RemoteTaskRunner
             SessionState: sessionState,
             SessionId: provider.SessionId,
             SameSessionResumeAttempts: sameSessionResumeAttempts,
+            ModelCapacityRetryAttempts: modelCapacityRetryAttempts,
             EffectiveCliType: invocation?.CliType,
             EffectiveModel: invocation?.Model,
             EffectiveThinkingLevel: invocation?.ThinkingLevel,
@@ -1844,6 +1886,9 @@ public sealed class RemoteTaskRunner
                 => new RunOutcome(
                     RunOutcomeKind.EnvironmentFailure,
                     DescribePreparationFailure(stdErr ?? string.Empty)),
+            ExecutionOutcomeKind.TransientModelCapacity
+                => new RunOutcome(RunOutcomeKind.TransientFailure,
+                    provider.FailureMessage ?? "Selected model remained at capacity after same-session retries."),
             _ => new RunOutcome(
                 RunOutcomeKind.Unknown,
                 provider.FailureMessage ?? typed.Detail ?? typed.Outcome.ToString()),
@@ -2142,7 +2187,7 @@ public sealed class RemoteTaskRunner
             .AppendLine("## Artifact transfer")
             .AppendLine()
             .AppendLine("- Status: `partial`")
-            .AppendLine($"- Per-file budget: {ArtifactTransferPolicy.FormatMb(limits.MaxFileBytes)} MB")
+            .AppendLine($"- Per-file budget: {ArtifactTransferPolicy.FormatMb(limits.TransferFileLimitBytes)} MB")
             .AppendLine($"- Total budget: {ArtifactTransferPolicy.FormatMb(limits.MaxTotalBytes)} MB")
             .AppendLine("- Not transferred:");
         foreach (var issue in issues)
@@ -2398,7 +2443,10 @@ public sealed class RemoteTaskRunner
             BuildEnvelopeCompletionFields(teardown, baseSha, artifactManifestDigest);
         return new RemoteRunCompletionRequest(
             taskKey, lease.LeaseId, lease.FencingToken, options.RunnerId,
-            outcome.Kind.ToString(), outcome.Reason, options.RunnerName,
+            outcome.Kind.ToString(), teardown.ResultRefFailure is null
+                ? outcome.Reason
+                : $"{outcome.Reason} [runner-result-ref-push-failed: {teardown.ResultRefFailure}]",
+            options.RunnerName,
             SalvageBranch: teardown.Branch,
             SalvageCommitSha: teardown.CommitSha,
             SalvageBranchUrl: teardown.BranchUrl,
@@ -2671,14 +2719,16 @@ public sealed class RemoteTaskRunner
         }
         var remediation = GitPushProbe.IsWorkflowScopeFailure(failure)
             ? GitPushProbe.WorkflowScopeFix()
-            : "Restore origin push access, publish the retained HEAD to a new ref, then requeue.";
+            : "Restore origin push access, then requeue. The card's next round on this host continues " +
+              "from the retained worktree; a round on another host needs the retained HEAD published to a new ref first.";
         return $"worktree-blocked: host={hostname}; worktree={ex.WorktreePath}; branch={ex.Branch}; " +
                $"{refs}; failure={failure}. No ref was overwritten. Recovery recipe: {remediation}";
     }
 
     internal static string BuildUnsecuredWorktreeReason(WorktreeSalvageException ex)
         => ex.PushProtection?.Summary
-           ?? $"Remote runner retained unsecured worktree at {ex.WorktreePath}; intended branch {ex.Branch}.";
+           ?? $"Remote runner retained unsecured worktree at {ex.WorktreePath}; intended branch {ex.Branch}. " +
+              $"Push failure: {OneLine(ex.InnerException?.Message ?? ex.Message)}";
 
     private async Task<bool> ReleaseAsync(
         RunLeaseInfoDto lease,
@@ -2832,6 +2882,9 @@ public sealed class RemoteTaskRunner
             hostShutdown: facts.HostShutdown || daemonShutdownRecorded,
             credentialGeneration: credentialGeneration);
 
+    internal static string ProviderAuthenticationFailureReason(ProviderAccessEvidence evidence)
+        => $"Unauthorized provider response: {ProviderAuthProbe.Excerpt(evidence.Detail)}";
+
     private static string? SameGenerationForCompletedWork(string cliBinary, DateTime? processStartedAtUtc)
     {
         if (processStartedAtUtc is null) return null;
@@ -2864,6 +2917,7 @@ public sealed class RemoteTaskRunner
         ExecutionSessionState SessionState = ExecutionSessionState.Unsupported,
         string? SessionId = null,
         int SameSessionResumeAttempts = 0,
+        int ModelCapacityRetryAttempts = 0,
         string? EffectiveCliType = null,
         string? EffectiveModel = null,
         string? EffectiveThinkingLevel = null,
@@ -2881,6 +2935,7 @@ public sealed class RemoteTaskRunner
             SessionState: SessionState,
             SessionId: SessionId,
             SameSessionResumeAttempts: SameSessionResumeAttempts,
+            ModelCapacityRetryAttempts: ModelCapacityRetryAttempts,
             EffectiveCliType: EffectiveCliType,
             EffectiveModel: EffectiveModel,
             EffectiveThinkingLevel: EffectiveThinkingLevel,
@@ -2909,7 +2964,8 @@ public sealed class RemoteTaskRunner
         string? EffectiveCliType = null,
         string? EffectiveModel = null,
         string? EffectiveThinkingLevel = null,
-        IReadOnlyList<string>? ObservedModels = null)
+        IReadOnlyList<string>? ObservedModels = null,
+        int ModelCapacityRetryAttempts = 0)
         => new(
             lease.AttemptId ?? lease.LeaseId,
             ExecutionAttemptKind.Coding,
@@ -2936,7 +2992,8 @@ public sealed class RemoteTaskRunner
             EffectiveCliType,
             EffectiveModel,
             EffectiveThinkingLevel,
-            ObservedModels);
+            ObservedModels,
+            ModelCapacityRetryAttempts);
 
     internal static async Task<T> RetryEnvironmentPreparationAsync<T>(
         Func<CancellationToken, Task<T>> prepare,

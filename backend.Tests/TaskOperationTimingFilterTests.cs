@@ -84,6 +84,34 @@ public sealed class TaskOperationTimingFilterTests
         Assert.DoesNotContain(logger.Lines, line => line.Contains("-trace", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task RoutingMutation_LogsStageBreakdownAndProcessCounts()
+    {
+        var logger = new CapturingLogger();
+        var filter = new TaskOperationTimingFilter(logger, Configuration(sampleEvery: 0));
+        var http = BoardRequest("/api/tasks/{jobId}/model");
+        http.Request.Method = "PUT";
+
+        await filter.InvokeAsync(new DefaultEndpointFilterInvocationContext(http), _ =>
+        {
+            using (TaskSwitchTrace.Span("mutation.lookup")) { }
+            using (TaskSwitchTrace.Span("mutation.lock")) { }
+            using (TaskSwitchTrace.Span("mutation.read-current")) { }
+            using (TaskSwitchTrace.Span("mutation.write")) { }
+            using (TaskSwitchTrace.Span("mutation.publish")) { }
+            return ValueTask.FromResult<object?>(Results.Ok());
+        });
+
+        var timing = Assert.Single(logger.Lines, line => line.Contains("task-operation-timing", StringComparison.Ordinal));
+        Assert.Contains("mutation.lookup", timing, StringComparison.Ordinal);
+        Assert.Contains("mutation.lock", timing, StringComparison.Ordinal);
+        Assert.Contains("mutation.read-current", timing, StringComparison.Ordinal);
+        Assert.Contains("mutation.write", timing, StringComparison.Ordinal);
+        Assert.Contains("mutation.publish", timing, StringComparison.Ordinal);
+        Assert.Contains("\"gitSpawns\":0", timing, StringComparison.Ordinal);
+        Assert.Contains("\"workspaceScans\":0", timing, StringComparison.Ordinal);
+    }
+
     private static IConfiguration Configuration(int sampleEvery)
         => new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>

@@ -399,7 +399,7 @@
 
   &__count {
     font-variant-numeric: tabular-nums;
-    color: var(--studio-fg-muted);
+    color: var(--studio-fg-dim);
   }
 
   &__concern {
@@ -710,6 +710,16 @@
     color: var(--studio-fg-muted);
     font-size: 9.5px;
     font-style: italic;
+  }
+
+  &__review-link {
+    flex: 0 0 auto;
+    border: 0;
+    background: none;
+    color: var(--studio-accent-strong);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
   }
 
   &__details,
@@ -1269,4 +1279,8 @@
 .ov-pl-step__cost-button:disabled {
   text-decoration: none;
   cursor: default;
+}
+
+.ov-decision-chain-placeholder {
+  min-height: var(--studio-spacing-1);
 }

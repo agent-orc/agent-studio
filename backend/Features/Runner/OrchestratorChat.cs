@@ -8,6 +8,7 @@ using AgentStudio.Tasks;
 using AgentStudio.AdHoc;
 using AgentStudio.Prompts;
 using AgentStudio.Tokens;
+using AgentStudio.Cli;
 
 namespace AgentStudio.Runner;
 
@@ -465,6 +466,8 @@ public sealed record ChatNavigationContext(
 /// both routes and the switch reason remain visible on the persisted turn.
 /// </para>
 /// </summary>
+public sealed record ChatExecutionReadiness(bool Ready, string Code, string? Reason);
+
 public class OrchestratorChatService
 {
     private readonly ITokenPricing _pricing;
@@ -479,6 +482,7 @@ public class OrchestratorChatService
     private readonly ProjectSettingsService? _projectSettings;
     private readonly ProjectRegistry? _projects;
     private readonly RemoteChatWorkBroker? _remoteWork;
+    private readonly V1ReviewExecutorRegistry? _remoteHosts;
     private readonly GitService? _git;
     private readonly OrchestratorTaskPromptContextComposer? _taskPromptContext;
     private readonly OrchestratorWorkbenchPromptContextComposer? _workbenchPromptContext;
@@ -489,6 +493,7 @@ public class OrchestratorChatService
     private readonly AgentMessageBusBridge? _bus;
     private readonly AdHocUsageRecorder? _chatUsage;
     private readonly LocalChatUsageTracker? _localChatUsage;
+    private readonly AgentStudio.Operator.OperatorCoordinationStore? _operatorLog;
     private readonly string? _taskRepositoryRoot;
     private readonly bool _networked;
 
@@ -521,7 +526,9 @@ public class OrchestratorChatService
         OrchestratorWorkbenchPromptContextComposer? workbenchPromptContext = null,
         AgentMessageBusBridge? bus = null,
         AdHocUsageRecorder? chatUsage = null,
-        LocalChatUsageTracker? localChatUsage = null)
+        LocalChatUsageTracker? localChatUsage = null,
+        V1ReviewExecutorRegistry? remoteHosts = null,
+        AgentStudio.Operator.OperatorCoordinationStore? operatorLog = null)
     {
         _pricing = pricing;
         _chat = chat;
@@ -534,12 +541,14 @@ public class OrchestratorChatService
         _bus = bus;
         _chatUsage = chatUsage;
         _localChatUsage = localChatUsage;
+        _operatorLog = operatorLog;
         _identityStore = identityStore;
         _contextDigests = contextDigests;
         _componentRouting = componentRouting;
         _projectSettings = projectSettings;
         _projects = projects;
         _remoteWork = remoteWork;
+        _remoteHosts = remoteHosts;
         _git = git;
         _taskPromptContext = taskPromptContext;
         _persistence = persistence;
@@ -654,13 +663,13 @@ public class OrchestratorChatService
                 var fullPrompt = prompt;
                 if (remoteRoute != null && _remoteWork != null)
                 {
-                    var quotaPlan = _quotaAdmission?.Plan(new QuotaAdmissionRequest(
+                    var quotaPlan = _quotaAdmission?.Selection.Select(ModelSelectionCall.FromAdmission(new QuotaAdmissionRequest(
                         CliTypes.Codex,
                         requestedModel,
                         thinkingLevel,
                         projectName,
                         OccupiedSlots: 0,
-                        ExecutionPath: "remote-project-chat"));
+                        ExecutionPath: "remote-project-chat"))).Admission;
                     if (quotaPlan is not null && !quotaPlan.ShouldLaunch)
                     {
                         _quotaAdmissionRecorder?.EmitProjectAdmissionDecision(
@@ -732,9 +741,9 @@ public class OrchestratorChatService
                                     _localChatUsage?.Start(userTurn.Id, projectName,
                                         fallbackQueuedAt ?? queuedAt, startedAt);
                                     localStarted = true;
-                                    result = await _runner.DecideCodexAsync(
-                                        fullPrompt, effectiveModel, effectiveThinking,
-                                        workingDirectory, ct, projectName, watchPath);
+                                    result = await RunLocalPlannedRouteAsync(
+                                        _runner, effectiveCli, effectiveModel, effectiveThinking,
+                                        fullPrompt, workingDirectory, projectName, watchPath, ct);
                                 }
                                 finally
                                 {
@@ -753,12 +762,19 @@ public class OrchestratorChatService
                 }
                 else
                 {
-                    result = _networked
-                        ? new OrchestratorDecisionResult(false, "", requestedModel, null, null,
-                            "No remote runner is configured for this project. Project chat cannot run on the Studio host in the networked profile.")
-                        : await _runner.DecideCodexAsync(
-                            fullPrompt, requestedModel, thinkingLevel, workingDirectory,
-                            ct, projectName, watchPath);
+                    if (_networked)
+                    {
+                        result = new OrchestratorDecisionResult(false, "", requestedModel, null, null,
+                            "No remote runner is configured for this project. Project chat cannot run on the Studio host in the networked profile.");
+                    }
+                    else
+                    {
+                        result = await RunLocalSelectedRouteAsync(_runner, _quotaAdmission?.Selection,
+                            requestedModel, thinkingLevel, fullPrompt, workingDirectory,
+                            projectName, watchPath, ct,
+                            plan => _quotaAdmissionRecorder?.EmitProjectAdmissionDecision(
+                                watchPath, projectName, plan, "remote-project-chat"));
+                    }
                 }
             }
             catch (Exception ex)
@@ -878,6 +894,50 @@ public class OrchestratorChatService
                 SessionGate.Release();
         }
     }
+
+    /// <summary>Preserve the planner's CLI when an unreachable remote chat runs locally.</summary>
+    internal static async Task<OrchestratorDecisionResult> RunLocalSelectedRouteAsync(
+        OrchestratorRunner runner, IModelSelectionService? selection,
+        string requestedModel, string? thinkingLevel, string prompt,
+        string workingDirectory, string projectName, string watchPath,
+        CancellationToken ct, Action<QuotaAdmissionPlan>? recordDecision = null)
+    {
+        var plan = selection?.Select(ModelSelectionCall.FromAdmission(
+            new QuotaAdmissionRequest(CliTypes.Codex, requestedModel, thinkingLevel,
+                projectName, OccupiedSlots: 0, ExecutionPath: "remote-project-chat"))).Admission;
+        if (plan is { ShouldLaunch: false })
+        {
+            recordDecision?.Invoke(plan);
+            return new OrchestratorDecisionResult(false, "", requestedModel, null, null, plan.Reason)
+            {
+                CliType = CliTypes.Codex,
+                ConfiguredModel = requestedModel,
+            };
+        }
+        if (plan?.IsFallback == true)
+            recordDecision?.Invoke(plan);
+        var outcome = await RunLocalPlannedRouteAsync(runner,
+            plan?.CliType ?? CliTypes.Codex,
+            plan?.Model ?? requestedModel,
+            plan?.ThinkingLevel ?? thinkingLevel,
+            prompt, workingDirectory, projectName, watchPath, ct);
+        return outcome with
+        {
+            CliType = plan?.CliType ?? CliTypes.Codex,
+            ConfiguredModel = requestedModel,
+            QuotaFallback = plan?.IsFallback == true,
+            QuotaFallbackReason = plan?.IsFallback == true ? plan.Reason : null,
+        };
+    }
+
+    /// <summary>Run the CLI and model already admitted for chat.</summary>
+    internal static Task<OrchestratorDecisionResult> RunLocalPlannedRouteAsync(
+        OrchestratorRunner runner, string cliType, string model, string? thinkingLevel,
+        string prompt, string workingDirectory, string projectName, string watchPath,
+        CancellationToken ct)
+        => string.Equals(cliType, CliTypes.Codex, StringComparison.OrdinalIgnoreCase)
+            ? runner.DecideCodexAsync(prompt, model, thinkingLevel, workingDirectory, ct, projectName, watchPath)
+            : runner.DecideWithCliAsync(cliType, prompt, model, thinkingLevel, workingDirectory, ct);
 
     /// <summary>
     /// Writes the turn's usage into the project token ledger (AGT-2986). The
@@ -1012,6 +1072,28 @@ public class OrchestratorChatService
         await ResolveAutomaticContextAsync(
             automatic, projectName, watchPath, req, clientId, context, envelope, ct)
             .ConfigureAwait(false);
+        if (_operatorLog is not null && envelope.Scope.Kind != "workbench")
+        {
+            try
+            {
+                var entries = (await _operatorLog.ReadAsync(projectName, 0, ct)).TakeLast(50).ToArray();
+                if (entries.Length > 0)
+                    automatic.Add(ResolvedContextBlock.Included(
+                        $"operator-log:{projectName}", "operator-log",
+                        string.Join('\n', entries.Select(entry =>
+                            $"{entry.TimeUtc:O} {entry.Actor} {entry.Kind}: {entry.Text} "
+                            + $"cards=[{string.Join(',', entry.CardKeys)}] audits=[{string.Join(',', entry.AuditIds)}]")),
+                        entries[^1].Cursor.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        "current", isExplicit: false));
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(exception, "operator_log_context_unavailable project={Project}", projectName);
+                automatic.Add(ResolvedContextBlock.Unavailable($"operator-log:{projectName}",
+                    "operator-log", "unavailable", "The operator log could not be read."));
+            }
+        }
         ResolveExplicitContext(explicitBlocks, projectName, watchPath, envelope);
         if (req.Attachments is { Count: > 0 })
         {
@@ -1957,6 +2039,38 @@ public class OrchestratorChatService
             _git?.ReadHeadShaAt(root),
             "ready",
             DateTime.UtcNow);
+    }
+
+    public ChatExecutionReadiness ResolveExecutionReadiness(string projectName, string watchPath)
+    {
+        if (!_networked) return new ChatExecutionReadiness(true, "local", null);
+
+        RemoteChatWorkRoute? route;
+        try { route = ResolveRemoteRoute(projectName, watchPath); }
+        catch (InvalidOperationException)
+        {
+            return new ChatExecutionReadiness(false, "repository-unavailable",
+                "The configured Runner needs a repository URL for this project.");
+        }
+        if (route is null)
+            return new ChatExecutionReadiness(false, "runner-not-configured",
+                "No Runner is configured for this project.");
+        if (_remoteWork?.IsRunnerReachable(route.RunnerId) != true)
+            return new ChatExecutionReadiness(false, "runner-unreachable",
+                "The configured Runner is not reachable.");
+
+        var host = _remoteHosts?.ListCapabilitySnapshots().FirstOrDefault(snapshot =>
+            string.Equals(snapshot.RunnerId, route.RunnerId, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(snapshot.Name, route.RunnerId, StringComparison.OrdinalIgnoreCase));
+        var cli = host?.Capabilities.FirstOrDefault(capability =>
+            capability.Key == AgentStudio.TaskServer.Contracts.CapabilityProtocol.CliExecution(CliTypes.Codex));
+        var login = host?.Capabilities.FirstOrDefault(capability =>
+            capability.Key == AgentStudio.TaskServer.Contracts.CapabilityProtocol.ProviderAuthentication(CliTypes.Codex));
+        if (cli?.IsFresh != true || cli.AdvertisedStatus != "ready"
+            || login?.IsFresh != true || login.AdvertisedStatus != "ready")
+            return new ChatExecutionReadiness(false, "cli-login-unavailable",
+                "The Runner needs an available Codex CLI and a verified login.");
+        return new ChatExecutionReadiness(true, "runner-ready", null);
     }
 
     private RemoteChatWorkRoute? ResolveRemoteRoute(string projectName, string watchPath)

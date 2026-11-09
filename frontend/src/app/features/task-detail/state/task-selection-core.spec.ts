@@ -125,7 +125,8 @@ describe('TaskSelectionService · board record reuse', () => {
       tasks.stopLiveUpdates();
       selection.closeDetail();
       // Enrichment of the selected task is covered by task-selection-url.service.spec.ts.
-      http.match(anyResource).forEach(r => r.flush(null, { status: 503, statusText: 'Unavailable' }));
+      http.match(anyResource).filter(r => !r.cancelled)
+        .forEach(r => r.flush(null, { status: 503, statusText: 'Unavailable' }));
       http.expectNone(legacyDetail);
       http.verify();
     } finally {
@@ -150,12 +151,19 @@ describe('TaskSelectionService · board record reuse', () => {
     return requests.map(r => r.request.url);
   }
 
-  it('board -> A -> B -> board reads each core once and never the grouped board', () => {
+  async function waitForLookahead(): Promise<void> {
+    TestBed.tick();
+    await new Promise(resolve => setTimeout(resolve, 1650));
+    TestBed.tick();
+  }
+
+  it('board -> A -> B -> board reads each core once and never the grouped board', async () => {
     const board = tasks.grouped();
 
     open(lane[0]);
     http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
     expect(selection.selectedCore()).toMatchObject({ id: 'a', projectId: 'PROJ-A' });
+    await waitForLookahead();
     expect(answerLookahead()).toEqual(['/api/tasks/b/core', '/api/tasks/c/core']);
 
     open(lane[1]);
@@ -172,15 +180,17 @@ describe('TaskSelectionService · board record reuse', () => {
     expect(tasks.grouped()).toBe(board);
   });
 
-  it('pager steps reuse visited and lookahead cores without a request', () => {
+  it('pager steps reuse visited and lookahead cores without a request', async () => {
     open(lane[0]);
     http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
+    await waitForLookahead();
     answerLookahead();
 
     selection.pagerStep(1);
     TestBed.tick();
     expect(selection.selectedCore()).toMatchObject({ id: 'b' });
     // Window is now c, d: c is resident, only d is requested.
+    await waitForLookahead();
     expect(answerLookahead()).toEqual(['/api/tasks/d/core']);
 
     selection.pagerStep(-1);

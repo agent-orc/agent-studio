@@ -104,5 +104,6 @@ public static class ReviewRoundBudgetStore
         var temp = path + ".tmp-" + Guid.NewGuid().ToString("N");
         File.WriteAllText(temp, JsonSerializer.Serialize(ledger, Json));
         File.Move(temp, path, overwrite: true);
+        AgentStudio.Tasks.SidecarFileGeneration.Changed(path);
     }
 }

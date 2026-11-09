@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
 
@@ -12,9 +13,7 @@ public sealed class RefMutationLeaseService
 
     public RefMutationLeaseService(string? root = null)
     {
-        _root = root ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "agentstudio", "ref-mutation-leases");
+        _root = root ?? LocalStateRoot.Combine("agentstudio", "ref-mutation-leases");
     }
 
     public async Task<Lease> AcquireAsync(

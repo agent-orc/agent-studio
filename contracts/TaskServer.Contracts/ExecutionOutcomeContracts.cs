@@ -28,6 +28,7 @@ public enum ExecutionOutcomeKind
     SuccessfulCompletion,
     ProtocolInconclusive,
     MechanicalFallback,
+    TransientModelCapacity,
 }
 
 public enum ExecutionRecoveryAction
@@ -117,7 +118,8 @@ public sealed record ExecutionRawFacts(
     string? EffectiveCliType = null,
     string? EffectiveModel = null,
     string? EffectiveThinkingLevel = null,
-    IReadOnlyList<string>? ObservedModels = null);
+    IReadOnlyList<string>? ObservedModels = null,
+    int ModelCapacityRetryAttempts = 0);
 
 /// <summary>
 /// Safe provider refusal evidence. The request and raw response are deliberately
@@ -167,6 +169,7 @@ public static class ExecutionOutcomeAdapter
 {
     public const string Version = "execution-outcome/v1";
     public const int MaxSameSessionResumeAttempts = 1;
+    public const int MaxModelCapacityRetryAttempts = 3;
     public const int MaxFreshSalvageAttempts = 1;
 
     private static readonly Regex Sentinel = new(
@@ -200,7 +203,7 @@ public static class ExecutionOutcomeAdapter
     public static ExecutionOutcomeDecision Classify(ExecutionRawFacts facts)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(facts.AttemptId);
-        if (facts.SameSessionResumeAttempts < 0 || facts.FreshSalvageAttempts < 0)
+        if (facts.SameSessionResumeAttempts < 0 || facts.ModelCapacityRetryAttempts < 0 || facts.FreshSalvageAttempts < 0)
             throw new ArgumentOutOfRangeException(nameof(facts), "Recovery attempt counters cannot be negative.");
 
         var providerFailed = ProviderFailed.IsMatch(facts.ProviderTerminalEvent ?? string.Empty);
@@ -264,14 +267,19 @@ public static class ExecutionOutcomeAdapter
             // include a request body or credential-bearing metadata.
             return BuildProviderRejection(facts, providerRejection, modelMismatch: null);
         }
-        var providerAccess = ProviderAccessClassifier.Classify(
+        var providerAccess = ProviderAccessClassifier.ClassifyRun(
             facts.ExitCode ?? (providerFailed ? 1 : 0),
-            failedStdOut,
-            Join(providerFailureEvent, facts.StdErr));
+            Join(providerFailureEvent, facts.StdOut),
+            facts.StdErr,
+            completedSuccessfully: honestTerminal);
         if (!honestTerminal
             && facts.Signal is null
             && providerAccess.Kind == ProviderAccessEvidenceKind.RateLimited)
             return Decide(facts, ExecutionOutcomeKind.QuotaExceeded, OutcomeConfidence.High, null, infrastructure: true);
+        if (!honestTerminal
+            && facts.Signal is null
+            && providerAccess.Kind == ProviderAccessEvidenceKind.ModelCapacity)
+            return Decide(facts, ExecutionOutcomeKind.TransientModelCapacity, OutcomeConfidence.High, null, infrastructure: true);
         if (!honestTerminal && providerAccess.Kind == ProviderAccessEvidenceKind.AuthenticationFailure)
             return Decide(facts, ExecutionOutcomeKind.AuthenticationFailure, OutcomeConfidence.High, null, infrastructure: true);
         if (!honestTerminal && InvalidConfiguration.IsMatch(diagnostic))
@@ -417,7 +425,11 @@ public static class ExecutionOutcomeAdapter
             .Select(model => model.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        if (observed.Length == 0 || observed.All(model => ModelsEquivalent(pinnedModel.Trim(), model)))
+        // A run that used the pinned model may also call other models (a CLI
+        // side call, a subagent on a smaller model). Those stay visible in
+        // RawFacts.ObservedModels; only a run that never used the pinned model
+        // is a mismatch.
+        if (observed.Length == 0 || observed.Any(model => ModelsEquivalent(pinnedModel.Trim(), model)))
             return false;
         mismatch = new ModelUsageMismatch(pinnedModel.Trim(), observed);
         return true;
@@ -443,6 +455,13 @@ public static class ExecutionOutcomeAdapter
 
         if (outcome == ExecutionOutcomeKind.ProtocolInconclusive)
             return ExecutionRecoveryAction.AskForHumanInput;
+
+        if (outcome == ExecutionOutcomeKind.TransientModelCapacity)
+            return facts.SessionState == ExecutionSessionState.Resumable
+                   && !string.IsNullOrWhiteSpace(facts.SessionId)
+                   && facts.ModelCapacityRetryAttempts < MaxModelCapacityRetryAttempts
+                ? ExecutionRecoveryAction.ResumeSameSession
+                : ExecutionRecoveryAction.StartFreshAttemptFromSalvage;
 
         if (outcome is ExecutionOutcomeKind.AuthenticationFailure
             or ExecutionOutcomeKind.QuotaExceeded

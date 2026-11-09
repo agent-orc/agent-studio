@@ -6,6 +6,7 @@ import type {
   TaskServerRunnerCapabilitySnapshot,
   RemoteRunnerLinkHealth,
 } from './remote-host.model';
+import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
 
 export type ProviderAuthDisplayState = 'ok' | 'retrying' | 'limited' | 'expiring' | 'unavailable' | 'unknown';
 
@@ -42,6 +43,18 @@ export function providerSignInLabel(badge: ProviderAuthBadge): string | null {
     && !(badge.healthOutcome == null && badge.signal === 'signed-out' && badge.consecutiveFailures >= 2)) return null;
   if (badge.state !== 'unavailable' && badge.state !== 'expiring') return null;
   return badge.provider === 'codex' ? 'Sign in Codex' : 'Sign in Claude';
+}
+
+/** Provider login state on the shared indicator (docs/quality/design/status-indicator.md). */
+export function providerAuthTone(state: ProviderAuthDisplayState): StatusTone {
+  switch (state) {
+    case 'ok': return 'success';
+    case 'retrying': return 'running';
+    case 'limited':
+    case 'expiring': return 'warning';
+    case 'unavailable': return 'danger';
+    default: return 'neutral';
+  }
 }
 
 export function providerLoginStateLabel(badge: ProviderAuthBadge): string {
@@ -101,6 +114,12 @@ export interface DeviceLoginStartResponse {
   expiresAt: string;
 }
 
+/**
+ * The Claude code-return step (AGT-3243): `awaiting` once the host published the sign-in URL,
+ * `submitted` after the Owner pasted the authorization code, `delivered` after the host took it.
+ */
+export type DeviceLoginCodeState = 'awaiting' | 'submitted' | 'delivered';
+
 export interface DeviceLoginStatusResponse {
   handle: string;
   state: 'queued' | 'running' | 'completed' | 'failed';
@@ -108,6 +127,8 @@ export interface DeviceLoginStatusResponse {
   verificationUrl: string | null;
   userCode: string | null;
   expiresAt: string;
+  /** Absent for a session that takes no code back, such as Codex. */
+  codeState?: DeviceLoginCodeState | null;
 }
 
 export interface ClaudeSignInTarget {
@@ -176,7 +197,7 @@ export function providerAuthBadgesForSnapshot(
 
 export function providerAuthBadgesForHost(host: RemoteHost, nowMs: number): ProviderAuthBadge[] {
   const capabilities = host.capabilityHealth ?? [];
-  return providerNames(capabilities).map(provider => badgeFromCapability(
+  return providerNames(capabilities).map(provider => ({ ...badgeFromCapability(
     provider,
     capabilities.find(item => item.key === `${PROVIDER_AUTH_PREFIX}${provider}`),
     host.id,
@@ -186,7 +207,9 @@ export function providerAuthBadgesForHost(host: RemoteHost, nowMs: number): Prov
     host.status !== 'offline' && host.status !== 'retired' && isRecent(host.lastHeartbeatAt, nowMs),
     host.runnerLink?.lastHeartbeatAt ?? host.lastHeartbeatAt,
     nowMs,
-  ));
+  ), acceptedModels: capabilities.filter(item => item.key.startsWith(`model-acceptance:${provider}:`)
+    && item.advertisedStatus === 'ready' && item.isFresh)
+    .map(item => item.key.slice(`model-acceptance:${provider}:`.length)).sort() }));
 }
 
 export function providerAuthWaitReason(

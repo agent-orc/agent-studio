@@ -1,6 +1,7 @@
 import type { PhysicalHostGroup } from './physical-host-group';
 import type { RemoteHost } from './remote-host.model';
 import type { CredentialInventory } from '../../credentials/credential-inventory.service';
+import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
 
 export interface EnvironmentSnapshot {
   controlHost: string;
@@ -45,6 +46,7 @@ export interface EnvironmentConnection {
   to: string;
   type: 'outbound claim link' | 'reverse tunnel' | 'SSH gate transport' | 'Git remote';
   health: 'ok' | 'warn' | 'unknown';
+  label?: string;
 }
 
 export interface EnvironmentMap { machines: readonly EnvironmentMachine[]; connections: readonly EnvironmentConnection[] }
@@ -118,9 +120,12 @@ export function buildEnvironmentMap(
     const route = snapshot?.routes?.find(item => group.roles.some(host => host.clientId === item.runnerId));
     const link = group.roles.find(host => host.runnerLink)?.runnerLink;
     const claim = group.roles.map(host => host.taskServerConnection).find(connection => connection?.observedAt);
-    if (route || claim) connections.push({ id: `claim:${group.id}`, from: controlId, to: group.id,
+    if (route || claim) connections.push({ id: `claim:${group.id}`, from: group.id, to: controlId,
       type: 'outbound claim link', health: claim?.status === 'reachable' ? 'ok'
-        : claim?.status === 'unreachable' ? 'warn' : 'unknown' });
+        : claim?.status === 'unreachable' ? 'warn' : 'unknown',
+      label: claim?.status === 'unreachable'
+        ? `${claim.lastError || 'Route unavailable'} · ${group.roles.length} ${group.roles.length === 1 ? 'role' : 'roles'}`
+        : claim?.status === 'reachable' ? 'Healthy' : 'No recent contact' });
     if (route?.route === 'reverse-ssh' || link?.kind === 'ssh-reverse')
       connections.push({ id: `tunnel:${group.id}`, from: group.id, to: controlId,
         type: 'reverse tunnel', health: link?.state === 'up' ? 'ok' : link ? 'warn' : 'unknown' });
@@ -192,4 +197,22 @@ export function buildEnvironmentMap(
 function knownRole(role: string): EnvironmentNode['role'] {
   return role === 'coding' || role === 'review' || role === 'gate' || role === 'integration' || role === 'link'
     ? role : 'control';
+}
+
+/**
+ * A map health word on the shared status indicator. The map mixes host
+ * heartbeats, reachability and engine states; a word not listed stays neutral.
+ */
+export function environmentHealthTone(health: string): StatusTone {
+  if (['online', 'ok', 'reachable', 'ready', 'healthy'].includes(health)) return 'success';
+  if (['degraded', 'warn', 'unverified'].includes(health)) return 'warning';
+  if (['offline', 'unreachable', 'engine-not-live'].includes(health)) return 'danger';
+  return 'neutral';
+}
+
+/** Repository access of a map node: writing is the goal, read-only is a known limit. */
+export function repositoryAccessTone(access: EnvironmentNode['repositoryAccess']): StatusTone {
+  if (access === 'writes') return 'success';
+  if (access === 'reads only') return 'info';
+  return access === 'no access' ? 'warning' : 'neutral';
 }

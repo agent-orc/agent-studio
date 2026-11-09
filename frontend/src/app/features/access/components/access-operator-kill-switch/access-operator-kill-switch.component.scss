@@ -1,0 +1,37 @@
+@use '../../access-controls' as access;
+
+:host { display: block; min-width: 0; }
+@include access.controls;
+@include access.table;
+.kill { display: flex; flex-direction: column; gap: var(--studio-spacing-3); }
+.kill__action { display: flex; flex-wrap: wrap; align-items: end; gap: var(--studio-spacing-2); }
+.kill__copy { display: flex; flex: 1; flex-direction: column; gap: var(--studio-spacing-1); min-width: 16rem; }
+// The one destructive action of the area: an outlined danger button, never a filled alarm (R4).
+button.kill__danger { border-color: color-mix(in srgb, var(--severity-high) 52%, var(--studio-border)); background: transparent; color: var(--severity-high); }
+button.kill__danger:hover:not(:disabled) { border-color: var(--severity-high); background: color-mix(in srgb, var(--severity-high) 10%, transparent); }
+
+// Status strip: one flat line per fact. A whole-row tint marks an acute state (R1, R4); otherwise it stays quiet.
+.kill__status { display: flex; flex-direction: column; }
+.kill__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-1) var(--studio-spacing-3);
+  min-height: var(--studio-row-min-h-interactive);
+  padding: var(--studio-row-pad-block) var(--studio-row-pad-inline);
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg);
+  font-size: 0.78rem;
+}
+.kill__line + .kill__line { border-top: 1px solid var(--studio-border); }
+.kill__line[data-tone='alert'] { background: color-mix(in srgb, var(--severity-high) 14%, var(--studio-bg-surface)); }
+.kill__line strong { color: var(--studio-fg-strong); font-weight: 600; }
+.kill__meta { color: var(--studio-fg-dim); }
+.kill__push { margin-left: auto; }
+.kill__dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--studio-fg-dim); }
+.kill__dot[data-tone='ok'] { background: var(--studio-success); }
+.kill__dot[data-tone='alert'] { background: var(--severity-high); }
+.kill__scroll { overflow-x: auto; }
+.kill__reason { max-width: 24rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.access-badge[data-tone='active'] { background: color-mix(in srgb, var(--studio-success) 16%, transparent); color: var(--studio-fg-strong); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

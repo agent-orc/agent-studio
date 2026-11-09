@@ -1,4 +1,18 @@
 <div class="cli-models" data-testid="cli-models-panel">
+  <section class="cli-models__policy" data-testid="active-model-switches">
+    <div class="cli-models__policy-copy">
+      <span class="cli-models__policy-title">Active fallbacks ({{ activeSwitches().length }})</span>
+      @for (item of activeSwitches(); track item.id) {
+        <span class="cli-models__active-route" [attr.data-switch-id]="item.id">
+          {{ item.from.cliType }}/{{ item.from.model ?? 'default' }} →
+          {{ item.to.cliType }}/{{ item.to.model ?? 'default' }}
+          <span class="cli-models__source">{{ item.rule }}</span>
+          @if (item.returnToPrimaryAt) { · returns after {{ item.returnToPrimaryAt | date:'medium' }} }
+        </span>
+      }
+    </div>
+  </section>
+  <app-consumer-model-policy />
   @if (policy(); as routingPolicy) {
     <section class="cli-models__policy" data-testid="model-routing-policy">
       <div class="cli-models__policy-copy">
@@ -46,7 +60,10 @@
           <span class="cli-models__policy-detail">Comparable models from {{ version }}. Overrides take precedence.</span>
         </div>
       </header>
-      <div class="cli-models__table-wrap">
+      <div class="cli-models__table-wrap" tabindex="0"
+           data-testid="cli-models-table-scroll"
+           aria-label="Quota fallback routes table"
+           (keydown)="onTableScrollKeydown($event)">
         <table class="cli-models__fallback-table">
           <thead>
             <tr><th>Model</th><th>Fallback model</th><th>Source</th><th>Price per MTok</th></tr>
@@ -102,10 +119,19 @@
           <input type="checkbox"
                  [attr.data-testid]="'prefer-fallback-' + g.cliType"
                  [checked]="fallbackStates()[g.cliType]?.state === 'fallback-preferred'"
-                 [disabled]="preferenceSaving() !== null || !hasFallback(g.cliType)"
+                 [disabled]="preferenceSaving() !== null"
                  (change)="setPreferFallback(g.cliType, $any($event.target).checked)" />
           <span>{{ fallbackStateLabel(g.cliType) }}</span>
         </label>
+        @if (effectiveFor(g.cliType).length) {
+          <div class="cli-models__effective" [attr.data-testid]="'effective-routes-' + g.cliType">
+            @for (route of effectiveFor(g.cliType); track route.consumer) {
+              <span>{{ route.consumer }}: {{ route.effective?.cliType ?? 'wait' }}
+                @if (route.effective?.model) { · {{ route.effective?.model }} }
+                ({{ route.rule }})</span>
+            }
+          </div>
+        }
         <app-model-migration-badge [model]="primaryModel(g.cliType)" [pending]="savingCli() === g.cliType"
           testId="cli-models-migration" (apply)="setPrimary(g.cliType, $event)" />
         <button class="cli-models__refresh"

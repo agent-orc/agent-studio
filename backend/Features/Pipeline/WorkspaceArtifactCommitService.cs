@@ -18,6 +18,7 @@ public sealed class WorkspaceArtifactCommitService
 {
     private const string CommitterName = "agent-orchestrator";
     private const string CommitterEmail = "agent-orchestrator@local";
+    private const string JobLogFolder = "logs";
 
     private readonly IConfiguration _configuration;
     private readonly ILogger<WorkspaceArtifactCommitService> _logger;
@@ -31,6 +32,8 @@ public sealed class WorkspaceArtifactCommitService
     private readonly int _lockRetryRounds;
     private readonly TimeProvider _time;
     private readonly ConcurrentDictionary<long, Task> _lockRetries = new();
+    private readonly ConcurrentDictionary<string, byte> _refusedFileNotices =
+        new(StringComparer.OrdinalIgnoreCase);
     private long _nextLockRetry;
 
     // Per-repo serialization gate. The punctual job-folder commits and the
@@ -62,8 +65,8 @@ public sealed class WorkspaceArtifactCommitService
         _indexLockRetryBackoffMs = Math.Clamp(
             configuration.GetValue<int?>("WorkspaceEvidence:IndexLockRetryBackoffMs") ?? 100, 0, 5000);
         _maximumFileBytes = Math.Clamp(
-            configuration.GetValue<long?>("WorkspaceArtifacts:MaximumFileBytes") ?? 50L * 1024 * 1024,
-            1L * 1024 * 1024,
+            configuration.GetValue<long?>("WorkspaceArtifacts:MaximumFileBytes") ?? 5L * 1024 * 1024,
+            1L,
             95L * 1024 * 1024);
         _addBytesPerSecond = Math.Clamp(
             configuration.GetValue<long?>("WorkspaceEvidence:GitAddBytesPerSecond")
@@ -264,6 +267,10 @@ public sealed class WorkspaceArtifactCommitService
                 var oversized = FindOversizedFiles(gitRoot, pathspecs);
                 UnstageRefusedFiles(gitRoot, oversized);
                 var refusedSpecs = BuildLiteralExcludePathspecs(oversized);
+                // Raw CLI and session logs stay on disk only; the job commit
+                // carries the reviewed evidence, never the log folder.
+                refusedSpecs.AddRange(BuildLiteralExcludePathspecs(
+                    pathspecs.Select(pathspec => pathspec + "/" + JobLogFolder).ToList()));
                 var writeTimeout = AddTimeout(gitRoot, pathspecs, refusedSpecs);
                 var addArgs = new List<string> { "add", "-A", "--" };
                 addArgs.AddRange(pathspecs);
@@ -647,7 +654,8 @@ public sealed class WorkspaceArtifactCommitService
 
                 var candidates = modified.Out
                     .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    .Where(path => !IsRuntimeOnlyPath(path))
+                    .Where(path => !IsRuntimeOnlyPath(path)
+                        && !AgentStudio.Git.SecurityStorePathPolicy.IsSecurityStorePath(path))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
                 var oversized = FindOversizedFiles(gitRoot, candidates);
@@ -665,6 +673,12 @@ public sealed class WorkspaceArtifactCommitService
                     if (add.Code != 0)
                         return WorkspaceArtifactCommitResult.Failed("git-add", add.ErrorText);
                 }
+
+                // The sweep commits the whole index, so .security/ content
+                // staged by anything else is unstaged first. Staged removals
+                // stay: they come from untracking the folder.
+                var unstage = UnstageSecurityStoreContent(gitRoot);
+                if (unstage != null) return unstage;
 
                 var changed = RunGit(gitRoot, ["diff", "--cached", "--quiet"]);
                 if (changed.Code == 0)
@@ -720,12 +734,14 @@ public sealed class WorkspaceArtifactCommitService
                 try
                 {
                     var size = new FileInfo(file).Length;
-                    if (size <= _maximumFileBytes) continue;
                     var relative = Path.GetRelativePath(gitRoot, file).Replace('\\', '/');
+                    var limit = IsSettlementJournal(relative) ? 5L * 1024 * 1024 : _maximumFileBytes;
+                    if (size <= limit) continue;
                     if (!refused.Add(relative)) continue;
-                    _logger.LogWarning(
-                        "workspace-artifact-file-refused path={Path} bytes={Bytes} maximumBytes={MaximumBytes}",
-                        relative, size, _maximumFileBytes);
+                    if (_refusedFileNotices.TryAdd(file, 0))
+                        _logger.LogWarning(
+                            "workspace-artifact-file-refused path={Path} bytes={Bytes} maximumBytes={MaximumBytes}",
+                            relative, size, limit);
                 }
                 catch (IOException ex)
                 {
@@ -736,6 +752,10 @@ public sealed class WorkspaceArtifactCommitService
         return refused.ToList();
     }
 
+    internal static bool IsSettlementJournal(string path)
+        => path.Replace('\\', '/').Contains("/logs/remote-review-settlement-", StringComparison.Ordinal)
+           && path.EndsWith(".json", StringComparison.Ordinal);
+
     private void UnstageRefusedFiles(string gitRoot, IReadOnlyList<string> refused)
     {
         if (refused.Count == 0) return;
@@ -745,6 +765,29 @@ public sealed class WorkspaceArtifactCommitService
         if (reset.Code != 0)
             _logger.LogWarning("workspace-artifact refused-file reset failed root={Root} error={Error}", gitRoot, reset.ErrorText);
     }
+
+    private WorkspaceArtifactCommitResult? UnstageSecurityStoreContent(string gitRoot)
+    {
+        var staged = RunGit(gitRoot,
+            ["diff", "--cached", "--name-only", "-z", "--no-renames", "--diff-filter=d", "--",
+                $":(top,icase){AgentStudio.Git.SecurityStorePathPolicy.DirectoryName}"]);
+        if (staged.Code != 0)
+            return WorkspaceArtifactCommitResult.Failed("git-diff-cached", staged.ErrorText);
+        var paths = staged.Out.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        if (paths.Length == 0) return null;
+
+        var resetArgs = new List<string> { "reset", "-q", "--" };
+        resetArgs.AddRange(BuildLiteralPathspecs(paths));
+        var reset = RunGitRetryingIndexLock(gitRoot, resetArgs);
+        if (reset.Code != 0)
+            return WorkspaceArtifactCommitResult.Failed("security-store-unstage", reset.ErrorText);
+        _logger.LogWarning("workspace-tracked-sweep skipped staged .security paths count={Count} root={Root}",
+            paths.Length, gitRoot);
+        return null;
+    }
+
+    private static List<string> BuildLiteralPathspecs(IEnumerable<string> paths) =>
+        paths.Select(path => $":(top,literal){path}").ToList();
 
     private static List<string> BuildLiteralExcludePathspecs(IReadOnlyList<string> paths) =>
         paths.Select(path => $":(exclude,top,literal){path}").ToList();

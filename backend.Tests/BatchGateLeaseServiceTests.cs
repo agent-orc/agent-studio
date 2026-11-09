@@ -15,9 +15,11 @@ public sealed class BatchGateLeaseServiceTests
         {
             var leases = new BatchGateLeaseService(root, now: () => now);
             var first = leases.TryAcquire(scope, "host-a")!;
+            Assert.True(leases.IsBusy(scope));
             Assert.True(leases.IsCurrent(first));
             Assert.Null(leases.TryAcquire(scope, "host-b"));
             now += TimeSpan.FromMinutes(3);
+            Assert.False(leases.IsBusy(scope));
             var second = leases.TryAcquire(scope, "host-b")!;
             Assert.True(second.Fence > first.Fence);
             Assert.False(leases.IsCurrent(first));
@@ -43,12 +45,14 @@ public sealed class BatchGateLeaseServiceTests
             using (var guard = new FileStream(Path.Combine(folder, "lock"),
                        FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
+                Assert.True(leases.IsBusy(scope));
                 Assert.Null(leases.Renew(lease));
                 Assert.False(leases.IsCurrent(lease));
                 Assert.False(leases.Release(lease));
             }
             Assert.True(leases.IsCurrent(lease));
             Assert.True(leases.Release(lease));
+            Assert.False(leases.IsBusy(scope));
         }
         finally
         {

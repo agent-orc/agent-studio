@@ -23,6 +23,7 @@ public static class PipelineHealthConventions
     public const int ArtifactUploadAfterSettlementAttempts = 3;
     public static readonly TimeSpan ArtifactUploadAfterSettlementWindow = TimeSpan.FromHours(1);
     public const string IntegrationLaneDivergedKind = "integration-lane-diverged";
+    public const string BatchAdmissionFailedKind = "batch-admission-failed";
 }
 
 public sealed record PipelineGateContext(
@@ -279,7 +280,7 @@ public sealed class PipelineHealthService
         new(StringComparer.OrdinalIgnoreCase);
     private readonly AutoReviewQueueStagnationWatchdog? _reviewQueue;
     private readonly RemoteQueueStarvationWatchdog? _queueStarvation;
-    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> _laneBlockedCards =
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, DateTime>> _laneBlockedCards =
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Alert identity of the review-claim stall, separate from the file-based lane drain.</summary>
@@ -340,7 +341,8 @@ public sealed class PipelineHealthService
             || lanes.Any(lane => lane.IsStalled)
             || alerts.Any(alert => alert.Kind is PipelineHealthConventions.EvidenceFlushStalledKind
                 or PipelineHealthConventions.ArtifactUploadAfterSettlementKind
-                or PipelineHealthConventions.IntegrationLaneDivergedKind)
+                or PipelineHealthConventions.IntegrationLaneDivergedKind
+                or PipelineHealthConventions.BatchAdmissionFailedKind)
             || _currentAlerts.ContainsKey(project + "\0" + ReviewClaimStallIdentity);
         return new PipelineHealthSnapshot(
             project,
@@ -440,6 +442,40 @@ public sealed class PipelineHealthService
     private static string ArtifactUploadAfterSettlementIdentity(string runnerId)
         => "artifact-after-settlement:" + runnerId;
 
+    public void BatchAdmissionFailed(string project, string watchPath, string jobId,
+        string reviewAttemptId, string reason)
+    {
+        var identity = BatchAdmissionIdentity(jobId, reviewAttemptId);
+        var alert = new PipelineHealthAlert(
+            PipelineHealthConventions.BatchAdmissionFailedKind, "high",
+            $"Batch admission failed for {jobId}",
+            $"Settled review {reviewAttemptId} has no batch entry or completed per-task gate. {reason}",
+            DateTime.UtcNow, jobId);
+        // The feed is durable across restarts. The snapshot is rebuilt by the
+        // admission recovery pass, but the operator receives one entry per card.
+        var alreadyReported = _orchestratorLog.Read(watchPath).Any(entry =>
+            entry.Kind == OrchestratorLogKinds.Alert
+            && entry.Topic == OrchestratorLogTopics.PipelineHealth
+            && entry.JobId == jobId
+            && entry.Reasoning?.Contains(reviewAttemptId, StringComparison.Ordinal) == true);
+        if (alreadyReported)
+        {
+            _currentAlerts[project + "\0" + identity] = alert;
+            return;
+        }
+        EmitAlert(project, watchPath, alert, identity);
+    }
+
+    public void BatchAdmissionRecovered(string project, string jobId, string reviewAttemptId)
+    {
+        var key = project + "\0" + BatchAdmissionIdentity(jobId, reviewAttemptId);
+        _currentAlerts.TryRemove(key, out _);
+        _lastAlertAt.TryRemove(key, out _);
+    }
+
+    private static string BatchAdmissionIdentity(string jobId, string reviewAttemptId)
+        => "batch-admission:" + jobId + ":" + reviewAttemptId;
+
     /// <summary>
     /// Raises <c>integration-lane-diverged</c> (AGT-3215): the lane carries
     /// genuinely unpublished work while origin moved on, so no delivery
@@ -452,8 +488,20 @@ public sealed class PipelineHealthService
         var identity = IntegrationLaneIdentity(stall.Branch);
         var blocked = _laneBlockedCards.GetOrAdd(
             stall.Project + "\0" + identity,
-            _ => new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase));
-        blocked[stall.JobId] = 0;
+            _ => new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase));
+        blocked.AddOrUpdate(stall.JobId, stall.DetectedAtUtc, (_, _) => stall.DetectedAtUtc);
+        var jobs = _scanner.ScanAllAutomationJobsWithArchive()
+            .Where(job => string.Equals(job.ProjectName, stall.Project, StringComparison.OrdinalIgnoreCase)
+                || (stall.WatchPath is not null && WatchPathComparison.PathsEqual(job.WatchPath, stall.WatchPath)))
+            .GroupBy(job => job.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        foreach (var (card, blockedAt) in blocked)
+        {
+            if (jobs.TryGetValue(card, out var job)
+                && IntegrationLaneEvents.Read(job.FolderPath).Any(entry =>
+                    entry.Kind == "published" && entry.AtUtc.UtcDateTime > blockedAt))
+                blocked.TryRemove(card, out _);
+        }
         var cards = blocked.Keys.OrderBy(key => key, StringComparer.OrdinalIgnoreCase).ToArray();
         var commits = stall.Commits
             .Where(commit => commit.Status == AgentStudio.Git.LaneCommitStatus.Unpublished)

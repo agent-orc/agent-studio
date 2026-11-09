@@ -372,6 +372,39 @@ entry has `key`, `releaseId`, `releaseVersion` and `rolledBack`; a rollback
 moves the withdrawn release's cards back to `waiting` and marks them rolled
 back. Membership follows release creation order, as the status projection
 does, so the read runs no git. Card lane states never change.
+The integrated column uses a project-local verification map. Writes and
+deletions through `IntegrationVerificationStore` update the next response;
+changes made directly to verification files are reconciled no later than the
+first Delivery read after the five-minute interval elapses. Warm reads do not probe
+every verification file. The process retains at most 4,096 recent store
+publications. A project that falls behind that window scans its current cards
+once on its next read, so pruning cannot hide a verification change.
+
+AGT-3538 measured the route on this runner host with the same generated
+3,000-card fixture and `TestServer` request to
+`/api/projects/demo/deploy/lanes`: one warmup, then 20 sequential warm reads.
+Each row is the median in milliseconds. A callback timed the code inside
+`DeployService._gate`; HTTP timing includes the handler and response body.
+On 9 November 2026, the required before commit was the result of
+`git merge-base HEAD origin/develop`, `ea372702d`. The benchmark ran with
+`HEAD` checked out at that commit. The after run used delivery `65d6e6109`.
+Both commits have identical tracked trees, so this pair measures host variation
+and does not quantify an implementation change.
+
+| Version | Request | Deploy lock hold |
+| --- | ---: | ---: |
+| Before, merge base `ea372702d`, 9 November | 184.79 ms | 1.49 ms |
+| After, delivery `65d6e6109`, 9 November | 199.73 ms | 1.52 ms |
+
+The earlier 8 November comparison used `433f34c6b`, the parent of the
+original delivery, as its baseline. It measured 211.83 ms per request and
+208.83 ms inside the lock, versus 178.40 ms and 1.36 ms after the change.
+That commit is not the required merge base for this delivery. Other jobs were
+active on the shared host during the 9 November runs, so these are host
+measurements, not an isolated latency guarantee. The repository benchmark
+test wrote the merge-base sample to
+`JOB_RESULTS_DIR/delivery-columns-merge-base.md` and the current-delivery
+sample is preserved in `JOB_RESULTS_DIR/delivery-columns-current.md`.
 
 The board renders it as the Delivery group after "Done & Decide" (AGT-3316,
 `<app-delivery-section>`): one column per read-model column, landed cards, a

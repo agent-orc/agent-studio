@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Net;
+using System.Security.Cryptography;
 
 namespace AgentStudio.Security;
 
@@ -34,6 +35,8 @@ public sealed partial class AccessSecurityStore
     private readonly Dictionary<string, LoginAttempt> _usernameLoginAttempts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTime> _recentSuccessfulLogins = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTime> _usernameClientDelays = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _pendingTotpSecrets = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string Challenge, DateTime ExpiresAt)> _passkeyChallenges = new(StringComparer.Ordinal);
     private readonly LoginOverflowBudget _overflowClientAttempts = new();
     private readonly LoginOverflowBudget _overflowUsernameAttempts = new();
     private readonly LoginOverflowBudget _overflowDelays = new();
@@ -42,8 +45,10 @@ public sealed partial class AccessSecurityStore
     private readonly SemaphoreSlim _passwordHashSlots;
     private readonly SemaphoreSlim _returningClientHashSlot = new(1, 1);
     private readonly Func<string, string, bool> _verifyPassword;
+    private readonly Func<string, string> _hashPassword;
     private static readonly string DummyPasswordHash = PasswordSecretHasher.HashPassword(PasswordSecretHasher.RandomToken());
     private SecurityState? _state;
+    private bool _lastSeenDirty;
 
     public AccessSecurityStore(IConfiguration configuration, ILogger<AccessSecurityStore> logger, TimeProvider? clock = null)
         : this(configuration, logger, clock, PasswordSecretHasher.VerifyPassword)
@@ -51,16 +56,21 @@ public sealed partial class AccessSecurityStore
     }
 
     internal AccessSecurityStore(IConfiguration configuration, ILogger<AccessSecurityStore> logger,
-        TimeProvider? clock, Func<string, string, bool> verifyPassword)
+        TimeProvider? clock, Func<string, string, bool> verifyPassword, Func<string, string>? hashPassword = null)
     {
         _configuration = configuration;
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
         _verifyPassword = verifyPassword;
+        _hashPassword = hashPassword ?? PasswordSecretHasher.HashPassword;
+        ControlPlaneAudit = new ControlPlaneAuditLog(SecurityFolder, _clock, logger);
         _passwordHashSlots = new SemaphoreSlim(Math.Clamp(
             configuration.GetValue("Security:LoginThrottle:MaxConcurrentHashes", Math.Max(2, Environment.ProcessorCount)),
             1, Math.Max(2, Environment.ProcessorCount)));
     }
+
+    /// <summary>The control plane audit chain in <see cref="SecurityFolder"/> (security model SM-1).</summary>
+    public ControlPlaneAuditLog ControlPlaneAudit { get; }
 
     public string SecurityFolder => Path.Combine(
         string.IsNullOrWhiteSpace(_configuration["TaskRepository"])
@@ -85,7 +95,7 @@ public sealed partial class AccessSecurityStore
         get { lock (_gate) return StateLocked().Users.Count == 0; }
     }
 
-    public (StudioUser User, string SessionToken, string CsrfToken) Bootstrap(BootstrapRequest request)
+    public (StudioUser User, string SessionToken, string CsrfToken) Bootstrap(BootstrapRequest request, bool publicEntry = false)
     {
         ValidateUsername(request.Username);
         ValidatePassword(request.Password, request.Username);
@@ -100,7 +110,7 @@ public sealed partial class AccessSecurityStore
                 Username = NormalizeUsername(request.Username),
                 DisplayName = string.IsNullOrWhiteSpace(request.DisplayName) ? (request.Username ?? string.Empty).Trim() : request.DisplayName.Trim(),
                 Role = StudioRoles.Owner,
-                PasswordHash = PasswordSecretHasher.HashPassword(request.Password ?? string.Empty),
+                PasswordHash = _hashPassword(request.Password ?? string.Empty),
                 CreatedAt = now,
                 PasswordChangedAt = now
             };
@@ -109,14 +119,16 @@ public sealed partial class AccessSecurityStore
                 new IamGrantRequest(IamRoles.Owner, IamScope.Workspace), IamBindingSources.Bootstrap, user.Id);
             state.RoleBindings.Add(binding);
             state.IamVersion = CurrentIamVersion;
-            var created = CreateSessionLocked(state, user);
+            var created = CreateSessionLocked(state, user, enrollmentOnly: publicEntry);
             SaveLocked(state);
             AuditBindings(user.Id, "binding.add", [binding]);
             return (user, created.Token, created.Csrf);
         }
     }
 
-    public (StudioUser User, string SessionToken, string CsrfToken) Login(string username, string password, string clientKey)
+    public (StudioUser User, string SessionToken, string CsrfToken) Login(string username, string password, string clientKey,
+        string? secondFactorCode = null, bool requireSecondFactor = false, string? device = null, string? address = null,
+        PasskeyAssertionProof? passkey = null, string? origin = null, string? rpId = null)
     {
         // Reject oversized input before normalization can retain a user-controlled key.
         var normalized = (username?.Length ?? 0) > 64 ? null : NormalizeUsername(username);
@@ -246,12 +258,33 @@ public sealed partial class AccessSecurityStore
                     throw new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
                 }
 
+                var needsEnrollment = requireSecondFactor && (current.Role is StudioRoles.Owner or StudioRoles.Operator)
+                    && string.IsNullOrEmpty(current.TotpSecret) && current.Passkeys.Count == 0;
+                if (requireSecondFactor && (current.Role is StudioRoles.Owner or StudioRoles.Operator) && !needsEnrollment)
+                {
+                    try
+                    {
+                        if (passkey is not null)
+                            VerifyPasskeyLocked(state, current, passkey, normalized + "|" + clientKey, origin, rpId);
+                        else VerifySecondFactorLocked(state, current, secondFactorCode);
+                    }
+                    catch (SecurityOperationException ex) when (ex.Code is "invalid-second-factor" or "invalid-passkey")
+                    {
+                        RegisterLoginFailureLocked(_clientLoginAttempts, clientKey, now,
+                            _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10), ClientLockout, MaxTrackedClients);
+                        RegisterLoginFailureLocked(_usernameLoginAttempts, normalized, now,
+                            _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20), null, MaxTrackedUsernames);
+                        RecordNetworkFailureLocked(networkKey, now);
+                        throw;
+                    }
+                }
+
                 _clientLoginAttempts.Remove(clientKey);
                 if (!EnsureLoginCapacityLocked(_recentSuccessfulLogins, loginKey!, MaxRecentSuccesses))
                     _recentSuccessfulLogins.Remove(_recentSuccessfulLogins.MinBy(x => x.Value).Key);
                 _recentSuccessfulLogins[loginKey!] = now;
                 _usernameClientDelays.Remove(loginKey!);
-                var created = CreateSessionLocked(state, current);
+                var created = CreateSessionLocked(state, current, device, address, needsEnrollment);
                 SaveLocked(state);
                 return (current, created.Token, created.Csrf);
             }
@@ -262,17 +295,29 @@ public sealed partial class AccessSecurityStore
     public HumanPrincipal? AuthenticateSession(string? token, bool touch = true)
     {
         if (!TryTokenParts(token, "ssn", out var id)) return null;
+        string tokenHash;
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var session = state.Sessions.FirstOrDefault(x => x.Id == id);
+            if (session is null) return null;
+            if (session.ExpiresAt <= Now || session.AbsoluteExpiresAt <= Now)
+            {
+                state.Sessions.Remove(session);
+                _lastSeenDirty = true;
+                return null;
+            }
+            tokenHash = session.TokenHash;
+        }
+        // Secret verification is CPU intensive and must not hold the global gate.
+        if (!PasswordSecretHasher.VerifySecret(token!, tokenHash)) return null;
         lock (_gate)
         {
             var state = StateLocked();
             var now = Now;
             var session = state.Sessions.FirstOrDefault(x => x.Id == id);
-            if (session is null || session.ExpiresAt <= now || session.AbsoluteExpiresAt <= now
-                || !PasswordSecretHasher.VerifySecret(token!, session.TokenHash))
-            {
-                if (session is not null) { state.Sessions.Remove(session); SaveLocked(state); }
-                return null;
-            }
+            if (session is null || session.TokenHash != tokenHash
+                || session.ExpiresAt <= now || session.AbsoluteExpiresAt <= now) return null;
             var user = state.Users.FirstOrDefault(x => x.Id == session.UserId && !x.Disabled);
             if (user is null) return null;
             if (touch && now - session.LastSeenAt >= TimeSpan.FromMinutes(1))
@@ -281,7 +326,7 @@ public sealed partial class AccessSecurityStore
                 var updated = session with { LastSeenAt = now, ExpiresAt = Min(now + sliding, session.AbsoluteExpiresAt) };
                 state.Sessions[state.Sessions.IndexOf(session)] = updated;
                 session = updated;
-                SaveLocked(state);
+                _lastSeenDirty = true;
             }
             return new HumanPrincipal(user, session);
         }
@@ -298,6 +343,257 @@ public sealed partial class AccessSecurityStore
             state.Sessions.RemoveAll(x => x.Id == session.Id);
             SaveLocked(state);
         }
+    }
+
+    public string BeginTotpEnrollment(HumanPrincipal principal)
+    {
+        lock (_gate)
+        {
+            var state = StateLocked();
+            if (!state.Users.Any(x => x.Id == principal.User.Id && !x.Disabled))
+                throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+            var secret = SecondFactorCodes.NewTotpSecret();
+            _pendingTotpSecrets[principal.User.Id] = secret;
+            return secret;
+        }
+    }
+
+    public IReadOnlyList<string> ConfirmTotpEnrollment(HumanPrincipal principal, string code)
+    {
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
+                ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+            if (!_pendingTotpSecrets.TryGetValue(user.Id, out var secret)
+                || !SecondFactorCodes.VerifyTotp(secret, code, Now))
+                throw new SecurityOperationException(400, "invalid-second-factor", "The authenticator code is invalid.");
+            var recovery = SecondFactorCodes.NewRecoveryCodes();
+            state.Users[state.Users.IndexOf(user)] = user with
+            {
+                TotpSecret = secret,
+                RecoveryCodeHashes = recovery.Select(SecondFactorCodes.HashRecoveryCode).ToList()
+            };
+            _pendingTotpSecrets.Remove(user.Id);
+            var session = state.Sessions.FirstOrDefault(x => x.Id == principal.Session.Id);
+            if (session is not null)
+                state.Sessions[state.Sessions.IndexOf(session)] = session with { SecondFactorEnrollmentOnly = false };
+            SaveLocked(state);
+            return recovery;
+        }
+    }
+
+    public void VerifyStepUp(HumanPrincipal principal, string? code)
+    {
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
+                ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+            VerifySecondFactorLocked(state, user, code);
+            MarkStepUpLocked(state, principal);
+            SaveLocked(state);
+        }
+    }
+
+    public string BeginPasskeyRegistration(HumanPrincipal principal)
+    {
+        lock (_gate)
+        {
+            var challenge = WebAuthnProofs.NewChallenge();
+            StorePasskeyChallengeLocked("register:" + principal.Session.Id, challenge);
+            return challenge;
+        }
+    }
+
+    public IReadOnlyList<string> RegisterPasskey(HumanPrincipal principal, PasskeyRegistrationProof proof,
+        string origin, string rpId)
+    {
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
+                ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+            var key = "register:" + principal.Session.Id;
+            if (!_passkeyChallenges.Remove(key, out var pending) || pending.ExpiresAt <= Now)
+                throw new SecurityOperationException(400, "passkey-challenge-expired", "Start passkey setup again.");
+            string publicKey;
+            try
+            {
+                WebAuthnProofs.VerifyClientData(proof.ClientDataJson, "webauthn.create", pending.Challenge, origin);
+                publicKey = WebAuthnProofs.RegistrationPublicKey(proof.AuthenticatorData, proof.CredentialId, rpId);
+            }
+            catch (Exception ex) when (ex is CryptographicException or FormatException or JsonException)
+            {
+                throw new SecurityOperationException(400, "invalid-passkey", "Passkey registration could not be verified.");
+            }
+            if (state.Users.Any(x => x.Passkeys.Any(p => p.Id == proof.CredentialId)))
+                throw new SecurityOperationException(409, "passkey-exists", "This passkey is already registered.");
+            var recovery = user.RecoveryCodeHashes.Count == 0 ? SecondFactorCodes.NewRecoveryCodes() : [];
+            var name = proof.Name ?? "Passkey";
+            state.Users[state.Users.IndexOf(user)] = user with
+            {
+                Passkeys = [.. user.Passkeys, new StudioPasskey(proof.CredentialId,
+                    name.Length > 80 ? name[..80] : name, publicKey, 0, Now)],
+                RecoveryCodeHashes = recovery.Count == 0 ? user.RecoveryCodeHashes : recovery.Select(SecondFactorCodes.HashRecoveryCode).ToList()
+            };
+            var session = state.Sessions.FirstOrDefault(x => x.Id == principal.Session.Id);
+            if (session is not null)
+                state.Sessions[state.Sessions.IndexOf(session)] = session with { SecondFactorEnrollmentOnly = false };
+            SaveLocked(state);
+            return recovery;
+        }
+    }
+
+    public string BeginPasskeyAssertion(string username, string clientKey)
+    {
+        if (string.IsNullOrWhiteSpace(username) || username.Length > 64 || clientKey.Length > 64)
+            throw new SecurityOperationException(400, "invalid-request", "Username is invalid.");
+        lock (_gate)
+        {
+            var challenge = WebAuthnProofs.NewChallenge();
+            StorePasskeyChallengeLocked(NormalizeUsername(username) + "|" + clientKey.Trim().ToLowerInvariant(), challenge);
+            return challenge;
+        }
+    }
+
+    public string BeginPasskeyStepUp(HumanPrincipal principal)
+    {
+        lock (_gate)
+        {
+            var challenge = WebAuthnProofs.NewChallenge();
+            StorePasskeyChallengeLocked("step-up:" + principal.Session.Id, challenge);
+            return challenge;
+        }
+    }
+
+    public void VerifyPasskeyStepUp(HumanPrincipal principal, PasskeyAssertionProof proof, string origin, string rpId)
+    {
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
+                ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+            VerifyPasskeyLocked(state, user, proof, "step-up:" + principal.Session.Id, origin, rpId);
+            MarkStepUpLocked(state, principal);
+            SaveLocked(state);
+        }
+    }
+
+    private void VerifyPasskeyLocked(SecurityState state, StudioUser user, PasskeyAssertionProof proof,
+        string challengeKey, string? origin, string? rpId)
+    {
+        if (!_passkeyChallenges.Remove(challengeKey, out var pending) || pending.ExpiresAt <= Now)
+            throw new SecurityOperationException(401, "passkey-challenge-expired", "Start passkey verification again.");
+        var passkey = user.Passkeys.FirstOrDefault(x => x.Id == proof.CredentialId)
+            ?? throw new SecurityOperationException(401, "invalid-passkey", "Passkey is not registered.");
+        try
+        {
+            var count = WebAuthnProofs.VerifyAssertion(proof.ClientDataJson, proof.AuthenticatorData,
+                proof.Signature, passkey.PublicKey, pending.Challenge, origin ?? string.Empty,
+                rpId ?? string.Empty, passkey.SignCount);
+            state.Users[state.Users.IndexOf(user)] = user with
+            {
+                Passkeys = user.Passkeys.Select(x => x.Id == passkey.Id ? x with { SignCount = count } : x).ToList()
+            };
+        }
+        catch (Exception ex) when (ex is CryptographicException or FormatException or JsonException)
+        {
+            throw new SecurityOperationException(401, "invalid-passkey", "Passkey verification failed.");
+        }
+    }
+
+    private void StorePasskeyChallengeLocked(string key, string challenge)
+    {
+        foreach (var expired in _passkeyChallenges.Where(x => x.Value.ExpiresAt <= Now).Select(x => x.Key).ToArray())
+            _passkeyChallenges.Remove(expired);
+        if (_passkeyChallenges.Count >= 8192 && !_passkeyChallenges.ContainsKey(key))
+            throw new SecurityOperationException(429, "passkey-busy", "Passkey verification is busy. Try again later.");
+        _passkeyChallenges[key] = (challenge, Now.AddMinutes(5));
+    }
+
+    public IReadOnlyList<SessionResponse> ListSessions(HumanPrincipal principal, string? userId = null)
+    {
+        lock (_gate)
+        {
+            var target = userId ?? principal.User.Id;
+            if (target != principal.User.Id && principal.User.Role != StudioRoles.Owner)
+                throw new SecurityOperationException(403, "owner-required", "Owner role is required.");
+            return StateLocked().Sessions.Where(x => x.UserId == target && x.ExpiresAt > Now && x.AbsoluteExpiresAt > Now)
+                .OrderByDescending(x => x.LastSeenAt)
+                .Select(x => new SessionResponse(x.Id, x.Device, x.Address, x.CreatedAt, x.LastSeenAt,
+                    x.Id == principal.Session.Id)).ToArray();
+        }
+    }
+
+    public void RevokeSession(HumanPrincipal principal, string sessionId, string? userId = null)
+    {
+        lock (_gate)
+        {
+            var target = userId ?? principal.User.Id;
+            if (target != principal.User.Id && principal.User.Role != StudioRoles.Owner)
+                throw new SecurityOperationException(403, "owner-required", "Owner role is required.");
+            var state = StateLocked();
+            if (!state.Sessions.Any(x => x.UserId == target && x.Id == sessionId))
+                throw new SecurityOperationException(404, "session-not-found", "Session not found.");
+            if (userId is not null) ConsumeStepUpLocked(state, principal);
+            state.Sessions.RemoveAll(x => x.UserId == target && x.Id == sessionId);
+            SaveLocked(state);
+        }
+    }
+
+    public void RevokeOtherSessions(HumanPrincipal principal, string? userId = null)
+    {
+        lock (_gate)
+        {
+            var target = userId ?? principal.User.Id;
+            if (target != principal.User.Id && principal.User.Role != StudioRoles.Owner)
+                throw new SecurityOperationException(403, "owner-required", "Owner role is required.");
+            var state = StateLocked();
+            if (userId is not null) ConsumeStepUpLocked(state, principal);
+            state.Sessions.RemoveAll(x => x.UserId == target && x.Id != principal.Session.Id);
+            SaveLocked(state);
+        }
+    }
+
+    private void MarkStepUpLocked(SecurityState state, HumanPrincipal principal)
+    {
+        var session = state.Sessions.FirstOrDefault(x => x.Id == principal.Session.Id && x.UserId == principal.User.Id)
+            ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+        if (session.SecondFactorEnrollmentOnly || session.ExpiresAt <= Now || session.AbsoluteExpiresAt <= Now)
+            throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+        state.Sessions[state.Sessions.IndexOf(session)] = session with { StepUpVerifiedAt = Now };
+    }
+
+    private void ConsumeStepUpLocked(SecurityState state, HumanPrincipal principal,
+        string message = "Verify a second factor before managing sessions.")
+    {
+        var session = state.Sessions.FirstOrDefault(x => x.Id == principal.Session.Id && x.UserId == principal.User.Id);
+        if (session?.StepUpVerifiedAt is not { } verifiedAt || session.SecondFactorEnrollmentOnly
+            || session.ExpiresAt <= Now || session.AbsoluteExpiresAt <= Now
+            || verifiedAt > Now || Now - verifiedAt > TimeSpan.FromMinutes(5))
+            throw new SecurityOperationException(403, "step-up-required", message);
+        state.Sessions[state.Sessions.IndexOf(session)] = session with { StepUpVerifiedAt = null };
+    }
+
+    private void VerifySecondFactorLocked(SecurityState state, StudioUser user, string? code)
+    {
+        if (string.IsNullOrEmpty(user.TotpSecret) && user.Passkeys.Count == 0)
+            throw new SecurityOperationException(403, "second-factor-required", "Register a second factor before signing in.");
+        if (string.IsNullOrWhiteSpace(code))
+            throw new SecurityOperationException(401, "second-factor-required", "A second factor is required.");
+        if (user.TotpSecret is not null && SecondFactorCodes.VerifyTotp(user.TotpSecret, code, Now)) return;
+        var recoveryHash = user.RecoveryCodeHashes.FirstOrDefault(hash => SecondFactorCodes.VerifyRecoveryCode(code, hash));
+        if (recoveryHash is not null)
+        {
+            state.Users[state.Users.IndexOf(user)] = user with
+            {
+                RecoveryCodeHashes = user.RecoveryCodeHashes.Where(hash => hash != recoveryHash).ToList()
+            };
+            SaveLocked(state);
+            return;
+        }
+        throw new SecurityOperationException(401, "invalid-second-factor", "The second factor is invalid.");
     }
 
     public StudioUser ChangePassword(HumanPrincipal principal, ChangePasswordRequest request)
@@ -319,7 +615,7 @@ public sealed partial class AccessSecurityStore
         {
             var matches = (request.CurrentPassword?.Length ?? 0) <= 128
                 && _verifyPassword(request.CurrentPassword ?? string.Empty, user.PasswordHash);
-            var newHash = matches ? PasswordSecretHasher.HashPassword(request.NewPassword ?? string.Empty) : null;
+            var newHash = matches ? _hashPassword(request.NewPassword ?? string.Empty) : null;
             lock (_gate)
             {
                 var state = StateLocked();
@@ -370,7 +666,7 @@ public sealed partial class AccessSecurityStore
             {
                 Id = "usr_" + Guid.NewGuid().ToString("N"), Username = username,
                 DisplayName = string.IsNullOrWhiteSpace(request.DisplayName) ? (request.Username ?? string.Empty).Trim() : request.DisplayName.Trim(), Role = request.Role,
-                Projects = NormalizeProjects(request.Projects), PasswordHash = PasswordSecretHasher.HashPassword(temporary),
+                Projects = NormalizeProjects(request.Projects), PasswordHash = _hashPassword(temporary),
                 MustChangePassword = true, CreatedAt = now, PasswordChangedAt = now
             };
             state.Users.Add(user);
@@ -397,11 +693,11 @@ public sealed partial class AccessSecurityStore
                 Id = "usr_" + Guid.NewGuid().ToString("N"), Username = username,
                 DisplayName = string.IsNullOrWhiteSpace(request.DisplayName) ? username : request.DisplayName.Trim(),
                 Role = request.Role, Projects = NormalizeProjects(request.Projects),
-                PasswordHash = PasswordSecretHasher.HashPassword(PasswordSecretHasher.RandomToken()),
+                PasswordHash = _hashPassword(PasswordSecretHasher.RandomToken()),
                 MustChangePassword = true, CreatedAt = now, PasswordChangedAt = now
             };
             var id = Guid.NewGuid().ToString("N");
-            var token = $"inv.{id}.{PasswordSecretHasher.RandomToken()}";
+            var token = Issued($"inv.{id}.{PasswordSecretHasher.RandomToken()}");
             var expiresAt = now.AddHours(24);
             state.Users.Add(user);
             (user, var bindings) = AddUserGrantsLocked(state, user, grants, actingUserId);
@@ -415,7 +711,7 @@ public sealed partial class AccessSecurityStore
         }
     }
 
-    public (StudioUser User, string SessionToken, string CsrfToken) AcceptInvitation(AcceptInvitationRequest request)
+    public (StudioUser User, string SessionToken, string CsrfToken) AcceptInvitation(AcceptInvitationRequest request, bool publicEntry = false)
     {
         if (!TryTokenParts(request.Token, "inv", out var id))
             throw new SecurityOperationException(401, "invalid-invitation", "Invitation is invalid or expired.");
@@ -431,12 +727,13 @@ public sealed partial class AccessSecurityStore
             ValidatePassword(request.NewPassword, user.Username);
             var updated = user with
             {
-                PasswordHash = PasswordSecretHasher.HashPassword(request.NewPassword),
+                PasswordHash = _hashPassword(request.NewPassword),
                 MustChangePassword = false, PasswordChangedAt = Now
             };
             state.Users[state.Users.IndexOf(user)] = updated;
             state.Invitations[state.Invitations.IndexOf(invitation)] = invitation with { UsedAt = Now };
-            var session = CreateSessionLocked(state, updated);
+            var session = CreateSessionLocked(state, updated,
+                enrollmentOnly: publicEntry && (updated.Role is StudioRoles.Owner or StudioRoles.Operator));
             SaveLocked(state);
             return (updated, session.Token, session.Csrf);
         }
@@ -497,7 +794,7 @@ public sealed partial class AccessSecurityStore
             var user = state.Users.FirstOrDefault(x => x.Id == id)
                 ?? throw new SecurityOperationException(404, "user-not-found", "User not found.");
             ValidatePassword(temporary, user.Username);
-            var updated = user with { PasswordHash = PasswordSecretHasher.HashPassword(temporary), PasswordChangedAt = Now, MustChangePassword = true };
+            var updated = user with { PasswordHash = _hashPassword(temporary), PasswordChangedAt = Now, MustChangePassword = true };
             state.Users[state.Users.IndexOf(user)] = updated;
             state.Sessions.RemoveAll(x => x.UserId == id);
             SaveLocked(state);
@@ -513,11 +810,13 @@ public sealed partial class AccessSecurityStore
         var expires = request.ExpiresAt ?? now.AddMinutes(15);
         if (expires <= now || expires > now.AddHours(24)) throw new SecurityOperationException(400, "invalid-expiry", "Enrollment expiry must be within the next 24 hours.");
         var id = Guid.NewGuid().ToString("N");
-        var code = $"enr.{id}.{PasswordSecretHasher.RandomToken()}";
+        var code = Issued($"enr.{id}.{PasswordSecretHasher.RandomToken()}");
         var enrollment = new RunnerEnrollment
         {
             Id = id, Name = request.Name.Trim(), CodeHash = PasswordSecretHasher.HashSecret(code), Scopes = scopes,
-            CreatedAt = now, ExpiresAt = expires, CredentialExpiresAt = request.CredentialExpiresAt
+            CreatedAt = now, ExpiresAt = expires, CredentialExpiresAt = request.CredentialExpiresAt,
+            // SM-9: an explicit project set; none named means none granted.
+            Projects = NormalizeProjects(request.Projects)
         };
         lock (_gate) { var state = StateLocked(); state.Enrollments.Add(enrollment); SaveLocked(state); }
         return (enrollment, code);
@@ -553,8 +852,13 @@ public sealed partial class AccessSecurityStore
             var runnerId = enrollment.Scopes.Contains(RunnerScopes.Orchestration, StringComparer.Ordinal)
                 ? "engine_" + Guid.NewGuid().ToString("N")
                 : "runner_" + Guid.NewGuid().ToString("N");
-            var made = NewRunnerCredential(runnerId, enrollment.Scopes, enrollment.CredentialExpiresAt);
-            var runner = new RunnerServiceIdentity { Id = runnerId, Name = enrollment.Name, CreatedAt = Now, Credentials = [made.Credential] };
+            var made = NewRunnerCredential(runnerId, enrollment.Scopes,
+                enrollment.CredentialExpiresAt ?? DefaultRunnerCredentialExpiry());
+            var runner = new RunnerServiceIdentity
+            {
+                Id = runnerId, Name = enrollment.Name, CreatedAt = Now, Credentials = [made.Credential],
+                Projects = enrollment.Projects
+            };
             state.Runners.Add(runner);
             state.Enrollments[state.Enrollments.IndexOf(enrollment)] = enrollment with { UsedAt = Now };
             SaveLocked(state);
@@ -565,27 +869,54 @@ public sealed partial class AccessSecurityStore
     public RunnerPrincipal? AuthenticateRunner(string? bearer)
     {
         if (!TryTokenParts(bearer, "rnr", out var credentialId)) return null;
+        string secretHash;
         lock (_gate)
         {
             var state = StateLocked();
+            var runner = state.Runners.FirstOrDefault(r => r.Credentials.Any(c => c.Id == credentialId));
+            var credential = runner?.Credentials.FirstOrDefault(c => c.Id == credentialId);
+            if (runner is null || credential is null || runner.RevokedAt is not null || runner.RetiredAt is not null
+                || credential.RevokedAt is not null || credential.ExpiresAt <= Now) return null;
+            secretHash = credential.SecretHash;
+        }
+        // PBKDF2 is deliberately outside the store gate: concurrent requests
+        // must not queue behind a credential hash or a filesystem save.
+        if (!PasswordSecretHasher.VerifySecret(bearer!, secretHash)) return null;
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var runner = state.Runners.FirstOrDefault(r => r.Credentials.Any(c => c.Id == credentialId));
+            var credential = runner?.Credentials.FirstOrDefault(c => c.Id == credentialId);
             var now = Now;
-            foreach (var runner in state.Runners)
+            if (runner is null || credential is null || runner.RevokedAt is not null || runner.RetiredAt is not null
+                || credential.RevokedAt is not null || credential.ExpiresAt <= now
+                || credential.SecretHash != secretHash) return null;
+            if (credential.LastUsedAt is null || now - credential.LastUsedAt >= TimeSpan.FromMinutes(1))
             {
-                var credential = runner.Credentials.FirstOrDefault(x => x.Id == credentialId);
-                if (credential is null) continue;
-                if (runner.RevokedAt is not null || runner.RetiredAt is not null
-                    || credential.RevokedAt is not null || credential.ExpiresAt <= now
-                    || !PasswordSecretHasher.VerifySecret(bearer!, credential.SecretHash)) return null;
-                if (credential.LastUsedAt is null || now - credential.LastUsedAt >= TimeSpan.FromMinutes(1))
+                var updatedCredential = credential with { LastUsedAt = now };
+                state.Runners[state.Runners.IndexOf(runner)] = runner with
                 {
-                    var updatedCredential = credential with { LastUsedAt = now };
-                    var updatedRunner = runner with { Credentials = runner.Credentials.Select(x => x.Id == credential.Id ? updatedCredential : x).ToList() };
-                    state.Runners[state.Runners.IndexOf(runner)] = updatedRunner;
-                    SaveLocked(state);
-                }
-                return new RunnerPrincipal(runner.Id, runner.Name, credential.Id, new HashSet<string>(credential.Scopes, StringComparer.Ordinal));
+                    Credentials = runner.Credentials.Select(c => c.Id == credentialId ? updatedCredential : c).ToList()
+                };
+                _lastSeenDirty = true;
             }
-            return null;
+            return new RunnerPrincipal(runner.Id, runner.Name, credential.Id,
+                new HashSet<string>(credential.Scopes, StringComparer.Ordinal))
+            {
+                Projects = runner.Projects ?? [RunnerProjectBinding.AllProjects],
+                CredentialExpiresAt = credential.ExpiresAt,
+            };
+        }
+    }
+
+    /// <summary>Persist authentication timestamps on the background flush tick.</summary>
+    public void FlushLastSeen()
+    {
+        lock (_gate)
+        {
+            if (!_lastSeenDirty) return;
+            try { SaveLocked(StateLocked()); _lastSeenDirty = false; }
+            catch (Exception ex) { _logger.LogError(ex, "Failed to persist access last-seen timestamps"); }
         }
     }
 
@@ -662,13 +993,36 @@ public sealed partial class AccessSecurityStore
             if (engineIdentity != scopes.Contains(RunnerScopes.Orchestration, StringComparer.Ordinal))
                 throw new SecurityOperationException(400, "invalid-scope",
                     "Credential rotation cannot change a service principal's kind.");
-            var made = NewRunnerCredential(runnerId, scopes, request.ExpiresAt);
+            // Rotation keeps the previous credential until the Owner revokes it (overlap);
+            // the new one starts the default lifetime unless the request names one.
+            var made = NewRunnerCredential(runnerId, scopes, request.ExpiresAt ?? DefaultRunnerCredentialExpiry());
             var updated = runner with { Credentials = [.. runner.Credentials, made.Credential] };
             state.Runners[state.Runners.IndexOf(runner)] = updated;
             SaveLocked(state);
             return (updated, made.Credential, made.Secret);
         }
     }
+
+    /// <summary>Replaces the projects a runner is bound to; this also ends a pre-binding notice.</summary>
+    public RunnerServiceIdentity UpdateRunnerProjects(string runnerId, IReadOnlyList<string>? projects)
+    {
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var runner = state.Runners.FirstOrDefault(x => x.Id == runnerId && x.RevokedAt is null)
+                ?? throw new SecurityOperationException(404, "runner-not-found", "Runner not found.");
+            var updated = runner with { Projects = NormalizeProjects(projects) };
+            state.Runners[state.Runners.IndexOf(runner)] = updated;
+            SaveLocked(state);
+            return updated;
+        }
+    }
+
+    /// <summary>SM-9, D7 A: a new runner credential lives 30 days unless configured otherwise.</summary>
+    public TimeSpan RunnerCredentialLifetime
+        => TimeSpan.FromDays(Math.Clamp(_configuration.GetValue("Security:RunnerCredentialLifetimeDays", 30), 1, 365));
+
+    private DateTime DefaultRunnerCredentialExpiry() => Now + RunnerCredentialLifetime;
 
     public void RevokeCredential(string runnerId, string credentialId)
     {
@@ -713,6 +1067,10 @@ public sealed partial class AccessSecurityStore
             };
             File.AppendAllText(Path.Combine(SecurityFolder, "run-audit.jsonl"), JsonSerializer.Serialize(sanitized) + Environment.NewLine);
             RestrictPermissions(Path.Combine(SecurityFolder, "run-audit.jsonl"));
+            ControlPlaneAudit.Append(new ControlPlaneAuditRecord(
+                ControlPlaneAuditStreams.Run, sanitized.InitiatingPrincipal, sanitized.Action, sanitized.Outcome ?? "recorded",
+                Target: string.IsNullOrWhiteSpace(sanitized.Project) ? $"task:{sanitized.TaskKey}" : $"project:{sanitized.Project}/task:{sanitized.TaskKey}",
+                Details: sanitized, At: sanitized.Timestamp));
         }
     }
 
@@ -720,21 +1078,23 @@ public sealed partial class AccessSecurityStore
     {
         if (expiresAt <= Now) throw new SecurityOperationException(400, "invalid-expiry", "Credential expiry must be in the future.");
         var id = Guid.NewGuid().ToString("N");
-        var secret = $"rnr.{id}.{PasswordSecretHasher.RandomToken()}";
+        var secret = Issued($"rnr.{id}.{PasswordSecretHasher.RandomToken()}");
         return (new RunnerCredential { Id = id, SecretHash = PasswordSecretHasher.HashSecret(secret), Scopes = scopes.ToList(), CreatedAt = Now, ExpiresAt = expiresAt }, secret);
     }
 
-    private (StudioSession Session, string Token, string Csrf) CreateSessionLocked(SecurityState state, StudioUser user)
+    private (StudioSession Session, string Token, string Csrf) CreateSessionLocked(SecurityState state, StudioUser user,
+        string? device = null, string? address = null, bool enrollmentOnly = false)
     {
         var now = Now;
         var id = Guid.NewGuid().ToString("N");
-        var token = $"ssn.{id}.{PasswordSecretHasher.RandomToken()}";
-        var csrf = PasswordSecretHasher.RandomToken();
+        var token = Issued($"ssn.{id}.{PasswordSecretHasher.RandomToken()}");
+        var csrf = Issued(PasswordSecretHasher.RandomToken());
         var absolute = now.AddMinutes(_configuration.GetValue("Security:Session:AbsoluteMinutes", 10080));
         var session = new StudioSession
         {
             Id = id, UserId = user.Id, TokenHash = PasswordSecretHasher.HashSecret(token), CsrfHash = PasswordSecretHasher.HashSecret(csrf),
-            CreatedAt = now, LastSeenAt = now,
+            CreatedAt = now, LastSeenAt = now, Device = device, Address = address,
+            SecondFactorEnrollmentOnly = enrollmentOnly,
             ExpiresAt = Min(now.AddMinutes(_configuration.GetValue("Security:Session:IdleMinutes", 480)), absolute), AbsoluteExpiresAt = absolute
         };
         state.Sessions.Add(session);
@@ -822,7 +1182,7 @@ public sealed partial class AccessSecurityStore
         // unchanged file on the next load.
         var fromVersion = loaded.IamVersion;
         var migrated = Copy(loaded);
-        MigrateToRoleBindings(migrated);
+        var tokenMigrations = MigrateToRoleBindings(migrated);
         if (!persisted)
         {
             _state = migrated;
@@ -835,6 +1195,7 @@ public sealed partial class AccessSecurityStore
             users = migrated.Users.Count, bindings = migrated.RoleBindings.Count,
             serviceAccounts = migrated.ServiceAccounts.Count, backup = Path.GetFileName(backup),
         });
+        AuditApiTokenRoleMigrations(tokenMigrations);
         _logger.LogInformation(
             "Migrated access state from IAM version {From} to {To}: {Users} users, {Bindings} bindings, {Accounts} service accounts; legacy copy at {Backup}",
             fromVersion, CurrentIamVersion, migrated.Users.Count, migrated.RoleBindings.Count, migrated.ServiceAccounts.Count, backup);
@@ -911,7 +1272,17 @@ public sealed partial class AccessSecurityStore
         if (password.Length is < 12 or > 128) throw new SecurityOperationException(400, "password-policy", "Password must be 12 to 128 characters.");
         if (password.Contains(username, StringComparison.OrdinalIgnoreCase)) throw new SecurityOperationException(400, "password-policy", "Password must not contain the username.");
     }
-    private static string GenerateTemporaryPassword() => "Tmp!" + PasswordSecretHasher.RandomToken(18);
+    private static string GenerateTemporaryPassword() => Issued("Tmp!" + PasswordSecretHasher.RandomToken(18));
+
+    /// <summary>
+    /// Registers a credential this store hands out with the redactor, so logs
+    /// and reports mask the exact value even where no pattern matches.
+    /// </summary>
+    private static string Issued(string secret)
+    {
+        CredentialRedactor.RegisterLiteral(secret);
+        return secret;
+    }
     private static DateTime Min(DateTime a, DateTime b) => a <= b ? a : b;
 }
 

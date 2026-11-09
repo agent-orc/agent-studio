@@ -38,8 +38,33 @@ public sealed class ProtocolTests
 
         Assert.NotNull(limits);
         Assert.Equal(10L * 1024 * 1024, limits!.MaxRequestBodyBytes);
-        Assert.True(limits.MaxFileBytes < limits.MaxRequestBodyBytes);
+        Assert.Equal(TaskServerEndpoints.RequestSafeArtifactBytes(10L * 1024 * 1024), limits.MaxFileBytes);
+        Assert.True((limits.MaxFileBytes + 2) / 3 * 4 < limits.MaxRequestBodyBytes);
+        Assert.Equal(20L * 1024 * 1024, limits.MaxChunkedFileBytes);
         Assert.Equal(30L * 1024 * 1024, limits.MaxTotalBytes);
+    }
+
+    [Fact]
+    public async Task Chunked_file_limit_is_not_advertised_when_request_budget_cannot_carry_a_chunk()
+    {
+        using var temp = new TempDirectory();
+        await using var factory = new TaskServerFactory(
+            temp.Path,
+            new Dictionary<string, string?>
+            {
+                ["TaskServer:MaxRequestBodyBytes"] = (2L * 1024 * 1024).ToString(),
+                ["TaskServer:ResultArtifactMaxFileBytes"] = (20L * 1024 * 1024).ToString(),
+            });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(TaskServerProtocol.HeaderName,
+            TaskServerProtocol.Current.ToString());
+
+        var limits = await client.GetFromJsonAsync<ArtifactTransferLimitsResponse>(
+            "/api/v1/artifact-limits");
+
+        Assert.NotNull(limits);
+        Assert.Null(limits.MaxChunkedFileBytes);
+        Assert.Equal(TaskServerEndpoints.RequestSafeArtifactBytes(2L * 1024 * 1024), limits.MaxFileBytes);
     }
 
     [Fact]
@@ -65,6 +90,26 @@ public sealed class ProtocolTests
         Assert.Equal("artifact-request-too-large", problem.RootElement.GetProperty("type").GetString());
         Assert.Equal(1024, problem.RootElement.GetProperty("limitBytes").GetInt64());
         Assert.Equal(2048, problem.RootElement.GetProperty("receivedBytes").GetInt64());
+    }
+
+    [Fact]
+    public async Task Oversized_review_report_returns_typed_413_from_shared_limit()
+    {
+        using var temp = new TempDirectory();
+        await using var factory = new TaskServerFactory(temp.Path);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(
+            TaskServerProtocol.HeaderName,
+            TaskServerProtocol.Current.ToString());
+        using var body = new StringContent(new string('x', (int)ReviewReportLimits.MaxRequestBodyBytes + 1));
+
+        var response = await client.PostAsync("/api/v1/reviews/attempts/attempt-1/report", body);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("review-report-too-large", problem.RootElement.GetProperty("type").GetString());
+        Assert.Equal(ReviewReportLimits.MaxRequestBodyBytes,
+            problem.RootElement.GetProperty("limitBytes").GetInt64());
     }
 
     [Fact]
@@ -479,7 +524,7 @@ public sealed class ProtocolTests
     }
 
     [Fact]
-    public void Provider_capacity_uses_the_bounded_unknown_limit_retry()
+    public void Provider_capacity_is_not_a_rate_limit()
     {
         var observedAt = new DateTimeOffset(2026, 8, 31, 6, 45, 42, TimeSpan.Zero);
 
@@ -489,8 +534,8 @@ public sealed class ProtocolTests
             stderr: "Selected model is at capacity. Please try a different model.",
             observedAt: observedAt);
 
-        Assert.Equal(ProviderAccessEvidenceKind.RateLimited, evidence.Kind);
-        Assert.Equal(observedAt.Add(ProviderAccessClassifier.UnknownLimitRetry), evidence.LimitedUntil);
+        Assert.Equal(ProviderAccessEvidenceKind.ModelCapacity, evidence.Kind);
+        Assert.Null(evidence.LimitedUntil);
         Assert.False(evidence.ResetTimeReported);
     }
 

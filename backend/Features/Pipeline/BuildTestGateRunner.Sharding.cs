@@ -95,10 +95,11 @@ public sealed partial class BuildTestGateRunner
         return new GateShardContext(
             request.Sharding?.Part,
             request.Sharding?.Timings,
-            (runnable, ct) => AcquireShardLanesAsync(slots, runnable, ct));
+            (runnable, ct) => AcquireShardLanesAsync(slots, runnable, request.DurationClass, ct));
     }
 
-    private async Task<GateShardLanes> AcquireShardLanesAsync(int slots, int runnable, CancellationToken ct)
+    private async Task<GateShardLanes> AcquireShardLanesAsync(int slots, int runnable,
+        GateDurationClass durationClass, CancellationToken ct)
     {
         if (_machineGateMode == BuildTestMachineGateMode.BypassForHermeticTest)
             return new GateShardLanes(Math.Clamp(_hermeticShardLanes, 1, Math.Max(1, runnable)), []);
@@ -106,7 +107,7 @@ public sealed partial class BuildTestGateRunner
         var processors = GateHostCapacity.ProcessorsPerTestProcess();
         var wanted = GateShardPlanner.Lanes(runnable, slots, cores, processors) - 1;
         var borrowed = wanted > 0
-            ? await _machineSlots.TryAcquireFreeAsync(slots, wanted, ct).ConfigureAwait(false)
+            ? await _machineSlots.TryAcquireFreeAsync(slots, wanted, ct, durationClass).ConfigureAwait(false)
             : [];
         return new GateShardLanes(1 + borrowed.Count, borrowed);
     }
@@ -311,6 +312,10 @@ public sealed partial class BuildTestGateRunner
                 report?.Counts ?? GateTestCounts.None, failedTests)
             {
                 FailureKind = failureKind,
+                StartedAtUtc = process.StartedAtUtc,
+                CompletedAtUtc = process.CompletedAtUtc,
+                ClassNames = shard.Classes,
+                ClassDurationsMs = classDurations,
                 Rerun = rerun,
                 Detail = detail,
             };

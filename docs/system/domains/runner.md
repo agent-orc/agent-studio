@@ -1,7 +1,12 @@
 # Runner Domain Map
 
-Version: 2026-10-28
+Version: 2026-11-02
 Status: System-of-record map for runner-side changes.
+
+Task Server connectivity stays capability-ready until three consecutive failed
+requests span at least 60 seconds. The capability detail retains the failure
+count, and the route advertises structured `since`, `httpStatus`, and `request`
+fields beside it. A successful request resets the sequence.
 
 ## Dynamic placement host agent, DP-S2
 
@@ -49,9 +54,20 @@ every resource without a live lease and fence, and never starts a container.
 Role images are digest-pinned in a manifest that keeps the previous digest
 for rollback; the release builds `agent-work` from
 `deploy/work-container/Dockerfile`. `RUNNER_WORK_CONTAINER_MODE` defaults to
-`off`. `shadow` records an `executor-shadow.json` beside each detached
+`contained` on Linux and `off` elsewhere (SM-11, security-model decision SM-D6
+H2): `AttemptContainmentPolicy` selects the container executor once the host's
+proof recorded a go `rollout-verdict.json`, and afterwards refuses work when the
+service user can reach the runtime, the launcher or a pinned image is missing,
+or the work-zone policy does not cover the container network; the
+`attempt-containment` capability carries that decision into claim admission.
+Each attempt runs under its own UID (`WorkContainerIdentity`), with
+per-repository caches, a one-shot ownership step, and every runtime call
+through the root-owned `agent-work-launcher`, whose
+`WorkContainerLauncherPolicy` admits only the executor's own calls.
+`work-container check` and `work-container probe` report and prove the
+boundary. `shadow` records an `executor-shadow.json` beside each detached
 worker. `canary` enables `agent-host work-container run`. Detached coding and
-review workers keep the process executor. DP-S5 adds an opt-in coding canary:
+review workers keep the process executor until provider attempt tokens exist. DP-S5 adds an opt-in coding canary:
 the host obtains a one-use Task Server exchange capability after a live claim,
 injects a one-repository read token through runtime stdin into the container's
 private tmpfs, and revokes it on teardown. The Git helper accepts only the
@@ -135,6 +151,16 @@ Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
 
+Ready pickup order is one rule for every runner and the board (AGT-3587). Each
+project's Ready queue is that project's `2-ready` lane order
+(`LaneSortApplier.Sort`, default `lane-entry`: placed cards by `order`, then
+the newest lane entry). The local runner takes the first pickup-eligible card;
+the remote claim uses `LaneSortApplier.PickupOrder`, which keeps each project's
+order and offers every project's head before any second card. The runner
+status `queuedJobIds` list is that queue, and the board marks only its head as
+Next. Move to top (`PromoteToReadyTop`) rewrites only the placed cards and the
+promoted one, so the other cards keep their order.
+
 Unknown or interrupted attempts that publish salvage hand its exact ref and SHA
 to the next coding claim. The runner starts that worktree at the salvage commit;
 an unavailable or moved ref fails preparation instead of selecting the
@@ -165,8 +191,23 @@ checklist cancels a queued or running session. A runner on that host claims the
 command through its outbound Task Server channel, holds a local provider login
 lock and starts `codex login --device-auth` or `claude setup-token` in its own
 service account through `DeviceLoginExecutor`, the only device-login launcher.
-The child gets a closed stdin pipe. The runner reports the URL and code without
-logging child output. While the CLI runs, the runner reads the session state
+Codex gets a closed stdin pipe. The runner reports the URL and code without
+logging child output. The URL must come from the provider's sign-in origin:
+`auth.openai.com` or `login.openai.com` for Codex; `claude.com` and
+`platform.claude.com` (Claude Code 2.x) or `claude.ai` and
+`console.anthropic.com` (earlier releases) for Claude. One list,
+`DeviceLoginSessions.ProviderOrigin`, serves the runner and the server.
+Headless `claude setup-token` waits for the authorization code its callback
+page shows (AGT-3243). After the runner publishes a Claude URL, the session
+reports `codeState: awaiting`. The Owner signs in, pastes the code into the
+first-run checklist, and the browser posts it once with its session key
+(`POST /api/v1/management/device-logins/{handle}/code`). The server keeps it
+only in memory and hands it once to the claiming runner
+(`POST /api/v1/runners/{runnerId}/device-login/{handle}/code`), which writes it
+to the CLI's stdin and then closes stdin. The code is never logged, audited,
+echoed in a response or written to disk; cancel, timeout and completion drop a
+code no runner took. A code the CLI refuses ends the session with
+"Claude did not accept the authorization code." While the CLI runs, the runner reads the session state
 every 2 seconds (`GET /api/v1/runners/{runnerId}/device-login/{handle}`, state
 only). A Studio cancel, a Task Server timeout or a failed instruction publish
 stops the process tree, accepts no credential and reports `failed`; on runner
@@ -253,6 +294,13 @@ New networked projects without a remote runner start paused. Only the Owner
 may explicitly select local placement in the networked profile, including
 through the project registry update route; local placement remains unrunnable.
 
+Besides `lastPickReason`, the status carries the runner's own wait reasons as
+typed facts: `pickupGate` for the mode, role, build-profile, or slot gate that
+ended the last tick, and `pickupSkips` for candidates skipped by quota, load,
+provider limit, or parallel conflict. The board names them on the Ready lane
+header and on each card; see
+[pickup holds](../../concepts/pickup-hold-visibility.md#runner-wait-reasons-agt-3579).
+
 Prelaunch infrastructure faults use the per-card fingerprint budget described
 in the [Execution hosts runbook](../../operations/remote-hosts.md#prelaunch-infrastructure-failures).
 
@@ -282,6 +330,15 @@ in the [Execution hosts runbook](../../operations/remote-hosts.md#prelaunch-infr
   and runner decision rationale.
 
 ## Key Code
+
+The coding runner samples load per core before each claim. Once load stays above
+`RUNNER_CLAIM_MAX_LOAD_PER_CORE` for the configured sustained interval, it stops
+new claims while active slots continue. The capability telemetry snapshot carries
+the gate state, measured load, threshold, duration, close time, and active slots.
+Task Server retains that snapshot and records one stream event on each close and
+open transition, including the elapsed closed interval on recovery. A transition
+forces the runner's next capability advertisement rather than waiting for its
+normal minute cadence.
 
 Coding claims carry the effective emergency process limit and its source from
 project setting, workspace default, or the 24-hour platform constant. The
@@ -705,6 +762,13 @@ unreported claim expires with its lease and is queued again.
   terminal extraction, and the pure typed-outcome policy. The
   [CLI frame compatibility matrix](../cli/frame-compatibility-matrix.md) is the
   current vocabulary and replay-corpus system of record.
+- Codex's "Selected model is at capacity" failure is a transient model-capacity
+  outcome, distinct from quota and rate-limit refusals. The runner retries the
+  same session after 30 seconds, 2 minutes, and 5 minutes, retaining its fenced
+  lease and provider-auth availability. If all retries fail, the typed
+  `TransientModelCapacity` completion returns the card to Ready with the
+  published salvage ref as its next starting point. A real usage limit or HTTP
+  429 with a reset continues to hold the provider until recovery.
 - `backend/Features/Runner/PromptEnrichmentService.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteRunPrompt.cs`: shared pre-spawn prompt materialization. Local
@@ -1049,6 +1113,24 @@ unreported claim expires with its lease and is queued again.
   integration ends in the existing AGT-2909 dead-end exit
   (`AgentRoundRequired`, `delivery-attribution-ambiguous`). The prompt states
   the base in one sentence and names no SHA.
+- Operator continue, steer and extend rounds carry the result ref (AGT-3483,
+  [operator-agent-level Dossier](../../operator-agent-level/index.html) OP-3).
+  A round queued for a runner claim on a card with a recorded result ref saves
+  the card's latest one (settled run envelopes, review subjects and
+  `review-subject.json`) as `continuation-base.json` with reason
+  `continue-round-result`, writes one `continuation_base_recorded` timeline row
+  with the actor, mode and base SHA, and returns the base on the response as
+  `base { ref, sha, source, resultAttemptId }`. `ContinueJobRequest.BaseRef`
+  names another of the card's refs (full or short form); a ref the card does
+  not own is refused with `400 base-ref-not-on-card` before any write. A fix
+  round keeps its reviewed delivery unless `BaseRef` names another ref, and a
+  base another round already saved (salvage, older-brief starting point) is
+  kept and reported as `existing`. A round that starts locally, or that joins
+  a run still live on the card, keeps today's checkout and names no base; an
+  explicit `BaseRef` there is refused with `409 base-ref-not-applicable`. The
+  runner treats the base like a salvage base: required, with the integration
+  branch merged on top. Pure rule: `ContinueRoundBasePolicy`
+  (`backend/Features/Runner/ContinueRoundBase.cs`).
 - If a fenced remote run finishes after the operator has returned its card to
   Ready and queued another continuation, completion settles the old attempt
   and records its timeline evidence, then leaves the card and pending prompt in
@@ -1347,6 +1429,12 @@ unreported claim expires with its lease and is queued again.
   boundary: the Task Server never substitutes its checkout or local
   `session-events.jsonl` for the ReviewSubject. Legacy tasks without attempt
   authority continue through the established local compatibility path.
+- The Auto Review stranding watchdog runs in both Monolith and Engine modes.
+  After the configured threshold it recovers a card without a running step,
+  active review, batch entry, or queued round, and records an intervention on
+  the card timeline and stall feed. A stale delivery verdict refreshes the
+  subject from the current completed run, integrates that delivery, and only
+  then requests another review. A merge conflict starts a merge round.
 - ReviewAttempt claimability is also bound to the current task lane. A
   successful transition into `6-completed` or `7-archive` supersedes every open
   ReviewAttempt for that task before another claim can cross the lifecycle
@@ -1523,6 +1611,12 @@ unreported claim expires with its lease and is queued again.
   distinct API, audit action, persisted field, and UI label. Capability failure
   reports must bind the active coding or review claim and fence; stale and
   duplicate deliveries fail closed or replay idempotently.
+- Run-level provider access classification reads CLI error events, CLI stderr,
+  and exit status. Tool output and agent messages in the JSON stream do not
+  diagnose provider login. A zero-exit completed turn confirms working access.
+  Unauthorized capability reports include a bounded, redacted matching line
+  in both the runner log and the report reason. Status probes still classify
+  their own command output directly.
 - Credential observations use capability schema 2 only after protocol
   compatibility advertises `credential-observation-v2`. A legacy peer receives
   schema 1; a new peer also receives `credentialHealthVersion: 1`.
@@ -1599,10 +1693,14 @@ unreported claim expires with its lease and is queued again.
   metadata is available, and Ready-card wait reasons. One shared classifier
   accepts only explicit provider-login signatures as authentication failures.
   Tool failures and indeterminate non-zero exits retain last-good; rate limits
-  use the limited state. Two consecutive explicit failures are required before
-  sign-in is blocked, and a later positive probe clears that provider circuit
-  without a runner restart. Provider-limit evidence is suppressed only by an
-  independently recorded termination fact. The legacy process boundary records
+  use the limited state. Two consecutive explicit login-probe failures are
+  required before sign-in is blocked, and a later positive probe clears that
+  provider circuit without a runner restart. Provider-limit evidence is
+  suppressed only by an independently recorded termination fact. A run classified
+  `ProviderUnauthorized` drains only that provider's capability on the
+  reporting host immediately; `GET /api/v1/management/remote-hosts` shows
+  `healthState: draining` until a positive provider-auth probe clears it.
+  Other providers and hosts remain claimable. The legacy process boundary records
   Bash's child wait status before it returns a conventional high exit code;
   CAR does not infer a signal from an exit number. A voluntary exit 137 remains
   eligible evidence, while recorded SIGTERM, SIGKILL, operator stop, and host
@@ -1835,11 +1933,15 @@ unreported claim expires with its lease and is queued again.
   escalation, and lane movement.
 - Waits-on gate (AGT-2029): the ready-lane pickup gate
   (`ProjectRunner.IsReadyPickupCandidate`) skips a `2-ready` card whose
-  `references.dependsOn` targets have not all reached `6-completed`/`7-archive`.
+  `references.dependsOn` targets have neither reached `6-completed`/`7-archive`
+  nor had their current delivery integrated into the successor's target branch.
+  A newer pending predecessor delivery closes the edge until it is integrated.
+  `requiresCompletion: true` retains the terminal-lane rule per edge, and
+  concept and research predecessors use it by default.
   A dependency object with `releaseGate: true` additionally requires the
   terminal target card to carry its explicit `released: true` flag. Completion
   does not infer release, and legacy string dependencies retain the existing
-  terminal-state-only behavior.
+  completion or current-delivery integration behavior.
   Fulfillment is resolved cross-project and archive-inclusive
   (`TaskReferenceIndex` built from `ScanAllJobsWithArchive()`, shared with the
   read-time card overlay via `WaitsOnEvaluator`). A skipped card falls out of the
@@ -2016,6 +2118,11 @@ unreported claim expires with its lease and is queued again.
   the exact result to
   `refs/heads/agent-studio/results/<run-attempt-id>/<result-sha>`. Cleanup then requires
   the Task Server acknowledgement for the matching canonical envelope digest.
+  Transient Git server push faults (5xx, internal server error, commit_refs failure,
+  or connection reset) retry each salvage or result ref after 30 seconds, 2 minutes,
+  5 minutes, and 15 minutes while the worktree and lease remain active. Each retry
+  is recorded on the card. Exhaustion names the retries in the failure reason;
+  authorization, permission, push protection, and non-fast-forward failures do not retry.
   A process restart replays the original outbox before new claims and never
   starts the coding CLI. Transfer failure stays `transfer-recovery`, retains the
   worktree, and consumes no coding or completion budget.
@@ -2430,6 +2537,15 @@ card), promotes the card to the top of `2-ready` with transition detail
 A manual start carries no prompt, so nothing is persisted; the promotion alone
 carries the intent.
 
+When a follow-up is queued during a live remote run, the card enters Ready but
+the earlier attempt keeps its lease and continues working. Remote dispatch
+records `earlier-run-still-leased` and skips that card until the lease is no
+longer active, so other Ready cards can be claimed. The earlier run's completion
+settles its result without moving the queued card out of Ready. Its commits
+remain on the remote work branch, and the immutable delivery ref and commit
+become the queued follow-up's continuation base unless a newer base was already
+selected. The next claim consumes the prompt and starts from that delivery.
+
 **A kill never loses intent.** Every stop path that terminates a run still
 holding its execution slot - `ClearActiveJobIfMatches` (lane reconciliation and
 the move endpoint), the silence watchdog, and the quota-cap watchdog - calls
@@ -2530,6 +2646,12 @@ case; a failed probe cannot close cases. `GET /api/watcher/stalls` supplies the
 open count and cases for the red Studio marker, Execution Hosts, and board lane
 headers. Activity records the opening and closing transitions once each.
 
+A `host-offline` finding is `critical` only when the stalled host blocks work:
+claimable work waits for its role, or it still holds a running attempt (a
+claimed review lease, active coding slots, or busy pull gate jobs). An offline
+host with no blocked work and no running attempt is at most a `warning`, so a
+host that is not enrolled or idle never reads as critical with 0 affected cards.
+
 The live release comparison covers registered runner roles. A container with
 no reported release identity has no comparable running-version fact and is
 not labelled as drift. The policy accepts a deployment start error when one is
@@ -2588,6 +2710,11 @@ second pending intervention on the subject and compares the live value
 (admission, route, the worker's running work) with the plan's before-value; on
 a mismatch it records `superseded` and does nothing. Cards and gate members are
 re-checked at apply time as well.
+A `host-offline` proposal (status `proposed`) becomes `superseded` once its
+case is resolved and the host reported after the proposal was decided
+(`ProposalRecoveryPolicy`); the receipt keeps its text, gains the outcome "The
+host reported after this proposal was decided." and no longer reads as a
+current proposal.
 An admission reduction also checks fresh overload or memory pressure immediately
 before the side effect. Both lowering and restoring admission use an atomic
 compare-and-set against the planned before-value, so a capacity edit made by a

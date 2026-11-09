@@ -196,6 +196,33 @@ public class TaskScannerLiveFolderMemoTests : IDisposable
         Assert.Equal("BBBBBBBBBB", Scan(scanner, "same-granule")!.Title);
     }
 
+    [Fact]
+    public void ASelfHealWriteOfTheScan_IsNotMemoizedWithTheLastActivityReadBeforeIt()
+    {
+        // The first scan of a legacy folder stamps ownerClientId into task.json
+        // after it has read the folder's last activity. Memoized under the
+        // fingerprint taken after that write, the older last activity was served
+        // by every later scan of the process, while a new process read the
+        // current one (AGT-3421). A zero granule memoizes at once, as a scan
+        // slower than the granule does on a loaded host.
+        var scanner = BuildScanner(timestampGranularity: TimeSpan.Zero);
+        var dir = SeedJob("legacy-owner", TaskStates.Escalated,
+            $"{{\"id\":\"legacy-owner\",\"title\":\"t\",\"state\":\"{TaskStates.Escalated}\",\"order\":1,\"agent\":\"claude\"}}");
+        var taskJsonPath = Path.Combine(dir, "task.json");
+        File.SetLastWriteTimeUtc(taskJsonPath, SeededInstant);
+        Directory.SetLastWriteTimeUtc(Path.Combine(dir, "logs"), SeededInstant);
+        Directory.SetLastWriteTimeUtc(dir, SeededInstant);
+
+        var migrated = Scan(scanner, "legacy-owner")!;
+        var current = Scan(BuildScanner(), "legacy-owner")!;
+
+        Assert.Contains("ownerClientId", File.ReadAllText(taskJsonPath));
+        Assert.NotEqual(SeededInstant.ToLocalTime(), current.LastActivity);
+        Assert.Equal(current.LastActivity, migrated.LastActivity);
+        Assert.Equal(current.LastActivity, Scan(scanner, "legacy-owner")!.LastActivity);
+    }
+
+    private static readonly DateTime SeededInstant = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
     private static readonly DateTime PinnedInstant = new(2027, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
     private static void PinStats(string dir, string taskJsonPath)

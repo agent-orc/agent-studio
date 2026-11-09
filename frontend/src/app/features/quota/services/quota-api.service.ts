@@ -49,6 +49,59 @@ export interface CliModelRoutesResponse {
   callersCannotReroute: { caller: string; cliType: string; reason: string }[];
 }
 
+export interface EffectiveModelSelection {
+  consumer: string;
+  stepId: string | null;
+  configured: { cliType: string; model: string | null; thinkingLevel: string | null };
+  effective: { cliType: string; model: string | null; thinkingLevel: string | null } | null;
+  rule: 'consumer-default' | 'operator-switch' | 'quota-cap' | 'pin';
+  reason: string | null;
+}
+
+export interface SelectionRoute { cliType: string; model: string | null; thinkingLevel: string | null }
+export interface ActiveModelSwitch {
+  id: string;
+  at: string;
+  kind: string;
+  consumer: string;
+  project: string | null;
+  taskKey: string | null;
+  from: SelectionRoute;
+  to: SelectionRoute;
+  rule: string;
+  returnToPrimaryAt: string | null;
+}
+export interface ModelSelectionEvent extends ActiveModelSwitch {
+  host: string | null;
+  pipelineType: string | null;
+  stepId: string | null;
+  attemptId: string | null;
+  round: number | null;
+  reason: string;
+  evidence: { excerpt: string | null; classifierKind: string | null } | null;
+  quota: { provider: string | null; window: string | null; usedPct: number | null;
+    capPct: number | null; projectedPct: number | null; resetAt: string | null;
+    snapshotAgeSeconds: number | null } | null;
+}
+export interface ModelSelectionEventPage { events: ModelSelectionEvent[]; nextCursor: string | null }
+export interface ConsumerPolicyRoute { cli: string; model: string | null; thinking: string | null }
+export interface ConsumerModelPolicy {
+  primary: ConsumerPolicyRoute | null;
+  route: string | null;
+  fallbacks: ConsumerPolicyRoute[] | 'catalogue' | null;
+  sameClassOnly: boolean;
+  stickyWithinCard: boolean;
+  costGuardFactor: number | null;
+}
+export interface ModelSelectionPolicy {
+  version: number;
+  consumers: Record<string, ConsumerModelPolicy>;
+  caps: Record<string, Record<string, number>>;
+  costGuardFactor: number;
+  hysteresis: { returnBelowCapPoints: number; minDwellMinutes: number };
+  migration: { inheritedSteps: number; explicitSteps: number; projects: number; applied: boolean };
+}
+
 export interface CliQuotaWaitPolicy {
   enabled: boolean;
   thresholdMinutes: number;
@@ -182,6 +235,33 @@ export class QuotaApiService {
     return this.http.get<CliModelRoutesResponse>(
       `${this.baseUrl}/cli/quota/model-routes`,
     );
+  }
+
+  /** Workspace routes, or the routes of one project and pipeline type when scoped. */
+  getEffectiveModelSelection(scope: { project?: string; pipelineType?: string } = {}) {
+    const params: Record<string, string> = {};
+    if (scope.project) params['project'] = scope.project;
+    if (scope.pipelineType) params['pipelineType'] = scope.pipelineType;
+    return this.http.get<{ routes: EffectiveModelSelection[] }>(
+      `${this.baseUrl}/model-selection/effective`, { params },
+    );
+  }
+
+  getSelectionPolicy() {
+    return this.http.get<ModelSelectionPolicy>(`${this.baseUrl}/model-selection/policy`);
+  }
+
+  getActiveModelSwitches() {
+    return this.http.get<ActiveModelSwitch[]>(`${this.baseUrl}/model-selection/active`);
+  }
+
+  getModelSelectionEvents(filters: Record<string, string>) {
+    return this.http.get<ModelSelectionEventPage>(`${this.baseUrl}/model-selection/events`, { params: filters });
+  }
+
+  setConsumerPolicy(consumer: string, setting: ConsumerModelPolicy) {
+    return this.http.put<ModelSelectionPolicy>(
+      `${this.baseUrl}/model-selection/policy/consumers/${encodeURIComponent(consumer)}`, setting);
   }
 
   setFallbackPreference(cliType: string, preferFallback: boolean) {

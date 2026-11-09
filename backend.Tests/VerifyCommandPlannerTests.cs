@@ -55,6 +55,23 @@ public sealed class VerifyCommandPlannerTests : IDisposable
         return stdout;
     }
 
+    [Fact]
+    public void CompiledFrontendChangeAddsPackageBuildWhenOnlyTestsAreDeclared()
+    {
+        Write("frontend/package.json", "{\"scripts\":{\"test\":\"vitest run\"}}");
+        var declared = new VerifyPlan(
+            [new VerifyCommand(VerifyEcosystem.Node, VerifyCommandKind.Test, "frontend", "npm test")],
+            VerifyPlan.SourceProjectDefinition);
+
+        var compiled = VerifyCommandPlanner.WithCompiledBuild(_root, declared, ["frontend/src/app.ts"]);
+        var docs = VerifyCommandPlanner.WithCompiledBuild(_root, declared, ["docs/notes.md"]);
+
+        Assert.Equal("npm run build", compiled.Commands[0].Command);
+        Assert.Equal("frontend", compiled.Commands[0].WorkingSubdir);
+        Assert.Equal(VerifyCommandKind.Build, compiled.Commands[0].Kind);
+        Assert.Equal(declared.Commands, docs.Commands);
+    }
+
     // ---- Fixture: .NET only ------------------------------------------------
 
     [Fact]
@@ -370,6 +387,49 @@ public sealed class VerifyCommandPlannerTests : IDisposable
         Assert.Equal("frontend", dependency.WorkingSubdir);
         Assert.Equal(["package-lock.json"], dependency.Lockfiles);
         Assert.All(verify.Commands, command => Assert.Equal(VerifyCommandShell.Bash, command.Shell));
+    }
+
+    /// <summary>
+    /// AGT-3429: which planned preparation a dependency-cache hit may skip. A
+    /// conventional <c>npm ci</c> prepares exactly its lockfile root; a profile
+    /// install command is opaque shell and is covered only by the profile's
+    /// explicit statement; <c>dotnet restore</c> has no scope at all.
+    /// </summary>
+    [Fact]
+    public void GatePreparation_MarksOnlyCommandsTheirLockfileScopesCover()
+    {
+        Write("App.sln", "");
+        Write("frontend/package.json", """{ "scripts": { "build": "ng build" } }""");
+        Write("frontend/package-lock.json", """{ "lockfileVersion": 3 }""");
+        const string install = "dotnet restore App.sln && npm --prefix frontend ci";
+        var opaque = new BuildProfile
+        {
+            InstallCmd = install,
+            Lockfiles = ["frontend/package-lock.json"],
+            BuildCmds = ["dotnet build App.sln --no-restore", "npm --prefix frontend run build"],
+        };
+        var declared = opaque with { InstallCmd = "npm --prefix frontend ci", InstallCoveredByLockfiles = true };
+        var declaredWithoutLockfiles = declared with { Lockfiles = [] };
+        var conventional = GatePreparationPlanner.Plan(
+            _root,
+            profile: null,
+            VerifyCommandPlanner.Plan(_root, profile: null).Commands);
+
+        Assert.False(Assert.Single(conventional, command => command.Command == "dotnet restore")
+            .CoveredByDependencyScopes);
+        Assert.True(Assert.Single(conventional, command => command.Command == "npm ci")
+            .CoveredByDependencyScopes);
+        Assert.False(Assert.Single(GatePreparationPlanner.Plan(
+            _root, opaque, VerifyCommandPlanner.Plan(_root, opaque).Commands)).CoveredByDependencyScopes);
+        Assert.True(Assert.Single(GatePreparationPlanner.Plan(
+            _root, declared, VerifyCommandPlanner.Plan(_root, declared).Commands)).CoveredByDependencyScopes);
+        Assert.False(Assert.Single(GatePreparationPlanner.Plan(
+            _root, declaredWithoutLockfiles,
+            VerifyCommandPlanner.Plan(_root, declaredWithoutLockfiles).Commands)).CoveredByDependencyScopes);
+        Assert.False(Assert.Single(V1ReviewPlaneEndpoints.FallbackPlan(_root, opaque, "refs/heads/main")
+            .Preparation!).CoveredByDependencyScopes);
+        Assert.True(Assert.Single(V1ReviewPlaneEndpoints.FallbackPlan(_root, declared, "refs/heads/main")
+            .Preparation!).CoveredByDependencyScopes);
     }
 
     /// <summary>

@@ -1,12 +1,7 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Cli;
-
-public sealed record CliFallbackPreference(
-    string CliType,
-    bool Active,
-    DateTime? EnabledAt,
-    DateTime? ExpiresAt);
 
 /// <summary>
 /// Runtime operator preference to conserve one provider before its hard cap.
@@ -95,7 +90,7 @@ public sealed class CliFallbackPreferenceService
     {
         var root = _configuration["TaskRepository"];
         if (string.IsNullOrWhiteSpace(root))
-            root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "agent-taskboard");
+            root = LocalStateRoot.Combine("agent-taskboard");
         return Path.Combine(root, FileName);
     }
 

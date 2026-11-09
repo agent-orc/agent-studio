@@ -1,0 +1,86 @@
+<div class="operators" data-testid="access-operator-agents">
+  @if (operators.error(); as message) { <p class="access-error" role="alert" data-testid="access-operator-error">{{ message }}</p> }
+  @if (operators.killSwitchError(); as message) { <p class="access-error" role="alert" data-testid="access-operator-kill-error">{{ message }}</p> }
+  @if (issued(); as session) {
+    <div class="operators__issued" data-testid="access-operator-session-issued" role="status">
+      <p>Copy this session token now. It is not shown again. It is valid until {{ time(session.expiresAt) }}, and only the Owner can renew it.</p>
+      <p class="access-hint">Acts as <code>{{ session.actor }}</code>, delegated by {{ person(session.delegatedBy) }}.</p>
+      <p class="access-secret" data-testid="access-operator-session-token">{{ session.token }}</p>
+      <div class="access-row">
+        <button type="button" data-testid="access-operator-session-copy" (click)="copy(session.token)">{{ copied() ? 'Copied' : 'Copy token' }}</button>
+        <button type="button" class="access-secondary" data-testid="access-operator-session-done" (click)="dismiss()">Done</button>
+      </div>
+    </div>
+  }
+  @for (agent of agents(); track agent.id) {
+    <article class="operators__item" [attr.data-testid]="'access-operator-agent-' + agent.id">
+      <header class="operators__head">
+        <div>
+          <h4>{{ agent.name }} @if (agent.disabledAt) { <span class="access-badge" data-tone="muted">Disabled</span> }</h4>
+          @if (agent.description) { <p class="access-hint">{{ agent.description }}</p> }
+          <p class="access-hint access-numeric">Created {{ time(agent.createdAt) }}@if (agent.createdBy) { by {{ person(agent.createdBy) }}}</p>
+        </div>
+        @if (!agent.disabledAt) {
+          <label>Session name
+            <input [attr.data-testid]="'access-operator-session-name-' + agent.id" placeholder="Optional" [value]="sessionName(agent.id)" (input)="setSessionName(agent.id, $any($event.target).value)" />
+          </label>
+          <label>Lifetime
+            <select [attr.data-testid]="'access-operator-session-lifetime-' + agent.id" (change)="setLifetime(agent.id, $any($event.target).value)">
+              @for (hour of hours; track hour) { <option [value]="'' + hour" [selected]="hour === lifetime(agent.id)">{{ hour }} {{ hour === 1 ? 'hour' : 'hours' }}</option> }
+            </select>
+          </label>
+          <button type="button" [attr.data-testid]="'access-operator-session-start-' + agent.id" [disabled]="operators.busy()" (click)="start(agent)">Start session</button>
+          <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-agent-disable-' + agent.id" [disabled]="operators.busy()" (click)="disable(agent)">Disable</button>
+        }
+      </header>
+      @if (agent.sessions.length) {
+        <div class="operators__scroll">
+          <table [attr.data-testid]="'access-operator-sessions-' + agent.id">
+            <thead>
+              <tr>
+                <th scope="col">Session</th><th scope="col">State</th><th scope="col">Actor</th><th scope="col">Delegated by</th>
+                <th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Last used</th><th scope="col"><span class="visually-hidden">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (session of sessions(agent); track session.id) {
+                <tr [attr.data-testid]="'access-operator-session-' + session.id" [attr.data-state]="session.state">
+                  <td>{{ session.name || session.id }}</td>
+                  <td><span class="access-badge" [attr.data-tone]="session.state === 'active' ? 'active' : 'muted'" [attr.title]="session.revokedAt ? 'Revoked ' + time(session.revokedAt) : null">{{ stateLabel(session.state) }}</span></td>
+                  <td><code class="operators__actor">{{ session.actor }}</code></td>
+                  <td>{{ person(session.delegatedBy) }}</td>
+                  <td class="access-numeric">{{ time(session.createdAt) }}</td>
+                  <td class="access-numeric" [attr.title]="session.renewedAt ? 'Renewed ' + time(session.renewedAt) : null">{{ time(session.expiresAt) }}</td>
+                  <td class="access-numeric">{{ time(session.lastUsedAt) || 'Never' }}</td>
+                  <td class="access-actions">
+                    <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-session-activity-' + session.id" (click)="showActivity(session)">Activity</button>
+                    @if (session.state === 'active' && !agent.disabledAt) {
+                      <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-session-renew-' + session.id" [disabled]="operators.busy()" (click)="renew(agent, session)">Renew</button>
+                      <button type="button" class="access-quiet" [attr.data-testid]="'access-operator-session-kill-' + session.id" [disabled]="operators.busy() || operators.killing()" (click)="end(agent, session)">End session</button>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      } @else {
+        <p class="access-hint">No sessions yet.</p>
+      }
+    </article>
+  } @empty {
+    <p class="access-hint" data-testid="access-operator-agents-empty">No operator agents. Create one for an automation that acts on your behalf in short, renewable sessions.</p>
+  }
+  <section class="operators__create" aria-labelledby="access-create-operator-title">
+    <h4 id="access-create-operator-title">New operator agent</h4>
+    <div class="access-row">
+      <label>Name
+        <input data-testid="access-operator-agent-name" [value]="name()" (input)="name.set($any($event.target).value)" />
+      </label>
+      <label>Description
+        <input data-testid="access-operator-agent-description" placeholder="Optional" [value]="description()" (input)="description.set($any($event.target).value)" />
+      </label>
+      <button type="button" data-testid="access-operator-agent-create" [disabled]="!name().trim() || operators.busy()" (click)="create()">Create operator agent</button>
+    </div>
+  </section>
+</div>

@@ -39,6 +39,24 @@ First-time browser install (already done in dev setup, but if the
 npx --prefix frontend playwright install chromium
 ```
 
+### Public demo shell check
+
+Run `npm --prefix frontend run e2e -- e2e/system/public-demo-shell.spec.ts` from
+the task worktree. The spec selects the `public-demo` Playwright profile, which
+seeds an isolated demo workspace and starts the backend with
+`Security:Profile=public-demo-readonly`. Its frontend proxy serves a temporary
+localhost HTTPS certificate, forwards the secure scheme to the backend, and
+lets Chromium retain the Secure viewer cookie. Playwright ignores certificate
+errors only for this isolated profile. The disposable backend raises its
+per-IP request budget to 2000 for browser automation; the normal public demo
+rate limit and HTTPS requirement stay unchanged outside this test process.
+This profile publishes the backend in Debug to a separate test output path, so
+the local browser check does not require a production Six Labors license.
+
+The spec covers the desktop project picker and the narrow-screen **More →
+Switch project** path at 1280 and 390 px in both themes. With
+`JOB_RESULTS_DIR` set, it writes four screenshots there for review.
+
 ## Suite layout
 
 Specs are grouped by domain under `e2e/<folder>/`, mirroring the feature
@@ -272,7 +290,6 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `cli-icons-screenshots.spec.ts` | CLI icons - screenshots @screenshots |
 | `cli-icons.spec.ts` | CLI icons - distinct glyph per CLI |
 | `cli-management-restructure.spec.ts` | CLI Management restructure (AGT-2101) |
-| `cli-sessions-tool.spec.ts` | CLI-session tool - real data |
 | `cli-skills-pickup.spec.ts` | CLI skills - pickup @billable |
 | `cli-usage-project-clickthrough.spec.ts` | clicking a project usage row opens that project Settings rail |
 | `cli-usage.spec.ts` | CLI usage hub (status-bar → settings home) |
@@ -314,7 +331,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `git-tree-no-ng0600.spec.ts` | git file tree renders without NG0600 (signal write inside computed) |
 | `git-view-layout-shots.spec.ts` | AGT-2011 · Git-View layout shots (mocked) |
 
-### `layout/` - 26 specs
+### `layout/` - 18 specs
 
 | Spec | Summary |
 |------|---------|
@@ -327,18 +344,8 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `orchestrator-inside-shell.spec.ts` | orchestrator rail sits inside studio-shell body |
 | `orchestrator-phases-continuous.spec.ts` | orchestrator chat renders no inline phase/super-phase dividers |
 | `project-drag-between-workspaces.spec.ts` | Sidebar: drag a project onto a workspace folder |
-| `status-bar-and-header.spec.ts` | Status bar and header size |
-| `status-bar-claude-unknown-quota.spec.ts` | Status bar quota: Claude 2.1.202 unknown utilization |
-| `status-bar-codex-percent-quota.spec.ts` | Status bar quota: Codex %-only payload |
-| `status-bar-codex-spark-quota.spec.ts` | Status bar quota: Codex Spark windows |
 | `status-bar-host-load.spec.ts` | Status bar execution-host load companion signal |
-| `status-bar-layout-consolidated.spec.ts` | Status bar layout consolidated |
-| `status-bar-layout-spacer.spec.ts` | Status bar layout: dense left quota + right dock |
-| `status-bar-menu-migration.spec.ts` | Status bar default picker (unified chip) |
-| `status-bar-panel-active-state.spec.ts` | Status bar panel buttons - active/toggle state |
-| `status-bar-quota-pills-polish.spec.ts` | AGT-2058 status-bar quota pills polish |
-| `status-bar-quota-two-windows.spec.ts` | Status bar quota: uniform primary pill |
-| `status-bar-usage-modal.spec.ts` | Status bar usage modal |
+| `status-bar-menu-migration.spec.ts` | Header defaults control and More navigation |
 | `studio-sidebar-resize.spec.ts` | Studio sidebar resize |
 | `tasks-activity-panel-cleanup.spec.ts` | Tasks activity panel - removed |
 | `verify-orchestrator-inside-shell.spec.ts` | orchestrator side sheet renders inside studio-shell body grid |
@@ -458,11 +465,12 @@ Do **not** select by CSS class names; they belong to styling and change often.
 |------|---------|
 | `networked-login.spec.ts` | networked Studio gates the workspace behind same-origin login |
 
-### `settings/` - 7 specs
+### `settings/` - 8 specs
 
 | Spec | Summary |
 |------|---------|
 | `appearance-layout-toggles.spec.ts` | Settings - Appearance/Layout segmented toggles |
+| `operator-agents.spec.ts` | AGT-3372 · Access operator agents: create, one-time session token, audited activity, chain and forwarding strip; AGT-3373 · kill switch: end one session, end all operator access, drill, acute states; light and dark (mocked) |
 | `quota-forecast.spec.ts` | AGT-3001 · CLI Management quota forecast: curve, rate, 100% time, session gauge, armed fallback (mocked) |
 | `remote-hosts.spec.ts` | Execution Hosts settings section |
 | `settings-consolidation.spec.ts` | Settings consolidation (AGT-2035) |
@@ -641,7 +649,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 
 | Spec | Summary |
 |------|---------|
-| `cockpit-integration-matrix.spec.ts` | HUC-S7 product UI captures and integration geometry over the pinned demo workspace; set `HUC_RESULTS_DIR` for the evidence folder |
+| `footer-subscription-usage.spec.ts` | One footer entry per subscription, stale age, host sign-in problem, top-right account and Settings, and responsive screenshots |
 
 ### `workspace/` - 8 specs
 

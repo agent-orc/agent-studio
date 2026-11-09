@@ -7,6 +7,25 @@ public static class TaskFailureContinuationEndpoints
 {
     public static void MapTaskFailureContinuationEndpoints(this RouteGroupBuilder group)
     {
+        // AGT-3582: the same guard as the POST, read only, so the task detail
+        // offers the action only for a delivery with a failure to continue.
+        group.MapGet("/{jobId}/failure/continue", (
+            string jobId,
+            string? project,
+            string? watchPath,
+            TaskScannerService scanner,
+            AgentStudio.Registry.ProjectRegistry projects,
+            TaskListGitProjectionCache gitProjection,
+            TaskFailureContinuationService continuations) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var job = scanner.FindJob(jobId, watchPath);
+            if (job is null) return Results.NotFound(new { error = "Task not found." });
+            // The published status the task detail renders, not a live git read.
+            var refusal = continuations.Check(job, gitProjection.ReadTask(job).Data?.Integration);
+            return Results.Ok(new { available = refusal is null, reason = refusal });
+        });
+
         group.MapPost("/{jobId}/failure/continue", async (
             string jobId,
             string? project,

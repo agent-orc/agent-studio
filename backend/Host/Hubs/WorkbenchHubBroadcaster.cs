@@ -32,14 +32,48 @@ public sealed class WorkbenchHubBroadcaster
 
     public void Attach(TaskWatcherService watcher, WorkbenchChangeNotifier notifier)
     {
-        lock (_gate)
-        {
-            foreach (var projectName in _catalogue.ListProjectNames())
-                _snapshots[projectName] = ReadProject(projectName);
-        }
         watcher.OnWikiChanged += OnWikiChanged;
         notifier.DecisionRecorded += OnDecisionRecorded;
         notifier.ReviewRecorded += OnReviewRecorded;
+    }
+
+    public void InitializeSnapshotsAfterBoot(TaskIndexCache index)
+    {
+        // A restored board can answer while its first scan is still running.
+        // Catalogue discovery needs the reference index from that scan, so
+        // await it without occupying a worker or delaying hosted services.
+        _ = InitializeSnapshotsAsync(index, index.RefreshInFlight);
+    }
+
+    private async Task InitializeSnapshotsAsync(TaskIndexCache index, Task? refresh)
+    {
+        if (refresh != null)
+        {
+            try { await refresh.ConfigureAwait(false); }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Initial Dossier snapshots await a successful task scan");
+            }
+        }
+        if (index.TryGetPublished() is null) return;
+        await Task.Run(InitializeSnapshots).ConfigureAwait(false);
+    }
+
+    private void InitializeSnapshots()
+    {
+        try
+        {
+            foreach (var projectName in _catalogue.ListProjectNames())
+            {
+                var snapshot = ReadProject(projectName);
+                lock (_gate)
+                    _snapshots.TryAdd(projectName, snapshot);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Initial Dossier hub snapshots could not be loaded");
+        }
     }
 
     private void OnWikiChanged(string projectName, string changedPath)

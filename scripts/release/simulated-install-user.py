@@ -94,7 +94,7 @@ def main() -> int:
                        "-e", "OPENAI_API_KEY", "-v", f"{work}:/work",
                        "-v", f"{args.candidate_dir.resolve()}:/candidate:ro", "-w", "/work",
                        "node:22-bookworm", "sh", "-c",
-                       "npm install -g @openai/codex@0.155.0 >/dev/null 2>&1 && "
+                       "npm install -g @openai/codex@0.166.0 >/dev/null 2>&1 && "
                        "exec codex exec --skip-git-repo-check --ephemeral --ignore-user-config "
                        "--dangerously-bypass-approvals-and-sandbox --model \"$1\" "
                        "--config model_reasoning_effort=low --output-schema /work/friction.schema.json "

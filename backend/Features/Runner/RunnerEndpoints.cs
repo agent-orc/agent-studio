@@ -319,13 +319,20 @@ public static class RunnerEndpoints
         // continuable state, routes the new direction through the existing
         // Continue path so the override actually takes effect on the agent.
         runnerGroup.MapPost("/{projectName}/orchestrator-log/override",
-            async (string projectName, OrchestratorOverrideRequest req, TaskScannerService scanner, OrchestratorLog log, TaskRunnerService runner, CancellationToken ct) =>
+            async (string projectName, OrchestratorOverrideRequest req, TaskScannerService scanner, OrchestratorLog log, TaskRunnerService runner, AgentStudio.Pipeline.BatchIsolationGuard isolation, CancellationToken ct) =>
             {
                 if (string.IsNullOrWhiteSpace(req?.NewDirection))
                     return Results.BadRequest(new { error = "newDirection is required" });
 
                 var watchEntry = scanner.GetWatchPaths().FirstOrDefault(e => e.Name == projectName);
                 if (watchEntry == null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+                // AGT-3483: the override is a steer; a member of an isolating
+                // batch takes no steer until isolation ends.
+                if (!string.IsNullOrWhiteSpace(req.JobId)
+                    && scanner.FindJob(req.JobId, watchEntry.Path) is { } steered
+                    && isolation.Find(steered) is { } isolating)
+                    return Results.Json(AgentStudio.Pipeline.BatchIsolationGuardPolicy.Body(isolating),
+                        statusCode: StatusCodes.Status409Conflict);
 
                 // Always record the intervention in the feed, regardless of
                 // whether we can route the follow-up. The audit trail is
@@ -381,8 +388,11 @@ public static class RunnerEndpoints
                 var entry = scanner.GetWatchPaths().FirstOrDefault(e => e.Name == projectName);
                 if (entry == null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
                 var turns = await chatService.ReadAsync(projectName, entry.Path, context: null, 1000, ct);
-                var executionContext = chatService.ResolveExecutionContext(projectName, entry.Path);
-                return Results.Ok(new { project = projectName, turns, executionContext });
+                var executionReadiness = chatService.ResolveExecutionReadiness(projectName, entry.Path);
+                var executionContext = executionReadiness.Ready
+                    ? chatService.ResolveExecutionContext(projectName, entry.Path)
+                    : null;
+                return Results.Ok(new { project = projectName, turns, executionContext, executionReadiness });
             });
 
         runnerGroup.MapPost("/{projectName}/orchestrator-chat",
@@ -432,8 +442,11 @@ public static class RunnerEndpoints
             var entry = scanner.GetWatchPaths().FirstOrDefault(e => e.Name == key.ProjectId);
             if (entry == null) return Results.NotFound(new { error = $"Unknown project '{key.ProjectId}'" });
             var turns = await chatService.ReadAsync(key.ProjectId!, entry.Path, key, 1000, ct);
-            var executionContext = chatService.ResolveExecutionContext(key.ProjectId!, entry.Path, key);
-            return Results.Ok(new { contextKey = key.Value, project = key.ProjectId, turns, executionContext });
+            var executionReadiness = chatService.ResolveExecutionReadiness(key.ProjectId!, entry.Path);
+            var executionContext = executionReadiness.Ready
+                ? chatService.ResolveExecutionContext(key.ProjectId!, entry.Path, key)
+                : null;
+            return Results.Ok(new { contextKey = key.Value, project = key.ProjectId, turns, executionContext, executionReadiness });
         }
 
         static async Task<IResult> SendContextChat(

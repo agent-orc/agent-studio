@@ -1,1 +1,6 @@
 .batch-member { display: inline-flex; align-items: center; border: 1px solid var(--studio-border); border-radius: 999px; background: var(--studio-bg-elevated); color: var(--studio-fg-muted); padding: var(--studio-spacing-1) var(--studio-spacing-2); font-size: .72rem; font-variant-numeric: tabular-nums; }
+.batch-member[data-status='review-fix'] {
+  background: color-mix(in srgb, var(--studio-status-warning) 14%, var(--studio-bg-elevated));
+  border-color: color-mix(in srgb, var(--studio-status-warning) 45%, var(--studio-border));
+  color: var(--studio-fg-strong);
+}

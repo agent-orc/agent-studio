@@ -32,6 +32,14 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+app-root {
+  --resizing-cursor: col-resize;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+}
+
 :root {
   --studio-z-overlay-root: 2147483647;
   --studio-z-overlay-backdrop: 2147483000;
@@ -152,7 +160,7 @@ html[data-studio-theme='light'] {
   }
   .task-card__subtle, .task-card__age, .task-card__client,
   .task-card__cli-name, .task-card__owner-name {
-    color: #6e6e6e;
+    color: var(--studio-fg-dim);
   }
   // Pills and small chips on the card. The component-side SCSS was
   // migrated to var(--studio-*) tokens in Wave A.2 — these overrides
@@ -804,4 +812,36 @@ select option:hover {
    sits at its size budget. */
 .studio .dashboard--studio:has(> app-delivery-section:not(.delivery--empty, .lane-group--hidden-by-focus)) {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.studio .dashboard--studio:has(> app-delivery-section.delivery--collapsed:not(.delivery--empty, .lane-group--hidden-by-focus)) {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) 72px;
+}
+
+.studio .dashboard--studio.dashboard--has-focus {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.studio .dashboard--studio > .lane-group.lane-group--hidden-by-focus {
+  display: none;
+}
+
+/* Narrow board (AGT-3590): below tablet width one container fills the board,
+   picked in <app-board-group-switcher>. This beats the Delivery track rules
+   above, so a picked Delivery group also gets the single track, and the
+   divider that separates side-by-side containers has nothing to separate. */
+.studio .dashboard--studio.dashboard--single-group.dashboard--has-focus {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.studio .dashboard--studio.dashboard--single-group > .lane-group {
+  border-left: 0;
+}
+// The legacy header shares the Studio action placement while its broader
+// visual migration remains outside this scoped bar change.
+.app .header__settings {
+  min-height: var(--studio-row-min-h-interactive-compact);
+  background: var(--studio-bg-elevated);
+  border-color: var(--studio-border);
+  color: var(--studio-text-primary);
 }

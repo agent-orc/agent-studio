@@ -17,6 +17,50 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class RoutePermissionInventoryTests : IDisposable
 {
+    [Fact]
+    public void ModelSelectionIngestionIsRunnerScoped()
+    {
+        Assert.Equal(IamPermissions.RunnerService,
+            RoutePermissionCatalog.Resolve("POST", "/api/model-selection/events")?.Permission);
+        Assert.Equal(IamPermissions.WorkspaceOperate,
+            RoutePermissionCatalog.Resolve("GET", "/api/model-selection/events")?.Permission);
+        Assert.Equal(IamPermissions.WorkspaceOperate,
+            RoutePermissionCatalog.Resolve("GET", "/api/model-selection/active")?.Permission);
+    }
+
+    [Fact]
+    public void Failed_test_ranking_route_is_project_read_scoped()
+    {
+        Assert.Equal(IamPermissions.ProjectRead,
+            RoutePermissionCatalog.Resolve("GET", "/api/projects/{projectName}/batch-gate/failed-tests")?.Permission);
+        using var factory = Factory(SecurityProfiles.Local, null);
+        Assert.Contains(Routes(factory.Services), route =>
+            route.RoutePattern.RawText == "/api/projects/{projectName}/batch-gate/failed-tests");
+    }
+
+    [Fact]
+    public async Task Failed_test_ranking_route_rejects_unknown_project()
+    {
+        using var factory = Factory(SecurityProfiles.Local, null);
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync("/api/projects/unknown-project/batch-gate/failed-tests");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Isolation_evidence_route_is_project_read_scoped_and_rejects_unknown_project()
+    {
+        Assert.Equal(IamPermissions.ProjectRead,
+            RoutePermissionCatalog.Resolve("GET", "/api/projects/{projectName}/batch-gate/isolation-evidence")?.Permission);
+        using var factory = Factory(SecurityProfiles.Local, null);
+        Assert.Contains(Routes(factory.Services), route =>
+            route.RoutePattern.RawText == "/api/projects/{projectName}/batch-gate/isolation-evidence");
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync(
+            "/api/projects/unknown-project/batch-gate/isolation-evidence?parentBatchId=batch-14&taskKey=AGT-2");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "route-permissions-" + Guid.NewGuid().ToString("N"));
 
     public static TheoryData<string, string?> Profiles => new()
@@ -26,7 +70,32 @@ public sealed class RoutePermissionInventoryTests : IDisposable
         { SecurityProfiles.Networked, "http://127.0.0.1:5071" },
     };
 
+    [Fact]
+    public async Task Retired_cli_host_routes_return_not_found_while_usage_remains_mapped()
+    {
+        using var factory = Factory(SecurityProfiles.Local, null);
+        var routes = Routes(factory.Services);
+        Assert.Contains(routes, route => route.RoutePattern.RawText == "/api/cli/usage");
+        Assert.DoesNotContain(routes, route => route.RoutePattern.RawText?.Contains("working-memory", StringComparison.Ordinal) == true
+            || route.RoutePattern.RawText?.Contains("session-detail", StringComparison.Ordinal) == true
+            || route.RoutePattern.RawText == "/api/cli/{cliType}/session");
+
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        foreach (var path in new[] { "/api/cli/claude/working-memory", "/api/cli/claude/session-detail?id=missing" })
+        {
+            using var response = await client.GetAsync(path);
+            Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+        }
+        foreach (var path in new[] { "/api/cli/claude/working-memory?path=missing", "/api/cli/claude/session?id=missing" })
+        {
+            using var response = await client.DeleteAsync(path);
+            Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+        }
+    }
+
     [Theory]
+    [Trait("Category", "Guard")]
     [MemberData(nameof(Profiles))]
     public void Every_route_declares_a_known_permission(string profile, string? taskServer)
     {
@@ -47,6 +116,13 @@ public sealed class RoutePermissionInventoryTests : IDisposable
             + string.Join("\n  ", undeclared.Distinct().Order(StringComparer.Ordinal)));
         Assert.Empty(unknown);
     }
+
+    [Theory]
+    [InlineData("GET", "/api/system/readiness", IamPermissions.WorkspaceOperate)]
+    [InlineData("POST", "/api/system/readiness/refresh", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/healthz/readiness", IamPermissions.Anonymous)]
+    public void Readiness_routes_use_their_intended_permissions(string method, string path, string permission)
+        => Assert.Equal(permission, RoutePermissionCatalog.Resolve(method, path)?.Permission);
 
     [Theory]
     [InlineData("GET", "/api/tasks/{jobId}", IamPermissions.ProjectRead)]
@@ -130,9 +206,8 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("GET", "/api/filesystem-layer/snapshot", IamPermissions.WorkspaceAdminister)]
     [InlineData("GET", "/api/cli/types", IamPermissions.WorkspaceRead)]
     [InlineData("GET", "/api/cli/usage", IamPermissions.WorkspaceOperate)]
-    [InlineData("GET", "/api/cli/{cliType}/session-detail", IamPermissions.WorkspaceOperate)]
-    [InlineData("GET", "/api/cli/{cliType}/working-memory", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/cli/quota", IamPermissions.WorkspaceRead)]
+    [InlineData("GET", "/api/model-selection/effective", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/cli/{cliType}/models", IamPermissions.WorkspaceRead)]
     [InlineData("GET", "/api/cli/maintenance-model", IamPermissions.WorkspaceRead)]
     [InlineData("GET", "/api/cli/{name}/effective-mode", IamPermissions.WorkspaceRead)]
@@ -152,6 +227,8 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("GET", "/api/workspaces/{workspaceId}/projects/{projectId}/quota", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/auto-review/status", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/system/execution-infrastructure", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/system/gate-capacity", IamPermissions.WorkspaceOperate)]
+    [InlineData("PUT", "/api/system/gate-capacity", IamPermissions.WorkspaceAdminister)]
     [InlineData("GET", "/api/agent-rules", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/adhoc-usage", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/admin/config/orchestrator", IamPermissions.WorkspaceOperate)]

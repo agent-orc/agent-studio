@@ -61,6 +61,16 @@ public sealed class ResultFinalizationPolicyTests
     }
 
     [Fact]
+    public void A_missing_model_host_reads_as_waiting_and_keeps_the_retry()
+    {
+        const string reason = "waiting for a host with model-acceptance:codex:gpt-6-sol";
+        var plan = ResultFinalizationPolicy.Plan(ResultSummaryDelivery.Pending, reason);
+        Assert.Equal("pending:" + reason, plan.ResultDocumentStatus);
+        Assert.Equal("Summary pending (" + reason + ")", plan.TimelineSummary);
+        Assert.True(plan.ScheduleRetry);
+    }
+
+    [Fact]
     public void A_summary_still_running_past_the_budget_is_pending_not_missing()
     {
         var plan = ResultFinalizationPolicy.Plan(ResultSummaryDelivery.Pending, null);
@@ -82,6 +92,32 @@ public sealed class ResultFinalizationPolicyTests
         Assert.True(plan.ScheduleRetry);
         Assert.Equal("degraded:A task was canceled.", plan.ResultDocumentStatus);
         Assert.Equal("Summary pending (degraded: A task was canceled.)", plan.TimelineSummary);
+    }
+
+    [Theory]
+    [InlineData("decision-input-incomplete:oversize-orchestrator-prompt", true)]
+    [InlineData("  decision-input-incomplete:raw-session-path", true)]
+    [InlineData("A task was canceled.", false)]
+    [InlineData("summary-protocol-invalid: missing # Status", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void Input_refusal_matrix(string? error, bool expected)
+        => Assert.Equal(expected, ResultFinalizationPolicy.IsInputRefusal(error));
+
+    [Fact]
+    public void A_summary_whose_input_the_boundary_refused_schedules_no_retry()
+    {
+        var plan = ResultFinalizationPolicy.Plan(
+            ResultSummaryDelivery.Degraded,
+            "decision-input-incomplete:oversize-orchestrator-prompt");
+
+        Assert.False(plan.Generated);
+        Assert.False(plan.CommitStatusDocument);
+        Assert.False(plan.ScheduleRetry);
+        Assert.Equal("degraded:decision-input-incomplete:oversize-orchestrator-prompt", plan.ResultDocumentStatus);
+        Assert.Equal(
+            "Summary degraded (input refused: decision-input-incomplete:oversize-orchestrator-prompt)",
+            plan.TimelineSummary);
     }
 
     [Fact]

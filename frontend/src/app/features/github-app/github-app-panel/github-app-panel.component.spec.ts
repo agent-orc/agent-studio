@@ -3,7 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { GITHUB_APP_NAVIGATOR, type GitHubAppStatus } from '../github-app.service';
+import { GITHUB_APP_NAVIGATOR, type GitHubAppCoverageState, type GitHubAppStatus } from '../github-app.service';
 import { GitHubAppPanelComponent } from './github-app-panel.component';
 
 const root = '/api/v1/management/github-app';
@@ -19,7 +19,7 @@ const connected: GitHubAppStatus = {
   connectedAtUtc: '2026-11-01T10:00:00Z',
   installations: [{ id: 1, account: 'owner', accountType: 'User', adoptedAtUtc: '2026-11-01T10:01:00Z', adoptedBy: 'local-operator' }],
   repositories: [
-    { project: 'Covered', repositoryUrl: 'https://github.com/owner/a.git', state: 'covered', installationId: 1, detail: null },
+    { project: 'Covered', repositoryUrl: 'https://github.com/owner/a.git', state: 'covered', installationId: 1, detail: null, visibility: 'private' },
     { project: 'Missing', repositoryUrl: 'https://github.com/owner/b.git', state: 'not-installed', installationId: null, detail: 'Not installed.' },
     { project: 'Local', repositoryUrl: null, state: 'no-repository-url', installationId: null, detail: null },
   ],
@@ -72,8 +72,49 @@ describe('GitHubAppPanelComponent', () => {
     const rows = element.querySelectorAll('[data-testid="github-app-repositories"] tbody tr');
     expect(rows.length).toBe(3);
     expect(rows[1].textContent).toContain('App not installed');
+    const visibility = [...element.querySelectorAll('[data-testid="github-app-repository-visibility"]')].map(cell => cell.textContent?.trim());
+    expect(visibility).toEqual(['Private', '-', '-']);
     expect(element.querySelector('[data-testid="github-app-uncovered"]')?.textContent).toContain('1 still use');
     expect(element.querySelector('[data-testid="github-app-hosts"]')?.textContent).toContain('runner-1');
+  });
+
+  it('shows a tone icon in front of every repository access state', async () => {
+    const states: { state: GitHubAppCoverageState; tone: string; icon: string; label: string }[] = [
+      { state: 'covered', tone: 'success', icon: 'check', label: 'Connected' },
+      { state: 'not-installed', tone: 'warning', icon: 'warn', label: 'App not installed' },
+      { state: 'not-adopted', tone: 'warning', icon: 'warn', label: 'Needs confirmation' },
+      { state: 'no-repository-url', tone: 'neutral', icon: 'circle', label: 'No repository' },
+      { state: 'not-github', tone: 'neutral', icon: 'circle', label: 'Not on GitHub' },
+      { state: 'unknown', tone: 'neutral', icon: 'circle', label: 'Unknown' },
+    ];
+    const element = await render({
+      ...connected,
+      repositories: states.map(({ state }) => ({
+        project: state, repositoryUrl: null, state, installationId: null, detail: state === 'not-adopted' ? 'Confirm on GitHub.' : null,
+      })),
+    });
+
+    for (const expected of states) {
+      const indicator = element.querySelector(`[data-testid="github-app-coverage-${expected.state}"]`) as HTMLElement;
+      expect(indicator, expected.state).not.toBeNull();
+      expect(indicator.dataset['tone'], expected.state).toBe(expected.tone);
+      expect(indicator.dataset['icon'], expected.state).toBe(expected.icon);
+      expect(indicator.querySelector('.status-indicator__icon svg'), expected.state).not.toBeNull();
+      expect(indicator.querySelector('.status-indicator__icon')?.getAttribute('aria-hidden')).toBe('true');
+      expect(indicator.textContent?.trim()).toBe(expected.label);
+    }
+    expect(element.querySelector('[data-testid="github-app-coverage-not-adopted"]')?.getAttribute('tabindex')).toBe('0');
+    expect(element.querySelector('[data-testid="github-app-coverage-covered"]')?.getAttribute('tabindex')).toBeNull();
+  });
+
+  it('marks the connection and each confirmed installation as success', async () => {
+    const element = await render(connected);
+    const connection = element.querySelector('[data-testid="github-app-connection-status"]') as HTMLElement;
+    expect(connection.dataset['tone']).toBe('success');
+    expect(connection.textContent?.trim()).toBe('Connected');
+    const installation = element.querySelector('[data-testid="github-app-installation-1"]') as HTMLElement;
+    expect(installation.dataset['icon']).toBe('check');
+    expect(installation.classList.contains('status-indicator--compact')).toBe(true);
   });
 
   it('asks once more before disconnecting', async () => {

@@ -37,7 +37,7 @@ describe('StudioHeaderCockpit workspace quota', () => {
       const host = {
         registryWorkspaces: workspaces, activeWorkspaceName,
         globalSearchOpen: signal(false), environmentOpen: signal(false), pickerOpen: signal(false),
-        chatToggle: { emit: vi.fn() }, openUsageSheet: { emit: vi.fn() }, openOrchFeed: { emit: vi.fn() }, openOrchSettings: { emit: vi.fn() },
+        chatToggle: { emit: vi.fn() }, openOrchSettings: { emit: vi.fn() },
         toggleTheme: () => undefined,
       } as unknown as StudioHeaderHost;
       return new StudioHeaderCockpit(host);

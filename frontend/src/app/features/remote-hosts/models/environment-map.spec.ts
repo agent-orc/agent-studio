@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildEnvironmentMap, type EnvironmentSnapshot } from './environment-map';
+import { buildEnvironmentMap, environmentHealthTone, repositoryAccessTone, type EnvironmentSnapshot } from './environment-map';
 import type { PhysicalHostGroup } from './physical-host-group';
 import type { RemoteHost } from './remote-host.model';
 import type { CredentialInventory, CredentialInventoryItem } from '../../credentials/credential-inventory.service';
@@ -156,5 +156,22 @@ describe('buildEnvironmentMap', () => {
       ...observed, taskServerConnection: { ...observed.taskServerConnection, status: 'unreachable' },
     })], null, () => 0);
     expect(disconnected.connections.find(connection => connection.type === 'outbound claim link')?.health).toBe('warn');
+  });
+});
+
+describe('environment map status tones', () => {
+  it('maps the mixed health words of the map onto the shared tones', () => {
+    expect(['online', 'reachable', 'ready', 'ok'].map(environmentHealthTone)).toEqual(['success', 'success', 'success', 'success']);
+    expect(['degraded', 'warn', 'unverified'].map(environmentHealthTone)).toEqual(['warning', 'warning', 'warning']);
+    expect(['offline', 'unreachable', 'engine-not-live'].map(environmentHealthTone)).toEqual(['danger', 'danger', 'danger']);
+    expect(['unknown', 'idle', 'not-required', 'something-new'].map(environmentHealthTone))
+      .toEqual(['neutral', 'neutral', 'neutral', 'neutral']);
+  });
+
+  it('treats write access as the goal and unknown access as neutral', () => {
+    expect(repositoryAccessTone('writes')).toBe('success');
+    expect(repositoryAccessTone('reads only')).toBe('info');
+    expect(repositoryAccessTone('no access')).toBe('warning');
+    expect(repositoryAccessTone('unknown')).toBe('neutral');
   });
 });

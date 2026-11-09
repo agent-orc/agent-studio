@@ -6,10 +6,14 @@ using AgentStudio.Runner;
 using AgentStudio.Security;
 using AgentStudio.Secrets;
 using AgentStudio.Shared;
+using AgentStudio.TestSupport;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
+using Microsoft.AspNetCore.TestHost;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -26,7 +30,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     private const string Password = "correct horse battery staple!";
     private const string AlphaCommit = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
     private const string BetaCommit = "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2";
-    private readonly string _workspace = Path.Combine(Path.GetTempPath(), "iam-handlers-" + Guid.NewGuid().ToString("N"));
+    private readonly string _workspace = TestTempRoot.Create("iam-handlers");
 
     [Fact]
     public async Task Concurrent_scoped_and_owner_task_reads_complete_without_blocking_index_refresh()
@@ -319,7 +323,8 @@ public sealed class IamHandlerAccessTests : IDisposable
         })
         {
             using var response = await viewer.GetAsync(path);
-            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.True(response.StatusCode == HttpStatusCode.Forbidden,
+                $"{path}: expected 403, got {(int)response.StatusCode} ({response.StatusCode}).");
         }
     }
 
@@ -501,8 +506,6 @@ public sealed class IamHandlerAccessTests : IDisposable
         foreach (var route in new[]
                  {
                      "/api/cli/usage",
-                     "/api/cli/claude/session-detail?id=missing",
-                     "/api/cli/claude/working-memory",
                  })
         {
             using var denied = await viewer.GetAsync(route);
@@ -996,13 +999,23 @@ public sealed class IamHandlerAccessTests : IDisposable
             File.WriteAllText(Path.Combine(card, "task.json"), JsonSerializer.Serialize(new
             {
                 id = project + "-card", title = project + " card", state = TaskStates.Backlog, order = 1, agent = "codex", kind = "task",
-                commits = new[] { new { sha = project == "alpha" ? AlphaCommit : BetaCommit, message = project + " change" } },
+                commits = new[] { new
+                {
+                    sha = project == "alpha" ? AlphaCommit : BetaCommit,
+                    message = project + " change",
+                    filesChanged = 0,
+                    files = Array.Empty<string>(),
+                } },
             }));
             File.WriteAllText(Path.Combine(card, "prompt.md"), "Fixture card.");
         }
         var factory = new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
+            // Handler authorization is exercised by requests. Startup workers
+            // would otherwise run Git catch-up against these non-repository
+            // fixtures while the requests are being measured.
+            builder.ConfigureTestServices(services => services.RemoveAll<IHostedService>());
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["TaskRepository"] = _workspace,
@@ -1077,7 +1090,7 @@ public sealed class IamHandlerAccessTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_workspace)) Directory.Delete(_workspace, true);
-        if (Directory.Exists(_workspace + "-keys")) Directory.Delete(_workspace + "-keys", true);
+        TestTempRoot.TryDelete(_workspace);
+        TestTempRoot.TryDelete(_workspace + "-keys");
     }
 }

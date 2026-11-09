@@ -1,9 +1,11 @@
 import { expect, Page, test } from '@playwright/test';
 import * as path from 'path';
+import * as fs from 'fs';
 
 const SHOTS_DIR = process.env['JOB_RESULTS_DIR']
   ?? path.resolve(__dirname, '../../results/AGT-2437');
 const EVIDENCE_VARIANT = process.env['EVIDENCE_VARIANT'] === 'before' ? 'before' : 'after';
+const LAYOUT_STAGE = process.env['AGT_3545_STAGE'] === 'before' ? 'before' : 'after';
 const TARGET = {
   id: 'activity-structured-content-fixture',
   watchPath: 'C:/fixtures/activity-structured-content',
@@ -151,14 +153,14 @@ function outputBuffer(): OutLine[] {
   ];
 }
 
-function detail() {
+function detail(state = '5-human-review') {
   return {
     info: {
       id: TARGET.id,
       taskKey: 'ASS-4242',
       displayKey: 'ASS-4242',
       title: 'Activity structured content fixture',
-      state: '5-human-review',
+      state,
       order: 1,
       agent: 'codex',
       cliType: 'codex',
@@ -221,7 +223,7 @@ function detail() {
   };
 }
 
-async function installRoutes(page: Page, output: OutLine[] = outputBuffer()): Promise<void> {
+async function installRoutes(page: Page, output: OutLine[] = outputBuffer(), state = '5-human-review'): Promise<void> {
   await page.route('**/hubs/v1/studio/negotiate**', (route) => route.fulfill({
     json: {
       connectionId: 'activity-gallery-e2e',
@@ -242,6 +244,13 @@ async function installRoutes(page: Page, output: OutLine[] = outputBuffer()): Pr
   // The header usage cockpit expects an object, not the catch-all array.
   await context.route('**/api/usage/cockpit**', (route) =>
     route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }));
+  await context.route('**/api/workspaces/*/quota/admission**', (route) =>
+    route.fulfill({ json: {
+      workspaceId: 'workspace-fixture',
+      workspace: { projectId: null, project: null, status: 'ok', message: null,
+        overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false },
+      projects: [],
+    } }));
   await context.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
@@ -261,12 +270,12 @@ async function installRoutes(page: Page, output: OutLine[] = outputBuffer()): Pr
         backlog: [],
         preparation: [],
         orchestratorPrep: [],
-        ready: [],
+        ready: state === '2-ready' ? [detail(state).info] : [],
         progress: [],
         failedPickup: [],
         codeNotComplete: [],
         autoReview: [],
-        humanReview: [detail().info],
+        humanReview: state === '5-human-review' ? [detail(state).info] : [],
         review: [],
         completed: [],
         archive: [],
@@ -306,6 +315,17 @@ async function installRoutes(page: Page, output: OutLine[] = outputBuffer()): Pr
         color: '#6c8cff',
         projects: [project],
       }]),
+    }));
+  await context.route('**/api/workspaces/workspace-fixture/quota/admission**', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        workspaceId: 'workspace-fixture',
+        workspace: { projectId: null, project: null, status: 'ok', message: null,
+          overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false },
+        projects: [],
+      }),
     }));
   await context.route('**/api/cli/quota**', (route) =>
     route.fulfill({
@@ -410,7 +430,7 @@ async function installRoutes(page: Page, output: OutLine[] = outputBuffer()): Pr
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(detail()),
+      body: JSON.stringify(detail(state)),
     }));
   await context.route(`**/api/tasks/${encodedId}/results/report.html**`, (route) =>
     route.fulfill({
@@ -419,15 +439,22 @@ async function installRoutes(page: Page, output: OutLine[] = outputBuffer()): Pr
       headers: { 'Content-Disposition': 'inline' },
       body: '<!doctype html><html><body><h1>Artifact opened</h1></body></html>',
     }));
-  await context.route(`**/api/tasks/${encodedId}/thumbnail?**`, (route) => {
-    const fileName = new URL(route.request().url()).searchParams.get('path') ?? 'artifact';
-    return route.fulfill({
+  await context.route(`**/api/tasks/${encodedId}/screenshots?**`, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ screenshots: [
+      'gallery-dashboard-light.png', 'gallery-dashboard-dark.png', 'gallery-export-dialog.png',
+      'gallery-empty-state.png', 'gallery-filter-panel.png', 'gallery-mobile-table.png',
+      'gallery-review-light.png', 'gallery-review-dark.png',
+    ].map((fileName) => ({ relativePath: `results/${fileName}`, sizeBytes: fileName === 'gallery-review-dark.png' ? 2_500_000 : 94_000, width: 1440, height: 900 })) }),
+  }));
+  await context.route(`**/api/tasks/${encodedId}/screenshot?**`, (route) =>
+    route.fulfill({
       status: 200,
       contentType: 'image/svg+xml',
-      body: `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="450" viewBox="0 0 720 450"><rect width="720" height="450" fill="#18202d"/><rect x="24" y="24" width="672" height="48" rx="8" fill="#2d3a50"/><rect x="24" y="96" width="170" height="330" rx="8" fill="#243044"/><rect x="218" y="96" width="478" height="330" rx="8" fill="#243044"/><rect x="248" y="130" width="320" height="18" rx="5" fill="#76a8ff"/><text x="248" y="200" fill="#dce8ff" font-family="sans-serif" font-size="24">${fileName}</text></svg>`,
-    });
-  });
-  await context.route(`**/api/tasks/${encodedId}/screenshot?**`, (route) =>
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900"><rect width="1440" height="900" fill="#18202d"/><rect x="64" y="64" width="1312" height="772" rx="24" fill="#2d3a50"/></svg>',
+    }));
+  await context.route(`**/api/tasks/${encodedId}/results/*.png?**`, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'image/svg+xml',
@@ -448,14 +475,159 @@ async function installRoutes(page: Page, output: OutLine[] = outputBuffer()): Pr
   });
 }
 
+test.describe('task detail mobile layout', () => {
+  test.use({ hasTouch: true });
+  for (const { width, height } of [
+    { width: 390, height: 900 },
+    { width: 375, height: 667 },
+    { width: 430, height: 932 },
+    { width: 1280, height: 900 },
+  ]) {
+    for (const theme of ['light', 'dark'] as const) {
+      test(`task detail mobile layout ${width}x${height} ${theme}`, async ({ page }) => {
+        await page.addInitScript((selectedTheme) => {
+          localStorage.setItem('atp.studio.theme', selectedTheme);
+          localStorage.setItem('atp.flag.nextGenChat', '1');
+        }, theme);
+        await installRoutes(page, outputBuffer(), '2-ready');
+        await page.setViewportSize({ width, height });
+        await page.goto(`/?job=${encodeURIComponent(TARGET.id)}&watchPath=${encodeURIComponent(TARGET.watchPath)}`);
+
+        const pane = page.getByTestId('pane-protocol');
+        await expect(pane).toBeVisible();
+        await page.getByTestId('prompt-tab-overview').tap();
+        await expect(page.getByTestId('prompt-tab-overview')).toHaveAttribute('aria-selected', 'true');
+        for (const [id, testid] of [
+          ['task', 'inspector-tab-task'],
+          ['protocol', 'inspector-tab-protocol'],
+          ['activity', 'inspector-tab-activity'],
+        ] as const) {
+          const tab = page.getByTestId(testid);
+          if (await tab.isVisible().catch(() => false)) {
+            await tab.tap();
+            await expect(tab).toHaveAttribute('aria-selected', 'true');
+          } else {
+            await pane.getByTestId('pane-tabs-overflow').tap();
+            await page.getByTestId(`pane-tabs-overflow-item-${id}`).tap();
+            await expect(pane.getByRole('tabpanel')).toHaveAttribute('data-active-tab', id);
+          }
+        }
+        await expect(page.getByTestId('activity-chat-compose')).toBeVisible();
+        await page.getByTestId('pane-protocol-body').evaluate(el => { el.scrollTop = el.scrollHeight; });
+        const geometry = await page.evaluate(() => {
+          const rect = (testid: string) => {
+            const r = document.querySelector(`[data-testid="${testid}"]`)?.getBoundingClientRect();
+            if (!r) return { left: 0, right: 0, top: 0, bottom: 0 };
+            return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+          };
+          return {
+            pane: rect('pane-protocol'),
+            statusbar: rect('studio-statusbar'),
+            composer: rect('activity-chat-compose'),
+            body: rect('pane-protocol-body'),
+            gallery: rect('conversation-artifact-gallery'),
+            lastContent: rect('conversation-view'),
+            toolbar: rect('studio-triage-panel'),
+            runNow: rect('studio-triage-action-run-now'),
+            actionStrip: rect('studio-tab-actions'),
+            actionStripOverflow: (() => {
+              const strip = document.querySelector('[data-testid="studio-tab-actions"]');
+              return strip ? strip.scrollWidth - strip.clientWidth : 0;
+            })(),
+            detail: rect('detail-panes'),
+            viewport: { width: innerWidth, height: innerHeight },
+          };
+        });
+        fs.mkdirSync(SHOTS_DIR, { recursive: true });
+        fs.writeFileSync(path.join(SHOTS_DIR, `AGT-3545-${LAYOUT_STAGE}-${width}x${height}-${theme}.json`), JSON.stringify(geometry, null, 2));
+        await page.screenshot({ path: path.join(SHOTS_DIR, `AGT-3545-${LAYOUT_STAGE}-${width}x${height}-${theme}.png`) });
+
+        if (LAYOUT_STAGE === 'before') return;
+
+        if (width < 720) expect(Math.abs(geometry.pane.bottom - geometry.statusbar.top)).toBeLessThanOrEqual(2);
+        else expect(geometry.pane.bottom).toBeGreaterThanOrEqual(geometry.statusbar.top - 16);
+        expect(geometry.toolbar.right).toBeLessThanOrEqual(Math.min(width, geometry.pane.right) + 1);
+        expect(geometry.toolbar.left).toBeGreaterThanOrEqual(0);
+        expect(geometry.runNow.right).toBeLessThanOrEqual(width + 1);
+        expect(geometry.runNow.left).toBeGreaterThanOrEqual(0);
+        expect(geometry.actionStrip.right).toBeLessThanOrEqual(width + 1);
+        expect(geometry.actionStripOverflow).toBeLessThanOrEqual(1);
+        expect(geometry.body.bottom).toBeLessThanOrEqual(geometry.composer.top + 1);
+        // The conversation holds the final outcome row. At scroll bottom its
+        // trailing edge must be visible immediately above the docked composer.
+        expect(geometry.lastContent.bottom).toBeGreaterThan(geometry.body.bottom - 32);
+        expect(geometry.lastContent.bottom).toBeLessThanOrEqual(geometry.composer.top + 1);
+        expect(geometry.composer.bottom).toBeLessThanOrEqual(geometry.pane.bottom + 1);
+        expect(geometry.composer.top).toBeGreaterThan(geometry.pane.top);
+        expect(geometry.composer.bottom).toBeGreaterThan(geometry.pane.bottom - 180);
+        await page.getByTestId('pane-protocol-body').evaluate(el => {
+          el.scrollTop = 0;
+          el.dispatchEvent(new Event('scroll', { bubbles: true }));
+        });
+        const jump = page.getByTestId('conversation-jump-latest');
+        await expect(jump).toBeVisible();
+        const jumpBox = await jump.boundingBox();
+        const paneBox = await pane.boundingBox();
+        expect(jumpBox!.x).toBeGreaterThanOrEqual(paneBox!.x);
+        expect(jumpBox!.x + jumpBox!.width).toBeLessThanOrEqual(paneBox!.x + paneBox!.width + 1);
+        expect(jumpBox!.y).toBeGreaterThanOrEqual(paneBox!.y);
+        expect(jumpBox!.y + jumpBox!.height).toBeLessThanOrEqual(paneBox!.y + paneBox!.height + 1);
+      });
+    }
+  }
+});
+
 for (const theme of ['light', 'dark'] as const) {
-test(`Activity renders structured tool payloads and runner events quietly in ${theme} theme`, async ({ page }) => {
-  const fullImageRequests: string[] = [];
+test(`AGT-3543 gallery uses original images and large placeholders in ${theme}`, async ({ page }) => {
+  const largeImageRequests: string[] = [];
   page.on('request', (request) => {
-    if (request.url().includes(`/api/tasks/${encodeURIComponent(TARGET.id)}/screenshot?`)) {
-      fullImageRequests.push(request.url());
+    if (new URL(request.url()).pathname.endsWith('/results/gallery-review-dark.png')) {
+      largeImageRequests.push(request.url());
     }
   });
+  await page.addInitScript((selectedTheme) => {
+    localStorage.setItem('atp.flag.nextGenChat', '1');
+    localStorage.setItem('atp.studio.theme', selectedTheme);
+  }, theme);
+  await installRoutes(page);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`/?job=${encodeURIComponent(TARGET.id)}&watchPath=${encodeURIComponent(TARGET.watchPath)}`);
+  await page.getByTestId('inspector-tab-activity').click();
+  const gallery = page.getByTestId('activity-panel').getByTestId('conversation-artifact-gallery');
+  const tiles = gallery.getByTestId('artifact-gallery-thumbnail');
+  await expect(tiles).toHaveCount(8);
+  const image = tiles.first().locator('img');
+  await expect(image).toHaveAttribute('src', /\/results\/.*\.png/);
+  await expect(image).toHaveAttribute('loading', 'lazy');
+  await expect(image).toHaveAttribute('decoding', 'async');
+  await expect(image).toHaveAttribute('width', '1440');
+  await expect(image).toHaveAttribute('height', '900');
+  await expect(gallery.getByTestId('artifact-gallery-large-placeholder')).toHaveText(/2\.5 MB/);
+  await expect(tiles.last().locator('img')).toHaveCount(0);
+  await expect(page.locator('[data-testid="conversation-artifact-image-img"]')).toHaveCount(0);
+  const before = await tiles.first().boundingBox();
+  await image.evaluate((element: HTMLImageElement) => element.decode());
+  const after = await tiles.first().boundingBox();
+  expect(after?.height).toBe(before?.height);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await gallery.screenshot({ path: path.join(SHOTS_DIR, `AGT-3543--gallery-${theme}-${width}--after--mocked.png`) });
+    await page.screenshot({ path: path.join(SHOTS_DIR, `AGT-3543--card-detail-gallery-${theme}-${width}--after--mocked.png`) });
+    if (width === 390) {
+      await tiles.last().scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(SHOTS_DIR, `AGT-3543--card-detail-gallery-${theme}-390-large--after--mocked.png`) });
+    }
+  }
+  expect(largeImageRequests).toHaveLength(0);
+  await tiles.last().click();
+  await expect(page.getByTestId('media-lightbox-position')).toHaveText('Image 8 / 8');
+  await expect(page.getByTestId('media-lightbox-image')).toHaveAttribute('src', /\/results\/.*\.png/);
+  await expect.poll(() => largeImageRequests.length).toBeGreaterThan(0);
+});
+}
+
+for (const theme of ['light', 'dark'] as const) {
+test(`Activity renders structured tool payloads and runner events quietly in ${theme} theme`, async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem('atp.flag.nextGenChat', '1');
   });
@@ -467,6 +639,7 @@ test(`Activity renders structured tool payloads and runner events quietly in ${t
   await page.goto(
     `/?job=${encodeURIComponent(TARGET.id)}&watchPath=${encodeURIComponent(TARGET.watchPath)}`,
   );
+  await expect(page.getByTestId('pane-protocol')).toBeVisible({ timeout: 30_000 });
   await page.getByTestId('inspector-tab-activity').click();
 
   const panel = page.getByTestId('activity-panel');
@@ -491,15 +664,33 @@ test(`Activity renders structured tool payloads and runner events quietly in ${t
   const thumbnails = gallery.getByTestId('artifact-gallery-thumbnail');
   await expect(thumbnails).toHaveCount(8);
   await expect(thumbnails.first().locator('img')).toHaveAttribute('loading', 'lazy');
-  await expect(thumbnails.first().locator('img')).toHaveAttribute('src', /\/thumbnail\?/);
+  await expect(thumbnails.first().locator('img')).toHaveAttribute('decoding', 'async');
+  await expect(thumbnails.first().locator('img')).toHaveAttribute('src', /\/results\/.*\.png/);
+  await expect(thumbnails.first().locator('img')).toHaveAttribute('width', '1440');
+  await expect(gallery.getByTestId('artifact-gallery-large-placeholder')).toHaveCount(1);
+  await expect(thumbnails.last().locator('img')).toHaveCount(0);
+  const beforeBox = await thumbnails.first().boundingBox();
+  await expect(thumbnails.first().locator('img')).toBeVisible();
+  await thumbnails.first().locator('img').evaluate((image: HTMLImageElement) => image.decode());
+  const afterBox = await thumbnails.first().boundingBox();
+  expect(afterBox?.height).toBe(beforeBox?.height);
   await expect(gallery.getByTestId('artifact-document-diff')).toBeVisible();
   await expect(gallery.getByTestId('artifact-document-markdown')).toBeVisible();
   await expect(gallery.getByTestId('artifact-document-json')).toBeVisible();
   await expect(gallery.getByTestId('artifact-document-log')).toBeVisible();
   await gallery.screenshot({
-    path: path.join(SHOTS_DIR, `AGT-2558--artifact-gallery-${theme}--mocked.png`),
+    path: path.join(SHOTS_DIR, `AGT-3543--artifact-gallery-${theme}--mocked.png`),
   });
-  expect(fullImageRequests, 'the thumbnail grid must not fetch full-size images').toHaveLength(0);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await gallery.screenshot({ path: path.join(SHOTS_DIR, `AGT-3543--gallery-${theme}-${width}--after--mocked.png`) });
+    await page.screenshot({ path: path.join(SHOTS_DIR, `AGT-3543--card-detail-gallery-${theme}-${width}--after--mocked.png`) });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await thumbnails.last().click();
+  await expect(page.getByTestId('media-lightbox')).toBeVisible();
+  await expect(page.getByTestId('media-lightbox-position')).toHaveText('Image 8 / 8');
+  await page.keyboard.press('Escape');
 
   await thumbnails.first().click();
   const lightbox = page.getByTestId('media-lightbox');
@@ -580,9 +771,12 @@ test(`Activity renders structured tool payloads and runner events quietly in ${t
   await panel.screenshot({
     path: path.join(SHOTS_DIR, 'activity-html-after.png'),
   });
-  const runnerRows = panel.locator('[data-testid="conversation-system-status"][data-category="runner"]');
-  await expect(runnerRows).toHaveCount(2);
-  await expect(runnerRows.first()).not.toContainText('[runner]');
+  const runnerGroup = panel.locator('[data-testid="conversation-system-status"][data-category="runner-group"]');
+  await expect(runnerGroup).toHaveCount(1);
+  await runnerGroup.getByTestId('runner-group-detail').locator('summary').click();
+  await expect(runnerGroup.getByTestId('runner-group-rows').locator('dt')).toHaveCount(2);
+  await expect(runnerGroup.getByTestId('runner-group-row-trace')).toHaveCount(2);
+  await expect(runnerGroup).not.toContainText('[runner]');
   const completion = panel.locator('[data-testid="conversation-system-status"][data-category="result"]');
   await expect(completion).toHaveCount(1);
   await expect(completion).toContainText('Task complete');
@@ -647,15 +841,18 @@ test('Activity, Task, and Result links bind task artifacts to the open card', as
   await expect(resultPopup.getByRole('heading', { name: 'Artifact opened' })).toBeVisible();
   await resultPopup.close();
 
-  await card.click();
-  await expect(page).toHaveURL(/#\/tasks\/ASS-4242/);
-
   await result.getByRole('link', { name: 'Open quality/angular-components.md in project Wiki' }).click();
   await expect(page).toHaveURL(/#\/projects\/fixture\/wiki/i);
   await expect.poll(() => page.evaluate(() => {
     const value = localStorage.getItem('atp.projectWiki.v1.fixture');
     return value ? JSON.parse(value).openedRel : null;
   })).toBe('quality/angular-components.md');
+
+  await page.goto(`/?job=${encodeURIComponent(TARGET.id)}&watchPath=${encodeURIComponent(TARGET.watchPath)}`);
+  await expect(page.getByTestId('pane-protocol')).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId('inspector-tab-protocol').click();
+  await page.getByTestId('protocol-beautiful-results').getByRole('link', { name: 'Open task ASS-4242' }).click();
+  await expect(page).toHaveURL(/#\/tasks\/ASS-4242/);
 });
 
 function runnerFactsBuffer(): OutLine[] {

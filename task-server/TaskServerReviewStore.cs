@@ -34,6 +34,8 @@ public sealed partial class TaskServerStore
         await AddColumnIfMissingAsync(connection, "runs", "source_bundle_artifact_id", "TEXT", ct);
         await AddColumnIfMissingAsync(connection, "runs", "source_bundle_sha256", "TEXT", ct);
         await AddColumnIfMissingAsync(connection, "runs", "coding_host_id", "TEXT", ct);
+        // SM-11: the authenticated principal that claimed the coding attempt.
+        await AddColumnIfMissingAsync(connection, "runs", "claim_principal_id", "TEXT", ct);
         await ExecuteAsync(connection, """
             CREATE TABLE IF NOT EXISTS review_subjects(
                 id TEXT PRIMARY KEY,
@@ -231,6 +233,9 @@ public sealed partial class TaskServerStore
         var subjectId = $"rsub_{Guid.NewGuid():N}";
         var attemptId = $"rat_{Guid.NewGuid():N}";
         var now = UtcNow;
+        // AGT-3408: a repository GitHub reports as private is never planned as public.
+        if (!request.Plan.PrivateRepository && ReportedRepositoryPrivate?.Invoke(request.RepositoryUrl) == true)
+            request = request with { Plan = request.Plan with { PrivateRepository = true } };
         var planJson = JsonSerializer.Serialize(request.Plan, ReviewJson);
         await ExecuteAsync(connection, """
             INSERT INTO review_subjects(
@@ -271,7 +276,8 @@ public sealed partial class TaskServerStore
     public async Task<ReviewClaimResponse> ClaimReviewAsync(
         ReviewClaimRequest request,
         string actorId,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? claimantPrincipalId = null)
     {
         RequireAdmission();
         ReviewClaimResponse? response = null;
@@ -331,6 +337,15 @@ public sealed partial class TaskServerStore
                     with { AdmissionReason = envelopeAdmission.Reason };
                 return;
             }
+            if (RequiresHostProjectPolicy
+                && await ReadHostProjectPolicyAsync(connection, transaction, executor.HostId, ct) is null)
+            {
+                response = ReviewClaimEmptyResponses.Empty(
+                    ReviewClaimEmptyReasons.CapabilityAdmission,
+                    HostProjectPolicyMissingMessage(executor.HostId))
+                    with { AdmissionReason = HostProjectPolicyMissingReason };
+                return;
+            }
 
             ReviewAttemptDto? attempt = null;
             ReviewSubjectDto? subject = null;
@@ -342,6 +357,7 @@ public sealed partial class TaskServerStore
             var unclaimable = new List<ReviewUnclaimableAttemptDto>();
             string? hostWaitReason = null;
             string? hostWaitMessage = null;
+            var coderExcluded = false;
             // Read one page at a time so a claimable attempt cannot be hidden
             // behind a page of plans this executor cannot run.
             async Task<int> ScanCandidatesAsync(int offset)
@@ -364,10 +380,23 @@ public sealed partial class TaskServerStore
                              OR (a.status = 'leased' AND a.expires_at <= $now)
                            )
                        AND t.state = '4-auto-review'
+                       AND (
+                           ($requirePolicy = 0 AND NOT EXISTS (
+                               SELECT 1 FROM host_project_policies policy
+                                WHERE policy.host_id = $host))
+                           OR EXISTS (
+                               SELECT 1 FROM host_project_policies policy
+                                WHERE policy.host_id = $host
+                                  AND policy.allow_all_projects = 1)
+                           OR EXISTS (
+                               SELECT 1 FROM host_allowed_projects allowed
+                                WHERE allowed.host_id = $host
+                                  AND allowed.project_id = t.project_id))
                      ORDER BY a.created_at, a.attempt_number, a.id
                      LIMIT $limit OFFSET $offset;
                     """, transaction, ("$now", Iso(UtcNow)),
-                    ("$limit", ClaimCandidatePageSize), ("$offset", offset));
+                    ("$limit", ClaimCandidatePageSize), ("$offset", offset),
+                    ("$host", executor.HostId), ("$requirePolicy", RequiresHostProjectPolicy ? 1 : 0));
                 await using var reader = await command.ExecuteReaderAsync(ct);
                 while (await reader.ReadAsync(ct))
                 {
@@ -393,6 +422,15 @@ public sealed partial class TaskServerStore
                 var scannedRows = await ScanCandidatesAsync(offset);
                 foreach (var candidate in candidates)
                 {
+                    // SM-11: never hand a delivery's review to the principal that coded it.
+                    var coding = await ReadDeliveryCodingPrincipalAsync(
+                        connection, transaction, candidate.Subject.SourceRunId, ct);
+                    if (!ReviewPrincipalSeparationPolicy.Decide(coding,
+                            new ReviewVerdictReporter(request.ExecutorId, claimantPrincipalId, null)).Accepted)
+                    {
+                        coderExcluded = true;
+                        continue;
+                    }
                     var quotaProjectName = QuotaAdmissionOn
                         ? await ScalarAsync(connection,
                             "SELECT p.name FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = $task LIMIT 1;",
@@ -464,6 +502,9 @@ public sealed partial class TaskServerStore
                 if (capabilityBlock is null) unclaimableToLog = unclaimable;
                 response = hostWaitReason == ReviewClaimEmptyReasons.DifferentHostRequired
                     ? ReviewClaimEmptyResponses.Empty(hostWaitReason, hostWaitMessage!)
+                    : coderExcluded && capabilityBlock is null && hostWaitReason is null && unclaimable.Count == 0
+                    ? ReviewClaimEmptyResponses.Empty(ReviewClaimEmptyReasons.CodingPrincipalExcluded,
+                        "Every queued review subject was coded by this principal; another review principal must claim it.")
                     : capabilityBlock is not null
                     ? ReviewClaimEmptyResponses.Empty(ReviewClaimEmptyReasons.CapabilityAdmission, capabilityBlock)
                         with { AdmissionReason = capabilityBlockReason }
@@ -960,7 +1001,8 @@ public sealed partial class TaskServerStore
         string attemptId,
         ReviewReportRequest request,
         string actorId,
-        CancellationToken ct)
+        CancellationToken ct,
+        TaskServerPrincipal? reporter = null)
     {
         RequireWritable();
         ReviewReportDto? result = null;
@@ -989,6 +1031,12 @@ public sealed partial class TaskServerStore
             ValidateReviewAuthority(attempt, request.ExecutorId, request.InstanceId, request.LeaseId, request.Fence, requireLeased: true);
             if (attempt.ExpiresAt <= UtcNow)
                 throw new TaskServerConflictException("review-lease-expired", "Review lease expired and its report is fenced off.");
+            // SM-11: a verdict counts only from a review principal other than the delivery's coding principal.
+            var separation = ReviewPrincipalSeparationPolicy.Decide(
+                await ReadDeliveryCodingPrincipalAsync(connection, transaction, subject.SourceRunId, ct),
+                new ReviewVerdictReporter(attempt.ExecutorId ?? request.ExecutorId, reporter?.PrincipalId, reporter?.Kind));
+            if (!separation.Accepted)
+                throw new TaskServerConflictException(separation.Code!, separation.Message!);
             await EnsureReviewSubjectCurrentAsync(connection, transaction, subject, ct);
             if (subject.Plan.Commands.Any(command => command.LibraryStep is not null)
                 && !ReviewLibraryStepPolicy.ValidReport(
@@ -1069,6 +1117,20 @@ public sealed partial class TaskServerStore
                 payloadHash, received, retry, taskState);
         }, ct);
         return result!;
+    }
+
+    /// <summary>The runner and the claiming principal of a delivery's coding attempt.</summary>
+    private static async Task<DeliveryCodingPrincipal> ReadDeliveryCodingPrincipalAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string sourceRunId, CancellationToken ct)
+    {
+        await using var command = Command(connection,
+            "SELECT runner_id, claim_principal_id FROM runs WHERE id = $run;", transaction, ("$run", sourceRunId));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct)
+            ? new DeliveryCodingPrincipal(
+                reader.IsDBNull(0) ? null : reader.GetString(0),
+                reader.IsDBNull(1) ? null : reader.GetString(1))
+            : new DeliveryCodingPrincipal(null, null);
     }
 
     public async Task<ReviewCleanupResponse> CleanupReviewAsync(
@@ -1439,7 +1501,9 @@ public sealed partial class TaskServerStore
             if (clean is null)
                 return ("ReviewInfra", "CleanRepeatMissing");
             if (failed.Diagnosis.ChargesCard
-                && (failed.BaselineExitCode != 0 || clean.ExitCode == 0
+                && ((failed.BaselineExitCode != 0
+                     && !ReviewReportDiagnosisPolicy.HasNewTestFailures(failed, subject.Plan))
+                    || clean.ExitCode == 0
                     || failed.Diagnosis.Confidence <= 0))
                 return ("ReviewInfra", "DiagnosisEvidenceInvalid");
         }
@@ -1515,8 +1579,17 @@ public sealed partial class TaskServerStore
             || failed.Budget.LimitMs <= 0
             || failed.Budget.ConsumedMs < 0)
             return ("ReviewInfra", "CommandBudgetEvidenceInvalid");
-        if (!HasUnabridgedArtifact(request.Artifacts, failed.StdoutSha256)
-            || !HasUnabridgedArtifact(request.Artifacts, failed.StderrSha256))
+        if ((!HasUnabridgedArtifact(request.Artifacts, failed.StdoutSha256)
+             || !HasUnabridgedArtifact(request.Artifacts, failed.StderrSha256))
+            && (!request.ArtifactsReduced
+                || !ValidDigest(failed.StdoutSha256, 64)
+                || !ValidDigest(failed.StderrSha256, 64)
+                || !request.Artifacts.Any(artifact =>
+                    ValidArtifact(artifact)
+                    && string.Equals(artifact.Sha256, failed.StdoutSha256, StringComparison.OrdinalIgnoreCase))
+                || !request.Artifacts.Any(artifact =>
+                    ValidArtifact(artifact)
+                    && string.Equals(artifact.Sha256, failed.StderrSha256, StringComparison.OrdinalIgnoreCase))))
             return ("ReviewInfra", "ArtifactEvidenceIncomplete");
         return ("ReviewInfra", "PreparationFailed");
     }
@@ -1631,6 +1704,54 @@ public sealed partial class TaskServerStore
             """, ct, transaction,
             ("$id", $"rat_{Guid.NewGuid():N}"), ("$subject", attempt.SubjectId),
             ("$task", attempt.TaskId), ("$number", attempt.AttemptNumber + 1), ("$now", Iso(now)));
+        await RenewReviewRepositoryVisibilityAsync(connection, transaction, attempt.SubjectId, ct);
+    }
+
+    /// <summary>
+    /// AGT-3408: GitHub's private flag for a repository URL, as the connected
+    /// App's installations report it; null when no adopted installation lists it.
+    /// </summary>
+    public Func<string?, bool?>? ReportedRepositoryPrivate { get; set; }
+
+    /// <summary>
+    /// AGT-3408: every attempt of a subject shares its sealed plan, so a retry
+    /// would keep the visibility of the failed attempt after the setting was
+    /// corrected. The successor takes the current visibility instead: the
+    /// registration's setting combined with what GitHub reports.
+    /// </summary>
+    private async Task RenewReviewRepositoryVisibilityAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string subjectId,
+        CancellationToken ct)
+    {
+        string planJson;
+        string? repositoryUrl;
+        string? registered;
+        await using (var command = Command(connection, """
+            SELECT s.plan_json, s.repository_url, r.repository_visibility
+              FROM review_subjects s
+              JOIN tasks t ON t.id = s.task_id
+              LEFT JOIN project_repositories r ON r.project_id = t.project_id
+             WHERE s.id = $subject;
+            """, transaction, ("$subject", subjectId)))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            if (!await reader.ReadAsync(ct)) return;
+            planJson = reader.GetString(0);
+            repositoryUrl = reader.IsDBNull(1) ? null : reader.GetString(1);
+            registered = reader.IsDBNull(2) ? null : reader.GetString(2);
+        }
+        var plan = JsonSerializer.Deserialize<ReviewPlanDto>(planJson, ReviewJson)
+                   ?? throw new InvalidOperationException("Stored review plan is invalid.");
+        var current = ReviewRepositoryAccessPolicy.CurrentPrivateRepository(
+            plan.PrivateRepository, registered, ReportedRepositoryPrivate?.Invoke(repositoryUrl));
+        if (current == plan.PrivateRepository) return;
+        await ExecuteAsync(connection, "UPDATE review_subjects SET plan_json = $plan WHERE id = $subject;", ct,
+            transaction, ("$plan", JsonSerializer.Serialize(plan with { PrivateRepository = current }, ReviewJson)),
+            ("$subject", subjectId));
+        await AuditAsync(connection, transaction, "task-server", "review.subject-visibility-renewed", "review-subject",
+            subjectId, JsonSerializer.Serialize(new { privateRepository = current }), ct);
     }
 
     private static async Task EnsureReviewSubjectCurrentAsync(

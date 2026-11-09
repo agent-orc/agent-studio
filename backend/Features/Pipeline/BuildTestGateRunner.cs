@@ -54,6 +54,14 @@ public sealed record BuildTestGateRequest(
     public string? Project { get; init; }
     public string? WatchPath { get; init; }
     public string? JobId { get; init; }
+    public IReadOnlyList<string>? LedgerCards { get; init; }
+    public string? LedgerBatchId { get; init; }
+    public string? LedgerTriggerEvent { get; init; }
+    public string? LedgerType { get; init; }
+    public string? LedgerRunId { get; init; }
+    public string? LedgerProfile { get; init; }
+    public DateTimeOffset? LedgerRequestedAtUtc { get; init; }
+    public DateTimeOffset? LedgerLeaseAcquiredAtUtc { get; init; }
     public string? AttemptChainId { get; init; }
     public string? SubjectRef { get; init; }
     /// <summary>Explicit project directories from a frozen test plan; null checks out the complete tree.</summary>
@@ -90,12 +98,28 @@ public sealed record BuildTestGateRequest(
     [System.Text.Json.Serialization.JsonIgnore]
     public Action<int, int>? OnMachineGateSlotAcquired { get; init; }
     public int GateSlots { get; init; } = 1;
+    /// <summary>Opportunistic work may use only slots after the first regular gate slot.</summary>
+    public bool ReserveBatchSlot { get; init; }
+
+    /// <summary>
+    /// AGT-3423: the expected slot hold from the project's recent gate history,
+    /// set by the dispatcher. <see cref="GateSlotFairnessPolicy"/> reads it to
+    /// choose the slots this gate may take; Unknown keeps plain arrival order.
+    /// </summary>
+    public GateDurationClass DurationClass { get; init; }
 
     /// <summary>
     /// AGT-3232: the host part and timing snapshot for sharded suites. Null
     /// runs the whole gate on this host and plans by class-name hashing.
     /// </summary>
     public GateShardRequest? Sharding { get; init; }
+
+    /// <summary>
+    /// AGT-3433: run only this part of the resolved plan (see
+    /// <see cref="GateNarrowCheckPlan"/>). A narrowed run never reads or
+    /// writes the verdict cache, because its green is not a full-suite green.
+    /// </summary>
+    public GateNarrowCheck? NarrowCheck { get; init; }
 
     /// <summary>
     /// Host requirements (capability keys) whose gate steps the reused Remote
@@ -128,6 +152,7 @@ public sealed record BuildTestGateRequest(
 
 public sealed record BuildTestGateProcessEvidence
 {
+    public string? Host { get; init; }
     public GateResourceEvidence? Resources { get; init; }
     public GateBudgetExtensionEvidence? BudgetExtension { get; init; }
     public bool FailedTestsObserved { get; init; }
@@ -214,6 +239,8 @@ public sealed record BuildTestGateResult(
     public string? ServerArtifactRunId { get; init; }
     public DateTimeOffset? GateStartedAtUtc { get; init; }
     public DateTimeOffset? GateCompletedAtUtc { get; init; }
+    public double? GateHostLoadAtStart { get; init; }
+    public double? GateHostLoadAtEnd { get; init; }
     public long GateQueueWaitMs { get; init; }
     public bool GateCollisionDetected { get; init; }
     public bool SelfHealed { get; init; }
@@ -231,6 +258,8 @@ public sealed record BuildTestGateResult(
     public string? FailureFingerprint { get; init; }
     public DeliveryFailureDiagnosisResult? Diagnosis { get; init; }
     public IReadOnlyList<BuildTestGateProcessEvidence> Processes { get; init; } = [];
+    /// <summary>Failure names retained when process output is compacted for durable evidence.</summary>
+    public IReadOnlyList<string> RecordedFailedTests { get; init; } = [];
     public IReadOnlyList<BuildTestGateDependencyCacheEvidence> DependencyCache { get; init; } = [];
     public BuildTestGateDependencyCacheDecision? DependencyCacheDecision { get; init; }
     public BuildTestGateBudgetEvidence? ViolatedBudget { get; init; }
@@ -283,6 +312,9 @@ public sealed record BuildTestGateResult(
     /// ran and the verdict came back after the guard step alone.
     /// </summary>
     public bool GuardViolation { get; init; }
+
+    /// <summary>Kind of the verify command that turned the gate red; null for a preparation or infrastructure stop.</summary>
+    public VerifyCommandKind? FailedStepKind { get; init; }
 
     public ProjectPreparationManifest? PreparationManifest { get; init; }
     public IReadOnlyList<ProjectDefinitionIssue> ProjectDefinitionIssues { get; init; } = [];
@@ -456,6 +488,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         CancellationToken ct)
     {
         if (mode == PostStepMode.Off) return Skipped("mode=off");
+        // A narrowed green is not a full-suite green; it never meets the cache.
+        if (request.NarrowCheck is not null) request = request with { DisableVerdictCache = true };
 
         var repositoryPath = Path.GetFullPath(request.RepositoryPath);
         var cacheProject = request.Project ?? repositoryPath;
@@ -466,6 +500,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         string? profileDigest = null;
         var gateRunId = Guid.NewGuid().ToString("N");
         var startedAt = DateTimeOffset.UtcNow;
+        var hostLoadAtStart = GateRunLedger.HostLoad();
         var infrastructureTimeout = request.InfrastructureTimeout > TimeSpan.Zero
             ? request.InfrastructureTimeout
             : TimeSpan.FromMinutes(2);
@@ -502,6 +537,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 {
                     request.OnMachineGateAcquired?.Invoke();
                     acquiredAtUtc = DateTime.UtcNow;
+                    hostLoadAtStart = GateRunLedger.HostLoad();
                 }
                 else
                 {
@@ -513,7 +549,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                             fallbackCollision = true;
                             request.OnMachineGateWaiting?.Invoke();
                             request.OnMachineGateSlotWaiting?.Invoke(busy, total);
-                        }, ct).ConfigureAwait(false);
+                        }, ct, request.DurationClass, request.ReserveBatchSlot).ConfigureAwait(false);
                     fallbackQueueWaitMs = queueWatch.ElapsedMilliseconds;
                     if (lease is null)
                     {
@@ -533,6 +569,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                         request.OnMachineGateAcquired?.Invoke();
                         request.OnMachineGateSlotAcquired?.Invoke(lease.Slot, lease.Count);
                         acquiredAtUtc = DateTime.UtcNow;
+                        hostLoadAtStart = GateRunLedger.HostLoad();
                         _logger.LogInformation(
                             "build_test_gate_acquired gate_run_id={GateRunId} repository={Repository} slot={Slot} gate_slots={GateSlots} collision={CollisionDetected} queue_wait_ms={QueueWaitMs}",
                             gateRunId, repositoryPath, lease.Slot, lease.Count, lease.CollisionDetected, lease.QueueWaitMs);
@@ -723,7 +760,9 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     var emptySelection = DeterministicTestScope.Plan(
                         workspace!, plan, changedFiles, request.ChangedFileStatuses,
                         request.TestExecution, request.Lane, request.RequiredTestLevel);
-                    completed = NotApplicable("no verify commands derivable") with
+                    // AGT-3428: the reason tells a deliberate empty definition
+                    // apart from a missing one; only the first admits a merge.
+                    completed = NotApplicable(VerifyDefinitionPolicy.NotApplicableReason(plan)) with
                     {
                         TestSelection = emptySelection.Audit,
                         TestSelectionAuditDigest = emptySelection.Audit.Digest,
@@ -737,6 +776,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     var commands = ComposeRenderGate.Append(
                         staged.Commands.Where(c => ShouldRunForChange(c, changedFiles)).ToList(),
                         composeRender);
+                    if (request.NarrowCheck is { } narrow)
+                        commands = GateNarrowCheckPlan.Apply(commands, narrow) ?? [];
                     // The digest covers the resolved command plan as well as the
                     // inputs that selected it. A different selection never borrows
                     // a verdict merely because the tree SHA is unchanged.
@@ -777,14 +818,17 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                         ? []
                         : GatePreparationPlanner.Plan(workspace!, profile, commands);
                     completed ??= commands.Count == 0
-                        ? Skipped($"no verify commands apply to the changed files ({plan.Source}); level={staged.Audit.Level}")
+                        ? Skipped(request.NarrowCheck is { } empty
+                            ? $"narrow check {empty.Kind} matched no verify command ({plan.Source})"
+                            : $"no verify commands apply to the changed files ({plan.Source}); level={staged.Audit.Level}")
                             with
                         {
                             TestSelection = staged.Audit,
                         }
                         : await RunCommandsAsync(
                             workspace!, preparation, commands, plan.Source, mode, timeout,
-                            [], projectPreparation, ct, ShardContext(request))
+                            [], projectPreparation, ct, ShardContext(request),
+                            guardFirst: request.NarrowCheck is null)
                             .ConfigureAwait(false);
                     if (completed.VerdictSource != GateVerdictSource.CacheHit)
                     {
@@ -832,8 +876,13 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 }, BuildTestGateFailureKind.Code);
             }
 
+            // An invalid definition is a fact of the delivery's own tree, not an
+            // experiment outcome. The diagnosis would compare it against a
+            // baseline and history and, on a first occurrence, retype it as an
+            // environment failure that asks for a host repair (AOW-15).
             if (completed is { Verdict: BuildTestGateVerdict.Fail }
-                && !string.IsNullOrWhiteSpace(request.JobId))
+                && !string.IsNullOrWhiteSpace(request.JobId)
+                && !IsDefinitionFailure(projectPreparation))
             {
                 completed = await DiagnoseGateFailureAsync(
                     request, repositoryPath, workspace, completed, profile, changedFiles,
@@ -873,6 +922,10 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                 GateId = request.GateId,
                 GateStartedAtUtc = completed.VerdictSource == GateVerdictSource.CacheHit ? completed.GateStartedAtUtc : startedAt,
                 GateCompletedAtUtc = completed.VerdictSource == GateVerdictSource.CacheHit ? completed.GateCompletedAtUtc : DateTimeOffset.UtcNow,
+                GateHostLoadAtStart = completed.VerdictSource == GateVerdictSource.CacheHit
+                    ? completed.GateHostLoadAtStart : hostLoadAtStart,
+                GateHostLoadAtEnd = completed.VerdictSource == GateVerdictSource.CacheHit
+                    ? completed.GateHostLoadAtEnd : GateRunLedger.HostLoad(),
                 GateQueueWaitMs = machineLease?.QueueWaitMs ?? fallbackQueueWaitMs,
                 GateCollisionDetected = machineLease?.CollisionDetected ?? fallbackCollision,
                 SelfHealed = selfHealed,
@@ -968,6 +1021,9 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             .ToLowerInvariant()[..24];
         return Path.Combine(cacheRoot, "manifests", key, "latest.json");
     }
+
+    private static bool IsDefinitionFailure(ProjectPreparationResult? preparation)
+        => preparation is { Configured: true, Succeeded: false, FailureKind: PreparationFailureKind.Definition };
 
     private static bool HasHealthContext(BuildTestGateRequest request)
         => !string.IsNullOrWhiteSpace(request.Project)
@@ -1345,7 +1401,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         IReadOnlyList<string> cacheRestoreMessages,
         ProjectPreparationResult? projectPreparation,
         CancellationToken ct,
-        GateShardContext? sharding = null)
+        GateShardContext? sharding = null,
+        bool guardFirst = true)
     {
         var sw = Stopwatch.StartNew();
         var budget = new GateContentionBudget(timeout);
@@ -1363,7 +1420,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         var quarantineDay = DateOnly.FromDateTime(DateTime.UtcNow);
         var quarantined = new List<TestQuarantineHit>();
         foreach (var issue in quarantine.Issues) output.AppendLine($"# test quarantine issue: {issue}");
-        commands = GuardFirstGatePlan.Apply(commands);
+        // A narrow check is already exactly the steps it repeats.
+        if (guardFirst) commands = GuardFirstGatePlan.Apply(commands);
         var shardSuites = sharding is null ? [] : ShardSuites(repositoryPath);
         var testShards = new List<GateShardSuiteEvidence>();
 
@@ -1397,8 +1455,9 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                                 scope.Lockfiles)));
                 })
                 .ToArray();
-            var installNeeded = decisions.Length == 0
-                || decisions.Any(item => item.Decision.State != "hit");
+            var installNeeded = !DependencyPreparationSkipPolicy.MaySkip(
+                command.CoveredByDependencyScopes,
+                decisions.Select(item => item.Decision).ToArray());
             if (!installNeeded)
             {
                 foreach (var item in decisions)
@@ -1620,6 +1679,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     QuarantinedFailures = quarantined,
                     QuarantineIssues = quarantine.Issues,
                     GuardViolation = guardStep,
+                    FailedStepKind = command.Kind,
                     TestShards = testShards,
                 }, kind);
             }

@@ -81,7 +81,7 @@ namespace AgentStudio.Tests;
 [Collection(RemoteRunnerSerialCollection.Name)]
 [Trait("Category", "MachineBound")]
 [Trait("Category", "ReviewFlaky")]
-public sealed class RemoteRunnerEndToEndTests : IDisposable
+public sealed partial class RemoteRunnerEndToEndTests : IDisposable
 {
     private static readonly JsonSerializerOptions ApiJson = CreateApiJson();
     private const string ProjectName = "agent-runner-01";
@@ -280,6 +280,77 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(resultRef, AgentStudio.Runner.ContinuationBaseStore.Read(progressFolder)?.Ref);
     }
 
+    /// <summary>
+    /// AGT-3483: an operator continue without a ref in the prompt starts the
+    /// next run from the card's latest result ref. The continue route answers
+    /// with that base, and the runner's own claim receives it as the run base
+    /// SHA.
+    /// </summary>
+    [Fact]
+    public async Task Remote_claim_after_a_plain_continue_starts_from_the_cards_latest_result()
+    {
+        SeedTask(TaskStates.HumanReview, TaskKey, "Continue round", "Original prompt.");
+        var reviewFolder = Path.Combine(_watchPath, TaskStates.HumanReview, TaskKey);
+        var resultSha = new string('d', 40);
+        var resultRef = Contract.FencedGitRefs.ImmutableResult("run_delivered", 2, resultSha);
+        ReviewSubjectStore.Write(reviewFolder, new ReviewSubjectRecord
+        {
+            TaskKey = TaskKey,
+            RunAttemptId = "run_delivered",
+            AttemptChainId = "chain-delivered",
+            Project = ProjectName,
+            ResultSha = resultSha,
+            ImmutableResultRef = resultRef,
+            // clock-independent: persisted metadata, never compared with the clock.
+            CompletedAtUtc = new DateTimeOffset(2026, 11, 4, 8, 0, 0, TimeSpan.Zero),
+        });
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/continue-round.git");
+
+        var continued = await http.PostAsJsonAsync(
+            $"/api/tasks/{TaskKey}/continue?watchPath={Uri.EscapeDataString(_watchPath)}",
+            new { prompt = "Tighten the error messages.", mode = "steer" });
+        Assert.Equal(HttpStatusCode.Accepted, continued.StatusCode);
+        var resolved = (await continued.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("base");
+        Assert.Equal(resultSha, resolved.GetProperty("sha").GetString());
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner"));
+
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        Assert.Equal(resultRef, claim.ContinuationBaseRef);
+        Assert.Equal(resultSha, claim.ContinuationBaseSha);
+        Assert.Equal(Contract.ContinuationBaseReasons.ContinueRoundResult, claim.ContinuationBaseReason);
+        Assert.Equal("Tighten the error messages.", claim.RunSpec!.FollowUp!.Prompt.Trim());
+    }
+
+    [Fact]
+    public async Task A_runner_credential_claims_no_card_outside_its_bound_projects()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Bound elsewhere", "Original prompt.");
+        // SM-9: the credential is bound to another project, so this ready card is not its work.
+        var runner = new AgentStudio.Security.RunnerPrincipal(RunnerId, ProjectName, "cred-coding",
+            new HashSet<string>([AgentStudio.Security.RunnerScopes.Claim], StringComparer.Ordinal))
+        {
+            Projects = ["another-project"],
+        };
+        using var factory = BuildFactory(claimingRunner: runner);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/bound-elsewhere.git");
+
+        var claim = await client.ClaimAsync(new RClaim(RunnerId, ProjectName, "host", 1, "remote-runner"), CancellationToken.None);
+
+        Assert.Equal(RClaimStatus.Empty, claim.Status);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, TaskKey)));
+    }
+
     [Fact]
     public async Task Completed_run_in_ready_keeps_newer_queued_continuation_for_next_claim()
     {
@@ -323,6 +394,9 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             item => item.GetProperty("kind").GetString() == "run-completion-superseded");
         Assert.Null(factory.Services.GetRequiredService<AttemptAuthorityService>()
             .GetTaskProjection(TaskKey).CurrentReviewAttempt);
+        var queuedBase = ContinuationBaseStore.Read(Path.Combine(_watchPath, TaskStates.Ready, TaskKey));
+        Assert.Equal(completionRequest.ImmutableResultRef, queuedBase?.Ref);
+        Assert.Equal(sha, queuedBase?.CommitSha);
         var readyReplay = await client.CompleteRunAsync(completionRequest, CancellationToken.None);
         Assert.Equal(TaskStates.Ready, readyReplay!.TargetState);
 
@@ -335,9 +409,121 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             IdempotencyKey: "second-continuation-claim"), CancellationToken.None);
         Assert.Equal(RClaimStatus.Claimed, next.Status);
         Assert.Equal("Run the second continuation", next.RunSpec!.FollowUp!.Prompt);
+        Assert.Equal(completionRequest.ImmutableResultRef, next.ContinuationBaseRef);
+        Assert.Equal(sha, next.ContinuationBaseSha);
         var oldReplay = await http.PostAsJsonAsync("/api/runner/completion", completionRequest);
         Assert.Equal(System.Net.HttpStatusCode.Conflict, oldReplay.StatusCode);
         Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Progress, TaskKey)));
+    }
+
+    [Fact]
+    public async Task Claim_skips_live_leased_ready_card_and_claims_next_card()
+    {
+        const string nextKey = "AGT-READY-NEXT";
+        SeedTask(TaskStates.Ready, TaskKey, "Live earlier run", "First prompt.", order: 1);
+        SeedTask(TaskStates.Ready, nextKey, "Next card", "Second prompt.", order: 2);
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://example.invalid/agent-studio.git");
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var first = scanner.FindJob(TaskKey, _watchPath)!;
+        var firstKey = first.Key ?? first.TaskKey ?? first.Id;
+        var second = scanner.FindJob(nextKey, _watchPath)!;
+        var secondKey = second.Key ?? second.TaskKey ?? second.Id;
+        var earlier = factory.Services.GetRequiredService<RunLeaseService>().TryAcquire(
+            new RunLeaseAcquireRequest(firstKey, "earlier-runner", "earlier runner", "other-host", 42, "remote-runner"));
+        Assert.True(earlier.Granted);
+
+        var claimed = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "coding-host", 4242, "codex", IdempotencyKey: "skip-live-ready"));
+
+        Assert.Equal(RClaimStatus.Claimed, claimed.Status);
+        Assert.Equal(secondKey, claimed.TaskKey);
+        var rejection = RemoteDispatchRejectionStore.Read(Path.Combine(_watchPath, TaskStates.Ready, TaskKey));
+        Assert.Equal("earlier-run-still-leased", rejection?.Code);
+        Assert.Contains(earlier.Lease!.AttemptId!, rejection!.Reason);
+        Assert.Contains(earlier.Lease.ExpiresAt.ToString("O"), rejection.Reason);
+    }
+
+    [Fact]
+    public async Task Claim_with_only_live_leased_ready_card_returns_empty_and_records_rejection_once()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Live earlier run", "Prompt.");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        var key = task.Key ?? task.TaskKey ?? task.Id;
+        var lease = factory.Services.GetRequiredService<RunLeaseService>().TryAcquire(
+            new RunLeaseAcquireRequest(key, "earlier-runner", "earlier runner", "other-host", 42, "remote-runner"));
+        Assert.True(lease.Granted);
+
+        var request = new RClaim(RunnerId, ProjectName, "coding-host", 4242, "codex");
+        Assert.Equal(RClaimStatus.Empty, (await client.ClaimAsync(request, CancellationToken.None)).Status);
+        var first = RemoteDispatchRejectionStore.Read(Path.Combine(_watchPath, TaskStates.Ready, TaskKey));
+        Assert.Equal("earlier-run-still-leased", first?.Code);
+        Assert.Equal(RClaimStatus.Empty, (await client.ClaimAsync(request, CancellationToken.None)).Status);
+        Assert.Equal(first?.RejectedAtUtc,
+            RemoteDispatchRejectionStore.Read(Path.Combine(_watchPath, TaskStates.Ready, TaskKey))?.RejectedAtUtc);
+    }
+
+    [Fact]
+    public async Task Expired_ready_lease_allows_a_new_claim()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Expired earlier run", "Prompt.");
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 16, 6, 31, 0, TimeSpan.Zero));
+        using var factory = BuildFactory(
+            authorityNow: () => clock.GetUtcNow().UtcDateTime,
+            leaseNow: () => clock.GetUtcNow().UtcDateTime,
+            clock: clock);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http,
+            advertisedAt: clock.GetUtcNow().UtcDateTime);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://example.invalid/agent-studio.git");
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        var key = task.Key ?? task.TaskKey ?? task.Id;
+        var lease = factory.Services.GetRequiredService<RunLeaseService>().TryAcquire(
+            new RunLeaseAcquireRequest(key, "earlier-runner", "earlier runner", "other-host", 42,
+                "remote-runner", RequestedTtlSeconds: 30));
+        Assert.True(lease.Granted);
+        clock.Advance(TimeSpan.FromSeconds(31));
+
+        var claimed = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "coding-host", 4242, "codex", IdempotencyKey: "expired-ready-takeover"));
+        Assert.Equal(RClaimStatus.Claimed, claimed.Status);
+        Assert.Equal(key, claimed.TaskKey);
+        Assert.NotEqual(lease.Lease!.AttemptId, claimed.Lease?.AttemptId);
+        Assert.Null(RemoteDispatchRejectionStore.Read(Path.Combine(_watchPath, TaskStates.Progress, TaskKey)));
+    }
+
+    [Fact]
+    public async Task Ready_card_with_this_hosts_live_lease_occupies_a_host_slot()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Live earlier run", "First prompt.", order: 1);
+        SeedTask(TaskStates.Ready, "AGT-HOST-NEXT", "Next card", "Second prompt.", order: 2);
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        var key = task.Key ?? task.TaskKey ?? task.Id;
+        var lease = factory.Services.GetRequiredService<RunLeaseService>().TryAcquire(
+            new RunLeaseAcquireRequest(key, RunnerId, ProjectName, "coding-host", 4242,
+                "remote-runner") { ClientId = client.ClientId });
+        Assert.True(lease.Granted);
+
+        var held = await client.ClaimAsync(new RClaim(RunnerId, ProjectName, "coding-host", 4242,
+            "codex") { BootstrapMaxParallelism = 1 }, CancellationToken.None);
+        Assert.Equal(RClaimStatus.Empty, held.Status);
+        Assert.Equal(HostAdmissionReasons.CeilingReached, held.AdmissionReason);
     }
 
     [Fact]
@@ -3388,6 +3574,54 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     [Fact]
+    public async Task A_failed_preflight_is_probed_again_at_once_after_the_hosts_credentials_change()
+    {
+        // 1 November 2026: a cached write-probe failure kept refusing claims after
+        // the host's credentials had been repaired.
+        SeedTask(TaskStates.Ready, TaskKey, "Credential repaired", "Prompt.");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/repaired-project.git");
+        // The server stamps its own receipt time; the host's report time is not read.
+        var reportedAt = new DateTime(2026, 11, 1, 12, 0, 0, DateTimeKind.Utc);
+        var request = new RClaim(RunnerId, ProjectName, "host", 1, "remote-runner",
+            RepositoryCredentialGeneration: "generation-read");
+
+        var offered = await client.ClaimAsync(request, CancellationToken.None);
+        Assert.Equal(RClaimStatus.PreflightRequired, offered.Status);
+        var refused = await client.ClaimAsync(request with
+        {
+            ProjectPreflight = new Runner::AgentRunner.RunnerProjectPreflightReport(
+                offered.ProjectId!, offered.RegistrationFingerprint!, false,
+                "write probe failed (128): The requested URL returned error: 403",
+                reportedAt, offered.RepositoryUrl!, offered.RepositoryUrl!),
+        }, CancellationToken.None);
+        Assert.Equal(RClaimStatus.PreflightFailed, refused.Status);
+
+        var unchanged = await client.ClaimAsync(request, CancellationToken.None);
+        Assert.Equal(RClaimStatus.PreflightFailed, unchanged.Status);
+
+        var repaired = request with { RepositoryCredentialGeneration = "generation-write" };
+        var reprobe = await client.ClaimAsync(repaired, CancellationToken.None);
+        Assert.Equal(RClaimStatus.PreflightRequired, reprobe.Status);
+        var admitted = await client.ClaimAsync(repaired with
+        {
+            ProjectPreflight = new Runner::AgentRunner.RunnerProjectPreflightReport(
+                reprobe.ProjectId!, reprobe.RegistrationFingerprint!, true,
+                "clone/fetch URLs match registration; target branch exists; write probe succeeded",
+                reportedAt, reprobe.RepositoryUrl!, reprobe.RepositoryUrl!),
+        }, CancellationToken.None);
+
+        Assert.True(
+            admitted.Status == RClaimStatus.Claimed,
+            $"Expected the claim after a fresh preflight, got {admitted.Status}: {admitted.Message}");
+        Assert.Equal(TaskKey, admitted.JobId);
+    }
+
+    [Fact]
     public async Task Failed_project_preflight_does_not_block_another_assigned_project()
     {
         const string deliverableProjectName = "deliverable-project";
@@ -3807,11 +4041,15 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         ICauseWaitMarkerStore? causeWaitMarkers = null,
         TimeProvider? clock = null,
         IBuildTestGateRunner? gateRunner = null,
-        Func<DateTime>? leaseNow = null) =>
+        Func<DateTime>? leaseNow = null,
+        AgentStudio.Security.RunnerPrincipal? claimingRunner = null) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(b =>
             {
                 b.UseEnvironment("Test");
+                if (claimingRunner is not null)
+                    b.ConfigureServices(services => services.AddSingleton<IStartupFilter>(
+                        new RunnerPrincipalInjection(claimingRunner, "/api/runner/claim")));
                 b.ConfigureAppConfiguration((_, cfg) =>
                 {
                     var values = new Dictionary<string, string?>

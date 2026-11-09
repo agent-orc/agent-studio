@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Central model selection and fallback | Concept Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept Dossier · AGT-3459</p>
+    <h1>Central model selection and fallback</h1>
+    <p class="lede">One selection service for every consumer that picks a CLI, model or thinking level. It moves work to an equivalent model when a subscription quota is spent or a provider rejects a model, and it writes every switch to a selection log that the owner reads on the management page.</p>
+    <div class="meta"><span><b>Pattern</b> concept</span><span><b>Status</b> decision-pending</span><span><b>Phase</b> decision-ready</span><span><b>As of</b> <time datetime="2026-11-03">3 November 2026</time>, develop at <code>d63df0be4</code></span></div>
+  </header>
+
+  <nav aria-label="Contents">
+    <ol>
+      <li><a href="#situation">Situation</a></li>
+      <li><a href="#inventory">Inventory</a></li>
+      <li><a href="#alternatives">Alternatives</a></li>
+      <li><a href="#recommendation">Recommendation</a> (target design, rules, selection log, settings, migration, risks)</li>
+      <li><a href="#evidence">Evidence</a></li>
+      <li><a href="#open-decisions">Open decisions</a></li>
+    </ol>
+  </nav>
+
+  <section id="situation">
+    <h2><span class="number">00</span> Situation</h2>
+    <p>The owner set three goals on 3 November 2026. First, model selection happens in one central place in the code. Second, the system never stands still: a spent quota or a provider rejection leads to an equivalent model chosen from the Token Economy catalogue and explicit rules. Third, every such event is written to a log the owner can read on the management page.</p>
+    <p>Three incidents prompted the goals.</p>
+    <ul>
+      <li><b>Manual switch, 2 and 3 November.</b> Claude weekly usage reached 94 % before its reset, and Codex weekly usage reached 81 % with 22 hours left. The operator switched the review steps of 12 projects and 3 pipeline types by hand, in both directions: 72 <code>PUT /api/projects/{p}/pipeline-step</code> calls. New cards were pinned by hand ("3 of 4 cards on Codex").</li>
+      <li><b>Capacity block, 2 November 15:37 UTC.</b> Codex reported "Selected model is at capacity". The event was handled as a quota limit: <code>provider-auth:codex</code> stayed limited and blocked every Codex claim for 60 minutes, and nothing fell back.</li>
+      <li><b>Unclear review coverage.</b> Remote Review aspects and the grade are pinned per project step. It was unclear whether the existing fallback covers them on the review hosts. Section 01 answers this: it covers most aspects, but not deep review, immutable plans or tool commands.</li>
+    </ul>
+    <p>Most of the pieces exist already. <code>QuotaAdmissionService</code> is the shared entry point for quota admission. <code>CliQuotaFallbackService</code> resolves a primary or fallback route per CLI model. <code>ModelEquivalenceCatalog</code> projects the Token Economy catalogue. <code>ModelRoutingPolicyRegistry</code> declares tiers and same-provider rejection siblings. The problem is not missing rules. Some consumers bypass these pieces, provider rejections other than quota have no cross-provider path, settings are scattered per project step, and the decisions are written to four places that the owner cannot read in one view.</p>
+  </section>
+
+  <section id="inventory">
+    <h2><span class="number">01</span> Inventory</h2>
+    <p>The table lists every place in develop that chooses a CLI, model or thinking level. Paths are relative to <code>backend/</code> unless they start with another top-level folder. "Covered" means the path goes through <code>QuotaAdmissionService</code> (directly, through the claim path or through the one-shot registry), so quota caps and the operator preference to use the fallback apply to it. "Rejection" says whether a provider rejection of the model (capacity, unauthorized, model not available) leads to another model.</p>
+    <div class="breakout">
+    <table>
+      <thead><tr><th>Consumer</th><th>Where the choice is made</th><th>Inputs</th><th>Quota fallback</th><th>Rejection</th><th>Gap and incident</th></tr></thead>
+      <tbody>
+        <tr><td>Local task run</td><td><code>Features/Runner/ProjectRunner.cs:885</code> (admission, path <code>local-coding-launch</code>), <code>:2633</code> <code>_router.Get</code>; <code>Features/Cli/Execution/CliRouter.cs:37</code> dispatches by type</td><td>card pin, qualification, route profile</td><td>Yes</td><td>No</td><td>The pin admission check is skipped on fallback (<code>:2636</code>) and the correctness floor is not checked on a local fallback. The local runner never reads <code>PendingIntent.ModelFallback</code>.</td></tr>
+        <tr><td>Local provider-limit skip</td><td><code>ProjectRunner.cs:1499</code>, <code>ProviderLimitRegistry.cs:19-57</code></td><td>raw card CLI</td><td>No</td><td>No</td><td>The card waits before admission runs, even when an equivalent model is free.</td></tr>
+        <tr><td>Model qualification</td><td><code>Features/Pipeline/ModelQualificationService.cs:136</code>, called at <code>ProjectRunner.cs:2789</code></td><td>task type, title/prompt signals, economy mode</td><td>Partial</td><td>Sibling chain only</td><td>Precedence at <code>:2791</code> is <code>route?.Model ?? qualification ?? info.Model</code>. The route is always set, so qualification is used only when neither the card nor the route profile has a model.</td></tr>
+        <tr><td>Merge-conflict resolver</td><td><code>ProjectRunner.cs:2176-2217</code></td><td>pipeline-step config</td><td>No</td><td>No</td><td>Calls <code>_router.Get(...).StartAsync</code> directly.</td></tr>
+        <tr><td>Remote coding claim</td><td><code>Features/Tasks/LeaseEndpoints.cs:903</code> (<code>remote-coding-claim</code>), floor check <code>:958</code>, marker <code>:1357/:1377</code>, run spec <code>:3206</code></td><td>card, admission plan, <code>PendingIntent.ModelFallback</code>, host model acceptance</td><td>Yes</td><td>Same provider only (<code>:2053-2091</code>)</td><td>No cross-provider switch for capacity. <b>2 November 15:37</b>: capacity blocked every Codex claim for 60 minutes.</td></tr>
+        <tr><td>Remote runner</td><td><code>runner/RemoteTaskRunner.cs:1543-1610</code>, <code>runner/RunnerCapabilityProbe.cs:931</code> (<code>UnknownLimitTtl</code> 60 min)</td><td>provider access classification</td><td>n/a</td><td>Same-session retry, then transient failure</td><td>A limit verdict is per provider and host, not per model. <b>2 November 15:37</b>.</td></tr>
+        <tr><td>Task Server</td><td><code>task-server/WorkspaceQuotaAdmission.cs</code>, <code>task-server/ProviderRejectionRecovery.cs:90</code></td><td>project go/no-go from the monolith</td><td>No model switch</td><td>Own copy of the rejection rules</td><td>Rules are duplicated between the monolith and the Task Server.</td></tr>
+        <tr><td>Remote review aspects, concept fit</td><td><code>Features/Runner/RemoteReviewPlanBuilder.cs:328-391</code>, claim at <code>V1ReviewPlaneEndpoints.cs:626</code> → <code>ApplyQuotaFallbackToAspects</code> (<code>:2589</code>)</td><td>host default, project step per pipeline type</td><td>Yes, except deep review (<code>:2667</code>, never downgraded), immutable plans and tool commands</td><td>No</td><td><b>2 and 3 November</b>: the per-project step pins and the deep-review exception are why the operator made 72 PUTs.</td></tr>
+        <tr><td>Local review aspects</td><td><code>ReviewDecisionOrchestrator.cs:2661-2688</code> → <code>AspectRunnerService.cs:92</code></td><td>economy recommendation, step config, default</td><td>Yes, through the one-shot registry</td><td>No</td><td>A CLI without a registered one-shot (Gemini) falls back to <code>CliRunner</code> without quota admission (<code>:93</code>, <code>:667</code>).</td></tr>
+        <tr><td>Review grade</td><td><code>ReviewDecisionOrchestrator.cs:5360-5370</code> (<code>CodeReviewGradeModelSelector</code>) → <code>Features/Review/CodeReviewStepService.cs:488</code></td><td><code>CodeReviewStep:DefaultModel/DefaultCli</code>, step overrides</td><td>Yes</td><td>No</td><td>Settings are per project step. <b>2 and 3 November</b>.</td></tr>
+        <tr><td>Concept review</td><td>Local: <code>ReviewDecisionOrchestrator.cs:1490-1506</code> (deterministic contract check, no model). Remote: concept-fit aspect.</td><td>as review aspects</td><td>Remote yes</td><td>No</td><td>Same as remote aspects.</td></tr>
+        <tr><td>Orchestrator chat</td><td>Remote <code>Features/Runner/OrchestratorChat.cs:633-700</code> (<code>remote-project-chat</code>); local <code>OrchestratorRunner.cs:105/175/390</code></td><td>Codex default, registry default model</td><td>Yes</td><td>No</td><td>If the remote host is unreachable, <code>:735</code> calls <code>DecideCodexAsync</code> with the planned model, which can already be a Claude model.</td></tr>
+        <tr><td>One-shots (summary, tags, titles, visual QA, failure intervention, drift, task spawner, post-abort review, prompt enhancement, wiki grader and search, batch gate advisor, watcher, proposal drafting, soft reasoning)</td><td><code>Features/Cli/Routing/OneShot/ICliOneShot.cs:236</code> <code>DispatchAsync</code>; callers such as <code>SummaryGenerationService.cs:484</code>, <code>AutoTaggingService.cs:72</code>, <code>TitleGenerationService.cs:136-141</code></td><td>step config or app config; titles and tag maintenance hard-code Claude</td><td>Yes</td><td>No</td><td>Only Claude and Codex one-shots are registered (<code>Host/Program.cs:930-946</code>). A fallback onto Gemini fails with "no one-shot implementation". <code>DriftPostStepRunner.cs:102</code> discards its <code>quotaFallback</code> parameter.</td></tr>
+        <tr><td>Quality Studio</td><td><code>Features/Pipeline/QualityAnalysis/QualityAnalysisStepRunner.cs:187</code></td><td>HTTP sensors</td><td>n/a</td><td>n/a</td><td>No model is chosen.</td></tr>
+        <tr><td>Card pins</td><td><code>Features/Tasks/TaskCrudEndpoints.cs:1202/1209/1216</code> → <code>TaskMutationService.cs:104/160/170</code>; creation recommendation <code>:1051-1079</code>; persistent re-pin <code>ProviderRejectionContinuation.cs:182-184</code></td><td>operator, creation recommendation</td><td>Inputs only; the planner ignores <code>modelExplicit</code></td><td>Re-pins after <code>RefusalsBeforePin</code></td><td>Whether a pin is hard or a preference is not defined. <b>2 and 3 November</b>: new cards were pinned by hand to spread load.</td></tr>
+        <tr><td>Pipeline-step settings</td><td><code>Features/Projects/ProjectSettingsEndpoints.cs:532</code>; read by <code>PipelineStepConfigResolver</code></td><td>project, pipeline type, step</td><td>Only where the consumer then calls admission</td><td>No</td><td>No workspace default per consumer class. <b>2 and 3 November</b>: 72 PUTs.</td></tr>
+        <tr><td>Fresh-run floor and integration recovery</td><td><code>MechanicalFreshRunRoutePolicy.cs:13-30</code>, <code>TaskIntegrationRecoveryService.cs:287-314</code></td><td>correctness floor</td><td>No</td><td>No</td><td>Floor logic exists in a third place.</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <h3>Why capacity became a quota block</h3>
+    <p><code>contracts/TaskServer.Contracts/ProviderAccessClassifier.cs</code> has a dedicated <code>ModelCapacity</code> kind (<code>:149</code>), but the method checks the rate-limit signals first (<code>:184</code>) and capacity only afterwards (<code>:203</code>). If the run output contains both "Selected model is at capacity" and any rate-limit phrase, such as a retry line with "too many requests" or a <code>429</code>, the result is <code>RateLimited</code>. That maps to <code>QuotaExceeded</code> (<code>ExecutionOutcomeContracts.cs:274-282</code>). Without a reset time, the runner marks the provider limited for <code>UnknownLimitTtl</code> = 60 minutes (<code>runner/RunnerCapabilityProbe.cs:931</code>). The verdict covers the whole provider, not only the rejected model. This explanation matches the observed 60-minute <code>provider-auth:codex</code> block. The raw run log of 2 November was not available to this run, so the first rejection card reproduces it before changing the order.</p>
+    <p>Even a correct <code>ModelCapacity</code> classification switches nothing. It retries the same session, then becomes a transient failure and returns the card to Ready on the same model (<code>RemoteTaskRunner.cs:1863</code>, <code>TaskServerStore.cs:2272-2286</code>).</p>
+    <h3>Where decisions are recorded today</h3>
+    <ul>
+      <li>Per job: <code>logs/timeline.jsonl</code> events <code>QuotaAdmissionDecision</code> and <code>QuotaFallbackActivated</code> (<code>QuotaAdmissionRecorder.cs:82-101,144-176</code>), plus a chat note.</li>
+      <li>Per project: <code>.orchestrator/orchestrator.jsonl</code>, topic <code>LoadDistribution</code>.</li>
+      <li>Application log lines <code>cli_quota_admission_decision</code> and <code>cli_quota_fallback_activated</code>; workspace one-shots write only these.</li>
+      <li>Current state only: <code>&lt;job&gt;/quota-fallback.json</code> (<code>QuotaFallbackMarker.cs</code>), deleted when the fallback is cleared.</li>
+      <li>Per job: <code>model-qualification.jsonl</code>.</li>
+    </ul>
+    <p>No workspace-wide selection log exists, and none of these files has retention. Provider rejections, deep-review exceptions and Task Server recoveries do not appear in any of them as selection events.</p>
+  </section>
+
+  <section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+    <h2><span class="number">02</span> Alternatives</h2>
+    <div class="variant-grid">
+      <article class="variant">
+        <h3>Option A: Close the gaps in place</h3>
+        <p>Add quota admission to the merge resolver, deep review and the local provider-limit skip. Fix the classifier order. Add a cross-provider step to the rejection paths. Write a selection log from <code>QuotaAdmissionRecorder</code>.</p>
+        <p><b>Gains:</b> smallest change; every card is a local fix. <b>Costs:</b> selection stays spread over about fifteen call sites and three rule copies (monolith, Task Server, runner). The next new consumer can bypass it again. Settings stay per project step, so the 72-PUT switch remains possible only through the global preference, which does not cover deep review or new-card pins.</p>
+      </article>
+      <article class="variant">
+        <h3>Option B: One selection service over the existing rules</h3>
+        <p>Add <code>ModelSelectionService</code> with a pure <code>ModelSelectionPlanner</code> in a shared contracts package. Every consumer sends a <code>SelectionRequest</code> and gets a <code>SelectionResult</code> with the route and the reason. The planner absorbs <code>QuotaAdmissionPlanner</code>, <code>CliQuotaFallbackService.Resolve</code>, the rejection siblings and the floor checks. Every non-trivial result goes to a selection ledger. Settings move to one workspace policy per consumer class, with project overrides.</p>
+        <p><b>Gains:</b> one place for rules, tests and the log; an architecture test can forbid direct CLI starts. The Task Server and runner use the same planner through the contracts package. <b>Costs:</b> about eight cards; consumers migrate one by one, and two paths live side by side for a while.</p>
+      </article>
+      <article class="variant">
+        <h3>Option C: Selection as an orchestration decision</h3>
+        <p>Put the selection rules into the <code>orchestration-decisions</code> library as a typed decider. Hosts collect facts (quota, rejections, pins) and apply the returned route, as they do for lane transitions.</p>
+        <p><b>Gains:</b> uses the existing decision boundary and its tests. <b>Costs:</b> model selection runs on every one-shot and chat turn, at a much higher rate than lane transitions. The decision gateway and its Monolith or Engine switch add latency and a dependency to calls such as title generation. Selection is not a lane transition, so it would stretch the library's contract.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+    <h2><span class="number">03</span> Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>Recommended default: Option B, starting with one switch for every consumer</h3>
+      <p>Build one selection service over the rules that already exist. Keep its planner pure and put it in the shared contracts package, so the monolith, Task Server and runner decide the same way. The first card makes the 72-PUT switch unnecessary: one workspace action moves every consumer class away from a provider until its reset. The second and third cards make each switch visible in a selection log on the CLI Management page. Option C stays possible later, because the planner is a pure function with typed facts.</p>
+    </div>
+
+    <h3>Target design</h3>
+    <figure>
+      <svg viewBox="0 0 760 360" role="img" aria-labelledby="flow-title flow-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="flow-title">Selection flow</title>
+        <desc id="flow-desc">Consumers send a selection request to the selection service. The service reads the policy, quota snapshots, provider health and the Token Economy catalogue, asks the pure planner, writes a ledger entry and returns the route and reason.</desc>
+        <style>
+          .b{fill:var(--article-surface);stroke:var(--article-line)}
+          .k{fill:var(--article-link-soft);stroke:var(--article-link)}
+          .t{fill:var(--article-ink);font:13px system-ui,sans-serif}
+          .s{fill:var(--article-muted);font:11px system-ui,sans-serif}
+          .l{stroke:var(--article-faint);fill:none;marker-end:url(#arr)}
+        </style>
+        <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--article-faint)"/></marker></defs>
+        <rect class="b" x="10" y="20" width="190" height="320" rx="8"/>
+        <text class="t" x="24" y="44">Consumers</text>
+        <text class="s" x="24" y="70">local and remote coding</text>
+        <text class="s" x="24" y="92">review aspects, deep review</text>
+        <text class="s" x="24" y="114">review grade, concept fit</text>
+        <text class="s" x="24" y="136">orchestrator chat</text>
+        <text class="s" x="24" y="158">one-shots</text>
+        <text class="s" x="24" y="180">merge resolver</text>
+        <text class="s" x="24" y="202">card creation</text>
+        <text class="s" x="24" y="224">Task Server, runner</text>
+        <rect class="k" x="270" y="110" width="210" height="140" rx="8"/>
+        <text class="t" x="284" y="136">ModelSelectionService</text>
+        <text class="s" x="284" y="160">collects facts, calls planner</text>
+        <text class="s" x="284" y="182">ModelSelectionPlanner (pure)</text>
+        <text class="s" x="284" y="204">contracts package</text>
+        <text class="s" x="284" y="226">returns route + reason</text>
+        <path class="l" d="M200 180H268"/>
+        <rect class="b" x="550" y="20" width="200" height="56" rx="8"/>
+        <text class="t" x="564" y="44">Selection policy</text>
+        <text class="s" x="564" y="64">per consumer class + overrides</text>
+        <rect class="b" x="550" y="90" width="200" height="56" rx="8"/>
+        <text class="t" x="564" y="114">Quota snapshots, caps</text>
+        <text class="s" x="564" y="134">windows, forecast, resets</text>
+        <rect class="b" x="550" y="160" width="200" height="56" rx="8"/>
+        <text class="t" x="564" y="184">Model health</text>
+        <text class="s" x="564" y="204">capacity, auth, availability</text>
+        <rect class="b" x="550" y="230" width="200" height="56" rx="8"/>
+        <text class="t" x="564" y="254">Token Economy catalogue</text>
+        <text class="s" x="564" y="274">classes, thinking, prices</text>
+        <path class="l" d="M548 48H500V140H482"/>
+        <path class="l" d="M548 118H500"/>
+        <path class="l" d="M548 188H482"/>
+        <path class="l" d="M548 258H500V230H482"/>
+        <rect class="b" x="270" y="290" width="210" height="50" rx="8"/>
+        <text class="t" x="284" y="312">Selection ledger</text>
+        <text class="s" x="284" y="330">CLI Management view, timeline</text>
+        <path class="l" d="M375 250V288"/>
+      </svg>
+      <figcaption>Proposed flow. Consumers no longer read step settings or start a CLI directly; they ask the service and start the returned route.</figcaption>
+    </figure>
+
+    <h4>Request and result</h4>
+<pre><code>SelectionRequest {
+  consumer:      coding | review-aspect | review-deep | review-grade | concept-fit
+                 | chat | one-shot:&lt;kind&gt; | merge-resolver | card-creation
+  project, pipelineType, stepId?, taskKey?, attemptId?, round?
+  pins:          { cliType?, model?, thinkingLevel?, mode: preference | hard }
+  taskType, correctnessFloor?        // from qualification
+  required:      { tools?, semanticReview?, imageInput?, longContext? }
+  host:          { hostId?, acceptedModels[], cliVersions{} }   // remote only
+  continuation:  { sessionCli?, sessionModel? }                 // same-session resume
+}
+
+SelectionResult {
+  outcome:   primary | fallback | wait | throttle | refused
+  route:     { cliType, model, thinkingLevel }
+  primary:   { cliType, model, thinkingLevel }   // what would run without the rule
+  rule:      pin | consumer-default | quota-cap | operator-switch | capacity
+             | unauthorized | model-unavailable | floor | cost-guard | host-capability
+  reason:    human sentence
+  equivalence: { class, catalogueVersion, thinkingMapping }
+  quota:     snapshot of the deciding window(s)
+  retryAt?, returnToPrimaryAt?
+  ledgerId?
+}</code></pre>
+    <p>The service is the only code allowed to call <code>CliRouter.Get(...)</code> for a model run. An architecture test in the style of <code>TransitionDecisionBoundaryTests</code> lists the allowed callers and fails on any new direct start. The Task Server and runner use the same planner from the contracts package and send their decisions to the ledger API.</p>
+
+    <h3>Rules</h3>
+    <p>The planner applies the rules in this order. The first rule that decides wins, and the result names it.</p>
+    <ol>
+      <li><b>Hard pin.</b> A card or step pin with <code>mode: hard</code> runs as pinned or waits. It never switches.</li>
+      <li><b>Continuation.</b> A same-session resume keeps the session's CLI and model. A different provider cannot resume another provider's session.</li>
+      <li><b>Model health.</b> If the requested model is marked unavailable, the planner picks the equivalent (rule 6). Health is kept per model and host, with an expiry:
+        <ul>
+          <li><code>capacity</code>: the model only, 15 minutes, or the provider's retry hint.</li>
+          <li><code>model-unavailable</code> (model not found, not allowed on this plan): the model only, until the next CLI catalogue refresh.</li>
+          <li><code>unauthorized</code>: the provider on that host, until a successful probe. Claims on that host switch provider; other hosts are unaffected.</li>
+          <li><code>rate-limited</code> with a reset time: the provider and window, until the reset.</li>
+        </ul>
+        The classifier checks the capacity signal before the rate-limit signals, so capacity no longer becomes a 60-minute provider block.</li>
+      <li><b>Operator switch.</b> "Conserve provider X until its reset" (today's <code>CliFallbackPreferenceService</code>) applies to every consumer class, including deep review, grade and card creation.</li>
+      <li><b>Quota cap.</b> A provider window at or above its cap (default 95 %, per provider and window, <code>CliQuotaCapsService</code>), or projected to cross it before reset, sends new work to the equivalent. The existing nearby-reset wait for cheap cards stays.</li>
+      <li><b>Equivalence.</b> The target is the cheapest selectable model of the same Token Economy capability class (<code>light</code>, <code>balanced</code>, <code>frontier</code>) on another provider, or the explicit <code>providerFallbacks</code> entry when one exists. Same-provider siblings (<code>opus-5-5 → opus-5</code>, <code>gpt-6.1-sol → gpt-6-sol</code>) come first for capacity and model-unavailable, because they keep the session format and the prompt contract. Thinking levels map to the same level when the target supports it, otherwise to the next higher supported level, and never lower. The consumer policy may list explicit fallbacks that win over the catalogue.</li>
+      <li><b>Floor and capabilities.</b> The target must meet the card's correctness floor (<code>ModelRoutingPolicyRegistry.RouteMeetsFloor</code>), the required capabilities and the host's accepted models and CLI versions. Review consumers (deep review, grade, code-quality aspect) accept only the same capability class; they never step down.</li>
+      <li><b>Cost guard.</b> A fallback whose price per MTok exceeds the primary by more than a factor set per consumer class (default 2.0) needs either an explicit policy entry or the operator switch. Otherwise the result is <code>wait</code> with rule <code>cost-guard</code>. Subscription CLIs are measured in quota rather than money, so the guard mainly protects API-key and pay-per-use routes.</li>
+      <li><b>No equivalent.</b> The result is <code>wait</code> with the earliest <code>retryAt</code> among the blocked routes. The card shows the reason; nothing fails.</li>
+    </ol>
+    <h4>Card pins</h4>
+    <p>Today the planner ignores <code>modelExplicit</code>, so a quota fallback already overrides card pins. The recommendation makes that explicit. A pin is a <b>preference</b> by default: it wins over consumer defaults and qualification, and a switch away from it is logged with rule and reason. An operator who needs the exact model sets the pin as <b>hard</b> (new <code>pinMode</code> field, default <code>preference</code>). The card then waits rather than switches and shows why. The persistent re-pin after repeated rejections (<code>ProviderRejectionContinuation</code>) becomes a preference pin with an expiry instead of an overwrite of the operator's choice.</p>
+    <h4>Running cards and their next rounds</h4>
+    <ul>
+      <li>A running process is never switched. Selection happens at launch, claim and continuation.</li>
+      <li>A same-session resume keeps its model (rule 2). After the bounded same-session capacity retries, the next attempt is a fresh attempt from salvage, and it goes through selection again.</li>
+      <li>Each new round (review rework, reissue, continuation, next review package) asks again. A card that ran round 1 on a fallback returns to its primary in round 2 when the primary is healthy again. Rework that depends on the earlier reviewer's wording keeps the review model if it is still healthy (consumer policy flag <code>stickyWithinCard</code>, default on for review consumers).</li>
+      <li>The ledger entry of the switch records <code>returnToPrimaryAt</code>. When the primary becomes healthy, a <code>returned</code> event closes the active fallback.</li>
+    </ul>
+    <h4>Hysteresis</h4>
+    <p>The cap switches at 95 %. The return happens only after the window has reset, or after usage is at least 10 points below the cap with a minimum dwell of 30 minutes. A provider that sits at 94 to 96 % therefore switches once and does not flap. Model-health marks expire on their own timer and are renewed by the next rejection.</p>
+
+    <h3>Selection log</h3>
+    <p>The selection ledger records every result that is not a plain primary launch, and every return to primary. One entry per event:</p>
+    <table>
+      <thead><tr><th>Field</th><th>Content</th></tr></thead>
+      <tbody>
+        <tr><td><code>id</code>, <code>at</code></td><td>ULID, UTC time</td></tr>
+        <tr><td><code>kind</code></td><td><code>switched</code>, <code>waiting</code>, <code>refused</code>, <code>returned</code>, <code>health-marked</code>, <code>health-cleared</code>, <code>operator-switch</code></td></tr>
+        <tr><td><code>consumer</code>, <code>host</code></td><td>consumer class (and one-shot kind), host id for remote decisions</td></tr>
+        <tr><td><code>project</code>, <code>pipelineType</code>, <code>stepId</code>, <code>taskKey</code>, <code>attemptId</code>, <code>round</code></td><td>scope; empty for workspace one-shots</td></tr>
+        <tr><td><code>from</code>, <code>to</code></td><td><code>{cliType, model, thinkingLevel}</code> each</td></tr>
+        <tr><td><code>rule</code>, <code>reason</code></td><td>rule id from the list above and a human sentence</td></tr>
+        <tr><td><code>evidence</code></td><td>provider message excerpt (at most 300 characters, redacted), classifier kind</td></tr>
+        <tr><td><code>quota</code></td><td>per provider and window: used %, cap %, projected %, reset time, snapshot age</td></tr>
+        <tr><td><code>equivalence</code></td><td>capability class, catalogue version, source (<code>policy</code>, <code>catalogue</code>, <code>sibling</code>)</td></tr>
+        <tr><td><code>returnToPrimaryAt</code>, <code>closesId</code></td><td>expected return; a <code>returned</code> event points at the switch it closes</td></tr>
+        <tr><td><code>pricePerMTok</code></td><td>from and to, for the cost view</td></tr>
+      </tbody>
+    </table>
+    <p><b>Storage.</b> Daily JSONL files under <code>&lt;TaskRepository&gt;/.runtime/model-selection/&lt;yyyy-MM-dd&gt;.jsonl</code>, written by one writer in the monolith. This matches <code>QuotaHistoryStore</code>. The Task Server and runner post their events to <code>POST /api/model-selection/events</code> with a runner-scoped principal, and the post is retried with bounded backoff. Repeated identical <code>waiting</code> events for the same card collapse into one entry with a count. The active fallbacks are an in-memory projection rebuilt from the last 14 days at start. <b>Retention:</b> 90 days, then files are deleted. 90 days covers several weekly windows and is enough to compare quality across equivalents. A daily summary row (counts per provider, rule and consumer) is kept for 400 days.</p>
+    <p><b>API.</b> The implemented wire and permission contract is documented in <a href="../system/contracts/model-selection-api.md">Model selection API</a>.</p>
+    <ul>
+      <li><code>GET /api/model-selection/events?provider=&amp;project=&amp;consumer=&amp;rule=&amp;from=&amp;to=&amp;cursor=</code>: newest first, paged.</li>
+      <li><code>GET /api/model-selection/active</code>: open fallbacks and health marks, with their expected return.</li>
+      <li><code>GET /api/model-selection/effective?project=&amp;pipelineType=</code>: the route each consumer would get now, and why.</li>
+      <li><code>POST /api/model-selection/events</code>: host ingestion, runner scope only.</li>
+    </ul>
+    <p>Existing timeline events <code>QuotaAdmissionDecision</code> and <code>QuotaFallbackActivated</code> keep their type and gain a <code>selectionEventId</code> detail. The card timeline renders it as a link to the filtered view.</p>
+    <h4>Management page view</h4>
+    <p>The view is a new "Model selection" section in the CLI Management overlay (<code>workspace-overlays.component.ts:132</code>, the page the owner calls Verwaltung). It follows the admin flat-surface contract and uses existing table, badge and filter components. Status is shown by tint and badge, never by a coloured left bar.</p>
+    <figure>
+      <svg viewBox="0 0 760 330" role="img" aria-labelledby="mock-title mock-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="mock-title">Model selection view, proposed layout</title>
+        <desc id="mock-desc">A strip of active fallbacks at the top, a filter row for provider, project, consumer and period, and a table of selection events below.</desc>
+        <style>
+          .p{fill:var(--article-paper);stroke:var(--article-line)}
+          .a{fill:var(--article-warn-soft);stroke:var(--article-line)}
+          .r{fill:var(--article-surface);stroke:var(--article-line)}
+          .h{fill:var(--article-ink);font:600 13px system-ui,sans-serif}
+          .x{fill:var(--article-muted);font:11px system-ui,sans-serif}
+        </style>
+        <rect class="p" x="1" y="1" width="758" height="328" rx="8"/>
+        <text class="h" x="20" y="28">Active fallbacks (2)</text>
+        <rect class="a" x="20" y="40" width="350" height="54" rx="6"/>
+        <text class="x" x="32" y="60">Claude → Codex · operator switch · all consumers</text>
+        <text class="x" x="32" y="80">Claude weekly 94 % · returns after reset Tue 18:00 UTC</text>
+        <rect class="a" x="390" y="40" width="350" height="54" rx="6"/>
+        <text class="x" x="402" y="60">gpt-6-sol → gpt-5.6-sol · capacity · 3 cards</text>
+        <text class="x" x="402" y="80">health mark expires 15:52 UTC</text>
+        <rect class="r" x="20" y="112" width="140" height="26" rx="5"/><text class="x" x="30" y="129">Provider: all</text>
+        <rect class="r" x="170" y="112" width="140" height="26" rx="5"/><text class="x" x="180" y="129">Project: all</text>
+        <rect class="r" x="320" y="112" width="140" height="26" rx="5"/><text class="x" x="330" y="129">Consumer: all</text>
+        <rect class="r" x="470" y="112" width="140" height="26" rx="5"/><text class="x" x="480" y="129">Period: 7 days</text>
+        <text class="x" x="20" y="166">TIME</text><text class="x" x="110" y="166">CONSUMER</text><text class="x" x="220" y="166">CARD / PROJECT</text><text class="x" x="370" y="166">FROM → TO</text><text class="x" x="590" y="166">RULE</text>
+        <line x1="20" y1="174" x2="740" y2="174" stroke="var(--article-line)"/>
+        <text class="x" x="20" y="196">15:37</text><text class="x" x="110" y="196">coding</text><text class="x" x="220" y="196">AGT-…</text><text class="x" x="370" y="196">gpt-6-sol → gpt-5.6-sol</text><text class="x" x="590" y="196">capacity</text>
+        <line x1="20" y1="206" x2="740" y2="206" stroke="var(--article-line)"/>
+        <text class="x" x="20" y="228">09:12</text><text class="x" x="110" y="228">review-grade</text><text class="x" x="220" y="228">12 projects</text><text class="x" x="370" y="228">opus-5 → gpt-6-sol</text><text class="x" x="590" y="228">operator-switch</text>
+        <line x1="20" y1="238" x2="740" y2="238" stroke="var(--article-line)"/>
+        <text class="x" x="20" y="260">08:40</text><text class="x" x="110" y="260">one-shot:title</text><text class="x" x="220" y="260">workspace</text><text class="x" x="370" y="260">haiku-4-5 → gpt-6-luna</text><text class="x" x="590" y="260">quota-cap</text>
+        <line x1="20" y1="270" x2="740" y2="270" stroke="var(--article-line)"/>
+        <text class="x" x="20" y="300">Row opens the quota snapshot, evidence excerpt and the linked card timeline.</text>
+      </svg>
+      <figcaption>Proposed layout, not a product capture. The values are illustrative.</figcaption>
+    </figure>
+    <ul>
+      <li>Top strip: active fallbacks and health marks, grouped by provider, with the expected return and the number of affected cards. Each has an action "end now" (operator switch only) and "return to primary".</li>
+      <li>Filters: provider, project, consumer class, rule, period (24 hours, 7 days, 30 days, custom). The filters are kept in the URL, so a timeline link opens the view already filtered to its card and event.</li>
+      <li>Table: time, consumer, card or project, from and to, rule, reason. A row expands to show the quota snapshot and evidence.</li>
+      <li>Next to the table: the effective route per consumer class, from <code>/effective</code>.</li>
+    </ul>
+
+    <h3>Settings</h3>
+    <p>One workspace policy file, <code>model-selection-policy.json</code> next to the other CLI settings, replaces <code>cli-model-routing.json</code> and the per-step model fields as the source of defaults:</p>
+<pre><code>{
+  "version": 1,
+  "consumers": {
+    "coding":        { "route": "qualification", "fallbacks": "catalogue" },
+    "review-aspect": { "primary": {"cli":"claude","model":"claude-opus-5","thinking":"high"},
+                       "fallbacks": [{"cli":"codex","model":"gpt-6-sol","thinking":"high"}],
+                       "sameClassOnly": true, "stickyWithinCard": true },
+    "review-deep":   { "...": "as review-aspect" },
+    "review-grade":  { "...": "as review-aspect" },
+    "chat":          { "primary": {"cli":"codex"}, "fallbacks": "catalogue" },
+    "one-shot":      { "primary": {"cli":"claude","model":"claude-haiku-4-5"}, "fallbacks": "catalogue" },
+    "merge-resolver":{ "...": "..." },
+    "card-creation": { "route": "qualification" }
+  },
+  "caps":   { "claude": { "weekly": 95, "5h": 95 }, "codex": { "weekly": 95 } },
+  "costGuardFactor": 2.0,
+  "hysteresis": { "returnBelowCapPoints": 10, "minDwellMinutes": 30 }
+}</code></pre>
+    <p>The operator edits it in the CLI Management overlay: one row per consumer class with primary, ordered fallbacks and the effective route. The existing caps and the preference switch stay in the same overlay.</p>
+    <p><b>Project overrides.</b> <code>ProjectSettings.ModelSelectionOverrides[consumerClass]</code> holds an optional primary, fallbacks and <code>pinMode</code>, per pipeline type where needed. The pipeline-step settings keep their model fields for compatibility. A migration rewrites each step pin that equals the old global default to "inherit", and the rest become explicit overrides with a visible "overrides workspace" badge. The operator switch and health rules still apply to overrides, unless the override is <code>hard</code>. This is why the operator no longer needs 72 PUTs: a provider switch is one workspace action, and project overrides follow it unless they are hard pins.</p>
+
+    <h3>Migration plan</h3>
+    <p>Eight cards, in order. Each is one workflow-sized slice; the prompts are in <code>workbench.json</code>.</p>
+    <table>
+      <thead><tr><th>#</th><th>Card</th><th>Acceptance</th></tr></thead>
+      <tbody>
+        <tr><td>MS-1</td><td>One provider switch for every consumer class</td><td><code>CliFallbackPreference</code> applies to deep review, grade, local and remote aspects, merge resolver, chat, one-shots and card creation. New <code>GET /api/model-selection/effective</code>. A test with 12 projects × 3 pipeline types shows one PUT moves all 36 review routes, and the reset returns them.</td></tr>
+        <tr><td>MS-2</td><td>Selection ledger and API</td><td>JSONL store with 90-day retention, <code>events</code>, <code>active</code>, and ingestion routes. The admission recorder, one-shot dispatch, review-plane fallback, rejection continuation and Task Server recovery all write to it. Timeline events carry <code>selectionEventId</code>.</td></tr>
+        <tr><td>MS-3</td><td>Model selection view on the management page</td><td>Active strip, filters, table, effective routes. Timeline entries link to the filtered view. Playwright light and dark captures, no page errors.</td></tr>
+        <tr><td>MS-4</td><td>Capacity and model rejections switch the model</td><td>The 2 November output is reproduced as a fixture. Capacity is classified before rate limits. Model-health marks are per model and host. Capacity after retries leads to the sibling or the equivalent for the next attempt, in the monolith, Task Server and runner. No 60-minute provider block for capacity.</td></tr>
+        <tr><td>MS-5</td><td>Selection service and planner core</td><td><code>SelectionRequest</code> and <code>SelectionResult</code> in the contracts package. The planner absorbs the admission planner, fallback resolve, siblings and floor checks with unchanged behaviour (golden tests). Local runs, remote claims and one-shot dispatch call it. The boundary test forbids new direct CLI starts.</td></tr>
+        <tr><td>MS-6</td><td>Remaining consumers and known defects</td><td>Merge resolver, Gemini and Antigravity aspect paths, the chat fallback with an unreachable host, the pin check and floor check on local fallback, and the <code>DriftPostStepRunner</code> parameter all go through the service. The boundary test allow-list is empty.</td></tr>
+        <tr><td>MS-7</td><td>Consumer-class policy and project overrides</td><td><code>model-selection-policy.json</code>, the migration of step pins to inherit or override, the editor in CLI Management, the <code>pinMode</code> field on cards and overrides, and the override badge.</td></tr>
+        <tr><td>MS-8</td><td>Hysteresis, cost guard and return to primary</td><td>Return only after the reset or below the cap minus 10 points with a 30-minute dwell. The cost guard has a factor per consumer class. Returned events close the switch. Simulation tests on recorded quota history show at most one switch per provider window.</td></tr>
+      </tbody>
+    </table>
+    <p>MS-1 is first because it removes the manual work at once and needs only the existing preference service. MS-4 can run in parallel with MS-2 and MS-3, because it touches the classifier and the runner, not the ledger.</p>
+
+    <h3>Risks</h3>
+    <ul>
+      <li><b>Quality differences between equivalents.</b> The review evaluation of 2 November found that the code-quality blocks raised by Opus were real defects. An equivalent of the same capability class is not an equal reviewer. Mitigation: review consumers accept only the same class (<code>sameClassOnly</code>). The reviewer model is stored with every verdict, so block rates can be compared per model. A review package that ran on a fallback can be marked for a second review on the primary when the primary returns (open decision 4).</li>
+      <li><b>Subscription terms for headless use.</b> The fallbacks move headless, automated load from one subscription CLI to another. Provider terms on automated use and account sharing can change, and this Dossier does not assess them. Mitigation: the policy can only name CLIs and accounts already configured for headless use. The ledger shows the moved volume per provider, so the owner can check it against each plan.</li>
+      <li><b>Flapping near the cap.</b> Snapshots are cached for up to 10 minutes, and forecasts move. Mitigation: the hysteresis rule, the minimum dwell, and the collapse of repeated waiting events. Suspicious snapshots count as blocked, as they do today, so a bad probe cannot cause a return.</li>
+      <li><b>Cost.</b> Moving work to a pay-per-use or more expensive route can cost money that a subscription would not. Mitigation: the cost guard and the price fields in the ledger.</li>
+      <li><b>Both providers capped.</b> With Claude at 94 % and Codex at 81 % in the same week, a full switch can push the second provider over its cap. Mitigation: the projected cap check also applies to the fallback target. The result is <code>wait</code> rather than overloading the target.</li>
+      <li><b>Two paths during migration.</b> Until MS-6, some consumers decide outside the service. Mitigation: the boundary test's allow-list makes the remaining paths visible, and the ledger already records their decisions from MS-2 on.</li>
+    </ul>
+  </section>
+
+  <section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+    <h2><span class="number">04</span> Evidence</h2>
+    <p>All observations come from reading develop at <code>d63df0be4</code> on 3 November 2026. This Dossier makes no claim that rests on what a product screen shows. Its statements about the card badge and the CLI Management overlay cite the code that builds them. The two figures above are proposals drawn as SVG, not captures, so there are no screenshot assets.</p>
+    <div class="evidence-list">
+      <a class="evidence" href="#ev-admission"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-admission">Quota admission is shared but not universal</b><small><code>QuotaAdmissionService.cs:59</code> is used by local runs, remote claims, remote chat and the one-shot registry. The merge resolver (<code>ProjectRunner.cs:2176-2217</code>), the local provider-limit skip (<code>:1499</code>) and the direct <code>CliRunner</code> aspect path (<code>AspectRunnerService.cs:93</code>) bypass it.</small></span></a>
+      <a class="evidence" href="#ev-deep"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-deep">Deep review is never downgraded on the review plane</b><small><code>V1ReviewPlaneEndpoints.cs:2589</code> re-plans agent aspects on fallback. Deep review is skipped (<code>:2667</code>), as are immutable plans and tool commands.</small></span></a>
+      <a class="evidence" href="#ev-classifier"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-classifier">Rate-limit signals are checked before capacity</b><small><code>ProviderAccessClassifier.cs:184</code> returns <code>RateLimited</code> before the <code>ModelCapacity</code> check at <code>:203</code>. An unknown reset leads to a 60-minute provider limit (<code>RunnerCapabilityProbe.cs:931</code>).</small></span></a>
+      <a class="evidence" href="#ev-incident"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-incident">Cause of the 2 November 15:37 block</b><small>The 60-minute <code>provider-auth:codex</code> limit matches the rate-limit path with an unknown reset. The run output was not available here, so MS-4 must reproduce it first. An earlier capacity case, AGT-2692 (31 August, <code>docs/concepts/orchestrator-drive-to-conclusion.html#case-agt-2692</code>), was fixed to return control "for capability wait, fallback, or bounded escalation", but no cross-provider fallback was added.</small></span></a>
+      <a class="evidence" href="#ev-catalogue"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-catalogue">Equivalence is asymmetric</b><small><code>ModelEquivalenceCatalog.cs:112-153</code> (TokenEconomy 0.3.7, routing policy of 4 October 2026) maps Claude to the cheapest Codex model of the same class. From Codex to Claude there is only one explicit rule: <code>claude-sonnet-5</code> at <code>high</code> for <code>terra-medium</code> and <code>sol-medium</code>, and not for <code>sol-xhigh</code>. <code>model-routing-policy.v1.json</code> (11 October 2026), however, gives <code>opus-5 xhigh</code> as the Anthropic override of <code>sol-xhigh</code>.</small></span></a>
+      <a class="evidence" href="#ev-pins"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-pins">Pins are not modelled as hard or preference</b><small><code>QuotaAdmissionPlanner.cs:72</code> does not read <code>modelExplicit</code>. <code>ProviderRejectionContinuation.cs:182-184</code> overwrites the card model after repeated refusals.</small></span></a>
+      <a class="evidence" href="#ev-logs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-logs">Decisions are scattered and kept forever</b><small>Timeline, orchestrator log, log lines and the current-state marker (<code>QuotaAdmissionRecorder.cs</code>, <code>QuotaFallbackMarker.cs</code>). None of them has retention code. Only <code>QuotaHistoryStore</code> keeps 14 days.</small></span></a>
+      <a class="evidence" href="#ev-switch"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-switch">Step pins are edited one step at a time</b><small><code>ProjectSettingsEndpoints.cs:532</code> takes one project, pipeline type and step per call. There is no workspace default per consumer class, which is why the 2 and 3 November switch took 72 calls.</small></span></a>
+      <a class="evidence" href="#ev-design"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b id="ev-design">Selection service, ledger and policy</b><small>Section 03 of this Dossier. The figures are proposed layouts, not captures.</small></span></a>
+    </div>
+  </section>
+
+  <section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+    <h2><span class="number">05</span> Open decisions</h2>
+    <p>Each decision has a recommended working option. Implementation cards use it unless the owner records another choice.</p>
+    <table>
+      <thead><tr><th>#</th><th>Decision</th><th>Options</th><th>Recommended</th></tr></thead>
+      <tbody>
+        <tr><td>D1</td><td>Architecture</td><td>A gaps in place; B selection service; C orchestration decider</td><td><b>B</b>, with the planner pure and in the contracts package</td></tr>
+        <tr><td>D2</td><td>Meaning of an explicit card pin</td><td>always hard; always preference; preference with a hard opt-in</td><td><b>Preference by default, <code>pinMode: hard</code> as opt-in.</b> Today's behaviour already overrides pins on quota. Making that explicit and logged costs nothing, and a hard pin remains available.</td></tr>
+        <tr><td>D3</td><td>Cap and return</td><td>switch at 95 % and return at reset; switch at 90 %; hysteresis</td><td><b>Switch at 95 % (current default), return after the reset or 10 points below the cap with a 30-minute dwell</b></td></tr>
+        <tr><td>D4</td><td>Review on a fallback</td><td>accept; same class only; same class plus a second review on the primary</td><td><b>Same class only, and record the reviewer model.</b> A second review on the primary only when the fallback reviewer accepted a package whose code-quality aspect the primary would normally run; this is decided after 30 days of ledger data.</td></tr>
+        <tr><td>D5</td><td>Codex to Claude at <code>sol-xhigh</code></td><td>wait (Token Economy rule); <code>opus-5 xhigh</code> (routing registry)</td><td><b><code>opus-5 xhigh</code> via an explicit policy entry</b>, because waiting contradicts the goal that the system never stands still, and the registry already treats them as the same tier. Ask Token Economy to add the rule so that both sources agree.</td></tr>
+        <tr><td>D6</td><td>Running cards</td><td>switch mid-run; switch at next attempt; keep for the whole card</td><td><b>Never mid-run, decide again at every attempt and round</b>, with <code>stickyWithinCard</code> for review consumers</td></tr>
+        <tr><td>D7</td><td>Ledger storage and retention</td><td>JSONL files; SQLite; orchestrator log</td><td><b>Daily JSONL, 90 days, daily summary for 400 days</b>, following <code>QuotaHistoryStore</code></td></tr>
+        <tr><td>D8</td><td>Cost guard</td><td>none; factor; daily budget</td><td><b>Factor 2.0 per consumer class</b>; a money budget only once a pay-per-use route is configured</td></tr>
+        <tr><td>D9</td><td>Load spreading ("3 of 4 cards on Codex")</td><td>target share per provider now; later from forecast</td><td><b>Not in this plan.</b> The existing projected-cap throttle covers the urgent case; the ledger supplies the data for a share rule later</td></tr>
+        <tr><td>D10</td><td>Headless-use terms</td><td>owner checks per provider; no automatic cross-provider moves</td><td><b>The owner checks the terms once per configured provider</b>; the policy only uses CLIs already configured for headless use</td></tr>
+      </tbody>
+    </table>
+  </section>
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">06</span> Implementation</h2>
+    <p>Delivery slices append their current implementation status here. Decision content above remains unchanged. Each slice is one <code>workbench.json</code> <code>implementationTasks</code> entry with a bounded <code>acceptanceScope</code>.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<li><p><b>MS-1 One provider switch for every consumer class</b> (AGT-3473). The workspace fallback preference reaches review aspects and grade, local aspects, merge resolution, chat, one-shots and card creation; <code>GET /api/model-selection/effective</code> reports configured and effective routes. The working choices are D2 preference pins (existing card pins stay on disk), D4 same-class review fallbacks with a wait when none exists, and D6 selection at a launch boundary. The preference expires back to the configured route. No alternate operator decision is recorded.</p></li>
+<li><p><b>MS-5 Selection service and planner core</b> (AGT-3477, 4 November 2026). <code>SelectionRequest</code>, <code>SelectionResult</code> and the pure <code>ModelSelectionPlanner</code> live in <code>contracts/TaskServer.Contracts/ModelSelection/</code> with the quota, routing-tier and refusal-sibling records they decide on. <code>QuotaAdmissionPlanner.Plan</code>, <code>CliQuotaFallbackService.Resolve</code>, the refusal siblings, <code>RouteMeetsFloor</code> and <code>MechanicalFreshRunRoutePolicy</code> are thin adapters over the planner; a golden matrix of 1,296 quota, pin, preference and host cases, recorded before the move, holds them unchanged. <code>ModelSelectionService</code> collects the facts and writes non-primary results to the ledger seam (interim log line until MS-2). Local runs, remote coding claims (including the correctness-floor rule) and the one-shot registry dispatch call it; the Task Server sibling lookup and the runner claim route use the planner. <code>ModelSelectionBoundaryTests</code> lists the remaining direct start (merge resolver) for MS-6. Decisions implemented: D1 option B (planner pure, in the contracts package); D2 preference by default with <code>pinMode: hard</code> available in the request (a hard pin or a same-session resume waits instead of switching; no caller sets hard before MS-7); D4 same class only for review consumers; D3, D5 to D10 unchanged by this slice and left to their cards.</p></li>
+<li><p><b>MS-6 Remaining consumers and boundary</b> (AGT-3478, 4 November 2026). The merge resolver now selects its route through <code>ModelSelectionService</code>, leaving the boundary-test pending-start allow-list empty. The aspect runner asks selection for a CLI without a registered one-shot and records an operator-switch wait in the ledger. One-shot dispatch supplies its registered CLI set as a fallback capability fact, so an unsupported fallback waits during planning. Title generation and tag maintenance use the <code>one-shot:title</code> and <code>one-shot:tags</code> consumer keys. Local coding admission checks the fallback model's pin support and hard correctness floor. The drift direct test seam uses its supplied fallback service. The local chat dispatch also selects through the service and preserves the selected CLI, model and fallback metadata. A direct aspect denied at dispatch returns a deferred result; the aspect remains pending for a later quota reset rather than becoming an infrastructure crash. Production drift registration supplies the selection service explicitly. Decisions used in this slice: D1 option B, D2 preference by default, D3's existing 95 % cap threshold, D4 same-class review fallback, D6 selection at each launch, D9 no target-share rule, D10 configured CLIs only. D3's return dwell and D5, D7 and D8 remain assigned to their other implementation slices.</p></li>
+<li><p><b>MS-7 Consumer-class policy and project overrides</b> (AGT-3479, 4 November 2026). The workspace policy, one-time step-pin migration, project overrides, card <code>pinMode</code>, CLI Management editor, and project override badge are implemented. The canonical <a href="../system/domains/model-routing-policy.md#model-selection-api-contract">model routing policy</a> records the API contracts. Working decisions for this slice: D1 option B remains the shared selection service and pure planner; D2 uses preference pins with a hard opt-in; D3 stores the 95 percent cap and 10-point, 30-minute return parameters; D4 keeps review fallbacks in the same capability class; D5 declares Opus 5/xhigh as the Sol/xhigh fallback; D6 keeps review choices sticky within a card and selects again at attempt boundaries; D7 continues to use the selection ledger from its earlier slice; D8 sets the cost guard factor to 2.0; D9 adds no provider target-share rule; D10 limits automatic choices to the configured headless CLI set.</p></li>
+<li><p><b>MS-2, AGT-3474.</b> The recommended D7 storage option is implemented as one monolith JSONL writer under <code>.runtime/model-selection/</code>, with 90-day event retention, 400-day daily summaries, an active projection, and filtered read and runner-scoped ingestion routes. The admission, one-shot, remote claim, review claim, local run, and provider-rejection continuation paths emit selection receipts. Timeline admission and fallback events include a selection event id. D1 through D6 and D8 through D10 retain their recommended working options; the selection-policy and management-view cards own their remaining behavior. The Task Server recovery publisher uses <code>TaskServer:ModelSelectionBearerToken</code> with a runner Events scope. The remote runner sends model rejection health marks through the same ingestion route using its runner Events credential and the Studio URL configured for post-merge state when available. Repeated card waits increase the ledger count without repeating timeline entries.</p></li>
+<li><p><b>MS-8 Hysteresis, cost guard and return to primary</b> (AGT-3480, 4 November 2026). The shared planner holds an open quota switch until the window reset or a trusted reading at least 10 points below every cap after a 30-minute dwell. The fallback target receives the projected cap check; an unavailable target waits. The factor guard compares catalogue input plus output prices per MTok and waits above 2.0 unless the route is an explicit policy fallback or operator switch. Daily JSONL entries replay into an active projection; a <code>returned</code> event names its switch in <code>closesId</code> and removes it from the CLI Management active strip. Working decisions: D1 option B keeps the pure planner and service; D2 keeps preference pins and hard opt-in; D3 uses the 95 percent cap and 10-point, 30-minute return rule; D4 keeps review fallbacks in the same class; D5 keeps the explicit Opus 5/xhigh route; D6 selects at attempt boundaries and preserves same-session routes; D7 uses daily JSONL with 90-day event retention, 400-day summaries and 14-day active replay; D8 uses the 2.0 factor per consumer class; D9 adds no target-share rule; D10 limits automatic routes to configured headless CLIs.</p></li>
+<li><p><b>MS-4 Capacity and model rejection recovery (AGT-3476)</b> (4 November 2026). This slice uses the recommended working choices D1 to D10; no alternate operator choice is recorded. D1: shared policy in contracts with host adapters. D2: existing pins remain preferences for this recovery; the MS-7 hard-pin opt-in is preserved and waits for its requested route. D3: existing 95% quota threshold is retained; return hysteresis belongs to the quota slice. D4: review fallback remains same-class under existing review policy. D5: Sol xhigh can move to Opus 5 xhigh through the policy route. D6: a switch starts a fresh attempt after bounded same-session retries. D7: health and switch events use the MS-2 selection ledger with timeline pointers. D8: the recommended 2.0 cost factor remains a selection-service constraint; this slice adds no priced route. D9: no provider share rule. D10: cross-provider routes require configured provider capability and host acceptance. The 2 November raw output was not present in the job folder, so the regression fixture uses the reported capacity line followed by a retry line containing an HTTP 429 rate-limit phrase.</p></li>
+<li><p><b>MS-3 Model selection view</b> (AGT-3475, 5 November 2026). CLI Management defers the model selection view until its section enters the viewport. The view reads active switches and health marks, filtered ledger events, and effective routes; card timeline receipts open it with card and event URL filters. Working decisions: D1 option B uses the shared selection service and ledger; D2 preference pins with hard opt-in remain visible through their recorded rule; D3 retains the 95 percent cap and reset or 10-point, 30-minute return policy; D4 keeps review fallbacks in the same class and their reviewer model in the route; D5 retains the explicit Opus 5/xhigh route; D6 keeps selection at attempt boundaries; D7 reads events from the daily JSONL ledger with 90-day event retention and 400-day summaries; D8 retains the 2.0 cost factor per consumer class; D9 adds no provider target-share rule; D10 limits automatic choices to configured headless CLIs. No alternate operator decision was recorded. Ending an operator switch uses the existing fallback-preference action; quota and health returns remain policy driven.</p></li>
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

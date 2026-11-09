@@ -366,6 +366,11 @@ used: set the environment variable or `Secrets:KeyFile` explicitly. With an
 explicit `Secrets:KeyFile`, the first write to an empty store may create the
 file there. To provide the key yourself, write 32 random bytes in base64, for
 example `head -c 32 /dev/urandom | base64 > secrets.kek && chmod 600 secrets.kek`.
+The networked Compose stack does this in `setup.sh` and mounts the key read-only
+(see [Studio website](../setup/studio-website.md)). Before the GitHub App
+registration sends the owner to GitHub, Studio checks that the store can write
+(the key loads and may seal a new name, and the store directory takes a file),
+so a missing key fails before the App exists.
 
 The provider refuses a key file inside the workspace. It also refuses a key
 file that other users can access (see [File protection](#file-protection)).
@@ -428,6 +433,17 @@ Before runner log lines (`POST /api/runner/logs`, the task folder's
 replaces the value, each line of a multi-line value, and the base64 form with
 `[secret:<reference>]`. Registrations expire 24 hours after the last
 resolution. The pattern-based `CredentialRedactor` still runs first.
+
+`CredentialRedactor` masks GitHub tokens (including App installation tokens),
+user info in remote URLs, Anthropic and OpenAI keys, `CLAUDE_CODE_OAUTH_TOKEN`
+and `refresh_token` assignments, private-key blocks, and the tokens Studio
+issues itself. Session, CSRF, runner, enrollment, invitation, service-account,
+telemetry and connector tokens are also registered as exact values when they
+are issued, so they are masked whatever their shape. Remote Review reports
+pass through the redactor before Studio stores them; a masked artifact gets a
+new digest that the command evidence then cites. Job-folder commits leave the
+job's `logs/` folder out. All patterns use the non-backtracking regex engine,
+so redaction time grows linearly with the input length.
 
 ## Studio
 

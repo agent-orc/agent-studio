@@ -51,6 +51,7 @@ public sealed class StallInterventionService(
         // Likewise a reroute that settled while in force is routed back once its stall cleared.
         effect.ReleaseClearedReroutes(cases.All(root).Where(item => item.Subject is not null
             && StallInterventionFactsBuilder.IsOpen(item)).Select(item => item.Subject!).ToHashSet(StringComparer.Ordinal));
+        effect.SupersedeRecoveredProposals(cases.All(root));
         if (!options.Enabled) return new(0, 0, 0, 0, "disabled");
         var now = time.GetUtcNow().UtcDateTime;
         store.Prune(now);

@@ -1,0 +1,182 @@
+{
+  "tooltipText": [
+    "Prompt enrichment A deterministic pre-processing step that runs before the agent.",
+    "Prompt enrichment",
+    "A deterministic pre-processing step that runs before the agent."
+  ],
+  "pipeline": {
+    "groupsBeforeExpand": [
+      {
+        "phase": "pre",
+        "label": "PRE STEPS",
+        "collapsed": true,
+        "summary": "Pending5 steps1 off"
+      },
+      {
+        "phase": "core",
+        "label": "CORE AGENT WORK",
+        "collapsed": true,
+        "summary": "Pending1 step"
+      },
+      {
+        "phase": "decision",
+        "label": "DECISION",
+        "collapsed": true,
+        "summary": "Pending2 steps"
+      },
+      {
+        "phase": "tool",
+        "label": "TOOL",
+        "collapsed": true,
+        "summary": "Pending2 steps"
+      },
+      {
+        "phase": "analysis",
+        "label": "ANALYSIS",
+        "collapsed": true,
+        "summary": "Pending7 steps"
+      },
+      {
+        "phase": "aspect",
+        "label": "ASPECT",
+        "collapsed": true,
+        "summary": "Pending4 steps"
+      },
+      {
+        "phase": "tool",
+        "label": "TOOL",
+        "collapsed": true,
+        "summary": "Pending2 steps"
+      },
+      {
+        "phase": "decision",
+        "label": "DECISION",
+        "collapsed": true,
+        "summary": "Pending1 step"
+      },
+      {
+        "phase": "tool",
+        "label": "TOOL",
+        "collapsed": true,
+        "summary": "Pending8 steps3 off"
+      },
+      {
+        "phase": "decision",
+        "label": "DECISION",
+        "collapsed": true,
+        "summary": "Pending4 steps2 off"
+      },
+      {
+        "phase": "drift",
+        "label": "DRIFT",
+        "collapsed": true,
+        "summary": "Disabled5 steps5 off"
+      }
+    ],
+    "preGroupsExpanded": 1,
+    "steps": [
+      {
+        "id": "pre-loop-guard",
+        "phase": "pre",
+        "status": "pending",
+        "label": "Loop check",
+        "hint": null,
+        "visible": true
+      },
+      {
+        "id": "pre-model-qualification",
+        "phase": "pre",
+        "status": "pending",
+        "label": "Model qualification",
+        "hint": null,
+        "visible": true
+      },
+      {
+        "id": "pre-prompt-enrichment",
+        "phase": "pre",
+        "status": "pending",
+        "label": "Prompt enrichment",
+        "hint": null,
+        "visible": true
+      },
+      {
+        "id": "pre-orchestrator-prep",
+        "phase": "pre",
+        "status": "disabled",
+        "label": "Orchestrator prep",
+        "hint": null,
+        "visible": true
+      },
+      {
+        "id": "pre-reissue-open-items",
+        "phase": "pre",
+        "status": "pending",
+        "label": "Reissue open-items check",
+        "hint": null,
+        "visible": true
+      }
+    ],
+    "preStepLabelsInOrder": [
+      "Loop check",
+      "Model qualification",
+      "Prompt enrichment",
+      "Orchestrator prep",
+      "Reissue open-items check"
+    ],
+    "preStepIdsInOrder": [
+      "pre-loop-guard",
+      "pre-model-qualification",
+      "pre-prompt-enrichment",
+      "pre-orchestrator-prep",
+      "pre-reissue-open-items"
+    ],
+    "promptEnrichmentRowVisible": true,
+    "shots": [
+      {
+        "file": "task-overview-pipeline-pre-steps-light--real.png",
+        "width": 1079,
+        "height": 398,
+        "bytes": 43397,
+        "theme": "light"
+      },
+      {
+        "file": "task-overview-pipeline-pre-steps-dark--real.png",
+        "width": 1079,
+        "height": 398,
+        "bytes": 48469,
+        "theme": "dark"
+      }
+    ]
+  },
+  "docs": {
+    "tabLabel": "Docs",
+    "indexLinks": [
+      "Task brief"
+    ],
+    "files": [
+      {
+        "testid": "file-card-prompt.md",
+        "name": "prompt.md",
+        "kind": "prompt",
+        "topic": "Task brief",
+        "head": "▸📝Task brief⋯Fileprompt.mdSize159 BUpdatedjust nowTokensNot recorded View document history"
+      }
+    ],
+    "shots": [
+      {
+        "file": "task-docs-tab-files-light--real.png",
+        "width": 852,
+        "height": 751,
+        "bytes": 29332,
+        "theme": "light"
+      },
+      {
+        "file": "task-docs-tab-files-dark--real.png",
+        "width": 852,
+        "height": 751,
+        "bytes": 30973,
+        "theme": "dark"
+      }
+    ]
+  }
+}

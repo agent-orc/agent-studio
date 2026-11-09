@@ -89,6 +89,82 @@ public class AspectRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task Visual_aspect_without_screenshot_names_missing_frontend_evidence()
+    {
+        var runner = BuildRunner(_ => "[[ASPECT_VERDICT: status=pass; summary=Looks fine.]]\n[[TASK_DONE]]");
+        var inputs = BuildInputs() with
+        {
+            DiffSummary = "Files changed: 1",
+            VisualChangedPaths = ["frontend/src/app/layout/footer.component.scss"],
+        };
+
+        var report = await runner.RunAsync(inputs, ["visual-review"], "claude",
+            "claude-sonnet-5", TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        var verdict = Assert.Single(report.Verdicts);
+        Assert.Equal(AspectStatus.Concerns, verdict.Status);
+        Assert.Contains("screenshot", verdict.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("footer.component.scss", verdict.EvidenceChecked);
+    }
+
+    [Fact]
+    public async Task Visual_aspect_with_before_only_screenshot_names_missing_after_evidence()
+    {
+        var results = Path.Combine(_jobFolder, "results", "bars");
+        Directory.CreateDirectory(results);
+        File.WriteAllBytes(Path.Combine(results, "before-1920-light.png"), ValidPng());
+        var runner = BuildRunner(_ => "[[ASPECT_VERDICT: status=pass; summary=Looks fine.]]\n[[TASK_DONE]]");
+        var inputs = BuildInputs() with
+        {
+            VisualChangedPaths = ["frontend/src/app/layout/footer.component.scss"],
+        };
+
+        var report = await runner.RunAsync(inputs, ["visual-review"], "claude",
+            "claude-sonnet-5", TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        var verdict = Assert.Single(report.Verdicts);
+        Assert.Equal(AspectStatus.Concerns, verdict.Status);
+        Assert.Contains("after screenshots", verdict.Body);
+    }
+
+    [Fact]
+    public async Task Visual_aspect_prioritizes_after_screenshot_beyond_eight_before_images()
+    {
+        var results = Path.Combine(_jobFolder, "results", "bars");
+        Directory.CreateDirectory(results);
+        for (var i = 0; i < 8; i++)
+            File.WriteAllBytes(Path.Combine(results, $"before-{i:D2}.png"), ValidPng());
+        File.WriteAllBytes(Path.Combine(results, "after-1920-light.png"), ValidPng());
+        var runner = BuildRunner(_ => "[[ASPECT_VERDICT: status=pass; summary=Looks fine.]]\n[[TASK_DONE]]");
+        var inputs = BuildInputs() with
+        {
+            VisualChangedPaths = ["frontend/src/app/layout/footer.component.scss"],
+        };
+
+        var report = await runner.RunAsync(inputs, ["visual-review"], "claude",
+            "claude-sonnet-5", TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        Assert.Equal(AspectStatus.Pass, Assert.Single(report.Verdicts).Status);
+        Assert.Contains("after-1920-light.png", LocalVisualScreenshotEvidence.PromptSection(_jobFolder));
+    }
+
+    [Fact]
+    public void Corrupt_local_images_do_not_hide_a_later_valid_after_screenshot()
+    {
+        var results = Path.Combine(_jobFolder, "results", "bars");
+        Directory.CreateDirectory(results);
+        for (var i = 0; i < 8; i++)
+            File.WriteAllBytes(Path.Combine(results, $"after-{i:D2}.png"), [1, 2, 3]);
+        File.WriteAllBytes(Path.Combine(results, "after-99.png"), ValidPng());
+
+        Assert.True(LocalVisualScreenshotEvidence.HasAfterScreenshot(_jobFolder));
+        Assert.Contains("after-99.png", LocalVisualScreenshotEvidence.PromptSection(_jobFolder));
+        Assert.Single(LocalVisualScreenshotEvidence.Images(_jobFolder));
+    }
+
+    private static byte[] ValidPng() => PngFixture.Create(1, 1);
+
+    [Fact]
     public async Task Local_aspect_preserves_evidence_checked_for_scoped_rereview()
     {
         var runner = BuildRunner(_ =>
@@ -709,7 +785,6 @@ public class AspectRunnerTests : IDisposable
                 ? string.Empty // dead reviewer: no output
                 : "[[ASPECT_VERDICT: status=pass; summary=Recovered on retry.]]\n[[TASK_DONE]]";
         });
-        runner.VerdictRetryBackoff = _ => TimeSpan.Zero; // no real wait in the test
 
         var report = await runner.RunAsync(BuildInputs(),
             new[] { "code-quality" },
@@ -735,7 +810,6 @@ public class AspectRunnerTests : IDisposable
             calls.AddOrUpdate(aspect, 1, (_, c) => c + 1);
             return string.Empty; // dead every time
         });
-        runner.VerdictRetryBackoff = _ => TimeSpan.Zero;
 
         var report = await runner.RunAsync(BuildInputs(),
             new[] { "code-quality" },
@@ -789,7 +863,6 @@ public class AspectRunnerTests : IDisposable
             calls.AddOrUpdate(aspect, 1, (_, c) => c + 1);
             return "I have no opinion.";
         });
-        runner.VerdictRetryBackoff = _ => TimeSpan.Zero;
 
         var report = await runner.RunAsync(BuildInputs(),
             new[] { "code-quality" },
@@ -817,7 +890,12 @@ public class AspectRunnerTests : IDisposable
             .AddInMemoryCollection(new Dictionary<string, string?>())
             .Build();
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
-        var runner = new AspectRunnerService(prompts, NullLogger<AspectRunnerService>.Instance);
+        // An unparseable or empty reply takes the environmental retry; the
+        // production backoff before it is 30 seconds (AGT-3419).
+        var runner = new AspectRunnerService(prompts, NullLogger<AspectRunnerService>.Instance)
+        {
+            VerdictRetryBackoff = _ => TimeSpan.Zero
+        };
         runner.CliRunner = (aspectId, _, _, _, _, _) => Task.FromResult(stub(aspectId));
         return runner;
     }

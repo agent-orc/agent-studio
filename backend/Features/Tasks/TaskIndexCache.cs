@@ -20,8 +20,8 @@ namespace AgentStudio.Tasks;
 /// mutation that calls <see cref="Invalidate"/>. The FileSystemWatcher
 /// signal (trailing-edge debounced in <see cref="TaskWatcherService"/>) covers
 /// external changes - things touched outside the API. There is also a
-/// safety re-scan TTL (default 30 s) so a missed watcher event cannot
-/// produce an indefinitely stale view.</para>
+/// 15-minute background folder-stamp reconciliation so a missed watcher event
+/// cannot produce an indefinitely stale view.</para>
 ///
 /// <para><b>Board reads (AGT-3088)</b> do not use that global contract. A
 /// board read takes one already published generation through
@@ -58,8 +58,17 @@ public sealed class TaskIndexCache
     internal static readonly TimeSpan RefreshCoalesceWindow = TimeSpan.FromMilliseconds(200);
 
     private readonly TimeSpan _safetyTtl;
+    private readonly TimeSpan _reconciliationInterval;
     private readonly TimeProvider _time;
     private readonly Func<List<TaskInfo>> _scanAllJobsRaw;
+    private readonly bool _incremental;
+    private readonly Dictionary<string, TaskInfo> _folderFacts = new(PathComparer);
+    private readonly Dictionary<string, object?> _folderStamps = new(PathComparer);
+    private readonly HashSet<string> _pendingFolderPaths = new(PathComparer);
+    private bool _enumerateFolders;
+    private ITimer? _reconciliationTimer;
+    private static StringComparer PathComparer => OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
     private readonly TaskScannerService _scanner;
     private readonly Action? _beforeRefreshGenerationCapture;
     private readonly ILogger<TaskIndexCache> _logger;
@@ -95,10 +104,13 @@ public sealed class TaskIndexCache
     private readonly Dictionary<string, int> _pendingCoreFolders = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     // Tombstones are retained so a scan started before a move cannot resurrect
-    // its old folder. Only direct publications advance these folder versions.
+    // its old folder. Direct publications and pending watcher reads advance
+    // these versions; _staleCoreFolders distinguishes the pending reads.
     private readonly Dictionary<string, long> _coreFolderVersions = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly Dictionary<string, TaskCoreSourceStamp> _coreTaskStamps = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private readonly Dictionary<string, TaskCoreSourceStamp> _apiTaskStamps = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private long _coreWriteGeneration;
     private long _coreDependencyGeneration;
@@ -145,7 +157,7 @@ public sealed class TaskIndexCache
     // observes the post-mutation state. Without this guard, a torn read can
     // overwrite a true invalidation with stale data and the cache happily
     // serves the stale snapshot until the next external watcher event or the
-    // 30s safety TTL, producing the "optimistic reorder reverts to the old
+    // periodic reconciliation, producing the "optimistic reorder reverts to the old
     // order after the next poll" symptom.
     private long _invalidationGen;
     // Mutation invalidations carry the stronger read-after-write contract.
@@ -153,10 +165,13 @@ public sealed class TaskIndexCache
     // while the published snapshot predates an API mutation.
     private long _requiredMutationGen;
     private long _publishedMutationGen;
+    // A direct one-card publication cannot satisfy an earlier mutation
+    // invalidation that requires a workspace reconciliation.
+    private long _requiredMutationScanGen;
     // The published generation (TaskIndexPublication.Generation) is the
     // monotonic id of the current snapshot. It is incremented once per
-    // successful disk-walk publish (a mutation, a watcher event, or the safety
-    // TTL). Downstream projections that re-derive expensive per-request state
+    // successful publication (a mutation, a watcher event, or reconciliation).
+    // Downstream projections that re-derive expensive per-request state
     // from the same on-disk facts (token snapshots, task-list Git signatures)
     // memoize against it so a warm poll where nothing changed pays O(1)
     // instead of re-walking the workspace.
@@ -168,6 +183,8 @@ public sealed class TaskIndexCache
     public long StaleHits;
     public long ExternalInvalidations;
     public long MutationInvalidations;
+    internal long FullRawScans;
+    internal long FolderReloads;
     private long _blockingRefreshWaits;
     private string? _firstBlockingRefreshWaitStack;
 
@@ -180,7 +197,8 @@ public sealed class TaskIndexCache
         ILogger<TaskIndexCache> logger,
         IConfiguration config,
         TimeProvider? timeProvider = null)
-        : this(scanner, logger, config, scanner.ScanAllJobsRaw, timeProvider: timeProvider)
+        : this(scanner, logger, config, scanner.ScanAllJobsRaw, timeProvider: timeProvider,
+            incremental: true)
     {
     }
 
@@ -190,15 +208,19 @@ public sealed class TaskIndexCache
         IConfiguration config,
         Func<List<TaskInfo>> scanAllJobsRaw,
         Action? beforeRefreshGenerationCapture = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        bool incremental = false)
     {
         _scanner = scanner;
         _time = timeProvider ?? TimeProvider.System;
         _scanAllJobsRaw = scanAllJobsRaw;
+        _incremental = incremental;
         _beforeRefreshGenerationCapture = beforeRefreshGenerationCapture;
         _logger = logger;
         var ttlSec = int.TryParse(config["TaskIndexCache:SafetyTtlSeconds"], out var v) ? v : 30;
-        _safetyTtl = TimeSpan.FromSeconds(Math.Max(1, ttlSec));
+        _safetyTtl = incremental ? TimeSpan.MaxValue : TimeSpan.FromSeconds(Math.Max(1, ttlSec));
+        var reconcileSec = int.TryParse(config["TaskIndexCache:ReconciliationSeconds"], out var r) ? r : 900;
+        _reconciliationInterval = TimeSpan.FromSeconds(Math.Max(1, reconcileSec));
     }
 
     /// <summary>The refresh in flight, if any (tests wait on it).</summary>
@@ -216,15 +238,15 @@ public sealed class TaskIndexCache
 
     /// <summary>
     /// Returns the cached snapshot of board jobs (every lane except the
-    /// terminal 7-archive). If the cache is dirty or has aged past the safety
-    /// TTL, refreshes from disk first. The archive partition of the same scan
+    /// terminal 7-archive). A dirty cache refreshes its indexed folders first.
+    /// The archive partition of the same publication
     /// is available via <see cref="GetArchiveSnapshot"/>.
     /// </summary>
     public ImmutableList<TaskInfo> GetSnapshot() => Current().Live;
 
     /// <summary>
     /// Version stamp of the currently published snapshot. It advances on every
-    /// snapshot publish (mutation, watcher event, or safety-TTL rescan) and is
+    /// snapshot publish (mutation, watcher event, or reconciliation) and is
     /// stable between publishes, so a caller that already forced freshness via
     /// <see cref="GetSnapshot"/> can memoize derived projections against this
     /// value without re-reading the workspace. This getter never triggers a
@@ -260,6 +282,14 @@ public sealed class TaskIndexCache
     {
         var publication = Current();
         return (publication.Live, publication.Archive);
+    }
+
+    /// <summary>Background indexers wait for an in-flight folder refresh so
+    /// a task event cannot rejoin Git facts against the previous generation.</summary>
+    internal (ImmutableList<TaskInfo> Live, ImmutableList<TaskInfo> Archive) GetCleanSnapshotPartitions()
+    {
+        EnsureFresh(requireClean: true);
+        lock (_lock) return (_publication.Live, _publication.Archive);
     }
 
 
@@ -734,6 +764,7 @@ public sealed class TaskIndexCache
                     {
                         _coreFolderVersions[old] = ++_coreWriteGeneration;
                         _coreTaskStamps.Remove(old);
+                        _apiTaskStamps.Remove(old);
                     }
                     ClearCoreTombstone(CoreKey(info.WatchPath, info.Id));
                     ClearCoreTombstone(CoreKey(info.WatchPath, info.TaskKey));
@@ -744,6 +775,154 @@ public sealed class TaskIndexCache
             }
         }
         finally { EndCorePublication(pendingKeys); }
+    }
+
+    /// <summary>
+    /// A routing edit changes one card but neither its identity nor its
+    /// reference edges. Replace that card in the published board generation
+    /// after publishing the core fact, without a workspace disk walk.
+    /// </summary>
+    public void PublishRoutingFromFolder(string folder, Func<TaskInfo?> read)
+    {
+        lock (_corePublicationLock)
+        {
+            var info = read();
+            if (info is null)
+            {
+                Invalidate(InvalidationSource.Mutation, changedPath: Path.Combine(folder, "task.json"));
+                return;
+            }
+            PublishRoutingMutation(info);
+        }
+    }
+
+    public void PublishRoutingMutation(TaskInfo info)
+    {
+        lock (_corePublicationLock)
+        {
+            if (!TryPublishRoutingCore(info)) PublishCore(info);
+            lock (_lock)
+            {
+                if (!_hasSnapshot) return;
+                var prior = _publication;
+                var tasks = info.State == TaskStates.Archive ? prior.Archive : prior.Live;
+                var index = tasks.FindIndex(task =>
+                    string.Equals(task.FolderPath, info.FolderPath,
+                        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
+                if (index < 0)
+                {
+                    // A concurrent move or an incomplete startup publication
+                    // needs the ordinary reconciliation path.
+                    Invalidate(InvalidationSource.Mutation);
+                    return;
+                }
+                var updated = tasks.SetItem(index, info);
+                _publication = new TaskIndexPublication(
+                    info.State == TaskStates.Archive ? prior.Live : updated,
+                    info.State == TaskStates.Archive ? updated : prior.Archive,
+                    prior.References, prior.AutomationReferences,
+                    prior.Generation + 1);
+                var mutationGeneration = ++_requiredMutationGen;
+                _publishedMutationGen = mutationGeneration;
+                _apiTaskStamps[info.FolderPath] = SourceStamp(info);
+                if (_incremental)
+                    _pendingFolderPaths.Add(Path.Combine(info.FolderPath, "task.json"));
+                // A scan already in flight may contain the old card. Its
+                // generation check keeps it dirty for one reconciliation pass.
+                if (_refreshCompletion is not null) ++_invalidationGen;
+            }
+        }
+    }
+
+    private bool TryPublishRoutingCore(TaskInfo info)
+    {
+        var pendingKeys = BeginCorePublication(info);
+        try
+        {
+            lock (_lock)
+            {
+                if (!_coreFactsByFolder.ContainsKey(info.FolderPath)) return false;
+                var record = TaskCoreRecord.Create(info,
+                    info.References.DependsOn.Count > 0 ? _coreReferences.EvaluateWaitsOn(info) : null,
+                    _coreByFolder.GetValueOrDefault(info.FolderPath));
+                var facts = new Dictionary<string, TaskInfo>(_coreFactsByFolder, _coreFactsByFolder.Comparer)
+                {
+                    [info.FolderPath] = info,
+                };
+                var records = new Dictionary<string, TaskCoreRecord>(_coreByFolder, _coreByFolder.Comparer)
+                {
+                    [info.FolderPath] = record,
+                };
+                var identities = new Dictionary<string, TaskInfo[]>(_coreFactsByIdentity,
+                    StringComparer.OrdinalIgnoreCase);
+                var aliases = new Dictionary<string, TaskCoreRecord>(_core, StringComparer.OrdinalIgnoreCase);
+                foreach (var identity in new[] { info.Id, info.TaskKey, info.Key,
+                             TaskCoreRecord.Limit(info.Id, 128) }
+                             .Where(value => !string.IsNullOrWhiteSpace(value))
+                             .Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    if (identities.TryGetValue(identity!, out var matches))
+                    {
+                        var position = Array.FindIndex(matches, task =>
+                            facts.Comparer.Equals(task.FolderPath, info.FolderPath));
+                        if (position >= 0)
+                        {
+                            var copy = (TaskInfo[])matches.Clone();
+                            copy[position] = info;
+                            identities[identity!] = copy;
+                        }
+                    }
+                    var key = CoreKey(info.WatchPath, identity!);
+                    if (aliases.TryGetValue(key, out var old)
+                        && facts.Comparer.Equals(old.FolderPath, info.FolderPath))
+                        aliases[key] = record;
+                }
+                _coreFactsByFolder = facts;
+                _coreFactsByIdentity = identities;
+                _coreByFolder = records;
+                _core = aliases;
+                var revisionKey = CoreKey(info.WatchPath, info.Id);
+                _coreRevisionByKey[revisionKey] = _coreRevisionByKey.GetValueOrDefault(revisionKey) + 1;
+                _coreFolderVersions[info.FolderPath] = ++_coreWriteGeneration;
+                _coreRevisionVersions[revisionKey] = _coreWriteGeneration;
+                _coreTaskStamps[info.FolderPath] = SourceStamp(info);
+                _staleCoreFolders.Remove(info.FolderPath);
+                return true;
+            }
+        }
+        finally { EndCorePublication(pendingKeys); }
+    }
+
+    /// <summary>Add one newly created card to the published generation without a disk walk.</summary>
+    public void PublishCreatedMutation(TaskInfo info)
+    {
+        lock (_corePublicationLock)
+        {
+            PublishCore(info);
+            lock (_lock)
+            {
+                if (!_hasSnapshot) return;
+                var prior = _publication;
+                var liveIndex = prior.Live.FindIndex(task => task.FolderPath == info.FolderPath);
+                var archiveIndex = prior.Archive.FindIndex(task => task.FolderPath == info.FolderPath);
+                var live = info.State == TaskStates.Archive ? prior.Live
+                    : liveIndex >= 0 ? prior.Live.SetItem(liveIndex, info) : prior.Live.Add(info);
+                var archive = info.State == TaskStates.Archive
+                    ? archiveIndex >= 0 ? prior.Archive.SetItem(archiveIndex, info) : prior.Archive.Add(info)
+                    : prior.Archive;
+                var all = live.Concat(archive).ToArray();
+                _publication = new TaskIndexPublication(live, archive,
+                    TaskReferenceIndex.Build(all),
+                    TaskReferenceIndex.Build(all.Where(task => !task.Fixture)),
+                    prior.Generation + 1);
+                var mutationGeneration = ++_requiredMutationGen;
+                _publishedMutationGen = mutationGeneration;
+                _apiTaskStamps[info.FolderPath] = SourceStamp(info);
+                if (_incremental)
+                    _pendingFolderPaths.Add(Path.Combine(info.FolderPath, "task.json"));
+                if (_refreshCompletion is not null) ++_invalidationGen;
+            }
+        }
     }
 
     /// <summary>Read and publish under one ordering lock, including watcher reads.</summary>
@@ -796,25 +975,42 @@ public sealed class TaskIndexCache
     private void PublishCoreFacts(Dictionary<string, TaskInfo> facts,
         Dictionary<string, TaskCoreRecord> records, TaskReferenceIndex references)
     {
-        var identities = new Dictionary<string, List<TaskInfo>>(StringComparer.OrdinalIgnoreCase);
+        // Every publication of one card rebuilds these maps for the whole
+        // workspace, so the loops below avoid per-card LINQ and presize the
+        // maps (AGT-3369). The result is the same as the grouped, ordered form.
+        var identities = new Dictionary<string, List<TaskInfo>>(facts.Count * 2, StringComparer.OrdinalIgnoreCase);
         foreach (var task in facts.Values)
-            foreach (var identity in new[] { task.Id, task.Key, task.TaskKey, TaskCoreRecord.Limit(task.Id, 128) }
-                .Where(identity => !string.IsNullOrWhiteSpace(identity))
-                .Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                if (!identities.TryGetValue(identity!, out var matches))
-                    identities[identity!] = matches = [];
-                matches.Add(task);
-            }
-        var byIdentity = identities.ToDictionary(pair => pair.Key,
-            pair => pair.Value.OrderBy(task => Array.IndexOf(TaskStates.All, task.State))
-                .ThenBy(task => task.FolderPath, StringComparer.Ordinal).ToArray(),
-            StringComparer.OrdinalIgnoreCase);
-        var byFolder = new Dictionary<string, TaskCoreRecord>(records.Comparer);
-        var aliases = new Dictionary<string, TaskCoreRecord>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (folder, task) in facts
-            .OrderByDescending(pair => Array.IndexOf(TaskStates.All, pair.Value.State))
-            .ThenByDescending(pair => pair.Key, StringComparer.Ordinal))
+        {
+            var limitedId = TaskCoreRecord.Limit(task.Id, 128);
+            AddIdentity(identities, task, task.Id);
+            if (!SameIdentity(task.Key, task.Id))
+                AddIdentity(identities, task, task.Key);
+            if (!SameIdentity(task.TaskKey, task.Id) && !SameIdentity(task.TaskKey, task.Key))
+                AddIdentity(identities, task, task.TaskKey);
+            if (!SameIdentity(limitedId, task.Id) && !SameIdentity(limitedId, task.Key)
+                && !SameIdentity(limitedId, task.TaskKey))
+                AddIdentity(identities, task, limitedId);
+        }
+        var byIdentity = new Dictionary<string, TaskInfo[]>(identities.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var (identity, matches) in identities)
+            byIdentity[identity] = matches.Count == 1
+                ? [matches[0]]
+                : matches.OrderBy(task => Array.IndexOf(TaskStates.All, task.State))
+                    .ThenBy(task => task.FolderPath, StringComparer.Ordinal).ToArray();
+        var byFolder = new Dictionary<string, TaskCoreRecord>(facts.Count, records.Comparer);
+        var aliases = new Dictionary<string, TaskCoreRecord>(facts.Count * 3, StringComparer.OrdinalIgnoreCase);
+        var ordered = new (int StateIndex, string Folder, TaskInfo Task)[facts.Count];
+        var position = 0;
+        foreach (var (folder, task) in facts)
+            ordered[position++] = (Array.IndexOf(TaskStates.All, task.State), folder, task);
+        // Later entries win an alias: descending lane index, then descending
+        // folder. Folders are unique, so the order is total.
+        Array.Sort(ordered, static (left, right) =>
+        {
+            var byState = right.StateIndex.CompareTo(left.StateIndex);
+            return byState != 0 ? byState : string.CompareOrdinal(right.Folder, left.Folder);
+        });
+        foreach (var (_, folder, task) in ordered)
         {
             if (!records.TryGetValue(folder, out var record)) continue;
             var waitsOn = task.References.DependsOn.Count > 0 ? references.EvaluateWaitsOn(task) : null;
@@ -835,6 +1031,18 @@ public sealed class TaskIndexCache
             _coreWriteGeneration++;
         }
     }
+
+    private static void AddIdentity(Dictionary<string, List<TaskInfo>> identities, TaskInfo task, string? identity)
+    {
+        if (string.IsNullOrWhiteSpace(identity)) return;
+        if (!identities.TryGetValue(identity, out var matches))
+            identities[identity] = matches = [];
+        matches.Add(task);
+    }
+
+    private static bool SameIdentity(string? candidate, string? earlier)
+        => !string.IsNullOrWhiteSpace(candidate) && !string.IsNullOrWhiteSpace(earlier)
+           && string.Equals(candidate, earlier, StringComparison.OrdinalIgnoreCase);
 
     private static bool DependencyFactsChanged(
         Dictionary<string, TaskInfo> previous, Dictionary<string, TaskInfo> current)
@@ -893,6 +1101,7 @@ public sealed class TaskIndexCache
             {
                 _coreFolderVersions[info.FolderPath] = ++_coreWriteGeneration;
                 _coreTaskStamps.Remove(info.FolderPath);
+                _apiTaskStamps.Remove(info.FolderPath);
                 _staleCoreFolders.Remove(info.FolderPath);
             }
         }
@@ -914,6 +1123,18 @@ public sealed class TaskIndexCache
         lock (_lock) return _coreByFolder.GetValueOrDefault(folder);
     }
 
+    /// <summary>Whether a watcher event echoes a task.json version already published by an API writer.</summary>
+    public bool IsCurrentTaskJson(string path)
+    {
+        if (!string.Equals(Path.GetFileName(path), "task.json", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var folder = Path.GetDirectoryName(path);
+        if (folder is null) return false;
+        var stamp = TaskCoreSourceStamp.Read(path);
+        lock (_lock)
+            return _apiTaskStamps.TryGetValue(folder, out var published) && published == stamp;
+    }
+
     /// <summary>Debounced sidecar refresh on the watcher thread, never on a core read.</summary>
     public void NotifyCoreFileChanged(string path)
     {
@@ -923,14 +1144,21 @@ public sealed class TaskIndexCache
             ? Path.GetDirectoryName(Path.GetDirectoryName(path))
             : Path.GetDirectoryName(path);
         if (folder is null) return;
-        var observedTaskStamp = name == "task.json" ? TaskCoreSourceStamp.Read(path) : default;
+        var observedStamp = TaskCoreSourceStamp.Read(path);
         TaskCoreRecord? known;
         var startWorker = false;
         lock (_lock)
         {
             _coreByFolder.TryGetValue(folder, out known);
             if (name == "task.json" && known is not null
-                && _coreTaskStamps.GetValueOrDefault(folder) == observedTaskStamp)
+                && _coreTaskStamps.GetValueOrDefault(folder) == observedStamp)
+                return;
+            // The watcher echoes every sidecar write the API already published
+            // with the card. Republishing it rebuilt the whole core index once
+            // more per timeline append, the largest allocator under load
+            // (AGT-3369). A sidecar whose stamp the published record already
+            // carries changes nothing.
+            if (known is not null && SidecarAlreadyPublished(known, name, observedStamp))
                 return;
             _staleCoreFolders.Add(folder);
             _coreFolderVersions[folder] = ++_coreWriteGeneration;
@@ -970,6 +1198,15 @@ public sealed class TaskIndexCache
         });
     }
 
+    internal static bool SidecarAlreadyPublished(TaskCoreRecord record, string fileName, TaskCoreSourceStamp observed)
+        => fileName switch
+        {
+            "status.md" => record.Status.State != "stale" && record.StatusStamp == observed,
+            "prompt.md" => record.Prompt.State != "stale" && record.PromptStamp == observed,
+            "timeline.jsonl" => record.Timeline.State != "stale" && record.TimelineStamp == observed,
+            _ => false,
+        };
+
     private (string WatchPath, string ProjectName, string State)? ResolveUnknownCoreFolder(string folder)
     {
         foreach (var entry in _scanner.GetWatchPaths())
@@ -984,11 +1221,18 @@ public sealed class TaskIndexCache
         return null;
     }
 
+    // Alias keys of a record. A record is immutable and an unchanged card keeps
+    // its record instance across publications, so its keys are built once
+    // instead of three strings per card per publication (AGT-3369). The table
+    // holds its keys weakly: it is bounded by the records still alive.
+    private static readonly ConditionalWeakTable<TaskCoreRecord, string[]> CoreAliasKeys = new();
+
     private static void AddCoreAliases(Dictionary<string, TaskCoreRecord> core, TaskCoreRecord record)
     {
-        core[CoreKey(record.WatchPath, record.Id)] = record;
-        core[CoreKey(record.WatchPath, record.TaskKey)] = record;
-        if (!string.IsNullOrWhiteSpace(record.Key)) core[CoreKey(record.WatchPath, record.Key)] = record;
+        foreach (var key in CoreAliasKeys.GetValue(record, static r => string.IsNullOrWhiteSpace(r.Key)
+                     ? [CoreKey(r.WatchPath, r.Id), CoreKey(r.WatchPath, r.TaskKey)]
+                     : [CoreKey(r.WatchPath, r.Id), CoreKey(r.WatchPath, r.TaskKey), CoreKey(r.WatchPath, r.Key)]))
+            core[key] = record;
     }
 
     private static void AddLegacyCoreAliases(Dictionary<string, TaskCoreRecord> core,
@@ -1023,13 +1267,13 @@ public sealed class TaskIndexCache
 
     /// <summary>
     /// Ensures the published generation (<see cref="_publication"/>)
-    /// reflects a scan taken after the last <see cref="Invalidate"/> / safety-TTL
+    /// reflects a scan taken after the last <see cref="Invalidate"/> or reconciliation
     /// expiry. Single-flight: only one thread does the disk walk. External-only
     /// readers receive the last good snapshot instead of waiting or spinning.
     /// Cold-start and mutation-freshness readers share one non-spinning wait
     /// because stale data is not valid for them.
     /// </summary>
-    private void EnsureFresh()
+    private void EnsureFresh(bool requireClean = false)
     {
         using var lookupTrace = TaskSwitchTrace.Span("index.lookup");
         // Freeze the read-after-write target at reader entry. Comparing every
@@ -1038,7 +1282,12 @@ public sealed class TaskIndexCache
         // workspace scan per later mutation even after their own prerequisite
         // generation has been published.
         long targetMutationGen;
-        lock (_lock) targetMutationGen = _requiredMutationGen;
+        long targetMutationScanGen;
+        lock (_lock)
+        {
+            targetMutationGen = _requiredMutationGen;
+            targetMutationScanGen = _requiredMutationScanGen;
+        }
 
         while (true)
         {
@@ -1049,6 +1298,7 @@ public sealed class TaskIndexCache
                 if (!_dirty
                     && Volatile.Read(ref _publishedMutationGen)
                     >= targetMutationGen
+                    && _publishedInvalidationGen >= targetMutationScanGen
                     && _time.GetUtcNow() - _snapshotAt < _safetyTtl)
                 {
                     Interlocked.Increment(ref Hits);
@@ -1057,9 +1307,10 @@ public sealed class TaskIndexCache
 
                 if (_refreshCompletion != null)
                 {
-                    if (_hasSnapshot
+                    if (!requireClean && _hasSnapshot
                         && Volatile.Read(ref _publishedMutationGen)
-                        >= targetMutationGen)
+                        >= targetMutationGen
+                        && _publishedInvalidationGen >= targetMutationScanGen)
                     {
                         Interlocked.Increment(ref Hits);
                         Interlocked.Increment(ref StaleHits);
@@ -1100,7 +1351,9 @@ public sealed class TaskIndexCache
                 // reader; do not chase it with another global scan here.
                 lock (_lock)
                 {
-                    if (_hasSnapshot && _publishedMutationGen >= targetMutationGen)
+                    if (_hasSnapshot && _publishedMutationGen >= targetMutationGen
+                        && _publishedInvalidationGen >= targetMutationScanGen
+                        && (!requireClean || !_dirty))
                     {
                         Interlocked.Increment(ref Hits);
                         if (_dirty) Interlocked.Increment(ref StaleHits);
@@ -1143,7 +1396,7 @@ public sealed class TaskIndexCache
                 previousCoreByFolder = new Dictionary<string, TaskCoreRecord>(_coreByFolder, _coreByFolder.Comparer);
             }
             var refreshTimer = System.Diagnostics.Stopwatch.StartNew();
-            var fresh = _scanAllJobsRaw();
+            var fresh = _incremental ? ScanIndexedFolders() : _scanAllJobsRaw();
             refreshTimer.Stop();
             BatchMoveOperationTelemetry.RecordScannerRefresh(refreshTimer.Elapsed);
             var board = new List<TaskInfo>(fresh.Count);
@@ -1181,17 +1434,20 @@ public sealed class TaskIndexCache
                 Dictionary<string, TaskInfo> mergedFacts;
                 Dictionary<string, TaskCoreRecord> mergedRecords;
                 Dictionary<string, long> currentFolderVersions;
+                HashSet<string> staleCoreFolders;
                 lock (_lock)
                 {
                     mergedFacts = new Dictionary<string, TaskInfo>(_coreFactsByFolder, _coreFactsByFolder.Comparer);
                     mergedRecords = new Dictionary<string, TaskCoreRecord>(_coreByFolder, _coreByFolder.Comparer);
                     currentFolderVersions = new Dictionary<string, long>(_coreFolderVersions, _coreFolderVersions.Comparer);
+                    staleCoreFolders = new HashSet<string>(_staleCoreFolders, _staleCoreFolders.Comparer);
                 }
                 var adopted = new List<string>();
                 var removed = new List<string>();
                 foreach (var (folder, scanned) in factsByFolder)
                 {
-                    if (currentFolderVersions.GetValueOrDefault(folder) > coreWriteGenBefore) continue;
+                    if (currentFolderVersions.GetValueOrDefault(folder) > coreWriteGenBefore
+                        && !staleCoreFolders.Contains(folder)) continue;
                     mergedFacts[folder] = scanned;
                     mergedRecords[folder] = byFolder[folder];
                     adopted.Add(folder);
@@ -1199,7 +1455,8 @@ public sealed class TaskIndexCache
                 foreach (var folder in mergedFacts.Keys.ToArray())
                 {
                     if (factsByFolder.ContainsKey(folder)
-                        || currentFolderVersions.GetValueOrDefault(folder) > coreWriteGenBefore) continue;
+                        || (currentFolderVersions.GetValueOrDefault(folder) > coreWriteGenBefore
+                            && !staleCoreFolders.Contains(folder))) continue;
                     mergedFacts.Remove(folder);
                     mergedRecords.Remove(folder);
                     removed.Add(folder);
@@ -1207,6 +1464,31 @@ public sealed class TaskIndexCache
                 var mergedReferences = TaskReferenceIndex.Build(mergedFacts.Values);
                 PublishCoreFacts(mergedFacts, mergedRecords, mergedReferences);
                 completedCoreFacts = mergedFacts.Values.ToArray();
+                // A direct API publication may have landed while this scan
+                // was reading disk. Keep its newer card in the board as well
+                // as the core index, rather than briefly publishing the old
+                // scan result until the follow-up reconciliation finishes.
+                var changedDuringScan = currentFolderVersions
+                    // A watcher marks a folder before its delayed core read.
+                    // That pending marker is not a newer published fact and
+                    // must not erase the card that this scan just found.
+                    .Where(pair => pair.Value > coreWriteGenBefore
+                        && !staleCoreFolders.Contains(pair.Key))
+                    .Select(pair => pair.Key).ToArray();
+                if (changedDuringScan.Length > 0)
+                {
+                    foreach (var folder in changedDuringScan)
+                    {
+                        board.RemoveAll(task => mergedFacts.Comparer.Equals(task.FolderPath, folder));
+                        archive.RemoveAll(task => mergedFacts.Comparer.Equals(task.FolderPath, folder));
+                        if (!mergedFacts.TryGetValue(folder, out var latest)) continue;
+                        if (latest.State == TaskStates.Archive) archive.Add(latest);
+                        else board.Add(latest);
+                    }
+                    referenceIndex = TaskReferenceIndex.Build(board.Concat(archive));
+                    automationReferences = TaskReferenceIndex.Build(
+                        board.Concat(archive).Where(task => !task.Fixture));
+                }
                 var stamps = adopted.ToDictionary(folder => folder,
                     folder => SourceStamp(factsByFolder[folder]),
                     mergedFacts.Comparer);
@@ -1219,14 +1501,16 @@ public sealed class TaskIndexCache
                     {
                         _coreTaskStamps[folder] = stamps[folder];
                         if (_coreFolderVersions.GetValueOrDefault(folder)
-                            == currentFolderVersions.GetValueOrDefault(folder))
+                            == currentFolderVersions.GetValueOrDefault(folder)
+                            && currentFolderVersions.GetValueOrDefault(folder) <= coreWriteGenBefore)
                             _staleCoreFolders.Remove(folder);
                     }
                     foreach (var folder in removed)
                     {
                         _coreTaskStamps.Remove(folder);
                         if (_coreFolderVersions.GetValueOrDefault(folder)
-                            == currentFolderVersions.GetValueOrDefault(folder))
+                            == currentFolderVersions.GetValueOrDefault(folder)
+                            && currentFolderVersions.GetValueOrDefault(folder) <= coreWriteGenBefore)
                             _staleCoreFolders.Remove(folder);
                     }
                     // Tombstones for absent cards survive unrelated scans and
@@ -1258,6 +1542,9 @@ public sealed class TaskIndexCache
                         ClearCoreTombstone(key);
                     _snapshotAt = _time.GetUtcNow();
                     _hasSnapshot = true;
+                    if (_incremental && _reconciliationTimer is null)
+                        _reconciliationTimer = _time.CreateTimer(_ => QueueReconciliation(),
+                            null, _reconciliationInterval, _reconciliationInterval);
                     _publishedMutationGen = Math.Max(_publishedMutationGen, mutationGenBefore);
                     _dirty = _invalidationGen != genBefore;
                     var followedInvalidation = genBefore != _publishedInvalidationGen;
@@ -1297,6 +1584,134 @@ public sealed class TaskIndexCache
         }
     }
 
+    private bool _folderIndexInitialized;
+
+    /// <summary>Apply queued paths to the resident folder map, probing the tree only for
+    /// an unlocated mutation or the periodic missed-event reconciliation.</summary>
+    private List<TaskInfo> ScanIndexedFolders()
+    {
+        if (!_folderIndexInitialized)
+        {
+            Interlocked.Increment(ref FullRawScans);
+            var initial = _scanAllJobsRaw();
+            foreach (var task in initial)
+            {
+                _folderFacts[task.FolderPath] = task;
+                _folderStamps[task.FolderPath] = _scanner.CaptureFolderStamp(task.FolderPath);
+            }
+            _folderIndexInitialized = true;
+            return initial;
+        }
+
+        bool enumerate;
+        string[] paths;
+        lock (_lock)
+        {
+            enumerate = _enumerateFolders;
+            _enumerateFolders = false;
+            paths = _pendingFolderPaths.ToArray();
+            _pendingFolderPaths.Clear();
+        }
+        var entries = _scanner.GetWatchPaths();
+        var candidates = new Dictionary<string, (WatchPathEntry Entry, string State)>(PathComparer);
+        var forced = new HashSet<string>(PathComparer);
+        foreach (var path in paths)
+        {
+            var entry = entries.FirstOrDefault(item => IsWithin(item.Path, path));
+            if (entry is null) continue;
+            var relative = Path.GetRelativePath(entry.Path, path);
+            var parts = relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string? folder = null;
+            string state = "";
+            if (parts.Length >= 3 && parts[0] == TaskStorageLayout.JobsDirName)
+                folder = Path.Combine(entry.Path, parts[0], parts[1], parts[2]);
+            else if (parts.Length >= 2 && TaskStates.All.Contains(parts[0]))
+            {
+                state = parts[0];
+                folder = Path.Combine(entry.Path, parts[0], parts[1]);
+            }
+            if (folder is null) { enumerate = true; continue; }
+            candidates[folder] = (entry, state);
+            forced.Add(folder);
+            // A rename reports its new directory, but the old directory also
+            // has to leave the index. Enumeration finds that removal cheaply.
+            if (PathComparer.Equals(path, folder)) enumerate = true;
+        }
+        if (enumerate)
+        {
+            foreach (var entry in entries)
+            {
+                var flat = TaskStorageLayout.EnumerateJobDirs(entry.Path).ToArray();
+                if (flat.Length > 0)
+                {
+                    foreach (var folder in flat) candidates[folder] = (entry, "");
+                }
+                else
+                {
+                    foreach (var state in TaskStates.All)
+                    {
+                        var lane = Path.Combine(entry.Path, state);
+                        if (!Directory.Exists(lane)) continue;
+                        foreach (var folder in Directory.EnumerateDirectories(lane))
+                            if (!Path.GetFileName(folder).StartsWith('_'))
+                                candidates[folder] = (entry, state);
+                    }
+                }
+            }
+            foreach (var folder in _folderFacts.Keys.ToArray())
+                if (!candidates.ContainsKey(folder))
+                {
+                    _folderFacts.Remove(folder);
+                    _folderStamps.Remove(folder);
+                }
+        }
+        foreach (var (folder, source) in candidates)
+        {
+            var stamp = _scanner.CaptureFolderStamp(folder);
+            if (stamp is null)
+            {
+                _folderFacts.Remove(folder);
+                _folderStamps.Remove(folder);
+                continue;
+            }
+            if (!forced.Contains(folder) && _scanner.FolderStampIsSettled(folder)
+                && _folderStamps.TryGetValue(folder, out var prior) && Equals(prior, stamp))
+                continue;
+            var task = _scanner.ScanJobFolder(folder, source.Entry, source.State,
+                bypassMemo: forced.Contains(folder));
+            Interlocked.Increment(ref FolderReloads);
+            if (task is null)
+            {
+                _folderFacts.Remove(folder);
+                _folderStamps.Remove(folder);
+            }
+            else
+            {
+                _folderFacts[folder] = task;
+                _folderStamps[folder] = stamp;
+            }
+        }
+        return _folderFacts.Values.ToList();
+
+        static bool IsWithin(string root, string path)
+        {
+            var relative = Path.GetRelativePath(root, path);
+            return relative == "." || (!Path.IsPathRooted(relative)
+                && relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar));
+        }
+    }
+
+    private void QueueReconciliation()
+    {
+        lock (_lock)
+        {
+            _enumerateFolders = true;
+            _invalidationGen++;
+            _dirty = true;
+            StartBackgroundRefreshLocked();
+        }
+    }
+
     /// <summary>
     /// Marks the cache stale so the next <see cref="GetSnapshot"/> call
     /// rescans from disk. Called from TaskWatcherService (external changes)
@@ -1309,7 +1724,8 @@ public sealed class TaskIndexCache
         InvalidationSource source = InvalidationSource.Mutation,
         [CallerMemberName] string callerMemberName = "",
         [CallerFilePath] string callerFilePath = "",
-        string? clientId = null)
+        string? clientId = null,
+        string? changedPath = null)
     {
         // Publish the required mutation generation, general invalidation
         // generation and dirty bit under the same lock. A reader can therefore
@@ -1318,11 +1734,16 @@ public sealed class TaskIndexCache
         // its disk walk intentionally runs outside this lock.
         lock (_lock)
         {
-            if (source == InvalidationSource.Mutation)
+            if (_incremental)
             {
-                Interlocked.Increment(ref _requiredMutationGen);
+                if (changedPath is null) _enumerateFolders = true;
+                else _pendingFolderPaths.Add(changedPath);
             }
+            if (source == InvalidationSource.Mutation)
+                ++_requiredMutationGen;
             Interlocked.Increment(ref _invalidationGen);
+            if (source == InvalidationSource.Mutation)
+                _requiredMutationScanGen = _invalidationGen;
             _dirty = true;
         }
         if (source == InvalidationSource.Mutation)
@@ -1423,7 +1844,7 @@ public sealed class TaskIndexCache
         Invalidate(InvalidationSource.Mutation);
         // Deliberately not GetSnapshot: a board-read pin must not turn a
         // forced rescan into a read of the pinned generation.
-        EnsureFresh();
+        EnsureFresh(requireClean: true);
         lock (_lock) return _publication.Live.Count;
     }
 

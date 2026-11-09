@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-09-29
+Version: 2026-11-05
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -22,7 +22,52 @@ repository-owned build and test contract. Studio validates the initial local
 build profile before offering the "Hello world change" card. Registration
 failures compensate the registry, task storage and newly created repository.
 
+When `QualityStudio:BaseUrl` is set, a separate registration attempt follows
+project creation. Its failure never rolls back the project. The 15-minute
+reconciler retries unregistered projects, adopts a repository found by
+`agent-studio:<projectId>`, backfills projects when the connection appears,
+and removes the Quality Studio registration for an archived project. The
+mapping and its last state and reason live in the project setting
+`qualityStudio` (`repositoryId`, `state`, `reason`). The canonical Quality
+Studio checkout path comes from `QualityStudio:CheckoutPathTemplate`, default
+`${RUNNER_WORKDIR}/{projectId}/repo`; `QualityStudio:RunnerWorkdir` may supply
+the runner root when the backend does not inherit that environment variable.
+The service token is `secret://workspace/quality-studio-api-token` by default;
+`QualityStudio:ApiTokenReference` may point to another platform secret.
+`POST /api/projects/{projectName}/quality-studio/reconcile` runs one Owner retry;
+the matching GET supplies the Deck status panel.
+
 ## Board read contract
+
+### Routing mutation publication
+
+`PUT /api/tasks/{id}/model`, `/cli-type`, and `/thinking-level` replace
+`task.json` once with all related fields, then publish that card into the
+resident core and board generations. `POST /api/tasks` publishes the new card
+after its task file, derived layout index, and timeline have been written.
+Routing writes hold the card's file lock through publication and use the
+latest published card under that lock before deriving related fields. Publication reads
+the written card under the index publication lock. This keeps concurrent
+routing writes in durable order across board, core, and detail readers; the
+new board generation also changes board validators and deploy projections.
+Git projections retain their snapshot because routing fields do not enter the
+Git input signature.
+On a cold host, the background Git indexer awaits the first task publication
+asynchronously before reading clean task partitions, so a held startup scan
+does not consume a worker in the index refresh gate.
+These paths do not invalidate the whole task index for a routine API write.
+The watcher ignores a `task.json` event when its file stamp matches the
+version already published by the API; an external edit still invalidates the
+index. Creation retains separate writes for the task, project key
+counter, and derived layout index.
+
+The `task-operation-timing` line for these four routes carries a `breakdown`
+JSON object. It reports request wall time, `mutation.lookup`,
+`mutation.lock`, `mutation.read-current`, `mutation.write`, `mutation.publish`,
+and the creation-only `mutation.key`,
+`mutation.index`, and `mutation.timeline` spans, plus workspace scans and Git
+process count. The spans are stage costs; their sum can be below wall time
+because validation and response coordination are outside them.
 
 `GET /api/tasks` and `GET /api/tasks/grouped` return compact card summaries.
 They include identity, lane, sort and filter fields, card badges, a commit
@@ -170,6 +215,19 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   The `queued.reason` field is a string reason code, including
   `project-busy`, `lane-not-runnable`, `remote-execution`, and
   `delivery-under-review`; clients must not assume only `project-busy`.
+  A queued round also returns `base` when it starts from a result ref
+  (AGT-3483); `BaseRef` on the request selects another ref of the same card,
+  see the [runner domain](runner.md) for the rule and its error codes.
+- Continue (every mode), preview feedback, the orchestrator-log steer override,
+  and an operator requeue (a move or batch move into Backlog, Preparation,
+  Ready or In Progress) refuse a card that is a member of a batch under
+  isolation with `409 batch-isolation-active`, naming the flight
+  (`{ error, message, flight, project, taskKey }`; a batch move item reports
+  `rejected` with the same code). A member is under isolation while its
+  ownership names a batch whose latest phase is `Red`, its pending record is
+  active and no isolation finding released it. Eject
+  (`POST /api/projects/{project}/batch-gate/members/{taskKey}/eject`) stays
+  allowed (AGT-3483, `BatchIsolationGuard`).
 
 ## Entry Points
 
@@ -790,6 +848,9 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   `POST /api/tasks/{address}/integration-records?watchPath=...`. The address may
   be a stable task key or the task folder name within the selected project. A
   duplicated legacy `id` returns `409` rather than selecting an arbitrary card.
+  Address resolution reads the published archive-inclusive identity facts;
+  after selecting an unambiguous card, the write reads only that card folder
+  again for current state and persisted records.
   The request uses the historical classes owned by
   `HistoricalIntegrationVerificationSweep` or `curated-mapping`, a stable caller-supplied record id,
   and explicit evidence. The server owns
@@ -1153,7 +1214,9 @@ files. The corrected card copy names the source and SHA, for example
 or review grade is recorded. Only a matched planned or running project test
 run uses `Evidence pending`. A build/test gate log with verdict
 `NotApplicable` and reason `no verify commands derivable` projects the neutral
-`No build/test defined` state. A true `Skipped` gate remains `not-proven` and
+`No build/test defined` state. At the merge that reason is no pass: the
+integration is refused with `verify-definition-missing` (AGT-3428, see
+[contributor setup](../../operations/setup/contributor-setup.md)). A true `Skipped` gate remains `not-proven` and
 uses the red attention treatment, so the card cannot imply that an applicable
 gate passed without executing.
 
@@ -1258,6 +1321,10 @@ site or derived from the lane pair for a human actor) and `details.causeDetail`
 when one was supplied; otherwise it falls back to `cause: causeDetail` (or
 whichever of the two is present) so the marker's `reason` field is never empty
 even when the lane-transition site only passed the taxonomy fields (AGT-2838).
+The marker also records the resolved cause and its qualifier as `cause` and
+`causeDetail`, so the park copy says who parked the card (for example the
+acceptance audit) instead of presenting the latest run as the parking run, and
+states the reason once (AGT-3586).
 
 A park whose run ended without a terminal sentinel carries its reason through the
 move, so the marker is never written with an empty `reason` and its `blockerType`
@@ -1363,7 +1430,11 @@ review for that run must contain a passed `requirement-fit` verdict for coding
 or `concept-fit` for concept cards, bound to that same brief. Build and lint
 alone cannot establish content fit. A stale delivery, missing content verdict,
 failed content verdict, or verdict for an older brief refuses completion with
-the particular gap. A written `operatorOverride` records the reason, actor,
+the particular gap. When no settled report backs the check, the refusal names
+why: no review, a review for another run, an unsettled review, or a
+settlement journal that is missing or needs repair, with the journal's reason
+(AGT-3467). A journal that reads as repair also writes one
+`review_settlement_repair_required` timeline entry per card and review. A written `operatorOverride` records the reason, actor,
 current/delivery/review brief versions, and content finding in the completion
 claim and a `completion_content_overridden` timeline entry. The Human Review
 delivery panel displays these grounds, the content citations, and ran/skipped
@@ -1671,8 +1742,11 @@ from completion backfill, cycle time, throughput, and environment flow metrics.
   An edge may use `{ "key": "AGT-2050", "releaseGate": true }` to require an
   explicit target-card release after terminal completion. Operators and
   dedicated release steps set that independent flag through
-  `PUT /api/tasks/{id}/release`; ordinary string edges keep their existing
-  terminal-state-only semantics.
+  `PUT /api/tasks/{id}/release`. Ordinary string edges open when the predecessor
+  completes or its current delivery is contained in the successor's target
+  branch. A newer pending delivery closes the edge again. Use
+  `{ "key": "AGT-2050", "requiresCompletion": true }` to retain the completion
+  rule on one edge. Concept and research predecessors use that rule by default.
 - The release flag has an operator affordance on both ends of a gated edge
   (AGT-2709), because nothing in the lifecycle sets it and a card would
   otherwise wait for a release screen that did not exist. The detail-view
@@ -1821,6 +1895,21 @@ their authoritative checks; display state never grants permission to mutate.
   than a fixed TTL after the last refresh queued a whole-board recompute -
   structurally proportional to request traffic rather than to actual repo
   change.
+- **Card sidecar generations (AGT-3541).** The review round ledger and
+  integration verification record have a remembered file generation per card.
+  Their writers and task watcher invalidate that card immediately. A ref-only
+  projection reuses the parsed review view and verification record, so it does
+  not probe every card's round file. Each index pass inspects at most 32
+  sidecars from a rotating queue to repair a missed watcher event. The 45 s
+  safety sweep checks up to 256 sidecars; a repaired
+  file changes the task input signature and queues a new board generation.
+  A second rotating pass re-reads at most 32 review views older than five
+  minutes to repair missed events for other review artifacts.
+  The first observation after a restart records file metadata and content hash
+  in the durable input signature, so a restored generation is confirmed only
+  against the current sidecars. The five synchronous projection lookups
+  execute on one outer pool worker instead of reserving five workers during
+  file and Git reads.
 - **Single-flight per repository, bounded concurrency across repositories.** A
   trigger that arrives while a repository's run is already in flight does not
   start a second one; it marks exactly one rerun for after the current run
@@ -1930,7 +2019,7 @@ offline reducer protocol is in [measurement.md](../../task-switch-performance/me
 
 The full-detail route resolves its card and dependency targets from published
 resident core facts. Other cards' mutations cannot make it wait for `EnsureFresh`;
-a safety-TTL or watcher repair runs in the background. It emits
+a reconciliation or watcher repair runs in the background. It emits
 `X-Task-Detail-Freshness: ready|stale|warming`; a cold, unindexed lookup returns
 `202` while the first snapshot or that card's publication is pending; a card
 absent from an otherwise populated but dirty snapshot returns `404`.
@@ -1949,7 +2038,7 @@ during migration. The `project` handle is required and resolved against the
 registry before a scoped principal can see a core. An unknown project or a
 known, indexed-but-absent task returns `404` with `state=missing`; an identity
 whose index is still hydrating returns `202` with `state=warming`. A known
-record whose sidecar refresh or safety sweep is pending returns `state=stale`.
+record whose sidecar refresh or folder reconciliation is pending returns `state=stale`.
 Durable deletion tombstones known core aliases immediately, so a deleted task
 does not reappear or wait for hydration to return `missing`.
 Core identity fields retain their full values. Lookup accepts the full id, the
@@ -2142,13 +2231,26 @@ every byte of it is a byte the client already holds.
   stored fact, so a 15 s tick is folded in while any card sits in the Progress
   lane - the only lane those branches apply to. An idle board has no Progress
   card and does not pay that tick at all.
-- **A cached body never outlives the task index safety TTL.** The index
-  publishes a new generation on every snapshot publish, including the TTL rescan
-  that finds nothing changed (`TaskIndexCache:SafetyTtlSeconds`, default 30 s).
-  The board therefore rebuilds at most once per TTL window, and the same bound
-  backstops the signature if the filesystem watcher ever stops delivering
-  events. A rebuild that produces the same bytes keeps its tag, so an unchanged
+- **Folder-index publication follows task changes.** The first publication
+  scans every configured watch path. Later watcher events name one card folder,
+  including for `jobs/<bucket>/<key>/task.json` changes;
+  mutation invalidations enumerate folder names and compare the scanner's file
+  stamps, then reload only changed folders. A 15-minute background reconciliation
+  (`TaskIndexCache:ReconciliationSeconds`, default 900) repeats that stamp
+  comparison to repair missed watcher events. Board requests use the last
+  published generation while it runs. Git-state sweeps and index runs read the
+  same archive-inclusive publication and wait for a pending folder refresh,
+  without starting raw task scans. Unchanged
+  polling and Git sweeps do not advance the task-index generation; an unchanged
   board still answers 304.
+  A Git task-event request without a folder path schedules the same stamp
+  comparison before its integration view joins task facts.
+  The 3,000-card AGT-3540 fixture measured one warm raw pass at 206 ms and
+  21.4 MB allocated on the shared host. Its simulated hour of 240 board polls,
+  80 Git sweep reads, and four background reconciliations made zero raw scans
+  after startup and took 2.49 s with 153 MB allocated. The previous 30 s TTL
+  plus 45 s Git sweep scheduled 200 raw passes per hour before task events,
+  about 41 s of scan wall time and 4.28 GB allocated at that warm-pass cost.
 - **Legacy `review` lane alias is opt-out.** The grouped response still carries
   `review` as a second copy of the auto-review lane for pre-ADR-0025 clients. A
   client that knows the ADR-0025 lane names sends
@@ -2176,7 +2278,7 @@ disk for runner state.
   part of the board response signature. The
   shared body build pins the same generation itself, so the tag always names the
   generation the body came from.
-- **A dirty index refreshes in the background.** A dirty or TTL-expired index
+- **A dirty index refreshes in the background.** A dirty index
   starts one single-flight background refresh after a 200 ms coalescing window.
   It inherits neither the request trace nor the pin, and the read answers from
   the last snapshot. A cold start answers from the persisted board (below);
@@ -2223,13 +2325,15 @@ disk for runner state.
 - **The client learns about the newer snapshot by push.** When a background
   refresh publishes after an invalidation, the index sends one
   `jobsBulkChanged` after a 250 ms debounce. The board answers it with a
-  conditional read. A TTL-only rescan does not push.
+  conditional read. An unchanged reconciliation does not push.
 - **Runner status reads the snapshot.** `ProjectRunner.GetStatus` takes provider
   limits from the snapshot's `TaskInfo.QuotaWait` and the displayed queue from
   one Ready-candidate order per generation and `ProjectSettingsService.Version`,
   shared by all runners. That order resolves waits-on against the published
-  fixture-free reference graph. Only the in-memory rapid-crash backoff is
-  applied per read. Pickup itself keeps its fresh read.
+  fixture-free reference graph and the same confirmed Git projection used by
+  pickup and remote claim. A changed predecessor delivery or a repository
+  refresh withholds the older integrated result. Only the in-memory rapid-crash
+  backoff is applied per read.
 - **Board-read trace.** `TaskOperationTimingFilter` traces board reads on
   `X-Task-Switch-Trace: 1` and otherwise one read in
   `BoardReadTrace:SampleEvery` (default every read, `0` disables). Each traced

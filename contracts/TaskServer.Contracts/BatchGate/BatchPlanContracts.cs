@@ -8,12 +8,27 @@ public sealed record BatchPlanUpcoming(
     string TaskKey, string Stage, DateTimeOffset? EtaUtc,
     double Risk, IReadOnlyList<string> Paths);
 
+/// <param name="QueuedPartners">
+/// Queued cards of the scope that a next batch can take but that are not in
+/// <see cref="Waiting"/> yet, because they wait for their batch pre-check
+/// (AGT-3466). They count as batch partners, not as eligible members.
+/// </param>
 public sealed record BatchPlanInput(
     DateTimeOffset NowUtc, IReadOnlyList<BatchPlanCard> Waiting,
     IReadOnlyList<BatchPlanUpcoming> Upcoming, int MinimumSize,
     int MaximumSize, int DeadlineMinutes, int LookAheadMinutes,
     IReadOnlyList<string> UrgentTags, string RiskPolicy, string Overlap,
-    bool CloseNow = false, bool IdleGateHost = false, bool GateBacklog = false);
+    bool CloseNow = false, bool IdleGateHost = false, bool GateBacklog = false,
+    int QueuedPartners = 0,
+    string Calibration = "legacy",
+    IReadOnlyList<BatchPlanObservation>? Observations = null);
+
+/// <summary>One original batch candidate. Risk is a relative score, not a probability.</summary>
+public sealed record BatchPlanObservation(
+    string BatchId, DateTimeOffset AtUtc, int Size, double MaxRisk,
+    IReadOnlyList<string> Areas, string OverlapGroup, bool Red,
+    int IsolationRuns = 0, double IsolationMinutes = 0,
+    string Classification = "pass");
 
 public sealed record BatchPlanUpcomingView(
     string TaskKey, string Stage, DateTimeOffset? EtaUtc,

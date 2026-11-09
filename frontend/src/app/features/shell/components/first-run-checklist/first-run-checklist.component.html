@@ -20,7 +20,8 @@
       <span class="first-run__number">1</span>
       <div><h3>Owner account</h3>
         <p>{{ ownerReady() ? 'Owner account and signed-in session verified.' : identity().error ? 'Installation identity is unavailable. Refresh after the Task Server reconnects.' : 'Create the owner account with the one-time installer code in the sign-in screen.' }}</p></div>
-      <strong>{{ ownerReady() ? 'Verified' : 'Pending' }}</strong>
+      <app-status-indicator class="first-run__state" [tone]="ownerReady() ? 'success' : 'neutral'"
+        [label]="ownerReady() ? 'Verified' : 'Pending'" testId="first-run-step-state" />
     </li>
     <li data-testid="first-run-providers" [attr.data-state]="providersReady() ? 'ready' : 'pending'">
       <span class="first-run__number">2</span>
@@ -28,7 +29,8 @@
         <p>Each CLI needs its own live authentication probe on the host that runs it. Device sign-in completes on that host.</p>
         @for (badge of providerBadges(); track badge.id) {
           <div class="first-run__subrow" [attr.data-testid]="'first-run-provider-' + badge.id">
-            <span>{{ badge.hostName }} · {{ badge.providerLabel }}: {{ badge.state }}</span>
+            <span>{{ badge.hostName }} · {{ badge.providerLabel }}:</span>
+            <app-status-indicator [tone]="tones.provider(badge.state)" [label]="badge.state" [compact]="true" testId="first-run-provider-state" />
             @if (badge.provider === 'codex' || badge.provider === 'claude') {
               <button type="button" (click)="signIn(badge)">Sign in</button>
             }
@@ -36,13 +38,16 @@
         }
         @if (deviceLogin(); as login) {
           <div class="first-run__form" data-testid="first-run-device-login">
-            <p>{{ login.providerLabel }} on {{ login.hostName }}: {{ login.state }}</p>
+            <p>{{ login.providerLabel }} on {{ login.hostName }}:
+              <app-status-indicator [tone]="tones.deviceLogin(login.state)" [label]="login.state" [compact]="true" testId="first-run-device-state" /></p>
             @if (login.verificationUrl && login.state === 'running') {
               <a data-testid="first-run-device-url" [href]="login.verificationUrl" target="_blank" rel="noopener noreferrer">Open provider sign-in</a>
               @if (login.userCode) {
                 <code data-testid="first-run-device-code">{{ login.userCode }}</code>
                 <button type="button" (click)="copyDeviceCode()">{{ codeCopyLabel() }}</button>
               }
+              <app-device-login-code-entry [handle]="login.handle" [sessionKey]="login.sessionKey"
+                [providerLabel]="login.providerLabel" [codeState]="login.codeState" />
             }
             @if (login.state === 'failed') {
               <p role="alert">{{ login.detail ?? 'Sign-in did not complete.' }} Start it again on this host.</p>
@@ -52,7 +57,8 @@
         @if (deviceLoginError()) { <p role="alert">{{ deviceLoginError() }}</p> }
         @if (!providerBadges().length) { <p>No fresh provider probe has arrived yet.</p> }
       </div>
-      <strong>{{ providersReady() ? 'Verified' : 'Pending' }}</strong>
+      <app-status-indicator class="first-run__state" [tone]="providersReady() ? 'success' : 'neutral'"
+        [label]="providersReady() ? 'Verified' : 'Pending'" testId="first-run-step-state" />
     </li>
     <li data-testid="first-run-git" [attr.data-state]="gitReady() ? 'ready' : 'pending'">
       <span class="first-run__number">3</span>
@@ -86,7 +92,8 @@
             <button type="button" data-testid="first-run-git-start" [disabled]="!gitSetupValid() || gitStarting()"
               (click)="startGitSetup()">{{ gitStarting() ? 'Configuring…' : 'Configure access on host' }}</button>
             @if (gitSetup(); as setup) {
-              <p data-testid="first-run-git-state">Host setup: {{ setup.state }}</p>
+              <p data-testid="first-run-git-state">Host setup:
+                <app-status-indicator [tone]="tones.git(setup.state)" [label]="setup.state" [compact]="true" testId="first-run-git-state-indicator" /></p>
               @if (setup.publicKey) {
                 <p>Add this key in the repository's GitHub deploy keys with write access, then verify.</p>
                 <code data-testid="first-run-deploy-key">{{ setup.publicKey }}</code>
@@ -104,7 +111,8 @@
         }
         <button type="button" data-testid="first-run-refresh-git" [disabled]="loading()" (click)="reload()">Refresh proof status</button>
       </div>
-      <strong>{{ gitReady() ? 'Verified' : 'Pending' }}</strong>
+      <app-status-indicator class="first-run__state" [tone]="gitReady() ? 'success' : 'neutral'"
+        [label]="gitReady() ? 'Verified' : 'Pending'" testId="first-run-step-state" />
     </li>
     <li data-testid="first-run-project" [attr.data-state]="repositoryReady() ? 'ready' : 'pending'">
       <span class="first-run__number">4</span>
@@ -129,7 +137,8 @@
           </div>
         }
       </div>
-      <strong>{{ repositoryReady() ? 'Verified' : 'Pending' }}</strong>
+      <app-status-indicator class="first-run__state" [tone]="repositoryReady() ? 'success' : 'neutral'"
+        [label]="repositoryReady() ? 'Verified' : 'Pending'" testId="first-run-step-state" />
     </li>
     <li data-testid="first-run-host" [attr.data-state]="activeHosts().length ? 'ready' : 'pending'">
       <span class="first-run__number">5</span>
@@ -164,14 +173,15 @@
           </div>
         }
       </div>
-      <strong>{{ activeHosts().length ? 'Verified' : 'Pending' }}</strong>
+      <app-status-indicator class="first-run__state" [tone]="activeHosts().length ? 'success' : 'neutral'"
+        [label]="activeHosts().length ? 'Verified' : 'Pending'" testId="first-run-step-state" />
     </li>
     <li data-testid="first-run-proof" [attr.data-state]="proofIntegrated() && proofReviewed() && proofRan() ? 'ready' : 'pending'">
       <span class="first-run__number">6</span>
       <div><h3>Proof run</h3>
         <p>Create a small overview document in the first repository. Follow the card through coding, review, and integration.</p>
         @if (proof(); as card) {
-          <p data-testid="first-run-proof-id">Card {{ card.id }} · coding {{ proofRan() ? 'run' : 'waiting' }} · review {{ proofReviewed() ? 'passed' : 'waiting' }} · integration {{ proofIntegrated() ? 'verified' : 'waiting' }}</p>
+          <p data-testid="first-run-proof-id">Card {{ card.id }} · coding <app-status-indicator [tone]="proofRan() ? 'success' : 'neutral'" [label]="proofRan() ? 'run' : 'waiting'" [compact]="true" /> · review <app-status-indicator [tone]="proofReviewed() ? 'success' : 'neutral'" [label]="proofReviewed() ? 'passed' : 'waiting'" [compact]="true" /> · integration <app-status-indicator [tone]="proofIntegrated() ? 'success' : 'neutral'" [label]="proofIntegrated() ? 'verified' : 'waiting'" [compact]="true" /></p>
         } @else {
           <label class="first-run__demo-confirm">
             <input type="checkbox" data-testid="first-run-demo-confirm"
@@ -188,7 +198,8 @@
           @if (proof()) { <button type="button" (click)="refreshProof()">Retry reading proof card</button> }
         }
       </div>
-      <strong>{{ proofIntegrated() && proofReviewed() && proofRan() ? 'Verified' : 'Pending' }}</strong>
+      <app-status-indicator class="first-run__state" [tone]="proofIntegrated() && proofReviewed() && proofRan() ? 'success' : 'neutral'"
+        [label]="proofIntegrated() && proofReviewed() && proofRan() ? 'Verified' : 'Pending'" testId="first-run-step-state" />
     </li>
   </ol>
 </section>

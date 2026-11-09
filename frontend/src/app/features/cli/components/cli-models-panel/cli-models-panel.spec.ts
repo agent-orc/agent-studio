@@ -57,7 +57,41 @@ describe('CliModelsPanelComponent', () => {
       tiers: [],
       taskTypeDefaults: {},
     });
+    http.expectOne('/api/model-selection/active').flush([{
+      id: 'switch-1', kind: 'switched', at: '2026-11-04T12:00:00Z', consumer: 'coding',
+      project: 'alpha', taskKey: 'AGT-1',
+      from: { cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high' },
+      to: { cliType: 'codex', model: 'gpt-6-sol', thinkingLevel: 'high' },
+      rule: 'quota-cap', returnToPrimaryAt: '2026-11-07T12:00:00Z',
+    }]);
+    http.expectOne('/api/model-selection/policy').flush({
+      version: 1,
+      consumers: {
+        'review-grade': {
+          primary: { cli: 'claude', model: 'claude-opus-5', thinking: 'high' },
+          route: null, fallbacks: [{ cli: 'codex', model: 'gpt-6-sol', thinking: 'high' }],
+          sameClassOnly: true, stickyWithinCard: true, costGuardFactor: null,
+        },
+      },
+      caps: {}, costGuardFactor: 2,
+      hysteresis: { returnBelowCapPoints: 10, minDwellMinutes: 30 },
+      migration: { inheritedSteps: 36, explicitSteps: 36, projects: 12, applied: true },
+    });
+    const initialEffective = http.match('/api/model-selection/effective');
+    expect(initialEffective).toHaveLength(2);
+    for (const request of initialEffective) request.flush({
+      routes: [{
+        consumer: 'review-grade', stepId: 'post-code-review-grade',
+        configured: { cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high' },
+        effective: { cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high' },
+        rule: 'pin', reason: null,
+      }],
+    });
     fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="consumer-policy-review-grade"]')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('[data-testid="active-model-switches"]')?.textContent)
+      .toContain('Active fallbacks (1)');
+    expect(fixture.nativeElement.textContent).toContain('36 inherited');
 
     const groups = fixture.componentInstance.groups();
     expect(groups.length).toBe(CLI_TYPES.length);
@@ -82,6 +116,36 @@ describe('CliModelsPanelComponent', () => {
     expect(fallbackTable?.textContent).toContain('claude-opus-5 medium');
     expect(fallbackTable?.textContent).toContain('gpt-5.6-sol high');
     expect(fallbackTable?.textContent).toContain('TokenEconomy 0.3.4');
+    const tableScroll = fixture.nativeElement.querySelector('[data-testid="cli-models-table-scroll"]') as HTMLElement;
+    expect(tableScroll.tabIndex).toBe(0);
+    Object.defineProperties(tableScroll, {
+      scrollWidth: { configurable: true, value: 600 },
+      clientWidth: { configurable: true, value: 200 },
+      scrollHeight: { configurable: true, value: 100 },
+      clientHeight: { configurable: true, value: 100 },
+    });
+    for (const [key, position] of [['End', 400], ['Home', 0], ['PageDown', 200], ['ArrowDown', 248]] as const) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      tableScroll.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(tableScroll.scrollLeft).toBe(position);
+    }
+    for (const key of ['Tab', 'Escape']) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      tableScroll.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    }
+    Object.defineProperties(tableScroll, {
+      scrollWidth: { configurable: true, value: 200 },
+      scrollHeight: { configurable: true, value: 100 },
+    });
+    for (const key of ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End']) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      tableScroll.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    }
+    expect(fixture.nativeElement.querySelector('[data-testid="effective-routes-claude"]')?.textContent)
+      .toContain('review-grade: claude');
     expect(fixture.nativeElement.querySelector('[data-testid="quota-non-reroutable-callers"]')?.textContent)
       .toContain('quota-probe');
     economy.click();
@@ -100,8 +164,18 @@ describe('CliModelsPanelComponent', () => {
       cliType: 'claude', active: true,
       enabledAt: '2026-09-25T07:00:00Z', expiresAt: '2026-09-26T07:00:00Z',
     });
+    http.expectOne('/api/model-selection/effective').flush({
+      routes: [{
+        consumer: 'review-grade', stepId: 'post-code-review-grade',
+        configured: { cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high' },
+        effective: { cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'high' },
+        rule: 'operator-switch', reason: 'Operator switch',
+      }],
+    });
     fixture.detectChanges();
     expect(fixture.componentInstance.fallbackStateLabel('claude'))
       .toContain('fallback preferred by operator until');
+    expect(fixture.nativeElement.querySelector('[data-testid="effective-routes-claude"]')?.textContent)
+      .toContain('review-grade: codex');
   });
 });

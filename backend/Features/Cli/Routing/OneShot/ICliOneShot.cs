@@ -1,4 +1,5 @@
 using AgentStudio.Shared;
+using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Tasks;
 
 namespace AgentStudio.Cli;
@@ -49,6 +50,8 @@ public sealed record CliOneShotRequest(
     string Model,
     string Prompt)
 {
+    /// <summary>Consumer policy key when the step id is more specific than the selection class.</summary>
+    public string? SelectionConsumer { get; init; }
     /// <summary>Optional thinking/reasoning level for CLIs and models that
     /// support one. Unsupported combinations are normalized away by the
     /// concrete runner.</summary>
@@ -190,17 +193,18 @@ public sealed class CliOneShotRegistry
 {
     private readonly Dictionary<string, ICliOneShot> _byCli;
     private readonly Dictionary<string, ICliOneShot> _quotaAware = new(StringComparer.OrdinalIgnoreCase);
-    private readonly QuotaAdmissionService? _quotaAdmission;
+    private readonly IModelSelectionService? _selection;
     private readonly QuotaAdmissionRecorder? _quotaRecorder;
     private readonly object _dispatcherLock = new();
 
     public CliOneShotRegistry(
         IEnumerable<ICliOneShot> implementations,
         QuotaAdmissionService? quotaAdmission = null,
-        QuotaAdmissionRecorder? quotaRecorder = null)
+        QuotaAdmissionRecorder? quotaRecorder = null,
+        IModelSelectionService? modelSelection = null)
     {
         _byCli = implementations.ToDictionary(i => i.CliType, StringComparer.OrdinalIgnoreCase);
-        _quotaAdmission = quotaAdmission;
+        _selection = modelSelection ?? quotaAdmission?.Selection;
         _quotaRecorder = quotaRecorder;
     }
 
@@ -211,7 +215,7 @@ public sealed class CliOneShotRegistry
     {
         if (string.IsNullOrWhiteSpace(cliType)) return null;
         if (!_byCli.ContainsKey(cliType)) return null;
-        if (_quotaAdmission is null) return _byCli[cliType];
+        if (_selection is null) return _byCli[cliType];
         lock (_dispatcherLock)
         {
             if (!_quotaAware.TryGetValue(cliType, out var dispatcher))
@@ -237,25 +241,22 @@ public sealed class CliOneShotRegistry
         CliOneShotRequest request,
         CancellationToken ct)
     {
-        if (_quotaAdmission is null)
+        if (_selection is null)
             return await _byCli[request.CliType].RunAsync(request, ct).ConfigureAwait(false);
 
         var source = request.StepId ?? request.Source ?? "one-shot";
-        var plan = _quotaAdmission.Plan(new QuotaAdmissionRequest(
-            request.CliType,
-            request.Model,
-            request.ThinkingLevel,
-            request.Project,
-            OccupiedSlots: 0,
-            ExecutionPath: source));
+        var plan = _selection.Select(SelectionCallFor(request, source) with
+        {
+            HostAcceptsFallback = (cli, _) => _byCli.ContainsKey(cli),
+        }).Admission;
         var task = TaskFrom(request);
         if (task is not null)
             _quotaRecorder?.EmitAdmissionDecision(task, plan, source);
         else if (!string.IsNullOrWhiteSpace(request.WatchPath))
             _quotaRecorder?.EmitProjectAdmissionDecision(
-                request.WatchPath, request.Project, plan, source);
+                request.WatchPath, request.Project, plan, source, request.CliType, request.Model);
         else
-            _quotaRecorder?.EmitUnscopedAdmissionDecision(plan, source);
+            _quotaRecorder?.EmitUnscopedAdmissionDecision(plan, source, request.CliType, request.Model, request.Project);
 
         if (!plan.ShouldLaunch)
         {
@@ -354,6 +355,49 @@ public sealed class CliOneShotRegistry
         }
     }
 
+    /// <summary>
+    /// The selection question of one one-shot. Review aspects and the grade
+    /// accept only a fallback of the same capability class (D4).
+    /// </summary>
+    internal static ModelSelectionCall SelectionCallFor(CliOneShotRequest request, string source)
+    {
+        var consumer = request.SelectionConsumer ?? (source.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
+            ? SelectionConsumers.ReviewAspect
+            : source.Contains("review-grade", StringComparison.OrdinalIgnoreCase)
+                || source.Contains("code-review", StringComparison.OrdinalIgnoreCase)
+                ? SelectionConsumers.ReviewGrade
+                : SelectionConsumers.OneShot(source));
+        return new ModelSelectionCall(
+            new SelectionRequest
+            {
+                Consumer = consumer,
+                Project = request.Project,
+                StepId = request.StepId,
+                TaskKey = request.JobId,
+                Pins = new SelectionPins(request.CliType, request.Model, request.ThinkingLevel),
+                Required = new SelectionRequirements(SameClassOnly: SelectionConsumers.IsReview(consumer)),
+            },
+            source, RecordEveryCall: true);
+    }
+
+    /// <summary>Admit a CLI whose aspect adapter does not use the one-shot protocol.</summary>
+    public ModelSelectionDecision? SelectDirect(CliOneShotRequest request)
+    {
+        if (_selection is null) return null;
+        var source = request.StepId ?? request.Source ?? "one-shot";
+        return _selection.Select(SelectionCallFor(request, source) with
+        {
+            HostAcceptsFallback = (cli, _) => _byCli.ContainsKey(cli)
+                || string.Equals(cli, request.CliType, StringComparison.OrdinalIgnoreCase),
+        });
+    }
+
+    /// <summary>Dispatch a route already admitted by <see cref="SelectDirect"/>.</summary>
+    public Task<CliOneShotResult> RunSelectedAsync(CliOneShotRequest request, CancellationToken ct)
+        => _byCli.TryGetValue(request.CliType, out var implementation)
+            ? implementation.RunAsync(request, ct)
+            : throw new InvalidOperationException($"No one-shot implementation is registered for '{request.CliType}'.");
+
     private static TaskInfo? TaskFrom(CliOneShotRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.JobFolderPath)) return null;
@@ -401,5 +445,7 @@ public static class CliOneShotCompatibility
                 cache_creation_input_tokens = result.Usage.CacheCreationTokens,
             },
             model = result.EffectiveModel ?? result.Usage?.Model ?? configuredModel,
+            quotaDeferred = result.QuotaDeferred,
+            error = result.Error,
         });
 }

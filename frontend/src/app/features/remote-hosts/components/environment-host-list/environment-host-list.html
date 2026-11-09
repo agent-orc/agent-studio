@@ -1,0 +1,41 @@
+<nav #list class="host-list" aria-label="Machines and roles" tabindex="0" (keydown)="onKeydown($event)" data-testid="remote-hosts-table">
+  @for (group of groups(); track group.id) {
+    <button class="host-list__row host-list__row--machine" type="button" [attr.data-host-row]="group.id"
+      [attr.data-status]="group.machine.status"
+      [attr.aria-current]="selected() === group.id ? 'true' : null" data-testid="remote-host-primary-row"
+      (click)="selectedChange.emit(group.id)">
+      <strong data-testid="remote-host-name">{{ group.name }}</strong>
+      <app-status-indicator [tone]="statusTone(group.machine.status)" [label]="statusLabel(group.machine.status)" [compact]="true" />
+      @if (group.machine.releaseDrift?.state === 'behind') { <span title="Behind Stable">Update due</span> }
+      @if (group.machine.stats; as stats) { <span>{{ stats.cpuLoadPct }}%</span> }
+      <span class="host-list__slots" data-testid="remote-host-machine-slots">{{ groupSlots(group) }} / {{ groupCapacity(group) ?? 'Unknown' }}</span>
+    </button>
+    @for (role of group.roles; track role.id) {
+      <button class="host-list__row host-list__row--role" type="button" [attr.data-host-row]="role.id"
+        [attr.data-status]="role.status"
+        [attr.aria-current]="selected() === role.id ? 'true' : null" data-testid="remote-host-role-row"
+        (click)="selectedChange.emit(role.id)">
+        <span data-testid="remote-host-role-label">{{ role.serviceRole === 'coding' ? 'Coding' : role.serviceRole === 'review' ? 'Review' : 'Runner' }} · <span data-testid="remote-host-role-name">{{ role.name }}</span></span>
+        <app-status-indicator [tone]="statusTone(role.status)" [label]="statusLabel(role.status)" [compact]="true" />
+        <span class="host-list__slots" data-testid="remote-host-slots-summary">{{ slots()(role) }} / {{ capacity(role) ?? 'Unknown' }}</span>
+      </button>
+    }
+    @for (gate of gates(); track gate.id) {
+      @if (gate.name === group.name) {
+        <button class="host-list__row host-list__row--role" type="button" [attr.data-host-row]="'gate:' + gate.id"
+          [attr.aria-current]="selected() === 'gate:' + gate.id ? 'true' : null" (click)="selectedChange.emit('gate:' + gate.id)">
+          <span>Gate worker</span><app-status-indicator tone="success" label="Online" [compact]="true" /><span class="host-list__slots">{{ gate.busy }} / {{ gate.slots }}</span>
+        </button>
+      }
+    }
+  }
+  @for (gate of gates(); track gate.id) {
+    @if (!hasGroup(gate.name)) {
+    <button class="host-list__row host-list__row--machine" type="button" [attr.data-host-row]="'gate:' + gate.id"
+      [attr.aria-current]="selected() === 'gate:' + gate.id ? 'true' : null" (click)="selectedChange.emit('gate:' + gate.id)">
+      <strong>{{ gate.name }}</strong><span>Gate worker</span><app-status-indicator tone="success" label="Online" [compact]="true" />
+      <span class="host-list__slots">{{ gate.busy }} / {{ gate.slots }}</span>
+    </button>
+    }
+  }
+</nav>

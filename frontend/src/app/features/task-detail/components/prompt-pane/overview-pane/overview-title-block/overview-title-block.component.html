@@ -41,7 +41,7 @@
       <span class="ov-subline__sep" aria-hidden="true">·</span>
       <span class="ov-phase-chip" data-testid="overview-created-by-orchestrator">Created by Orchestrator</span>
     }
-    <app-execution-location-badge [execution]="job().executionLocation" /> @if (promptMarkdown()) {
+    @if (promptMarkdown()) {
       <span class="ov-subline__sep" aria-hidden="true">·</span>
       <app-task-prompt-popover
         [markdown]="promptMarkdown()"
@@ -71,5 +71,5 @@
     (changed)="referencesChanged.emit()" />
   <app-concept-dossier-notice [job]="job()" (changed)="referencesChanged.emit()" />
   <app-delivery-claim-panel [job]="job()" />
+  <app-continue-round-panel [job]="job()" />
 </section>
-

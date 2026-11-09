@@ -1,9 +1,60 @@
 name: agent-studio-website
 
+# Every container drops all capabilities and cannot gain privileges.
+x-hardening: &hardening
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
 services:
-  api:
-    image: ghcr.io/agent-orc/agent-studio-api:v${STUDIO_VERSION:?Run setup.sh with a release version}
+  quality-studio:
+    profiles: [quality]
+    image: ${QUALITY_STUDIO_IMAGE:-quality-studio:local}
     restart: ${STUDIO_RESTART_POLICY:-on-failure}
+    <<: *hardening
+    pids_limit: 512
+    environment:
+      QualityStudio__Security__Mode: Hosted
+      # Studio reaches the service over the private bridge. Public browsers use edge TLS.
+      QualityStudio__Security__RequireHttps: 'false'
+      QualityStudio__Security__TrustedProxies__0: 172.30.83.2
+      AgentStudio__Federation__Issuer: https://${STUDIO_DOMAIN}
+      AgentStudio__Federation__Audience: quality-studio
+      AgentStudio__Federation__JwksUrl: https://${STUDIO_DOMAIN}/.well-known/agent-studio/jwks.json
+      AgentStudio__Federation__StudioPublicUrl: https://${STUDIO_DOMAIN}
+      QualityStudio__AllowedOrigins__0: https://${QUALITY_DOMAIN:-quality-${STUDIO_DOMAIN}}
+      QualityStudio__AllowedOrigins__1: https://${STUDIO_DOMAIN}
+      QualityStudio__Security__Clients__0__Id: ${QUALITY_SERVICE_CLIENT_ID:-agent-studio}
+      QualityStudio__Security__Clients__0__CredentialSha256: ${QUALITY_SERVICE_TOKEN_SHA256:-}
+      QualityStudio__Security__Clients__0__Repositories__0: '*'
+      QualityStudio__Security__Clients__0__CanRegisterRepositories: 'true'
+      QualityStudio__RepositoryRoot: ${QUALITY_REPOSITORY_ROOT:-/home/agent/runner-work}
+      QualityStudio__AllowedRoots__0: ${QUALITY_REPOSITORY_ROOT:-/home/agent/runner-work}
+      QualityStudio__DataRoot: /data
+      GIT_CONFIG_COUNT: '1'
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: ${QUALITY_REPOSITORY_ROOT:-/home/agent/runner-work}/*
+    volumes:
+      - ${QUALITY_REPOSITORY_ROOT:-/home/agent/runner-work}:${QUALITY_REPOSITORY_ROOT:-/home/agent/runner-work}:ro
+      - /srv/agent-studio/quality/data:/data
+      - /srv/agent-studio/quality/registry:/app/.quality-studio
+    networks:
+      website:
+        ipv4_address: 172.30.83.5
+
+  api:
+    image: ghcr.io/agent-orc/agent-studio-api@sha256:${STUDIO_API_DIGEST:?Set the release API image digest}
+    user: '10001:1654'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: ${STUDIO_RESTART_POLICY:-on-failure}
+    <<: *hardening
+    # Writable workspace, projects, home, and /tmp are mounted explicitly so the
+    # root file system can remain read-only. Agent CLIs and build gates write
+    # scratch files to /tmp; a disk-backed directory keeps them out of mem_limit.
+    pids_limit: 8192
+    # .NET caps its heap at 75 % of this limit; 8g stalled on a real workspace.
+    mem_limit: ${STUDIO_API_MEMORY_LIMIT:-20g}
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       TaskRepository: /data/workspace
@@ -14,35 +65,181 @@ services:
       Security__TrustedProxyAddresses: 172.30.83.3,172.30.83.2
       AllowedHosts: ${STUDIO_DOMAIN:?Set STUDIO_DOMAIN}
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
+      QUALITY_DOMAIN: ${QUALITY_DOMAIN:-quality-${STUDIO_DOMAIN}}
+      # The key-encryption key of the secret store, kept outside the data directory.
+      Secrets__KeyFile: /run/secrets/studio-secrets.kek
+      Operations__Url: http://operations-server:5081
+      RemoteGate__SshHost: ${STUDIO_GATE_SSH_HOST:-}
+      RemoteGate__WorkerPath: ${STUDIO_GATE_WORKER_PATH:-}
+      Operations__ServiceTokenFile: /run/operations/client/token
+      Operations__Agents__local: container-agent
+      HostCertificates__CaPrivateKeyFile: /run/host-ca/ca
+      HostCertificates__StateDirectory: /data/host-certificates
+      # Scheduled encrypted backups (AGT-3574, docs/operations/setup/studio-backup-restore.md).
+      # The backup key lives outside the data directory and is never archived.
+      Backup__KeyFile: /run/secrets/studio-backup/backup.key
+      Backup__Directory: /data/backups
+      Backup__IntervalHours: ${STUDIO_BACKUP_INTERVAL_HOURS:-6}
+      Backup__StaleAfterHours: ${STUDIO_BACKUP_STALE_AFTER_HOURS:-12}
+      Backup__RetentionCount: ${STUDIO_BACKUP_RETENTION:-12}
+      Backup__Sources__workspace__Path: /data/workspace
+      Backup__Sources__home__Path: /data/home
+      Backup__Sources__home__Exclude__0: cache
+      Backup__Sources__projects__Path: /data/projects
+      Backup__Sources__projects__Projects: 'true'
+      Backup__Sources__host-certificates__Path: /data/host-certificates
+      # Stack configuration (.env, Caddyfiles, target credentials) without the keys directory.
+      Backup__Sources__stack__Path: /run/backup-sources/stack
+      Backup__Sources__stack__Exclude__0: keys
+      Backup__Sources__stack__Exclude__1: restored-stack
+      Backup__Sources__caddy-data__Path: /run/backup-sources/caddy-data
+      Backup__Sources__origin-pull__Path: /run/backup-sources/origin-pull
+      Backup__Sources__origin-pull__Optional: 'true'
+      # Off-host copy: none, sftp, s3 or directory (with compose.backup-mount.yaml).
+      Backup__Target__Kind: ${STUDIO_BACKUP_TARGET:-none}
+      Backup__Target__Host: ${STUDIO_BACKUP_SFTP_HOST:-}
+      Backup__Target__Port: ${STUDIO_BACKUP_SFTP_PORT:-22}
+      Backup__Target__User: ${STUDIO_BACKUP_SFTP_USER:-}
+      Backup__Target__Path: ${STUDIO_BACKUP_REMOTE_PATH:-}
+      Backup__Target__IdentityFile: /run/backup-target/ssh.key
+      Backup__Target__KnownHostsFile: /run/backup-target/known_hosts
+      Backup__Target__Endpoint: ${STUDIO_BACKUP_S3_ENDPOINT:-}
+      Backup__Target__Region: ${STUDIO_BACKUP_S3_REGION:-us-east-1}
+      Backup__Target__Bucket: ${STUDIO_BACKUP_S3_BUCKET:-}
+      Backup__Target__Prefix: ${STUDIO_BACKUP_S3_PREFIX:-}
+      Backup__Target__PathStyle: ${STUDIO_BACKUP_S3_PATH_STYLE:-true}
+      Backup__Target__AccessKeyIdFile: /run/backup-target/s3-access-key-id
+      Backup__Target__SecretAccessKeyFile: /run/backup-target/s3-secret-access-key
+      Backup__Target__Directory: /mnt/studio-backup-target
     volumes:
+      - ${STUDIO_SECRETS_KEY_FILE:?Run setup.sh or set STUDIO_SECRETS_KEY_FILE}:/run/secrets/studio-secrets.kek:ro
       - ${STUDIO_DATA_DIR:?Run setup.sh}/workspace:/data/workspace
       - ${STUDIO_DATA_DIR}/projects:/data/projects
       - ${STUDIO_DATA_DIR}/home:/data/home
+      - ${STUDIO_DATA_DIR}/api-tmp:/tmp
+      - operations-client-secret:/run/operations/client:ro
+      - ${STUDIO_HOST_CA_DIR:?Run setup.sh or set STUDIO_HOST_CA_DIR}:/run/host-ca:ro
+      - ${STUDIO_DATA_DIR}/host-certificates:/data/host-certificates
+      - ${STUDIO_DATA_DIR}/backups:/data/backups
+      - ${STUDIO_BACKUP_KEY_DIR:-./keys/backup}:/run/secrets/studio-backup:ro
+      - ${STUDIO_BACKUP_TARGET_DIR:-./backup-target}:/run/backup-target:ro
+      - .:/run/backup-sources/stack:ro
+      - ${STUDIO_DATA_DIR}/caddy-data:/run/backup-sources/caddy-data:ro
+      - ${STUDIO_DATA_DIR}/origin-pull:/run/backup-sources/origin-pull:ro
+    depends_on:
+      operations-bootstrap: {condition: service_completed_successfully}
     networks:
       website:
         ipv4_address: 172.30.83.4
 
   frontend:
-    image: ghcr.io/agent-orc/agent-studio-web:v${STUDIO_VERSION}
+    image: ghcr.io/agent-orc/agent-studio-web@sha256:${STUDIO_WEB_DIGEST:?Set the release web image digest}
+    user: '10001:10001'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
     restart: ${STUDIO_RESTART_POLICY:-on-failure}
+    <<: *hardening
+    # The frontend listens on unprivileged port 8080.
+    pids_limit: 512
     environment:
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
+      QUALITY_DOMAIN: ${QUALITY_DOMAIN:-quality-${STUDIO_DOMAIN}}
+      XDG_CONFIG_HOME: /config
+      XDG_DATA_HOME: /data
+      HOME: /tmp
     volumes:
       - ./Caddyfile.frontend:/etc/caddy/Caddyfile:ro
+      - ${STUDIO_DATA_DIR}/frontend-data:/data
+      - ${STUDIO_DATA_DIR}/frontend-config:/config
     depends_on:
       api: {condition: service_healthy}
     networks:
       website:
         ipv4_address: 172.30.83.3
 
-  edge:
-    image: caddy:2-alpine
-    # Public stacks wait for the firewall boot unit; private stacks use Docker restart.
+  operations-bootstrap:
+    image: ghcr.io/agent-orc/agent-operations-server@sha256:${STUDIO_OPERATIONS_SERVER_DIGEST:?Set the operations server image digest}
+    command: [bootstrap, /run/operations/principals, /run/operations/agent, /run/operations/client]
+    network_mode: none
+    read_only: true
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - operations-principals:/run/operations/principals
+      - operations-agent-secret:/run/operations/agent
+      - operations-client-secret:/run/operations/client
+
+  operations-server:
+    image: ghcr.io/agent-orc/agent-operations-server@sha256:${STUDIO_OPERATIONS_SERVER_DIGEST:?Set the operations server image digest}
+    read_only: true
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: ${STUDIO_RESTART_POLICY:-on-failure}
+    # Host agents reach this through a private, authenticated tunnel only.
+    ports: ['127.0.0.1:5081:5081']
+    environment:
+      Operations__DataDirectory: /var/lib/operations
+      Operations__PrincipalsFile: /run/operations/principals/principals.json
+      Operations__AllowPrivateHttp: 'true'
+    volumes:
+      - operations-data:/var/lib/operations
+      - operations-principals:/run/operations/principals:ro
+    depends_on:
+      operations-bootstrap: {condition: service_completed_successfully}
+    networks:
+      website:
+        ipv4_address: 172.30.83.6
+
+  operations-agent:
+    image: ghcr.io/agent-orc/agent-operations-agent@sha256:${STUDIO_OPERATIONS_AGENT_DIGEST:?Set the operations agent image digest}
+    read_only: true
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     restart: ${STUDIO_RESTART_POLICY:-on-failure}
     environment:
+      OPERATIONS_URL: http://operations-server:5081
+      OPERATIONS_ALLOW_PRIVATE_HTTP: 'true'
+      OPERATIONS_TOKEN_FILE: /run/operations/agent/token
+      OPERATIONS_AGENT_ID: container-agent
+      OPERATIONS_SPOOL_DIRECTORY: /var/lib/operations-agent/spool
+    volumes:
+      - operations-agent-data:/var/lib/operations-agent
+      - operations-agent-secret:/run/operations/agent:ro
+    depends_on:
+      operations-bootstrap: {condition: service_completed_successfully}
+      operations-server: {condition: service_started}
+    networks:
+      website:
+        ipv4_address: 172.30.83.7
+
+  edge:
+    image: caddy@sha256:${STUDIO_EDGE_DIGEST:?Set the edge image digest}
+    user: '10001:10001'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: '0'
+    # Public stacks wait for the firewall boot unit; private stacks use Docker restart.
+    restart: ${STUDIO_RESTART_POLICY:-on-failure}
+    <<: *hardening
+    # Unprivileged port binding is enabled through the service sysctl.
+    read_only: true
+    pids_limit: 512
+    environment:
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
+      QUALITY_DOMAIN: ${QUALITY_DOMAIN:-quality-${STUDIO_DOMAIN}}
       # Caddyfile.cloudflare only: true admits peers outside Cloudflare's ranges.
       STUDIO_CLOUDFLARE_ALLOW_DIRECT: ${STUDIO_CLOUDFLARE_ALLOW_DIRECT:-false}
+      STUDIO_ACCESS_AUTH_URL: ${STUDIO_ACCESS_AUTH_URL:?Set the HTTPS access-layer authorization URL}
+      XDG_CONFIG_HOME: /config
+      XDG_DATA_HOME: /data
+      HOME: /tmp
     ports:
       - '0.0.0.0:80:80'
       - '0.0.0.0:443:443'
@@ -65,3 +262,10 @@ networks:
     ipam:
       config:
         - subnet: 172.30.83.0/24
+
+volumes:
+  operations-principals:
+  operations-agent-secret:
+  operations-client-secret:
+  operations-data:
+  operations-agent-data:

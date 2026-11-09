@@ -17,6 +17,62 @@ public sealed class ReviewProjectionTests : IDisposable
         catch (UnauthorizedAccessException) { }
     }
 
+    [Fact]
+    public async Task BoardLookup_RefChangeReusesLedgers_OneWriteRefreshesOneCard_AndRepairFindsMissedWrite()
+    {
+        var tasks = Enumerable.Range(0, 3)
+            .Select(i => Job($"AGT-{i}", CreateJobFolder($"card-{i}"))).ToArray();
+        var reads = new List<string>();
+        foreach (var task in tasks)
+            SidecarFileGeneration.Observe(Path.Combine(task.FolderPath,
+                AgentStudio.Runner.ReviewRoundBudgetStore.FileName));
+        var service = new ReviewProjectionService(
+            new AgentStudio.Tasks.TimelineLog(NullLogger<AgentStudio.Tasks.TimelineLog>.Instance))
+        {
+            LedgerReadObserver = reads.Add,
+        };
+        Task<TaskListGitProjection> Board() => TaskListGitProjectionCache.BuildProjectionAsync(
+            tasks,
+            _ => new Dictionary<string, TaskMergeSignal>(),
+            _ => new Dictionary<string, TaskIntegrationStatus>(),
+            _ => new Dictionary<string, TaskPublishSignal>(),
+            _ => new Dictionary<string, TaskTestRunEvidence>(),
+            service.BuildLookup);
+        var first = await Board();
+        Assert.Equal(3, reads.Count);
+
+        // The next repository projection represents a ref change with no card sidecar change.
+        var refProjection = await Board();
+        Assert.Equal(3, reads.Count);
+        Assert.Same(first.ReviewProjection[tasks[0].TaskKey], refProjection.ReviewProjection[tasks[0].TaskKey]);
+
+        var changed = tasks[0];
+        AgentStudio.Runner.ReviewRoundBudgetStore.Record(changed.FolderPath,
+            AgentStudio.OrchestrationDecisions.ReviewRoundBudgetLedger.Empty,
+            new AgentStudio.OrchestrationDecisions.DeliveredReviewRound("round-1", [], []));
+        var afterWrite = await Board();
+        Assert.Equal(4, reads.Count);
+        Assert.Equal(changed.FolderPath, reads[^1]);
+        Assert.Equal(1, afterWrite.ReviewProjection[changed.TaskKey].RoundBudget!.Delivered);
+        Assert.Same(refProjection.ReviewProjection[tasks[1].TaskKey], afterWrite.ReviewProjection[tasks[1].TaskKey]);
+
+        // An external write with no watcher callback is found by the rotating repair probe.
+        var missed = tasks[1];
+        var path = Path.Combine(missed.FolderPath, AgentStudio.Runner.ReviewRoundBudgetStore.FileName);
+        File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(
+            new AgentStudio.OrchestrationDecisions.ReviewRoundBudgetLedger([
+                new AgentStudio.OrchestrationDecisions.DeliveredReviewRound("round-2", [], []),
+            ])));
+        var version = SidecarFileGeneration.FolderVersion(missed.FolderPath);
+        for (var i = 0; i < 1024 && SidecarFileGeneration.FolderVersion(missed.FolderPath) == version; i++)
+            SidecarFileGeneration.Repair();
+        Assert.NotEqual(version, SidecarFileGeneration.FolderVersion(missed.FolderPath));
+        var afterRepair = await Board();
+        Assert.Equal(5, reads.Count);
+        Assert.Equal(missed.FolderPath, reads[^1]);
+        Assert.Equal(1, afterRepair.ReviewProjection[missed.TaskKey].RoundBudget!.Delivered);
+    }
+
     /// <summary>
     /// AGT-2689: seven remote-review-grade reports (all ProductFailure, all
     /// build-tests passing, all blocked on the same documentation-impact
@@ -98,6 +154,32 @@ public sealed class ReviewProjectionTests : IDisposable
         Assert.Empty(projection.BlockingAspects);
         Assert.Equal(ReviewDeliveryStates.NotAttempted, projection.Delivery.Status);
         Assert.False(projection.DecisionRequired.Required);
+    }
+
+    /// <summary>
+    /// AGT-3369: the service keeps parsed timelines against the file's length
+    /// and write time. A timeline that grew after the first read must be read
+    /// again, an unchanged one must give the same answer.
+    /// </summary>
+    [Fact]
+    public void Read_SeesATimelineEventAppendedAfterAnEarlierRead()
+    {
+        var folder = CreateJobFolder("timeline-memo");
+        var timelineLog = new AgentStudio.Tasks.TimelineLog(NullLogger<AgentStudio.Tasks.TimelineLog>.Instance);
+        timelineLog.Append(folder, AgentStudio.Shared.TimelineEventKinds.LaneChanged, actor: "system",
+            summary: "Lane changed from 4-auto-review to 5-human-review.");
+        var task = Job("AGT-3369", folder);
+        var service = new ReviewProjectionService(timelineLog);
+
+        Assert.Equal(ReviewDeliveryStates.NotAttempted, service.Read(task).Delivery.Status);
+        Assert.Equal(ReviewDeliveryStates.NotAttempted, service.Read(task).Delivery.Status);
+
+        timelineLog.Append(folder, AgentStudio.Shared.TimelineEventKinds.IntegrationFailed, actor: "system",
+            summary: "Remote delivery gate failed before integration.");
+
+        var projection = service.Read(task);
+        Assert.Equal(ReviewDeliveryStates.GateFailed, projection.Delivery.Status);
+        Assert.Equal("Remote delivery gate failed before integration.", projection.Delivery.Reason);
     }
 
     [Fact]

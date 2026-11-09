@@ -83,11 +83,16 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | EngineApplierCanaryService | always | apply-recover | Authority. Probes the effects of the first engine decisions after a rollout switch (AGT-3218), passes the applier canary, or rolls the profile back to the monolith and raises an operator alert with the card and its manual redrive when an effect is missing after its deadline (apply deadline while the applier runs, effect window after completion). |
 | LinkSupervisor | always | infra | Authority host |
 | GitHubAppHostCredentialService | !PD | infra | Authority host |
+| QualityStudioRevokeOutbox | always | infra | Authority host. Delivers persisted Quality Studio session revocations with bounded retries; makes no task transition decision. |
+| QualityChangeReviewOutbox | always | infra | Authority host. Delivers persisted Review Plane verdicts to Quality Studio with a seven-day retry bound; makes no task transition decision. |
 | OrchestratorChatLegacyMigrationHostedService | !PD | infra | Authority host |
+| ProjectChatStartupService | always | infra | Authority host. Migrates legacy project chat and refreshes indexes; shutdown cancels the scan and awaits the active file or SQLite operation. |
 | DecisionReminderSweepHostedService | always | report | Authority host |
 | DeliveryChainReconciler | always | decide, operator | AI Operator decider `delivery-chain` (`DeliveryChainPolicy`). Effect: `DeliveryChainReconciler` moves the card; a red merge gate is still routed by `GateFailureRouter` before it may park (gate triage, a host rule in the baseline). |
 | BatchMoveJobCoordinator | !PD | apply-recover | Authority (applies an operator command) |
 | TaskIndexCacheDiagnosticsService | always | infra | Authority host |
+| LastSeenPersistenceService | always | infra | Authority host. Flushes coalesced client and runner last-seen updates outside request paths. |
+| AgentMessageBusSeedHostedService | always | infra | Authority host. Seeds built-in bus participants and awaits the active JSON write on shutdown. |
 | BoardSummaryPersister | always | infra | Authority host. Single writer of the persisted slim board (`board-summaries.db`, Git facts S5): after each task index publication it writes the changed projects' board cards, which a cold board read serves as `restored`. Makes no transition decision. |
 | BoardShadowWorker | always | infra | Authority host. Idle unless `Board:Source` is `task-server-shadow` or `task-server`; then it mirrors the published task index generation into the Task Server board read model and records shadow differences by card and field (AGT-3317). Makes no transition decision. |
 | TaskFileMirrorWorker | always | infra | Authority host. Idle unless `TaskArtifacts:Source` is `task-server-shadow` or `task-server`; then it copies task folder files into the Task Server's `task_files` by content hash, off the request path, until the write cutover (AGT-3320). Makes no transition decision. |
@@ -95,8 +100,14 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | ResultSummaryRetryScheduler | !PD | apply-recover | Authority |
 | AttemptArchiveIndexWarmupService | always | infra | Authority host |
 | RemoteQueueStarvationWatchdog | !PD | report | Authority host |
+| AuditSinkForwarder | always | infra | Authority host. Copies control plane audit entries to the configured off-host sink, records the forwarded position, and alerts when the sink stops accepting entries (security model SM-1). Idle without a sink. Makes no transition decision. |
+| ControlPlaneAuditVerifier | always | report | Authority host. Recomputes the control plane audit chain, compares it with the sink, and raises an acute alert on a change, gap, or mismatch (security model SM-1). Makes no transition decision. |
+| OperatorKillSwitchService | always | infra | Authority host. Holds the control plane lock the out-of-band kill switch checks, applies its latch, retries the Operations Server revocation of operator principals, sends pending Owner notices, and runs the scheduled kill switch drill (security model SM-2). Makes no transition decision. |
+| BreakGlassWindowService | always | apply-recover | Authority host. Closes expired break-glass windows, retries opening alerts, and creates one Human review card per closed window after control-plane recovery (security model SM-7). Makes no transition decision. |
+| OperatorApprovalNotifier | always | report | Authority host. Sends the operator-feed notice and the optional push link for a new Owner approval request (security model SM-5). Carries no decision route; makes no transition decision. |
 | HostReleaseDriftWatchdog | !PD | report | Authority host |
 | AutoReviewQueueStagnationWatchdog | !PD | report | Authority host |
+| AutoReviewStrandingWatchdog | !PD | decide, switched | Per-card ownerless Auto Review recovery reads the `ReviewReport` transition profile, runs in both Monolith and Engine modes, and applies `AutoReviewStrandingPolicy`. Starts the missing step, re-enters the batch gate, or escalates with a stall-intervention receipt that names the active mode. |
 | AdaptiveReviewParallelismAdvisor | !PD | report | Authority host (advisory) |
 | CodingYieldAdvisor | !PD | report | Authority host (advisory) |
 | ReviewInfrastructureRetryScheduler | !PD | apply-recover | Authority. Mints the successor attempt for a retry the review decision already scheduled. |
@@ -112,7 +123,9 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | OrchestratorPrepHostedService | !PD, off by default | decide, local | Monolith until an engine occurrence can apply its prep verdict. |
 | ChatNoteHostedService | !PD | report | Authority host |
 | PipelineHealthService | always | report | Authority host |
+| ApiStallDetector | always | report | Every API host. Logs an `api-stall` warning when its own timer tick runs late (GC pause or starved thread pool); no lane transition (AGT-3369). |
 | PublishEnvironmentReconciliationService | always | infra | Authority host. Polls website deployment state and releases stopped hosting reservations; no lane transition. |
+| StructureRegistryRefreshService | always | infra | Authority host. Refreshes cached registry metadata every six hours; no lane transition. |
 | RemoteGateOrphanSweepService | always | infra | Authority host. Cancels unowned SSH gate runs from prior Studio process instances and clears their durable records once the remote run directory is gone. |
 | WorkspaceArtifactPushWorker | !PD | infra | Authority host. Pushes nothing into the TaskRepository while `TaskArtifacts:Source = task-server` (AGT-3320). |
 | WorkspaceRepositoryMaintenanceWorker | !PD | infra | Authority host |
@@ -123,10 +136,13 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | PostWorkSubjectReconcilerService | loop | apply-recover | Authority. Idle while `PostWork:Mode` is `off`; reports lane facts for DP-S8 post-work subjects and hands accepted host reports to the worker. |
 | RemoteReviewEvidenceProjectionWorker | loop | apply-recover | Authority |
 | RemoteReviewSettlementReconciler | loop | apply-recover | Authority |
+| ReviewPackageFormationHostedService | loop | report | AGT-3400 S4. Forms shadow review packages for projects with `review.package: shadow` through `ReviewPackageFormationPolicy` (via `MonolithTransitionAdapter`) and logs each formation decision. No lane move, verdict or settlement; the per-card review is unchanged. |
 | BatchGatePilotHostedService | loop | decide, switched | `GateResult` profile for every batch gate outcome, releases and red per-task gates (`HoldForEngineBatchDecision`, AGT-3234). A per-task gate whose budget ran out in the machine gate queue is requeued through `GateQueueStallPolicy` (AGT-3219). Batch forming, closing and the advisor move with AGT-3055. |
 | IntakeHostedService | !PD, per project | decide, operator | AI Operator decider `intake-routing` (`IntakeRoutingPolicy`): an already-done card goes to a person in Human Review. Effect: `IntakeRoutingEffect`. |
 | GitInventoryRefreshHostedService | !PD | infra | Authority host |
 | ProjectRepositoryVisibilitySync | always | infra | Authority host. Copies project visibility settings to registered Task Server repositories. |
+| ServerReadinessMonitor | always | report | Authority host. Computes the server readiness report (AGT-3412) after start, every five minutes and on recheck; no lane move. |
+| QualityStudioRegistrationReconciler | always | infra | Authority host. Retries Quality Studio repository registration and archives mappings for archived projects. |
 | GitStateIndexService | !PD | infra | Authority host |
 | GitBranchRetentionHostedService | !PD | infra | Authority host |
 | CompletedPushWorker | !PD | infra | Authority host |
@@ -140,9 +156,11 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | GateEnvironmentRetryHostedService | !PD | decide, operator | AI Operator decider `gate-environment-retry` (`GateEnvironmentRetryPolicy`). Effect: `GateEnvironmentRetryService` replays or parks. The operator's Retry integration intent is validated, not decided. |
 | OperatorSweepHostedService | !PD | decide, switched | `OperatorSweep` profile (`OperatorSweepPolicy`). Effect: `MonolithOrchestrationApplier` with `OperatorSweepActions`. |
 | WatcherHostedService | !PD, off by default | report | Authority host (drafts proposals, no lane move) |
+| OperatorDecisionPublisher | !PD | report | Authority host. Publishes existing facts (lanes, decision cards, watcher stall cases, batch gate, pending-push age alert, quota) as the operator decision stream (OP-2); reads the published task index generation only, so a sweep never refreshes the index or starts a scan or a git process; no lane move. |
 | EnvironmentHealthWorker | !PD, not Test | report | Authority host (IP-14 environment health checks; opens incident and certificate cards in Backlog and comments on them, no lane move) |
 | StallInterventionHostedService | !PD | decide, operator | AI Operator decider `stall-intervention` (`StallInterventionPolicy`, AGT-3207) on the AGT-3206 stall cases and due follow-up checks. Effect: `StallInterventionEffect` lowers or restores coding admission, restarts an allowlisted service through the Operations Server, reroutes a provider, reconciles the batch gate queue or pins the last delivery; it records A2 proposals and escalations. `StallIntervention:Mode` `observe` (default, "would do" receipts only), `act` or `off`; per-action switches. Held decisions are evaluated in process and never submitted. |
 | HostedVolumeBackupWorker | !PD, not Test | infra | Authority host (IP-D5 daily declared-volume backups through the host adapter; no lane decision) |
+| BackupHostedService | not Test | infra | Authority host (AGT-3574 scheduled encrypted installation backups, retention, restore verification and off-host copy; no lane decision) |
 | CardPreviewSweep | !PD, not Test | infra | Authority host. Reconciles green deliveries, integration and expiry into fenced preview deploy and removal jobs; it does not move cards. |
 | DeploymentInterventionWorker | !PD, not Test | infra | Authority host. Runs deployment intervention timeout reconciliation each minute; it does not move task lanes. |
 | OrphanReaperHostedService | !PD | infra | Authority host |

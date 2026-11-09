@@ -586,9 +586,19 @@ public sealed partial class ProjectEnvironmentService
         {
             var declarations = Declarations(project);
             if (declarations is null) return null;
-            var state = Load(project);
+            var persisted = Load(project);
+            // Show expired claims immediately, but leave the durable queue untouched.
+            // Claim and other write paths advance and save it under the same gate.
+            var state = new State
+            {
+                Jobs = [.. persisted.Jobs],
+                Promotions = [.. persisted.Promotions],
+                History = [.. persisted.History],
+                Observed = persisted.Observed,
+                Placements = persisted.Placements,
+                RunTargetRemovals = persisted.RunTargetRemovals,
+            };
             AdvanceQueue(state);
-            Save(project, state);
             return new(project, declarations.Select(item =>
             {
                 var history = state.History.Where(row => row.EnvironmentId == item.Id)
@@ -1719,17 +1729,9 @@ public sealed partial class ProjectEnvironmentService
         catch (FormatException) { return false; }
         if (bytes.Length is < 8 or > 2_000_000 || !bytes.AsSpan(0, 8).SequenceEqual(
                 new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 })) return false;
-        try
-        {
-            var image = SixLabors.ImageSharp.Image.Identify(bytes);
-            if (image is null || image.Width is < 1 or > 4096 || image.Height is < 1 or > 4096)
-                return false;
-        }
-        catch (Exception ex)
-        {
-            SilentCatch.Note(ex, "ProjectEnvironmentService: invalid preview screenshot");
+        var image = AgentStudio.Shared.ImageHeaderReader.Read(bytes);
+        if (image is null || image.Format != "png" || image.Width is < 1 or > 4096 || image.Height is < 1 or > 4096)
             return false;
-        }
         var directory = Path.Combine(StoreRoot(), "preview-screenshots", SafeProjectName(project));
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, cardKey.ToLowerInvariant() + ".png");

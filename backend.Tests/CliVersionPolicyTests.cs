@@ -34,6 +34,7 @@ public sealed class CliVersionPolicyTests
     [InlineData(ModelIds.ClaudeOpus55, "claude-code", "2.1.270", "2.1.281")]
     [InlineData(ModelIds.Gpt6Sol, "codex-cli", "0.154.0", "0.155.0")]
     [InlineData(ModelIds.Gpt6Luna, "codex-cli", "0.154.0", "0.155.0")]
+    [InlineData(ModelIds.Gpt61Sol, "codex-cli", "0.155.0", "0.166.0")]
     public void New_models_explain_the_required_cli_version(
         string modelId, string cliLabel, string installed, string minimum)
     {

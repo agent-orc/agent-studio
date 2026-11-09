@@ -126,12 +126,16 @@ public sealed partial class BatchGatePilotService
     }
 
     private int ConfiguredGateSlots()
-        => new[]
+    {
+        var capacity = _services?.GetService<GateCapacitySettings>();
+        return new[]
         {
             _gateSlots?.Snapshot().Total ?? 0,
-            _configuration?.GetValue("RemoteGate:GateSlots", 0) ?? 0,
+            capacity is { HasOverride: true } ? capacity.Current().Slots
+                : _configuration?.GetValue("RemoteGate:GateSlots", 0) ?? 0,
             _configuration?.GetValue("LocalGate:GateSlots", 0) ?? 0,
         }.Max();
+    }
 
     /// <summary>
     /// Re-reads the generation after a per-task gate returned. A result of any
@@ -146,7 +150,8 @@ public sealed partial class BatchGatePilotService
     /// Returns false when the result is the card's to settle or a cancellation.
     /// </summary>
     private async Task<bool> ResolveBeforeSettlementAsync(TaskInfo task, BatchGatePendingRecord pending,
-        BuildTestGateResult gate, string evidence, DateTimeOffset started, bool recordInStore, CancellationToken ct)
+        BuildTestGateResult gate, string evidence, DateTimeOffset started, string level, bool recordInStore,
+        CancellationToken ct)
     {
         // GateCancellationPolicy classifies a cancelled gate, a stale one
         // included; the escalation itself refuses a generation that is not current.
@@ -175,7 +180,7 @@ public sealed partial class BatchGatePilotService
             if (live is not null
                 && !MonolithTransitionAdapter.IsGateQueueOverrun(gate.ViolatedBudget?.Name, gate.ViolatedBudget?.Phase))
                 RecordFallbackExecution(pending, gate,
-                    Path.Combine(TaskPaths.LogsDir(live.FolderPath), Path.GetFileName(evidence)), started);
+                    Path.Combine(TaskPaths.LogsDir(live.FolderPath), Path.GetFileName(evidence)), started, level);
             SupersedeFallbackResult(live ?? task, pending, recordInStore);
             return true;
         }
@@ -191,6 +196,8 @@ public sealed partial class BatchGatePilotService
         await BatchGateOwnershipStore.WriteAsync(live!.FolderPath, queued is null
             ? new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject, FallbackGateActive: true)
             : new BatchGateOwnership(pending.ReviewAttemptId, queued.Subject), ct).ConfigureAwait(false);
+        // A review back in the batch queue is no per-task fallback any more (AGT-3466).
+        if (queued is not null) _store.ClearFallbackCause(pending.Subject.Project, pending.ReviewAttemptId);
         Lane(queued ?? pending, "gate-queue-stalled", queueWaitMs: waitedMs,
             outcome: queued is null ? "resume-per-task" : "requeued", reason: gate.Reason);
         _logger.LogWarning(

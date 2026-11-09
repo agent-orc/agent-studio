@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ProjectShellComponent } from './project-shell.component';
 import { resolveProjectSection, type ProjectRailKey } from './project-shell.config';
+import { AuthService } from '../../../../services/auth.service';
 
 /**
  * Render-path coverage for the Deck nav IA (ASS-1711): collapsible
@@ -58,6 +59,31 @@ function resizeEvent(
 describe('ProjectShellComponent rail IA', () => {
   beforeEach(() => {
     clearProjectShellStorage();
+  });
+
+  it('shows the registration reason and lets an owner request one reconcile', () => {
+    const fixture = mount('quality-studio');
+    const auth = TestBed.inject(AuthService);
+    auth.status.set({ profile: 'local', bootstrapRequired: false, authenticated: true });
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/Demo%20Project/quality-studio').flush({
+      connected: true, repositoryId: null, state: 'not-registered', reason: 'root-missing',
+    });
+    http.expectOne('/api/integrations/quality-studio/status?project=Demo%20Project').flush({
+      state: 'not-registered', configured: true, owner: true, repositoryId: null,
+    });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="quality-studio-reason"]')?.textContent)
+      .toContain('root-missing');
+    fixture.nativeElement.querySelector('[data-testid="quality-studio-register"]')!.click();
+    http.expectOne('/api/projects/Demo%20Project/quality-studio/reconcile').flush({
+      connected: true, repositoryId: 'proj-002', state: 'registered', reason: null,
+    });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="quality-studio-state"]')?.textContent)
+      .toContain('Registered');
+    http.verify();
   });
 
   it('renders one balanced Deck header with icon actions and legacy selector', () => {
@@ -277,7 +303,7 @@ describe('ProjectShellComponent rail IA', () => {
     expect(railEl(host, 'overview')?.querySelector('app-studio-icon')).toBeTruthy();
     expect(railEl(host, 'security')?.querySelector('app-studio-icon')).toBeTruthy();
     expect(railEl(host, 'architecture')?.querySelector('app-studio-icon')).toBeTruthy();
-    expect(railEl(host, 'overview')?.querySelector('.tree-row__chev--placeholder')).toBeTruthy();
+    expect(railEl(host, 'overview')?.closest('.tree-row-wrap')?.querySelector('.tree-row__chev--placeholder')).toBeTruthy();
   });
 
   it('keeps Deploy, Operations, Pipeline, and Observability outside the Deck groups', () => {

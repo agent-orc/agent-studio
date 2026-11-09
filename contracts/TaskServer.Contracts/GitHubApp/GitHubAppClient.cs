@@ -28,6 +28,12 @@ public sealed record GitHubAppInfo(
 
 public sealed record GitHubUserInstallation(long Id, long AppId, string Account, string AccountType);
 
+/// <summary>One repository an installation's selection covers, with GitHub's own visibility.</summary>
+public sealed record GitHubInstallationRepository(string Owner, string Name, bool Private)
+{
+    public string Canonical => new GitHubRepositoryName(Owner, Name).Canonical;
+}
+
 public sealed record GitHubInstallationToken(string Value, DateTime ExpiresAtUtc)
 {
     public override string ToString() => $"GitHubInstallationToken {{ expires {ExpiresAtUtc:O} }}";
@@ -150,6 +156,69 @@ public sealed class GitHubAppClient(HttpClient http, TimeProvider clock)
                 || !string.Equals(repositories[0].GetProperty("name").GetString(), repository.Name, StringComparison.OrdinalIgnoreCase)))
             throw new GitHubAppException("token-scope-mismatch", "GitHub granted a different repository scope.", 502);
         return new GitHubInstallationToken(token, expires);
+    }
+
+    /// <summary>
+    /// The repositories an installation's selection covers, each with GitHub's
+    /// <c>private</c> flag. The listing needs an installation token; this one
+    /// may read metadata only, is never handed out and is revoked at once.
+    /// </summary>
+    public async Task<IReadOnlyList<GitHubInstallationRepository>> ListInstallationRepositoriesAsync(
+        long appId, string privateKeyPem, long installationId, CancellationToken ct)
+    {
+        string token;
+        using (var request = ApiRequest(HttpMethod.Post,
+                   $"/app/installations/{installationId.ToString(CultureInfo.InvariantCulture)}/access_tokens",
+                   CreateJwt(appId, privateKeyPem)))
+        {
+            request.Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                permissions = new Dictionary<string, string> { ["metadata"] = RepositoryAccess.Read },
+            }), Encoding.UTF8, "application/json");
+            using var document = await SendAsync(request, "issue a listing token", ct);
+            var json = document.RootElement;
+            token = RequiredString(json, "token");
+            if (json.TryGetProperty("permissions", out var granted)
+                && granted.EnumerateObject().Any(item => item.Name != "metadata" || item.Value.GetString() != RepositoryAccess.Read))
+            {
+                await RevokeQuietlyAsync(token);
+                throw new GitHubAppException("token-scope-mismatch", "GitHub granted more than the requested permissions.", 502);
+            }
+        }
+        try
+        {
+            var found = new List<GitHubInstallationRepository>();
+            for (var page = 1; page <= 20; page++)
+            {
+                using var request = ApiRequest(HttpMethod.Get,
+                    $"/installation/repositories?per_page=100&page={page.ToString(CultureInfo.InvariantCulture)}", token);
+                using var document = await SendAsync(request, "list the installation's repositories", ct);
+                var repositories = document.RootElement.GetProperty("repositories");
+                foreach (var item in repositories.EnumerateArray())
+                {
+                    var owner = item.GetProperty("owner").GetProperty("login").GetString();
+                    var name = item.GetProperty("name").GetString();
+                    if (string.IsNullOrEmpty(owner) || string.IsNullOrEmpty(name)) continue;
+                    // A repository whose flag is missing counts as private: it can never turn public by omission.
+                    var isPrivate = !item.TryGetProperty("private", out var flag) || flag.ValueKind != JsonValueKind.False;
+                    found.Add(new GitHubInstallationRepository(owner, name, isPrivate));
+                }
+                if (repositories.GetArrayLength() < 100) break;
+            }
+            return found;
+        }
+        finally
+        {
+            await RevokeQuietlyAsync(token);
+        }
+    }
+
+    private async Task RevokeQuietlyAsync(string token)
+    {
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try { await RevokeInstallationTokenAsync(token, budget.Token); }
+        catch (HttpRequestException) { }
+        catch (OperationCanceledException) { }
     }
 
     /// <summary>The web-flow step that proves who authorized the App. The user token leaves this class only to the two calls below.</summary>

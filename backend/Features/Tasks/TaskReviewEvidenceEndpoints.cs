@@ -22,6 +22,24 @@ public static class TaskReviewEvidenceEndpoints
 {
     public static void MapTaskReviewEvidenceEndpoints(this RouteGroupBuilder group)
     {
+        group.MapGet("/{jobId}/quality-studio", async (string jobId, string? project, string? watchPath,
+            HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects,
+            AgentStudio.Projects.ProjectSettingsService settings, DeliveryClaimSweep claims,
+            AgentStudio.Git.GitService git, CancellationToken ct) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var task = scanner.FindJob(jobId, watchPath);
+            if (task is null) return Results.NotFound();
+            if (!ProjectAccessAuthorization.AllowsTasks(context, [task.ProjectName],
+                    IamPermissions.ProjectRead, projects)) return Results.Forbid();
+            var config = settings.Get(task.ProjectName);
+            var repositoryId = config.QualityStudioRepositoryId ?? config.QualityStudio?.RepositoryId;
+            var claim = claims.Describe(task);
+            var view = await AgentStudio.QualityStudio.QualityChangeReviewProjection.BuildAsync(
+                task, repositoryId, claim.Integrated ? claim.MergeCommit ?? claim.IntegratedSha : null,
+                git.GetFirstParent, ct, landedIsMerge: claim.MergeCommit is not null);
+            return Results.Ok(view);
+        });
         group.MapPost("/{jobId}/preview-comments",
             (string jobId, string? project, string? watchPath, PreviewCommentRequest body,
                 HttpContext context, TaskScannerService scanner, TimelineLog timeline,
@@ -34,7 +52,7 @@ public static class TaskReviewEvidenceEndpoints
                 || string.IsNullOrWhiteSpace(body.PreviewId) || body.PreviewId.Length > 200)
                 return Results.BadRequest(new { error = "A preview id and a comment of up to 4000 characters are required." });
             var actor = context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account
-                ? TimelineActors.ServiceAccount(account.AccountId)
+                ? account.ActorId
                 : context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
                 ? TimelineActors.Human(human.User.Id)
                 : TimelineActors.Human(context.Items["ClientId"] as string ?? string.Empty);

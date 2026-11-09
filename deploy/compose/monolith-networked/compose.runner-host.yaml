@@ -2,8 +2,8 @@
 services:
   api:
     cgroup_parent: studio.slice
+    # The memory limit comes from compose.yaml (STUDIO_API_MEMORY_LIMIT).
     mem_reservation: 1g
-    mem_limit: 4g
   frontend:
     cgroup_parent: studio.slice
   edge:

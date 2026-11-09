@@ -659,8 +659,10 @@ public sealed class CapabilityAdmissionTests
         var capability = CapabilityProtocol.ProviderAuthentication("codex");
         await RegisterAndAdvertiseAsync(store, clock, runner, instance, "host-a",
             CapabilityProtocol.CodingExecutor, capability);
-        await FailAsync(store, clock, runner, instance, capability, "fail-1");
-        var initialDrain = await FailAsync(store, clock, runner, instance, capability, "fail-2");
+        await FailAsync(store, clock, runner, instance, capability, "fail-1",
+            classification: "ProviderTransient");
+        var initialDrain = await FailAsync(store, clock, runner, instance, capability, "fail-2",
+            classification: "ProviderTransient");
         clock.Advance(initialDrain.CooldownUntil!.Value - clock.GetUtcNow().UtcDateTime + TimeSpan.FromSeconds(1));
 
         var canary = await store.ClaimAsync(
@@ -678,7 +680,7 @@ public sealed class CapabilityAdmissionTests
 
         var failedCanary = await store.ReportCapabilityFailureAsync(
             new CapabilityFailureRequest(
-                runner, instance, capability, "ProviderUnauthorized", "Codex returned 401",
+                runner, instance, capability, "ProviderTransient", "Codex transient failure",
                 clock.GetUtcNow().UtcDateTime, "canary-failed", "run", canary.Run!.RunId, canary.Lease!.Fence),
             runner,
             default);
@@ -1137,14 +1139,17 @@ public sealed class CapabilityAdmissionTests
         string capability,
         string key,
         string? claimId = null,
-        long? fence = null)
+        long? fence = null,
+        string classification = "ProviderUnauthorized")
         => store.ReportCapabilityFailureAsync(
             new CapabilityFailureRequest(
                 runner,
                 instance,
                 capability,
-                "ProviderUnauthorized",
-                "provider returned 401",
+                classification,
+                classification == "ProviderUnauthorized"
+                    ? "provider returned 401"
+                    : "transient provider failure",
                 clock.GetUtcNow().UtcDateTime,
                 key,
                 claimId is null ? null : "run",

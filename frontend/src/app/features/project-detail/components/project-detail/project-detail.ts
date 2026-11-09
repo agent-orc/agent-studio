@@ -2,14 +2,15 @@ import { SegmentedControlComponent } from '../../../../components/segmented-cont
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { TaskService } from '../../../../services/task.service';
+import { TASK_REFERENCE_CHAT_PROVIDER } from '../../../../services/task-reference-chat.provider';
 import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from '../../../../utils/visible-interval';
 import type { ProjectQueueHealth, RunnerStatus } from '../../../../models/task.model';
 import { CLI_TYPES, type CliType } from '../../../../models/task.model';
 import { cliTypeLabel, cliTypeIcon } from '../../../../services/format.util';
 import type { OrchestratorLogEntry, OrchestratorSession } from '../../../../features/orchestrator';
 import { CliCatalogStore } from '../../../cli';
-import { TokenSummaryBlockComponent } from '../../../../features/tokens';
-import { GlobalOrchestratorCardComponent } from '../../../../features/orchestrator';
+import { TokenSummaryBlockComponent } from '../../../../features/tokens/lazy';
+import { GlobalOrchestratorCardComponent } from '../../../../features/orchestrator/lazy';
 import { ProjectArchitectureSectionComponent } from '../project-architecture-section/project-architecture-section';
 import { ProjectDriftSectionComponent } from '../project-drift-section/project-drift-section';
 import { ProjectDriftOverviewSectionComponent } from '../project-drift-overview-section/project-drift-overview-section';
@@ -76,6 +77,7 @@ export type ProjectDetailView =
 @Component({
   selector: 'app-project-detail',
   standalone: true,
+  providers: [TASK_REFERENCE_CHAT_PROVIDER],
   imports: [SegmentedControlComponent,
     FormsModule,
     TokenSummaryBlockComponent,

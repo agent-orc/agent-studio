@@ -51,6 +51,16 @@ public static class WorkContainerShadow
             }
             var selection = WorkExecutorSelectionPolicy.Select(OperatingSystem.IsWindows(), OperatingSystem.IsLinux(),
                 settings.Mode, RuntimeSocketPresent(settings.Runtime), RoleImageManifest.IsPinned(image));
+            if (settings.Mode == WorkContainerMode.Contained)
+            {
+                // SM-11: the contained decision is the selection; the detached CLI worker
+                // itself still runs as a process until provider attempt tokens exist.
+                var contained = AttemptContainmentPolicy.Decide(AttemptContainmentHost.Gather(
+                    settings, role, read("RUNNER_ZONE_POLICY_STATE"), TimeProvider.System));
+                selection = new WorkExecutorSelection(
+                    contained.Verdict == ContainmentVerdict.Container ? WorkExecutorKind.Container : WorkExecutorKind.Process,
+                    true, contained.Reason);
+            }
             var admission = WorkContainerAdmissionPolicy.Decide(
                 new WorkContainerGrant(1, 1, ProvisionalGrantHalfCores),
                 new WorkContainerHostBudget(0, memory.AvailableBytes, memory.TotalBytes),

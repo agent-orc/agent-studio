@@ -34,6 +34,7 @@ public static class IamPermissions
     public const string WorkspaceAdminister = "workspace.administer";
     public const string AccessRead = "access.read";
     public const string AccessManage = "access.manage";
+    public const string SecurityPostureRead = "security.posture.read";
 
     public const string ProjectRead = "project.read";
     public const string ProjectCardsWrite = "project.cards.write";
@@ -41,6 +42,7 @@ public static class IamPermissions
     public const string ProjectChatWrite = "project.chat.write";
     public const string ProjectDocsWrite = "project.docs.write";
     public const string ProjectSettingsWrite = "project.settings.write";
+    public const string ProjectPipelineWrite = "project.pipeline.write";
 
     public const string EnvironmentDeploy = "environment.deploy";
     public const string EnvironmentProductionDeploy = "environment.production.deploy";
@@ -61,12 +63,15 @@ public static class IamPermissions
         new(WorkspaceAdminister, PermissionLevel.Workspace, "Installation-wide changes reserved to the Owner, such as path import."),
         new(AccessRead, PermissionLevel.Workspace, "See users, groups, service accounts, and role bindings."),
         new(AccessManage, PermissionLevel.Workspace, "Invite users and change groups, service accounts, and role bindings."),
+        new(SecurityPostureRead, PermissionLevel.Workspace,
+            "Read the installation security view: exposure, credential metadata, second factor coverage, versions, audit anomalies, and security cards. Never secret values."),
         new(ProjectRead, PermissionLevel.Project, "Read cards, runs, chats, documents, and project reports."),
         new(ProjectCardsWrite, PermissionLevel.Project, "Create, edit, order, and move cards."),
         new(ProjectRunsOperate, PermissionLevel.Project, "Start, stop, and continue runs, pipeline steps, merges, and integrations."),
         new(ProjectChatWrite, PermissionLevel.Project, "Send project, card, and Dossier chat turns."),
         new(ProjectDocsWrite, PermissionLevel.Project, "Edit the wiki, Dossiers, steering, and security documents."),
         new(ProjectSettingsWrite, PermissionLevel.Project, "Change project settings, pipeline, checkout, and URLs."),
+        new(ProjectPipelineWrite, PermissionLevel.Project, "Change one pipeline step override of a project: enabled, mode, and model."),
         new(EnvironmentDeploy, PermissionLevel.Environment, "Release an artifact to a non-production environment."),
         new(EnvironmentProductionDeploy, PermissionLevel.Environment, "Deploy to or roll back an environment, production included."),
         new(EnvironmentProductionDeployApprove, PermissionLevel.Environment, "Approve or reject a production release."),
@@ -100,7 +105,8 @@ public sealed record RoleDefinition(
     string Description,
     IReadOnlySet<string> Permissions,
     IReadOnlySet<IamScopeKind> BindableScopes,
-    bool ServiceAccountBindable);
+    bool ServiceAccountBindable,
+    bool UserBindable = true);
 
 /// <summary>
 /// The Studio roles. A role always applies in a scope: a binding is a user,
@@ -115,6 +121,7 @@ public static class IamRoles
     public const string Contributor = "contributor";
     public const string Viewer = "viewer";
     public const string Approver = "approver";
+    public const string OperatorAgent = "operator-agent";
 
     private static readonly string[] ReadSet =
         [IamPermissions.WorkspaceRead, IamPermissions.ProjectRead, IamPermissions.SecretsRead];
@@ -130,8 +137,24 @@ public static class IamRoles
     [
         .. DeveloperSet,
         IamPermissions.WorkspaceSettingsWrite, IamPermissions.WorkspaceOperate,
-        IamPermissions.ProjectSettingsWrite, IamPermissions.EnvironmentProductionDeploy,
+        IamPermissions.ProjectSettingsWrite, IamPermissions.ProjectPipelineWrite, IamPermissions.EnvironmentProductionDeploy,
         IamPermissions.EnvironmentProductionDeployApprove, IamPermissions.SecretsWrite,
+    ];
+
+    /// <summary>
+    /// The operator surface of the Dossier operator-agent-level (OP-1, OA-D4 B):
+    /// board and card reads, lane moves, continue and steer, create, title,
+    /// batch gate eject and close-now, quota and routing reads, review step
+    /// models, installation operation reads such as the watcher, and stage
+    /// deploys. No secret, production, access, or installation setting. It
+    /// reads the security view (AGT-3575) so it can watch expiries and audit
+    /// anomalies without the Owner's access administration.
+    /// </summary>
+    private static readonly string[] OperatorAgentSet =
+    [
+        IamPermissions.WorkspaceRead, IamPermissions.ProjectRead, IamPermissions.ProjectCardsWrite,
+        IamPermissions.ProjectRunsOperate, IamPermissions.ProjectPipelineWrite, IamPermissions.WorkspaceOperate,
+        IamPermissions.EnvironmentDeploy, IamPermissions.SecurityPostureRead,
     ];
 
     public static readonly IReadOnlyList<RoleDefinition> All =
@@ -144,6 +167,9 @@ public static class IamRoles
             AdminSet, [IamScopeKind.Workspace, IamScopeKind.Project], serviceAccounts: true),
         Role(Developer, "Developer", 30, "Works on cards, runs, chats, and documents; deploys outside production.",
             DeveloperSet, [IamScopeKind.Workspace, IamScopeKind.Project, IamScopeKind.Environment], serviceAccounts: true),
+        Role(OperatorAgent, "Operator agent", 25,
+            "Operates the board for a coding agent: reads, lane moves, runs, batch gate, review step models, and stage deploys; no secrets, production approval, access, or installation settings.",
+            OperatorAgentSet, [IamScopeKind.Workspace, IamScopeKind.Project], serviceAccounts: true, users: false),
         Role(Contributor, StudioRoles.ContributorDisplayName, 20, "Product role: writes and accepts cards in assigned projects.",
             [IamPermissions.WorkspaceRead, IamPermissions.ProjectRead, IamPermissions.ProjectCardsWrite, IamPermissions.ProjectChatWrite],
             [IamScopeKind.Project], serviceAccounts: false),
@@ -160,14 +186,14 @@ public static class IamRoles
     public static RoleDefinition? Find(string? id) => id is not null && ById.TryGetValue(id, out var role) ? role : null;
 
     /// <summary>
-    /// The legacy role a handler check reads for a role of this model: Admin
-    /// and Developer act as operator, Approver as viewer. Used only for the
+    /// The legacy role a handler check reads for a role of this model: Admin,
+    /// Developer, and Operator agent act as operator, Approver as viewer. Used only for the
     /// per-request projection, never persisted (see <see cref="LegacyRoleMapping.Summarize"/>).
     /// </summary>
     public static string LegacyRole(string? id) => id switch
     {
         Owner => StudioRoles.Owner,
-        Admin or Developer => StudioRoles.Operator,
+        Admin or Developer or OperatorAgent => StudioRoles.Operator,
         Contributor => StudioRoles.Contributor,
         _ => StudioRoles.Viewer,
     };
@@ -177,7 +203,7 @@ public static class IamRoles
 
     private static RoleDefinition Role(
         string id, string displayName, int rank, string description,
-        IEnumerable<string> permissions, IamScopeKind[] scopes, bool serviceAccounts)
+        IEnumerable<string> permissions, IamScopeKind[] scopes, bool serviceAccounts, bool users = true)
         => new(id, displayName, rank, description,
-            new HashSet<string>(permissions, StringComparer.Ordinal), new HashSet<IamScopeKind>(scopes), serviceAccounts);
+            new HashSet<string>(permissions, StringComparer.Ordinal), new HashSet<IamScopeKind>(scopes), serviceAccounts, users);
 }

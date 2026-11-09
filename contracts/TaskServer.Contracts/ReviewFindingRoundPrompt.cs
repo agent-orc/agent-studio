@@ -65,7 +65,7 @@ public static class ReviewFindingRoundPrompt
             if (!string.IsNullOrWhiteSpace(finding.EvidenceChecked))
                 lines.Add($"- Evidence checked: {finding.EvidenceChecked}");
             if (!string.IsNullOrWhiteSpace(finding.Finding))
-                lines.Add($"- Finding: {finding.Finding}");
+                lines.Add($"- Missing or wrong behavior: {finding.Finding}");
             lines.Add("");
         }
         while (lines.Count > 0 && lines[^1].Length == 0) lines.RemoveAt(lines.Count - 1);

@@ -22,4 +22,32 @@ describe('ProjectBuildProfileNoticeComponent', () => {
     expect(notice.textContent).toContain('Not applicable');
     expect(notice.querySelector('a')?.href).toContain('contributor-setup.md#onboarding-checklist');
   });
+
+  it('names the missing project definition and shows its example', async () => {
+    await TestBed.configureTestingModule({ imports: [ProjectBuildProfileNoticeComponent] }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectBuildProfileNoticeComponent);
+    fixture.componentRef.setInput('summary', {
+      profile: null,
+      gateApplicable: false,
+      verifyPlan: { source: 'none', commands: [] },
+      verifyDefinition: {
+        state: 'missing',
+        path: '.agent-studio/project.yml',
+        message: 'Verify definition missing: ...',
+        exampleStack: 'go',
+        exampleDefinition: 'schemaVersion: 1\nstack: [go]\n',
+        examplePrepareScript: '#!/bin/sh\n',
+      },
+    });
+    fixture.detectChanges();
+
+    const notice = fixture.nativeElement.querySelector(
+      '[data-testid="project-settings-no-verify-commands"]',
+    ) as HTMLElement;
+    expect(notice.textContent).toContain('.agent-studio/project.yml');
+    expect(notice.textContent).toContain('Merges refused');
+    expect(notice.textContent).toContain('go repository');
+    expect(notice.querySelector('[data-testid="project-settings-verify-example"]')?.textContent)
+      .toContain('stack: [go]');
+  });
 });

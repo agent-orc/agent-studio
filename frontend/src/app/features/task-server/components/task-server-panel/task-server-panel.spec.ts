@@ -42,6 +42,8 @@ describe('TaskServerPanelComponent', () => {
     expect(el.querySelector('[data-testid="task-server-statistics-pending"]')?.textContent).toContain('being computed');
     expect(el.querySelector('[data-testid="task-server-store-size"]')?.textContent).toContain('Calculating');
     expect(el.querySelector('[data-testid="task-server-backups"]')?.textContent).toContain('Calculating');
+    expect(el.querySelector<HTMLElement>('[data-testid="task-server-backups-state"]')?.dataset['tone']).toBe('running');
+    expect(el.querySelector<HTMLElement>('[data-testid="task-server-evidence-state"]')?.dataset['icon']).toBe('spinner');
     expect(el.querySelector('[data-testid="task-server-unavailable"]')).toBeNull();
     fixture.destroy();
   });
@@ -123,6 +125,18 @@ describe('TaskServerPanelComponent', () => {
     expect(el.querySelector('[data-testid="task-server-management"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="task-server-evidence"]')?.textContent).toContain('Event files');
     expect(el.querySelector('[data-testid="task-server-evidence"]')?.textContent).not.toContain('Branch');
+
+    // Every block state renders through the shared indicator: tone, icon and visible text.
+    const indicator = (id: string) => {
+      const node = el.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
+      return [node.dataset['tone'], node.dataset['icon'], node.textContent?.trim()];
+    };
+    expect(indicator('task-server-health')).toEqual(['success', 'check', 'Healthy']);
+    expect(indicator('task-server-readiness')).toEqual(['success', 'check', 'Ready']);
+    expect(indicator('task-server-evidence-state')).toEqual(['success', 'check', 'Available']);
+    expect(indicator('task-server-maintenance-mode')).toEqual(['success', 'check', 'normal']);
+    expect(indicator('task-server-backups-state')).toEqual(['success', 'check', '0 retained']);
+    expect(indicator('task-server-security-state')).toEqual(['success', 'check', 'Integrated']);
 
     // The connected URL is reported by the Task Server.
     expect(el.querySelector('[data-testid="task-server-url"]')?.textContent)

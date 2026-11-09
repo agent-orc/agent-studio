@@ -176,27 +176,43 @@ public static class RoutePermissionCatalog
             => rules.Add(new Rule(methods, Split(pattern), new RequiredPermissionMetadata(permission, EnvironmentBodyField: field)));
 
         // --- Anonymous, own session, and access administration -------------
+        // The move tool reads this health probe from inside the API container;
+        // the endpoint itself rejects non-loopback callers before returning host facts.
+        Add("GET", IamPermissions.Anonymous, "/healthz/readiness");
+        Add("R", IamPermissions.Anonymous, "/.well-known/agent-studio/jwks.json");
+        Add("R", IamPermissions.WorkspaceAdminister, "/api/integrations/quality-studio/connection");
+        Add("W", IamPermissions.WorkspaceAdminister, "/api/integrations/quality-studio/connection", "/api/integrations/quality-studio/token",
+            "/api/integrations/quality-studio/projects/{}/repository");
+        AddProjectChecked("R", IamPermissions.ProjectRead, "/api/integrations/quality-studio/status",
+            "/api/integrations/quality-studio/open");
         Add("*", IamPermissions.Anonymous, "/healthz/**");
         Add("R", IamPermissions.Anonymous, "/api/auth/status", "/recovery");
         Add("POST", IamPermissions.Anonymous,
-            "/api/auth/bootstrap", "/api/auth/login", "/api/auth/invite/accept", "/api/auth/runner-enroll");
+            "/api/auth/bootstrap", "/api/auth/login", "/api/auth/invite/accept", "/api/auth/runner-enroll",
+            "/api/auth/passkeys/assertion-options");
         Add("R", IamPermissions.SelfSession, "/api/auth/session");
         Add("POST", IamPermissions.SelfSession, "/api/auth/logout", "/api/auth/change-password");
+        Add("R", IamPermissions.SelfSession, "/api/auth/sessions");
+        Add("W", IamPermissions.SelfSession, "/api/auth/sessions/**", "/api/auth/totp/**", "/api/auth/step-up");
+        Add("W", IamPermissions.SelfSession, "/api/auth/passkeys/register-options", "/api/auth/passkeys/register",
+            "/api/auth/passkeys/step-up-options");
         Add("R", IamPermissions.RunnerService, "/api/auth/runner");
         Add("R", IamPermissions.AccessRead,
             "/api/auth/users/**", "/api/auth/runners/**", "/api/auth/runner-enrollments/**", "/api/auth/api-tokens/**",
-            "/api/auth/iam/**");
+            "/api/auth/iam/**", "/api/auth/audit/**");
         Add("W", IamPermissions.AccessManage,
             "/api/auth/users/**", "/api/auth/invitations", "/api/auth/runners/**", "/api/auth/runner-enrollments/**",
-            "/api/auth/api-tokens/**", "/api/auth/iam/**");
+            "/api/auth/api-tokens/**", "/api/auth/iam/**", "/api/auth/audit/**");
         // First-run setup writes Git credentials and probes repositories for
         // the installation; the checklist is the Owner's.
         Add("*", IamPermissions.WorkspaceAdminister, "/api/first-run/**");
 
         // --- Runner and engine service routes (credential scopes decide) ----
         Add("R", IamPermissions.RunnerService, "/api/quota/admission/{}");
+        Add("POST", IamPermissions.RunnerService, "/api/model-selection/events");
         Add("POST", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/claim");
         Add("PUT", IamPermissions.RunnerService, "/api/v1/runners/{}/quota/report");
+        Add("POST", IamPermissions.RunnerService, "/api/v1/runners/{}/review-package-claims");
         Add("R", IamPermissions.RunnerService, "/api/deploy/run-targets/{}/desired-state");
         Add("POST", IamPermissions.RunnerService, "/api/deploy/run-targets/{}/observed-state");
         Add("*", IamPermissions.RunnerService,
@@ -204,6 +220,10 @@ public static class RoutePermissionCatalog
             "/api/runner/artifacts/**", "/api/runner/lease/**", "/api/pull-gates/**", "/api/gate-artifacts/**");
         Add("R", IamPermissions.ProjectRead, "/api/v1/reviews/attempts/{}");
         Add("W", IamPermissions.RunnerService, "/api/v1/reviews/attempts/**");
+        // Package attempt writes are runner-host operations, like per-card review attempts.
+        Add("POST", IamPermissions.RunnerService,
+            "/api/v1/review-packages/attempts/{}/lease/renew",
+            "/api/v1/review-packages/attempts/{}/report");
         Add("R", IamPermissions.WorkspaceRead, "/api/v1/protocol");
         Add("POST", IamPermissions.WorkspaceRead, "/api/v1/protocol/compatibility");
         Add("POST", IamPermissions.RunnerService,
@@ -224,7 +244,16 @@ public static class RoutePermissionCatalog
         // The App key can reach every repository; connecting it is the Owner's.
         Add("*", IamPermissions.WorkspaceAdminister, "/api/v1/management/github-app", "/api/v1/management/github-app/**");
         Add("GET", IamPermissions.WorkspaceAdminister, "/api/v1/management/credential-inventory");
+        // A device sign-in authorizes a host's provider account; a Git setup hands a host a repository credential.
+        Add("*", IamPermissions.WorkspaceAdminister,
+            "/api/v1/management/device-logins", "/api/v1/management/device-logins/**",
+            "/api/v1/management/runner-git-setups", "/api/v1/management/runner-git-setups/**");
         Add("*", IamPermissions.WorkspaceOperate, "/api/v1/management/**");
+        // Studio's browser reads installation-wide declared topology, even when
+        // a project scope is requested. Runner credentials do not call it.
+        Add("GET", IamPermissions.WorkspaceOperate, "/api/v1/operations/structure");
+        Add("GET", IamPermissions.WorkspaceOperate, "/api/v1/operations/structure/library");
+        Add("POST", IamPermissions.WorkspaceOperate, "/api/v1/operations/structure/library/refresh");
 
         // --- Environments and production approval --------------------------
         // Environment keys are canonical kinds (IamEnvironments): a release
@@ -308,14 +337,29 @@ public static class RoutePermissionCatalog
         AddProjectChecked("POST", IamPermissions.ProjectRunsOperate,
             "/api/orchestration/decision-receipts/{}/operator-intent");
 
+        // Operator decision stream and watcher lease (operator agent level
+        // OP-2). The stream handlers filter events per readable project. The
+        // lease is one per installation; holding it needs a binding that may
+        // operate runs in at least one project.
+        Add("R", IamPermissions.ProjectRead,
+            "/api/operator/decisions", "/api/operator/decisions/stream", "/api/operator/watcher/lease",
+            "/api/operator/capacity", "/api/operator/backups");
+        AddProjectChecked("W", IamPermissions.ProjectRunsOperate,
+            "/api/operator/watcher/lease", "/api/operator/watcher/lease/{}", "/api/operator/watcher/lease/{}/heartbeat");
+        Add("R", IamPermissions.ProjectRead, "/api/operator/log");
+        AddProjectChecked("POST", IamPermissions.ProjectCardsWrite, "/api/operator/log");
+        Add("POST", IamPermissions.ProjectCardsWrite, "/api/tasks/{}/attention");
+
         // --- Workspace administration, settings, and operation -------------
         Add("PUT", IamPermissions.WorkspaceAdminister, "/api/workspaces/{}/usage-calendar");
+        Add("PUT", IamPermissions.WorkspaceAdminister, "/api/workspaces/{}/systems/{}");
         Add("POST", IamPermissions.WorkspaceAdminister, "/api/projects/path-import");
         Add("POST", IamPermissions.WorkspaceSettingsWrite, "/api/projects");
         Add("W", IamPermissions.WorkspaceSettingsWrite,
             "/api/workspaces/**", "/api/watch-paths/**", "/api/tags/**", "/api/admin/**",
             "/api/cli/quota/caps", "/api/cli/quota/fallback-preference", "/api/cli/quota/model-routes",
             "/api/cli/quota/wait-policy", "/api/cli/maintenance-model", "/api/cli/model-routing/**",
+            "/api/model-selection/policy/consumers/{}",
             "/api/clients/{}/defaults", "/api/clients/{}/runner-capacity", "/api/git/branch-sweep/settings",
             "/api/orchestration/rollout/**");
         Add("POST", IamPermissions.WorkspaceRead, "/api/token-pricing/calculate", "/api/component-routing/resolve");
@@ -330,6 +374,10 @@ public static class RoutePermissionCatalog
         // working memory, quota and model probes are installation-wide.
         Add("R", IamPermissions.WorkspaceRead,
             "/api/cli/types", "/api/cli/contracts", "/api/cli/model-migrations");
+        Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/effective");
+        Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/active");
+        Add("R", IamPermissions.WorkspaceRead, "/api/model-selection/policy");
+        Add("R", IamPermissions.WorkspaceOperate, "/api/model-selection/events", "/api/model-selection/active");
         // These return configuration or cached data without reading sessions.
         Add("R", IamPermissions.WorkspaceRead,
             "/api/cli/{}/models", "/api/cli/maintenance-model", "/api/cli/{}/effective-mode",
@@ -343,9 +391,11 @@ public static class RoutePermissionCatalog
             "/api/watcher/**", "/api/crash-recovery/**", "/api/cause-breakers/**",
             "/api/workspace/summary", "/api/workspaces/{}/quota/**",
             "/api/workspaces/{}/projects/{}/quota", "/api/auto-review/status",
-            "/api/system/execution-infrastructure", "/api/agent-rules", "/api/adhoc-usage/**");
+            "/api/system/execution-infrastructure", "/api/system/gate-capacity", "/api/system/gate-slots", "/api/system/readiness", "/api/agent-rules", "/api/adhoc-usage/**");
+        Add("POST", IamPermissions.WorkspaceOperate, "/api/system/readiness/refresh");
+        Add("PUT", IamPermissions.WorkspaceAdminister, "/api/system/gate-capacity");
         Add("W", IamPermissions.WorkspaceOperate,
-            "/api/cli/quota/refresh/**", "/api/cli/{}/session", "/api/cli/{}/working-memory", "/api/clients/**",
+            "/api/cli/quota/refresh/**", "/api/clients/**",
             "/api/crash-recovery/**", "/api/git/branch-sweep/**", "/api/git/cleanup/**", "/api/git/branch-reclaim/**",
             "/api/maintenance/**", "/api/attempts/**", "/api/cause-breakers/**", "/api/watcher/**",
             "/api/devtools/**", "/api/_internal/**", "/api/tasks/orphan-folder");
@@ -403,19 +453,31 @@ public static class RoutePermissionCatalog
             "execution/proposal", "checkout/**", "gate-result-cache", "urls/{}/start", "urls/test", "urls/{}/process");
         Add("POST", IamPermissions.WorkspaceOperate, "/api/projects/{}/operator-candidate-verifications");
         Add("POST", IamPermissions.ProjectRunsOperate, "/api/projects/{}/batch-gate/queue-stalls/release");
+        Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/failed-tests");
+        Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/isolation-evidence");
 
         // --- Documents -----------------------------------------------------
         Under("W", IamPermissions.ProjectDocsWrite, "/api/projects/{}",
             "wiki/**", "workbenches/**", "security/files/**", "security/meta");
 
         // --- Project settings ----------------------------------------------
+        // One step override at a time; the operator agent changes review step
+        // models here without the rest of the project settings (OP-1).
+        Add("PUT", IamPermissions.ProjectPipelineWrite, "/api/projects/{}/pipeline-step");
+        // Only project settings writers may enable shadow package review.
+        Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/review-package");
         Add("W", IamPermissions.ProjectSettingsWrite, "/api/projects/{}");
         Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/*");
+        Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/model-selection-overrides/{}");
         Under("W", IamPermissions.ProjectSettingsWrite, "/api/projects/{}",
             "areas/{}/glossary", "build-profile", "build-profile/validate", "execution/override", "test-execution",
             "publish/automation", "urls", "urls/**", "ownership-mappings/**", "pipeline-definition/**");
 
         // --- Project reads -------------------------------------------------
+        Add("GET", IamPermissions.ProjectRead,
+            "/api/projects/{}/review-packages",
+            "/api/projects/{}/review-packages/formation",
+            "/api/projects/{}/review-packages/shadow-report");
         Add("R", IamPermissions.ProjectRead,
             "/api/projects/**", "/api/tasks/**", "/api/runner/{}/**", "/api/runner/project:{}/**",
             "/api/runner/task:{}/**", "/api/runner/workbench:{}/**", "/api/runner/integration-lease/**",

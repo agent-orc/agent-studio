@@ -63,6 +63,104 @@ public sealed class WorkspaceRepositoryMaintenanceServiceTests : IDisposable
             $"Expected maintenance to reduce {looseBefore} loose objects, found {LooseObjectCount()}.");
     }
 
+    [Fact]
+    public void UntrackSecurityStore_UntracksOnceKeepsFilesAndSweepRecordsTheRemoval()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".security", "secrets"));
+        File.WriteAllText(Path.Combine(_root, ".security", "access-state.json"), "{}\n");
+        File.WriteAllText(Path.Combine(_root, ".security", "secrets", "store.json"), "{}\n");
+        RunGit("add", ".security");
+        RunGit("commit", "-q", "-m", "tracked security store");
+
+        var configuration = Config();
+        var commits = new WorkspaceArtifactCommitService(
+            configuration, NullLogger<WorkspaceArtifactCommitService>.Instance);
+        var logger = new ListLogger();
+        var service = new WorkspaceRepositoryMaintenanceService(
+            configuration, commits, new ReadyLoadGate(), logger);
+
+        var first = service.UntrackSecurityStore();
+        var second = service.UntrackSecurityStore();
+
+        Assert.True(first.Success, $"{first.Phase}: {first.Error}");
+        Assert.True(second.Success, $"{second.Phase}: {second.Error}");
+        Assert.Single(logger.Messages, m => m.Contains("workspace-security-store-untracked", StringComparison.Ordinal));
+        Assert.Empty(Git("ls-files", ".security").Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        Assert.True(File.Exists(Path.Combine(_root, ".security", "access-state.json")));
+        Assert.True(File.Exists(Path.Combine(_root, ".security", "secrets", "store.json")));
+        Assert.Equal(".security/access-state.json", Git("check-ignore", ".security/access-state.json").Trim());
+
+        var sweep = commits.TryCommitTrackedSweep(_root);
+
+        Assert.True(sweep.DidCommit, sweep.Error);
+        Assert.Empty(Git("ls-tree", "-r", "--name-only", "HEAD", "--", ".security")
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        Assert.True(File.Exists(Path.Combine(_root, ".security", "access-state.json")));
+        Assert.Empty(Git("status", "--porcelain").Split('\n', StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    [Fact]
+    public void Oversized_review_journals_leave_the_index_through_the_platform_sweep()
+    {
+        var folder = Path.Combine(_root, "projects", "demo", "tasks", "000", "DEMO-1", "logs");
+        Directory.CreateDirectory(folder);
+        var large = Path.Combine(folder, "remote-review-settlement-large.json");
+        var small = Path.Combine(folder, "remote-review-settlement-small.json");
+        File.WriteAllText(large, new string('x', 5 * 1024 * 1024 + 1));
+        File.WriteAllText(small, "{}\n");
+        RunGit("add", "projects");
+        RunGit("commit", "-q", "-m", "legacy review journals");
+        var configuration = Config();
+        var commits = new WorkspaceArtifactCommitService(configuration,
+            NullLogger<WorkspaceArtifactCommitService>.Instance);
+        var service = new WorkspaceRepositoryMaintenanceService(configuration, commits,
+            new ReadyLoadGate(), NullLogger<WorkspaceRepositoryMaintenanceService>.Instance);
+
+        var untrack = service.UntrackOversizedReviewJournals();
+        var sweep = commits.TryCommitTrackedSweep(_root);
+
+        Assert.True(untrack.Success, $"{untrack.Phase}: {untrack.Error}");
+        Assert.True(sweep.DidCommit, sweep.Error);
+        Assert.True(File.Exists(large));
+        Assert.DoesNotContain("remote-review-settlement-large", Git("ls-files", "projects"));
+        Assert.Contains("remote-review-settlement-small", Git("ls-files", "projects"));
+        Assert.DoesNotContain("remote-review-settlement-large", Git("ls-tree", "-r", "--name-only", "HEAD"));
+        var evidence = commits.TryCommitEvidence(_root,
+            [Path.Combine(_root, "projects", "demo")], [], "evidence\n");
+        Assert.True(evidence.Success, evidence.Error);
+        Assert.DoesNotContain("remote-review-settlement-large", Git("ls-files", "projects"));
+    }
+
+    [Fact]
+    public async Task RunOnceUntracksOnlyLargeLegacyFallbackEvidenceThroughWorkspaceSweep()
+    {
+        var logs = Path.Combine(_root, "projects", "Example", "tasks", "AGT-1", "logs");
+        Directory.CreateDirectory(logs);
+        var large = Path.Combine(logs, "batch-fallback-old.json");
+        var compact = Path.Combine(logs, "batch-fallback-new.json");
+        using (var stream = File.Create(large)) stream.SetLength(1024 * 1024 + 1);
+        File.WriteAllText(compact, "{\"Verdict\":0}\n");
+        RunGit("add", "projects");
+        RunGit("commit", "-q", "-m", "legacy fallback evidence");
+
+        var configuration = Config();
+        var commits = new WorkspaceArtifactCommitService(
+            configuration, NullLogger<WorkspaceArtifactCommitService>.Instance);
+        var service = new WorkspaceRepositoryMaintenanceService(
+            configuration, commits, new ReadyLoadGate(),
+            NullLogger<WorkspaceRepositoryMaintenanceService>.Instance);
+
+        var result = await service.RunOnceAsync();
+
+        Assert.True(result.Success, $"{result.Phase}: {result.Error}");
+        Assert.Empty(Git("ls-files", "--", "projects/**/logs/batch-fallback-old.json"));
+        Assert.Contains("batch-fallback-new.json", Git("ls-files", "--", "projects"));
+        Assert.True(File.Exists(large));
+        Assert.Contains("batch-fallback-old.json", Git("show", "--name-only", "--format=", "HEAD"));
+        Assert.Contains("batch-fallback-old.json", Git("check-ignore", large));
+        Assert.Empty(Git("status", "--porcelain"));
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); }
@@ -115,6 +213,16 @@ public sealed class WorkspaceRepositoryMaintenanceServiceTests : IDisposable
         var stderr = process.StandardError.ReadToEnd();
         process.WaitForExit();
         return (stdout, stderr, process.ExitCode);
+    }
+
+    private sealed class ListLogger : Microsoft.Extensions.Logging.ILogger<WorkspaceRepositoryMaintenanceService>
+    {
+        public List<string> Messages { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+            TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => Messages.Add(formatter(state, exception));
     }
 
     private sealed class ReadyLoadGate : AgentStudio.Runner.ILoadThrottleGate

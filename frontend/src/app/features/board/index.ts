@@ -16,7 +16,7 @@ export { BoardSearchIconComponent } from './components/board-search-icon/board-s
 export { ActiveBoardFiltersComponent } from './components/active-board-filters/active-board-filters.component';
 export { TagFiltersComponent } from '../../components/tag-filters/tag-filters.component';
 export { TagChipsComponent } from '../../components/tag-chips/tag-chips.component';
-export { CreateTaskDialogComponent, type PendingAttachment } from './components/create-task-dialog/create-task-dialog.component';
+export type { PendingAttachment } from './components/create-task-dialog/create-task-dialog.component';
 export { DecisionBacklogHintComponent } from './components/decision-backlog-hint/decision-backlog-hint.component';
 export { FiltersDropdownComponent, type TypeFilterOption } from './components/filters-dropdown/filters-dropdown.component';
 export { KanbanFilterSidesheetComponent } from './components/kanban-filter-sidesheet/kanban-filter-sidesheet.component';
@@ -24,6 +24,7 @@ export { TaskCardComponent } from './components/task-card/task-card.component';
 export { TaskColumnComponent } from './components/task-column/task-column';
 export { DossierGroupBoardComponent } from './components/dossier-group-board/dossier-group-board.component';
 export { DeliverySectionComponent } from './components/delivery-section/delivery-section';
+export { BoardGroupSwitcherComponent } from './components/board-group-switcher/board-group-switcher';
 export {
   ProjectTabsComponent,
   type ProjectAutoInfo,
@@ -50,7 +51,9 @@ export {
   buildFocusLanes,
   buildDeliveryGroup,
   buildLaneGroups,
+  countedLanes,
   laneChrome,
+  laneGroupCount,
   DELIVERY_GROUP_ID,
   type BoardDeliveryColumn,
   type BoardDeliveryGroup,

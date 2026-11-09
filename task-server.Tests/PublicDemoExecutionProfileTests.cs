@@ -99,7 +99,46 @@ public sealed class PublicDemoExecutionProfileTests
         // DP-S4 added the gate bundle upload (PostStep) and download (Continue).
         // DP-S5 credential lifecycle endpoints can issue and renew work material (Continue).
         // AGT-3332 records executor receipts for attempt visibility (Continue).
-        Assert.Equal(65, routes.Count);
+        // AGT-3426 adds package creation and attempt renewal/report (Review),
+        // plus a review package claim (Claim); all four deny execution here.
+        // AGT-3371 adds artifact chunk status, upload and completion (PostStep).
+        // AGT-3505 adds one-shot creation (Start), claim (Claim), and completion
+        // (Continue). The read route only observes an existing job.
+        Assert.Equal(75, routes.Count);
+        foreach (var (path, admissionPath) in new[]
+        {
+            ("/api/v1/one-shot-jobs", ExecutionAdmissionPath.Start),
+            ("/api/v1/one-shot-jobs/claim", ExecutionAdmissionPath.Claim),
+            ("/api/v1/one-shot-jobs/complete", ExecutionAdmissionPath.Continue),
+        })
+        {
+            var jobRoute = Assert.Single(routes, route => route.RoutePattern.RawText == path);
+            Assert.Equal(admissionPath,
+                jobRoute.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path);
+        }
+        foreach (var path in new[]
+        {
+            "/api/v1/runs/{runId}/artifact-chunks/{sha256}",
+            "/api/v1/runs/{runId}/artifact-chunks",
+            "/api/v1/runs/{runId}/artifact-chunks/complete",
+        })
+        {
+            var chunkRoute = Assert.Single(routes, route => route.RoutePattern.RawText == path);
+            Assert.Equal(ExecutionAdmissionPath.PostStep,
+                chunkRoute.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path);
+        }
+        foreach (var (path, admissionPath) in new[]
+        {
+            ("/api/v1/review-packages/", ExecutionAdmissionPath.Review),
+            ("/api/v1/runners/{runnerId}/review-package-claims", ExecutionAdmissionPath.Claim),
+            ("/api/v1/review-packages/attempts/{attemptId}/lease/renew", ExecutionAdmissionPath.Review),
+            ("/api/v1/review-packages/attempts/{attemptId}/report", ExecutionAdmissionPath.Review),
+        })
+        {
+            var packageRoute = Assert.Single(routes, route => route.RoutePattern.RawText == path);
+            Assert.Equal(admissionPath,
+                packageRoute.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path);
+        }
         foreach (var operation in new[] { "capability", "exchange", "renew", "revoke", "deletion" })
             Assert.Contains(routes, route => route.RoutePattern.RawText ==
                 $"/api/v1/runs/{{runId}}/credentials/{operation}");
@@ -162,13 +201,13 @@ public sealed class PublicDemoExecutionProfileTests
         Assert.Equal(
             new Dictionary<ExecutionAdmissionPath, int>
             {
-                [ExecutionAdmissionPath.Claim] = 7,
-                [ExecutionAdmissionPath.Start] = 7,
-                [ExecutionAdmissionPath.Continue] = 20,
-                [ExecutionAdmissionPath.Review] = 2,
+                [ExecutionAdmissionPath.Claim] = 9,
+                [ExecutionAdmissionPath.Start] = 8,
+                [ExecutionAdmissionPath.Continue] = 21,
+                [ExecutionAdmissionPath.Review] = 5,
                 // Includes the Studio workbench orchestrator turn (AGT-2983).
                 [ExecutionAdmissionPath.Chat] = 5,
-                [ExecutionAdmissionPath.PostStep] = 24,
+                [ExecutionAdmissionPath.PostStep] = 27,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));

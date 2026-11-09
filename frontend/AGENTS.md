@@ -146,6 +146,20 @@ A divergence needs a `kind` (`popup-trigger`, `tree-chevron`, `staged-adoption`)
 and a written reason. Adopt the marker and move the file into `enforced` when you
 next touch a `staged-adoption` surface.
 
+## Status labels: one indicator, six tones (AGT-3402)
+
+A state label renders through `<app-status-indicator tone="..." label="...">`
+([`src/app/components/status-indicator/`](src/app/components/status-indicator/)):
+a tone icon (`aria-hidden`) in front of the visible text, tinted from the
+`--studio-status-*` tokens, optional `detail` tooltip, optional `compact`
+form. Tones are `success`, `warning`, `danger`, `info`, `neutral`, `running`.
+Map states to tones in a typed record or pure function next to the data, with
+unknown states falling back to `neutral`. Tags, counts, filters, lanes and
+banners are not states; the boundary and the mapping table live in
+[docs/quality/design/status-indicator.md](../docs/quality/design/status-indicator.md),
+and the legacy displays still to migrate are listed in
+[status-display-inventory.md](../docs/quality/design/status-display-inventory.md).
+
 ## Single-choice segmented controls
 
 Use `<app-segmented-control>` for compact pick-one-of-N choices. It owns the
@@ -154,13 +168,14 @@ option test IDs and tooltips in `SegmentedOption`. Pill `pane-tabs` keep tab
 semantics while sharing the same track and thumb mixins. The structure lint
 checks templates for hand-built selection buttons; each exception in
 [`scripts/segmented-baseline.json`](scripts/segmented-baseline.json) needs a
-written reason and a pinned button signature.
+written reason and a pinned control identity. The gate compares the number
+of matching buttons, so another control with the same class still fails.
 
 ## Side-sheet layout contract (`<app-orchestrator-side-sheet>`, `<app-kanban-filter-sidesheet>`)
 
 Both right-edge side sheets are **panels that push the workspace, not overlays that float over it**. The push behaviour rides on three coordinated pieces; break any one and the panel either floats, overlays, leaves a transparent gap, or stacks on the wrong side. Locked by the `open pushes studio-shell + inner panel fills host` test in `e2e/orchestrator-side-sheet-position.spec.ts`.
 
-> History: a third sheet, `<app-cli-usage-sheet>`, used to live here. Its quota glance and per-CLI session inventory were folded into the global Workspace Settings home (the CLI Management / "Usage caps" section, `features/cli/components/cli-admin-panel`) so CLI usage has a single hub; the loose sidesheet was retired. The status-bar "Usage" button now opens that home section instead of a parallel sidesheet.
+> History: a third sheet, `<app-cli-usage-sheet>`, used to live here. CLI Management and its session inventory live in Workspace Settings. The footer now shows subscription usage from `GET /api/usage/cockpit`; each entry opens the shared usage detail surface. New-task defaults, Settings, and the account menu live in the Studio header.
 
 1. **Flex parent.** In `app.html` the `vsCodeLayout` branch wraps `<app-studio-shell>` + the side sheets in `<div class="app-shell">`, styled `display: flex; flex-direction: row-reverse`. Row-reverse keeps the studio shell on the left (consuming the remaining space via `flex: 1 1 auto`) while the side sheets dock on the right edge in natural DOM order. Without the flex parent the sheets fall back to block layout and stack vertically.
 
@@ -192,6 +207,8 @@ The task-detail header carries a lane `<select>` (studio shell: `data-testid="st
 - the context-menu move targets are stripped by `overflowActionsFor`, which filters any move action whose target is in `ORCHESTRATOR_CONTROLLED_LANES` (the canonical set in `triage-actions.model.ts`).
 
 When you add a new manual-target lane or a new move affordance, route it through `ORCHESTRATOR_CONTROLLED_LANES` / `studioLaneOptions` rather than re-deriving the exclusion list inline, so the two surfaces stay in lockstep.
+
+**Board card menu (AGT-3588).** The card context menu (`buildCardCtxMenuItems`) lists every lane in `MANUAL_MOVE_LANES` by name (`Move to Ready`), never relative "forward/back" rows. `manualMoveSkipsExecution` (`triage-actions.model.ts`) drops Human review and Accepted for a card in a pre-execution lane, because that move would skip the run. Ready cards also get Move to top / Move to bottom. These reorder the card inside its own project's queue (`ready-queue-order.ts`), paint first, and offer Undo.
 
 **Pager position is stable across a lane move.** The Prev/Next pager iterates a snapshot captured on detail entry (`LanePagerService`), not the live lane. Moving the current task out of its lane shrinks that snapshot by one and auto-advances to the next captured slug in the *original* lane — the `X / N` context does not jump to the destination lane. See `advanceAfterMutation` / `removeAndAdvance`.
 
@@ -256,7 +273,7 @@ themes).
 
 The frontend is organised by **feature** under `app/features/<name>/` with a uniform shape: `models/`, `state/`, `components/`, `services/`, plus a top-level `index.ts` barrel. Cross-cutting capabilities (e.g. `polling/`) follow the same shape.
 
-**Hard rule for cross-feature imports**: import from the **barrel**, not from internal paths.
+**Hard rule for cross-feature imports**: import from the feature's public entrypoint (`index.ts`, `runtime.ts`, or `lazy.ts`), not from internal paths. Keep components used only after navigation out of startup entrypoints.
 
 ```ts
 // ✅ correct — uses the barrel
@@ -272,7 +289,7 @@ Why: the barrel is the feature's **public API**. Anything not exported from it i
 
 **Inside the same feature**, use relative imports (`./components/...`, `../services/...`) as usual — barrels are about the cross-feature boundary.
 
-When you add a new component or service that needs to be reachable from outside its feature, add it to that feature's `index.ts`. If you find yourself wanting a deep import from outside, that's a signal: either (a) the symbol belongs in the barrel, or (b) what you're trying to do should live inside the target feature, not at the call site.
+When you add a new component or service that needs to be reachable from outside its feature, export it from the entrypoint matching its load phase. If you find yourself wanting a deep import from outside, that's a signal: either (a) the symbol belongs in a public entrypoint, or (b) what you're trying to do should live inside the target feature, not at the call site.
 
 Existing deep imports across the codebase still work (they're just paths). Convert them to barrel imports as you touch the surrounding code; don't churn for its own sake.
 
@@ -337,8 +354,9 @@ directive in `src/app/components/tooltip/`. Keep `[cacTooltip]` inside library
 surfaces and at existing library integration points; do not recreate the old
 chat-owned tooltip controller or component in the host app.
 
-Host wiring (all in `src/app/app.config.ts`):
-- `provideCodingAgentChat({ taskReferences: TaskReferenceNavigationService, mediaLightbox: MediaLightboxService })` — markdown task-key auto-linking + click-to-enlarge images.
+Host wiring:
+- Markdown-capable views provide `TASK_REFERENCE_CHAT_PROVIDER` from `services/task-reference-chat.provider.ts`, which binds the public `CHAT_TASK_REFERENCE_PROVIDER` token to `TaskReferenceNavigationService` when the view opens. This keeps the Markdown renderer out of board startup.
+- `src/app/app.config.ts` provides `CHAT_MEDIA_LIGHTBOX` from `coding-agent-chat/shared` with `MediaLightboxService`. This is the same public host seam as `provideCodingAgentChat`.
 - `PROJECT_CHAT_DATA_SOURCE` → `ProjectChatDataSourceAdapter` (`services/project-chat-data-source.adapter.ts`) over `TaskService`'s `/api/projects/{p}/chat/*` endpoints.
 - `CHAT_HISTORY_CONFIRM` → `ConfirmDialogService` (structural match).
 

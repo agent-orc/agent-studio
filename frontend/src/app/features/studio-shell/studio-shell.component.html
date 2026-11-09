@@ -4,22 +4,14 @@
      data-testid="app-root"
      data-studio="root">
   <!-- ============ Titlebar ============ -->
-  <!-- Header usage cockpit (HUC-S4): the existing navigation row above the
-       usage row, one row on phone. Optional controls carry
+  <!-- One navigation row. Optional controls carry
        `data-nav-inline-from`; below that tier they live in the text-only
        More menu (`STUDIO_HEADER_NAV_ITEMS`). -->
-  <app-usage-cockpit-header #cockpitHeader
+  <app-studio-navigation-header #cockpitHeader
                             class="studio-titlebar"
                             data-testid="studio-titlebar"
-                            [snapshot]="headerCockpit.usage.snapshot()"
-                            [readFailed]="headerCockpit.usage.readFailed()"
-                            [selectedCliId]="headerCockpit.selectedCli()"
-                            [defaultCliId]="headerCockpit.defaultCli()"
-                            [openDetail]="headerCockpit.openRequest()"
-                            detailControls="studio-usage-detail"
                             [navItems]="headerCockpit.navItems"
-                            (navSelect)="headerCockpit.onNav($event, cockpitHeader)"
-                            (usageSelect)="headerCockpit.onUsage($event)">
+                            (navSelect)="headerCockpit.onNav($event, cockpitHeader)">
     <nav class="studio-titlebar__crumbs" aria-label="Breadcrumb" data-testid="studio-titlebar-crumbs"
          data-nav-inline-from="desktop">
       @if (activeWorkspaceName(); as workspaceName) {
@@ -49,24 +41,6 @@
                 [style.background]="activeProjectColor()"
                 aria-hidden="true">{{ activeProjectInitial() }}</span>
           <span class="studio-pill__label">{{ name }}</span>
-          <!-- Auto-pickup state sits inline behind the project name (per
-               user feedback) so the chip reads as one unit:
-               "<glyph> <name> <auto-dot> <count> <caret>". Clicking the
-               dot cycles auto-continuous ⇄ paused; clicking the rest of
-               the chip opens the project picker. `stopPropagation()`
-               keeps the two click targets independent. -->
-          <span class="studio-auto-toggle studio-auto-toggle--inline"
-                role="button"
-                tabindex="0"
-                [class.studio-auto-toggle--on]="autoModeFor(name) !== 'manual' && autoModeFor(name) !== 'paused'"
-                data-testid="studio-titlebar-auto-toggle"
-                [cacTooltip]="autoToggleTooltip(name)"
-                (click)="toggleAuto.emit(name); $event.stopPropagation()"
-                (keydown.enter)="toggleAuto.emit(name); $event.stopPropagation()"
-                (keydown.space)="toggleAuto.emit(name); $event.stopPropagation()">
-            <span class="studio-auto-toggle__dot" aria-hidden="true"></span>
-            <span class="studio-auto-toggle__label">{{ autoModeLabelFor(name) }}</span>
-          </span>
           <span class="studio-pill__count" aria-label="open tasks">{{ activeProjectTotalJobs() }}</span>
         } @else {
           <span class="studio-pill__glyph studio-pill__glyph--all" aria-hidden="true">
@@ -76,6 +50,18 @@
         }
         <span class="studio-pill__caret" aria-hidden="true">▾</span>
       </button>
+
+      @if (activeProjectName(); as name) {
+        <button type="button" class="studio-auto-toggle studio-auto-toggle--inline"
+                [class.studio-auto-toggle--on]="autoModeFor(name) !== 'manual' && autoModeFor(name) !== 'paused'"
+                data-testid="studio-titlebar-auto-toggle"
+                [attr.aria-label]="autoToggleTooltip(name)"
+                [cacTooltip]="autoToggleTooltip(name)"
+                (click)="toggleAuto.emit(name)">
+          <span class="studio-auto-toggle__dot" aria-hidden="true"></span>
+          <span class="studio-auto-toggle__label">{{ autoModeLabelFor(name) }}</span>
+        </button>
+      }
 
       <app-menu
         [items]="projectPickerItems()"
@@ -100,6 +86,8 @@
     </button>
 
     <div class="studio-titlebar__actions" data-testid="studio-titlebar-actions">
+      <app-task-defaults-control (cliChange)="defaultCliChange.emit($event)"
+                                 (modelChange)="defaultModelChange.emit($event)" />
       <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-environment"
               data-nav-inline-from="tablet" cacTooltip="Open live environment"
               (click)="environmentOpen.set(true)">Environment</button>
@@ -107,7 +95,7 @@
               class="studio-titlebar__chatbtn"
               data-testid="studio-titlebar-chat"
               data-nav-inline-from="tablet"
-              cacTooltip="Open project chat (orchestrator side sheet)"
+              cacTooltip="Open project chat"
               (click)="chatToggle.emit()">
         <app-studio-icon name="bot" [size]="14"></app-studio-icon>
         <span>Project Chat</span>
@@ -121,23 +109,37 @@
               (click)="toggleTheme()">
         <app-studio-icon [name]="theme() === 'light' ? 'moon' : 'sun'" [size]="14"></app-studio-icon>
       </button>
-      <button type="button" class="studio-titlebar__iconbtn" data-testid="studio-open-stalls" [attr.aria-label]="orchestratorFeed.openStallCount() + ' open stalls'" cacTooltip="Open stall events" (click)="openFeed()">
-        <app-studio-icon name="bell" [size]="14"></app-studio-icon> @if (orchestratorFeed.openStallCount()) { <strong class="studio-titlebar__stall-count">{{ orchestratorFeed.openStallCount() }}</strong> }
+      @if (orchestratorFeed.openStallCount()) {
+        <button type="button" class="studio-titlebar__iconbtn" data-testid="studio-open-stalls" [attr.aria-label]="orchestratorFeed.openStallCount() + ' open stalls'" cacTooltip="Open stall events" (click)="openFeed()">
+          <app-studio-icon name="bell" [size]="14"></app-studio-icon><strong class="studio-titlebar__stall-count">{{ orchestratorFeed.openStallCount() }}</strong>
+        </button>
+      }
+      <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-settings"
+              aria-label="Settings" cacTooltip="Workspace settings" (click)="toggleSettings.emit()">
+        <app-studio-icon name="settings" [size]="14" /><span>Settings</span>
       </button>
+      <app-account-control />
     </div>
-  </app-usage-cockpit-header>
+  </app-studio-navigation-header>
+  <app-workspace-quota-banner />
+  @defer (when headerCockpit.detailFocus() !== null) {
   <app-usage-detail-surface surfaceId="studio-usage-detail"
                             [snapshot]="headerCockpit.usage.snapshot()"
                             [focus]="headerCockpit.detailFocus()"
                             [returnTrigger]="headerCockpit.openRequest()?.section === 'details' ? 'details' : null"
                             [now]="headerCockpit.detailNow()"
                             (closed)="headerCockpit.closeDetail()" />
+  }
+  @defer (when globalSearchOpen()) {
   <app-global-search
     [tasks]="globalSearchTasks()"
     [open]="globalSearchOpen()"
     (openChange)="globalSearchOpen.set($event)"></app-global-search>
+  }
   @if (environmentOpen()) {
+    @defer (on immediate) {
     <app-environment-flow [tasks]="globalSearchTasks()" (closed)="environmentOpen.set(false)" />
+    }
   }
 
   <!-- ============ Body ============ -->
@@ -226,6 +228,8 @@
               <section class="studio-explorer">
                 <button type="button" class="studio-deployment-entry" data-testid="studio-open-deployment-dashboard"
                         (click)="openDeploymentDashboard()">Deployment dashboard</button>
+                <button type="button" class="studio-deployment-entry" data-testid="studio-open-structure"
+                        (click)="openStructure()">Structure</button>
                 <!-- F46: two-level workspace → project tree. The flat
                      project list is grouped under its registry workspace
                      by <app-explorer-workspace-tree>; the shell keeps
@@ -325,11 +329,6 @@
                 }
                 <app-section-header title="Tools" [divider]="true" />
                 <button type="button" class="studio-button studio-button--ghost"
-                        data-testid="studio-cli-open-usage"
-                        (click)="openUsageSheet.emit()">
-                  Open CLI usage sheet
-                </button>
-                <button type="button" class="studio-button studio-button--ghost"
                         (click)="openCliAdmin.emit()">
                   Open CLI admin
                 </button>
@@ -374,7 +373,9 @@
             @case ('chats') {
               <!-- The one place that lists orchestrator chat sessions. Rows
                    open in the orchestrator side sheet. -->
-              <app-chat-sessions-panel class="studio-chats" [projects]="knownProjectNames()" />
+              @defer (on immediate) {
+                <app-chat-sessions-panel class="studio-chats" [projects]="knownProjectNames()" />
+              }
             }
             @default {
               <app-empty-state>Panel not implemented.</app-empty-state>
@@ -405,28 +406,25 @@
           @for (t of tabs(); track tabKey(t)) {
             <div #studioTab
                  class="studio-tab"
-                 role="tab"
-                 tabindex="0"
                  draggable="true"
                  [class.studio-tab--active]="activeKey() === tabKey(t)"
                  [class.studio-tab--dragging]="draggingTabKey() === tabKey(t)"
                  [class.studio-tab--drop-before]="dragOverTabKey() === tabKey(t) && draggingTabKey() !== tabKey(t)"
-                 [attr.aria-selected]="activeKey() === tabKey(t) ? 'true' : 'false'"
-                 [attr.aria-label]="tabLabel(t)"
                  [appTooltip]="tabTooltip(t)"
                  [attr.data-testid]="'studio-tab-' + tabKey(t)"
                  [attr.data-tab-key]="tabKey(t)"
                  [attr.data-tab-kind]="t.kind"
-                 (click)="selectTab(tabKey(t))"
                  (auxclick)="onTabAuxClick($event, tabKey(t))"
-                 (keydown.enter)="selectTab(tabKey(t))"
-                 (keydown.space)="selectTab(tabKey(t)); $event.preventDefault()"
                  (contextmenu)="openTabContextMenu($event, tabKey(t))"
                  (dragstart)="onTabDragStart($event, tabKey(t))"
                  (dragover)="onTabDragOver($event, tabKey(t))"
                  (dragleave)="onTabDragLeave($event, tabKey(t))"
                  (drop)="onTabDrop($event, tabKey(t))"
                  (dragend)="onTabDragEnd($event)">
+              <button type="button" class="studio-tab__select" role="tab"
+                      [attr.aria-selected]="activeKey() === tabKey(t) ? 'true' : 'false'"
+                      [attr.aria-label]="tabLabel(t)"
+                      (click)="selectTab(tabKey(t))">
               @if (tabDotColor(t); as dot) {
                 <span class="studio-tab__dot"
                       [style.background]="dot"
@@ -440,10 +438,12 @@
                 <app-studio-icon [name]="icon" [size]="13"></app-studio-icon>
               }
               <span class="studio-tab__title">{{ tabVisibleTitle(t) }}</span>
-              <button type="button"
-                      class="studio-tab__close"
-                      aria-label="Close tab"
-                      (click)="closeTab(tabKey(t), $event)">×</button>
+              </button>
+            <button type="button"
+                    class="studio-tab__close"
+                    [attr.data-testid]="'studio-tab-close-' + tabKey(t)"
+                    [attr.aria-label]="'Close ' + tabLabel(t)"
+                    (click)="closeTab(tabKey(t), $event)">×</button>
             </div>
           }
           <!-- Invisible spacer that catches drops past the last tab so users can
@@ -478,6 +478,13 @@
             (openDeployment)="openProjectDeployment($event)"
             (openCard)="openDeliveryCard($event)" />
           }
+        }
+        @if (activeTab()?.kind === 'structure') {
+          @defer (when structureComponent()) {
+            @if (structureComponent(); as component) {
+              <ng-container *ngComponentOutlet="component; inputs: { projectName: $any(activeTab()).projectName ?? null }" />
+            }
+          } @placeholder { <p>Loading structure…</p> }
         }
         @if (activeTab() === null) {
           <app-studio-welcome

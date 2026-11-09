@@ -1,3 +1,8 @@
+{
+    # The private edge runs without root and cannot update host trust stores.
+    skip_install_trust
+}
+
 {$STUDIO_DOMAIN} {
     tls internal
     encode zstd gzip
@@ -8,6 +13,20 @@
         -Server
     }
     reverse_proxy frontend:8080 {
+        header_up X-Forwarded-For {client_ip}
+    }
+}
+
+{$QUALITY_DOMAIN} {
+    tls internal
+    encode zstd gzip
+    header {
+        >Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        >X-Content-Type-Options nosniff
+        >Referrer-Policy same-origin
+        -Server
+    }
+    reverse_proxy quality-studio:8080 {
         header_up X-Forwarded-For {client_ip}
     }
 }

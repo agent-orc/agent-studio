@@ -1,0 +1,40 @@
+<section class="quality-panel" data-testid="quality-studio-panel" aria-label="Quality Studio">
+  <header class="quality-panel__header">
+    <h2>Quality Studio</h2>
+    @if (status(); as current) { <span class="quality-panel__badge" [attr.data-state]="current.state">{{ stateLabel(current.state) }}</span> }
+  </header>
+  @if (status(); as current) {
+    @switch (current.state) {
+      @case ('not-connected') {
+        <p>Quality Studio is not connected. An Owner can set it up in Settings › Integrations.</p>
+        @if (owner()) { <button type="button" (click)="openSettings.emit()">Connect in Settings</button> }
+      }
+      @case ('unreachable') { <p>Quality Studio is unreachable. The repository jump is unavailable until the connection recovers.</p> }
+      @case ('version-too-old') { <p>This Quality Studio version has no Agent Studio sign-in. Ask an Owner to upgrade it.</p> }
+      @case ('not-registered') { <p>Not registered yet. Set or check the repository ID, then register the repository in Quality Studio.</p> }
+      @case ('ready') { <p>Repository {{ current.repositoryId }} is ready.</p> }
+    }
+    @if (owner() && current.configured) {
+      <div class="quality-panel__mapping">
+        <label for="quality-repository-id">Quality Studio repository ID</label>
+        <input id="quality-repository-id" data-testid="quality-studio-repository-id" type="text"
+          [value]="repositoryDraft()" (input)="repositoryDraft.set($any($event.target).value)" />
+        <button type="button" data-testid="quality-studio-save-repository" [disabled]="saving()"
+          (click)="saveRepository()">Save mapping</button>
+      </div>
+    }
+    @if (error()) { <p role="alert">{{ error() }}</p> }
+    <button type="button" data-testid="quality-studio-open" [disabled]="current.state !== 'ready'"
+      (click)="open()">Open in Quality Studio</button>
+  } @else { <p>Checking Quality Studio…</p> }
+    @if (registration?.status(); as registered) {
+      <div class="quality-panel__registration">
+        <p data-testid="quality-studio-state">{{ !registered.connected ? 'Not connected' : registered.state === 'registered' ? 'Registered' : 'Not registered' }}</p>
+        @if (registered.reason) { <p data-testid="quality-studio-reason">{{ registered.reason }}</p> }
+        @if (registered.connected && registered.state !== 'registered' && registration?.canRegister()) {
+          <button type="button" data-testid="quality-studio-register" [disabled]="registration?.busy()"
+            (click)="registration?.reconcile()">{{ registration?.busy() ? 'Registering…' : 'Register now' }}</button>
+        }
+      </div>
+    }
+</section>

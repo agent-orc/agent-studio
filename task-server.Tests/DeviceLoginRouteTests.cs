@@ -11,6 +11,8 @@ namespace TaskServer.Tests;
 /// <summary>
 /// AGT-3225: one device-login service serves the first-run checklist and the Access and
 /// Execution Hosts actions. A second session store or route family for the same flow fails here.
+/// The networked monolith maps the same routes over the shared <c>DeviceLoginSessions</c>
+/// (AGT-3432); its own route test pins that set.
 /// </summary>
 [Trait("Category", "Guard")]
 public sealed class DeviceLoginRouteTests
@@ -20,9 +22,11 @@ public sealed class DeviceLoginRouteTests
         "POST /api/v1/management/device-logins",
         "GET /api/v1/management/device-logins/{handle}",
         "POST /api/v1/management/device-logins/{handle}/cancel",
+        "POST /api/v1/management/device-logins/{handle}/code",
         "POST /api/v1/runners/{runnerId}/device-login/claim",
         "GET /api/v1/runners/{runnerId}/device-login/{handle}",
         "POST /api/v1/runners/{runnerId}/device-login/{handle}/instructions",
+        "POST /api/v1/runners/{runnerId}/device-login/{handle}/code",
         "POST /api/v1/runners/{runnerId}/device-login/{handle}/completion",
     ];
 
@@ -54,6 +58,8 @@ public sealed class DeviceLoginRouteTests
             @"Map(?:Get|Post|Put|Delete|Patch|Methods|Group)\s*\(\s*\$?@?""[^""]*(?:device-?logins?|device-auth)",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         var owner = Path.Combine("task-server", "DeviceLoginEndpoints.cs");
+        // The networked monolith maps the same family over the same DeviceLoginSessions (AGT-3432).
+        var monolith = Path.Combine("backend", "Features", "HostSetup", "HostSetupEndpoints.cs");
         var offenders = new[] { "backend", "task-server", "studio-bff", "operations-server", "runner" }
             .Select(folder => Path.Combine(root, folder))
             .Where(Directory.Exists)
@@ -62,6 +68,7 @@ public sealed class DeviceLoginRouteTests
                            && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
             .Select(path => Path.GetRelativePath(root, path))
             .Where(path => !string.Equals(path, owner, StringComparison.Ordinal)
+                           && !string.Equals(path, monolith, StringComparison.Ordinal)
                            && mapping.IsMatch(File.ReadAllText(Path.Combine(root, path))))
             .ToArray();
 

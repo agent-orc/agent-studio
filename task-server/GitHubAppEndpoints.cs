@@ -35,6 +35,8 @@ public sealed class AttemptRootGitHubAppVault(IAttemptRootSecretStore roots) : I
         => roots.WriteAsync(SecretsName, JsonSerializer.Serialize(secrets, Json), ct);
 
     public Task DeleteSecretsAsync(string actor, CancellationToken ct) => roots.DeleteAsync(SecretsName, ct);
+
+    public Task EnsureWritableAsync(CancellationToken ct) => roots.EnsureWritableAsync(ct);
 }
 
 /// <summary>The repository each project registered with this Task Server.</summary>
@@ -49,6 +51,30 @@ public sealed class TaskServerRepositoryCatalog(TaskServerStore store) : IRegist
             repositories.Add(new RegisteredRepository(project.Name, registration?.RepositoryUrl));
         }
         return repositories;
+    }
+}
+
+/// <summary>
+/// Keeps GitHub's own repository visibility current (AGT-3408), so review
+/// subjects and their retries never treat a repository GitHub reports as
+/// private as public. A failed listing keeps what GitHub reported before.
+/// </summary>
+public sealed class GitHubAppVisibilityRefreshService(
+    GitHubAppBroker broker, ILogger<GitHubAppVisibilityRefreshService> logger) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try { await broker.RefreshRepositoryVisibilityAsync(stoppingToken); }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
+            catch (Exception exception)
+            {
+                logger.LogWarning("github-app-repository-visibility refresh failed: {Reason}", exception.Message);
+            }
+            try { await Task.Delay(TimeSpan.FromSeconds(GitHubAppBroker.HostRefreshSeconds), stoppingToken); }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
+        }
     }
 }
 
@@ -93,7 +119,7 @@ public static class GitHubAppEndpoints
         })).RequireStudioRole(StudioUserRoles.Owner);
 
         app.MapPost("/api/v1/runners/{runnerId}/repository-credentials", (string runnerId, RepositoryCredentialsRequest request,
-            HttpContext context, GitHubAppBroker broker, CancellationToken ct) => Run(context, async () =>
+            HttpContext context, GitHubAppBroker broker, TaskServerStore store, CancellationToken ct) => Run(context, async () =>
         {
             var access = RepositoryAccess.Normalize(request.Access);
             if (access is null)
@@ -105,7 +131,12 @@ public static class GitHubAppEndpoints
             // host's role. A review host's principal is enrolled without this one.
             if (access == RepositoryAccess.Write && !principal.Scopes.Contains(TaskServerScopes.RepositoriesWrite))
                 return Error(StatusCodes.Status403Forbidden, "write-access-denied", "This host may only read repositories.");
-            var credentials = await broker.IssueAllAsync(access, runnerId, ct);
+            // SM-9: a host receives tokens only for the repositories of its bound projects.
+            var binding = await RunnerRouteAuthorization.BindingAsync(context, principal, store);
+            if (binding.Projects.IsEmpty) return Results.NoContent();
+            var repositories = await store.RunnerRepositoryUrlsAsync(binding.Projects, ct);
+            var credentials = await broker.IssueAllAsync(access, runnerId, ct,
+                admits: repository => repository.RepositoryUrl is { } url && repositories.Contains(url));
             return credentials.Count == 0
                 ? Results.NoContent()
                 : Results.Ok(new RepositoryCredentialsResponse(credentials, GitHubAppBroker.HostRefreshSeconds));

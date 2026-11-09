@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using AgentStudio.Drift;
 using AgentStudio.Runner;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Prompts;
 
@@ -72,6 +73,14 @@ public sealed partial class RuntimePromptService
         RecordCall(templateName, loaded, rendered, values, context);
         return rendered;
     }
+
+    /// <summary>
+    /// Renders like <see cref="Render"/> without recording a prompt call. A
+    /// builder uses it to measure the fixed part of a prompt before it fits a
+    /// slot into the remaining byte budget and renders for real.
+    /// </summary>
+    public string RenderUnrecorded(string templateName, IReadOnlyDictionary<string, string?> values)
+        => RenderContent(Load(templateName).Content, values);
 
     /// <summary>
     /// Records and returns a project-level pipeline prompt override. Legacy
@@ -306,9 +315,7 @@ public sealed partial class RuntimePromptService
             if (!string.IsNullOrWhiteSpace(taskRepo))
                 return Path.Combine(taskRepo, ".metadata", "prompt-overrides");
 
-            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            if (string.IsNullOrEmpty(local)) local = Path.GetTempPath();
-            return Path.Combine(local, "agent-taskboard", "prompt-overrides");
+            return LocalStateRoot.Combine("agent-taskboard", "prompt-overrides");
         }
     }
 

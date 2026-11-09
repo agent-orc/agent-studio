@@ -87,6 +87,9 @@
                   [cacTooltip]="'This follow-up was raised automatically from pipeline failure evidence.'">Created by Orchestrator</span>
           }
           <app-execution-location-badge [execution]="info().executionLocation" />
+          @if (info().attentionHolder; as holder) {
+            <span class="detail__meta-item" data-testid="detail-attention-holder">Attention: {{ holder }}</span>
+          }
         </div>
         <app-remote-dispatch-rejection [execution]="info().executionLocation" />
       }
@@ -153,13 +156,10 @@
   }
   @if (hasTriageActions()) {
     <div class="detail__triage" data-testid="triage-panel" data-triage-root>
+      @if (info().qualityStudioVerdict; as qualityVerdict) { <span data-testid="human-decision-quality-verdict">Quality: {{ qualityVerdict }}</span> }
       <span class="detail__triage-counter visually-hidden"
             data-testid="triage-counter"
             aria-live="polite">{{ triageCounterText() }}</span>
-      <!--
-        The landed-status ("Merged to develop") is intentionally NOT shown here.
-        The task's on-develop state lives once, at the task commit (git pane
-        landed ladder). The primary reads "Accept"; no separate pill is needed. -->
       @if (triagePrimary(); as primary) {
         <button type="button"
                 class="detail__triage-primary"

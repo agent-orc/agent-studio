@@ -10,6 +10,7 @@
   </header>
   @if (error()) { <p class="environment-flow__error" role="status">{{ error() }}</p> }
   <div class="environment-flow__body">
+    <app-server-readiness-panel />
     @if (flow(); as snapshot) {
       <section aria-labelledby="environment-throughput-title">
         <h2 id="environment-throughput-title">Today <small>UTC</small></h2>
@@ -52,7 +53,12 @@
           <article class="environment-flow__host" [class.environment-flow__host--alert]="host.status === 'offline' || host.status === 'degraded'" [attr.data-host-id]="host.id">
             <div class="environment-flow__host-head"><h3>{{ host.name }} @if (hostMarkers(host)) { <span class="environment-flow__marker">{{ hostMarkers(host) }} open</span> }</h3><span>{{ host.serviceRole ?? host.role }} · {{ host.status }}</span></div>
             <dl><div><dt>Load / core</dt><dd>{{ loadPerCore(host) }}</dd></div><div><dt>Memory used</dt><dd>{{ memory(host) }}</dd></div>
-              <div><dt>Slots used / total</dt><dd>{{ usedSlots(host) ?? '—' }} / {{ totalSlots(host) ?? '—' }}</dd></div>
+              <div><dt>Slots used / total</dt><dd>{{ usedSlots(host) ?? '—' }} / {{ totalSlots(host) ?? '—' }}
+                @if (host.claimLoadGate; as gate) {
+                  <app-status-indicator [tone]="gate.state === 'closed' ? 'warning' : 'success'"
+                    [label]="claimLoadGateLabel(gate)" [compact]="true" [wrap]="true" />
+                }
+              </dd></div>
               <div><dt>Free slots</dt><dd>{{ freeSlots(host) ?? '—' }}</dd></div></dl>
             <div class="environment-flow__host-detail"><strong>Provider auth</strong>
               @for (provider of auth(host); track provider.name) { <span>{{ provider.name }}: {{ provider.status }}</span> }

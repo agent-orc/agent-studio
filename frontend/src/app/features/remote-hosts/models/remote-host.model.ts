@@ -1,6 +1,7 @@
 import type { CliType } from '../../../models/task.model';
 import type { RunnerProjectPreflight } from '../../../models/task.model';
 import type { HostReleaseDrift, HostReleaseIdentity } from './host-release-drift';
+import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
 
 /**
  * Remote-hosts registry model (AGT-1921).
@@ -211,6 +212,9 @@ export interface RemoteHostCapabilityHealth {
   version?: string | null;
   identity?: string | null;
   detail?: string | null;
+  since?: string | null;
+  httpStatus?: number | null;
+  request?: string | null;
   /** Typed provider condition. A ready transient state retains last-good admission. */
   signal?: 'ok' | 'transient-auth-error' | 'rate-limited' | 'signed-out' | 'credentials-expiring' | 'binary-missing'
     | 'healthy' | 'indeterminate' | 'credential_invalid' | 'provider_incident' | 'quota_exhausted' | 'network_failure' | null;
@@ -234,6 +238,7 @@ export interface TaskServerTelemetrySnapshot {
   cpuCores: number;
   /** Live occupied slots reported by this runner process. */
   activeSlots?: number;
+  claimLoadGate?: ClaimLoadGate | null;
   diskFreeBytes?: number | null;
   diskTotalBytes?: number | null;
   taskServerConnectionStatus?: 'unknown' | 'reachable' | 'unreachable';
@@ -244,6 +249,15 @@ export interface TaskServerTelemetrySnapshot {
   taskServerConnectionLastError?: string | null;
   taskServerConnectionLastRecoveredAt?: string | null;
   reviewPlane?: ReviewPlaneBudget | null;
+}
+
+export interface ClaimLoadGate {
+  state: 'open' | 'closed';
+  loadPerCore: number;
+  threshold: number;
+  sustainedSeconds: number;
+  since: string | null;
+  activeSlots: number;
 }
 
 export interface ReviewPlaneBudget {
@@ -430,6 +444,7 @@ export interface RemoteHost {
   daemonState?: 'running' | 'read-only' | 'stopped';
   lastClaimAt?: string | null;
   activeTaskCount?: number;
+  claimLoadGate?: ClaimLoadGate | null;
   availableSlots?: number;
   retireRequestedAt?: string | null;
   capabilityHealth?: readonly RemoteHostCapabilityHealth[];
@@ -522,6 +537,19 @@ export function hostStatusTone(status: HostHeartbeatStatus): HostStatusTone {
   }
 }
 
+/**
+ * Host heartbeat on the shared status indicator. Idle, draining and retired
+ * hosts stay neutral: they are settled operator choices, not outcomes (R4).
+ */
+export function hostStatusIndicatorTone(status: HostHeartbeatStatus): StatusTone {
+  switch (status) {
+    case 'online': return 'success';
+    case 'degraded': return 'warning';
+    case 'offline': return 'danger';
+    default: return 'neutral';
+  }
+}
+
 /** Human label for a host role. */
 export function hostRoleLabel(role: HostRole): string {
   return role === 'local' ? 'Local' : 'Remote';
@@ -602,11 +630,18 @@ export type TaskServerRouteStatus = 'reachable' | 'degraded' | 'unreachable' | '
 export function taskServerRouteStatus(host: RemoteHost): TaskServerRouteStatus {
   if (host.status === 'retired') return 'unknown';
   const capability = host.capabilityHealth?.find(item => item.key === 'task-server:connectivity');
-  if (!capability) return host.taskServerConnection?.status ?? 'unknown';
+  if (!capability) {
+    const connection = host.taskServerConnection;
+    if (!connection) return 'unknown';
+    if (connection.status !== 'unreachable') return connection.status;
+    const first = Date.parse(connection.failureStartedAt ?? '');
+    const observed = Date.parse(connection.observedAt ?? '');
+    return connection.consecutiveFailures >= 3 && Number.isFinite(first)
+      && Number.isFinite(observed) && observed - first >= 60_000 ? 'unreachable' : 'reachable';
+  }
   if (!capability.isFresh || capability.advertisedStatus !== 'ready'
       || capability.healthState === 'draining') return 'unreachable';
   if (capability.healthState === 'suspect' || capability.healthState === 'half-open') return 'degraded';
-  if (host.taskServerConnection?.status === 'unreachable') return 'unreachable';
   return 'reachable';
 }
 
@@ -615,8 +650,8 @@ export function taskServerRouteDetail(host: RemoteHost): string {
   if (capability && !capability.isFresh) {
     return `No connectivity advertisement has arrived since ${capability.advertisedAt}. Check the tunnel or Task Server route.`;
   }
-  return host.taskServerConnection?.lastError
+  return capability?.detail
+    || host.taskServerConnection?.lastError
     || capability?.reason
-    || capability?.detail
     || 'No route observation has been reported yet.';
 }

@@ -1,25 +1,13 @@
-// Status bar layout:
-// - left side owns the live status + per-CLI quota strip and may use the
-//   middle space aggressively;
-// - the tiny center group only preserves the DOM contract from earlier
-//   tests and acts as a compact gutter;
-// - the right side is a fixed dock for actions + defaults.
-
 app-status-bar {
   display: block;
   flex: 1 1 auto;
   min-width: 0;
-  // Stretch across the projected studio-statusbar footer so the right
-  // dock can anchor to the actual edge. ViewEncapsulation.None leaves
-  // `:host` untransformed, so target the element explicitly.
   width: 100%;
 }
 
 .statusbar {
-  // Shared sizing tokens. One source of truth for every chip in the bar:
-  // status items, quota cards and the default CLI/model picker.
-  --statusbar-bar-height: 24px;
-  --statusbar-item-height: 20px;
+  --statusbar-bar-height: 32px;
+  --statusbar-item-height: 28px;
   --statusbar-item-pad-x: 8px;
   --statusbar-item-radius: 5px;
   --statusbar-item-gap-inner: 5px;
@@ -32,13 +20,13 @@ app-status-bar {
   gap: var(--studio-spacing-1);
   padding: 0 var(--studio-spacing-2);
   height: var(--statusbar-bar-height);
-  background: var(--studio-bg-activitybar, #181825);
-  border-top: 1px solid var(--studio-border, rgba(255, 255, 255, 0.06));
+  background: var(--studio-bg-activitybar);
+  border-top: 1px solid var(--studio-border);
   font-size: var(--statusbar-font-size);
   line-height: 1;
-  color: var(--studio-fg-dim, rgba(255, 255, 255, 0.70));
+  color: var(--studio-fg-dim);
   letter-spacing: 0;
-  overflow: hidden;
+  overflow: visible;
   white-space: nowrap;
 }
 
@@ -51,60 +39,25 @@ app-status-bar {
 }
 .statusbar__group--left  {
   flex: 1 1 auto;
-  overflow: hidden;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
-.statusbar__group--center {
-  flex: 0 0 var(--studio-spacing-1);
-  min-width: var(--studio-spacing-1);
-}
+.statusbar__group--left::-webkit-scrollbar { display: none; }
 .statusbar__group--right {
-  flex: 0 0 auto;
-  justify-content: flex-end;
-  gap: var(--studio-spacing-1);
+  flex: 0 1 auto;
+  max-width: 65%;
+  margin-inline-start: auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+  gap: var(--studio-spacing-2);
 }
-
-.statusbar__quota {
-  display: flex;
-  align-items: center;
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.statusbar__quota app-usage-hover-panel {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.statusbar__quota .uhp,
-.statusbar__quota .hquota {
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-}
-
-.statusbar__quota .uhp app-header-quota {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.statusbar__quota .uhp__chat-trigger { flex: 0 0 auto; }
-.statusbar__quota .uhp__chat { white-space: normal; }
-
-.statusbar .statusbar__quota .hquota {
-  display: flex;
-  gap: var(--studio-spacing-1);
-}
-
-.statusbar .statusbar__quota .hquota__card {
-  cursor: pointer;
-  flex: 0 0 auto;
-  min-width: 0;
-  gap: var(--studio-spacing-1);
-  padding: 0 var(--studio-spacing-2);
-}
+.statusbar__group--right::-webkit-scrollbar { display: none; }
+.statusbar__usage-entry, .statusbar__host-problem { flex: 0 0 auto; }
+.statusbar__usage-entry strong { color: var(--studio-text-primary); font-weight: 600; }
+.statusbar__usage-entry span + span::before { content: '·'; margin-inline-end: var(--studio-spacing-1); color: var(--studio-text-muted); }
+.statusbar__age { color: var(--studio-text-muted); }
+.statusbar__host-problem { color: var(--severity-warn); }
+.statusbar__usage app-usage-alarm-status { position: absolute; width: 0; height: 0; overflow: hidden; }
 
 .statusbar__item {
   display: inline-flex;
@@ -124,14 +77,20 @@ app-status-bar {
   white-space: nowrap;
   min-width: 0;
 }
-.statusbar__item--ro { color: rgba(255, 255, 255, 0.55); }
+.statusbar__item--ro { color: var(--studio-fg-muted); }
+.statusbar__item.statusbar__usage-entry,
+.statusbar__item.statusbar__host-problem { border: 1px solid var(--studio-border); }
 .statusbar__item--btn {
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
 .statusbar__item--btn:hover {
-  background: rgba(255, 255, 255, 0.10);
-  color: #f8fafc;
+  background: var(--studio-bg-hover);
+  color: var(--studio-text-primary);
+}
+.statusbar__item--btn:focus-visible {
+  outline: 2px solid var(--studio-accent-strong);
+  outline-offset: -2px;
 }
 .statusbar__item--btn:disabled {
   opacity: 0.5;
@@ -143,8 +102,8 @@ app-status-bar {
 // reverting to the translucent hover wash. Theme-aware via accent tokens.
 .statusbar__item--btn.statusbar__item--active,
 .statusbar__item--btn.statusbar__item--active:hover {
-  background: var(--studio-accent, #d97757);
-  color: var(--studio-on-accent, #1a1a1a);
+  background: var(--studio-accent);
+  color: var(--studio-on-accent);
 }
 .statusbar__item--active .statusbar__icon { color: inherit; }
 
@@ -215,124 +174,26 @@ app-status-bar {
   display: inline-block;
   width: 1px;
   height: 14px;
-  background: rgba(255, 255, 255, 0.10);
+  background: var(--studio-border);
   margin: 0 var(--studio-spacing-1);
   flex: 0 0 auto;
 }
 
-.statusbar__defaults {
-  min-width: 0;
-}
-
-.statusbar__defaults .model-selector {
-  height: var(--statusbar-item-height);
-  padding: 0 var(--statusbar-item-pad-x);
-  border-radius: var(--statusbar-item-radius);
-  font-size: var(--statusbar-font-size);
-  line-height: 1;
-  color: inherit;
-}
-
-.statusbar__defaults .model-selector__icon {
-  font-size: 12px;
-}
-
-.statusbar__defaults .model-selector__name {
-  max-width: 15ch;
-}
-
-@container statusbar (width <= 1320px) {
-  .statusbar .uhp__chat-trigger {
-    min-width: var(--statusbar-item-height);
-    padding-inline: var(--studio-spacing-1);
-    font-size: 0;
-  }
-
-  .statusbar .uhp__chat-trigger::before {
-    content: '◎';
-    font-size: var(--statusbar-font-size);
-  }
-
-  .statusbar .hquota__bar {
-    display: none;
-  }
-
-  .statusbar .hquota__card {
-    gap: var(--studio-spacing-1);
-    padding-inline: var(--studio-spacing-1);
-  }
-
-  .statusbar .hquota__value {
-    min-width: auto;
-  }
-}
-
-@container statusbar (width <= 940px) {
-  .statusbar .hquota__label,
-  .statusbar .hquota__tag {
-    display: none;
-  }
-
-  .statusbar .hquota__metric {
-    gap: 0;
-  }
-
-  .statusbar__defaults .model-selector__name {
-    max-width: 10ch;
-  }
-}
-
-@container statusbar (width <= 760px) {
-  .statusbar__group--right .statusbar__item {
-    width: var(--statusbar-item-height);
-    padding-inline: 0;
-  }
-
-  .statusbar__group--right .statusbar__item > span:last-child {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
-  .statusbar__defaults .model-selector__tags {
-    display: none;
-  }
-}
-
 @container statusbar (width <= 560px) {
-  .statusbar {
-    padding-inline: var(--studio-spacing-1);
-  }
-
+  .statusbar { padding-inline: var(--studio-spacing-1); }
   .statusbar__group--left .statusbar__review,
-  .statusbar__group--left .statusbar__sep {
-    display: none;
-  }
-
-  .statusbar .hquota {
-    gap: var(--studio-spacing-1);
-  }
-
-  .statusbar .hquota__card {
-    padding-inline: var(--studio-spacing-1);
-  }
-
-  .statusbar__defaults .model-selector__name {
-    display: none;
-  }
+  .statusbar__sep { display: none; }
+  .statusbar__group--left { flex: 0 0 auto; max-width: 40%; }
+  .statusbar__group--right { flex: 1 1 auto; max-width: none; }
+}
+@container statusbar (width <= 460px) {
+  .statusbar__group--left .statusbar__automation { display: none; }
+  .statusbar__item { padding-inline: var(--studio-spacing-1); }
 }
 
-@container statusbar (width <= 460px) {
-  .statusbar__group--left .statusbar__automation,
-  .statusbar .hquota {
-    display: none;
-  }
-
-  .statusbar__item {
-    padding-inline: var(--studio-spacing-1);
+@media (max-width: 600px) {
+  .statusbar { height: var(--studio-target-coarse-min); }
+  .statusbar__usage-entry, .statusbar__host-problem, .statusbar__item {
+    min-height: var(--studio-target-coarse-min);
   }
 }

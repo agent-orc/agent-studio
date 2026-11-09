@@ -1,5 +1,6 @@
 using AgentStudio.Git;
 using AgentStudio.Pipeline;
+using AgentStudio.Shared;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -74,6 +75,18 @@ public sealed class BatchGatePolicyTests
             Sha, Scope, first.Members.Select(x => x.TaskKey == "a" ? x with { DeliveryEpoch = 2 } : x).ToArray()));
     }
 
+    [Fact]
+    public void Proven_green_member_is_selected_first_on_its_tested_base()
+    {
+        var options = Enabled with { CloseSize = 2, MaximumSize = 2 };
+        var members = new[] { Subject("old", -3), Subject("middle", -2), Subject("green", -1) };
+
+        var formed = BatchGatePolicy.Form(members, Scope, Sha, options, Now,
+            priorityKeys: new HashSet<string>(["green"], StringComparer.Ordinal));
+
+        Assert.Equal(["green", "old"], formed.Manifest!.Members.Select(member => member.TaskKey));
+    }
+
     [Theory]
     [InlineData(8, 2, 0, false)]
     [InlineData(8, 3, 0, true)]
@@ -94,11 +107,126 @@ public sealed class BatchGatePolicyTests
     [Fact]
     public void FormationTriggersHonorDeadlinePressureAndLoneFallback()
     {
-        Assert.Null(BatchGatePolicy.Form([Subject("a")], Scope, Sha, Enabled, Now).Manifest);
-        Assert.True(BatchGatePolicy.Form([Subject("a", -16)], Scope, Sha, Enabled, Now).UsePerTaskGate);
-        Assert.NotNull(BatchGatePolicy.Form([Subject("a"), Subject("b")], Scope, Sha, Enabled, Now,
+        var code = Enabled with { Scope = "code" };
+        BatchGateSubject Code(string key, int minute = 0) => Subject(key, minute) with { DocumentationOnly = false };
+        Assert.Null(BatchGatePolicy.Form([Code("a")], Scope, Sha, code, Now).Manifest);
+        Assert.False(BatchGatePolicy.Form([Code("a")], Scope, Sha, code, Now).UsePerTaskGate);
+        var agedSolo = BatchGatePolicy.Form([Code("a", -16)], Scope, Sha, code, Now);
+        Assert.True(agedSolo.UsePerTaskGate);
+        Assert.Equal("oldest eligible card reached deadline without a batch partner", agedSolo.Reason);
+        Assert.NotNull(BatchGatePolicy.Form([Code("a"), Code("b")], Scope, Sha, code, Now,
             reviewQueueLength: 12).Manifest);
-        Assert.Null(BatchGatePolicy.Form([Subject("a"), Subject("b")], Scope, Sha, Enabled, Now).Manifest);
+        Assert.Null(BatchGatePolicy.Form([Code("a"), Code("b")], Scope, Sha, code, Now).Manifest);
+    }
+
+    [Fact]
+    public void Threshold_does_not_form_below_configured_minimum_even_for_documentation()
+    {
+        var options = Enabled with { MinimumSize = 3, CloseSize = 2 };
+        var result = BatchGatePolicy.Form([Subject("a"), Subject("b")],
+            Scope, Sha, options, Now);
+
+        Assert.Null(result.Manifest);
+        Assert.False(result.UsePerTaskGate);
+        Assert.Equal("eligible members below minimum batch size", result.Reason);
+    }
+
+    [Fact]
+    public void Due_single_card_waits_for_a_partner_while_the_project_gate_is_busy()
+    {
+        var options = Enabled with { Scope = "code", DeadlineMinutes = 45 };
+        var due = Subject("a", -46) with { DocumentationOnly = false };
+
+        var held = BatchGatePolicy.Form([due], Scope, Sha, options, Now,
+            projectGateBusy: true);
+
+        Assert.Null(held.Manifest);
+        Assert.False(held.UsePerTaskGate);
+        Assert.True(BatchGatePolicy.Form([due], Scope, Sha, options, Now).UsePerTaskGate);
+    }
+
+    [Fact]
+    public void Forced_close_below_minimum_explains_its_per_task_fallback()
+    {
+        var code = Enabled with { Scope = "code", MinimumSize = 2 };
+        var formed = BatchGatePolicy.Close(
+            [Subject("a") with { DocumentationOnly = false }], Scope, Sha,
+            code, ["a"], Now);
+
+        Assert.True(formed.UsePerTaskGate);
+        Assert.Equal("close requested below minimum batch size", formed.Reason);
+    }
+
+    [Theory]
+    [InlineData("documentation")]
+    [InlineData("code")]
+    public void DocumentationOnlyCardClosesAtOnceInsteadOfWaitingForItsDeadline(string scope)
+    {
+        // AGT-3414: its gate runs no test, so a partner saves no suite.
+        var options = Enabled with { Scope = scope, MinimumSize = 1 };
+        var lone = BatchGatePolicy.Form([Subject("a")], Scope, Sha, options, Now);
+        Assert.Equal(["a"], lone.Manifest!.Members.Select(member => member.TaskKey));
+        Assert.False(lone.UsePerTaskGate);
+        // Past the deadline the lone card keeps its per-task gate, at the same level.
+        Assert.True(BatchGatePolicy.Form([Subject("a", -16)], Scope, Sha, options, Now).UsePerTaskGate);
+        var pair = BatchGatePolicy.Form([Subject("a"), Subject("b", sequence: 2)], Scope, Sha, options, Now);
+        Assert.Equal(["a", "b"], pair.Manifest!.Members.Select(member => member.TaskKey));
+    }
+
+    [Fact]
+    public void DocumentationOnlyCardStillWaitsForAPartnerBehindAGateBacklog()
+    {
+        // AGT-3219 still holds: a backlogged gate queue holds a lone card for a partner.
+        var held = BatchGatePolicy.Form([Subject("a")], Scope, Sha, Enabled, Now,
+            reviewQueueLength: 1, gateBacklog: true);
+        Assert.False(held.UsePerTaskGate);
+        Assert.Null(held.Manifest);
+    }
+
+    [Fact]
+    public void DocumentationOnlyCardKeepsTheHoldOnARedBase()
+    {
+        var held = BatchGatePolicy.Form([Subject("a")], Scope, Sha, Enabled, Now, baseRed: true);
+        Assert.Null(held.Manifest);
+        Assert.False(held.UsePerTaskGate);
+    }
+
+    [Fact]
+    public void MixedCodeSetKeepsTheThresholds()
+    {
+        var code = Enabled with { Scope = "code" };
+        var mixed = BatchGatePolicy.Form([Subject("a"), Subject("b", sequence: 2) with { DocumentationOnly = false }],
+            Scope, Sha, code, Now);
+        Assert.Null(mixed.Manifest);
+        Assert.False(mixed.UsePerTaskGate);
+    }
+
+    [Fact]
+    public void GateTestLevel_DocumentationSubjectsWithADocumentationDiffSkipTheTests()
+        => Assert.Equal(TestExecutionLevels.BuildOnly, BatchGatePolicy.GateTestLevel(
+            [Subject("a"), Subject("b")], ["docs/concepts/batch.html", "README.md"], buildStepPlanned: true));
+
+    [Fact]
+    public void GateTestLevel_AnyCodeSubjectRunsTheCompleteSuite()
+        => Assert.Equal(TestExecutionLevels.Full, BatchGatePolicy.GateTestLevel(
+            [Subject("a"), Subject("b") with { DocumentationOnly = false }], ["docs/a.md"], buildStepPlanned: true));
+
+    [Theory]
+    [InlineData("backend/Program.cs")]
+    [InlineData(".agent-studio/project.yml")]
+    [InlineData("prompts/runtime/review.md")]
+    public void GateTestLevel_AMixedGatedDiffRunsTheCompleteSuiteDespiteTheFlag(string product)
+        => Assert.Equal(TestExecutionLevels.Full, BatchGatePolicy.GateTestLevel(
+            [Subject("a")], ["docs/a.md", product], buildStepPlanned: true));
+
+    [Fact]
+    public void GateTestLevel_FailsClosed()
+    {
+        Assert.Equal(TestExecutionLevels.Full, BatchGatePolicy.GateTestLevel([Subject("a")], null, true));
+        Assert.Equal(TestExecutionLevels.Full, BatchGatePolicy.GateTestLevel([Subject("a")], [], true));
+        Assert.Equal(TestExecutionLevels.Full, BatchGatePolicy.GateTestLevel([], ["docs/a.md"], true));
+        // Nothing but tests to run: the build-only level would verify nothing.
+        Assert.Equal(TestExecutionLevels.Full, BatchGatePolicy.GateTestLevel([Subject("a")], ["docs/a.md"], false));
     }
 
     [Theory]

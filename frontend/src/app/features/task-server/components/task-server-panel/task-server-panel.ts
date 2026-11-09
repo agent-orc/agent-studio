@@ -3,13 +3,16 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { TaskServerService } from '../../services/task-server.service';
 import { TaskServerClientsCardComponent } from '../task-server-clients-card/task-server-clients-card';
 import { TaskServerManagementPanelComponent } from '../task-server-management-panel/task-server-management-panel';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import {
+  evidenceIndicatorTone,
   evidenceStateLabel,
   evidenceStateTone,
   formatBytes,
   formatRelativeTime,
   healthLabel,
   healthTone,
+  indicatorTone,
   phaseLabel,
   type ManagementActionKind,
 } from '../../models/task-server.model';
@@ -33,12 +36,20 @@ import {
 @Component({
   selector: 'app-task-server-panel',
   standalone: true,
-  imports: [TaskServerClientsCardComponent, TaskServerManagementPanelComponent, TooltipDirective],
+  imports: [TaskServerClientsCardComponent, TaskServerManagementPanelComponent, TooltipDirective, StatusIndicatorComponent],
   templateUrl: './task-server-panel.html',
   styleUrl: './task-server-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class TaskServerPanelComponent implements OnInit, OnDestroy {
+  readonly migrationTone = (state: string): StatusTone => {
+    switch (state.toLowerCase()) {
+      case 'running': return 'running';
+      case 'failed': return 'danger';
+      case 'completed': return 'success';
+      default: return 'neutral';
+    }
+  };
   private readonly service = inject(TaskServerService);
 
   readonly status = this.service.status;
@@ -71,6 +82,8 @@ export class TaskServerPanelComponent implements OnInit, OnDestroy {
   readonly healthTone = healthTone;
   readonly evidenceStateLabel = evidenceStateLabel;
   readonly evidenceStateTone = evidenceStateTone;
+  readonly evidenceIndicatorTone = evidenceIndicatorTone;
+  readonly indicatorTone = indicatorTone;
 
   ngOnInit(): void {
     this.service.ensureLoaded();

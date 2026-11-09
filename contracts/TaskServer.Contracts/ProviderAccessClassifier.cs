@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace AgentStudio.TaskServer.Contracts;
@@ -11,6 +12,7 @@ public enum ProviderAccessEvidenceKind
     RequestRejected,
     TransientFailure,
     IndeterminateFailure,
+    ModelCapacity,
 }
 
 public sealed record ProviderAccessEvidence(
@@ -29,6 +31,61 @@ public static partial class ProviderAccessClassifier
 {
     public static readonly TimeSpan UnknownLimitRetry = TimeSpan.FromMinutes(10);
 
+    /// <summary>
+    /// Classifies a CLI run using only provider error frames and process stderr.
+    /// Other stdout frames carry agent and tool content, including arbitrary
+    /// source files and command output, so they cannot diagnose provider access.
+    /// Status commands continue to use <see cref="Classify"/> directly.
+    /// </summary>
+    public static ProviderAccessEvidence ClassifyRun(
+        int exitCode,
+        string? stdout,
+        string? stderr,
+        bool completedSuccessfully = false,
+        DateTimeOffset? observedAt = null,
+        TimeZoneInfo? localZone = null)
+    {
+        if (exitCode == 0 && completedSuccessfully)
+            return new ProviderAccessEvidence(
+                ProviderAccessEvidenceKind.Authenticated,
+                "The provider completed the turn successfully.");
+
+        var providerErrors = new List<string>();
+        foreach (var line in (stdout ?? string.Empty).Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object
+                    || !root.TryGetProperty("type", out var typeProperty)
+                    || typeProperty.ValueKind != JsonValueKind.String)
+                    continue;
+                var type = typeProperty.GetString();
+                // Quota telemetry is a provider frame. An allowed warning is
+                // counter-evidence for nearby limit prose on stderr.
+                var isProviderError = type is "error" or "turn.failed" or "response.failed" or "rate_limit_event";
+                if (type == "result")
+                {
+                    isProviderError = root.TryGetProperty("is_error", out var isError)
+                                      && isError.ValueKind == JsonValueKind.True;
+                    if (root.TryGetProperty("subtype", out var subtype)
+                        && subtype.ValueKind == JsonValueKind.String
+                        && subtype.GetString()?.StartsWith("error", StringComparison.OrdinalIgnoreCase) == true)
+                        isProviderError = true;
+                }
+                if (isProviderError) providerErrors.Add(line);
+            }
+            catch (JsonException)
+            {
+                // Unstructured stdout is agent content, not provider evidence.
+            }
+        }
+
+        return Classify(exitCode, string.Join('\n', providerErrors), stderr,
+            observedAt: observedAt, localZone: localZone);
+    }
+
     private static readonly string[] RateLimitSignals =
     [
         "hit your session limit",
@@ -42,8 +99,6 @@ public static partial class ProviderAccessClassifier
         "rate_limit_exceeded",
         "insufficient_quota",
         "too many requests",
-        "model is at capacity",
-        "at capacity",
         "status=rejected",
         "· rejected ·",
     ];
@@ -92,6 +147,8 @@ public static partial class ProviderAccessClassifier
         "refresh race",
     ];
 
+    private static readonly string[] ModelCapacitySignals = ["model is at capacity", "selected model is at capacity"];
+
     public static ProviderAccessEvidence Classify(
         int exitCode,
         string? stdout,
@@ -127,6 +184,17 @@ public static partial class ProviderAccessClassifier
                 rejection.Message);
         }
 
+        // Retry diagnostics can contain HTTP 429 or "too many requests" after
+        // the provider has already identified the selected model as full.
+        // That is a model-scoped refusal unless a reset time identifies an
+        // actual account quota window.
+        if (Contains(text, ModelCapacitySignals)
+            && ParseResetAt(text, observedAt ?? DateTimeOffset.UtcNow, localZone ?? TimeZoneInfo.Local) is null)
+            return new ProviderAccessEvidence(
+                ProviderAccessEvidenceKind.ModelCapacity,
+                FirstMatchingLine(text, ModelCapacitySignals, "selected model is at capacity"),
+                ParseModelRetryAt(text, observedAt ?? DateTimeOffset.UtcNow));
+
         var explicitRefusal = Contains(text, RateLimitSignals) || Http429Regex().IsMatch(text);
         if (explicitRefusal)
         {
@@ -147,6 +215,12 @@ public static partial class ProviderAccessClassifier
                 reset ?? now.Add(UnknownLimitRetry),
                 reset is not null);
         }
+
+        if (Contains(text, ModelCapacitySignals))
+            return new ProviderAccessEvidence(
+                ProviderAccessEvidenceKind.ModelCapacity,
+                FirstMatchingLine(text, ModelCapacitySignals, "selected model is at capacity"),
+                ParseModelRetryAt(text, observedAt ?? DateTimeOffset.UtcNow));
 
         if (Contains(text, AuthenticationSignals)
             || ExplicitHttp401Regex().IsMatch(text)
@@ -230,6 +304,22 @@ public static partial class ProviderAccessClassifier
         return new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(localReset, localZone));
     }
 
+    private static DateTimeOffset? ParseModelRetryAt(string text, DateTimeOffset observedAt)
+    {
+        var match = ModelRetryRegex().Match(text);
+        if (!match.Success || !int.TryParse(match.Groups["amount"].Value,
+                NumberStyles.None, CultureInfo.InvariantCulture, out var amount)
+            || amount <= 0) return null;
+        var unit = match.Groups["unit"].Value.ToLowerInvariant();
+        var delay = unit[0] switch
+        {
+            'h' => TimeSpan.FromHours(amount),
+            'm' => TimeSpan.FromMinutes(amount),
+            _ => TimeSpan.FromSeconds(amount),
+        };
+        return observedAt.Add(delay);
+    }
+
     private static string FirstMatchingLine(
         string text,
         IEnumerable<string> signals,
@@ -269,4 +359,7 @@ public static partial class ProviderAccessClassifier
 
     [GeneratedRegex(@"\bresets?(?:\s+(?:at|on))?\s+(?<value>\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ClockResetRegex();
+
+    [GeneratedRegex(@"\bretry\s+(?:after|in)\s+(?<amount>\d{1,5})\s*(?<unit>seconds?|minutes?|hours?|s|m|h)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex ModelRetryRegex();
 }

@@ -101,6 +101,14 @@ public static class ServiceAccountOrigins
     /// valid only while the user who created it stays active.
     /// </summary>
     public const string ApiToken = "api-token";
+
+    /// <summary>
+    /// The operator agent (security model SM-1): a service account the Owner
+    /// creates in the Access area whose only credentials are child sessions,
+    /// each with its own <c>oas.*</c> bearer of at most eight hours that only
+    /// the Owner starts and renews. It holds no <c>sat.*</c> token.
+    /// </summary>
+    public const string OperatorAgent = "operator-agent";
 }
 
 /// <summary>A non-human principal with its own API tokens, scopes, expiry, and revocation.</summary>
@@ -115,6 +123,37 @@ public sealed record ServiceAccount
     public string? Origin { get; init; }
     public DateTime? DisabledAt { get; init; }
     public List<ServiceAccountToken> Tokens { get; init; } = [];
+    /// <summary>Operator agent sessions; <c>null</c> for every other origin.</summary>
+    public List<OperatorAgentSession>? Sessions { get; init; }
+    /// <summary><see cref="ServiceAccountPurposes.KillSwitchDrill"/> for a drill's test principal; <c>null</c> otherwise.</summary>
+    public string? Purpose { get; init; }
+}
+
+public static class ServiceAccountPurposes
+{
+    /// <summary>The test principal a kill switch drill creates and ends (security model SM-2); hidden from the operator list.</summary>
+    public const string KillSwitchDrill = "kill-switch-drill";
+}
+
+/// <summary>
+/// One interactive operator agent session: its own bearer (hash only), the
+/// Owner who started it, and an expiry of at most eight hours that only the
+/// Owner extends.
+/// </summary>
+public sealed record OperatorAgentSession
+{
+    public required string Id { get; init; }
+    public required string SecretHash { get; init; }
+    public string? Name { get; init; }
+    public DateTime CreatedAt { get; init; }
+    /// <summary>The Owner's user id; every action of the session is delegated by this person.</summary>
+    public required string CreatedBy { get; init; }
+    public DateTime ExpiresAt { get; init; }
+    public DateTime? RenewedAt { get; init; }
+    public string? RenewedBy { get; init; }
+    public DateTime? LastUsedAt { get; init; }
+    public DateTime? RevokedAt { get; init; }
+    public string? RevokedBy { get; init; }
 }
 
 public sealed record ServiceAccountToken
@@ -129,13 +168,16 @@ public sealed record ServiceAccountToken
 }
 
 public sealed record ServiceAccountPrincipal(
-    string AccountId, string AccountName, string TokenId, string? Origin = null, string? CreatedBy = null)
+    string AccountId, string AccountName, string TokenId, string? Origin = null, string? CreatedBy = null,
+    AgentStudio.Shared.OperatorActor? Operator = null)
 {
     /// <summary>
     /// How handlers, audit records, and card timelines attribute the account's
-    /// actions: the one non-human actor id <c>service-account:&lt;id&gt;</c>.
+    /// actions: the one non-human actor id <c>service-account:&lt;id&gt;</c>,
+    /// or <c>operator-agent:&lt;id&gt;/session:&lt;sid&gt;</c> for an operator
+    /// agent session.
     /// </summary>
-    public string ActorId => AgentStudio.Shared.TimelineActors.ServiceAccount(AccountId);
+    public string ActorId => Operator?.Actor ?? AgentStudio.Shared.TimelineActors.ServiceAccount(AccountId);
 }
 
 /// <summary>The principal an access decision is made for, with its group memberships.</summary>
@@ -160,7 +202,7 @@ public sealed record OneTimeServiceAccountTokenResponse(
     string ServiceAccountId, string TokenId, string Token, DateTime? ExpiresAt);
 public sealed record IamRoleResponse(
     string Id, string DisplayName, string Description, IReadOnlyList<string> Permissions,
-    IReadOnlyList<IamScopeKind> BindableScopes, bool ServiceAccountBindable);
+    IReadOnlyList<IamScopeKind> BindableScopes, bool ServiceAccountBindable, bool UserBindable = true);
 public sealed record IamPermissionResponse(string Name, PermissionLevel Level, string Description);
 public sealed record IamInvitationResponse(string Id, string UserId, DateTime ExpiresAt, bool Used);
 public sealed record IamOverviewResponse(
@@ -173,3 +215,23 @@ public sealed record IamOverviewResponse(
     IReadOnlyList<IamInvitationResponse> Invitations,
     int IamVersion);
 public sealed record IamCheckResponse(bool Allowed, string Permission, IReadOnlyList<string> GrantingBindings, string? Reason);
+
+public sealed record CreateOperatorAgentRequest(string Name, string? Description, IReadOnlyList<IamGrantRequest>? Bindings = null);
+public sealed record StartOperatorSessionRequest(string? Name, int? LifetimeHours);
+public sealed record RenewOperatorSessionRequest(int? LifetimeHours);
+
+public static class OperatorSessionStates
+{
+    public const string Active = "active";
+    public const string Expired = "expired";
+    public const string Revoked = "revoked";
+}
+
+public sealed record OperatorSessionResponse(
+    string Id, string OperatorAgentId, string? Name, string Actor, string DelegatedBy, DateTime CreatedAt, string CreatedBy,
+    DateTime ExpiresAt, DateTime? RenewedAt, DateTime? LastUsedAt, DateTime? RevokedAt, string State);
+public sealed record OperatorAgentResponse(
+    string Id, string Name, string? Description, DateTime CreatedAt, string? CreatedBy, DateTime? DisabledAt,
+    IReadOnlyList<OperatorSessionResponse> Sessions);
+public sealed record OneTimeOperatorSessionResponse(
+    string OperatorAgentId, string SessionId, string Token, string Actor, string DelegatedBy, DateTime ExpiresAt);

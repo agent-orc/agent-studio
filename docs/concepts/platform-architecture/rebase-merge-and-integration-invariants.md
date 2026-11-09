@@ -67,12 +67,16 @@ Git integration lives in `backend/Features/Git/GitService.cs` and
    fast-forwards a stale local branch. A local-ahead branch is left alone;
    genuine divergence returns `Diverged` and fails closed rather than
    overwriting either tip.
-5. Canonical integration preserves delivery SHAs first. A direct
+5. Linear canonical integration preserves delivery SHAs first. A direct
    `git merge --no-ff --no-edit` is attempted before any history rewrite.
-6. A history rewrite is admissible only with an exact one-to-one replacement
-   map. The fallback rebase refuses on a non-linear delivery
-   (`rev-list --count --merges` greater than zero) or on changed commit
-   cardinality, and reports `AgentRoundRequired` instead of guessing.
+   A non-linear delivery behind the current tip is folded by its net tree
+   change against the merge base into one commit on that tip. The gate tests
+   this commit, and every delivery commit absent from the tip maps to it.
+6. Linear history rewrites require an exact one-to-one replacement map. A
+   changed commit cardinality reports `AgentRoundRequired` instead of guessing.
+   A non-linear net-change replay uses the explicit many-to-one map to the
+   published commit; a real tree conflict names the files and requests an
+   agent round.
 7. A rewrite that cannot be persisted is rolled back. If
    `TaskMutationService.RecordMechanicalRebaseOnFolder` fails after a
    `MergedAfterRebase`, `MergeIntoDevelopRunner` hard-resets the integration
@@ -195,6 +199,7 @@ eligibility and operator copy cannot drift. Its matrix is pinned directly by
 | persisted `rebase-attribution-failed` | `rebase-attribution-failed` | Rebase attribution failed | No |
 | persisted `integration-ref-unresolved` | `integration-ref-unresolved` | Integration ref unresolved | No |
 | persisted `gate-unavailable` | `gate-unavailable` | Gate unavailable | No |
+| persisted `release-line-moving` | `release-line-moving` | Release line kept moving | No |
 | anything else on a failed step | `integration-error` | Integration failed | No |
 
 A persisted code always wins over inference. A step that is neither `Failed`
@@ -220,10 +225,11 @@ merge-into-develop project=<p> job=<id> delivery=<ref> integration=<branch> stra
 | The integration branch cannot be synchronized with origin (diverged, fetch or fast-forward failure) | `branch-sync-failed` |
 | `main` is not an ancestor of `develop`, so the release line cannot advance | `lineage-blocked` |
 | A mechanical rebase merged but its attribution could not be persisted; the merge was rolled back | `rebase-attribution-failed` |
-| The release source is not rebased onto `main` | `source-needs-rebase` |
+| The release source is not rebased onto `main` | `source-needs-rebase` (legacy records only; since AGT-3435 such a delivery is merged and the full suite runs on the merge result) |
+| `main` moved during each of the bounded full-suite runs on the merge result; the lane was rolled back | `release-line-moving` |
 | An exact branch, tip, or merge-result SHA cannot be resolved | `integration-ref-unresolved` |
 | The mandatory pre-main gate is not wired | `gate-unavailable` |
-| The pre-main full suite blocked the fast-forward | `build-gate-failed` |
+| The pre-main full suite blocked the fast-forward or the merge result | `build-gate-failed` (`gate-environment-failure` for a gate environment fault) |
 | A Remote delivery has no valid fenced result SHA | `review-subject-invalid` |
 | A Git primitive reports prose only, or the run threw | inferred from the reason, otherwise `integration-error` |
 

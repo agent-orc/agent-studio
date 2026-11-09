@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, output, signal } from '@angular/core';
 import { ProjectOverlaysService } from '../../state/project-overlays.service';
 import { ModalStackService } from '../../../../services/modal-stack.service';
-import { OrchestratorFeedComponent, PromptAdminPanelComponent } from '../../../orchestrator';
+import { OrchestratorFeedComponent, PromptAdminPanelComponent } from '../../../orchestrator/lazy';
 import { ProjectDetailComponent } from '../project-detail/project-detail';
 import { ProjectOverviewDashboardComponent } from '../project-overview-dashboard/project-overview-dashboard';
 import { ProjectDeployAreaComponent } from '../project-deploy-area/project-deploy-area';
@@ -16,6 +16,8 @@ import { TokenAnalysisViewComponent } from '../../../token-analysis';
 import { ProjectObservabilityPanelComponent } from '../project-observability/project-observability-panel.component';
 import { ProjectEnvironmentOverviewComponent } from '../project-environment-overview/project-environment-overview.component';
 import { ProjectProductRuntimePanelComponent } from '../project-product-runtime/project-product-runtime-panel.component';
+import { ApiStallPanelComponent } from '../api-stall-panel/api-stall-panel.component';
+import { OperationsSecurityComponent } from '../operations-security/operations-security';
 import { ProjectTestRunsPanelComponent } from '../project-test-runs-panel/project-test-runs-panel';
 import { ProjectSteeringDocsSectionComponent } from '../project-steering-docs-section/project-steering-docs-section';
 import { ProjectWikiSectionComponent } from '../project-wiki-section/project-wiki-section';
@@ -25,6 +27,7 @@ import { WorkspaceScreenshotsComponent } from '../../../screenshots';
 import type { TaskScreenshot } from '../../../screenshots';
 import { RegressionRadarComponent } from '../../../regression-radar';
 import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
+import { TASK_REFERENCE_CHAT_PROVIDER } from '../../../../services/task-reference-chat.provider';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
 /**
@@ -57,6 +60,8 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
     ProjectObservabilityPanelComponent,
     ProjectEnvironmentOverviewComponent,
     ProjectProductRuntimePanelComponent,
+    ApiStallPanelComponent,
+    OperationsSecurityComponent,
     ProjectTestRunsPanelComponent,
     ProjectSteeringDocsSectionComponent,
     ProjectWikiSectionComponent,
@@ -68,6 +73,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
     OverlayPortalDirective
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  providers: [TASK_REFERENCE_CHAT_PROVIDER],
   templateUrl: './project-overlays.component.html',
 })
 export class ProjectOverlaysComponent {

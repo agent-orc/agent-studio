@@ -4,16 +4,20 @@
       <app-project-deploy-area [projectName]="projectName()" [initialView]="deployView()"
         [releaseTarget]="selectedRelease()"
         [focusStepId]="pipelineStepId()" (openPrompts)="setRail('prompts')" (openTask)="openTask.emit($event)"
-        (viewChange)="onDeployView($event)" />
+        (viewChange)="onDeployView($event)" (openRail)="setRail($event)" />
     }
   </div>
 } @else if (activeRail() === 'operations') {
   <div class="project-area" data-testid="project-operations-area">
+    <app-structure-view [projectName]="projectName()" [embedded]="true" />
+    <a [href]="'#/projects/' + projectSlug(projectName()) + '/operations/structure'">Open structure view</a>
     @defer (on immediate) {
       <app-project-environment-overview [projectName]="projectName()" (openDeploy)="setRail('deploy')"
         (openRelease)="openOperationsRelease($event)"
         (openTask)="openTask.emit($event)" />
+      <app-api-stall-panel />
       <app-project-product-runtime-panel [projectName]="projectName()" />
+      <app-operations-security (openTask)="openTask.emit($event)" />
     }
   </div>
 } @else {
@@ -105,6 +109,9 @@
       <app-project-test-runs-panel [projectName]="projectName()" />
       <app-regression-radar scope="project" [projectName]="projectName()" />
     }
+  }
+  @if (activeRail() === 'quality-studio') {
+    <app-quality-studio-panel [projectName]="projectName()" (openSettings)="setRail('settings')" />
   }
   @defer (when activeRail() === 'token-usage') {
     @if (activeRail() === 'token-usage') {

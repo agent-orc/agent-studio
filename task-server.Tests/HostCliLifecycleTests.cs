@@ -122,8 +122,10 @@ public sealed class HostCliLifecycleTests
             .Where(item => item.Kind == "host.model-cli-version.blocked")
             .Select(item => JsonSerializer.Serialize(item.Payload))
             .ToArray();
-        Assert.Equal(2, modelEvents.Length);
+        Assert.Equal(4, modelEvents.Length);
         Assert.Contains(modelEvents, payload => payload.Contains("gpt-6-astra needs codex-cli", StringComparison.Ordinal));
+        Assert.Contains(modelEvents, payload => payload.Contains("gpt-6.1-sol needs codex-cli", StringComparison.Ordinal));
+        Assert.Contains(modelEvents, payload => payload.Contains("gpt-6.1-terra needs codex-cli", StringComparison.Ordinal));
         Assert.Contains(modelEvents, payload => payload.Contains("host has 0.144.1", StringComparison.Ordinal));
         Assert.Contains(modelEvents, payload => payload.Contains("claude-opus-5 needs claude-cli", StringComparison.Ordinal));
         Assert.Contains(modelEvents, payload => payload.Contains("host has 2.1.202", StringComparison.Ordinal));
@@ -135,7 +137,7 @@ public sealed class HostCliLifecycleTests
         await AdvertiseAsync(store, clock, activeSlots: 0, generation: 4);
 
         Assert.Equal(2, publisher.Messages.Count(item => item.Kind == "host.cli-drift.alarm"));
-        Assert.Equal(2, publisher.Messages.Count(item => item.Kind == "host.model-cli-version.blocked"));
+        Assert.Equal(4, publisher.Messages.Count(item => item.Kind == "host.model-cli-version.blocked"));
     }
 
     private static TaskServerStore Store(string path, TimeProvider clock)

@@ -126,9 +126,21 @@ internal static class PromptUsageCatalog
         {
             new PromptUsageRef("AspectRunnerService", "RenderAspectPrompt", "Tests-and-evidence review aspect."),
         },
+        ["review-aspect-visual-review.md"] = new[]
+        {
+            new PromptUsageRef("AspectRunnerService", "RenderAspectPrompt", "Screenshot-backed visual review aspect."),
+        },
         ["review-aspect-documentation-impact.md"] = new[]
         {
             new PromptUsageRef("AspectRunnerService", "RenderAspectPrompt", "Documentation-impact review aspect."),
+        },
+        ["review-aspect-cross-card-consistency.md"] = new[]
+        {
+            new PromptUsageRef("ReviewPackagePlanBuilder", "Build", "Cross-card consistency of a Dossier wave package."),
+        },
+        ["review-package-aspect.md"] = new[]
+        {
+            new PromptUsageRef("ReviewPackagePlanBuilder", "Build", "Package-tier aspect frame with per-member verdicts."),
         },
         ["post-abort-review.md"] = new[]
         {

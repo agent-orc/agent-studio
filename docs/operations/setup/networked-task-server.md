@@ -28,6 +28,15 @@ The reference files are:
 3. Copy the networked settings example to a host-owned configuration file,
    set `AllowedHosts`, and set `ASPNETCORE_ENVIRONMENT=Production`. Keep the
    file and Task Repository readable only by the service user.
+
+   Installation-specific backend settings live in `appsettings.Local.json` at
+   the backend content root. The container deployment mounts that file at
+   `/app/appsettings.Local.json`. It overrides the packaged appsettings files;
+   environment variables take precedence over it. For example,
+   `Security__MaxRequestBodyBytes` overrides
+   `Security:MaxRequestBodyBytes` in the file. Restart the backend after
+   changing a startup limit such as the Kestrel request body cap.
+
 4. Install Caddy, copy the reference Caddyfile, and set `STUDIO_DOMAIN` and
    `ACME_EMAIL` in the Caddy service environment.
 5. Validate before reload:
@@ -67,13 +76,25 @@ and session storage contain no password, session token, or Runner bearer.
 
 ## Enroll a Runner
 
-As an owner, call `POST /api/auth/runner-enrollments` from an authenticated
-same-origin administration client with its CSRF header. Choose only the scopes
-the daemon needs. The default set is:
+As an owner, create the code in Settings > Access, or call
+`POST /api/auth/runner-enrollments` from an authenticated same-origin
+administration client with its CSRF header. Choose only the scopes the daemon
+needs. The default set is:
 
 ```text
 runner.claim runner.lease runner.logs runner.events runner.artifacts runner.completion
 ```
+
+Name the projects the runner may work on in `projects` (project ids or names;
+`*` for all). A runner enrolled without a project claims, reads and reviews
+nothing and receives no repository token. The enrolled credential expires 30
+days after enrollment unless `credentialExpiresAt` names another end
+(`Security:RunnerCredentialLifetimeDays` changes the default). Change a
+runner's projects later with `PUT /api/auth/runners/{id}/projects` or
+**Edit projects** in Settings > Access. A runner enrolled before project
+binding keeps all projects, and its credentials keep no expiry, until you
+choose its projects and rotate; Settings > Access shows both notices. See
+[Runner credential binding](../security/overview.md#runner-credential-binding-sm-9).
 
 Transfer the returned `enr.*` code over the SSH administration channel. On each
 Runner, Review, or Gate host, run the enrollment command as that service user:
@@ -126,7 +147,9 @@ STUDIO_COOKIE=... STUDIO_CSRF=... deploy/networked/rehearse-runbooks.sh rotate h
 ```
 
 Rotation is deliberately overlapping and should be rehearsed before the first
-incident.
+incident. Rotate each runner before its credential's 30-day end: Settings >
+Access marks a credential that ends within 14 days, and the host logs a warning
+once a day in its last 7 days. The new credential starts its own 30 days.
 
 1. Owner creates a credential with `POST
    /api/auth/runners/{runnerId}/credentials`. Record its id and capture its

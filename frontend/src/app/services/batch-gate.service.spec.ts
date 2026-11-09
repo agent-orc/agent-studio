@@ -126,6 +126,15 @@ describe('batch state from the AGT-3052 backend', () => {
     expect(isBatchGateState(JSON.parse(JSON.stringify(backendShapedState)))).toBe(true);
   });
 
+  it('accepts a review fix wait as a batch member state', () => {
+    expect(isBatchGateState({ ...backendShapedState,
+      members: { 'CARD-7': { status: 'review-fix', reason: 'actionable concern',
+        reasonDetail: 'Fix round 1 of 1 must finish before batch admission.' } },
+      reviewFixWaits: [{ taskKey: 'CARD-7', reviewAttemptId: 'review-7', round: 1,
+        maximum: 1, aspects: ['code-quality'] }],
+    })).toBe(true);
+  });
+
   it('renders risk as a percentage, the replay outcome and the verified published SHA', () => {
     expect(batchRiskLabel(0.35)).toBe('35 %');
     expect(batchRiskLabel('high')).toBe('high');

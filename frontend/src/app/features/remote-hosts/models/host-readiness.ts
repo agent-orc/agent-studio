@@ -1,4 +1,5 @@
 import type { RemoteHost, RemoteHostCapabilityHealth } from './remote-host.model';
+import type { StatusTone } from '../../../components/status-indicator/status-indicator.component';
 
 export interface HostReadiness {
   state: 'not-enrolled' | 'enrolled' | 'connected' | 'capability-ready';
@@ -58,4 +59,10 @@ export function hostReadiness(host: RemoteHost, now: number): HostReadiness {
       : 'Fresh coding, task-branch push and provider capabilities with an open budget.',
     action: 'Check the registered project origin proof before assigning work.',
   };
+}
+
+/** Readiness on the shared status indicator: only a capability-ready host succeeds. */
+export function hostReadinessTone(state: HostReadiness['state']): StatusTone {
+  if (state === 'capability-ready') return 'success';
+  return state === 'not-enrolled' ? 'neutral' : 'warning';
 }

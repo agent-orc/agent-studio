@@ -6,10 +6,15 @@ namespace AgentStudio.TaskServer.Contracts;
 /// </summary>
 public sealed record StartDeviceLoginRequest(string HostId, string Provider, string? TargetRunnerId = null);
 
+/// <summary>
+/// <paramref name="CodeState"/> drives the Claude code-return step (AGT-3243): <c>awaiting</c> once the
+/// runner published the sign-in URL, <c>submitted</c> after the Owner pasted the authorization code,
+/// <c>delivered</c> after the claiming runner took it. Null when the session takes no code back.
+/// </summary>
 public sealed record DeviceLoginSessionDto(
     string Handle, string State, DateTime ExpiresAt, string? VerificationUrl = null,
     string? UserCode = null, string? Detail = null, string? SessionKey = null,
-    string? HostId = null, string? Provider = null);
+    string? HostId = null, string? Provider = null, string? CodeState = null);
 
 public sealed record DeviceLoginClaimDto(string Handle, string Provider, DateTime ExpiresAt);
 
@@ -20,3 +25,9 @@ public sealed record DeviceLoginCompletionRequest(string Result, string Detail);
 
 /// <summary>What the claiming runner may read back: the session state only, never the code.</summary>
 public sealed record DeviceLoginRunnerStateDto(string State);
+
+/// <summary>The authorization code the Owner pastes back after the Claude browser sign-in.</summary>
+public sealed record DeviceLoginCodeRequest(string? Code);
+
+/// <summary>The one handoff of that code to the runner that claimed the session.</summary>
+public sealed record DeviceLoginCodeDto(string Code);

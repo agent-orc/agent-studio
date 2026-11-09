@@ -61,7 +61,11 @@ public sealed partial class TaskServerStore
     // remains the retired-schema downgrade guard for older binaries.
     // 40 adds post-work subjects, attempts, events and cohorts, and records one-use
     // attempt credential exchange and redacted teardown receipts (both additive).
-    public const int CurrentSchemaVersion = 41;
+    // 43 adds runner host, role and project binding after the independent
+    // schema 42 changes were integrated.
+    // 44 adds bounded, capability-gated one-shot model jobs.
+    // 45 binds those jobs to the runner instance that claimed them.
+    public const int CurrentSchemaVersion = 45;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -103,6 +107,7 @@ public sealed partial class TaskServerStore
     private long? _oldestUnacknowledgedSequence;
     private IReadOnlyDictionary<string, int> _finalHandoffStates =
         new Dictionary<string, int>(StringComparer.Ordinal);
+    private readonly TaskServerModelSelectionPoster? _selectionPoster;
 
     public TaskServerStore(IOptions<TaskServerOptions> options, TimeProvider clock)
         : this(
@@ -128,7 +133,8 @@ public sealed partial class TaskServerStore
         IResultFinalizationSummaryGenerator resultSummaries,
         ITaskServerEventPublisher? operationalEvents,
         ILogger<TaskServerStore>? logger,
-        IWorkspaceQuotaAdmission? workspaceQuota = null)
+        IWorkspaceQuotaAdmission? workspaceQuota = null,
+        TaskServerModelSelectionPoster? selectionPoster = null)
     {
         _options = options.Value;
         _clock = clock;
@@ -136,6 +142,7 @@ public sealed partial class TaskServerStore
         _operationalEvents = operationalEvents;
         _logger = logger;
         _quotaVerdicts = workspaceQuota is null ? null : new WorkspaceQuotaVerdictCache(workspaceQuota, clock);
+        _selectionPoster = selectionPoster;
         _startedAt = UtcNow;
     }
 
@@ -1453,13 +1460,17 @@ public sealed partial class TaskServerStore
         string? ProjectId,
         string? TaskId);
 
-    public async Task<ClaimResponse> ClaimAsync(ClaimRequest request, string actorId, CancellationToken ct)
+    /// <param name="claimPrincipalId">SM-11: the authenticated principal that claims, recorded on the run
+    /// so a later review verdict can be refused from the delivery's coding principal.</param>
+    public async Task<ClaimResponse> ClaimAsync(
+        ClaimRequest request, string actorId, CancellationToken ct, string? claimPrincipalId = null)
     {
         if (request.AvailableSlots > 0)
             RequireAdmission();
         else
             RequireWritable();
         ClaimResponse? response = null;
+        var selectionReceipts = new List<object>();
         if (request.AvailableSlots > 0) await StartWorkspaceQuotaRefreshAsync(QuotaClaimKind.Coding, actorId, ct);
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
@@ -1562,6 +1573,16 @@ public sealed partial class TaskServerStore
                     ReconciliationActions: reconciliationActions,
                     RuntimeCapacity: runtimeCapacity,
                     PlacementReason: "host-slots-unavailable");
+                return;
+            }
+            if (hostProjectPolicy is null && RequiresHostProjectPolicy)
+            {
+                response = new ClaimResponse(
+                    "empty",
+                    Message: HostProjectPolicyMissingMessage(capabilityRunner.HostId),
+                    ReconciliationActions: reconciliationActions,
+                    RuntimeCapacity: runtimeCapacity,
+                    PlacementReason: HostProjectPolicyMissingReason);
                 return;
             }
             var envelopeAdmission = await EvaluateHostEnvelopeAsync(
@@ -1675,7 +1696,8 @@ public sealed partial class TaskServerStore
             var (task, selected) = await ProjectPlacementSelection.SelectAsync(
                 WhereModelAcceptedAsync(
                     ExceptHeldModelRoutesAsync(connection, transaction,
-                        ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, ct),
+                        ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId,
+                            RequiresHostProjectPolicy, ct),
                         request.RunnerId, UtcNow, ct),
                     connection, transaction, request.RunnerId,
                     reason => modelRefusal ??= reason, ct),
@@ -1738,7 +1760,7 @@ public sealed partial class TaskServerStore
             }
 
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
-                connection, transaction, task.TaskId, ct);
+                connection, transaction, task.TaskId, request.RunnerId, ct);
             var continuationIntent = await ReadNextContinuationAsync(connection, transaction, task.TaskId, ct);
             var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
             var previousSession = await ReadPreviousSessionAsync(connection, transaction, task.TaskId, ct);
@@ -1759,6 +1781,8 @@ public sealed partial class TaskServerStore
             var briefVersion = FollowUpPromptDigest.Compute(task.Body ?? string.Empty);
             var now = UtcNow;
             var expires = now.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
+            var clearedModelCapacity = await ClearExpiredModelCapacityAsync(
+                connection, transaction, request.RunnerId, now, ct);
             // An ordered continuation round takes precedence. A follow-up row
             // saved before schema 26 stays queued for a later claim.
             var followUp = continuationIntent is not null
@@ -1772,10 +1796,10 @@ public sealed partial class TaskServerStore
                 INSERT INTO runs(
                     id, task_id, status, runner_id, fence, created_at, started_at,
                     required_capabilities_json, canary_capabilities_json, brief_version,
-                    coding_host_id)
+                    coding_host_id, claim_principal_id)
                 VALUES (
                     $run, $task, 'running', $runner, $fence, $now, $now,
-                    $requiredCapabilities, $canaryCapabilities, $briefVersion, $codingHost);
+                    $requiredCapabilities, $canaryCapabilities, $briefVersion, $codingHost, $claimPrincipal);
                 INSERT INTO leases(task_id, lease_id, run_id, runner_id, instance_id, fence, acquired_at, expires_at, status)
                 VALUES ($task, $lease, $run, $runner, $instance, $fence, $now, $expires, 'active');
                 UPDATE pending_follow_ups
@@ -1787,6 +1811,7 @@ public sealed partial class TaskServerStore
                 ("$run", runId), ("$task", task.TaskId), ("$runner", request.RunnerId), ("$instance", request.InstanceId),
                 ("$fence", fence), ("$lease", leaseId), ("$now", Iso(now)), ("$expires", Iso(expires)),
                 ("$codingHost", capabilityRunner.HostId),
+                ("$claimPrincipal", claimPrincipalId),
                 ("$requiredCapabilities", JsonSerializer.Serialize(capabilityAdmission.Required)),
                 ("$canaryCapabilities", JsonSerializer.Serialize(capabilityAdmission.Canaries)),
                 ("$legacyFollowUp", continuationIntent is null ? 1 : 0),
@@ -1801,6 +1826,51 @@ public sealed partial class TaskServerStore
                     """, ct, transaction, ("$run", runId), ("$fence", fence),
                     ("$command", continuationIntent.Receipt.CommandId));
                 continuationIntent = continuationIntent with { Status = "claimed", RunId = runId, Fence = fence };
+            }
+            if (providerContinuation?.Fallback is { } switched)
+            {
+                var selectionId = TaskServerModelSelectionPoster.NewId();
+                selectionReceipts.Add(new
+                {
+                    id = selectionId, at = now, kind = "switched", consumer = "task-server-claim",
+                    host = request.RunnerId, taskKey = task.TaskKey, attemptId = runId,
+                    @from = new { cliType = switched.CliType, model = switched.From, thinkingLevel = switched.ThinkingLevel },
+                    to = new { cliType = switched.CliType, model = switched.To, thinkingLevel = switched.ThinkingLevel },
+                    rule = switched.Reason, reason = $"Provider rejected {switched.From}; selected {switched.To}.",
+                });
+                await AppendLifecycleEventAsync(connection, transaction, runId, task.TaskId, fence,
+                    "model.switched", new
+                    {
+                        selectionEventId = selectionId,
+                        provider = switched.CliType,
+                        from = switched.From,
+                        to = switched.To,
+                        thinkingLevel = switched.ThinkingLevel,
+                        rule = switched.Reason,
+                        hostRunnerId = request.RunnerId,
+                    }, ct);
+            }
+            foreach (var capabilityKey in clearedModelCapacity)
+            {
+                var selectionId = TaskServerModelSelectionPoster.NewId();
+                var parts = capabilityKey.Split(':', 3);
+                var provider = parts.Length > 1 ? parts[1] : string.Empty;
+                var model = parts.Length > 2 ? parts[2] : string.Empty;
+                selectionReceipts.Add(new
+                {
+                    id = selectionId, at = now, kind = "health-cleared", consumer = "task-server-claim",
+                    host = request.RunnerId, taskKey = task.TaskKey, attemptId = runId,
+                    @from = new { cliType = provider, model }, to = new { cliType = provider, model },
+                    rule = "model-capacity", reason = "Capacity retry window elapsed.",
+                });
+                await AppendLifecycleEventAsync(connection, transaction, runId, task.TaskId, fence,
+                    "model.health-cleared", new
+                    {
+                        selectionEventId = selectionId,
+                        hostRunnerId = request.RunnerId,
+                        capabilityKey,
+                        reason = "capacity retry window elapsed",
+                    }, ct);
             }
             await ReserveCanariesAsync(
                 connection,
@@ -1859,6 +1929,9 @@ public sealed partial class TaskServerStore
                 PlacementReason: placementReason,
                 ContinuationIntent: continuationIntent);
         }, ct);
+        if (_selectionPoster is not null)
+            foreach (var receipt in selectionReceipts)
+                await _selectionPoster.PostAsync(receipt, CancellationToken.None);
         return response!;
     }
 
@@ -2269,6 +2342,7 @@ public sealed partial class TaskServerStore
         var mechanicalFallback = string.Equals(
             request.Outcome, ExecutionOutcomeKind.MechanicalFallback.ToString(),
             StringComparison.OrdinalIgnoreCase);
+        var transientModelCapacity = request.OutcomeDecision?.Outcome == ExecutionOutcomeKind.TransientModelCapacity;
         if (mechanicalFallback
             && (request.OutcomeDecision?.Outcome != ExecutionOutcomeKind.MechanicalFallback
                 || request.SessionContinuation is not
@@ -2282,13 +2356,14 @@ public sealed partial class TaskServerStore
         var gateItems = NormalizeGateItems(request.GateItems);
         var needsInput = !string.IsNullOrWhiteSpace(request.NeedsInputMessage);
         var providerRejected = request.OutcomeDecision?.Outcome == ExecutionOutcomeKind.ProviderRejectedRequest;
-        var nextState = mechanicalFallback ? "2-ready"
+        var nextState = mechanicalFallback || transientModelCapacity ? "2-ready"
             : needsInput || providerRejected ? "5-human-review" : "4-auto-review";
         var effectiveSummary = request.Summary;
         if (mechanicalFallback)
             effectiveSummary = $"Resumed mechanical round requires a policy-qualified fresh attempt ({request.SessionContinuation!.FallbackReason}).";
         ProviderRejectionRecoveryPlan? providerRecovery = null;
         RunDto? completed = null;
+        var healthReceipts = new List<object>();
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             if (request.OutcomeDecision is not null
@@ -2334,6 +2409,9 @@ public sealed partial class TaskServerStore
 
             var lease = await ReadLeaseAsync(connection, transaction, runId, ct)
                 ?? throw new KeyNotFoundException("Run lease was not found.");
+            var selectionTaskKey = Convert.ToString(await ScalarAsync(connection,
+                "SELECT task_key FROM tasks WHERE id = $task;", ct, transaction,
+                ("$task", lease.TaskId)), CultureInfo.InvariantCulture) ?? lease.TaskId;
             ValidateLeaseReference(lease, request.RunnerId, request.InstanceId, request.LeaseId, request.Fence);
             await EnsureOutboxLeaseCurrentAsync(
                 connection,
@@ -2410,6 +2488,37 @@ public sealed partial class TaskServerStore
             }
             providerRecovery = await PlanProviderRejectionAsync(
                 connection, transaction, lease.TaskId, request, ct);
+            if (transientModelCapacity
+                && request.OutcomeDecision?.RawFacts.EffectiveCliType is { Length: > 0 } capacityProvider
+                && request.OutcomeDecision.RawFacts.EffectiveModel is { Length: > 0 } capacityModel)
+            {
+                var evidence = ProviderAccessClassifier.ClassifyRun(1,
+                    request.OutcomeDecision.RawFacts.StdOut, request.OutcomeDecision.RawFacts.StdErr,
+                    observedAt: new DateTimeOffset(now, TimeSpan.Zero));
+                var expiresAt = await RecordModelCapacityAsync(connection, transaction, request.RunnerId,
+                    CapabilityProtocol.ModelAcceptance(capacityProvider, capacityModel), now,
+                    evidence.LimitedUntil?.UtcDateTime, ct);
+                var selectionId = TaskServerModelSelectionPoster.NewId();
+                healthReceipts.Add(new
+                {
+                    id = selectionId, at = now, kind = "health-marked", consumer = "task-server-recovery",
+                    host = request.RunnerId, taskKey = selectionTaskKey, attemptId = runId,
+                    @from = new { cliType = capacityProvider, model = capacityModel },
+                    to = new { cliType = capacityProvider, model = capacityModel },
+                    rule = "model-capacity", reason = $"{capacityModel} is at capacity until {expiresAt:u}.",
+                    returnToPrimaryAt = expiresAt,
+                });
+                await AppendLifecycleEventAsync(connection, transaction, runId, lease.TaskId,
+                    lease.Fence, "model.health-marked", new
+                    {
+                        selectionEventId = selectionId,
+                        hostRunnerId = request.RunnerId,
+                        provider = capacityProvider,
+                        model = capacityModel,
+                        kind = "capacity",
+                        expiresAt,
+                    }, ct);
+            }
             if (providerRecovery?.HostModelUnavailable == true)
             {
                 nextState = StudioTaskLanes.Ready;
@@ -2426,6 +2535,25 @@ public sealed partial class TaskServerStore
                             provider = cli,
                             model = providerRecovery.Model,
                             reason = effectiveSummary,
+                        }, ct);
+                    var modelUnavailableSelectionId = TaskServerModelSelectionPoster.NewId();
+                    healthReceipts.Add(new
+                    {
+                        id = modelUnavailableSelectionId, at = now, kind = "health-marked",
+                        consumer = "task-server-recovery", host = request.RunnerId,
+                        taskKey = selectionTaskKey, attemptId = runId,
+                        @from = new { cliType = cli, model = providerRecovery.Model },
+                        to = new { cliType = cli, model = providerRecovery.Model },
+                        rule = "model-unavailable", reason = effectiveSummary,
+                    });
+                    await AppendLifecycleEventAsync(connection, transaction, runId, lease.TaskId,
+                        lease.Fence, "model.health-marked", new
+                        {
+                            selectionEventId = modelUnavailableSelectionId,
+                            hostRunnerId = request.RunnerId,
+                            provider = cli,
+                            model = providerRecovery.Model,
+                            kind = "model-unavailable",
                         }, ct);
                 }
             }
@@ -2459,11 +2587,25 @@ public sealed partial class TaskServerStore
             var currentBriefVersion = FollowUpPromptDigest.Compute(currentBody);
             var olderBrief = !string.IsNullOrWhiteSpace(claimedBriefVersion)
                 && !string.Equals(claimedBriefVersion, currentBriefVersion, StringComparison.OrdinalIgnoreCase);
-            if (olderBrief)
+            if (olderBrief && !transientModelCapacity)
             {
                 nextState = "5e-escalated";
                 effectiveSummary = "Delivered against an older brief; choose accept, use as a starting point, or discard.";
             }
+            if (transientModelCapacity
+                && !string.IsNullOrWhiteSpace(request.SalvageBranch)
+                && !string.IsNullOrWhiteSpace(request.SalvageCommitSha))
+                await ExecuteAsync(connection, """
+                    INSERT INTO task_starting_points(task_id, source_run_id, result_ref, result_sha, reason)
+                    VALUES ($task, $run, $ref, $sha, 'transient-model-capacity')
+                    ON CONFLICT(task_id) DO UPDATE SET
+                        source_run_id = excluded.source_run_id,
+                        result_ref = excluded.result_ref,
+                        result_sha = excluded.result_sha,
+                        reason = excluded.reason;
+                    """, ct, transaction,
+                    ("$task", lease.TaskId), ("$run", runId),
+                    ("$ref", request.SalvageBranch), ("$sha", request.SalvageCommitSha));
             await ExecuteAsync(connection, """
                 UPDATE leases SET status = 'completed' WHERE run_id = $run;
                 UPDATE runs
@@ -2506,7 +2648,7 @@ public sealed partial class TaskServerStore
                 ("$repositoryUrl", resultHandoff?.Envelope.RepositoryUrl),
                 ("$resultRef", resultHandoff?.Envelope.ImmutableRemoteRef),
                 ("$bundleSha", resultHandoff?.Envelope.SourceBundleDigest));
-            if (olderBrief)
+            if (olderBrief && !transientModelCapacity)
                 await ExecuteAsync(connection, """
                     INSERT INTO older_brief_deliveries(
                         task_id, run_id, brief_version, current_brief_version,
@@ -2617,6 +2759,24 @@ public sealed partial class TaskServerStore
                 resultHandoff?.Envelope.RepositoryId,
                 BriefVersion: claimedBriefVersion);
         }, ct);
+        if (_selectionPoster is not null)
+            foreach (var receipt in healthReceipts)
+                await _selectionPoster.PostAsync(receipt, CancellationToken.None);
+        if (_selectionPoster is not null && providerRecovery?.Fallback is { } selectedFallback)
+        {
+            var selectionId = TaskServerModelSelectionPoster.NewId();
+            await _selectionPoster.PostAsync(new
+            {
+                id = selectionId, at = _clock.GetUtcNow(), kind = "switched", consumer = "task-server-recovery",
+                host = request.RunnerId,
+                taskKey = completed!.TaskId, attemptId = runId,
+                @from = new { cliType = selectedFallback.CliType, model = selectedFallback.From, thinkingLevel = selectedFallback.ThinkingLevel },
+                to = new { cliType = selectedFallback.CliType, model = selectedFallback.To, thinkingLevel = selectedFallback.ThinkingLevel },
+                rule = "provider-rejection", reason = effectiveSummary,
+                evidence = new { excerpt = providerRecovery.Rejection.Message, classifierKind = DescribeProviderRejection(providerRecovery.Rejection) },
+                equivalence = new { source = "sibling" },
+            }, CancellationToken.None);
+        }
         return completed!;
     }
 
@@ -2691,11 +2851,17 @@ public sealed partial class TaskServerStore
 
     public async Task<ArtifactDto> IngestArtifactAsync(string runId, ArtifactIngestRequest request, string actorId, CancellationToken ct)
     {
-        RequireWritable();
-        ArtifactDto? result = null;
         byte[] content;
         try { content = Convert.FromBase64String(request.ContentBase64); }
         catch (FormatException) { throw new ArgumentException("Artifact content is not valid base64."); }
+        return await IngestArtifactBytesAsync(runId, request, content, actorId, ct);
+    }
+
+    internal async Task<ArtifactDto> IngestArtifactBytesAsync(
+        string runId, ArtifactIngestRequest request, byte[] content, string actorId, CancellationToken ct)
+    {
+        RequireWritable();
+        ArtifactDto? result = null;
         var actualSha = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
         if (!string.Equals(actualSha, request.Sha256, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Artifact SHA-256 does not match the uploaded content.");
@@ -3967,6 +4133,9 @@ public sealed partial class TaskServerStore
                 version TEXT,
                 identity_value TEXT,
                 detail TEXT,
+                failure_since TEXT,
+                http_status INTEGER,
+                request TEXT,
                 signal TEXT,
                 credential_expires_at TEXT,
                 limited_until TEXT,
@@ -4560,6 +4729,11 @@ public sealed partial class TaskServerStore
                 acknowledged_instance_id TEXT,
                 acknowledged_sequence INTEGER,
                 PRIMARY KEY(runner_id, capability_key));
+            CREATE TABLE IF NOT EXISTS host_model_capacity(
+                host_id TEXT NOT NULL,
+                capability_key TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                PRIMARY KEY(host_id, capability_key));
             CREATE INDEX IF NOT EXISTS ix_artifacts_run ON artifacts(run_id);
             CREATE INDEX IF NOT EXISTS ix_legacy_entities_migration_kind
                 ON legacy_migration_entities(migration_id, entity_kind);
@@ -4609,6 +4783,9 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runners", "release_identity_json", "TEXT", ct);
         await EnsureColumnAsync(connection, "runners", "instance_started_at", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "signal", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "failure_since", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "http_status", "INTEGER", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "request", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_expires_at", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "limited_until", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_modified_at", "TEXT", ct);
@@ -4668,6 +4845,9 @@ public sealed partial class TaskServerStore
             ON CONFLICT(version) DO NOTHING;
             """, ct, ("$version", CurrentSchemaVersion), ("$now", Iso(UtcNow)));
         await ApplyReviewMigrationAsync(connection, ct);
+        await ApplyOneShotJobMigrationAsync(connection, ct);
+        await EnsureColumnAsync(connection, "one_shot_jobs", "claim_instance_id", "TEXT", ct);
+        await ApplyReviewPackageMigrationAsync(connection, ct);
         await ApplyGateMigrationAsync(connection, ct);
         await ApplyPostWorkMigrationAsync(connection, ct);
         await ApplyFailureFingerprintMigrationAsync(connection, ct);
@@ -4696,6 +4876,20 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "review_attempts", "required_capabilities_json", "TEXT NOT NULL DEFAULT '[]'", ct);
         await EnsureColumnAsync(connection, "review_attempts", "canary_capabilities_json", "TEXT NOT NULL DEFAULT '[]'", ct);
         await EnsureColumnAsync(connection, "tasks", "rank", "INTEGER NOT NULL DEFAULT 0", ct);
+        await EnsureColumnAsync(connection, "studio_sessions", "expires_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "studio_sessions", "absolute_expires_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "studio_sessions", "enrollment_only", "INTEGER NOT NULL DEFAULT 0", ct);
+        await EnsureColumnAsync(connection, "studio_sessions", "device", "TEXT", ct);
+        await EnsureColumnAsync(connection, "studio_sessions", "address", "TEXT", ct);
+        await EnsureColumnAsync(connection, "studio_sessions", "step_up_verified_at", "TEXT", ct);
+        await ExecuteAsync(connection, """
+            CREATE TABLE IF NOT EXISTS studio_factors(
+                user_id TEXT PRIMARY KEY REFERENCES studio_users(id),
+                totp_secret TEXT,
+                recovery_hashes_json TEXT NOT NULL DEFAULT '[]',
+                passkeys_json TEXT NOT NULL DEFAULT '[]'
+            );
+            """, ct);
         await ExecuteAsync(connection, """
             CREATE INDEX IF NOT EXISTS ix_tasks_project_state_rank ON tasks(project_id, state, rank);
             CREATE INDEX IF NOT EXISTS ix_studio_sessions_user ON studio_sessions(user_id, revoked_at);
@@ -4753,6 +4947,7 @@ public sealed partial class TaskServerStore
                AND json_array_length(consumers_json) = 1;
             """, ct);
         await ApplyIdentityBootstrapMigrationAsync(connection, ct);
+        await ApplyRunnerBindingMigrationAsync(connection, ct);
         await ApplyCredentialReminderMigrationAsync(connection, ct);
         await ApplyStandaloneReviewLoopMigrationAsync(connection, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);

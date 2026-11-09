@@ -10,6 +10,7 @@ using AgentStudio.Registry;
 using Microsoft.Extensions.Logging;
 using Contract = AgentStudio.TaskServer.Contracts;
 using AgentStudio.Review;
+using AgentStudio.Tasks;
 
 namespace AgentStudio.Runner;
 
@@ -27,6 +28,7 @@ public sealed class RemoteReviewPlanBuilder
         "code-quality",
         "documentation-impact",
         "tests-and-evidence",
+        "visual-review",
     ];
 
     private static readonly AspectDefinition ConceptFitDefinition = new(
@@ -62,6 +64,7 @@ public sealed class RemoteReviewPlanBuilder
     private readonly ModelRoutingPolicyRegistry? _routing;
     private readonly ReviewObservationStore? _observations;
     private readonly PostMergeModeService? _postMergeMode;
+    private readonly AgentStudio.Projects.ProjectRepositoryVisibility? _visibility;
 
     public RemoteReviewPlanBuilder(
         AspectRunnerService aspects,
@@ -74,7 +77,8 @@ public sealed class RemoteReviewPlanBuilder
         QuotaAdmissionService? quota = null,
         ModelRoutingPolicyRegistry? routing = null,
         ReviewObservationStore? observations = null,
-        PostMergeModeService? postMergeMode = null)
+        PostMergeModeService? postMergeMode = null,
+        AgentStudio.Projects.ProjectRepositoryVisibility? visibility = null)
     {
         _aspects = aspects;
         _configuration = configuration;
@@ -87,6 +91,7 @@ public sealed class RemoteReviewPlanBuilder
         _routing = routing;
         _observations = observations;
         _postMergeMode = postMergeMode;
+        _visibility = visibility;
     }
 
     /// <summary>
@@ -112,6 +117,33 @@ public sealed class RemoteReviewPlanBuilder
            + "build, test and lint would compare this SHA with itself. "
            + "The integration lane verifies the contained tree before completion (AGT-3002).";
 
+    private string? InventoryDeferralReason(string repositoryPath, string? integrationRef,
+        string? resultSha, IReadOnlyList<string> changedPaths)
+    {
+        foreach (var path in changedPaths)
+        {
+            if (path is ".agent-studio/project.yml" or "frontend/package.json"
+                or "frontend/angular.json" or "backend/OrchestratorApi.csproj")
+                return $"Verify command inventory changed: {path}.";
+            if (path != "backend.Tests/OrchestratorApi.Tests.csproj") continue;
+            if (_git is null || string.IsNullOrWhiteSpace(integrationRef)
+                || !ReviewSubjectStore.IsValidResultSha(resultSha))
+                return $"Cannot classify verify command inventory change: {path}.";
+            var baseSha = _git.GetMergeBase(repositoryPath, integrationRef, resultSha);
+            if (baseSha is null)
+                return $"Cannot classify verify command inventory change: {path}.";
+            var before = _git.ReadFilesAtRevision(repositoryPath, baseSha, [path]);
+            var after = _git.ReadFilesAtRevision(repositoryPath, resultSha!, [path]);
+            if (before.Failure is not null || after.Failure is not null
+                || !before.Files.TryGetValue(path, out var oldContent)
+                || !after.Files.TryGetValue(path, out var newContent))
+                return $"Cannot classify verify command inventory change: {path}.";
+            if (!ReviewInventoryChangePolicy.IsContentOnlyTestProjectChange(oldContent, newContent))
+                return $"Test project verify command inventory changed beyond copy content items: {path}.";
+        }
+        return null;
+    }
+
     /// <param name="changedFiles">
     /// The delivery's paths against its merge base, when known. A diff that
     /// can change the Compose stack adds the Compose-render steps, whose host
@@ -130,13 +162,57 @@ public sealed class RemoteReviewPlanBuilder
         string? immutableResultRef = null)
         // AGT-3077: every plan shape carries the repository visibility, so a
         // private repository is refused at claim time on any executor without
-        // a read credential for it.
-        => BuildPlan(task, repositoryPath, projectSettings, integrationRef,
+        // a read credential for it. AGT-3408: what GitHub reports through the
+        // App joins the project setting; GitHub's "private" always holds.
+        => WithVerifyDefinition(task, BuildPlan(task, repositoryPath, projectSettings, integrationRef,
                 expectedResultSha, changedFiles, immutableResultRef) with
             {
-                PrivateRepository = Contract.ReviewRepositoryAccessPolicy.IsPrivate(
-                    projectSettings?.RepositoryVisibility),
-            };
+                PrivateRepository = task is not null && _visibility is not null
+                    ? _visibility.IsPrivate(task, projectSettings)
+                    : Contract.ReviewRepositoryAccessPolicy.IsPrivate(projectSettings?.RepositoryVisibility),
+            }, repositoryPath, projectSettings?.BuildProfile, integrationRef,
+            changedFiles, immutableResultRef ?? (task is null ? null : ReviewSubjectStore.Read(task.FolderPath)?.ImmutableResultRef));
+
+    /// <summary>
+    /// AGT-3428: the review states at its start that no check can verify this
+    /// delivery, instead of passing and leaving the merge to find out. A plan
+    /// that runs any build, test or lint command, a deferred batch gate, a
+    /// docs-only or no-change result, and a delivery that adds the definition
+    /// itself are left alone.
+    /// </summary>
+    private Contract.ReviewPlanDto WithVerifyDefinition(
+        TaskInfo? task,
+        Contract.ReviewPlanDto plan,
+        string? repositoryPath,
+        BuildProfile? profile,
+        string? integrationRef,
+        IReadOnlyList<string>? changedFiles,
+        string? resultRef)
+    {
+        if (task is null || TaskModes.IsReportOnly(task.Mode) || TaskModes.IsConcept(task.Mode)
+            || plan.BuildTestDeferredToBatch || string.IsNullOrWhiteSpace(repositoryPath)
+            || plan.Commands.Any(command => command.Aspect is "build-tests" or "lint" or "review-verification"))
+            return plan;
+        var report = VerifyDefinitionPolicy.Inspect(repositoryPath, profile);
+        if (!report.IsMissing) return plan;
+        var changedPaths = changedFiles ?? (_git is null || string.IsNullOrWhiteSpace(integrationRef)
+            || string.IsNullOrWhiteSpace(resultRef)
+            ? null
+            : _git.ChangedPathsAgainstMergeBase(repositoryPath, integrationRef, resultRef));
+        if (changedPaths is { Count: 0 } || DocsOnlyDeliveryPolicy.IsDocsOnly(changedPaths)
+            || changedPaths?.Any(path => string.Equals(path.Replace('\\', '/'),
+                Contract.ProjectPreparationPaths.Definition, StringComparison.Ordinal)) == true)
+            return plan;
+        _logger?.LogWarning(
+            "remote-review-plan-verify-definition-missing task={TaskKey} repository={Repository}",
+            string.IsNullOrWhiteSpace(task.TaskKey) ? task.Id : task.TaskKey, repositoryPath);
+        return plan with
+        {
+            VerifyDefinitionMissing = report.Message,
+            SkippedAspects = [.. plan.SkippedAspects ?? [],
+                new Contract.ReviewSkippedAspectDto("build-tests", VerifyDefinitionPolicy.Summary)],
+        };
+    }
 
     private Contract.ReviewPlanDto BuildPlan(
         TaskInfo? task,
@@ -147,15 +223,6 @@ public sealed class RemoteReviewPlanBuilder
         IReadOnlyList<string>? changedFiles,
         string? immutableResultRef)
     {
-        var toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(
-            repositoryPath,
-            projectSettings?.BuildProfile,
-            integrationRef,
-            changedFiles) with
-        {
-            RequireDifferentHostFailureDomain = projectSettings?.RequireDifferentReviewHost == true,
-        };
-        var ordinaryToolPlan = toolPlan;
         var subject = task is null ? null : ReviewSubjectStore.Read(task.FolderPath);
         var resultRef = immutableResultRef ?? subject?.ImmutableResultRef;
         var resultSha = expectedResultSha ?? subject?.ResultSha;
@@ -164,6 +231,12 @@ public sealed class RemoteReviewPlanBuilder
             ? null
             : _git.ChangedPathsAgainstMergeBase(
                 repositoryPath, integrationRef, resultRef));
+        var toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(repositoryPath,
+            projectSettings?.BuildProfile, integrationRef, changedPaths) with
+        {
+            RequireDifferentHostFailureDomain = projectSettings?.RequireDifferentReviewHost == true,
+        };
+        var ordinaryToolPlan = toolPlan;
         var deferBuildTest = projectSettings?.BatchGate.Enabled == true
             && (_postMergeMode?.Resolve(task?.ProjectName ?? string.Empty, projectSettings)
                 ?? IntegrationTestModes.Resolve(projectSettings)) != IntegrationTestModes.PostMerge
@@ -176,19 +249,17 @@ public sealed class RemoteReviewPlanBuilder
         var noChange = IsNoChangeResult(changedPaths, resultSha, resultRef);
         string? testLevel = null;
         string? selectionDigest = null;
+        string? deferralDisabledReason = null;
         if (deferBuildTest)
         {
             var options = projectSettings!.BatchGate;
             var selectionRepo = repositoryPath ?? string.Empty;
-            // Selection reads the project inventory from the existing checkout.
-            // The built-in Agent Studio verifier reads these fixed command
-            // inventory files. A delivery that changes that inventory needs its own full gate;
-            // materializing a 7,000-file result worktree for every queued plan
-            // would hold review admission behind filesystem work.
-            if (changedPaths!.Any(path => path is ".agent-studio/project.yml"
-                    or "frontend/package.json" or "frontend/angular.json"
-                    or "backend/OrchestratorApi.csproj"
-                    or "backend.Tests/OrchestratorApi.Tests.csproj"))
+            // Selection reads the existing checkout's command inventory. A
+            // test-project content item cannot change the verify commands;
+            // all other inventory edits still require the per-card gate.
+            deferralDisabledReason = InventoryDeferralReason(selectionRepo,
+                integrationRef, resultSha, changedPaths!);
+            if (deferralDisabledReason is not null)
                 deferBuildTest = false;
             if (deferBuildTest)
             {
@@ -212,6 +283,11 @@ public sealed class RemoteReviewPlanBuilder
                             && !selected.Any(command => command.Kind == VerifyCommandKind.Test)))
                     {
                         deferBuildTest = false;
+                        deferralDisabledReason = selection.Audit.FullSuiteRequired
+                            ? "Test selection requires the full suite."
+                            : selection.Audit.UnmappedSourceDirectories.Count > 0
+                                ? "Test selection found source directories without a test mapping."
+                                : "Test selection found no class-filtered test command for this work package.";
                     }
                     else
                     {
@@ -311,6 +387,12 @@ public sealed class RemoteReviewPlanBuilder
             var aspectId = step.Id.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
                 ? step.Id["aspect-".Length..]
                 : step.Id;
+            if (aspectId == "visual-review" && changedPaths is not null
+                && !Contract.VisualReviewEvidence.IsFrontendVisualChange(changedPaths))
+            {
+                skipped.Add(new(aspectId, "No frontend template or style changed."));
+                continue;
+            }
             if (!isConcept && !configured.Contains(aspectId))
             {
                 skipped.Add(new(aspectId, "Not selected by ReviewDecisionOrchestrator:AspectRunners."));
@@ -354,6 +436,12 @@ public sealed class RemoteReviewPlanBuilder
                 model,
                 PipelineStepConfigResolver.ResolvePrompt(settings, step.Id),
                 step.Id);
+            // Version the prompt layout through its frozen prompt bytes. Only the
+            // four stock Claude aspects use the shared cache prefix; overrides
+            // and other CLIs retain their authored prompt.
+            if (!isConcept && string.Equals(cliType, "claude", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(PipelineStepConfigResolver.ResolvePrompt(settings, step.Id)))
+                prompt = ReviewAspectCachePrompt.Compose(prompt, inputs);
             // AGT-2820: the budget is derived from the toolchain, the model, the
             // thinking level, and the size of the prompt - not from a constant.
             // The executor re-derives it once it has appended the authoritative
@@ -419,7 +507,10 @@ public sealed class RemoteReviewPlanBuilder
         var hasModelReview = commands.Any(command =>
             Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind));
         if (deferBuildTest && !hasModelReview)
+        {
             commands = ordinaryToolPlan.Commands.ToList();
+            deferralDisabledReason = "No model review is planned for this delivery.";
+        }
         if (noChange)
         {
             if (commands.Count == 0)
@@ -437,6 +528,8 @@ public sealed class RemoteReviewPlanBuilder
                 : deferBuildTest && !hasModelReview
                     ? ordinaryToolPlan.Preparation : toolPlan.Preparation,
             BuildTestDeferredToBatch = deferBuildTest && hasModelReview,
+            BuildTestDeferralDisabledReason = !deferBuildTest || !hasModelReview
+                ? deferralDisabledReason : null,
             TestLevel = (deferBuildTest && hasModelReview) || perCardApplied ? testLevel : null,
             TestSelectionDigest = (deferBuildTest && hasModelReview) || perCardApplied ? selectionDigest : null,
             RequiredAspects = commands
@@ -481,6 +574,7 @@ public sealed class RemoteReviewPlanBuilder
                 integrationRef,
                 expectedResultSha,
                 requireFullReview);
+        plan = ApplyEquivalentDeliveryReview(plan, task, repositoryPath, integrationRef, resultSha);
         // A scoped review drops carried-over agent commands. A no-change plan
         // has no tool command left to keep it non-empty, so it falls back to
         // the completion-only command the Task Server can admit.
@@ -495,6 +589,101 @@ public sealed class RemoteReviewPlanBuilder
             }
             : plan;
     }
+
+    private static Contract.ReviewPlanDto ApplyEquivalentDeliveryReview(
+        Contract.ReviewPlanDto plan, TaskInfo task, string? repositoryPath,
+        string? integrationRef, string? resultSha)
+    {
+        if (plan.CarriedVerdicts is { Count: > 0 }
+            || string.IsNullOrWhiteSpace(repositoryPath)
+            || string.IsNullOrWhiteSpace(integrationRef)
+            || !ReviewSubjectStore.IsValidResultSha(resultSha)
+            || string.IsNullOrWhiteSpace(plan.BriefSha256))
+            return plan;
+
+        var logs = TaskPaths.LogsDir(task.FolderPath);
+        if (!Directory.Exists(logs)) return plan;
+        var previous = Directory.EnumerateFiles(logs, "remote-review-settlement-*.json")
+            .Select(path => Path.GetFileNameWithoutExtension(path)["remote-review-settlement-".Length..])
+            .Select(id => RemoteReviewSettlementJournal.Read(task.FolderPath, id).Entry)
+            .Where(entry => entry is not null
+                && string.Equals(entry.Report.Outcome, "Pass", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(entry.Report.BriefSha256, plan.BriefSha256, StringComparison.OrdinalIgnoreCase)
+                && ReviewSubjectStore.IsValidResultSha(entry.Report.Workspace.ExpectedResultSha)
+                && ReviewSubjectStore.IsValidResultSha(entry.Report.Workspace.MergeBaseSha))
+            .OrderByDescending(entry => entry!.ReceivedAtUtc)
+            .FirstOrDefault();
+        if (previous is null) return plan;
+
+        var currentBase = Git(repositoryPath, "merge-base", integrationRef, resultSha!);
+        if (!ReviewSubjectStore.IsValidResultSha(currentBase)) return plan;
+        var priorDiff = OwnChangeDiff(repositoryPath, previous.Report.Workspace.MergeBaseSha!,
+            previous.Report.Workspace.ExpectedResultSha);
+        var currentDiff = OwnChangeDiff(repositoryPath, currentBase!, resultSha!);
+        if (priorDiff is null || currentDiff is null) return plan;
+
+        var ordinaryEqual = DiffForPaths(priorDiff, OrdinaryPath) == DiffForPaths(currentDiff, OrdinaryPath);
+        if (!ordinaryEqual) return plan;
+        var evidenceEqual = DiffForPaths(priorDiff, EvidencePath) == DiffForPaths(currentDiff, EvidencePath);
+        var carryAspects = evidenceEqual
+            ? DefaultAspectIds.Where(id => id != "visual-review").ToArray()
+            : ["code-quality", "documentation-impact"];
+        var previousVerdicts = previous.Report.Verdicts
+            .Where(verdict => string.Equals(verdict.Status, "pass", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(verdict => verdict.Aspect, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
+        var carry = new List<Contract.ReviewVerdictDto>();
+        foreach (var aspect in carryAspects)
+        {
+            if (!plan.Commands.Any(command => Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                    && string.Equals(command.Aspect, aspect, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            if (!previousVerdicts.TryGetValue(aspect, out var verdict)) return plan;
+            carry.Add(verdict with
+            {
+                Classification = "carried-over",
+                CarriedOverFrom = previous.AttemptId,
+            });
+        }
+        if (carry.Count == 0) return plan;
+        return plan with
+        {
+            Commands = plan.Commands.Where(command => !carry.Any(verdict =>
+                string.Equals(command.Aspect, verdict.Aspect, StringComparison.OrdinalIgnoreCase))).ToArray(),
+            CarriedOverFrom = previous.AttemptId,
+            CarriedVerdicts = carry,
+        };
+    }
+
+    private static bool EvidencePath(string path)
+        => string.Equals(Path.GetFileName(path), "status.md", StringComparison.OrdinalIgnoreCase)
+           || path.StartsWith("results/", StringComparison.OrdinalIgnoreCase)
+           || path.Contains("/results/", StringComparison.OrdinalIgnoreCase);
+
+    private static bool OrdinaryPath(string path) => !EvidencePath(path);
+
+    private static Dictionary<string, string>? OwnChangeDiff(string repositoryPath, string baseSha, string resultSha)
+    {
+        var paths = Git(repositoryPath, "diff", "--name-only", "-z", baseSha, resultSha);
+        if (paths is null) return null;
+        var diffs = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var path in paths.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var diff = Git(repositoryPath, "diff", "--no-ext-diff", "--no-textconv", "--binary",
+                "--unified=0", baseSha, resultSha, "--", path);
+            if (diff is null) return null;
+            diffs[path] = string.Join('\n', diff.Split('\n')
+                .Where(line => !line.StartsWith("index ", StringComparison.Ordinal))
+                .Select(line => line.StartsWith("@@ ", StringComparison.Ordinal)
+                    ? "@@" : line));
+        }
+        return diffs;
+    }
+
+    private static string DiffForPaths(Dictionary<string, string> diffs, Func<string, bool> predicate)
+        => string.Join("\n", diffs.Where(item => predicate(item.Key))
+            .OrderBy(item => item.Key, StringComparer.Ordinal)
+            .Select(item => item.Key + "\n" + item.Value));
 
     private DeepReviewDecision DecideDeepReview(TaskInfo task, string taskBody, ProjectSettings? settings,
         IReadOnlyList<string>? changedPaths, int changedLines, string resultSha)
@@ -517,6 +706,10 @@ public sealed class RemoteReviewPlanBuilder
         var matching = rules.LastOrDefault(rule => values.TryGetValue(rule.FactId, out var value)
             && (rule.WarningThreshold is null
                 || int.TryParse(rule.WarningThreshold, out var threshold) && value >= threshold));
+        var typedSettings = PipelineTypeSettings.ForTask(settings, task);
+        var deepSetting = typedSettings?.PipelineSteps?.GetValueOrDefault("post-deep-review");
+        var selectedDeepModel = matching?.Model ?? deepSetting?.Model;
+        var selectedDeepThinking = matching?.ThinkingLevel ?? deepSetting?.ThinkingLevel;
         var ruleSelection = matching is null ? (bool?)null
             : matching.CandidateActions.Contains(Contract.DecisionActionKinds.Prepare, StringComparer.Ordinal);
         var critical = _routing?.CorrectnessFloor(task.TaskType, task.Title, taskBody)?.Id == "sol-xhigh"
@@ -531,17 +724,22 @@ public sealed class RemoteReviewPlanBuilder
             settings?.MaxDeliveredReviewRounds ?? ReviewRoundBudgetPolicy.DefaultMaximumRounds,
             gateFailures, "unknown");
         var preliminary = MonolithTransitionAdapter.DeepReview(preliminaryFacts, DeepReviewPolicy.Shadow,
-            ruleVersion, ruleSelection, matching?.Model, matching?.ThinkingLevel);
+            ruleVersion, ruleSelection, selectedDeepModel, selectedDeepThinking);
         var reviewCli = preliminary.Model.StartsWith("claude-", StringComparison.OrdinalIgnoreCase)
             ? "claude" : "codex";
         var quota = _quota?.Plan(new QuotaAdmissionRequest(reviewCli, preliminary.Model,
             preliminary.ThinkingLevel, task.ProjectName, 0, "remote-deep-review-plan"));
-        var quotaState = quota is null ? "unknown" : !quota.ShouldLaunch ? "capped"
-            : quota.IsFallback ? "unavailable" : "available";
+        var operatorSwitch = _quota?.IsOperatorSwitchActive(reviewCli) == true;
+        var quotaState = DeepReviewQuotaState(quota, operatorSwitch);
         return MonolithTransitionAdapter.DeepReview(preliminaryFacts with { QuotaState = quotaState },
             _configuration["DeepReview:Mode"] ?? DeepReviewPolicy.Shadow,
-            ruleVersion, ruleSelection, matching?.Model, matching?.ThinkingLevel);
+            ruleVersion, ruleSelection, selectedDeepModel, selectedDeepThinking);
     }
+
+    internal static string DeepReviewQuotaState(QuotaAdmissionPlan? plan, bool operatorSwitch)
+        => plan is null ? "unknown" : operatorSwitch ? "available"
+            : !plan.ShouldLaunch ? "capped"
+            : plan.IsFallback ? "unavailable" : "available";
 
     /// <summary>
     /// Reads unchanged files from the checkout and the delivery's changed paths
@@ -668,6 +866,7 @@ public sealed class RemoteReviewPlanBuilder
             if (!Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)
                 || !decisions.TryGetValue(command.Aspect, out var decision)
                 || decision.Run
+                || string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase)
                 || noCarryOver
                 || !previous.TryGetValue(command.Aspect, out var priorVerdict))
             {
@@ -820,7 +1019,12 @@ public sealed class RemoteReviewPlanBuilder
             diff,
             status)
         {
-            ResultsInventory = ResultsInventory.Render(task.FolderPath),
+            // Concept review uses the generated status summary as its authority.
+            // Its compact inventory must not reintroduce the agent report after
+            // ReadStatus has selected that summary.
+            ResultsInventory = TaskModes.IsConcept(task.Mode)
+                ? ResultsInventory.Render(task.FolderPath)
+                : ResultsInventory.RenderForReview(task.FolderPath),
             CardMode = ReviewCardMode.Describe(task.Mode),
             AcceptanceScope = RequirementAcceptanceScope.Describe(
                 task.AcceptanceScope,

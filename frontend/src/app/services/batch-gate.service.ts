@@ -3,8 +3,10 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { firstValueFrom, map, type Observable } from 'rxjs';
 import type {
   BatchGateConfiguration,
+  BatchGateReport,
   BatchGateSettings,
   BatchGateState,
+  BatchTestFailureReport,
   GateQueueStallRelease,
   GateQueueStallReport,
 } from '../models/batch-gate.model';
@@ -126,6 +128,16 @@ export class BatchGateService {
   eject(project: string, taskKey: string): Observable<unknown> {
     return this.http.post(`${this.url(project)}/members/${encodeURIComponent(taskKey)}/eject`, {});
   }
+  /** Lifetime pilot figures; read-only and served from the batch store without Git. */
+  report(project: string): Observable<BatchGateReport> {
+    return this.http.get<BatchGateReport>(`${this.url(project)}/report`);
+  }
+  failedTests(project: string, windowDays = 7): Observable<BatchTestFailureReport> {
+    return this.http.get<BatchTestFailureReport>(`${this.url(project)}/failed-tests?windowDays=${windowDays}`);
+  }
+  history(project: string, count: number): Observable<BatchGateState> {
+    return this.http.get<BatchGateState>(`${this.url(project)}/state?history=${count}`);
+  }
   queueStalls(project: string): Observable<GateQueueStallReport> {
     return this.http.get<GateQueueStallReport>(`${this.url(project)}/queue-stalls`);
   }
@@ -148,18 +160,24 @@ function configuration(value: unknown): BatchGateConfiguration {
   const settings = value['settings'];
   const advisor = settings['advisor'];
   if (typeof settings['enabled'] !== 'boolean' ||
+      typeof settings['preCheckEnabled'] !== 'boolean' ||
       !['documentation', 'code'].includes(String(settings['scope'])) ||
       !['threshold', 'look-ahead'].includes(String(settings['planner'])) ||
       !['minimumSize', 'maximumSize', 'deadlineMinutes', 'lookAheadMinutes', 'gateTimeoutMinutes']
         .every(field => typeof settings[field] === 'number') ||
       !strings(settings['urgentTags']) ||
       !['conservative', 'balanced', 'aggressive'].includes(String(settings['riskPolicy'])) ||
+      !['legacy', 'empirical', undefined].includes(settings['calibration'] as string | undefined) ||
+      !['off', '1', undefined].includes(settings['stacking'] as string | undefined) ||
       !['adjacent', 'separate'].includes(String(settings['overlap'])) ||
       !['work-package', 'build-only'].includes(String(settings['reviewTestLevel'])) ||
       !record(advisor) || !['off', 'advise', 'enforce'].includes(String(advisor['mode'])) ||
       typeof advisor['cliType'] !== 'string' || !optionalString(advisor['model']) ||
       typeof advisor['timeoutSeconds'] !== 'number' ||
       typeof value['limits']['hardMaximumSize'] !== 'number') throw new Error('Invalid batch settings response');
+  // A server older than these fields applies the backend defaults.
+  settings['calibration'] ??= 'empirical';
+  settings['stacking'] ??= 'off';
   return value as unknown as BatchGateConfiguration;
 }
 
@@ -185,6 +203,11 @@ export function isBatchGateState(value: unknown): value is BatchGateState {
   if (!value['batches'].every(batch => record(batch) && typeof batch['batchId'] === 'string' &&
       typeof batch['phase'] === 'string' && typeof batch['baseSha'] === 'string' &&
       optionalString(batch['parentBatchId']) && optionalString(batch['phaseReason']) &&
+      optionalString(batch['formationReason']) &&
+      (batch['exclusions'] == null || Array.isArray(batch['exclusions']) &&
+        batch['exclusions'].every((item: unknown) => record(item) &&
+          typeof item['taskKey'] === 'string' && typeof item['reason'] === 'string' &&
+          optionalString(item['detail']))) &&
       optionalString(batch['candidateSha']) && Array.isArray(batch['members']) && Array.isArray(batch['runs']) &&
       batch['members'].every((member: unknown) => record(member) && typeof member['taskKey'] === 'string' &&
         replay(member['replay']) && typeof member['released'] === 'boolean') &&
@@ -194,7 +217,7 @@ export function isBatchGateState(value: unknown): value is BatchGateState {
         optionalString(run['finishedAtUtc'])) &&
       (batch['publication'] == null || record(batch['publication'])))) return false;
   return Object.values(value['members']).every(member => record(member) &&
-    ['pending', 'in-batch', 'published', 'fallback'].includes(String(member['status'])) &&
+    ['pending', 'in-batch', 'published', 'fallback', 'pre-check-red', 'review-fix'].includes(String(member['status'])) &&
     optionalString(member['batchId']) && optionalString(member['phase']) &&
     optionalNumber(member['position']) && optionalNumber(member['size']) &&
     optionalString(member['reason']) && optionalString(member['reasonDetail']));

@@ -61,6 +61,7 @@ public class ScreenshotIndexService
             var (caption, status) = DescribeEntry(rel, passFailIndex);
             var fileName = Path.GetFileName(path);
             var source = ScreenshotSourceParser.Parse(fileName);
+            var metadata = ReadMetadata(path);
             entries.Add(new TaskScreenshot
             {
                 JobId = info.Id,
@@ -70,6 +71,9 @@ public class ScreenshotIndexService
                 FileName = fileName,
                 RelativePath = $"results/{rel}",
                 Url = BuildServeUrl(info.Id, rel, info.WatchPath),
+                SizeBytes = metadata.SizeBytes,
+                Width = metadata.Header?.Width,
+                Height = metadata.Header?.Height,
                 Caption = caption,
                 Status = status,
                 Source = source.Source,
@@ -123,6 +127,7 @@ public class ScreenshotIndexService
                 var (caption, status) = DescribeEntry(rel, passFailIndex);
                 var fileName = Path.GetFileName(path);
                 var source = ScreenshotSourceParser.Parse(fileName);
+                var metadata = ReadMetadata(path);
                 collected.Add(new TaskScreenshot
                 {
                     JobId = job.Id,
@@ -132,6 +137,9 @@ public class ScreenshotIndexService
                     FileName = fileName,
                     RelativePath = $"results/{rel}",
                     Url = BuildServeUrl(job.Id, rel, job.WatchPath),
+                    SizeBytes = metadata.SizeBytes,
+                    Width = metadata.Header?.Width,
+                    Height = metadata.Header?.Height,
                     Caption = caption,
                     Status = status,
                     Source = source.Source,
@@ -208,6 +216,13 @@ public class ScreenshotIndexService
         // Use the sub-path serving endpoint for everything so the
         // frontend has a single URL shape, including playwright/<spec>/...
         return $"/api/tasks/{Uri.EscapeDataString(jobId)}/screenshot?path={Uri.EscapeDataString(relativeWithinResults)}{watchQs}";
+    }
+
+    private static (long SizeBytes, ImageHeader? Header) ReadMetadata(string path)
+    {
+        try { return (new FileInfo(path).Length, ImageHeaderReader.ReadFile(path)); }
+        catch (IOException) { return (0, null); }
+        catch (UnauthorizedAccessException) { return (0, null); }
     }
 
     private static DateTime SafeLastWriteUtc(string path)

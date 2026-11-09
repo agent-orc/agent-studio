@@ -7,6 +7,7 @@ using System.Text.Json;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Runner;
 using AgentStudio.Security;
+using AgentStudio.TestSupport;
 using AgentStudio.Tasks;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Tasks;
@@ -598,7 +599,8 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_workspace)) Directory.Delete(_workspace, recursive: true);
+        Assert.True(TestTempRoot.TryDelete(_workspace),
+            $"Endpoint workspace was recreated during teardown: {_workspace}");
     }
 
     private sealed class FakeEngineClient(HttpClient client, string engineId)

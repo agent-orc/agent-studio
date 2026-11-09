@@ -1,4 +1,4 @@
-@if (inline()) {
+﻿@if (inline()) {
   <section class="ws-settings ws-settings--inline"
            role="region"
            aria-labelledby="ws-settings-title"
@@ -27,7 +27,7 @@
 }
 
 <ng-template #settingsContent>
-  <header class="ws-settings__head">
+  <header class="ws-settings__head" role="presentation">
     <div class="ws-settings__title-row">
       <h1 id="ws-settings-title"
           class="ws-settings__title"
@@ -112,16 +112,22 @@
           }
         }
         @case ('first-run') {
+          @defer (on immediate) {
           <app-first-run-checklist (openProjectSettings)="openProjectSettings.emit($event)" />
+          }
         }
         @case ('updates') {
           <app-updates-settings />
         }
         @case ('workspaces') {
+          @defer (on immediate) {
           <app-workspace-management />
+          }
         }
         @case ('task-server') {
+          @defer (on immediate) {
           <app-task-server-panel />
+          }
         }
         @case ('credentials') {
           <app-credential-inventory />
@@ -137,7 +143,9 @@
           }
         }
         @case ('remote-hosts') {
+          @defer (on immediate) {
           <app-remote-hosts-panel [workspaces]="watchPaths()" (openTask)="openJobDetail.emit($event)" />
+          }
         }
         @case ('orchestrator') {
           <section class="ws-settings__section" data-testid="workspace-orchestrator">
@@ -152,66 +160,41 @@
                 on each project's Settings → Workspace defaults instead.
               </p>
             </header>
-            <app-orchestrator-logic-panel />
-            <app-transition-rollout-panel />
-            <app-decision-rules-panel />
+            @defer (on immediate) {
+              <app-orchestrator-logic-panel />
+              <app-transition-rollout-panel />
+              <app-decision-rules-panel />
+            }
           </section>
         }
         @case ('caps') {
+          @defer (on immediate) {
           <app-cli-admin-panel />
-        }
-        @case ('cli-sessions') {
-          <section class="ws-settings__section" data-testid="workspace-cli-sessions">
-            <header class="ws-settings__section-head">
-              <h2 class="ws-settings__panel-title">CLI sessions</h2>
-              <p class="ws-settings__panel-desc">
-                The per-CLI, per-project inventory of native CLI sessions on this
-                host. This is a lazy read-only view; the larger session revamp is
-                tracked separately.
-              </p>
-            </header>
-            <app-cli-sessions-panel (openJobDetail)="openJobDetail.emit($event)" />
-          </section>
-        }
-        @case ('cli-paths') {
-          <section class="ws-settings__section" data-testid="workspace-cli-paths">
-            <header class="ws-settings__section-head">
-              <h2 class="ws-settings__panel-title">CLI paths</h2>
-              <p class="ws-settings__panel-desc">
-                Where each CLI lives on this host: the discovered executable path
-                and the project roots it holds session state for. Read-only.
-              </p>
-            </header>
-            <app-cli-paths-panel />
-          </section>
-        }
-        @case ('working-memory') {
-          <section class="ws-settings__section" data-testid="workspace-working-memory">
-            <header class="ws-settings__section-head">
-              <h2 class="ws-settings__panel-title">Working memory</h2>
-              <p class="ws-settings__panel-desc">
-                Per-CLI memory and session state you can inspect and clear. Auth
-                and config are protected and never listed as deletable.
-              </p>
-            </header>
-            <app-cli-working-memory-panel />
-          </section>
+          }
         }
         @case ('prompts') {
+          @defer (on immediate) {
           <app-prompt-admin-panel />
+          }
         }
         @case ('retention') {
+          @defer (on immediate) {
           <app-retention-admin />
+          }
         }
         @case ('tokens') {
+          @defer (on immediate) {
           <app-token-usage-section
             [page]="overlays.tokenUsagePage()"
             [ledgerScope]="overlays.tokenLedgerScope()"
             (pageChange)="overlays.selectTokenUsagePage($event)"
             (openProjectSettings)="openProjectSettings.emit($event)" />
+          }
         }
         @case ('screenshots') {
+          @defer (on immediate) {
           <app-workspace-screenshots (openTask)="openTask.emit($event)" />
+          }
         }
       }
     </main>

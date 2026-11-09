@@ -50,6 +50,7 @@ namespace AgentStudio.Tests;
 /// </list>
 /// </para>
 /// </remarks>
+[Trait("Category", "Guard")]
 public class TaskFolderAccessIsolationTest
 {
     /// <summary>
@@ -132,6 +133,14 @@ public class TaskFolderAccessIsolationTest
                 "Deletes only its GUID-named agent-studio-git-proof clone under OS temp, never task storage.",
             ["backend/Features/Registry/LocalFirstRunGitSetup.cs"] =
                 "Deletes only a failed fresh clone under the AgentStudio first-run-git checkouts root, never task storage.",
+            ["backend/Features/Pipeline/BatchGate/GateRunLedger.cs"] =
+                "Prunes expired instance-local gate ledger day folders outside the task repository.",
+
+            // The readiness commit-tree probe creates a GUID-named repository
+            // under OS temp and removes it after each cached probe. It cannot
+            // use task access because the directory is outside task storage.
+            ["backend/Features/Readiness/ReadinessGitFacts.cs"] =
+                "Deletes only its GUID-named OS-temp commit-tree probe repository, never task storage.",
 
             // Tier 2 (boot): the crash-recovery sweep walks 3-progress
             // before the in-memory store boots. Explicitly carved out in
@@ -144,6 +153,9 @@ public class TaskFolderAccessIsolationTest
                 "Moves and replaces dependency caches under the OS review-workspace temp root, never task storage.",
             ["backend/Features/Pipeline/GateResultCache.cs"] =
                 "Deletes only the hashed per-project gate-result cache under local application data, never task storage.",
+            // AGT-3401 moves only the API's own legacy local state into its durable root.
+            ["backend/Features/State/LocalStateStartup.cs"] =
+                "Moves only API-owned legacy local state into the durable local state root, never task folders.",
             ["backend/Features/Pipeline/GateSourceCacheRetention.cs"] =
                 "Evicts only SHA-keyed host gate source caches under local application data, never task folders.",
             ["backend/Features/Pipeline/BuildTestGateRunner.cs"] =
@@ -169,6 +181,16 @@ public class TaskFolderAccessIsolationTest
                 "Temporary legacy/OneShot npm staging cleanup under the user npm directory, not the job-folder tree; removed in AGT-2373.",
             ["backend/Features/Projects/HostedData/HostedVolumeBackupEngine.cs"] =
                 "AGT-3248 stages, swaps and prunes hosted-app volume backup and restore directories under the hosted data root, never a lane or task folder.",
+            ["backend/Features/Management/Backups/BackupCatalog.cs"] =
+                "AGT-3574 clears the owner-only staging folder of the backup directory, which lies outside every backup source.",
+            ["backend/Features/Management/Backups/BackupCollector.cs"] =
+                "AGT-3574 removes the per-run spool staging folder of the backup directory, never a lane or task folder.",
+            ["backend/Features/Management/Backups/BackupCheckouts.cs"] =
+                "AGT-3574 restore removes a failed clone it just created on an empty restore target, before retrying the default branch.",
+            ["backend/Features/Management/Backups/BackupRestore.cs"] =
+                "AGT-3574 restore empties only targets it verified empty at start after a failed restore, and its bundle scratch folder.",
+            ["backend/Features/Management/Backups/StudioBackupService.cs"] =
+                "AGT-3574 removes the restore-verification staging host below the backup directory.",
             ["backend/Features/Secrets/BuiltIn/BuiltInSecretStore.cs"] =
                 "AGT-3222 removes a revoked or replaced secret item directory under the secret store root (tombstone move, then delete), never a lane or task folder.",
             ["backend/Features/Cli/Execution/RunLogStore.cs"] =
@@ -177,8 +199,6 @@ public class TaskFolderAccessIsolationTest
                 "Deletes CAR's temporary mirror under TaskRepository/.runtime/car-cli-output, never a lane or task folder.",
             ["backend/Features/Cli/Execution/CleanContextPreparation.cs"] =
                 "Adapts the external task clean-home store; failed-start cleanup never targets the job-folder tree.",
-            ["backend/Features/Cli/Execution/CliWorkingMemoryService.cs"] =
-                "Deletes a CLI's own working-memory state under its config home (guarded by a known-state whitelist), not lane folders.",
             ["backend/Features/Cli/Execution/DurableLocalCliProcess.cs"] =
                 "AGT-2780 worker spool directory is outside the task folder tree and owned by the durable worker lifecycle.",
             ["backend/Features/Cli/Routing/OneShot/CodexOneShot.cs"] =

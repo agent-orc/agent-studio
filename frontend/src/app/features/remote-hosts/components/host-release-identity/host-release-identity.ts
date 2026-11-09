@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-key/copyable-task-key.component';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 import {
   releaseDriftLabel,
   releaseDriftTone,
@@ -13,7 +14,7 @@ import type { RemoteHost } from '../../models/remote-host.model';
 @Component({
   selector: 'app-host-release-identity',
   standalone: true,
-  imports: [AppTooltipDirective, CopyableTaskKeyComponent],
+  imports: [AppTooltipDirective, CopyableTaskKeyComponent, StatusIndicatorComponent],
   templateUrl: './host-release-identity.html',
   styleUrl: './host-release-identity.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -36,6 +37,7 @@ export class HostReleaseIdentityComponent {
   });
   readonly driftLabel = computed(() => releaseDriftLabel(this.host().releaseDrift));
   readonly driftTone = computed(() => releaseDriftTone(this.host().releaseDrift));
+  readonly indicatorTone = computed<StatusTone>(() => this.driftTone() === 'warn' ? 'warning' : 'neutral');
   readonly tooltip = computed(() =>
     releaseDriftTooltip(this.host().releaseDrift, this.stableRelease())
     ?? this.host().releaseId?.trim()

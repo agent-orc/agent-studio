@@ -58,6 +58,18 @@
   background: var(--studio-bg-elevated);
 }
 
+.strip__large {
+  display: flex;
+  width: 100%;
+  height: 120px;
+  align-items: center;
+  justify-content: center;
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg-muted);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
 // Status badge sits on top of the screenshot image, so it keeps fixed pastel
 // fills + dark text that stay legible regardless of the active app theme.
 .strip__badge {

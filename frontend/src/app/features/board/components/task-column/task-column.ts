@@ -10,6 +10,8 @@ import {
   input,
   output,
   signal,
+  ElementRef,
+  viewChild,
 } from '@angular/core';
 import type { Subscription } from 'rxjs';
 import {
@@ -29,13 +31,16 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { groupReviewJobs } from '../review-grouping.util';
 import { InfoButtonComponent } from '../../../../components/info-button/info-button.component';
 import { lanePresentation } from '../../../../models/lane-presentation';
-import { laneSortStrategyMeta, isManualStrategy } from '../../../../services/lane-sort.util';
+import { laneSortIndicator, perProjectOrderNote } from '../../../../services/lane-sort.util';
 import { deriveStalledTaskState } from '../../../../services/run-activity.util';
 import { PostProcessingSummaryComponent } from '../post-processing-summary/post-processing-summary.component';
+import { ReadyWaitSplitComponent } from '../ready-wait-split/ready-wait-split.component';
 import { BoardDragStateService } from '../../state/board-drag-state.service';
 import { isUnpullableDependencyHold } from './pullable-task.util';
 import { BatchLaneIndicatorComponent } from '../../../batch-gate/batch-lane-indicator/batch-lane-indicator';
 import { OrchestratorFeedStore } from '../../../orchestrator';
+import { LaneCardWindow } from './lane-card-window';
+import { LaneCardWindowComponent } from '../lane-card-window/lane-card-window.component';
 /** ASS-1727: Archive pagination and typed-filter debounce. */
 const ARCHIVE_PAGE_SIZE = 50;
 const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
@@ -45,10 +50,12 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
   standalone: true,
   imports: [
     TaskCardComponent,
+    LaneCardWindowComponent,
     DecisionBacklogHintComponent,
     TooltipDirective,
     InfoButtonComponent,
     PostProcessingSummaryComponent,
+    ReadyWaitSplitComponent,
     BatchLaneIndicatorComponent,
   ],
   // Signal inputs let OnPush skip unchanged lanes during board polling.
@@ -84,6 +91,14 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
    * change detection is OnPush-friendly.
    */
   readonly nowMs = input<number>(0);
+  private readonly laneBody = viewChild<ElementRef<HTMLElement>>('laneBody');
+  readonly cardWindowState = new LaneCardWindow(
+    () => this.jobs(), () => this.compact(), () => this.state(),
+    () => this.isReview(), () => this.reviewGroups(),
+    () => this.laneBody()?.nativeElement ?? null, () => this.highlightJobId(),
+  );
+  readonly windowed = this.cardWindowState.enabled;
+  readonly cardWindow = this.cardWindowState.window;
   private readonly unpullableDependencyCount = computed(() => this.jobs().filter(isUnpullableDependencyHold).length);
   readonly stalledCount = computed(() => this.state() === TaskState.Progress
     ? this.jobs().filter((job) => deriveStalledTaskState(job, this.nowMs() || Date.now()) !== null).length
@@ -100,7 +115,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   readonly jobDrop = output<{ jobId: string; watchPath: string; targetState: string; targetIndex: number }>();
   readonly jobReorder = output<{ state: string; jobs: TaskOrderItem[] }>();
   readonly jobDeleteRequest = output<TaskInfo>();
-  /** F5: bubbled "Pick next" click from a 2-ready card. */
+  /** F5: bubbled "Move to top" click from a 2-ready card. */
   readonly jobPickNextRequest = output<TaskInfo>();
   readonly addTask = output<string>();
   readonly archiveAll = output<void>();
@@ -108,41 +123,10 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   /** Emits the project name when the user clicks the lane's auto chip. */
   readonly autoToggleRequest = output<string>();
 
-  /**
-   * F35: lane-header sort indicator. Returns the glyph + tooltip for the
-   * resolved strategy, or null when no strategy data is available. When the
-   * strategy is non-manual the tooltip explains why drag is disabled; when
-   * the active projects disagree it renders a neutral "mixed" marker.
-   */
-  readonly sortIndicator = computed<{ icon: string; label: string; tooltip: string } | null>(() => {
-    const strategy = this.sortStrategy();
-    if (!strategy) return null;
-    if (strategy === 'mixed') {
-      return {
-        icon: '⇅',
-        label: 'mixed',
-        tooltip:
-          'Auto-sorted — the projects shown in this lane use different sort orders. '
-          + 'Filter to a single project, or set that lane to Manual, to reorder by hand.',
-      };
-    }
-    const meta = laneSortStrategyMeta(strategy);
-    if (isManualStrategy(strategy)) {
-      return { icon: meta.icon, label: meta.label, tooltip: 'Manual order — drag cards to reorder.' };
-    }
-    if (strategy === 'lane-entry') {
-      return {
-        icon: meta.icon,
-        label: meta.label,
-        tooltip: 'Most recently entered on top — drag a card to pin it in place.',
-      };
-    }
-    return {
-      icon: meta.icon,
-      label: meta.label,
-      tooltip: `Auto-sorted by ${meta.label.toLowerCase()}; switch this lane to Manual to reorder.`,
-    };
-  });
+  /** F35 / AGT-3587: lane-header sort indicator; Ready adds the pickup rule. */
+  readonly sortIndicator = computed(() => laneSortIndicator(this.sortStrategy(), this.state()));
+  /** AGT-3587: names the per-project order when Ready mixes projects. */
+  readonly perProjectNote = computed(() => perProjectOrderNote(this.state(), this.jobs()));
 
   /** Running, pickup-mode, and queue pills for a project-scoped In-Progress lane. */
   readonly statusCluster = computed(() => {
@@ -330,9 +314,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   });
 
   cliIconFor(cli: string): string {
-    if (cli === 'claude' || cli === 'codex' || cli === 'gemini') {
-      return cliTypeIcon(cli);
-    }
+    if (cli === 'claude' || cli === 'codex' || cli === 'gemini') return cliTypeIcon(cli);
     return '🤖';
   }
 
@@ -448,6 +430,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.cardWindowState.destroy();
     if (this.archiveSearchTimer !== null) clearTimeout(this.archiveSearchTimer);
     this.archiveSub?.unsubscribe();
     this.stopAutoScroll();
@@ -782,25 +765,11 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
     });
   }
 
-  /**
-   * Find the insertion slot (0..jobs.length) that corresponds to the
-   * cursor's vertical position. Slot `i` means "insert before card i"; slot
-   * `jobs.length` means "append after the last card". Cards are queried
-   * from the column root so the result reflects the actual rendered
-   * positions (gap, padding, scroll offset all baked into the rect).
-   */
+  /** Find the insertion slot from the lane scroll position or mounted card midpoints. */
   private computeDropSlotFromCursor(event: DragEvent): number {
     const columnEl = event.currentTarget as HTMLElement | null;
     if (!columnEl) return this.jobs().length;
-    const cards = Array.from(columnEl.querySelectorAll('app-job-card')) as HTMLElement[];
-    if (cards.length === 0) return 0;
-    const cursorY = event.clientY;
-    for (let i = 0; i < cards.length; i++) {
-      const rect = cards[i].getBoundingClientRect();
-      const mid = rect.top + rect.height / 2;
-      if (cursorY < mid) return i;
-    }
-    return cards.length;
+    return this.cardWindowState.dropSlotAt(event.clientY, columnEl);
   }
 
   /**

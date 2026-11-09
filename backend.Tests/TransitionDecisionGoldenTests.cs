@@ -18,9 +18,9 @@ public sealed class TransitionDecisionGoldenTests
     {
         yield return Case("pass", Facts("Pass"), TransitionAction.AcceptAndIntegrate);
         yield return Case("unactionable concern", Facts("Pass", "requirements", "concerns"), TransitionAction.AcceptAndIntegrate);
-        yield return Case("actionable concern", Facts("Pass", "requirements", "concerns", finding: "Fix src/feature.cs")
+        yield return Case("actionable concern", Facts("Pass", "requirements", "concerns", finding: "src/feature.cs fails to retry after timeout")
             with { Settings = new(MaximumConcernRounds: 1) }, TransitionAction.ConcernRound);
-        yield return Case("concern exhausted", Facts("Pass", "requirements", "concerns", finding: "Fix src/feature.cs")
+        yield return Case("concern exhausted", Facts("Pass", "requirements", "concerns", finding: "src/feature.cs fails to retry after timeout")
             with { Settings = new(MaximumConcernRounds: 1), Counters = new(ConcernRounds: 1) }, TransitionAction.AcceptAndIntegrate);
         yield return Case("blocking verdict", Facts("ProductFailure", "requirements", "block"), TransitionAction.FindingRound);
         yield return Case("uncited block", Facts("ProductFailure", "requirements", "block",
@@ -107,6 +107,7 @@ public sealed class TransitionDecisionGoldenTests
     [InlineData("noop", false, "4-auto-review")]
     [InlineData("needsinput", false, "5e-escalated")]
     [InlineData("stopped", false, "2-ready")]
+    [InlineData("transientfailure", false, "2-ready")]
     [InlineData("done", true, "5e-escalated")]
     [InlineData("invalid", false, "")]
     public void Completion_routing_preserves_the_lease_contract(string outcome, bool rejected, string lane)
@@ -147,7 +148,7 @@ public sealed class TransitionDecisionGoldenTests
     public void Frozen_history_counts_only_the_chosen_concern_round()
     {
         var first = new StagePayload(ReviewOutcome: "Pass", ReviewAttemptId: "one",
-            Verdicts: [new("requirements", "concerns", "Review", "Fix src/feature.cs")],
+            Verdicts: [new("requirements", "concerns", "Review", "src/feature.cs fails to retry after timeout")],
             MaximumConcernRounds: 1);
         var second = first with { ReviewAttemptId = "two", ConcernRoundsUsed = 1 };
         Assert.Equal(1, StageDecisionPolicy.ConcernRoundsUsed([first, second]));

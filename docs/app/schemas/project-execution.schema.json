@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent-taskboard.local/schemas/project-execution.schema.json",
   "title": "Repository project execution definition",
-  "description": "Repository-owned project.yml schema 1 or 2. Schema 2 adds deployments, environments, lifecycle, tenants, scoped variables and operational runbooks. Secrets are references, never values.",
+  "description": "Repository-owned project.yml schema 1 or 2. Schema 2 adds deployments, environments, lifecycle, tenants, scoped variables, operational runbooks and the deployment structure. Secrets are references, never values.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -70,7 +70,13 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "fullSuite": { "enum": ["required", "optional", "off"] }
+        "fullSuite": {
+          "enum": [
+            "required",
+            "optional",
+            "off"
+          ]
+        }
       }
     },
     "testSuites": {
@@ -367,12 +373,28 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["phase"],
+            "required": [
+              "phase"
+            ],
             "properties": {
-              "phase": {"$ref": "#/$defs/deployEnvironmentName"},
-              "automatic": {"type": "boolean"},
-              "approval": {"type": "array", "items": {"enum": ["Owner", "Maintainer"]}},
-              "requires": {"$ref": "#/$defs/deployEnvironmentName"}
+              "phase": {
+                "$ref": "#/$defs/deployEnvironmentName"
+              },
+              "automatic": {
+                "type": "boolean"
+              },
+              "approval": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "Owner",
+                    "Maintainer"
+                  ]
+                }
+              },
+              "requires": {
+                "$ref": "#/$defs/deployEnvironmentName"
+              }
             }
           }
         }
@@ -700,15 +722,24 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "steps"],
+        "required": [
+          "name",
+          "steps"
+        ],
         "properties": {
-          "name": { "$ref": "#/$defs/identifier" },
+          "name": {
+            "$ref": "#/$defs/identifier"
+          },
           "steps": {
             "type": "array",
             "minItems": 1,
-            "items": { "$ref": "#/$defs/identifier" }
+            "items": {
+              "$ref": "#/$defs/identifier"
+            }
           },
-          "environments": { "$ref": "#/$defs/environmentScope" }
+          "environments": {
+            "$ref": "#/$defs/environmentScope"
+          }
         }
       }
     },
@@ -718,11 +749,27 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "environments"],
+        "required": [
+          "name",
+          "environments"
+        ],
         "properties": {
-          "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
-          "tags": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" } },
-          "environments": { "$ref": "#/$defs/environmentScope", "minItems": 1 }
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+          },
+          "tags": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+            }
+          },
+          "environments": {
+            "$ref": "#/$defs/environmentScope",
+            "minItems": 1
+          }
         }
       }
     },
@@ -733,21 +780,40 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "lifecycle"],
+        "required": [
+          "name",
+          "lifecycle"
+        ],
         "properties": {
-          "name": {"$ref": "#/$defs/identifier"},
-          "lifecycle": {"$ref": "#/$defs/identifier"},
+          "name": {
+            "$ref": "#/$defs/identifier"
+          },
+          "lifecycle": {
+            "$ref": "#/$defs/identifier"
+          },
           "versionRules": {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "prereleaseTag": {"$ref": "#/$defs/identifier"},
-              "branchPattern": {"type": "string", "pattern": "^refs/heads/[A-Za-z0-9._/*-]+$"}
+              "prereleaseTag": {
+                "$ref": "#/$defs/identifier"
+              },
+              "branchPattern": {
+                "type": "string",
+                "pattern": "^refs/heads/[A-Za-z0-9._/*-]+$"
+              }
             }
           },
-          "prereleaseTag": {"$ref": "#/$defs/identifier"},
-          "branchPattern": {"type": "string", "pattern": "^refs/heads/[A-Za-z0-9._/*-]+$"},
-          "default": {"type": "boolean"}
+          "prereleaseTag": {
+            "$ref": "#/$defs/identifier"
+          },
+          "branchPattern": {
+            "type": "string",
+            "pattern": "^refs/heads/[A-Za-z0-9._/*-]+$"
+          },
+          "default": {
+            "type": "boolean"
+          }
         }
       }
     },
@@ -782,17 +848,25 @@
           "tenants": {
             "type": "array",
             "uniqueItems": true,
-            "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" }
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+            }
           },
           "tenantTags": {
             "type": "array",
             "uniqueItems": true,
-            "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" }
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+            }
           },
           "channels": {
             "type": "array",
             "uniqueItems": true,
-            "items": {"$ref": "#/$defs/identifier"}
+            "items": {
+              "$ref": "#/$defs/identifier"
+            }
           }
         },
         "oneOf": [
@@ -808,10 +882,186 @@
           }
         ]
       }
+    },
+    "structure": {
+      "description": "Deployment structure for the Operations structure view: regions, placements (clusters, namespaces, VMs, servers or runner deploy target kinds) and managed services. Declares shape only; addresses and credentials stay in environment declarations and the operator inventory. Artifact registry destinations are declared per artifact, with secret references for private registries.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "regions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "$ref": "#/$defs/identifier"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              }
+            }
+          }
+        },
+        "placements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "kind"
+            ],
+            "properties": {
+              "name": {
+                "$ref": "#/$defs/identifier"
+              },
+              "kind": {
+                "description": "Placement kind, or a runner deploy target kind: ssh-docker draws as a server, kubernetes as a cluster, cloud-run as a managed runtime.",
+                "enum": [
+                  "server",
+                  "vm",
+                  "cluster",
+                  "namespace",
+                  "ssh-docker",
+                  "kubernetes",
+                  "cloud-run"
+                ]
+              },
+              "parent": {
+                "$ref": "#/$defs/identifier"
+              },
+              "region": {
+                "$ref": "#/$defs/identifier"
+              },
+              "environments": {
+                "$ref": "#/$defs/environmentScope"
+              },
+              "artifacts": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/$defs/identifier"
+                }
+              },
+              "replicas": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "namespace"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "parent"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "managedServices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "kind"
+            ],
+            "properties": {
+              "name": {
+                "$ref": "#/$defs/identifier"
+              },
+              "kind": {
+                "enum": [
+                  "database",
+                  "queue",
+                  "object-storage",
+                  "cache",
+                  "search",
+                  "other"
+                ]
+              },
+              "region": {
+                "$ref": "#/$defs/identifier"
+              },
+              "environments": {
+                "$ref": "#/$defs/environmentScope"
+              },
+              "healthCheck": {
+                "description": "Id of an environment health check (healthChecks in the environment declaration). Its control-plane probe observes the service; without it the service is declared, not observed.",
+                "$ref": "#/$defs/identifier"
+              }
+            }
+          }
+        },
+        "registries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "artifact",
+              "provider",
+              "package"
+            ],
+            "properties": {
+              "artifact": {
+                "type": "string",
+                "minLength": 1
+              },
+              "provider": {
+                "enum": [
+                  "npm",
+                  "nuget",
+                  "docker-hub",
+                  "github",
+                  "jfrog",
+                  "internal"
+                ]
+              },
+              "package": {
+                "type": "string",
+                "minLength": 1
+              },
+              "repository": {
+                "type": "string"
+              },
+              "secretRef": {
+                "type": "string",
+                "pattern": "^secret://"
+              },
+              "baseUrl": {
+                "type": "string",
+                "format": "uri"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {
-    "deployEnvironmentName": {"enum": ["staging", "production"]},
+    "deployEnvironmentName": {
+      "enum": [
+        "staging",
+        "production"
+      ]
+    },
     "relativePath": {
       "type": "string",
       "minLength": 1,
@@ -991,6 +1241,11 @@
               "required": [
                 "tenants",
                 "channels"
+              ]
+            },
+            {
+              "required": [
+                "structure"
               ]
             }
           ]

@@ -47,11 +47,7 @@ describe('StudioActivityBarComponent (smoke)', () => {
   });
 });
 
-/**
- * Bottom-pinned workspace destination: the Settings gear. (The former Admin
- * shield was removed — its destinations live in the CLI/Activity panels.)
- */
-describe('StudioActivityBarComponent settings destination', () => {
+describe('StudioActivityBarComponent destinations', () => {
   function mount(activeKey: string | null = 'explorer') {
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
@@ -82,24 +78,10 @@ describe('StudioActivityBarComponent settings destination', () => {
     expect(host.querySelector('[data-testid="studio-ab-admin"]')).toBeNull();
   });
 
-  it('renders a Settings button that emits the settings panel key', () => {
+  it('leaves Settings to the top-right header', () => {
     const fixture = mount();
     const host = fixture.nativeElement as HTMLElement;
-    const btn = host.querySelector<HTMLElement>('[data-testid="studio-ab-settings"]');
-    expect(btn).toBeTruthy();
-
-    const emitted: string[] = [];
-    fixture.componentInstance.panelToggle.subscribe(k => emitted.push(k));
-    btn!.click();
-
-    expect(emitted).toEqual(['settings']);
-  });
-
-  it('keeps the Settings button active while the Workspace settings tab is active', () => {
-    const fixture = mount('settings');
-    const host = fixture.nativeElement as HTMLElement;
-    const btn = host.querySelector<HTMLElement>('[data-testid="studio-ab-settings"]')!;
-    expect(btn.classList.contains('studio-ab__btn--active')).toBe(true);
+    expect(host.querySelector('[data-testid="studio-ab-settings"]')).toBeNull();
   });
 
   /**
@@ -108,7 +90,7 @@ describe('StudioActivityBarComponent settings destination', () => {
    * that two items can never light up together — assert it on the DOM.
    */
   it('marks at most one button active for any active key', () => {
-    for (const key of ['explorer', 'filters', 'chats', 'workbenches', 'settings', null]) {
+    for (const key of ['explorer', 'filters', 'chats', 'workbenches', null]) {
       const fixture = mount(key);
       const host = fixture.nativeElement as HTMLElement;
       const active = host.querySelectorAll('.studio-ab__btn--active');
@@ -117,6 +99,19 @@ describe('StudioActivityBarComponent settings destination', () => {
         expect(active.length, `activeKey=${key}`).toBe(1);
       }
     }
+  });
+
+  it('names each icon button and exposes the current destination', () => {
+    const fixture = mount('filters');
+    const host = fixture.nativeElement as HTMLElement;
+    for (const item of ITEMS) {
+      const button = host.querySelector<HTMLElement>(`[data-testid="studio-ab-${item.key}"]`)!;
+      expect(button.getAttribute('aria-label')).toBe(item.label);
+      expect(button.getAttribute('aria-current')).toBe(item.key === 'filters' ? 'page' : null);
+      expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    }
+    expect(host.querySelector('[data-testid="studio-ab-workbenches"]')?.getAttribute('aria-label'))
+      .toBe('Dossiers');
   });
 });
 

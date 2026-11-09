@@ -296,10 +296,13 @@ public sealed partial class TaskServerStore
                 UPDATE studio_invitations SET consumed_at = $now WHERE id = $invite AND consumed_at IS NULL;
                 """, ct, transaction, ("$hash", HashStudioPassword(password)), ("$now", now),
                 ("$id", userId), ("$invite", id));
-            var (sessionToken, csrf) = await CreateStudioSessionAsync(connection, transaction, userId, ct);
+            var enrollFactor = user.Role is StudioUserRoles.Owner or StudioUserRoles.Operator;
+            var (sessionToken, csrf) = await CreateStudioSessionAsync(connection, transaction, userId, ct,
+                enrollmentOnly: enrollFactor);
             await AuditAsync(connection, transaction, userId, "studio-user.invitation-accepted", "studio-user", userId, "{}", ct);
             result = new StudioAuthSessionDto(sessionToken, csrf,
-                new StudioAuthStatusDto(false, true, ToStudioAuthUserDto(user with { MustChangePassword = false })));
+                new StudioAuthStatusDto(false, true, ToStudioAuthUserDto(user with { MustChangePassword = false }),
+                    SecondFactorEnrollmentRequired: enrollFactor));
         }, ct);
         return result!;
     }
@@ -364,6 +367,9 @@ public sealed partial class TaskServerStore
             : request.RunnerId is null
                 ? null
                 : throw new ArgumentException("Runner id is valid only for runner principals.");
+        var role = string.IsNullOrWhiteSpace(request.Role) ? null : request.Role.Trim().ToLowerInvariant();
+        if (role is not null && (kind != TaskServerPrincipalKinds.Runner || !RunnerCredentialRoles.IsValid(role)))
+            throw new ArgumentException("Role is valid only for runner principals and must be coding or review.");
         var ttl = request.TimeToLiveSeconds ?? DefaultEnrolmentTimeToLiveSeconds;
         if (ttl < 30 || ttl > MaximumEnrolmentTimeToLiveSeconds)
             throw new ArgumentException($"TimeToLiveSeconds must be between 30 and {MaximumEnrolmentTimeToLiveSeconds}.");
@@ -391,14 +397,14 @@ public sealed partial class TaskServerStore
                 UPDATE service_enrolments SET revoked_at = $now
                  WHERE principal_id = $principal AND consumed_at IS NULL AND revoked_at IS NULL;
                 INSERT INTO service_enrolments(
-                    enrolment_id, code_hash, principal_id, kind, runner_id, created_by, created_at, expires_at, repository_write)
-                VALUES ($id, $hash, $principal, $kind, $runner, $actor, $now, $expires, $repositoryWrite);
-                """, ct, transaction,
+                    enrolment_id, code_hash, principal_id, kind, runner_id, created_by, created_at, expires_at, repository_write, role)
+                VALUES ($id, $hash, $principal, $kind, $runner, $actor, $now, $expires, $repositoryWrite, $role);
+                """, ct, transaction, ("$role", role),
                 ("$id", enrolmentId), ("$hash", HashOneTimeSecret(code)), ("$principal", principalId),
                 ("$kind", kind), ("$runner", runnerId), ("$actor", actorId), ("$now", Iso(now)),
                 ("$expires", Iso(expires)), ("$repositoryWrite", request.RepositoryWrite && kind == TaskServerPrincipalKinds.Runner ? 1 : 0));
             await AuditAsync(connection, transaction, actorId, "enrolment.created", "principal", principalId,
-                JsonSerializer.Serialize(new { enrolmentId, kind, runnerId, ttl }), ct);
+                JsonSerializer.Serialize(new { enrolmentId, kind, runnerId, ttl, role }), ct);
         }, ct);
         return new IssuedEnrolment(enrolmentId, principalId, kind, runnerId, installationId, code, expires);
     }
@@ -458,7 +464,7 @@ public sealed partial class TaskServerStore
         {
             var installationId = await ReadMetaAsync(connection, transaction, InstallationIdKey, ct) ?? string.Empty;
             await using var command = Command(connection, """
-                SELECT enrolment_id, principal_id, kind, runner_id, expires_at, consumed_at, revoked_at, repository_write
+                SELECT enrolment_id, principal_id, kind, runner_id, expires_at, consumed_at, revoked_at, repository_write, role
                   FROM service_enrolments WHERE code_hash = $hash;
                 """, transaction, ("$hash", codeHash));
             await using var reader = await command.ExecuteReaderAsync(ct);
@@ -471,6 +477,7 @@ public sealed partial class TaskServerStore
             var consumed = found && !reader.IsDBNull(5);
             var revoked = found && !reader.IsDBNull(6);
             var repositoryWrite = found && reader.GetInt64(7) != 0;
+            var role = found && !reader.IsDBNull(8) ? reader.GetString(8) : null;
             await reader.DisposeAsync();
             var existing = found ? await ReadPrincipalAsync(connection, transaction, principalId, ct) : null;
             var replaceRunner = existing is not null && kind == TaskServerPrincipalKinds.Runner
@@ -490,30 +497,34 @@ public sealed partial class TaskServerStore
             }
 
             var scopes = DefaultScopes(kind, repositoryWrite);
+            var credentialExpiresAt = RunnerCredentialExpiry(kind, now);
             if (replaceRunner)
             {
                 await ExecuteAsync(connection,
                     "UPDATE principal_credentials SET revoked_at = $now WHERE principal_id = $id AND revoked_at IS NULL;",
                     ct, transaction, ("$now", Iso(now)), ("$id", principalId));
-                await InsertCredentialAsync(connection, transaction, principalId, credential, now, ct);
+                await InsertCredentialAsync(connection, transaction, principalId, credential, now, ct, credentialExpiresAt);
                 // Enrolling a host again states its role anew; its other scopes stay as they are.
                 var updated = existing!.Scopes.Where(scope => scope != TaskServerScopes.RepositoriesWrite).ToList();
                 if (repositoryWrite) updated.Add(TaskServerScopes.RepositoriesWrite);
                 await ExecuteAsync(connection,
-                    "UPDATE principals SET scopes_json = $scopes WHERE principal_id = $id;",
-                    ct, transaction, ("$scopes", JsonSerializer.Serialize(updated.Order(StringComparer.Ordinal))), ("$id", principalId));
+                    "UPDATE principals SET scopes_json = $scopes, role = COALESCE($role, role) WHERE principal_id = $id;",
+                    ct, transaction, ("$scopes", JsonSerializer.Serialize(updated.Order(StringComparer.Ordinal))),
+                    ("$role", role), ("$id", principalId));
             }
             else
-                await InsertPrincipalAsync(connection, transaction, principalId, kind, scopes, runnerId, credential, now, ct);
+                await InsertPrincipalAsync(connection, transaction, principalId, kind, scopes, runnerId, credential, now, ct,
+                    role, credentialExpiresAt);
             await ExecuteAsync(connection,
                 "UPDATE service_enrolments SET consumed_at = $now WHERE enrolment_id = $id;",
                 ct, transaction, ("$now", Iso(now)), ("$id", enrolmentId));
             await AuditAsync(connection, transaction, principalId, "enrolment.exchanged", "principal", principalId,
-                JsonSerializer.Serialize(new { enrolmentId, kind, runnerId, replaced = replaceRunner }), ct);
+                JsonSerializer.Serialize(new { enrolmentId, kind, runnerId, replaced = replaceRunner, role, expiresAt = credentialExpiresAt }), ct);
             result = new ExchangedEnrolment(
                 installationId,
                 new IssuedPrincipalCredential(ToDto(principalId, kind, scopes, runnerId,
-                    existing?.CreatedAt ?? now, null, existing?.LastSeenAt), credential, now));
+                    existing?.CreatedAt ?? now, null, existing?.LastSeenAt, role ?? existing?.Role,
+                    existing?.BoundHostId), credential, now, ExpiresAt: credentialExpiresAt));
         }, ct);
         if (result is not null) return result;
 

@@ -31,7 +31,7 @@ var builder = WebApplication.CreateBuilder(command.HostArguments);
 if (string.Equals(Environment.GetEnvironmentVariable("TASK_SERVER_PROFILE"), "local-compatibility", StringComparison.OrdinalIgnoreCase))
     builder.Configuration.AddJsonFile("appsettings.LocalCompatibility.json", optional: false, reloadOnChange: false);
 var taskServerRequestBodyLimit = builder.Configuration.GetValue<long?>(
-    $"{TaskServerOptions.SectionName}:MaxRequestBodyBytes") ?? 25L * 1024 * 1024;
+    $"{TaskServerOptions.SectionName}:MaxRequestBodyBytes") ?? ReviewReportLimits.MaxRequestBodyBytes;
 builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MaxRequestBodySize = taskServerRequestBodyLimit);
 builder.Services.AddSingleton(serviceProvider =>
@@ -46,6 +46,7 @@ builder.Services
         options.DataDirectory = bootstrap.StorePath;
         options.BackupDirectory = bootstrap.BackupPath;
         options.ListenUrl = bootstrap.ListenUrl;
+        options.RequireHostProjectPolicy ??= bootstrap.RequiresAuthentication;
     })
     .Configure<IConfiguration>((options, configuration) =>
     {
@@ -57,6 +58,9 @@ builder.Services.AddSingleton(new HostQuotaCoordinator(
     builder.Configuration.GetValue<int?>("Quota:TtlSeconds") ?? HostQuotaCoordinator.DefaultTtlSeconds));
 builder.Services.AddHttpClient(nameof(HttpWorkspaceQuotaAdmission), client =>
     client.Timeout = TimeSpan.FromSeconds(3));
+builder.Services.AddHttpClient(nameof(TaskServerModelSelectionPoster), client =>
+    client.Timeout = TimeSpan.FromSeconds(3));
+builder.Services.AddSingleton<TaskServerModelSelectionPoster>();
 // Without a meter URL quota admission is off: no admission object, no per-claim event, one startup log line.
 if (!string.IsNullOrWhiteSpace(builder.Configuration["TaskServer:QuotaAdmissionBaseUrl"]))
     builder.Services.AddSingleton<IWorkspaceQuotaAdmission, HttpWorkspaceQuotaAdmission>();
@@ -65,6 +69,7 @@ builder.Services.AddSignalR();
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.AllowDuplicateProperties = false);
 builder.Services.AddSingleton<IResultFinalizationSummaryGenerator, ApplicationResultFinalizationSummaryGenerator>();
 builder.Services.AddSingleton<TaskServerStore>();
+builder.Services.AddSingleton<ArtifactChunkStore>();
 builder.Services.AddSingleton<AgentStudio.TaskServer.AttemptCredentials.IAttemptRootSecretStore>(services =>
 {
     var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<TaskServerOptions>>().Value;
@@ -75,7 +80,14 @@ builder.Services.AddSingleton<AgentStudio.TaskServer.AttemptCredentials.IAttempt
 });
 builder.Services.AddHttpClient<AgentStudio.TaskServer.AttemptCredentials.IRepositoryTokenIssuer,
     AgentStudio.TaskServer.AttemptCredentials.GitHubAppTokenIssuer>(client => client.Timeout = TimeSpan.FromSeconds(20));
-builder.Services.AddSingleton<DeviceLoginSessions>();
+// SM-11: tokens of finished attempts are revoked even when their host never tears down.
+builder.Services.AddHostedService<AgentStudio.TaskServer.AttemptCredentials.AttemptCredentialCompletionSweep>();
+builder.Services.AddSingleton(services =>
+{
+    var store = services.GetRequiredService<TaskServerStore>();
+    return new DeviceLoginSessions(services.GetRequiredService<TimeProvider>(), async (request, actor, ct) =>
+        _ = await store.RecordStudioProviderAuthEventAsync(request, actor, ct));
+});
 builder.Services.AddHostedService<DeviceLoginAuditSweep>();
 builder.Services.AddSingleton<RunnerGitSetupStore>();
 builder.Services.AddHttpClient("github-app", client => client.Timeout = TimeSpan.FromSeconds(20))
@@ -88,6 +100,7 @@ builder.Services.AddSingleton(services => new AgentStudio.TaskServer.Contracts.G
     services.GetRequiredService<AgentStudio.TaskServer.Contracts.GitHubApp.IGitHubAppVault>(),
     services.GetRequiredService<AgentStudio.TaskServer.Contracts.GitHubApp.IRegisteredRepositoryCatalog>(),
     TimeProvider.System));
+builder.Services.AddHostedService<GitHubAppVisibilityRefreshService>();
 builder.Services.AddSingleton<RuntimeCapacitySettingsService>();
 builder.Services.AddSingleton<HostProjectPolicyService>();
 builder.Services.AddSingleton<LegacyMigrationService>();
@@ -117,6 +130,9 @@ if (!string.IsNullOrWhiteSpace(configuredUrl)
 
 var app = builder.Build();
 var store = app.Services.GetRequiredService<TaskServerStore>();
+// The broker lists the store's repositories, so the store reads GitHub's visibility through this hook.
+store.ReportedRepositoryPrivate = app.Services
+    .GetRequiredService<AgentStudio.TaskServer.Contracts.GitHubApp.GitHubAppBroker>().ReportedPrivate;
 var migration = app.Services.GetRequiredService<LegacyMigrationService>();
 var commandJson = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
 if (command.Kind == TaskServerCommandKind.Inventory)
@@ -281,7 +297,8 @@ if (bootstrap.RequiresAuthentication)
             bootstrap.BootstrapRunnerAuthenticationToken,
             bootstrap.BootstrapRunnerId,
             app.Lifetime.ApplicationStopping,
-            repositoryWrite: true);
+            repositoryWrite: true,
+            role: RunnerCredentialRoles.Coding);
     if (bootstrap.BootstrapReviewRunnerAuthenticationToken is not null)
         await BootstrapPrincipalAsync(
             store,
@@ -289,7 +306,8 @@ if (bootstrap.RequiresAuthentication)
             TaskServerPrincipalKinds.Runner,
             bootstrap.BootstrapReviewRunnerAuthenticationToken,
             bootstrap.BootstrapReviewRunnerId,
-            app.Lifetime.ApplicationStopping);
+            app.Lifetime.ApplicationStopping,
+            role: RunnerCredentialRoles.Review);
     if (bootstrap.LegacyRunnerAuthenticationToken is not null)
         await BootstrapPrincipalAsync(
             store,
@@ -358,7 +376,8 @@ static async Task BootstrapPrincipalAsync(
     string? configuredCredential,
     string? runnerId,
     CancellationToken cancellationToken,
-    bool repositoryWrite = false)
+    bool repositoryWrite = false,
+    string? role = null)
 {
     var issued = await store.EnsureBootstrapPrincipalAsync(
         principalId,
@@ -366,7 +385,8 @@ static async Task BootstrapPrincipalAsync(
         configuredCredential,
         runnerId,
         cancellationToken,
-        repositoryWrite);
+        repositoryWrite,
+        role);
     if (issued is not null && configuredCredential is null)
         Console.WriteLine(
             $"INITIAL {kind.ToUpperInvariant()} CREDENTIAL (shown once): {issued.Credential}");

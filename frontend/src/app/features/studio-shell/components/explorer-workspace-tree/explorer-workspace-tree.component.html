@@ -33,7 +33,6 @@
       <app-studio-icon name="grid" [size]="11"></app-studio-icon>
     </button>
   </app-section-header>
-
   @if (!isCollapsed('workspace')) {
     @for (g of groups(); track g.id) {
       <div class="studio-explorer-tree__ws-group"
@@ -100,7 +99,6 @@
           }
         </div>
       }
-
       @if (!isCollapsed('ws:' + g.id)) {
         @for (p of g.projects; track p.name) {
           <div class="studio-tree-project"
@@ -131,6 +129,7 @@
                    is the registry displayName (p.displayLabel) so a rename shows
                    immediately; the row stays keyed by p.name everywhere else. -->
               <app-tree-row class="studio-project-row" level="root"
+                            [hasActions]="true"
                             [chevron]="isExpanded(p.name) ? 'expanded' : 'collapsed'"
                             [glyphChar]="p.initial"
                             [glyphColor]="p.color"
@@ -152,7 +151,7 @@
                   [tooltip]="autoPickup.tooltip"
                   [reason]="autoPickup.reason"
                   [testid]="'studio-explorer-project-auto-pickup-' + p.name" />
-                <button type="button"
+                <button rowActions type="button"
                         class="studio-tree-row__hub-link"
                         [attr.data-testid]="'studio-explorer-project-hub-link-' + p.name"
                         cacTooltip="Open Deck"
@@ -216,8 +215,10 @@
                               [ariaLabel]="'Deck, ' + p.displayLabel"
                               [testid]="'studio-explorer-project-hub-' + p.name"
                               (selectRequest)="openHubRequest.emit(p.name)" />
+                <app-quality-studio-explorer-row [projectName]="p.name" [displayLabel]="p.displayLabel" />
                 @for (u of p.urls; track u.id) {
                   <app-tree-row level="child" glyph="link"
+                                [hasActions]="true"
                                 [label]="u.label"
                                 [ariaLabel]="u.label + ', opens ' + u.url + ' as an embedded preview tab'"
                                 [tooltip]="urlTooltip(p, u)"
@@ -230,7 +231,7 @@
                           [attr.data-testid]="'studio-explorer-project-url-dot-' + p.name + '-' + u.id"
                           [attr.data-status]="urlProbe.statusFor(p.projectId ?? '', u.id)"
                           [attr.aria-label]="urlProbe.statusFor(p.projectId ?? '', u.id)"></span>
-                    <button type="button"
+                    <button rowActions type="button"
                             class="studio-tree-row__url-ext"
                             [attr.data-testid]="'studio-explorer-project-url-ext-' + p.name + '-' + u.id"
                             cacTooltip="Open in external browser"
@@ -251,7 +252,6 @@
       <app-empty-state>No projects loaded</app-empty-state>
     }
   }
-
   <!-- Right-click "Rename" surface for workspace headers. Text-only menu
        (project convention: no icons in menu items); selecting it opens the
        same inline rename as the double-click path. -->

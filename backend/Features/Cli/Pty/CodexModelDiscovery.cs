@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Cli;
 
@@ -20,6 +21,7 @@ public sealed class CodexModelDiscovery
 
     private CliModelCatalog? _memCache;
     private DateTime _memCacheAt = DateTime.MinValue;
+    private int _networkedRegistryLogged;
 
     public CodexModelDiscovery(
         ILogger<CodexModelDiscovery> logger,
@@ -35,9 +37,7 @@ public sealed class CodexModelDiscovery
     {
         get
         {
-            var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "agent-taskboard");
+            var dir = LocalStateRoot.Combine("agent-taskboard");
             Directory.CreateDirectory(dir);
             // v2: entries written by this version carry the CLI-reported
             // reasoning ladder. A v1 file cannot be told apart from one whose
@@ -54,6 +54,15 @@ public sealed class CodexModelDiscovery
 
     public async Task<CliModelCatalog> GetAsync(string cliPath, bool forceRefresh = false, CancellationToken ct = default)
     {
+        if (!HostCliDiscovery.Allowed(_config))
+        {
+            if (Interlocked.Exchange(ref _networkedRegistryLogged, 1) == 0)
+                _logger.LogInformation(
+                    "Codex model discovery uses the registry catalogue: host CLI discovery is disabled in the {Profile} profile",
+                    SecurityProfiles.ActiveProfile(_config));
+            return Publish(FallbackCatalog(HostCliDiscovery.NetworkedRegistrySource));
+        }
+
         if (!forceRefresh)
         {
             if (_memCache != null && DateTime.UtcNow - _memCacheAt < Ttl)
@@ -295,8 +304,11 @@ public sealed class CodexModelDiscovery
     internal static CliModelCatalog WithKnownButUnavailableModels(CliModelCatalog cat, string? cliVersion)
     {
         cliVersion = SemanticCliVersion.FromCliOutput(cliVersion);
+        // Terra is probed on hosts but enters Studio only with AGT-3405's price.
+        var pricedModels = cat.Models.Where(model => model.Id != AgentStudio.TaskServer.Contracts.CodexCliRelease.Gpt61Terra
+            || ModelMetadataRegistry.Find(model.Id) is not null).ToArray();
         var models = ModelMetadataRegistry.AppendUnavailableRegistryEntries(
-                cat.Models,
+                pricedModels,
                 vendor: "openai",
                 cliType: CliTypes.Codex,
                 availabilityNote: ModelMetadataRegistry.UnavailableOnInstalledCliNote(CliLabel, cliVersion));
@@ -304,7 +316,8 @@ public sealed class CodexModelDiscovery
         {
             Models = models.Select(model =>
             {
-                var minimum = ModelMetadataRegistry.Find(model.Id)?.MinimumCliVersion;
+                var minimum = AgentStudio.TaskServer.Contracts.CodexCliRelease.MinimumVersionForModel(model.Id)
+                    ?? ModelMetadataRegistry.Find(model.Id)?.MinimumCliVersion;
                 var belowFloor = !string.IsNullOrWhiteSpace(minimum)
                     && SemanticCliVersion.TryCompare(cliVersion, minimum, out var comparison)
                     && comparison < 0;

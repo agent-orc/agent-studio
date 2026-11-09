@@ -26,12 +26,14 @@ public sealed class TransitionDecisionBoundaryTests
         // AGT-3060 (I18): background deciders moved out of the monolith.
         "AiOperatorDecisionPolicy", "RunLivenessPolicy", "SteerTimeoutPolicy", "StaleProgressPolicy",
         "GateEnvironmentRetryPolicy", "GateEnvironmentContinuationPolicy",
-        "DeliveryChainPolicy", "CauseBreakerClosePolicy", "IntakeRoutingPolicy", "AcceptanceRailDecisionPolicy",
+        "DeliveryChainPolicy", "AutoReviewStrandingPolicy", "CauseBreakerClosePolicy", "IntakeRoutingPolicy", "AcceptanceRailDecisionPolicy",
         // AGT-3207: interventions on operational stall events.
         "StallInterventionPolicy",
         // AGT-3219: queue overrun, backlog and release rule of the batch gate.
         "GateQueueStallPolicy",
         "RedDevelopRepairPolicy",
+        // AGT-3562: batch flight start order and pre-lease deadline.
+        "BatchGateStartPolicy",
     ];
 
     [Fact]
@@ -47,6 +49,7 @@ public sealed class TransitionDecisionBoundaryTests
         Assert.Equal(assembly, typeof(RunLivenessPolicy).Assembly);
         Assert.Equal(assembly, typeof(GateEnvironmentRetryPolicy).Assembly);
         Assert.Equal(assembly, typeof(DeliveryChainPolicy).Assembly);
+        Assert.Equal(assembly, typeof(AutoReviewStrandingPolicy).Assembly);
         Assert.Equal(assembly, typeof(AcceptanceRailDecisionPolicy).Assembly);
         Assert.Equal(assembly, typeof(RedDevelopRepairPolicy).Assembly);
         var referenced = assembly.GetReferencedAssemblies().Select(item => item.Name!).ToArray();

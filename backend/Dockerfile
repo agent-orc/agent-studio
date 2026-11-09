@@ -12,8 +12,8 @@ RUN dotnet publish backend/OrchestratorApi.csproj -c Release -o /app /p:UseAppHo
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 ARG VERSION=0.0.0-dev
 ARG SHA=unknown
-ARG CODEX_CLI_VERSION=0.154.0
-ARG CLAUDE_CLI_VERSION=2.1.269
+ARG CODEX_CLI_VERSION=0.166.0
+ARG CLAUDE_CLI_VERSION=2.1.305
 ARG GEMINI_CLI_VERSION=0.39.1
 LABEL org.opencontainers.image.title="agent-studio-api" \
       org.opencontainers.image.version="$VERSION" \
@@ -21,6 +21,9 @@ LABEL org.opencontainers.image.title="agent-studio-api" \
       org.opencontainers.image.source="https://github.com/agent-orc/agent-studio"
 # curl: the container probe checks local readiness independently of public login diagnostics.
 # git: GitService shells out for merges, worktrees, and integration pushes.
+# user.name/user.email: the default committer identity of the service user
+# (AGT-3412). System level, because HOME (/data/home) is a mounted volume that
+# hides anything the image writes there; a --global identity on it still wins.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl git openssh-client ca-certificates \
  && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
@@ -31,6 +34,8 @@ RUN apt-get update \
       "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
  && rm -rf /var/lib/apt/lists/* \
  && git config --system safe.directory '*' \
+ && git config --system user.name 'Agent Studio' \
+ && git config --system user.email 'studio@agent-studio.invalid' \
  && groupadd --system --gid 10001 agentstudio \
  && useradd --system --uid 10001 --gid agentstudio --home-dir /data/home --shell /usr/sbin/nologin agentstudio
 WORKDIR /app
@@ -44,8 +49,12 @@ COPY scripts/monolith-seed-cli-auth.sh /usr/local/bin/monolith-seed-cli-auth.sh
 ENV ASPNETCORE_URLS=http://0.0.0.0:5031 \
     TaskRepository=/data/workspace
 # /data/workspace: task repository (cards, metadata). /data/projects: project checkouts.
-RUN mkdir -p /data/workspace /data/projects /data/home && chown -R agentstudio:agentstudio /app /data
-VOLUME ["/data/workspace", "/data/projects"]
+# /data/home: HOME of agentstudio. Its .local/share holds machine-local state
+# (batch gates, gate result cache, quota and routing state); the API creates it
+# at startup and refuses to start when it cannot. Mount /data/home from the
+# data volume so that state survives a container recreate.
+RUN mkdir -p /data/workspace /data/projects /data/home/.local/share && chown -R agentstudio:agentstudio /app /data
+VOLUME ["/data/workspace", "/data/projects", "/data/home"]
 EXPOSE 5031
 USER agentstudio
 HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=24 \

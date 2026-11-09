@@ -408,7 +408,8 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             integrationBranch,
             projectSettings.IntegrationStrategy,
             mergeStep,
-            reviewLookup);
+            reviewLookup,
+            GateEnvironmentRetryFactsReader.IsServiceShutdownInterruption(status));
     }
 
     /// <summary>
@@ -479,7 +480,9 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         // budget that can never be exhausted. An operator replay is not a rung:
         // it restarts the ladder, so it carries rung 0.
         var isOperator = source == GateEnvironmentRetrySources.Operator;
-        var rung = isOperator ? 0 : evaluation.Ledger.AttemptsSpent + 1;
+        if (!isOperator && evaluation.ShutdownInterruption) source = GateEnvironmentRetrySources.Shutdown;
+        var isShutdown = source == GateEnvironmentRetrySources.Shutdown;
+        var rung = isOperator || isShutdown ? 0 : evaluation.Ledger.AttemptsSpent + 1;
         var maximum = evaluation.Facts.Backoff.Count;
         GateEnvironmentRetryReceipts.RecordRetry(
             _timeline,
@@ -490,6 +493,9 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             isOperator
                 ? $"Operator replayed the integration of {Short(deliverySha)} into {evaluation.IntegrationBranch} "
                   + "after a gate environment failure, reusing the passed review and restarting the bounded ladder."
+                : isShutdown
+                ? $"Resumed the integration of {Short(deliverySha)} into {evaluation.IntegrationBranch} after the "
+                  + "service's own stop interrupted its gate, reusing the passed review without spending a retry."
                 : $"Gate-environment retry {rung}/{maximum} replayed the integration of "
                   + $"{Short(deliverySha)} into {evaluation.IntegrationBranch}, reusing the passed review.");
 
@@ -557,7 +563,7 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
             current.FolderPath,
             success ? TimelineEventKinds.IntegrationSucceeded : TimelineEventKinds.IntegrationFailed,
             TimelineActors.System,
-            Outcome(success, rung, maximum, evaluation.IntegrationBranch, result.Outcome),
+            Outcome(success, rung, maximum, evaluation.IntegrationBranch, result.Outcome, source),
             details: new Dictionary<string, string>
             {
                 ["outcome"] = result.Outcome.ToString(),
@@ -664,9 +670,12 @@ public sealed class GateEnvironmentRetryService : AgentStudio.Runner.IAiOperator
         int rung,
         int maximum,
         string integrationBranch,
-        MergeIntoIntegrationOutcome outcome)
+        MergeIntoIntegrationOutcome outcome,
+        string source)
     {
-        var attempt = rung == 0
+        var attempt = source == GateEnvironmentRetrySources.Shutdown
+            ? "The resumed integration after a service stop"
+            : rung == 0
             ? "The operator integration replay"
             : $"Gate-environment retry {rung}/{maximum}";
         return success
@@ -686,4 +695,5 @@ internal sealed record GateEnvironmentRetryEvaluation(
     string IntegrationBranch,
     string IntegrationStrategy,
     PipelineStepExecution? MergeStep,
-    GateEnvironmentReviewLookup ReviewLookup);
+    GateEnvironmentReviewLookup ReviewLookup,
+    bool ShutdownInterruption = false);

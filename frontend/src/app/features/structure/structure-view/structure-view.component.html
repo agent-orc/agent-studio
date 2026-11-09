@@ -1,0 +1,184 @@
+<section class="structure-view" [class.structure-view--embedded]="embedded()" data-testid="structure-view" aria-label="Structure and library registries" [attr.data-overlay]="overlay()">
+  <header class="structure-header">
+    <div><p class="structure-eyebrow">Operations</p><h1>Structure</h1>
+      <p>{{ projectName() ? projectName() + ' partial picture' : 'Workspace whole picture' }}</p></div>
+    <div class="structure-controls" aria-label="Structure controls">
+      @if (!hostOnly()) {
+        <app-segmented-control [options]="viewOptions" [value]="view()" ariaLabel="Projection"
+                               (valueChange)="setView($event)" />
+      }
+      <app-segmented-control [options]="levelOptions" [value]="level()" ariaLabel="Detail level"
+                             (valueChange)="setLevel($event)" />
+      <app-segmented-control [options]="overlayOptions" [value]="overlay()" ariaLabel="Overlay"
+                             (valueChange)="setOverlay($event)" />
+      <label>Environment <select data-testid="structure-environment" [value]="environment()" (change)="setEnvironment($any($event.target).value)">
+        <option value="" [selected]="!environment()">All environments</option>
+        @for (item of environments(); track item.id) { <option [value]="item.environmentId || item.id" [selected]="environment() === (item.environmentId || item.id)">{{ item.label }}</option> }
+      </select></label>
+    </div>
+  </header>
+  @if (error()) { <p role="alert">{{ error() }}</p> }
+  @if (library().registries.length || libraryError()) {
+    <section class="structure-library" aria-label="Library and registry inventory" data-testid="structure-library">
+      <div class="structure-library-head"><div><h2>Libraries and registries</h2>
+        <p>Published channels and workspace consumers</p></div>
+        <button type="button" data-testid="refresh-registries" [disabled]="refreshing()"
+                (click)="loadLibrary(true)">Refresh registry lookups</button></div>
+      @if (libraryError()) { <p role="alert">{{ libraryError() }}</p> }
+      <div class="structure-registry-list">
+        @for (registry of library().registries; track registry.projectId + registry.artifact + registry.provider + registry.package) {
+          <article class="structure-registry" data-testid="structure-registry" [attr.data-state]="registry.state">
+            <div class="structure-registry-head"><strong>{{ registryLabel(registry.provider) }}</strong>
+              <span class="structure-state" [attr.data-state]="registry.state">{{ registry.state === 'current' ? 'Current' : registry.state === 'stale' ? 'Stale' : 'Lookup unavailable' }}</span></div>
+            <p>{{ registry.package }} · {{ registry.artifact }} @if (registry.private) { · Private }</p>
+            @if (registry.channels.length) {
+              <div class="structure-channels">
+                @for (channel of registry.channels; track channel.name + channel.version) {
+                  @if (channel.name !== 'version') { <span><b>{{ channel.name }}</b> {{ channel.version }}</span> }
+                }
+              </div>
+            }
+            <small>Last successful lookup: {{ registry.checkedAt ? (registry.checkedAt | date:'medium') : 'unavailable' }} ·
+              Last publish: {{ registry.lastPublishAt ? (registry.lastPublishAt | date:'medium') : 'unavailable' }}</small>
+          </article>
+        }
+      </div>
+      @if (library().consumers.length) {
+        <h3>Consumers in this workspace</h3>
+        <div class="structure-consumers">
+          @for (consumer of library().consumers; track consumer.projectId + consumer.package + consumer.version) {
+            <div class="structure-consumer"><strong>{{ consumer.project }}</strong>
+              <span>{{ consumer.package }} {{ consumer.version }}</span>
+              @if (consumer.releasesBehind && consumer.releasesBehind > 0) {
+                <span class="structure-behind">{{ consumer.releasesBehind }} releases behind</span>
+              }
+              <small>{{ consumer.source }}</small></div>
+          }
+        </div>
+      }
+    </section>
+  }
+  <div class="structure-body">
+    <div class="structure-main" tabindex="0" role="region" aria-label="Structure diagram"
+         (keydown)="onCanvasKeydown($event)">
+      <div class="structure-canvas" data-testid="structure-canvas" [attr.data-layout-ms]="layout().ms"
+           [attr.data-view]="view()" [attr.data-level]="level()"
+           [style.width.px]="layout().width" [style.height.px]="layout().height">
+        @if (layout().outside; as outside) {
+          <p class="structure-outside-label" [style.left.px]="outside.x" [style.top.px]="outside.y">Outside the boundary</p>
+        }
+        @for (item of layout().boxes; track item.id) {
+          <div class="structure-box" [attr.data-kind]="item.box.kind" [attr.data-opaque]="item.opaque"
+               [attr.data-collapsed]="item.box.collapsed && item.box.children.length > 0"
+               [attr.data-selected]="selected() === item.id" [attr.data-other-project]="item.box.otherProject || null"
+               [attr.data-observation]="item.box.probeObservation || null"
+               [attr.data-difference]="item.box.observation?.difference ?? 'declared-only'"
+               [attr.data-health]="item.box.observation?.health ?? 'not observed'"
+               [style.left.px]="item.x" [style.top.px]="item.y" [style.width.px]="item.w" [style.height.px]="item.h">
+            <button type="button" class="structure-node" [attr.data-node-id]="item.id"
+                    [style.height.px]="item.opaque ? item.h : headerHeight"
+                    [attr.aria-label]="accessibleLabel(item.box)"
+                    [attr.aria-expanded]="item.box.children.length ? !item.box.collapsed : null"
+                    (click)="toggle(item.box)">
+              @if (item.box.children.length) { <app-disclosure-marker [open]="!item.box.collapsed" /> }
+              <strong>{{ item.box.label }}</strong>
+              <span class="structure-observation-state" [attr.data-state]="stateWord(item.box.observation)">
+                <span aria-hidden="true">{{ stateGlyph(item.box.observation) }}</span> {{ stateWord(item.box.observation) }}
+              </span>
+              @if (item.box.observation?.difference === 'undeclared') { <span class="structure-chip">not declared</span> }
+              @if (item.box.replicas > 1) { <span class="structure-replicas">×{{ item.box.replicas }}</span> }
+              @if (status(item.box); as status) {
+                <svg class="structure-status" [attr.data-status]="status.tone" viewBox="-7 -7 14 14" role="img"
+                     [attr.aria-label]="status.word"><title>{{ status.word }}</title>
+                  @switch (status.tone) {
+                    @case ('ok') { <circle r="6" /><path d="M-3 0 L-1 2.4 L3.2 -2.4" /> }
+                    @case ('warn') { <path d="M0 -6.5 L6.6 5.2 L-6.6 5.2 Z" /><path d="M0 -2.4 L0 1.2 M0 3 L0 3.3" /> }
+                    @case ('down') { <rect x="-5.6" y="-5.6" width="11.2" height="11.2" rx="1.5" /><path d="M-2.6 -2.6 L2.6 2.6 M2.6 -2.6 L-2.6 2.6" /> }
+                    @default { <circle r="5.6" /><path d="M-1.8 -1.8 Q0 -4 1.8 -1.8 Q1.8 0 0 0.8 L0 1.6 M0 3 L0 3.2" /> }
+                  }
+                </svg>
+              }
+              <small>{{ overlayDetail(item) }}</small>
+              @if (item.box.collapsed && item.box.children.length) {
+                <span class="structure-summary">{{ summaryText(item.box) }}</span>
+              }
+            </button>
+          </div>
+        }
+        <svg class="structure-links" aria-hidden="true" [attr.width]="layout().width" [attr.height]="layout().height">
+          <defs>
+            <marker [attr.id]="arrowId" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" />
+            </marker>
+          </defs>
+          @for (link of layout().links; track link.number) {
+            <path class="structure-link-halo" [attr.d]="link.path" />
+            <path class="structure-link" [attr.d]="link.path" [attr.data-kind]="link.kind"
+                  [attr.data-link-number]="link.number"
+                  [attr.marker-end]="arrowFor(link.kind)" />
+          }
+          @for (link of layout().links; track link.number) {
+            <g class="structure-link-key-marker" [attr.transform]="'translate(' + link.keyX + ' ' + link.keyY + ')'">
+              <circle r="9" /><text y="3.5" text-anchor="middle">{{ link.number }}</text>
+            </g>
+          }
+        </svg>
+      </div>
+      <ol class="structure-link-key" data-testid="structure-link-key" aria-label="Connection key">
+        @for (link of layout().links; track link.number) {
+          <li [attr.data-link-key]="link.number"><span class="structure-link-number">{{ link.number }}</span>
+            <svg class="structure-link-sample" aria-hidden="true" width="24" height="8">
+              <path class="structure-link" [attr.data-kind]="link.kind" d="M0 4 H24" />
+            </svg>
+            <span>{{ link.label }}{{ link.count > 1 ? ' ×' + link.count : '' }} · {{ link.kind }} ·
+              {{ link.fromLabel }} → {{ link.toLabel }} · {{ stateGlyph(linkObservation(link)) }} {{ stateWord(linkObservation(link)) }}</span></li>
+        }
+      </ol>
+      <ul class="structure-link-key" aria-label="Connection actions">
+        @for (link of data().links; track $index) {
+          <li><a [href]="'#/workspace/settings/environment?host=' + linkHost(link.from) + '&link=' + link.kind"
+                 [attr.data-testid]="'structure-link-' + $index">{{ link.label }} · {{ link.kind }} health and actions</a></li>
+        }
+      </ul>
+    </div>
+    <aside class="structure-outline" aria-label="Structure outline">
+      <h2>Outline</h2>
+      @if (selectedNode(); as node) {
+        <section class="structure-targets" data-testid="structure-targets" aria-label="Node destinations">
+          <h3>{{ node.label }}</h3>
+          @if (node.kind === 'physical' || node.kind === 'cloud-server' || node.kind === 'vm' || node.kind === 'host' || node.kind === 'server') {
+            <a [href]="'#/workspace/settings/environment?host=' + node.id">Host row</a>
+            <a [href]="'#/workspace/settings/environment?host=' + node.id + '&view=telemetry'">Host telemetry</a>
+          } @else if (node.kind === 'container' || node.kind === 'process') {
+            <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/deploy?view=history&focus=' + node.id">Deploy runs</a>
+            <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/deploy?view=operations&focus=' + node.id">Logs</a>
+            <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/deploy?view=runbooks&focus=' + node.id">Runbooks</a>
+          } @else if (node.kind === 'boundary' || node.kind === 'system' || node.kind === 'environment' || node.kind === 'location') {
+            <a [href]="'#/workspace/deployments?env=' + (node.environmentId || node.label)">Deployment dashboard</a>
+            <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/deploy?view=releases'">Release page</a>
+          } @else if (node.kind === 'registry' || node.kind === 'package' || node.kind === 'unit') {
+            <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '?focus=publish'">Publish panel</a>
+            <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/deploy?view=releases'">Release page</a>
+            @if (node.sourceRef.startsWith('https://')) { <a [href]="node.sourceRef">Registry page</a> }
+          } @else if (node.kind === 'managed' || node.kind === 'external') {
+            <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/deploy?view=overview&focus=' + node.id">Health checks</a>
+            <a [href]="'#/projects/' + projectSlug(projectName() || node.project || '') + '/settings?focus=declaration&node=' + node.id">Declaration</a>
+          }
+          @if (selectedLinks().length) {
+            @for (link of selectedLinks(); track $index) {
+              <a [href]="'#/workspace/settings/environment?host=' + linkHost(link.from) + '&link=' + link.kind">{{ link.label }} health and actions</a>
+            }
+          }
+        </section>
+      }
+      @for (box of visible(); track box.id) {
+        <button type="button" [attr.data-outline-id]="box.id" [attr.data-other-project]="box.otherProject || null"
+                [attr.aria-label]="accessibleLabel(box)"
+                (click)="focus(box.id)">
+          <span>{{ box.label }}</span><small>{{ ownerDescription(box) }} · {{ stateGlyph(box.observation) }} {{ stateWord(box.observation) }}</small>
+        </button>
+      }
+    </aside>
+  </div>
+  <p class="structure-shortcuts">Keys 1–3 change detail · H host · C container · Escape clears selection</p>
+</section>

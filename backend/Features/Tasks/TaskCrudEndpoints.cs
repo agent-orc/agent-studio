@@ -382,7 +382,7 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, TaskTokenUsageCache tokenCache, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, ILoggerFactory loggerFactory) =>
+        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, TaskTokenUsageCache tokenCache, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, AgentStudio.Operator.OperatorCoordinationStore attention, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest("tasks/detail",
                 loggerFactory.CreateLogger("TaskDetail"), includeNested: true);
@@ -420,7 +420,7 @@ public static class TaskCrudEndpoints
                     .Where(job => !job.Fixture)
                 : Enumerable.Empty<TaskInfo>();
             var dependencyLookups = TaskSwitchTrace.Run("dependencies", () => BuildDependencyGraphLookups(
-                new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority));
+                new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority, gitProjection, projectSettings));
             var withRuntime = WithRuntime(pricing, detail, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters);
             withRuntime = TaskSwitchTrace.Run("runtime", () => withRuntime with
             {
@@ -441,6 +441,11 @@ public static class TaskCrudEndpoints
                 } };
             if (AcceptanceAttemptLineagePolicy.ReadGap(withRuntime.Info, attemptAuthority) is { } attemptGap)
                 withRuntime = withRuntime with { Info = withRuntime.Info with { AcceptanceAttemptGap = attemptGap } };
+            context.Response.Headers.ETag = AgentStudio.Operator.OperatorCoordinationStore.Revision(withRuntime.Info.FolderPath);
+            withRuntime = withRuntime with { Info = withRuntime.Info with
+            {
+                AttentionHolder = attention.Current(withRuntime.Info.TaskKey)?.Holder,
+            } };
             return Results.Ok(withRuntime);
         });
 
@@ -706,6 +711,7 @@ public static class TaskCrudEndpoints
             AttemptAuthorityService authority,
             TimelineLog timeline,
             AgentStudio.Registry.ProjectRegistry projects,
+            AgentStudio.Pipeline.BatchIsolationGuard isolation,
             CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
@@ -737,7 +743,7 @@ public static class TaskCrudEndpoints
             // human. Auto paths (runner pickup, orchestrator, sweeps) reach
             // MoveJob without a cause and are recorded as system.
             return await MoveOperatorWithRunIntentAsync(jobId, watchPath, req, ctx,
-                transitions, scanner, leases, authority, timeline, ct);
+                transitions, scanner, leases, authority, timeline, isolation, ct);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         group.MapPost("/{jobId}/move", async (string jobId, string? project, string? watchPath, MoveJobRequest req,
@@ -748,6 +754,7 @@ public static class TaskCrudEndpoints
             AttemptAuthorityService authority,
             TimelineLog timeline,
             AgentStudio.Registry.ProjectRegistry projects,
+            AgentStudio.Pipeline.BatchIsolationGuard isolation,
             CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
@@ -775,7 +782,7 @@ public static class TaskCrudEndpoints
                 return Results.BadRequest(new { error = OverrideReasonRequired });
 
             return await MoveOperatorWithRunIntentAsync(jobId, watchPath, req, ctx,
-                transitions, scanner, leases, authority, timeline, ct);
+                transitions, scanner, leases, authority, timeline, isolation, ct);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         group.MapPost("/{jobId}/older-brief-delivery/decision", async (
@@ -940,6 +947,7 @@ public static class TaskCrudEndpoints
             ModelRoutingPolicyRegistry modelRouting,
             IModelRoutingModeProvider routingMode,
             CliRouter cliRouter,
+            QuotaAdmissionService quotaAdmission,
             AgentStudio.Tags.AutoTagCreationWorker autoTag,
             IConfiguration configuration,
             CancellationToken ct) =>
@@ -1050,13 +1058,23 @@ public static class TaskCrudEndpoints
 
             var modelExplicit = req.ModelExplicit ?? !string.IsNullOrWhiteSpace(req.Model);
             var thinkingExplicit = req.ThinkingLevelExplicit ?? !string.IsNullOrWhiteSpace(req.ThinkingLevel);
+            var requestedCli = string.IsNullOrWhiteSpace(req.CliType) ? CliTypes.Claude : req.CliType;
             if ((!modelExplicit || !thinkingExplicit)
-                && !string.IsNullOrWhiteSpace(req.CliType)
-                && CliTypes.IsValid(req.CliType))
+                && CliTypes.IsValid(requestedCli))
             {
                 try
                 {
-                    var catalogue = await cliRouter.Get(req.CliType).GetModelCatalogAsync(false, ct);
+                    CliModelCatalog catalogue;
+                    try
+                    {
+                        catalogue = await cliRouter.Get(requestedCli).GetModelCatalogAsync(false, ct);
+                    }
+                    catch when (requestedCli is CliTypes.Claude or CliTypes.Codex)
+                    {
+                        catalogue = requestedCli == CliTypes.Claude
+                            ? ClaudeModelDiscovery.FallbackCatalog("creation-registry-fallback")
+                            : CodexModelDiscovery.FallbackCatalog("creation-registry-fallback");
+                    }
                     var recommendation = modelRouting.Recommend(
                         req.TaskType,
                         catalogue,
@@ -1069,7 +1087,7 @@ public static class TaskCrudEndpoints
                         : string.Equals(effectiveModel, recommendation.Model, StringComparison.OrdinalIgnoreCase)
                             ? recommendation.ThinkingLevel
                             : ModelMetadataRegistry.ResolveThinkingLevel(
-                                req.CliType,
+                                requestedCli,
                                 effectiveModel,
                                 recommendation.ThinkingLevel);
                     req = req with
@@ -1079,6 +1097,19 @@ public static class TaskCrudEndpoints
                         ModelExplicit = modelExplicit,
                         ThinkingLevelExplicit = thinkingExplicit,
                     };
+                    if (!modelExplicit)
+                    {
+                        var selection = quotaAdmission.Plan(new QuotaAdmissionRequest(
+                            requestedCli, req.Model, req.ThinkingLevel,
+                            req.Project, 0, "card-creation"));
+                        if (selection is { ShouldLaunch: true, IsFallback: true })
+                            req = req with
+                            {
+                                CliType = selection.CliType,
+                                Model = selection.Model,
+                                ThinkingLevel = selection.ThinkingLevel,
+                            };
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -1201,15 +1232,17 @@ public static class TaskCrudEndpoints
 
         group.MapPut("/{jobId}/model", (string jobId, string? project, string? watchPath, SetJobModelRequest req, TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
         {
+            if (req.PinMode is not ("preference" or "hard")) return Results.BadRequest(new { error = "pinMode must be preference or hard." });
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var success = mutations.SetJobModel(jobId, req?.Model, watchPath);
+            var success = mutations.SetJobModel(jobId, req.Model, watchPath, req.PinMode);
             return success ? Results.Ok() : Results.NotFound();
         });
 
         group.MapPut("/{jobId}/thinking-level", (string jobId, string? project, string? watchPath, SetJobThinkingLevelRequest req, TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
         {
+            if (req.PinMode is not ("preference" or "hard")) return Results.BadRequest(new { error = "pinMode must be preference or hard." });
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var success = mutations.SetJobThinkingLevel(jobId, req?.ThinkingLevel, watchPath);
+            var success = mutations.SetJobThinkingLevel(jobId, req.ThinkingLevel, watchPath, req.PinMode);
             return success ? Results.Ok() : Results.NotFound();
         });
 
@@ -1217,11 +1250,10 @@ public static class TaskCrudEndpoints
         {
             if (req is null || !CliTypes.IsValid(req.CliType))
                 return Results.BadRequest(new { error = $"cliType must be one of {string.Join(", ", CliTypes.All)}" });
+            if (req.PinMode is not ("preference" or "hard")) return Results.BadRequest(new { error = "pinMode must be preference or hard." });
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var ok = mutations.SetJobCliType(jobId, req.CliType, watchPath);
+            var ok = mutations.SetJobCliType(jobId, req.CliType, watchPath, req.PinMode, req.UseOwnSession);
             if (!ok) return Results.NotFound();
-            if (req.UseOwnSession.HasValue)
-                mutations.SetJobUseOwnSession(jobId, req.UseOwnSession.Value, watchPath);
             return Results.Ok();
         });
 
@@ -1525,7 +1557,8 @@ public static class TaskCrudEndpoints
     private static async Task<IResult> MoveOperatorWithRunIntentAsync(
         string jobId, string? watchPath, MoveJobRequest request, HttpContext context,
         TaskTransitionService transitions, TaskScannerService scanner, RunLeaseService leases,
-        AttemptAuthorityService authority, TimelineLog timeline, CancellationToken ct)
+        AttemptAuthorityService authority, TimelineLog timeline,
+        AgentStudio.Pipeline.BatchIsolationGuard isolation, CancellationToken ct)
     {
         // Completion and claim use this same gate. Keep the lane move and its
         // authority decision in one ordering so neither can settle in between.
@@ -1534,6 +1567,27 @@ public static class TaskCrudEndpoints
         {
             var card = scanner.FindJob(jobId, watchPath);
             if (card is null) return Results.NotFound();
+            var attention = context.RequestServices.GetRequiredService<AgentStudio.Operator.OperatorCoordinationStore>();
+            var actor = AgentStudio.Operator.OperatorEndpoints.Actor(context);
+            var owner = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                && human.User.Role == StudioRoles.Owner;
+            if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem]
+                is ServiceAccountPrincipal { Origin: ServiceAccountOrigins.ApiToken })
+            {
+                if (attention.Current(card.TaskKey)?.Holder != actor)
+                    return Results.Conflict(new { error = "attention-lease-required" });
+                if (context.Request.Headers.IfMatch.Count == 0)
+                    return Results.Json(new { error = "card-revision-required" }, statusCode: StatusCodes.Status428PreconditionRequired);
+                if (!string.Equals(context.Request.Headers.IfMatch.ToString(),
+                        AgentStudio.Operator.OperatorCoordinationStore.Revision(card.FolderPath), StringComparison.Ordinal))
+                    return Results.Json(new { error = "stale-card-revision" }, statusCode: StatusCodes.Status412PreconditionFailed);
+            }
+            // AGT-3483: a requeue would replace the delivery an isolating batch
+            // is probing. Eject is the member action until isolation ends.
+            if (AgentStudio.Pipeline.BatchIsolationGuardPolicy.IsRequeue(card.State, request.TargetState)
+                && isolation.Find(card) is { } isolating)
+                return Results.Json(AgentStudio.Pipeline.BatchIsolationGuardPolicy.Body(isolating),
+                    statusCode: StatusCodes.Status409Conflict);
             var live = request.TargetState != card.State
                 ? leases.Peek(card.TaskKey).Lease : null;
             var intent = RunDispositionPolicy.ParseMoveIntent(request.RunIntent);
@@ -1548,6 +1602,8 @@ public static class TaskCrudEndpoints
                 cause: OperatorActor(context), reason: request.Reason,
                 operatorOverride: request.OperatorOverride,
                 archiveOverride: request.ArchiveOverride);
+            if (moved.Status == MoveJobStatus.Success && owner)
+                await attention.OwnerActionAsync(card.TaskKey, card.ProjectName, actor, ct);
             if (moved.Status == MoveJobStatus.Success && live?.AttemptId is { } attemptId
                 && intent == RunMoveIntent.Revoke)
             {
@@ -1577,7 +1633,7 @@ public static class TaskCrudEndpoints
     internal static string OperatorActor(HttpContext context)
     {
         if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account)
-            return TimelineActors.ServiceAccount(account.AccountId);
+            return account.ActorId;
         if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
             return TimelineActors.Human(human.User.DisplayName);
         var clientId = context.Items["ClientId"] as string

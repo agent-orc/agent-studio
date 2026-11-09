@@ -147,7 +147,7 @@ public sealed partial class TaskServerStore
                     INSERT INTO runner_capabilities(
                         runner_id, capability_key, category, schema_version,
                         advertised_status, health_state, reason, version,
-                        identity_value, detail, signal, credential_expires_at,
+                        identity_value, detail, failure_since, http_status, request, signal, credential_expires_at,
                         limited_until, credential_modified_at, evidence_id, evidence_excerpt, supported_models_json,
                         credential_generation, credential_observed_at, last_real_success_at, expiry_provenance,
                         access_token_expires_at, effective_source, native_file_shadowed, evidence_refs_json,
@@ -156,7 +156,7 @@ public sealed partial class TaskServerStore
                         generation, recovery_history_json, updated_at)
                     VALUES (
                         $runner, $key, $category, $schema, $status, 'healthy',
-                        NULL, $version, $identity, $detail, $signal, $expires,
+                        NULL, $version, $identity, $detail, $failure_since, $http_status, $request, $signal, $expires,
                         $limited, $credential_modified, $evidence_id, $evidence_excerpt, $supported_models,
                         $credential_generation, $credential_observed, $last_real_success, $expiry_provenance,
                         $access_expires, $effective_source, $native_shadowed, $evidence_refs,
@@ -177,6 +177,9 @@ public sealed partial class TaskServerStore
                         version = excluded.version,
                         identity_value = excluded.identity_value,
                         detail = excluded.detail,
+                        failure_since = excluded.failure_since,
+                        http_status = excluded.http_status,
+                        request = excluded.request,
                         signal = excluded.signal,
                         credential_expires_at = excluded.credential_expires_at,
                         limited_until = excluded.limited_until,
@@ -213,6 +216,9 @@ public sealed partial class TaskServerStore
                     ("$version", capability.Version),
                     ("$identity", capability.Identity),
                     ("$detail", advertisedDetail),
+                    ("$failure_since", capability.Since is { } since ? Iso(since.ToUniversalTime()) : null),
+                    ("$http_status", capability.HttpStatus),
+                    ("$request", capability.Request),
                     ("$signal", capability.Signal),
                     ("$expires", capability.ExpiresAt is null ? null : Iso(capability.ExpiresAt.Value.ToUniversalTime())),
                     ("$limited", capability.LimitedUntil is null ? null : Iso(capability.LimitedUntil.Value.ToUniversalTime())),
@@ -243,6 +249,37 @@ public sealed partial class TaskServerStore
             }
             if (request.Telemetry is not null)
             {
+                var previousTelemetryJson = Convert.ToString(await ScalarAsync(connection,
+                    "SELECT payload_json FROM runner_telemetry_latest WHERE runner_id = $runner;",
+                    ct, transaction, ("$runner", request.RunnerId)), CultureInfo.InvariantCulture);
+                var previousGate = string.IsNullOrWhiteSpace(previousTelemetryJson)
+                    ? null
+                    : JsonSerializer.Deserialize<HostTelemetrySnapshotDto>(previousTelemetryJson)?.ClaimLoadGate;
+                var currentGate = request.Telemetry.ClaimLoadGate;
+                if (currentGate is not null && currentGate.State != previousGate?.State
+                    && (currentGate.State == "closed" || previousGate?.State == "closed"))
+                {
+                    var closedSeconds = currentGate.State == "open" && previousGate?.Since is { } since
+                        ? Math.Max(0, (long)(request.Telemetry.ObservedAt - since).TotalSeconds) : 0;
+                    var transitionDetail = new
+                    {
+                        runnerId = request.RunnerId,
+                        hostId = runner.HostId,
+                        state = currentGate.State,
+                        currentGate.LoadPerCore,
+                        currentGate.Threshold,
+                        currentGate.SustainedSeconds,
+                        since = currentGate.State == "closed" ? currentGate.Since : previousGate?.Since,
+                        closedSeconds,
+                        currentGate.ActiveSlots,
+                    };
+                    await AppendStudioStreamEventAsync(connection, transaction,
+                        currentGate.State == "closed" ? "runner.claim-load-gate.closed" : "runner.claim-load-gate.opened",
+                        null, null, transitionDetail, UtcNow, ct);
+                    await AuditAsync(connection, transaction, actorId,
+                        currentGate.State == "closed" ? "runner.claim-load-gate.closed" : "runner.claim-load-gate.opened",
+                        "runner", request.RunnerId, JsonSerializer.Serialize(transitionDetail), ct);
+                }
                 await ExecuteAsync(connection, """
                     INSERT INTO runner_telemetry_latest(runner_id, payload_json, observed_at)
                     VALUES ($runner, $payload, $observed)
@@ -287,7 +324,7 @@ public sealed partial class TaskServerStore
                     telemetryAt = request.Telemetry?.ObservedAt,
                 }),
                 ct);
-            configuredRoutes = await ReadConfiguredModelRoutesAsync(connection, transaction, ct);
+            configuredRoutes = await ReadConfiguredModelRoutesAsync(connection, transaction, UtcNow, ct);
         }, ct);
         await EvaluateHostCliPolicyAsync(request.RunnerId, actorId, ct);
         return (await ListRunnerCapabilitySnapshotsAsync(ct))
@@ -396,15 +433,19 @@ public sealed partial class TaskServerStore
                 ct);
 
             var wholeHost = WholeHostCapabilities.Contains(capability.Key);
+            var unauthorizedProvider = capability.Key.StartsWith("provider-auth:", StringComparison.Ordinal)
+                && request.Classification == "ProviderUnauthorized";
             var failures = capability.ConsecutiveFailures + 1;
             var nextState = capability.HealthState switch
             {
+                _ when unauthorizedProvider => CapabilityHealthStates.Draining,
                 CapabilityHealthStates.HalfOpen => CapabilityHealthStates.Draining,
                 CapabilityHealthStates.Draining => CapabilityHealthStates.Draining,
                 _ when wholeHost || failures >= CapabilityFailureThreshold => CapabilityHealthStates.Draining,
                 _ => CapabilityHealthStates.Suspect,
             };
-            DateTime? cooldownUntil = nextState == CapabilityHealthStates.Draining
+            DateTime? cooldownUntil = unauthorizedProvider ? DateTime.MaxValue
+                : nextState == CapabilityHealthStates.Draining
                 ? UtcNow.AddSeconds(CapabilityBaseCooldownSeconds * (1 << Math.Min(Math.Max(0, failures - 2), 4)))
                 : null;
             var history = AppendHistory(
@@ -575,7 +616,8 @@ public sealed partial class TaskServerStore
                        limited_until, credential_modified_at, evidence_id, evidence_excerpt, supported_models_json,
                        credential_generation, credential_observed_at, last_real_success_at, expiry_provenance,
                        access_token_expires_at, effective_source, native_file_shadowed, evidence_refs_json,
-                       health_outcome, service_availability, credential_health
+                       health_outcome, service_availability, credential_health,
+                       failure_since, http_status, request
                   FROM runner_capabilities
                  WHERE runner_id = $runner
                  ORDER BY category, capability_key;
@@ -622,7 +664,10 @@ public sealed partial class TaskServerStore
                         reader.IsDBNull(30) ? null : JsonSerializer.Deserialize<string[]>(reader.GetString(30)),
                         reader.IsDBNull(31) ? null : reader.GetString(31),
                         reader.IsDBNull(32) ? null : reader.GetString(32),
-                        reader.IsDBNull(33) ? null : reader.GetString(33)));
+                        reader.IsDBNull(33) ? null : reader.GetString(33),
+                        reader.IsDBNull(34) ? null : Parse(reader.GetString(34)),
+                        reader.IsDBNull(35) ? null : reader.GetInt32(35),
+                        reader.IsDBNull(36) ? null : reader.GetString(36)));
                 }
             }
             if (runner.Status == "active"
@@ -706,7 +751,8 @@ public sealed partial class TaskServerStore
                     _options.ClaudeCliTargetVersion),
                 CliUpdate: await ReadHostCliUpdateAsync(connection, null, runner.HostId, ct),
                 Release: runner.Release,
-                ActiveGateCount: activeGateCount));
+                ActiveGateCount: activeGateCount,
+                Containers: telemetry?.Containers));
         }
         return result;
     }

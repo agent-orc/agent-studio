@@ -50,6 +50,13 @@ public sealed partial class MergeIntoDevelopRunner
     private readonly PipelineHealthService? _pipelineHealth;
     private readonly IIntegrationLaneStallAlarm? _laneStallAlarm;
     private readonly PostMergeModeService? _postMergeMode;
+    private readonly AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness? _hostCredentials;
+
+    /// <summary>How long one merge waits for the host's first App tokens before it fetches anyway.</summary>
+    internal TimeSpan HostCredentialWaitLimit { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>Interval of the wait's log line and readiness check.</summary>
+    internal TimeSpan HostCredentialRetryInterval { get; set; } = TimeSpan.FromSeconds(30);
     private readonly TimeProvider _gateTime;
     private readonly TimeSpan? _preMainTimeout;
     private readonly TimeSpan? _preDevelopTimeout;
@@ -74,6 +81,14 @@ public sealed partial class MergeIntoDevelopRunner
     public const string SupersededReviewGenerationError = "superseded-review-generation";
     private int _mergeGateUsers;
     private readonly AsyncLocal<long?> _mergeLockWaitMs = new();
+    private readonly AsyncLocal<RejectedPushReplayGateHolder?> _rejectedPushReplayGate = new();
+    private sealed record RejectedPushReplayGate(
+        string? DeliverySha, string BaseSha, BuildTestGateResult Gate);
+    private sealed class RejectedPushReplayGateHolder
+    {
+        public RejectedPushReplayGate? Approval { get; set; }
+    }
+    private readonly AsyncLocal<bool> _holdsBatchReservation = new();
     private string? _integrationGateHolder;
 
     public MergeIntoDevelopRunner(
@@ -102,8 +117,10 @@ public sealed partial class MergeIntoDevelopRunner
         PipelineHealthService? pipelineHealth = null,
         TimeProvider? timeProvider = null,
         IIntegrationLaneStallAlarm? laneStallAlarm = null,
-        PostMergeModeService? postMergeMode = null)
+        PostMergeModeService? postMergeMode = null,
+        AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness? hostCredentials = null)
     {
+        _hostCredentials = hostCredentials;
         _gateTime = timeProvider ?? TimeProvider.System;
         _git = git;
         _pipelineLog = pipelineLog;
@@ -141,6 +158,36 @@ public sealed partial class MergeIntoDevelopRunner
         // Default to the AGT-1944 environmental backoff (30s, 120s, cap 5min); a
         // test injects a zero backoff so it does not sleep between retries.
         _environmentalBackoff = environmentalBackoff ?? PostProcessingOutcomeTaxonomy.RetryBackoff;
+    }
+
+    /// <summary>
+    /// Directly after a start the host's own Git may not have its App tokens
+    /// yet, and a private repository then refuses the integration fetch. Wait
+    /// for them, saying so on every retry. After the bound the merge fetches
+    /// anyway: a refused credential is a transient fault that the bounded
+    /// gate-environment ladder retries instead of parking the card.
+    /// </summary>
+    internal async Task WaitForHostGitCredentialsAsync(string project, string jobId, CancellationToken ct)
+    {
+        if (_hostCredentials is not { Pending: true } readiness) return;
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (waited.Elapsed < HostCredentialWaitLimit)
+        {
+            _logger.LogWarning(
+                "integration-waits-for-host-git-credentials project={Project} job={JobId} waitedSeconds={Waited:0} retryInSeconds={Retry:0} reason={Reason}",
+                project, jobId, waited.Elapsed.TotalSeconds, HostCredentialRetryInterval.TotalSeconds,
+                readiness.LastFailure ?? "the GitHub App tokens for this host's own Git are not written yet");
+            if (await readiness.WaitAsync(HostCredentialRetryInterval, ct).ConfigureAwait(false))
+            {
+                _logger.LogInformation(
+                    "integration-host-git-credentials-ready project={Project} job={JobId} waitedSeconds={Waited:0}",
+                    project, jobId, waited.Elapsed.TotalSeconds);
+                return;
+            }
+        }
+        _logger.LogWarning(
+            "integration-proceeds-without-host-git-credentials project={Project} job={JobId} waitedSeconds={Waited:0} reason={Reason}",
+            project, jobId, waited.Elapsed.TotalSeconds, readiness.LastFailure ?? "not written yet");
     }
 
     /// <summary>
@@ -192,14 +239,9 @@ public sealed partial class MergeIntoDevelopRunner
         Interlocked.Increment(ref _mergeGateUsers);
         try
         {
+            await WaitForHostGitCredentialsAsync(project, jobId, ct).ConfigureAwait(false);
             var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
                 ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
-            using var batchReservation = _batchReservations is null
-                || string.IsNullOrWhiteSpace(reservationRepo)
-                || IsDocumentationDelivery(reservationRepo, integrationBranch,
-                    ReviewSubjectStore.Read(jobFolderPath))
-                ? null
-                : await _batchReservations.AcquireAsync(project, ct).ConfigureAwait(false);
             // Deliberately NOT the caller's token. Merge + gate + rollback form
             // one consistency boundary after acceptance is already durable.
             var mergeWait = System.Diagnostics.Stopwatch.StartNew();
@@ -213,13 +255,31 @@ public sealed partial class MergeIntoDevelopRunner
                 mergeLockWaitMs: mergeWait.ElapsedMilliseconds, holdingProject: holdingProject);
             try
             {
-                return await RunSerializedAsync(
-                    project, jobId, jobFolderPath, watchPath,
-                    integrationBranch, integrationStrategy, pipelineType, publicationFence,
-                    reviewedResultSha, ct).ConfigureAwait(false);
+                using var batchReservation = _batchReservations is null
+                    || string.IsNullOrWhiteSpace(reservationRepo)
+                    || IsDocumentationDelivery(reservationRepo, integrationBranch,
+                        ReviewSubjectStore.Read(jobFolderPath))
+                    ? null
+                    : await _batchReservations.AcquireAsync(project, ct).ConfigureAwait(false);
+                _holdsBatchReservation.Value = batchReservation is not null;
+                _rejectedPushReplayGate.Value = new RejectedPushReplayGateHolder();
+                // A rejected publication is restored to origin before this
+                // method returns. Reconstruct once on that new base while the
+                // project reservation still excludes a batch publication.
+                for (var replay = 0; ; replay++)
+                {
+                    var outcome = await RunSerializedAsync(
+                        project, jobId, jobFolderPath, watchPath,
+                        integrationBranch, integrationStrategy, pipelineType, publicationFence,
+                        reviewedResultSha, ct, replay).ConfigureAwait(false);
+                    if (replay > 0 || outcome.FailureCode != AcceptedIntegrationFailureCodes.IntegrationPushBlocked
+                        || outcome.Error?.Contains("replay on origin", StringComparison.Ordinal) != true)
+                        return outcome;
+                }
             }
             finally
             {
+                _rejectedPushReplayGate.Value = null;
                 _mergeLockWaitMs.Value = null;
                 _mergeHolders.TryRemove(key, out _);
                 gate.Release();
@@ -227,6 +287,7 @@ public sealed partial class MergeIntoDevelopRunner
         }
         finally
         {
+            _holdsBatchReservation.Value = false;
             Interlocked.Decrement(ref _mergeGateUsers);
         }
     }
@@ -262,7 +323,8 @@ public sealed partial class MergeIntoDevelopRunner
         string pipelineType,
         Func<Action, bool>? publicationFence,
         string? reviewedResultSha,
-        CancellationToken ct)
+        CancellationToken ct,
+        int replay)
     {
         var cancellationSubject = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, reviewedResultSha);
         var cancellationAttempt = _pipelineLog.Read(jobFolderPath)?.Attempt;
@@ -426,7 +488,7 @@ public sealed partial class MergeIntoDevelopRunner
             if (!synchronized.Success)
             {
                 result = MergeIntoIntegrationResult.Failed(
-                    AcceptedIntegrationFailureCodes.BranchSyncFailed,
+                    AcceptedIntegrationFailureCodes.ForBranchSync(synchronized.Error),
                     synchronized.Error);
             }
             else if (lineage?.Mode == ImmediateIntegrationLineageMode.Blocked)
@@ -466,6 +528,7 @@ public sealed partial class MergeIntoDevelopRunner
                     project,
                     jobId,
                     jobFolderPath,
+                    developerRoot,
                     repoRoot,
                     delivery,
                     branch,
@@ -544,6 +607,7 @@ public sealed partial class MergeIntoDevelopRunner
                     watchPath,
                     repoRoot,
                     pushBranch ?? branch,
+                    pipelineType,
                     delivery,
                     result).ConfigureAwait(false);
                 result = verification.Result;
@@ -559,7 +623,7 @@ public sealed partial class MergeIntoDevelopRunner
                     approvedPushSha = null;
                 }
             }
-            else if (result.Outcome.IsFreshMerge())
+            else if (result.Outcome.IsFreshMerge() && !PublishWithinGate(project, pipelineType, repoRoot, branch))
             {
                 RecordFreshMergeVerification(
                     jobFolderPath,
@@ -601,6 +665,7 @@ public sealed partial class MergeIntoDevelopRunner
                 pushBranch = branch;
             }
             var pushDecidedByFence = false;
+            GitPushResult? inlinePush = null;
             var supersededCleanly = false;
             var conclusionFolderPath = jobFolderPath;
             var cancelledGate = preMainResult?.FailureKind == BuildTestGateFailureKind.Cancellation
@@ -698,9 +763,16 @@ public sealed partial class MergeIntoDevelopRunner
                             return;
                         }
                         if (admittedPushBranch is not null)
-                            MaybeEnqueueIntegrationPush(
-                                project, jobId, jobFolderPath, watchPath,
-                                admittedPushBranch, admittedPushSha, pipelineType);
+                        {
+                            if (PublishWithinGate(project, pipelineType, repoRoot, admittedPushBranch))
+                                inlinePush = PushIntegrationBranchSerializedAsync(
+                                    project, jobId, jobFolderPath, watchPath,
+                                    admittedPushBranch, admittedPushSha, ct).GetAwaiter().GetResult();
+                            else
+                                MaybeEnqueueIntegrationPush(
+                                    project, jobId, jobFolderPath, watchPath,
+                                    admittedPushBranch, admittedPushSha, pipelineType);
+                        }
                     }))
                 {
                     result = RollBackSupersededPublication(repoRoot, fenceAnchors, out supersededCleanly);
@@ -744,13 +816,76 @@ public sealed partial class MergeIntoDevelopRunner
                     rollback! with { FailureCode = AcceptedIntegrationFailureCodes.IntegrationError },
                     null, null, startedAt, ct, recordStep: false).ConfigureAwait(false);
             }
+            if (!pushDecidedByFence && pushBranch is not null
+                && PublishWithinGate(project, pipelineType, repoRoot, pushBranch))
+            {
+                inlinePush = await PushIntegrationBranchSerializedAsync(
+                    project, jobId, jobFolderPath, watchPath, pushBranch,
+                    approvedPushSha, ct).ConfigureAwait(false);
+                pushDecidedByFence = true;
+            }
+            if (inlinePush is not null)
+            {
+                if (inlinePush.Success && inlinePush.Status is ("pushed" or "already-remote"))
+                {
+                    if (result.Outcome.IsFreshMerge())
+                        RecordFreshMergeVerification(jobFolderPath, repoRoot, pushBranch!,
+                            result, preMainResult ?? preDevelopResult);
+                    else if (verification is { NoOp: false }
+                             && verification.Decision.State == IntegrationVerificationStates.Verified)
+                        RecordVerification(jobFolderPath, repoRoot, verification.Branch,
+                            result.MergedSha, verification.Decision, verification.Gate,
+                            result.EvidenceShas);
+                    IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "published",
+                        outcome: inlinePush.Status, receipt: inlinePush.Sha);
+                }
+                else
+                {
+                    var repair = inlinePush.Status == "remote-rejected"
+                        ? _git.RestartRejectedIntegrationLane(repoRoot, pushBranch!, approvedPushSha!, ct)
+                        : null;
+                    var replayCovered = false;
+                    if (repair is { Success: true })
+                    {
+                        var oldBase = _git.GetFirstParent(repoRoot, approvedPushSha!);
+                        var newBase = _git.GetBranchTip(repoRoot, $"refs/remotes/origin/{pushBranch}");
+                        var deliveryPaths = oldBase is null ? null
+                            : _git.ChangedPathsAgainstMergeBase(repoRoot, oldBase, approvedPushSha!);
+                        var movedPaths = oldBase is null || newBase is null ? null
+                            : _git.ChangedPathsAgainstMergeBase(repoRoot, oldBase, newBase);
+                        replayCovered = RejectedPushReplayPolicy.Decide(
+                            replay, oldBase is not null && newBase is not null
+                                && _git.IsAncestor(repoRoot, oldBase, newBase),
+                            (preMainResult ?? preDevelopResult) is { Verdict: BuildTestGateVerdict.Ok },
+                            deliveryPaths, movedPaths)
+                            == RejectedPushReplayAction.ReuseGreenOnNewBase;
+                        if (replayCovered)
+                            _rejectedPushReplayGate.Value!.Approval = new RejectedPushReplayGate(
+                                delivery.ExpectedResultSha, newBase!,
+                                (preMainResult ?? preDevelopResult)!);
+                        var reviewAttempt = BatchGateOwnershipStore.Read(jobFolderPath)?.ReviewAttemptId;
+                        if (!replayCovered && !string.IsNullOrWhiteSpace(reviewAttempt)
+                            && _batchGates?.ReadPending(reviewAttempt) is not null)
+                            _batchGates.ReopenPending(reviewAttempt);
+                    }
+                    result = MergeIntoIntegrationResult.Failed(
+                        AcceptedIntegrationFailureCodes.IntegrationPushBlocked,
+                        replayCovered
+                            ? "Publication was rejected after origin moved; the lane was restored for replay on origin."
+                            : repair is { Success: true }
+                            ? "Publication was rejected after origin moved; the lane was restored and the card returned to the batch queue."
+                            : $"Publication failed ({inlinePush.Status}); {repair?.Error ?? inlinePush.Error}");
+                    approvedPushSha = null;
+                }
+            }
             // A cleanly rolled-back supersession is routine, not a failure; only
             // a failed rollback needs the operator.
             var unverifiedBranch = verification?.Decision.Action == IntegrationVerificationAction.FailUnverified;
             result = await ConcludeAsync(
                 project, jobId, conclusionFolderPath, watchPath, taskBranch, branch, strategy,
                 result, preMainResult, preDevelopResult, startedAt, ct,
-                raiseIntervention: !supersededCleanly && !shutdownCancellation && !unverifiedBranch,
+                raiseIntervention: !supersededCleanly && !shutdownCancellation && !unverifiedBranch
+                    && result.FailureCode != AcceptedIntegrationFailureCodes.IntegrationPushBlocked,
                 approvedPushSha: approvedPushSha,
                 recordStep: !supersededCancellation || cancellationAttempt.HasValue,
                 expectedAttempt: supersededCancellation ? cancellationAttempt : null).ConfigureAwait(false);
@@ -777,12 +912,10 @@ public sealed partial class MergeIntoDevelopRunner
                     environmentalRetries: 0);
             }
 
-            // AGT-1999: once the accepted task is folded into the integration
-            // branch, push that branch to origin so integration is never only
-            // local. Offloaded to the background worker (the same "not on the
-            // request path" strategy as the completed-job workspace push), so the
-            // accept transition never awaits the network round-trip.
-            // AGT-2996: only the push worker releases the developer checkout.
+            // Legacy and unwired paths keep the deferred push. Per-task code
+            // integrations with the publication lease pushed before ConcludeAsync.
+            // AGT-2996: the push helper releases the developer checkout only
+            // after origin carries the approved result.
             // A disabled or unavailable push leaves the branch on the lane.
             if (!pushDecidedByFence && pushBranch is not null)
             {
@@ -938,7 +1071,10 @@ public sealed partial class MergeIntoDevelopRunner
         DateTime startedAt,
         CancellationToken ct)
     {
+        // A refused Git credential is a host fault the bounded ladder replays;
+        // a follow-up card for it would only repeat what the ladder does.
         if (result.Outcome.IsSuccessfulIntegration()
+            || result.FailureCode == AcceptedIntegrationFailureCodes.GitCredentialUnavailable
             || _failureInterventions is null
             || _taskScanner is null
             || _projectSettings is null)
@@ -1210,6 +1346,27 @@ public sealed partial class MergeIntoDevelopRunner
             ? null
             : _git.ChangedPathsAgainstMergeBase(repoRoot, preMergeTip, gatedSha);
         var gateApplies = PreDevelopBuildGate.AppliesTo(profile, changedPaths, repoRoot);
+        var replayGate = _rejectedPushReplayGate.Value?.Approval;
+        if (gateApplies && replayGate is not null
+            && string.Equals(preMergeTip, replayGate.BaseSha, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(ReviewSubjectStore.Read(jobFolderPath)?.ResultSha,
+                replayGate.DeliverySha, StringComparison.OrdinalIgnoreCase)
+            && replayGate.Gate.Verdict == BuildTestGateVerdict.Ok)
+        {
+            var reused = replayGate.Gate with
+            {
+                ExpectedSha = gatedSha,
+                TestedSha = gatedSha,
+                VerdictSource = GateVerdictSource.CacheHit,
+                Reason = "The published base moved only in files outside this delivery; the prior green gate covers the replay.",
+            };
+            IntegrationGateReceipts.Record(jobFolderPath,
+                IntegrationGateJournal.PreDevelopBuildGateStep, reused, _timeline,
+                mergeLockWaitMs: _mergeLockWaitMs.Value);
+            IntegrationGateJournal.ClearOwned(jobFolderPath, journalOwner);
+            _rejectedPushReplayGate.Value!.Approval = null;
+            return (result with { GateVerdictReused = true }, reused);
+        }
         if (!gateApplies && changedPaths is not null)
         {
             const string skipReason =
@@ -1248,6 +1405,33 @@ public sealed partial class MergeIntoDevelopRunner
                     missingAnchor.Reason,
                     mergedSha: gatedSha),
                 missingAnchor);
+        }
+
+        // AGT-3434: the batch per-task fallback ran its selected gate on this
+        // delivery merged onto an integration tip. The same tree on the same
+        // tip stands on that verdict; anything else keeps the gate below.
+        var perTask = DecidePerTaskVerdictReuse(repoRoot, integrationBranch, jobFolderPath, gatedSha, preMergeTip);
+        if (perTask.Reused)
+        {
+            var reused = new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 0, string.Empty,
+                "Reused the per-task gate verdict: " + perTask.Reason + ".", false, false)
+            {
+                VerdictSource = GateVerdictSource.CacheHit,
+                OriginEvidencePath = perTask.EvidencePath,
+                ExpectedSha = gatedSha,
+                TestedSha = gatedSha,
+            };
+            IntegrationGateReceipts.Record(
+                jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, reused, _timeline,
+                mergeLockWaitMs: _mergeLockWaitMs.Value);
+            IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-finished",
+                level: "per-task-verdict", durationMs: 0, outcome: reused.Verdict.ToString(),
+                reuseToken: "per-task-verdict", reason: perTask.Reason);
+            IntegrationGateJournal.ClearOwned(jobFolderPath, journalOwner);
+            _logger.LogInformation(
+                "merge-into-develop build gate reused the per-task verdict for project={Project} job={JobId} integration={Integration} merged={MergedSha} reason={Reason}",
+                project, jobId, integrationBranch, gatedSha, perTask.Reason);
+            return (result with { GateVerdictReused = true }, reused);
         }
 
         var settings = ProjectSettingsFor(project);
@@ -1317,6 +1501,8 @@ public sealed partial class MergeIntoDevelopRunner
                     JobFolderPath = jobFolderPath,
                     SubjectRef = integrationBranch,
                     TimeoutBudgetSource = preDevelopTimeoutSource,
+                    QueueWaitTimeout = _holdsBatchReservation.Value
+                        ? BatchIntegrationReservationService.IntegrationGateQueueCap : null,
                     InfrastructureTimeout = ResolveGateInfrastructureTimeout(),
                     CoveredRequirements = reuse.Reused ? reuse.CoveredRequirements : [],
                     OnMachineGateWaiting = IntegrationGateWaiting(jobFolderPath, project, jobId),
@@ -1349,12 +1535,35 @@ public sealed partial class MergeIntoDevelopRunner
         // hold a newer attempt's journal, which must survive.
         IntegrationGateJournal.ClearOwned(gateEvidenceFolder, journalOwner);
 
+        // AGT-3428: the gate applied but found no verify command and no
+        // declaration. Roll the unverified merge back and refuse it with the
+        // typed code; it is not a red gate and is never triaged as one.
+        if (VerifyDefinitionPolicy.IsMissingDefinition(gate))
+        {
+            var rollback = _git.ResetIntegrationBranch(repoRoot, integrationBranch, preMergeTip!);
+            _logger.LogWarning(
+                "merge-into-develop refused for project={Project} job={JobId} integration={Integration}: verify definition missing rollback={Rollback}",
+                project, jobId, integrationBranch,
+                rollback.Success ? "reset-to-pre-merge-tip" : "FAILED: " + (rollback.Error ?? "unknown"));
+            var refused = MissingVerifyDefinition(repoRoot, profile, rollback.Success ? null : gatedSha);
+            return (rollback.Success
+                ? refused
+                : refused with
+                {
+                    Error = refused.Error + $"\n\nRolling {integrationBranch} back to {Short(preMergeTip!)} FAILED "
+                            + $"({rollback.Error ?? "unknown error"}); the unverified merge is still on the local "
+                            + "integration branch and needs manual repair.",
+                }, gate);
+        }
+
+        var executed = gate.VerdictSource == GateVerdictSource.Executed
+            && gate.FailureKind is not (BuildTestGateFailureKind.MissingSource or BuildTestGateFailureKind.Cancellation);
         if (PreDevelopBuildGate.IsGreen(gate))
         {
             _logger.LogInformation(
-                "merge-into-develop build gate passed for project={Project} job={JobId} integration={Integration} merged={MergedSha} verdict={Verdict} reuse={Reuse} reuseReason={ReuseReason}",
-                project, jobId, integrationBranch, gatedSha, gate.Verdict, reuse.Token, reuse.Reason);
-            return (result, gate);
+                "merge-into-develop build gate passed for project={Project} job={JobId} integration={Integration} merged={MergedSha} verdict={Verdict} reuse={Reuse} reuseReason={ReuseReason} perTaskReuse={PerTaskReason}",
+                project, jobId, integrationBranch, gatedSha, gate.Verdict, reuse.Token, reuse.Reason, perTask.Reason);
+            return (result with { GateExecuted = executed }, gate);
         }
 
         // The merge was created by this invocation, so it owns an exact
@@ -1386,7 +1595,36 @@ public sealed partial class MergeIntoDevelopRunner
             : $"The build gate blocked the merge into {integrationBranch}: {gate.Reason}. " +
               $"Rolling {integrationBranch} back to {Short(preMergeTip!)} FAILED ({reset.Error ?? "unknown error"}); " +
               "the unverified merge is still on the local integration branch and needs manual repair.";
-        return (MergeIntoIntegrationResult.Of(outcome, error: error), gate);
+        return (MergeIntoIntegrationResult.Of(outcome, error: error) with { GateExecuted = executed }, gate);
+    }
+
+    /// <summary>
+    /// Whether this merge may stand on the per-task batch fallback verdict
+    /// (AGT-3434). Gathers the marker beside the card and the Git facts for the
+    /// pure <see cref="PerTaskGateVerdictReusePolicy"/>.
+    /// </summary>
+    private PerTaskGateVerdictReuseDecision DecidePerTaskVerdictReuse(
+        string repoRoot,
+        string integrationBranch,
+        string jobFolderPath,
+        string gatedSha,
+        string? preMergeTip)
+    {
+        BatchGateOwnership? ownership;
+        try { ownership = BatchGateOwnershipStore.Read(jobFolderPath); }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException)
+        {
+            SilentCatch.Note(ex, "MergeIntoDevelopRunner: an unreadable batch marker keeps the merge gate");
+            ownership = null;
+        }
+        var resultSha = ownership?.Subject.ResultSha;
+        return PerTaskGateVerdictReusePolicy.Decide(new PerTaskGateVerdictReuseInput(
+            ownership,
+            integrationBranch,
+            preMergeTip,
+            ReviewSubjectStore.IsValidResultSha(resultSha)
+                && _git.IsAncestor(repoRoot, resultSha!, gatedSha),
+            ownership?.FallbackCandidateTreeSha is null ? null : _git.GetCommitTree(repoRoot, gatedSha)));
     }
 
     /// <summary>
@@ -1483,19 +1721,25 @@ public sealed partial class MergeIntoDevelopRunner
     /// </summary>
     private (TimeSpan Timeout, string Source) ResolveGateTimeout(string project, TimeSpan? explicitTimeout)
     {
+        (TimeSpan Timeout, string Source) Cap(TimeSpan requested, string source)
+        {
+            var capped = BatchIntegrationReservationService.GateBudget(
+                requested, _holdsBatchReservation.Value);
+            return (capped, capped < requested ? source + ";batch-reservation-cap" : source);
+        }
         if (explicitTimeout is { } configured && configured > TimeSpan.Zero)
-            return (configured, "explicit-override");
+            return Cap(configured, "explicit-override");
 
         var configuredSeconds = _configuration?.GetValue<int?>(GateTimeoutConfigKey);
         if (configuredSeconds is { } fromConfig)
-            return (TimeSpan.FromSeconds(Math.Max(1, fromConfig)), $"config:{GateTimeoutConfigKey}");
+            return Cap(TimeSpan.FromSeconds(Math.Max(1, fromConfig)), $"config:{GateTimeoutConfigKey}");
 
         var projectOverrideSeconds = ProjectGateTimeoutOverrideSecondsFor(project);
         var resolvedSeconds = GateRunBudgetPolicy.ResolveSeconds(projectOverrideSeconds);
         var source = projectOverrideSeconds is not null
             ? "project-override:ProjectSettings.BuildTestGateTimeoutSeconds"
             : "policy-default:GateRunBudgetPolicy";
-        return (TimeSpan.FromSeconds(resolvedSeconds), source);
+        return Cap(TimeSpan.FromSeconds(resolvedSeconds), source);
     }
 
     private TimeSpan ResolveGateInfrastructureTimeout() => TimeSpan.FromSeconds(Math.Max(1,
@@ -1596,6 +1840,8 @@ public sealed partial class MergeIntoDevelopRunner
                     JobFolderPath = jobFolderPath,
                     SubjectRef = workBranch,
                     TimeoutBudgetSource = preMainTimeoutSource,
+                    QueueWaitTimeout = _holdsBatchReservation.Value
+                        ? BatchIntegrationReservationService.IntegrationGateQueueCap : null,
                     InfrastructureTimeout = ResolveGateInfrastructureTimeout(),
                 },
                 settings.BuildProfile,
@@ -1603,7 +1849,9 @@ public sealed partial class MergeIntoDevelopRunner
                 ct).ConfigureAwait(false);
             if (gate.FailureKind != BuildTestGateFailureKind.Cancellation)
                 IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate, _timeline);
-            if (gate.Verdict != BuildTestGateVerdict.Ok)
+            if (VerifyDefinitionPolicy.IsMissingDefinition(gate))
+                return (MissingVerifyDefinition(repoRoot, settings.BuildProfile), gate);
+            if (!VerifyDefinitionPolicy.AdmitsMerge(gate))
             {
                 return (
                     MergeIntoIntegrationResult.Failed(
@@ -1629,6 +1877,7 @@ public sealed partial class MergeIntoDevelopRunner
         string project,
         string jobId,
         string jobFolderPath,
+        string developerRoot,
         string repoRoot,
         DeliveryRefResolution delivery,
         string releaseBranch,
@@ -1740,13 +1989,14 @@ public sealed partial class MergeIntoDevelopRunner
             return (docsMerge, lightGate);
         }
 
+        // AGT-3435: a delivery behind the release line is merged, and the full
+        // suite runs on that merge result. Main still only advances to a SHA the
+        // full suite passed; only a real conflict goes back to the agent.
         if (!_git.IsAncestor(repoRoot, releaseLine, taskBranch))
         {
-            return (
-                MergeIntoIntegrationResult.Failed(
-                    AcceptedIntegrationFailureCodes.SourceNeedsRebase,
-                    $"Release source '{taskBranch}' must be rebased onto '{releaseBranch}' before the full-suite gate."),
-                null);
+            return await MergeBehindReleaseLineAsync(
+                project, jobId, jobFolderPath, developerRoot, repoRoot, delivery, releaseBranch, ct)
+                .ConfigureAwait(false);
         }
 
         var settings = _projectSettings.Get(project);
@@ -1761,6 +2011,8 @@ public sealed partial class MergeIntoDevelopRunner
                 JobFolderPath = jobFolderPath,
                 SubjectRef = taskBranch,
                 TimeoutBudgetSource = preMainTimeoutSource,
+                QueueWaitTimeout = _holdsBatchReservation.Value
+                    ? BatchIntegrationReservationService.IntegrationGateQueueCap : null,
                 InfrastructureTimeout = ResolveGateInfrastructureTimeout(),
             },
             settings.BuildProfile,
@@ -1769,7 +2021,12 @@ public sealed partial class MergeIntoDevelopRunner
         if (gate.FailureKind != BuildTestGateFailureKind.Cancellation)
             IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate, _timeline);
 
-        if (gate.Verdict != BuildTestGateVerdict.Ok)
+        // AGT-3428: no gate ran, so this is neither a red gate nor something the
+        // gate failure router can classify. Only a declared empty definition
+        // lets a not-applicable gate through.
+        if (VerifyDefinitionPolicy.IsMissingDefinition(gate))
+            return (MissingVerifyDefinition(repoRoot, settings.BuildProfile), gate);
+        if (!VerifyDefinitionPolicy.AdmitsMerge(gate))
         {
             return (
                 MergeIntoIntegrationResult.Failed(
@@ -1788,6 +2045,18 @@ public sealed partial class MergeIntoDevelopRunner
             targetSha);
         return (merge, gate);
     }
+
+    /// <summary>
+    /// The typed refusal of a delivery that no check could verify because the
+    /// repository defines no verify commands (AGT-3428).
+    /// </summary>
+    private static MergeIntoIntegrationResult MissingVerifyDefinition(
+        string repoRoot, BuildProfile? profile, string? mergedSha = null)
+        => MergeIntoIntegrationResult.Failed(
+            AcceptedIntegrationFailureCodes.VerifyDefinitionMissing,
+            VerifyDefinitionPolicy.Inspect(repoRoot, profile).Message
+            ?? VerifyDefinitionPolicy.Message(VerifyDefinitionPolicy.ExampleFor(repoRoot)),
+            mergedSha);
 
     private static bool IsReleaseBranch(string branch)
         => string.Equals(branch, "main", StringComparison.OrdinalIgnoreCase);
@@ -1854,14 +2123,6 @@ public sealed partial class MergeIntoDevelopRunner
         string pipelineType)
     {
         if (_pushQueue == null) return;
-        var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
-            ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
-        if (_batchReservations is not null && !string.IsNullOrWhiteSpace(reservationRepo)
-            && !IsDocumentationDelivery(reservationRepo, integrationBranch,
-                ReviewSubjectStore.Read(jobFolderPath)))
-            _batchReservations.MarkPushPending(project, jobId, approvedSha,
-                jobFolderPath, reservationRepo, integrationBranch, watchPath);
-
         if (!IntegrationPushEnabled(project, pipelineType))
         {
             _logger.LogInformation(
@@ -1869,6 +2130,13 @@ public sealed partial class MergeIntoDevelopRunner
                 project, jobId);
             return;
         }
+        var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
+            ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
+        if (_batchReservations is not null && !string.IsNullOrWhiteSpace(reservationRepo)
+            && !IsDocumentationDelivery(reservationRepo, integrationBranch,
+                ReviewSubjectStore.Read(jobFolderPath)))
+            _batchReservations.MarkPushPending(project, jobId, approvedSha,
+                jobFolderPath, reservationRepo, integrationBranch, watchPath);
 
         var sequence = IntegrationLaneEvents.CurrentSequence;
         IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "publication-queued",
@@ -1904,6 +2172,14 @@ public sealed partial class MergeIntoDevelopRunner
             return true;
         }
     }
+
+    private bool PublishWithinGate(string project, string pipelineType, string repoRoot, string branch)
+        => _pushQueue is not null
+           && _batchReservations is not null
+           && _refMutationLeases is not null
+           && !IsReleaseBranch(branch)
+           && _git.HasOriginRemote(repoRoot)
+           && IntegrationPushEnabled(project, pipelineType);
 
     /// <summary>
     /// Pushes the integration branch to <c>origin</c> and records the deferred
@@ -1976,7 +2252,10 @@ public sealed partial class MergeIntoDevelopRunner
                     ct,
                     recordSuccessfulStep: false);
                 if (!developPush.Success)
+                {
+                    _batchReservations?.MarkPushVerified(project, jobId, approvedSha);
                     return developPush;
+                }
 
                 var decision = ImmediateIntegrationLineagePolicy.Decide(
                     integrationBranch,
@@ -1993,6 +2272,7 @@ public sealed partial class MergeIntoDevelopRunner
                         "lineage-blocked",
                         decision.Reason);
                     RecordPushStep(jobFolderPath, project, jobId, blocked, DateTime.UtcNow, environmentalRetries: 0);
+                    _batchReservations?.MarkPushVerified(project, jobId, approvedSha);
                     _logger.LogWarning(
                         "merge-into-develop push: develop published to origin but {Branch} is blocked project={Project} job={JobId}; {Reason}",
                         integrationBranch, project, jobId, decision.Reason);
@@ -2014,6 +2294,8 @@ public sealed partial class MergeIntoDevelopRunner
                 IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "published",
                     sequence: deliverySequence, outcome: pushed.Status, receipt: pushed.Sha);
             }
+            else
+                _batchReservations?.MarkPushVerified(project, jobId, approvedSha);
             return pushed;
         }
         finally
@@ -2112,6 +2394,7 @@ public sealed partial class MergeIntoDevelopRunner
                     + $"POST /api/projects/{project}/checkout/sync after resolving its obstacles.";
                 _logger.LogInformation("merge-into-develop push: {ReleaseWarning}", releaseWarning);
             }
+            RecordPublishedGate(project, jobId, jobFolderPath, watchPath, releaseRoot, integrationBranch, result.Sha);
         }
         try
         {
@@ -2372,9 +2655,11 @@ public sealed partial class MergeIntoDevelopRunner
                     (preDevelopResult ?? preMainResult)?.Reason);
             case MergeIntoIntegrationOutcome.MergedAfterRebase:
                 var replacementCount = result.RebasedCommits.Count;
-                var rebaseGate = preDevelopResult is null
-                    ? string.Empty
-                    : $" Build gate {preDevelopResult.Verdict} checked the rebased merge result.";
+                var rebaseGate = preDevelopResult is not null
+                    ? $" Build gate {preDevelopResult.Verdict} checked the rebased merge result."
+                    : preMainResult is not null
+                        ? $" Mandatory full suite {preMainResult.Verdict} checked the rebased merge result."
+                        : string.Empty;
                 return (
                     PipelineStepStatus.Passed,
                     "merged-after-rebase",

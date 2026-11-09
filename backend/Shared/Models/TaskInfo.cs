@@ -9,6 +9,8 @@ public record TaskInfo
     [JsonIgnore] internal string TokenReceiptStamp { get; init; } = "none";
     public string Id { get; init; } = "";
     public string TaskKey { get; init; } = "";
+    /// <summary>The active short attention lease holder, projected at detail read time.</summary>
+    public string? AttentionHolder { get; init; }
     /// <summary>Current card preview, projected from its sidecar rather than task.json.</summary>
     public TaskPreview? Preview { get; init; }
     /// <summary>
@@ -80,6 +82,10 @@ public record TaskInfo
     /// execution model unexpectedly.
     /// </summary>
     public bool ModelExplicit { get; init; } = true;
+    public string PinMode { get; init; } = "preference";
+    public string? PreferenceModel { get; init; }
+    public string? PreferenceThinkingLevel { get; init; }
+    public DateTime? PreferenceExpiresAt { get; init; }
     /// <summary>Optional thinking / reasoning effort level for the selected CLI model.</summary>
     public string? ThinkingLevel { get; init; }
     /// <summary>
@@ -165,6 +171,8 @@ public record TaskInfo
     /// without <c>commits</c> are surfaced as <c>[commit]</c> by the scanner.
     /// </summary>
     public List<TaskCommitInfo> Commits { get; init; } = [];
+    /// <summary>Latest frozen Quality Studio verdict for a review-lane board signal.</summary>
+    public string? QualityStudioVerdict { get; init; }
     /// <summary>
     /// Append-only application bookkeeping for historical integration truth.
     /// Live acceptance records remain in pipeline/timeline history; this list
@@ -607,10 +615,17 @@ public sealed record TaskLiveQueue
     public int? Position { get; init; }
     /// <summary>
     /// Human-readable reason the task has no <see cref="Position"/>, e.g.
-    /// "waiting for review executor: <detail>". Null when a real position is
-    /// known. Never used for machine matching.
+    /// "waiting for review executor: <detail>", or, for a runner queue entry
+    /// with a <see cref="ReasonCode"/>, why the runner is not picking it.
+    /// Never used for machine matching.
     /// </summary>
     public string? Reason { get; init; }
+    /// <summary>
+    /// AGT-3579: the <see cref="RunnerPickupWaitCodes"/> token for a Ready card
+    /// the runner is not picking (runner gate or candidate skip). Null when the
+    /// runner recorded no reason for this card.
+    /// </summary>
+    public string? ReasonCode { get; init; }
     /// <summary>
     /// AGT-3094: one of the <see cref="TaskLiveQueueStates"/> tokens. Runner
     /// queues and legacy review queues are always <c>queued</c>; a canonical

@@ -35,11 +35,11 @@
 }
 
 .studio-sidebar-header__action {
-  @include m.icon-button(22px);
+  @include m.icon-button(24px);
 
   &--inline {
-    width: 18px;
-    height: 18px;
+    width: 24px;
+    height: 24px;
   }
 
   &--active {

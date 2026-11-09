@@ -4,7 +4,7 @@
       <h2>Access</h2>
       <p>Users, groups, and service accounts hold roles in a scope: the workspace, one project, or one environment. Effective access is the union of those role bindings; Owner is the break-glass role.</p>
     </div>
-    <button type="button" class="access-secondary" data-testid="access-reload" [disabled]="access.state() === 'loading' || access.busy()" (click)="access.load()">Reload</button>
+    <button type="button" class="access-secondary" data-testid="access-reload" [disabled]="access.state() === 'loading' || access.busy()" (click)="reload()">Reload</button>
   </header>
 
   @if (access.error(); as message) { <p class="access-error" role="alert" data-testid="access-error">{{ message }}</p> }
@@ -39,8 +39,9 @@
                   @for (grant of grants(user); track grant) { <span class="access-badge">{{ grant }}</span> } @empty { <span class="access-hint">No role</span> }
                 </span>
               </td>
-              <td><span class="access-badge" [attr.data-tone]="status(user) === 'Active' ? null : 'muted'">{{ status(user) }}</span></td>
+              <td><app-status-indicator [tone]="statusTone(user)" [label]="status(user)" [testId]="'access-user-status-' + user.username" /></td>
               <td class="access-actions">
+                <app-session-manager [userId]="user.id" />
                 <button type="button" class="access-quiet" [disabled]="access.busy()" (click)="resetPassword(user)">Reset password</button>
                 <button type="button" class="access-quiet" [attr.data-testid]="'access-user-toggle-' + user.username" [disabled]="access.busy()" (click)="toggleDisabled(user)">{{ user.disabled ? 'Enable' : 'Disable' }}</button>
               </td>
@@ -66,6 +67,42 @@
       <header><h3 id="access-accounts-title">Service accounts and API tokens</h3><p class="access-hint">Scripts and jobs use a service account with its own tokens, expiry, and revocation. API tokens are service accounts with one token.</p></header>
       <app-access-service-accounts />
     </section>
+
+    @if (operators.available()) {
+      <section class="access__section" aria-labelledby="access-operators-title">
+        <header><h3 id="access-operators-title">Operator agents</h3><p class="access-hint">Automations that act for the Owner through sessions of at most 8 hours. Each call is audited with the agent, the session, and the Owner who delegated it.</p></header>
+        @defer (on immediate) { <app-access-operator-agents /> }
+      </section>
+
+      @if (approvals.state() !== 'denied') {
+        <section class="access__section" aria-labelledby="access-approvals-title">
+          <header><h3 id="access-approvals-title">Approval requests</h3><p class="access-hint">High-risk (T2) requests of operator sessions wait here for you. An approval covers one exact request, is used once, and lapses after 15 minutes.</p></header>
+          @defer (on immediate) { <app-access-operator-approvals /> }
+        </section>
+      }
+
+      @if (standingGrants.state() !== 'denied') {
+        <section class="access__section" aria-labelledby="access-grants-title">
+          <header><h3 id="access-grants-title">Standing grants</h3><p class="access-hint">The operation catalogue and the routine authority you grant an operator agent, by operation, scope, hourly rate, and time window. A grant lasts 7 days by default and at most 30.</p></header>
+          @defer (on immediate) { <app-access-standing-grants /> }
+        </section>
+      }
+
+      <section class="access__section" aria-labelledby="access-kill-switch-title">
+        <header><h3 id="access-kill-switch-title">Kill switch</h3><p class="access-hint">End all operator access in one step, end one runaway session from its row above, and see the drills that prove the switch works.</p></header>
+        @defer (on immediate) { <app-access-operator-kill-switch /> }
+      </section>
+
+      <section class="access__section" aria-labelledby="access-break-glass-title">
+        <header><h3 id="access-break-glass-title">Break-glass windows</h3><p class="access-hint">Emergency authority for named sessions, capped at two hours and reviewed after closure.</p></header>
+        @defer (on immediate) { <app-access-break-glass /> }
+      </section>
+
+      <section class="access__section" aria-labelledby="access-operator-activity-title">
+        <header><h3 id="access-operator-activity-title">Operator activity</h3><p class="access-hint">Audit entries of operator sessions in a hash chain, with its verification and off-host forwarding.</p></header>
+        @defer (on immediate) { <app-access-operator-activity /> }
+      </section>
+    }
 
     <section class="access__section" aria-labelledby="access-runners-title">
       <header><h3 id="access-runners-title">Runner enrollments and runners</h3><p class="access-hint">Runners and the engine enroll with a one-time code and keep their own credentials and Runner scopes.</p></header>

@@ -16,6 +16,8 @@ public sealed class SourceFactsDemandSweep(
     public async Task PollAsync(CancellationToken shutdown)
     {
         if (!options.SourceFactsProducerEnabled) return;
+        // A monolith does not map the source data store.
+        var absence = new FeatureRouteAbsence("source-facts demand sweep", log);
         while (!shutdown.IsCancellationRequested)
         {
             foreach (var (repositoryId, repositoryPath) in DiscoverRepositories(options.WorkDir))
@@ -23,16 +25,18 @@ public sealed class SourceFactsDemandSweep(
                 try
                 {
                     var answered = await producer.DrainDemandsAsync(repositoryId, repositoryPath, shutdown);
+                    absence.RecordAnswered();
                     if (answered > 0)
                         log($"source-facts demands answered repository={repositoryId} count={answered}");
                 }
                 catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { return; }
+                catch (Exception exception) when (absence.TryRecordAbsent(exception)) { break; }
                 catch (Exception exception)
                 {
                     log($"source-facts demand sweep deferred repository={repositoryId} type={exception.GetType().Name}: {exception.Message}");
                 }
             }
-            try { await Task.Delay(Interval, shutdown); }
+            try { await Task.Delay(absence.NextDelay(Interval), shutdown); }
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { return; }
         }
     }

@@ -14,6 +14,10 @@
   <div class="task-card__header">
     <app-copyable-task-key variant="card" [key]="job().key" [label]="issueLabel()" testId="task-card-key" />
     <span class="task-card__header-signals">
+      @if ((job().state === '4-review' || job().state === '5-human-review') && job().qualityStudioVerdict === 'block') {
+        <span class="task-card__quality-block-dot" data-testid="task-card-quality-block"
+              role="img" aria-label="Quality review block" [cacTooltip]="'Quality Studio: Block'"></span>
+      }
       @if (codeReviewGradeBadge(); as grade) {
         <span class="task-card__grade-pill"
               [class]="'task-card__grade-pill--' + grade.tone" [cacTooltip]="grade.tooltip"
@@ -34,16 +38,19 @@
           <span class="task-card__owner-name">{{ oc.initials }}</span>
         </span>
       }
-      @if (canPickNext()) {
+      @if (isPickupNext()) {
+        <span class="task-card__pickup-next" data-testid="task-card-pickup-next"
+              [cacTooltip]="'Runs next in this project when it has a free slot.'">Next</span>
+      } @else if (canPickNext()) {
         <button type="button"
                 class="task-card__pick-next"
                 data-testid="task-card-pick-next"
                 [attr.aria-disabled]="decisionBlockTooltip() ? 'true' : null"
-                [cacTooltip]="decisionBlockTooltip() || 'Pick next — bump to the front of the runner queue'"
-                aria-label="Pick next"
+                [cacTooltip]="decisionBlockTooltip() || 'Move to the top of the Ready queue for this project'"
+                aria-label="Move to top"
                 (click)="onPickNextClick($event)">
           <span class="task-card__pick-next-glyph" aria-hidden="true">⤴</span>
-          <span class="task-card__pick-next-label">Next</span>
+          <span class="task-card__pick-next-label">Move to top</span>
         </button>
       }
       </span>
@@ -427,6 +434,7 @@
     Last activity: {{ relativeActivity() }}
   </div>
 </div>
+@if (cardContextMenu()) {
 <app-menu
   [items]="cardCtxMenuItems()"
   [open]="cardContextMenu() !== null"
@@ -436,3 +444,4 @@
   [minWidth]="180"
   (itemClick)="onCardCtxMenuItemClick($event)"
   (closeRequest)="closeCardContextMenu()" />
+}

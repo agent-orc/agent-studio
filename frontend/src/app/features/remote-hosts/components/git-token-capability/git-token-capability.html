@@ -1,16 +1,8 @@
 @if (mode() === 'badges') {
-  <span class="git-badge" [attr.data-tone]="contents().tone"
-        data-testid="remote-host-git-status"
-        [attr.title]="detail() || 'No successful push probe has been reported'"
-        [appTooltip]="detail() || 'No successful push probe has been reported'">
-    {{ contents().label }}
-  </span>
-  <span class="git-badge" [attr.data-tone]="workflow().tone"
-        data-testid="remote-host-workflow-status"
-        [attr.title]="detail() || 'No workflow push probe has been reported'"
-        [appTooltip]="detail() || 'No workflow push probe has been reported'">
-    {{ workflow().label }}
-  </span>
+  <app-status-indicator [tone]="contents().tone" [label]="contents().label" testId="remote-host-git-status"
+    [detail]="detail() || 'No successful push probe has been reported'" />
+  <app-status-indicator [tone]="workflow().tone" [label]="workflow().label" testId="remote-host-workflow-status"
+    [detail]="detail() || 'No workflow push probe has been reported'" />
 } @else if (status() === 'ready-no-workflow-scope') {
   <p class="token-warning" data-testid="remote-host-token-scope-fix">
     Contents pushes work, but this runner cannot publish changes under <code>.github/workflows</code>.

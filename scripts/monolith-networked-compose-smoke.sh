@@ -6,6 +6,8 @@ stack="$repo_root/deploy/compose/monolith-networked"
 version="$(tr -d '\r\n' < "$repo_root/VERSION")"
 api_image="ghcr.io/agent-orc/agent-studio-api:v$version"
 web_image="ghcr.io/agent-orc/agent-studio-web:v$version"
+operations_server_image="agent-operations-server:website-smoke"
+operations_agent_image="agent-operations-agent:website-smoke"
 smoke_root="$(mktemp -d)"
 chmod 755 "$smoke_root"
 export COMPOSE_PROJECT_NAME="website-smoke-$$"
@@ -32,12 +34,59 @@ if [ "${WEBSITE_REUSE_WEBSITE_IMAGES:-0}" != 1 ]; then
     docker build -f "$repo_root/backend/Dockerfile" --build-arg VERSION="$version" -t "$api_image" "$repo_root"
   fi
   docker build -f "$repo_root/frontend/Dockerfile" --build-arg VERSION="$version" -t "$web_image" "$repo_root"
+  docker build -f "$repo_root/operations-server/Dockerfile" -t "$operations_server_image" "$repo_root"
+  docker build -f "$repo_root/operations-agent/Dockerfile" -t "$operations_agent_image" "$repo_root"
+fi
+
+# setup.sh uses the edge image for its root-owned directory handoff. Pull the
+# smoke edge image and resolve its registry digest before setup.
+docker pull caddy:2-alpine > /dev/null
+edge_reference="$(docker image inspect --format '{{index .RepoDigests 0}}' caddy:2-alpine)"
+edge_digest="${edge_reference##*@sha256:}"
+if [[ ! "$edge_digest" =~ ^[0-9a-f]{64}$ ]]; then
+  echo 'The pulled Caddy image has no usable registry digest' >&2
+  exit 1
 fi
 
 cd "$stack"
-bash setup.sh --private "$version" studio.test "$smoke_root/data" >/dev/null
+export STUDIO_API_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_WEB_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_EDGE_DIGEST="$edge_digest"
+export STUDIO_OPERATIONS_SERVER_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_OPERATIONS_AGENT_DIGEST="$(openssl rand -hex 32)"
+export STUDIO_ACCESS_AUTH_URL=https://access.example.test
+export STUDIO_ACCESS_MFA_ENFORCED=true
+STUDIO_SECRETS_KEY_FILE="$smoke_root/keys/secrets.kek" bash setup.sh --private "$version" studio.test "$smoke_root/data" >/dev/null
+cat > "$smoke_root/local-images.yaml" <<EOF
+services:
+  api:
+    image: $api_image
+  frontend:
+    image: $web_image
+  operations-bootstrap:
+    image: $operations_server_image
+  operations-server:
+    image: $operations_server_image
+  operations-agent:
+    image: $operations_agent_image
+EOF
+export COMPOSE_FILE="$stack/compose.yaml:$smoke_root/local-images.yaml"
 code="$(sed -n 's/^STUDIO_BOOTSTRAP_CODE=//p' .env)"
 docker compose up -d --no-build
+for service in frontend edge; do
+  container="$(docker compose ps -q "$service")"
+  [ -n "$container" ] || { echo "$service Caddy container did not start" >&2; exit 1; }
+  runtime="$(docker inspect --format '{{.State.Running}} {{.HostConfig.ReadonlyRootfs}} {{.Config.User}}' "$container")"
+  [ "$runtime" = 'true true 10001:10001' ] || {
+    echo "$service Caddy container is not running with the read-only, non-root baseline: $runtime" >&2
+    exit 1
+  }
+  docker compose exec -T "$service" sh -c \
+    'test "$(id -u)" -eq 10001 && test -w /data && test -w /config && test -w /tmp' || {
+    echo "$service Caddy writable mounts are unavailable to UID 10001" >&2
+    exit 1
+  }
+done
 url=https://studio.test
 curl_args=(--silent --show-error --insecure --resolve studio.test:443:127.0.0.1)
 for attempt in $(seq 1 90); do
@@ -50,20 +99,75 @@ import json, sys
 status = json.load(open(sys.argv[1], encoding='utf-8'))
 assert status['bootstrapRequired'] and status['bootstrapCodeRequired'], status
 PY
-curl "${curl_args[@]}" --fail "$url/" | grep -q '<app-root'
+curl "${curl_args[@]}" --fail "$url/" > "$smoke_root/shell.html"
+grep -q '<app-root' "$smoke_root/shell.html"
 payload="$(python3 - "$code" <<'PY'
 import json, sys
 print(json.dumps({'username':'website.owner','password':'correct horse battery staple!', 'displayName':'Website Owner', 'bootstrapCode':sys.argv[1]}))
 PY
 )"
-curl "${curl_args[@]}" --fail -H 'Content-Type: application/json' -H 'Origin: https://studio.test' -d "$payload" "$url/api/auth/bootstrap" >/dev/null
+jar="$smoke_root/cookies.txt"
+curl "${curl_args[@]}" --fail -c "$jar" -H 'Content-Type: application/json' -H 'Origin: https://studio.test' -d "$payload" "$url/api/auth/bootstrap" >/dev/null
+# Starting a GitHub App registration checks that the secret store can write;
+# it answers with GitHub's form and contacts nobody.
+csrf="$(awk '$6 == "__Host-agentstudio-csrf" { print $7 }' "$jar")"
+curl "${curl_args[@]}" --fail-with-body -b "$jar" -H 'Content-Type: application/json' -H 'Origin: https://studio.test' \
+  -H "X-CSRF-Token: $csrf" -d '{"origin":"https://studio.test"}' \
+  "$url/api/v1/management/github-app/registration" > "$smoke_root/registration.json"
+grep -q '"actionUrl":"https://github.com/settings/apps/new' "$smoke_root/registration.json"
 STUDIO_SMOKE_URL="$url" \
 STUDIO_SMOKE_USERNAME=website.owner \
 STUDIO_SMOKE_PASSWORD='correct horse battery staple!' \
   node "$repo_root/frontend/scripts/monolith-networked-browser-smoke.mjs"
-echo 'Website smoke passed: TLS, owner bootstrap, browser login, and board.'
+
+# Local state (batch gates, gate cache, quota and routing state) must sit on the
+# data directory, not in the container layer below /app (AGT-3401).
+wait_for_api() {
+  for attempt in $(seq 1 90); do
+    if curl "${curl_args[@]}" --fail "$url/api/auth/status" >/dev/null 2>&1; then return 0; fi
+    if [ "$attempt" -eq 90 ]; then echo "API did not become ready after $1" >&2; exit 1; fi
+    sleep 2
+  done
+}
+local_state="$smoke_root/data/home/.local/share"
+test -d "$local_state" || { echo "Local state is not on the data directory: $local_state" >&2; exit 1; }
+api_log="$(docker compose logs --no-color api)"
+grep -q 'local-state-root "\{0,1\}/data/home/.local/share' <<< "$api_log" \
+  || { echo 'API did not report /data/home/.local/share as its local state root' >&2; exit 1; }
+# Exercise migration from an older writable-root release, then restore the
+# hardened reference service before checking persistence across recreation.
+base_compose_file="$COMPOSE_FILE"
+cat > "$smoke_root/legacy-api.yaml" <<'EOF'
+services:
+  api:
+    read_only: false
+EOF
+export COMPOSE_FILE="$base_compose_file:$smoke_root/legacy-api.yaml"
+docker compose up -d --no-build --no-deps --force-recreate api >/dev/null
+wait_for_api 'the legacy writable-root recreate'
+# State an older release wrote relative to /app moves once on the next start.
+docker compose exec -T api sh -ec 'mkdir -p /app/agentstudio/smoke-legacy && printf "legacy\n" > /app/agentstudio/smoke-legacy/marker'
+docker compose restart api >/dev/null
+wait_for_api 'the legacy state restart'
+docker compose exec -T api sh -ec 'test "$(cat /data/home/.local/share/agentstudio/smoke-legacy/marker)" = legacy && test ! -e /app/agentstudio' \
+  || { echo 'Legacy local state below /app was not moved to /data/home/.local/share' >&2; exit 1; }
+export COMPOSE_FILE="$base_compose_file"
+docker compose up -d --no-build --no-deps --force-recreate api >/dev/null
+wait_for_api 'the hardened API recreate'
+marker="recreate-$(openssl rand -hex 8)"
+docker compose exec -T api sh -ec "printf '%s\n' '$marker' > /data/home/.local/share/agentstudio/smoke-recreate-marker"
+before="$(docker compose ps -q api)"
+docker compose up -d --no-build --no-deps --force-recreate api >/dev/null
+after="$(docker compose ps -q api)"
+if [ -z "$after" ] || [ "$before" = "$after" ]; then echo 'The API container was not recreated' >&2; exit 1; fi
+wait_for_api 'the container recreate'
+docker compose exec -T api sh -ec "test \"\$(cat /data/home/.local/share/agentstudio/smoke-recreate-marker)\" = '$marker' && test \"\$(cat /data/home/.local/share/agentstudio/smoke-legacy/marker)\" = legacy" \
+  || { echo 'Local state did not survive the API container recreate' >&2; exit 1; }
+echo 'Local state smoke passed: legacy state moved once and a marker survived the container recreate.'
+echo 'Website smoke passed: TLS, owner bootstrap, writable secret store, browser login, and board.'
+
 if [ -n "${JOB_RESULTS_DIR:-}" ]; then
   mkdir -p "$JOB_RESULTS_DIR"
   rm -f "$JOB_RESULTS_DIR/website-smoke.log"
-  printf 'Website smoke passed: TLS, owner bootstrap, browser login, and board.\n' > "$JOB_RESULTS_DIR/website-smoke.txt"
+  printf 'Website smoke passed: TLS, owner bootstrap, writable secret store, browser login, and board.\n' > "$JOB_RESULTS_DIR/website-smoke.txt"
 fi

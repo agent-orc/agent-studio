@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   clientKindLabel,
+  clientStateTone,
+  evidenceIndicatorTone,
   evidenceStateLabel,
   evidenceStateTone,
   formatBytes,
   formatRelativeTime,
   healthLabel,
   healthTone,
+  indicatorTone,
   isLocalUrl,
   managementActionLabel,
   phaseLabel,
@@ -78,6 +81,29 @@ describe('task-server.model helpers', () => {
     });
     it('returns never for an unparseable value', () => {
       expect(formatRelativeTime('not-a-date', now)).toBe('never');
+    });
+  });
+
+  describe('shared status-indicator tones', () => {
+    it('maps every panel tone onto one indicator tone', () => {
+      expect(indicatorTone('ok')).toBe('success');
+      expect(indicatorTone('warn')).toBe('warning');
+      expect(indicatorTone('error')).toBe('danger');
+      expect(indicatorTone('calm')).toBe('neutral');
+    });
+
+    it('treats pending evidence statistics as running work', () => {
+      expect(evidenceIndicatorTone('pending')).toBe('running');
+      expect(evidenceIndicatorTone('available')).toBe('success');
+      expect(evidenceIndicatorTone('empty')).toBe('neutral');
+      expect(evidenceIndicatorTone('failed')).toBe('warning');
+    });
+
+    it('keeps revoked and unknown host identities neutral', () => {
+      expect(clientStateTone(undefined)).toBe('success');
+      expect(clientStateTone('draining')).toBe('warning');
+      expect(clientStateTone('revoked')).toBe('neutral');
+      expect(clientStateTone('something-new')).toBe('neutral');
     });
   });
 });

@@ -14,6 +14,100 @@ public sealed class BatchGateReviewPlanTests
     private static readonly DateTimeOffset Now = DateTimeOffset.UnixEpoch.AddDays(20_000);
 
     [Fact]
+    public void ContentRemovalIsSafeButTestDiscoveryPropertyChangeIsNot()
+    {
+        const string original = "<Project><PropertyGroup><IsTestProject>true</IsTestProject>"
+            + "</PropertyGroup><ItemGroup><None Include=\"Fixtures\\**\\*\" "
+            + "CopyToOutputDirectory=\"PreserveNewest\" /></ItemGroup></Project>";
+        const string removed = "<Project><PropertyGroup><IsTestProject>true</IsTestProject>"
+            + "</PropertyGroup><ItemGroup /></Project>";
+        Assert.True(ReviewInventoryChangePolicy.IsContentOnlyTestProjectChange(original, removed));
+        Assert.False(ReviewInventoryChangePolicy.IsContentOnlyTestProjectChange(original,
+            removed.Replace("<IsTestProject>true</IsTestProject>",
+                "<IsTestProject>false</IsTestProject>", StringComparison.Ordinal)));
+        Assert.False(ReviewInventoryChangePolicy.IsContentOnlyTestProjectChange(original,
+            original.Replace("PreserveNewest", "Always", StringComparison.Ordinal)));
+    }
+
+    [Theory]
+    [InlineData("<None Include=\"Fixtures\\review-settlement\\**\\*\" CopyToOutputDirectory=\"PreserveNewest\" />", true)]
+    [InlineData("<Content Include=\"Fixtures\\**\\*\"><CopyToOutputDirectory>Always</CopyToOutputDirectory></Content>", true)]
+    [InlineData("<EmbeddedResource Include=\"Fixtures\\**\\*\" />", true)]
+    [InlineData("<PackageReference Include=\"Example\" Version=\"1.0\" />", false)]
+    [InlineData("<ProjectReference Include=\"..\\runner\\AgentRunner.csproj\" />", false)]
+    [InlineData("<Compile Include=\"NewTest.cs\" />", false)]
+    public void TestProjectContentItemsAloneKeepBatchDeferral(string item, bool expectedDeferred)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "batch-plan-test-" + Guid.NewGuid().ToString("N"));
+        var repo = Path.Combine(root, "repo");
+        var folder = Path.Combine(root, "task");
+        Directory.CreateDirectory(repo);
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var resultRef = BackendRepository(repo, folder);
+            var path = Path.Combine(repo, "backend.Tests", "OrchestratorApi.Tests.csproj");
+            var original = File.ReadAllText(path);
+            File.WriteAllText(path, original.Replace("</ItemGroup>", item + "</ItemGroup>", StringComparison.Ordinal));
+            Git(repo, "add", ".");
+            Git(repo, "commit", "-qm", "test project inventory");
+            var sha = Git(repo, "rev-parse", "HEAD").Trim();
+            Git(repo, "switch", "-q", "develop");
+
+            var plan = PlanBuilder().Build(AutoReviewTask(repo, folder), repo,
+                new ProjectSettings { BatchGate = new(Enabled: true, Scope: "code", ReviewTestLevel: "build-only") },
+                "develop", sha, ["backend.Tests/OrchestratorApi.Tests.csproj"], resultRef);
+
+            Assert.Equal(expectedDeferred, plan.BuildTestDeferredToBatch);
+            if (expectedDeferred)
+            {
+                Assert.Equal("build-only", plan.TestLevel);
+                Assert.Null(plan.BuildTestDeferralDisabledReason);
+                Assert.DoesNotContain(plan.Commands, command => command.Arguments.Any(argument =>
+                    argument.Contains("dotnet test", StringComparison.Ordinal)));
+            }
+            else
+            {
+                Assert.Contains("Test project verify command inventory changed", plan.BuildTestDeferralDisabledReason);
+                Assert.Contains(plan.Commands, command => command.Aspect == "build-tests");
+            }
+        }
+        finally { DeleteDirectory(root); }
+    }
+
+    [Theory]
+    [InlineData(".agent-studio/project.yml")]
+    [InlineData("frontend/package.json")]
+    [InlineData("frontend/angular.json")]
+    [InlineData("backend/OrchestratorApi.csproj")]
+    public void OtherVerifyInventoryChangesKeepPerCardGate(string changedPath)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "batch-plan-test-" + Guid.NewGuid().ToString("N"));
+        var repo = Path.Combine(root, "repo");
+        var folder = Path.Combine(root, "task");
+        Directory.CreateDirectory(repo);
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var resultRef = BackendRepository(repo, folder);
+            var path = Path.Combine(repo, changedPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.AppendAllText(path, "\n");
+            Git(repo, "add", ".");
+            Git(repo, "commit", "-qm", "verify inventory");
+            var sha = Git(repo, "rev-parse", "HEAD").Trim();
+            Git(repo, "switch", "-q", "develop");
+            var plan = PlanBuilder().Build(AutoReviewTask(repo, folder), repo,
+                new ProjectSettings { BatchGate = new(Enabled: true, Scope: "code", ReviewTestLevel: "build-only") },
+                "develop", sha, [changedPath], resultRef);
+            Assert.False(plan.BuildTestDeferredToBatch);
+            Assert.Contains(changedPath, plan.BuildTestDeferralDisabledReason);
+            Assert.Contains(plan.Commands, command => command.Aspect == "build-tests");
+        }
+        finally { DeleteDirectory(root); }
+    }
+
+    [Fact]
     public void Deep_review_size_uses_the_merge_base_diff_line_count()
     {
         var fixture = CreateFixture();
@@ -211,6 +305,43 @@ public sealed class BatchGateReviewPlanTests
         {
             DeleteDirectory(root);
         }
+    }
+
+    [Theory]
+    [InlineData("backend.Tests/Delivery/NewOnlyTests.cs", true)]
+    [InlineData("backend.Tests/SharedFixtureTests.cs", false)]
+    public void TestOnlyDeliveryRetainsAReviewBuildAndItsOwnTestGate(
+        string changed, bool classFilter)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "batch-plan-test-" + Guid.NewGuid().ToString("N"));
+        var repo = Path.Combine(root, "repo");
+        var folder = Path.Combine(root, "task");
+        Directory.CreateDirectory(repo);
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var resultRef = BackendRepository(repo, folder);
+            var file = Path.Combine(repo, changed);
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            File.WriteAllText(file, classFilter
+                ? "namespace AgentStudio.Tests;\npublic sealed class NewOnlyTests { [Fact] public void Runs() { } }\n"
+                : "namespace AgentStudio.Tests;\npublic sealed class SharedFixtureTests { }\n");
+            Git(repo, "add", ".");
+            Git(repo, "commit", "-qm", "test-only delivery");
+            var sha = Git(repo, "rev-parse", "HEAD").Trim();
+            Git(repo, "switch", "-q", "develop");
+
+            var plan = PlanBuilder().Build(AutoReviewTask(repo, folder), repo,
+                new ProjectSettings { BatchGate = new(Enabled: true, Scope: "code") }, "develop",
+                sha, [changed], resultRef);
+
+            Assert.True(plan.BuildTestDeferredToBatch);
+            Assert.Contains(plan.Commands, command => command.Arguments.Contains("echo build"));
+            Assert.Contains(plan.Commands, command => command.Arguments.Any(argument =>
+                argument.Contains("dotnet test", StringComparison.Ordinal)
+                && argument.Contains("FullyQualifiedName~NewOnlyTests", StringComparison.Ordinal) == classFilter));
+        }
+        finally { DeleteDirectory(root); }
     }
 
     /// <summary>

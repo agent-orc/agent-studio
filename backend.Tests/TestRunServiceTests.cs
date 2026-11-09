@@ -271,6 +271,41 @@ public sealed class TestRunServiceTests : IDisposable
     }
 
     [Fact]
+    public void CardEvidence_ShowsPreExistingFailuresForAPassingReviewStep()
+    {
+        var stack = BuildStack();
+        var commit = RevParse(stack.Repo, "HEAD");
+        var folder = Path.Combine(stack.Storage, TaskStates.Archive, "review-pre-existing");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "remote-review-grade-review-43.md"), $"""
+             ---
+             type: remote-review-grade
+             attemptId: "review-43"
+             receivedAt: 2026-11-03T18:00:00Z
+             outcome: "IntegrationBranchDefect"
+             expectedResultSha: "{commit}"
+             actualHead: "{commit}"
+             ---
+
+             ## Aspect verdicts
+
+             | Aspect | Status | Classification | Summary |
+             | --- | --- | --- | --- |
+             | build-tests | pass | IntegrationBranchDefect | pre-existing failures: Product.Tests.OldFailure; clean repeat found no new failures. |
+             """);
+        var job = Task("review-pre-existing", stack.Storage, commit) with
+        {
+            State = TaskStates.Archive,
+            FolderPath = folder,
+        };
+
+        var source = Assert.Single(stack.Service.BuildLookup([job])[job.TaskKey].Sources);
+
+        Assert.Equal("passed", source.Result);
+        Assert.Contains("pre-existing failures: Product.Tests.OldFailure", source.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CardEvidence_KeepsPassingReviewBuildTestsIndependentFromBlockedAspect()
     {
         var stack = BuildStack();

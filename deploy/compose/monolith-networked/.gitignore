@@ -1,1 +1,7 @@
 .env
+/keys/
+.backup-last
+.backup.lock
+backup-recipients.txt
+backup-ssh.key
+backup-known-hosts

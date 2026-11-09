@@ -8,7 +8,7 @@
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 22px;
+  min-height: var(--studio-row-min-h-interactive);
   padding: 2px 12px;
   /* Shared rail gutter keeps a trailing count badge clear of the sidebar
      edge and aligned with the tree-row / section-header counts above it. */

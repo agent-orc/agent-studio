@@ -17,6 +17,8 @@ public class TaskRunnerService : BackgroundService
     private readonly IConfiguration _config;
     private readonly ILogger<TaskRunnerService> _logger;
     private readonly TaskScannerService _scanner;
+    private readonly TaskIntegrationStatusService? _dependencyIntegration;
+    private readonly TaskListGitProjectionCache? _dependencyGitProjection;
     private readonly TaskStateMachine _states;
     private readonly TaskMutationService _mutations;
     private readonly TaskSessionLog _sessions;
@@ -32,6 +34,7 @@ public class TaskRunnerService : BackgroundService
     private readonly ProviderLimitRegistry _providerLimits;
     private readonly CliQuotaFallbackService? _quotaFallback;
     private readonly QuotaAdmissionService? _quotaAdmission;
+    private readonly ModelSelectionLedger? _selectionLedger;
     private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
     private readonly OrchestratorChatLog _chatLog;
     private readonly OrchestratorLog _orchestratorLog;
@@ -180,11 +183,16 @@ public class TaskRunnerService : BackgroundService
         TimeProvider? time = null,
         ReviewInputDecisionGateway? reviewInputDecisions = null,
         AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null,
-        RemoteRunStopRequestStore? runStops = null)
+        RemoteRunStopRequestStore? runStops = null,
+        ModelSelectionLedger? selectionLedger = null,
+        TaskIntegrationStatusService? dependencyIntegration = null,
+        TaskListGitProjectionCache? dependencyGitProjection = null)
     {
         _config = config;
         _logger = logger;
         _scanner = scanner;
+        _dependencyIntegration = dependencyIntegration;
+        _dependencyGitProjection = dependencyGitProjection;
         _states = states;
         _mutations = mutations;
         _sessions = sessions;
@@ -198,6 +206,7 @@ public class TaskRunnerService : BackgroundService
         _quotaCaps = quotaCaps;
         _quotaFallback = quotaFallback;
         _quotaAdmission = quotaAdmission;
+        _selectionLedger = selectionLedger;
         _workspaceQuota = workspaceQuota;
         _loadThrottle = loadThrottle;
         _chatLog = chatLog;
@@ -449,6 +458,8 @@ public class TaskRunnerService : BackgroundService
                 visualQa: _visualQa,
                 providerLimits: _providerLimits,
                 quotaAdmission: _quotaAdmission,
+                dependencyIntegration: _dependencyIntegration,
+                dependencyGitProjection: _dependencyGitProjection,
                 failureInterventions: _failureInterventions,
                 projectUrls: registryProject?.Urls,
                 projectUrlPortInspector: _projectUrlPortInspector,
@@ -456,7 +467,8 @@ public class TaskRunnerService : BackgroundService
                 localCodingAdmission: _localCodingAdmission,
                 networked: SecurityProfiles.IsNetworked(_config),
                 reviewInputDecisions: _reviewInputDecisions,
-                workspaceQuota: _workspaceQuota);
+                workspaceQuota: _workspaceQuota,
+                selectionLedger: _selectionLedger);
             runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
             runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
             _stuckLoopBudget = LoadStuckLoopBudget(_config);
@@ -500,8 +512,14 @@ public class TaskRunnerService : BackgroundService
             _logger.LogInformation("Initialized runner for project '{Name}' (Root: {RootPath})", entry.Name, entry.RootPath);
         }
 
-        // Check CLI availability (default backend = Claude)
-        if (!_router.Get(CliTypes.Claude).IsAvailable())
+        // Check CLI availability (default backend = Claude). The networked
+        // profile never runs host CLIs, so a missing one there is expected.
+        if (!HostCliDiscovery.Allowed(_config))
+        {
+            _logger.LogInformation("Host CLI runs are disabled in the {Profile} profile; the Claude CLI check is skipped",
+                SecurityProfiles.ActiveProfile(_config));
+        }
+        else if (!_router.Get(CliTypes.Claude).IsAvailable())
         {
             _logger.LogWarning("Claude CLI not available - runners will be in manual/board-only mode");
         }
@@ -759,7 +777,7 @@ public class TaskRunnerService : BackgroundService
     /// continuation they asked for instead of a 400 - at the cost of conversation
     /// memory that wasn't already on disk.
     /// </summary>
-    public async Task<ContinueJobResponse> ContinueJobAsync(string jobId, string followupPrompt, string? watchPath = null, string? modelOverride = null, string? cliTypeOverride = null, string? thinkingLevelOverride = null, string? mode = null, string? modeOverride = null, string? author = null, CancellationToken ct = default, string? reason = null, string? triggeredBy = null)
+    public async Task<ContinueJobResponse> ContinueJobAsync(string jobId, string followupPrompt, string? watchPath = null, string? modelOverride = null, string? cliTypeOverride = null, string? thinkingLevelOverride = null, string? mode = null, string? modeOverride = null, string? author = null, CancellationToken ct = default, string? reason = null, string? triggeredBy = null, string? baseRef = null)
     {
         _executionAdmission?.Demand(ExecutionAdmissionPath.Continue);
         var info = _scanner.FindJob(jobId, watchPath);
@@ -779,6 +797,23 @@ public class TaskRunnerService : BackgroundService
             && ProjectExecutionPolicy.IsLocalExecution(_projectSettings.Get(info.ProjectName)))
             throw new TaskOperationException(
                 RemoteExecutionRequirement.Code + ": " + RemoteExecutionRequirement.Message, 400);
+
+        // Admission before spawn (AGT-2747). Evaluated on the card, not on the
+        // runner's slot state: a lane that cannot hold a run, a delivery under
+        // review, or a remote execution location all mean "queue this", because
+        // a process started here would be killed by lane reconciliation within
+        // seconds while the caller had already been told "started". It also runs
+        // before the local CLI check, so a follow-up destined for a remote runner
+        // is never refused because this host lacks the CLI.
+        var admission = FollowUpAdmissionPolicy.Decide(BuildFollowUpAdmissionFacts(info));
+
+        // AGT-3483: the run base is decided before the first write, so a ref the
+        // card does not own leaves the card exactly as it was.
+        var (fixRoundBase, roundBase) = DecideContinueBase(info, admission, baseRef);
+        if (roundBase.Action == ContinueRoundBaseAction.RejectUnknownRef)
+            throw new TaskOperationException(roundBase.Message!, 400, roundBase.Code);
+        if (roundBase.Action == ContinueRoundBaseAction.RejectNotClaimed)
+            throw new TaskOperationException(roundBase.Message!, 409, roundBase.Code);
 
         if (!string.IsNullOrWhiteSpace(cliTypeOverride) && cliTypeOverride != info.CliType)
         {
@@ -800,20 +835,8 @@ public class TaskRunnerService : BackgroundService
 
         var normalizedMode = ContinueModes.Normalize(mode);
 
-        // Admission before spawn (AGT-2747). Evaluated on the card, not on the
-        // runner's slot state: a lane that cannot hold a run, a delivery under
-        // review, or a remote execution location all mean "queue this", because
-        // a process started here would be killed by lane reconciliation within
-        // seconds while the caller had already been told "started". It also runs
-        // before the local CLI check, so a follow-up destined for a remote runner
-        // is never refused because this host lacks the CLI.
-        var admission = FollowUpAdmissionPolicy.Decide(BuildFollowUpAdmissionFacts(info));
-
         // AGT-3056: a queued continue after a ProductFailure is a fix round. It
         // continues on the delivery the review graded, and its prompt says so.
-        var fixRoundBase = admission.Action == FollowUpAdmissionAction.Queue
-            ? DecideOperatorFixRoundBase(info)
-            : null;
         if (fixRoundBase is not null)
             followupPrompt = followupPrompt.TrimEnd() + "\n\n" + ReviewFixRoundBase.PromptSentence(true);
 
@@ -832,10 +855,18 @@ public class TaskRunnerService : BackgroundService
 
         if (admission.Action == FollowUpAdmissionAction.Queue)
         {
-            if (fixRoundBase is null)
-                return QueueFollowUp(info, jobId, watchPath, normalizedMode, followupPrompt, admission, author, triggerMetadata);
-            return QueueFixRoundFollowUp(info, jobId, watchPath, normalizedMode, followupPrompt, admission,
-                author, triggerMetadata, fixRoundBase);
+            if (fixRoundBase is not null)
+                return QueueFixRoundFollowUp(info, jobId, watchPath, normalizedMode, followupPrompt, admission,
+                    author, triggerMetadata, fixRoundBase);
+            if (roundBase is { Action: ContinueRoundBaseAction.Use, Base: { } chosen })
+                return QueueFollowUpWithBase(info, jobId, watchPath, normalizedMode, followupPrompt, admission,
+                    author, triggerMetadata, chosen, roundBase.Source!,
+                    folder => ContinueRoundBasePolicy.RecordOnTimeline(_timeline, folder, chosen,
+                        roundBase.Source!, normalizedMode, author, _time.GetUtcNow().UtcDateTime));
+            var queued = QueueFollowUp(info, jobId, watchPath, normalizedMode, followupPrompt, admission, author, triggerMetadata);
+            return roundBase is { Action: ContinueRoundBaseAction.Keep, Base: { } kept }
+                ? queued with { Base = BaseInfo(kept, roundBase.Source!) }
+                : queued;
         }
 
         var cli = _router.Get(info.CliType);
@@ -1052,6 +1083,56 @@ public class TaskRunnerService : BackgroundService
     }
 
     /// <summary>
+    /// AGT-3483: the base of an operator continue, steer or extend round. A
+    /// fix round (AGT-3056) keeps its reviewed delivery unless the caller names
+    /// another ref; every other round goes through <see cref="ContinueRoundBasePolicy"/>.
+    /// The base only travels through a runner claim, so it applies to a queued
+    /// round on a card without a live run.
+    /// </summary>
+    private (ContinuationBaseRecord? FixRound, ContinueRoundBaseDecision Round) DecideContinueBase(
+        TaskInfo info, FollowUpAdmissionDecision admission, string? baseRef)
+    {
+        var queued = admission.Action == FollowUpAdmissionAction.Queue;
+        var fixRound = queued ? DecideOperatorFixRoundBase(info) : null;
+        if (fixRound is not null
+            && (string.IsNullOrWhiteSpace(baseRef)
+                || ContinueRoundBasePolicy.NormalizeRef(baseRef) == fixRound.Ref))
+            return (fixRound, new ContinueRoundBaseDecision(ContinueRoundBaseAction.None));
+        var taskKey = info.Key ?? info.TaskKey;
+        var projection = _attemptAuthority is null || string.IsNullOrWhiteSpace(taskKey)
+            ? null
+            : _attemptAuthority.GetTaskProjection(taskKey);
+        var decision = ContinueRoundBasePolicy.Decide(
+            baseRef,
+            ContinueRoundBasePolicy.Collect(projection, AgentStudio.Pipeline.ReviewSubjectStore.Read(info.FolderPath)),
+            ContinuationBaseStore.Read(info.FolderPath),
+            startsFromClaim: queued && info.State != TaskStates.Progress,
+            _time.GetUtcNow().UtcDateTime);
+        return (null, decision);
+    }
+
+    /// <summary>
+    /// The base a continue, steer or extend round without a <c>baseRef</c>
+    /// would start from, decided as <see cref="ContinueJobAsync"/> decides it
+    /// but without writing anything (AGT-3582). The task detail shows it read
+    /// only before the operator sends the round; null when the round keeps
+    /// today's checkout.
+    /// </summary>
+    public ContinueRoundBaseInfo? PreviewContinueBase(TaskInfo info)
+    {
+        ArgumentNullException.ThrowIfNull(info);
+        var admission = FollowUpAdmissionPolicy.Decide(BuildFollowUpAdmissionFacts(info));
+        var (fixRound, round) = DecideContinueBase(info, admission, baseRef: null);
+        if (fixRound is not null) return BaseInfo(fixRound, ContinueRoundBaseSources.ReviewFixRound);
+        return round is { Action: ContinueRoundBaseAction.Use or ContinueRoundBaseAction.Keep, Base: { } chosen }
+            ? BaseInfo(chosen, round.Source!)
+            : null;
+    }
+
+    private static ContinueRoundBaseInfo BaseInfo(ContinuationBaseRecord record, string source)
+        => new(record.Ref, record.CommitSha, source, record.AttemptId);
+
+    /// <summary>
     /// Queues an operator fix round with its base written in the card folder
     /// first, so the card never reaches Ready without it.
     /// </summary>
@@ -1065,9 +1146,31 @@ public class TaskRunnerService : BackgroundService
         string? author,
         RunTriggerMetadata? triggerMetadata,
         ContinuationBaseRecord fixRoundBase)
+        => QueueFollowUpWithBase(info, jobId, watchPath, mode, prompt, decision, author, triggerMetadata,
+            fixRoundBase, ContinueRoundBaseSources.ReviewFixRound,
+            folder => ReviewFixRoundBase.RecordOnTimeline(_timeline, folder,
+                fixRoundBase, ReviewFixRoundBase.SourceOperatorContinue, _time.GetUtcNow().UtcDateTime));
+
+    /// <summary>
+    /// Queues a round with its base written in the card folder first, so the
+    /// card never reaches Ready without it, then names the base on the
+    /// timeline and in the response.
+    /// </summary>
+    private ContinueJobResponse QueueFollowUpWithBase(
+        TaskInfo info,
+        string jobId,
+        string? watchPath,
+        string mode,
+        string prompt,
+        FollowUpAdmissionDecision decision,
+        string? author,
+        RunTriggerMetadata? triggerMetadata,
+        ContinuationBaseRecord continuationBase,
+        string source,
+        Action<string> recordOnTimeline)
     {
-        if (!ContinuationBaseStore.Save(info.FolderPath, fixRoundBase))
-            throw new TaskOperationException("Could not record the fix round's continuation base.", 500);
+        if (!ContinuationBaseStore.Save(info.FolderPath, continuationBase))
+            throw new TaskOperationException("Could not record the round's continuation base.", 500);
         ContinueJobResponse response;
         try
         {
@@ -1078,11 +1181,17 @@ public class TaskRunnerService : BackgroundService
             ContinuationBaseStore.Clear((_scanner.FindJob(jobId, watchPath) ?? info).FolderPath);
             throw;
         }
-        ReviewFixRoundBase.RecordOnTimeline(_timeline, (_scanner.FindJob(jobId, watchPath) ?? info).FolderPath,
-            fixRoundBase, ReviewFixRoundBase.SourceOperatorContinue, _time.GetUtcNow().UtcDateTime);
-        return response;
+        recordOnTimeline((_scanner.FindJob(jobId, watchPath) ?? info).FolderPath);
+        return response with { Base = BaseInfo(continuationBase, source) };
     }
 
+    /// <summary>
+    /// A follow-up for a live remote run is saved and moved to the top of Ready
+    /// while the earlier attempt keeps its lease. Dispatch skips that card until
+    /// the attempt settles and releases its lease. Its completed delivery stays
+    /// on the remote work branch and becomes the next claim's continuation base;
+    /// the queued prompt is consumed by that next run.
+    /// </summary>
     private ContinueJobResponse QueueFollowUp(
         TaskInfo info,
         string jobId,
@@ -1831,6 +1940,8 @@ public class TaskRunnerService : BackgroundService
             orchestratorDefaults: _orchestratorDefaults,
             quotaFallback: _quotaFallback,
             quotaWaitPolicy: _quotaWaitPolicy,
+            dependencyIntegration: _dependencyIntegration,
+            dependencyGitProjection: _dependencyGitProjection,
             loadThrottle: _loadThrottle,
             modelMigrationCatalog: _modelMigrationCatalog,
             conceptWorkbenchPublisher: _conceptWorkbenchPublisher,
@@ -1846,7 +1957,8 @@ public class TaskRunnerService : BackgroundService
             localCodingAdmission: _localCodingAdmission,
             networked: SecurityProfiles.IsNetworked(_config),
             reviewInputDecisions: _reviewInputDecisions,
-            workspaceQuota: _workspaceQuota);
+            workspaceQuota: _workspaceQuota,
+            selectionLedger: _selectionLedger);
         runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
         runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
         runner.ConfigureStuckLoopBudget(LoadStuckLoopBudget(_config));

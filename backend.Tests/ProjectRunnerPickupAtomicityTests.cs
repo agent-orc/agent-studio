@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using AgentStudio.TestSupport;
+using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -225,46 +227,123 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
     }
 
     [Fact]
+    public async Task AutoPickupUnsupportedFallbackModel_StaysReady_AndDoesNotSpawn()
+    {
+        WriteJob(TaskStates.Ready, "job-unsupported-fallback",
+            model: "claude-haiku-4-5", modelExplicit: false);
+        var cli = new FailingCliService(installedVersion: "2.1.270 (Claude Code)");
+        var runner = BuildRunner(cli, modelSelection: new UnsupportedFallbackSelection());
+        runner.SetMode("auto-continuous");
+
+        await runner.TickAsync(CancellationToken.None);
+
+        Assert.False(cli.StartCalled);
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, "job-unsupported-fallback");
+        Assert.True(Directory.Exists(readyFolder));
+        using var taskJson = JsonDocument.Parse(File.ReadAllText(Path.Combine(readyFolder, "task.json")));
+        Assert.Equal(ModelPinAdmissionPolicy.RejectionCode,
+            taskJson.RootElement.GetProperty(RemoteDispatchRejectionStore.FieldName)
+                .GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public void Local_fallback_selection_receives_the_cards_hard_correctness_floor()
+    {
+        WriteJob(TaskStates.Ready, "job-critical-fallback", model: "gpt-6-sol");
+        File.WriteAllText(Path.Combine(_watchPath, TaskStates.Ready,
+            "job-critical-fallback", "prompt.md"), "Prevent data-loss in a concurrent state machine.");
+        var policy = new ModelRoutingPolicyRegistry();
+        var qualification = new ModelQualificationService(policy, new FixedRoutingMode(),
+            new JsonlAppender(), NullLogger<ModelQualificationService>.Instance);
+        var selection = new FloorInspectingSelection();
+        TaskScannerService? scanner = null;
+        var runner = BuildRunner(new FailingCliService(), modelSelection: selection,
+            modelQualification: qualification, scannerObserver: found => scanner = found);
+        var info = scanner!.FindJob("job-critical-fallback")!;
+
+        var method = typeof(ProjectRunner).GetMethod("PlanQuotaAdmission",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        _ = method.Invoke(runner, [info]);
+
+        Assert.Equal("sol-xhigh", selection.Floor?.Id);
+    }
+
+    [Fact]
     public async Task ImmediateCliFinish_WaitsForDurableStartHandshakeBeforeFinalization()
     {
         WriteJob(TaskStates.Ready, "job-fast-finish");
-        var cli = new ImmediateFinishCliService();
+        var loadBound = TimeSpan.FromMinutes(2);
+        using var outputReadGate = new ManualResetEventSlim(false);
+        var outputReadEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cli = new ImmediateFinishCliService
+        {
+            BeforeFirstOutputRead = () =>
+            {
+                outputReadEntered.TrySetResult();
+                outputReadGate.Wait(loadBound);
+            },
+        };
         var runner = BuildRunner(cli);
         runner.SetMode("auto-continuous");
 
         var tick = runner.TickAsync(CancellationToken.None);
-        await cli.FinishRaised.Task.WaitAsync(TimeSpan.FromSeconds(10));
-
-        // Keep StartAsync suspended after it raised OnFinished. Without the
-        // handoff gate, the background finalizer releases the execution slot
-        // and writes post-processing state while admission is still waiting.
-        await Task.Delay(200);
-        Assert.Equal(1, runner.GetStatus().OccupiedSlots);
         var progressFolder = Path.Combine(_watchPath, TaskStates.Progress, "job-fast-finish");
-        Assert.True(Directory.Exists(progressFolder));
-        Assert.False(File.Exists(Path.Combine(progressFolder, "logs", "session-events.jsonl")));
+        try
+        {
+            try
+            {
+                await cli.FinishRaised.Task.WaitAsync(loadBound);
 
-        cli.AllowStartReturn.TrySetResult();
-        await tick.WaitAsync(TimeSpan.FromSeconds(10));
+                // Keep StartAsync suspended after it raised OnFinished. Without the
+                // handoff gate, the background finalizer releases the execution slot
+                // and writes post-processing state while admission is still waiting.
+                await Task.Delay(200);
+                Assert.Equal(1, runner.GetStatus().OccupiedSlots);
+                Assert.True(Directory.Exists(progressFolder));
+                Assert.False(File.Exists(Path.Combine(progressFolder, "logs", "session-events.jsonl")));
+            }
+            finally
+            {
+                // A failed assertion must release the fake start and let the
+                // finalizer finish before the fixture deletes its workspace.
+                cli.AllowStartReturn.TrySetResult();
+                await tick.WaitAsync(loadBound);
+            }
+
+            // The fake pauses finalization after the start handshake and before
+            // the closeout rewrite, so this reads the complete durable start.
+            await outputReadEntered.Task.WaitAsync(loadBound);
+            var startEvents = Path.Combine(progressFolder, "logs", "session-events.jsonl");
+            Assert.True(File.Exists(startEvents), "the confirmed start must be durable before finalization is released");
+            Assert.Contains("\"kind\"", File.ReadAllText(startEvents), StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            outputReadGate.Set();
+        }
 
         var sessionEvents = Path.Combine(progressFolder, "logs", "session-events.jsonl");
-        Assert.True(File.Exists(sessionEvents), "the confirmed start must be durable before finalization is released");
-        Assert.Contains("\"kind\"", File.ReadAllText(sessionEvents), StringComparison.OrdinalIgnoreCase);
 
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (runner.GetStatus().OccupiedSlots != 0 && DateTime.UtcNow < deadline)
+        var slotWait = Stopwatch.StartNew();
+        while (runner.GetStatus().OccupiedSlots != 0 && slotWait.Elapsed < loadBound)
             await Task.Delay(20);
         Assert.Equal(0, runner.GetStatus().OccupiedSlots);
 
         SessionEvent? recorded = null;
-        var closeoutDeadline = DateTime.UtcNow.AddSeconds(10);
-        while (recorded?.FinishedAt is null && DateTime.UtcNow < closeoutDeadline)
+        var closeoutWait = Stopwatch.StartNew();
+        while (recorded?.FinishedAt is null && closeoutWait.Elapsed < loadBound)
         {
-            recorded = JsonSerializer.Deserialize<SessionEvent>(
-                File.ReadLines(sessionEvents).Single(),
-                TaskJsonFile.ReadOpts);
+            try
+            {
+                var lines = File.ReadAllLines(sessionEvents);
+                if (lines.Length == 1)
+                    recorded = JsonSerializer.Deserialize<SessionEvent>(lines[0], TaskJsonFile.ReadOpts);
+            }
+            catch (IOException) { /* The closeout writer may still hold this file on Windows. */ }
+            catch (JsonException) { /* A read may overlap the closeout rewrite. */ }
             if (recorded?.FinishedAt is null) await Task.Delay(20);
         }
+        Assert.Single(File.ReadAllLines(sessionEvents));
         Assert.NotNull(recorded);
         Assert.Equal(RunStatuses.Stopped, recorded!.Status);
         Assert.Equal(TerminalRunOutcomeKinds.Interrupted, recorded.Result);
@@ -614,7 +693,9 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         LocalRunClaimAdapter? localRunClaims = null,
         IVisualQaService? visualQa = null,
         bool networked = false,
-        string? executionRunner = null)
+        string? executionRunner = null,
+        IModelSelectionService? modelSelection = null,
+        ModelQualificationService? modelQualification = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -704,7 +785,53 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             localCodingAdmission: allowLocalCoding ? AllowLocalCodingForTests.Instance : null,
             localRunClaims: localRunClaims,
             visualQa: visualQa,
-            networked: networked);
+            networked: networked,
+            modelQualification: modelQualification,
+            modelSelection: modelSelection);
+    }
+
+    private sealed class FixedRoutingMode : IModelRoutingModeProvider
+    {
+        public bool EconomyMode => false;
+    }
+
+    private sealed class FloorInspectingSelection : IModelSelectionService
+    {
+        public ModelRoutingTier? Floor { get; private set; }
+        public bool IsOperatorSwitchActive(string? cliType) => false;
+        public ModelSelectionDecision Select(ModelSelectionCall call)
+        {
+            Floor = call.CorrectnessFloor?.Invoke();
+            var route = new SelectionRoute(call.Request.Pins.CliType ?? CliTypes.Claude,
+                call.Request.Pins.Model, call.Request.Pins.ThinkingLevel);
+            var result = new SelectionResult
+            {
+                Outcome = SelectionOutcome.Primary,
+                Primary = route,
+                Route = route,
+                Rule = SelectionRules.Pin,
+                Reason = "launch",
+            };
+            return new ModelSelectionDecision(result, QuotaAdmissionPlan.From(result));
+        }
+    }
+
+    private sealed class UnsupportedFallbackSelection : IModelSelectionService
+    {
+        public bool IsOperatorSwitchActive(string? cliType) => false;
+
+        public ModelSelectionDecision Select(ModelSelectionCall call)
+        {
+            var result = new SelectionResult
+            {
+                Outcome = SelectionOutcome.Fallback,
+                Primary = new SelectionRoute(CliTypes.Claude, "claude-haiku-4-5", null),
+                Route = new SelectionRoute(CliTypes.Claude, "claude-opus-5-5", "high"),
+                Rule = SelectionRules.QuotaCap,
+                Reason = "quota fallback",
+            };
+            return new ModelSelectionDecision(result, QuotaAdmissionPlan.From(result));
+        }
     }
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
@@ -831,6 +958,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource AllowStartReturn { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Action? BeforeFirstOutputRead { get; init; }
+        private int _outputReads;
 
         public string GetCliPath() => "fake-claude";
         public bool IsAvailable() => true;
@@ -879,10 +1008,14 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
 
         public bool Stop(string jobKey, RunStopReason reason = RunStopReason.UserStop) => false;
         public bool SendInput(string jobKey, string input) => false;
-        public List<CliOutputLine> GetOutput(string jobKey) =>
-            _finishedStatus == RunStatuses.Completed
+        public List<CliOutputLine> GetOutput(string jobKey)
+        {
+            if (Interlocked.Exchange(ref _outputReads, 1) == 0)
+                BeforeFirstOutputRead?.Invoke();
+            return _finishedStatus == RunStatuses.Completed
                 ? [new CliOutputLine { Timestamp = _now(), Stream = "stdout", Text = "[[TASK_DONE]]" }]
                 : [];
+        }
         public void DiscardPersistedOutput(string jobKey) { }
         public void ReleaseOutputResources(string jobKey) { }
         public CliExecution? GetExecution(string jobKey) => null;

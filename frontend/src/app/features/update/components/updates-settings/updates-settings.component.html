@@ -5,9 +5,7 @@
   </header>
 
   <div class="updates__bar" [attr.data-state]="state()">
-    <span class="updates__dot" [attr.data-state]="state()" aria-hidden="true"></span>
-    <span class="updates__status"
-          data-testid="settings-update-status">{{ statusLine() }}</span>
+    <app-status-indicator class="updates__status" [tone]="tone()" [label]="statusLine()" testId="settings-update-status" />
     <span class="updates__spacer"></span>
     <button type="button"
             class="updates__action"

@@ -325,8 +325,22 @@
     }
     .task-card__pick-next:hover .task-card__pick-next-label,
     .task-card__pick-next:focus-visible .task-card__pick-next-label {
-      max-width: 60px;
+      max-width: 88px;
       opacity: 1;
+    }
+    /* AGT-3587: quiet queue-position chip on the one card per project that
+       runs next. A tint, not a button: it is a fact, not an action. */
+    .task-card__pickup-next {
+      display: inline-flex;
+      align-items: center;
+      min-height: var(--studio-card-pill-height);
+      padding: 0 var(--studio-card-pill-padding-x);
+      border-radius: 7px;
+      font-size: var(--studio-card-meta-size);
+      font-weight: 600;
+      color: var(--studio-accent);
+      background: color-mix(in srgb, var(--studio-accent) 13%, transparent);
+      cursor: help;
     }
     @media (prefers-reduced-motion: reduce) {
       .task-card__pick-next,
@@ -1453,4 +1467,12 @@
     }
 .task-card__better-candidates {
   margin-block: var(--studio-spacing-1);
+}
+.task-card__quality-block-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--studio-error);
+  flex: none;
 }

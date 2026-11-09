@@ -11,6 +11,7 @@
  * Live projection of `GET /api/v1/management/status`. The recovery console and
  * Agent Studio consume this same authoritative contract.
  */
+import type { StatusTone as IndicatorTone } from '../../../components/status-indicator/status-indicator.component';
 
 /** Which deployment phase the connected server is in. */
 export type TaskServerPhase = 'local' | 'central';
@@ -32,7 +33,7 @@ export type TaskServerClientKind =
 /** The three management sweeps offered on the page. */
 export type ManagementActionKind =
   | 'archive-sweep' | 'orphan-sweep' | 'fixture-sweep'
-  | 'backup-create' | 'restore-verify' | 'backup-retention'
+  | 'backup-create' | 'restore-verify' | 'backup-retention' | 'backup-upload'
   | 'maintenance-enter' | 'maintenance-read-only' | 'maintenance-exit' | 'shutdown-prepare'
   | 'runner-enrollment-create' | 'runner-credential-rotate' | 'runner-credential-revoke'
   | 'runner-revoke' | 'runner-drain' | 'runner-retire';
@@ -217,6 +218,33 @@ export function evidenceStateTone(state: string): StatusTone {
   return 'warn';
 }
 
+/** Shared status-indicator tone for a panel tone (docs/quality/design/status-indicator.md). */
+export function indicatorTone(tone: StatusTone): IndicatorTone {
+  switch (tone) {
+    case 'ok': return 'success';
+    case 'warn': return 'warning';
+    case 'error': return 'danger';
+    case 'calm': return 'neutral';
+  }
+}
+
+/** Evidence state on the shared indicator: a pending count is work in progress, not a calm state. */
+export function evidenceIndicatorTone(state: string): IndicatorTone {
+  return state === 'pending' ? 'running' : indicatorTone(evidenceStateTone(state));
+}
+
+/** Registry state of a host identity on the shared indicator. Unknown states stay neutral. */
+export function clientStateTone(state: string | undefined): IndicatorTone {
+  switch (state ?? 'registered') {
+    case 'registered':
+    case 'active': return 'success';
+    case 'draining':
+    case 'drained':
+    case 'credential-rotating': return 'warning';
+    default: return 'neutral';
+  }
+}
+
 /** Human label for a client identity kind. */
 export function clientKindLabel(kind: TaskServerClientKind): string {
   switch (kind) {
@@ -237,6 +265,7 @@ export function managementActionLabel(kind: ManagementActionKind): string {
     case 'backup-create': return 'Create backup';
     case 'restore-verify': return 'Verify restore';
     case 'backup-retention': return 'Apply retention';
+    case 'backup-upload': return 'Copy off-host';
     case 'maintenance-enter': return 'Enter maintenance';
     case 'maintenance-read-only': return 'Enter read-only';
     case 'maintenance-exit': return 'Exit maintenance';

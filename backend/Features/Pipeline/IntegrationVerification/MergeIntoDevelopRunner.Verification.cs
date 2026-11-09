@@ -34,7 +34,14 @@ public sealed partial class MergeIntoDevelopRunner
     /// commits, so its original result SHA is covered by name. Null means the
     /// covered SHAs are the delivery commits <paramref name="Sha"/> contains.
     /// </param>
-    private sealed record CarriedTree(string Sha, IReadOnlyList<string>? CoveredDeliveryShas = null);
+    /// <param name="PublishedGate">
+    /// AGT-3436: another card's gate that passed on <paramref name="Sha"/>,
+    /// when that is the evidence. The card names it in its own record.
+    /// </param>
+    private sealed record CarriedTree(
+        string Sha,
+        IReadOnlyList<string>? CoveredDeliveryShas = null,
+        PublishedGateEvidence? PublishedGate = null);
 
     /// <summary>
     /// Boundary of the rule: gathers the facts the pure
@@ -51,6 +58,7 @@ public sealed partial class MergeIntoDevelopRunner
         string? watchPath,
         string repoRoot,
         string branch,
+        string pipelineType,
         DeliveryRefResolution delivery,
         MergeIntoIntegrationResult result)
     {
@@ -94,6 +102,8 @@ public sealed partial class MergeIntoDevelopRunner
             NoOpIntegration: noOp,
             CarriedVerifiedTreeSha: carried?.Sha);
         var decision = IntegrationVerificationPolicy.Decide(facts);
+        if (decision.Evidence == IntegrationVerificationEvidence.CarriedTree && carried?.PublishedGate is { } publishedGate)
+            decision = decision with { Reason = $"{decision.Reason} {publishedGate.Describe()}" };
         var gate = facts.ExactReceipt;
 
         if (decision.Action == IntegrationVerificationAction.CompleteUnverified && !releaseGate)
@@ -139,8 +149,10 @@ public sealed partial class MergeIntoDevelopRunner
         var verifiedSha = decision.Evidence == IntegrationVerificationEvidence.CarriedTree
             ? facts.CarriedVerifiedTreeSha
             : sha;
-        RecordVerification(jobFolderPath, repoRoot, branch, verifiedSha, decision, gate, result.EvidenceShas, containmentSha,
-            decision.Evidence == IntegrationVerificationEvidence.CarriedTree ? carried?.CoveredDeliveryShas : null);
+        if (noOp || !PublishWithinGate(project, pipelineType, repoRoot, branch)
+            || decision.State != IntegrationVerificationStates.Verified)
+            RecordVerification(jobFolderPath, repoRoot, branch, verifiedSha, decision, gate, result.EvidenceShas, containmentSha,
+                decision.Evidence == IntegrationVerificationEvidence.CarriedTree ? carried?.CoveredDeliveryShas : null);
         _logger.LogInformation(
             "merge-into-develop contained-delivery verification project={Project} job={JobId} integration={Integration} sha={Sha} noOp={NoOp} containedIn={ContainedIn} state={State} evidence={Evidence} action={Action}",
             project, jobId, branch, sha, noOp, containmentSha ?? "none", decision.State, decision.Evidence, decision.Action);
@@ -219,7 +231,8 @@ public sealed partial class MergeIntoDevelopRunner
     /// AGT-3103: an earlier verified tree that the published tip still carries
     /// and that already contained every delivery commit: the card's own
     /// verified record, an <c>integrated-verified</c> record that names its
-    /// integration SHA, or a batch candidate whose gate passed with this
+    /// integration SHA, a passed gate another card recorded on a published
+    /// tree (AGT-3436), or a batch candidate whose gate passed with this
     /// delivery as a member. The same carry the board projection applies after
     /// the tip moves on; later commits belong to the cards that brought them.
     /// </summary>
@@ -256,9 +269,74 @@ public sealed partial class MergeIntoDevelopRunner
                              && IntegrationVerificationProjection.SameBranch(record.IntegrationBranch, branch))
             .Select(record => record.IntegrationSha)
             .FirstOrDefault(Carries);
-        return recorded is not null
-            ? new(recorded)
+        if (recorded is not null) return new(recorded);
+
+        var published = deliveryShas.Count == 0
+            ? null
+            : IntegrationVerificationProjection.FindPublishedGate(
+                PublishedGateEvidenceStore.Read(watchPath),
+                branch,
+                candidate => _git.IsAncestor(repoRoot, candidate, tip),
+                candidate => deliveryShas.All(deliverySha => _git.IsDeliveryInPublished(repoRoot, deliverySha, candidate)));
+        return published is not null
+            ? new(published.TreeSha, deliveryShas.Select(sha => sha.ToLowerInvariant()).ToArray(), published)
             : CarriedBatchCandidate(project, repoRoot, branch, tip, deliveryShas);
+    }
+
+    /// <summary>
+    /// AGT-3436: after a push publishes a tree whose own gate passed, records
+    /// that gate at project level. A later no-op card whose delivery the tree
+    /// contains can then name this gate instead of an operator run. Only the
+    /// card's own gate on its merged tree counts, never carried evidence, and
+    /// only an <see cref="BuildTestGateVerdict.Ok"/> verdict.
+    /// </summary>
+    private void RecordPublishedGate(
+        string project, string jobId, string jobFolderPath, string? watchPath,
+        string repoRoot, string branch, string publishedSha)
+    {
+        if (string.IsNullOrWhiteSpace(watchPath) || !ReviewSubjectStore.IsValidResultSha(publishedSha)) return;
+        try
+        {
+            // The project folder normally lives outside the repository. When
+            // it is the checkout itself, the record would dirty the checkout
+            // the push just released.
+            if (string.Equals(Path.GetFullPath(watchPath).TrimEnd(Path.DirectorySeparatorChar),
+                    Path.GetFullPath(repoRoot).TrimEnd(Path.DirectorySeparatorChar), StringComparison.Ordinal))
+                return;
+
+            var own = IntegrationVerificationStore.Read(jobFolderPath);
+            if (own is not { State: IntegrationVerificationStates.Verified }
+                || own.Evidence is not (IntegrationVerificationEvidence.MergeGate
+                    or IntegrationVerificationEvidence.GateRun
+                    or IntegrationVerificationEvidence.GateReceipt)
+                || !string.Equals(own.GateVerdict, nameof(BuildTestGateVerdict.Ok), StringComparison.Ordinal)
+                || !IntegrationVerificationProjection.SameBranch(own.IntegrationBranch, branch)
+                || !ReviewSubjectStore.IsValidResultSha(own.Sha)
+                || !_git.IsAncestor(repoRoot, own.Sha!, publishedSha))
+            {
+                return;
+            }
+
+            var appended = PublishedGateEvidenceStore.Append(watchPath, new PublishedGateEvidence(
+                project,
+                TaskIntegrationBranch.Name(branch, fallback: branch),
+                own.Sha!.ToLowerInvariant(),
+                IsReleaseBranch(branch) ? PreMainTestGateStep : IntegrationGateJournal.PreDevelopBuildGateStep,
+                jobId,
+                own.GateVerdict!,
+                own.Reason,
+                publishedSha.ToLowerInvariant(),
+                DateTimeOffset.UtcNow));
+            if (appended)
+                _logger.LogInformation(
+                    "merge-into-develop recorded published gate project={Project} job={JobId} branch={Branch} tree={Tree}",
+                    project, jobId, branch, own.Sha);
+        }
+        catch (Exception ex)
+        {
+            // The push already landed; this record is shared evidence for later cards.
+            _logger.LogWarning(ex, "merge-into-develop could not record the published gate for {JobFolder}", jobFolderPath);
+        }
     }
 
     /// <summary>

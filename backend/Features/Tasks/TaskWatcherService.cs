@@ -292,7 +292,7 @@ public class TaskWatcherService : BackgroundService
                 : path;
             if (_pendingDispatches.TryGetValue(key, out var pending))
             {
-                pending.Path = path;
+                pending.Path = key;
                 pending.Timer.Change(_debounce, Timeout.InfiniteTimeSpan);
                 return;
             }
@@ -302,7 +302,7 @@ public class TaskWatcherService : BackgroundService
                 null,
                 _debounce,
                 Timeout.InfiniteTimeSpan);
-            _pendingDispatches[key] = new PendingDispatch(path, timer);
+            _pendingDispatches[key] = new PendingDispatch(key, timer);
         }
     }
 
@@ -370,7 +370,7 @@ public class TaskWatcherService : BackgroundService
     /// structural moves/deletes qualify. Generated sidecars, logs, results,
     /// lifecycle output and index mirrors are intentionally excluded: API
     /// writers invalidate synchronously, while genuinely external edits are
-    /// covered by the safety TTL.
+    /// covered by the background folder-stamp reconciliation.
     ///
     /// Task-local <c>lastProgressAt</c> and <c>contextUsage</c> telemetry is
     /// excluded after the first observation. Neither field is projected into

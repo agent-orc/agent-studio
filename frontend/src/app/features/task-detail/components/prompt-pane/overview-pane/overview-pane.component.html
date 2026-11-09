@@ -67,7 +67,8 @@
   </section>
 
   <div class="studio-measure studio-measure--tabular">
-    <app-references-section [info]="job()" (changed)="referencesChanged.emit()" />
+    @defer (on viewport) { <app-references-section [info]="job()" (changed)="referencesChanged.emit()" /> }
+    @placeholder { <div aria-hidden="true"></div> }
   </div>
 
   <!-- Pipeline block: ordered steps with status, usage, and cost. Configuration of
@@ -303,16 +304,13 @@
                 <span class="ov-pl-step__skip-hint" data-testid="overview-pipeline-skip-hint">{{ row.skipHint }}</span>
               }
               @if (row.reviewRoundStatus) { <span class="ov-pl-step__skip-hint" data-testid="overview-pipeline-review-round-status">{{ row.reviewRoundStatus }}</span> }
-              <app-pipeline-step-details
-                class="ov-pl-step__details"
-                [stepId]="row.id"
-                [label]="row.label"
-                [docs]="row.explanation.body"
-                [promptMarkdown]="stepPromptMarkdown(row.id)"
-                [jobId]="job().id"
-                [watchPath]="job().watchPath"
-                [resultFile]="resultForRow(row)?.fileName ?? null"
-                [resultHeader]="resultForRow(row)?.header ?? null"
+              @if (row.batchGateSummary) { <span class="ov-pl-step__skip-hint" data-testid="overview-pipeline-batch-gate">{{ row.batchGateSummary }}</span> }
+              @else if (row.reviewAttemptId && row.kind !== 'aspect' && row.remoteReviewDetail) { <span class="ov-pl-step__skip-hint" data-testid="overview-pipeline-review-summary">{{ row.remoteReviewDetail }}</span> }
+              @if (row.reviewAttemptId) { <button type="button" class="ov-pl-step__review-link" data-testid="overview-pipeline-review-attempt" (click)="reviewAttemptRequested.emit(row.reviewAttemptId)">Review attempt@if (row.reviewAttemptNumber && row.reviewAttemptNumber > 1) { #{{ row.reviewAttemptNumber }} }</button> }
+              <app-pipeline-step-details class="ov-pl-step__details" [stepId]="row.id" [label]="row.label"
+                [docs]="row.explanation.body" [promptMarkdown]="stepPromptMarkdown(row.id)"
+                [jobId]="job().id" [watchPath]="job().watchPath"
+                [resultFile]="resultForRow(row)?.fileName ?? null" [resultHeader]="resultForRow(row)?.header ?? null"
                 [concernTitle]="row.concernTooltip?.title ?? null"
                 [concernBody]="row.concernTooltip?.body ?? null" [aspectEvidence]="row.aspectEvidence" (documentRequested)="documentRequested.emit($event)" />
               @if (selectedPipelineIsCurrent() && canConfigurePendingPipelineSteps() && row.canDisable && !row.hasExecution) {
@@ -377,6 +375,7 @@
                     [attr.data-model-resolved]="row.modelIsResolved ? 'true' : null"
                     [cacTooltip]="row.concernTooltip ?? row.modelTooltip">{{ row.model }}@if (row.thinkingLevel) {<span> · {{ row.thinkingLevel }}</span>}</span>
             }
+            @if (row.reviewAttemptId && row.cliType) { <span class="ov-pl-step__model" data-testid="overview-pipeline-review-cli">{{ row.cliType }}</span> }
             @if (row.modelEditable && row.kind !== 'aspect') {
               <app-cli-model-selector
                 class="ov-pl-step__agent-select"
@@ -466,11 +465,11 @@
           </button>
         </div>
       }
-      <app-pipeline-decision-chain [execution]="selectedPipelineExecution()" [response]="pipelinePoll.pipeline()" [current]="selectedPipelineIsCurrent()" [taskId]="job().id" [projectId]="job().projectName" [askActive]="job().state === escalatedState" (documentRequested)="documentRequested.emit($event)" />
+      @defer (on viewport) { <app-pipeline-decision-chain [execution]="selectedPipelineExecution()" [response]="pipelinePoll.pipeline()" [current]="selectedPipelineIsCurrent()" [taskId]="job().id" [projectId]="job().projectName" [askActive]="job().state === escalatedState" (documentRequested)="documentRequested.emit($event)" /> }
+      @placeholder { <div class="ov-decision-chain-placeholder" data-testid="overview-decision-chain-placeholder" aria-hidden="true"></div> }
       }
     </section>
   }
-
   <app-pipeline-token-usage [summary]="pipelinePoll.pipeline()?.tokensByModel ?? null"
     [showTaskTotal]="showAllRunsTaskTotal()" [analysisProject]="job().projectName" [analysisJobId]="job().id" />
 
@@ -494,6 +493,7 @@
 
   <!-- Radar reads the spec changes of those runs, so it follows them quietly. -->
   <section class="ov-section studio-measure studio-measure--tabular" data-testid="overview-regression-radar">
-    <app-regression-radar variant="inline" [jobId]="job().id" [watchPath]="job().watchPath" />
+    @defer (on viewport) { <app-regression-radar variant="inline" [jobId]="job().id" [watchPath]="job().watchPath" /> }
+    @placeholder { <div aria-hidden="true"></div> }
   </section>
 </div>

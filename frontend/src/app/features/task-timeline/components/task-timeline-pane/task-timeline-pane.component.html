@@ -1,4 +1,10 @@
 <div class="tl" data-testid="timeline-tab">
+  @if (loadState() === 'error') {
+    <div class="tl-load-error" role="alert" data-testid="timeline-load-error">
+      Timeline could not load.
+      <button type="button" data-testid="timeline-retry" (click)="retry()">Retry</button>
+    </div>
+  }
   @if (hasLoop()) {
     @let loop = completionLoop();
     <!-- Prominent final-verdict banner: the at-a-glance answer to
@@ -51,6 +57,10 @@
             </div>
             @if (eventSummary(event); as summary) {
               <p class="tl-item__summary" data-testid="timeline-event-summary">{{ summary }}</p>
+            }
+            @if (event.details?.['selectionEventId']; as selectionEventId) {
+              <a [href]="selectionViewHref(event)" data-testid="timeline-selection-link"
+                 [attr.aria-label]="'View model selection event ' + selectionEventId">View model selection</a>
             }
             @if (isSteeringEvent(event.kind)) {
               @if (steeringInfo(event); as steer) {

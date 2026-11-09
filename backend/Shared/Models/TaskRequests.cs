@@ -629,6 +629,7 @@ public record SetBuildProfileRequest
     public IReadOnlyList<string>? BuildCmds { get; init; }
     public IReadOnlyList<string>? TestCmds { get; init; }
     public IReadOnlyList<string>? Lockfiles { get; init; }
+    public bool InstallCoveredByLockfiles { get; init; }
     public IReadOnlyList<string>? PreserveGlobs { get; init; }
     public int? PoolSize { get; init; }
 }
@@ -769,6 +770,7 @@ public record SetPipelineStepRequest
     public string? CliType { get; init; }
     public string? Model { get; init; }
     public string? ThinkingLevel { get; init; }
+    public string PinMode { get; init; } = "preference";
 
     /// <summary>Per-step prompt override (pipeline-admin: editable tool/LLM step
     /// prompts). Null leaves the step's built-in prompt. Added to match the
@@ -801,17 +803,20 @@ public record OrchestratorOverrideRequest
 public record SetJobModelRequest
 {
     public string? Model { get; init; }
+    public string PinMode { get; init; } = "preference";
 }
 
 public record SetJobThinkingLevelRequest
 {
     public string? ThinkingLevel { get; init; }
+    public string PinMode { get; init; } = "preference";
 }
 
 public record SetJobCliTypeRequest
 {
     public string CliType { get; init; } = "";
     public bool? UseOwnSession { get; init; }
+    public string PinMode { get; init; } = "preference";
 }
 
 public record SetJobTitleRequest

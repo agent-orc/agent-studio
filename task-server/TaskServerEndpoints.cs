@@ -18,6 +18,27 @@ public static class TaskServerEndpoints
         var api = app.MapGroup("/api/v1")
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
         api.MapGet("/protocol", (TaskServerStore store) => Results.Ok(store.Status().Protocol));
+        api.MapPost("/one-shot-jobs", async (OneShotJobRequest request, TaskServerStore store,
+            CancellationToken ct) => await InvokeAsync(() => store.CreateOneShotJobAsync(request, ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start)
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        api.MapGet("/one-shot-jobs/{jobId}", async (string jobId, TaskServerStore store,
+            CancellationToken ct) => await InvokeAsync(() => store.GetOneShotJobAsync(jobId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        api.MapPost("/one-shot-jobs/claim", async (HttpContext context, OneShotJobClaimRequest request,
+            TaskServerStore store, CancellationToken ct) =>
+        {
+            if (RunnerIdentityMismatch(context, request.RunnerId) is { } mismatch) return mismatch;
+            return await InvokeAsync(() => store.ClaimOneShotJobAsync(request, ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
+            .RequireAnyTaskServerScope(TaskServerScopes.RunsClaim, TaskServerScopes.ReviewsClaim);
+        api.MapPost("/one-shot-jobs/complete", async (HttpContext context, OneShotJobCompletion request,
+            TaskServerStore store, CancellationToken ct) =>
+        {
+            if (RunnerIdentityMismatch(context, request.RunnerId) is { } mismatch) return mismatch;
+            return await InvokeAsync(() => store.CompleteOneShotJobAsync(request, ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue)
+            .RequireAnyTaskServerScope(TaskServerScopes.RunsWrite, TaskServerScopes.ReviewsWrite);
         api.MapGet("/failure-fingerprints", async (
             string? fingerprint, DateTime? sinceUtc, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ReadFailureFingerprintsAsync(fingerprint, sinceUtc, ct)));
@@ -43,22 +64,31 @@ public static class TaskServerEndpoints
             TaskServerScopes.ReviewsWrite,
             TaskServerScopes.RunsWrite,
             TaskServerScopes.TasksWrite);
-        api.MapPost("/protocol/compatibility", (ProtocolCompatibilityRequest request, TaskServerStore store) =>
+        api.MapPost("/protocol/compatibility", async (ProtocolCompatibilityRequest request, TaskServerStore store,
+            CancellationToken ct) =>
         {
+            var server = store.Status().Protocol;
             var supported = TaskServerProtocol.Supports(request.ProtocolVersion)
+                && request.ProtocolVersion <= server.Current
                 && request.ClientKind is "studio" or "runner" or "review-runner" or "management"
                     or TaskServerProtocol.EngineClientKind;
             var reason = supported
                 ? null
-                : !store.Status().Protocol.ClientKinds.Contains(request.ClientKind, StringComparer.Ordinal)
+                : !server.ClientKinds.Contains(request.ClientKind, StringComparer.Ordinal)
                     ? $"Client kind '{request.ClientKind}' is not supported. Supported client kinds: " +
-                      $"{string.Join(", ", store.Status().Protocol.ClientKinds)}."
+                      $"{string.Join(", ", server.ClientKinds)}."
                     : $"Client protocol {request.ProtocolVersion} is outside the supported range " +
-                      $"{TaskServerProtocol.MinimumSupported}-{TaskServerProtocol.MaximumSupported}.";
+                      $"{server.MinimumSupported}-{server.Current}.";
             var response = new ProtocolCompatibilityResponse(
                 supported,
-                store.Status().Protocol,
+                server,
                 reason);
+            if (!supported && request.ProtocolVersion > server.Current
+                && (request.ClientKind is "runner" or "review-runner" or TaskServerProtocol.EngineClientKind))
+                await store.AppendStudioStreamEventAsync("protocol.startup-refused", null, null,
+                    new ProtocolStartupRefusalEvent("task-server-protocol-older", request.ClientKind,
+                        request.ClientVersion, request.ProtocolVersion, server.ServerVersion, server.Current,
+                        reason!), ct);
             return supported ? Results.Ok(response) : Results.Json(response, statusCode: StatusCodes.Status426UpgradeRequired);
         });
         // Authenticated attach handshake of the loopback Studio connector: it
@@ -93,13 +123,15 @@ public static class TaskServerEndpoints
         {
             var options = configured.Value;
             var requestBytes = Math.Max(1, options.MaxRequestBodyBytes);
-            var reserve = Math.Min(64L * 1024, requestBytes / 4);
-            var requestSafeRawBytes = Math.Max(1, (requestBytes - reserve) / 4 * 3);
             var maxTotalBytes = Math.Max(1, options.ResultArtifactMaxTotalBytes);
+            var configuredFileBytes = Math.Min(Math.Max(1, options.ResultArtifactMaxFileBytes), maxTotalBytes);
             return Results.Ok(new ArtifactTransferLimitsResponse(
                 requestBytes,
-                Math.Min(Math.Min(Math.Max(1, options.ResultArtifactMaxFileBytes), requestSafeRawBytes), maxTotalBytes),
-                maxTotalBytes));
+                Math.Min(configuredFileBytes, RequestSafeArtifactBytes(requestBytes)),
+                maxTotalBytes,
+                requestBytes >= ArtifactChunkProtocol.MaxChunkBytes * 2L
+                    ? configuredFileBytes
+                    : null));
         });
 
         api.MapGet("/runner/tasks/{taskKey}/attachments/{fileName}", async (
@@ -137,6 +169,9 @@ public static class TaskServerEndpoints
             => await InvokeAsync(async () =>
             {
                 var projects = await store.ListProjectsAsync(workspaceId, ct);
+                // A runner credential sees the projects its host is bound to (SM-9).
+                if (await RunnerRouteAuthorization.RunnerBindingAsync(context, store) is { } binding)
+                    return projects.Where(project => binding.Projects.Allows(project.ProjectId)).ToArray();
                 var status = await store.GetStudioAuthStatusAsync(StudioEndpoints.StudioSessionToken(context), ct);
                 return status.User?.Role == StudioUserRoles.Contributor
                     ? projects.Where(project => status.User.ProjectIds.Contains(project.ProjectId, StringComparer.Ordinal)).ToArray()
@@ -329,8 +364,15 @@ public static class TaskServerEndpoints
 
         api.MapGet("/projects/{projectId}/tasks", async (string projectId, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListTasksAsync(projectId, ct)));
-        api.MapGet("/projects/{projectId}/tasks/{taskIdentity}", async (string projectId, string taskIdentity, TaskServerStore store, CancellationToken ct)
-            => await InvokeNullableAsync(() => store.GetTaskAsync(projectId, taskIdentity, ct)));
+        api.MapGet("/projects/{projectId}/tasks/{taskIdentity}", async (
+            HttpContext context, string projectId, string taskIdentity, TaskServerStore store, CancellationToken ct)
+            => await InvokeNullableAsync(async () =>
+            {
+                var task = await store.GetTaskAsync(projectId, taskIdentity, ct);
+                return task is not null && RunnerRouteAuthorization.CardLifecycleOnly(context)
+                    ? RunnerRouteAuthorization.LifecycleOnly(task)
+                    : task;
+            }));
         api.MapGet("/projects/{projectId}/tasks/{taskIdentity}/attempts", async (
             string projectId, string taskIdentity, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListAttemptsAsync(projectId, taskIdentity, ct)));
@@ -357,8 +399,14 @@ public static class TaskServerEndpoints
             => await InvokeAsync(() => store.ListHostProjectionsAsync(ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
         runners.MapPut("/{runnerId}", async (
-            HttpContext context, string runnerId, RegisterRunnerRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.RegisterRunnerAsync(runnerId, request, Actor(context), ct)));
+            HttpContext context, string runnerId, RegisterRunnerRequest request, TaskServerStore store, CancellationToken ct) =>
+        {
+            // SM-9: the first registration pins the credential's host; a copy elsewhere is refused.
+            if (context.TaskServerPrincipal() is { Kind: TaskServerPrincipalKinds.Runner } principal
+                && await store.BindRunnerHostAsync(principal, request.HostId?.Trim() ?? string.Empty, ct) is { } refusal)
+                return Results.Json(new ApiError(refusal.Code, refusal.Message), statusCode: refusal.Status);
+            return await InvokeAsync(() => store.RegisterRunnerAsync(runnerId, request, Actor(context), ct));
+        });
         runners.MapPut("/{runnerId}/capabilities", async (
             HttpContext context,
             string runnerId,
@@ -459,7 +507,10 @@ public static class TaskServerEndpoints
         {
             if (!string.Equals(runnerId, request.RunnerId, StringComparison.Ordinal))
                 return Results.BadRequest(new ApiError("runner-id-mismatch", "Route and request runner ids differ."));
-            return await InvokeAsync(() => store.ClaimAsync(request, Actor(context), ct));
+            if (await RunnerRouteAuthorization.ClaimRefusalAsync(context, store, RunnerCredentialRoles.Coding) is { } refused)
+                return refused;
+            return await InvokeAsync(() => store.ClaimAsync(
+                request, Actor(context), ct, context.TaskServerPrincipal()?.PrincipalId));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
             .RequireTaskServerScope(TaskServerScopes.RunsClaim);
         runners.MapPut("/{runnerId}/outbox-status", async (
@@ -484,12 +535,29 @@ public static class TaskServerEndpoints
             CancellationToken ct)
             => await InvokeAsync(() => store.RecordRunnerCliUpdateResultAsync(
                 runnerId, request, Actor(context), ct)));
+        runners.MapPost("/{runnerId}/review-package-claims", async (
+            HttpContext context, string runnerId, ReviewPackageClaimRequest request, TaskServerStore store,
+            CancellationToken ct) =>
+        {
+            if (!string.Equals(runnerId, request.ExecutorId, StringComparison.Ordinal))
+                return Results.BadRequest(new ApiError("runner-id-mismatch", "Route and request review executor ids differ."));
+            if (await RunnerRouteAuthorization.ClaimRefusalAsync(context, store, RunnerCredentialRoles.Review) is { } refused)
+                return refused;
+            if (RunnerIdentityMismatch(context, request.ExecutorId) is { } mismatch) return mismatch;
+            var binding = await RunnerRouteAuthorization.RunnerBindingAsync(context, store);
+            return await InvokeAsync(() => store.ClaimReviewPackageAsync(request, Actor(context), ct,
+                binding?.Projects));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
+            .RequireTaskServerScope(TaskServerScopes.ReviewsClaim);
         runners.MapPost("/{runnerId}/review-claims", async (
             HttpContext context, string runnerId, ReviewClaimRequest request, TaskServerStore store, CancellationToken ct) =>
         {
             if (!string.Equals(runnerId, request.ExecutorId, StringComparison.Ordinal))
                 return Results.BadRequest(new ApiError("runner-id-mismatch", "Route and request review executor ids differ."));
-            return await InvokeAsync(() => store.ClaimReviewAsync(request, Actor(context), ct));
+            if (await RunnerRouteAuthorization.ClaimRefusalAsync(context, store, RunnerCredentialRoles.Review) is { } refused)
+                return refused;
+            return await InvokeAsync(() => store.ClaimReviewAsync(
+                request, Actor(context), ct, context.TaskServerPrincipal()?.PrincipalId));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
             .RequireTaskServerScope(TaskServerScopes.ReviewsClaim);
 
@@ -501,7 +569,8 @@ public static class TaskServerEndpoints
             WorkPermitAcceptRequest request,
             TaskServerStore store,
             CancellationToken ct)
-            => await InvokeAsync(() => store.AcceptWorkPermitAsync(
+            => await RunnerRouteAuthorization.ClaimRefusalAsync(context, store, RunnerCredentialRoles.Coding)
+               ?? await InvokeAsync(() => store.AcceptWorkPermitAsync(
                 permitId,
                 request,
                 Actor(context),
@@ -683,10 +752,9 @@ public static class TaskServerEndpoints
             IOptions<TaskServerOptions> configured, CancellationToken ct) =>
         {
             var options = configured.Value;
-            var reserve = Math.Min(64L * 1024, options.MaxRequestBodyBytes / 4);
-            var requestSafeBytes = Math.Max(1, (options.MaxRequestBodyBytes - reserve) / 4 * 3);
             var limit = Math.Min(
-                Math.Min(Math.Max(1, options.ResultArtifactMaxFileBytes), requestSafeBytes),
+                Math.Min(Math.Max(1, options.ResultArtifactMaxFileBytes),
+                    RequestSafeArtifactBytes(options.MaxRequestBodyBytes)),
                 Math.Max(1, options.ResultArtifactMaxTotalBytes));
             var encoded = request.ContentBase64 ?? string.Empty;
             var padding = encoded.EndsWith("==", StringComparison.Ordinal) ? 2
@@ -697,6 +765,32 @@ public static class TaskServerEndpoints
             return await InvokeAsync(() => store.IngestArtifactAsync(runId, request, Actor(context), ct),
                 StatusCodes.Status201Created);
         });
+        runs.MapGet("/{runId}/artifact-chunks/{sha256}", (
+            string runId, string sha256, int count, long sizeBytes, ArtifactChunkStore chunks) =>
+        {
+            try { return Results.Ok(chunks.Status(runId, sha256, count, sizeBytes)); }
+            catch (ArtifactChunkTooLargeException ex) { return ArtifactRequestLimitMiddleware.Problem(ex.Limit, sizeBytes); }
+            catch (ArgumentException ex) { return Results.BadRequest(new ApiError("invalid-artifact-chunks", ex.Message)); }
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.RunsWrite);
+        runs.MapPost("/{runId}/artifact-chunks", (
+            string runId, ArtifactChunkRequest request, ArtifactChunkStore chunks) =>
+        {
+            try { return Results.Ok(chunks.Put(runId, request)); }
+            catch (ArtifactChunkTooLargeException ex) { return ArtifactRequestLimitMiddleware.Problem(ex.Limit, request.SizeBytes); }
+            catch (ArgumentException ex) { return Results.BadRequest(new ApiError("invalid-artifact-chunks", ex.Message)); }
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.RunsWrite);
+        runs.MapPost("/{runId}/artifact-chunks/complete", async (
+            HttpContext context, string runId, ArtifactChunkCompleteRequest request,
+            ArtifactChunkStore chunks, TaskServerStore store, CancellationToken ct) =>
+        {
+            try { return await InvokeAsync(() => chunks.CompleteAsync(runId, request, store, Actor(context), ct),
+                StatusCodes.Status201Created); }
+            catch (ArtifactChunkTooLargeException ex) { return ArtifactRequestLimitMiddleware.Problem(ex.Limit, request.SizeBytes); }
+            catch (ArgumentException ex) { return Results.BadRequest(new ApiError("invalid-artifact-chunks", ex.Message)); }
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.RunsWrite);
         runs.MapGet("/{runId}/artifacts", async (string runId, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListArtifactsAsync(runId, ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
@@ -931,12 +1025,46 @@ public static class TaskServerEndpoints
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
         reviews.MapPost("/attempts/{attemptId}/report", async (
             HttpContext context, string attemptId, ReviewReportRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.ReportReviewAsync(attemptId, request, Actor(context), ct)))
+            => await InvokeAsync(() => store.ReportReviewAsync(
+                attemptId, request, Actor(context), ct, context.TaskServerPrincipal())))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);
         reviews.MapPost("/attempts/{attemptId}/cleanup", async (
             HttpContext context, string attemptId, ReviewCleanupRequest request, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.CleanupReviewAsync(attemptId, request, Actor(context), ct)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
+        // AGT-3400 S4: review subject kind "package", shadow only. The
+        // orchestrator creates and reads packages; a review runner claims,
+        // renews and reports package attempts. No package route moves a task.
+        var reviewPackages = api.MapGroup("/review-packages")
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        reviewPackages.MapPost("", async (
+            HttpContext context, CreateReviewPackageSubjectRequest request, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.CreateReviewPackageSubjectAsync(request, Actor(context), ct),
+                StatusCodes.Status201Created))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review)
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
+        reviewPackages.MapGet("", async (string project, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ListReviewPackagesAsync(project, ct)));
+        reviewPackages.MapGet("/members/{taskKey}/{runAttemptId}", async (
+            string taskKey, string runAttemptId, TaskServerStore store, CancellationToken ct)
+            => await InvokeNullableAsync(() => store.GetReviewPackageMembershipAsync(taskKey, runAttemptId, ct)));
+        var reviewPackageAttempts = api.MapGroup("/review-packages/attempts")
+            .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
+        reviewPackageAttempts.MapPost("/{attemptId}/lease/renew", async (
+            HttpContext context, string attemptId, ReviewPackageRenewRequest request, TaskServerStore store,
+            CancellationToken ct)
+            => await RunnerRouteAuthorization.ReviewPackageAttemptRefusalAsync(context, store, attemptId)
+                ?? RunnerIdentityMismatch(context, request.ExecutorId)
+                ?? await InvokeAsync(() => store.RenewReviewPackageAsync(attemptId, request, ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);
+        reviewPackageAttempts.MapPost("/{attemptId}/report", async (
+            HttpContext context, string attemptId, ReviewPackageReportRequest request, TaskServerStore store,
+            CancellationToken ct)
+            => await RunnerRouteAuthorization.ReviewPackageAttemptRefusalAsync(context, store, attemptId)
+                ?? RunnerIdentityMismatch(context, request.ExecutorId)
+                ?? await InvokeAsync(() => store.ReportReviewPackageAsync(attemptId, request, Actor(context), ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);
 
         // AGT-3061: an accepted delivery is published by a runner host that
         // holds the project's publication lease; the report applies the lane.
@@ -1416,6 +1544,13 @@ public static class TaskServerEndpoints
            ?? context.Request.Headers["X-Client-Id"].FirstOrDefault()
            ?? "local-compatibility";
 
+    internal static long RequestSafeArtifactBytes(long requestBytes)
+    {
+        var budget = Math.Max(1, requestBytes);
+        var reserve = Math.Min(64L * 1024, budget / 4);
+        return Math.Max(1, (budget - reserve) / 4 * 3);
+    }
+
     private static bool OwnsCredentialAttempt(HttpContext context, string runId, AttemptCredentialIdentity identity)
         => context.TaskServerPrincipal() is
             { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } boundRunner }
@@ -1455,8 +1590,18 @@ public static class TaskServerEndpoints
         }
     }
 
+    /// <summary>A Runner principal may act only for its bound Runner identity.</summary>
+    private static IResult? RunnerIdentityMismatch(HttpContext context, string executorId)
+        => context.TaskServerPrincipal() is { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } runnerId }
+           && !string.Equals(runnerId, executorId, StringComparison.Ordinal)
+            ? Results.Json(new ApiError("runner-identity-mismatch",
+                "A Runner principal may act only for its bound Runner identity."), statusCode: StatusCodes.Status403Forbidden)
+            : null;
+
     internal static IResult MapError(Exception exception) => exception switch
     {
+        StudioThrottledException throttled => Results.Json(
+            new ApiError("login-throttled", throttled.Message), statusCode: StatusCodes.Status429TooManyRequests),
         StudioAuthenticationException studioAuth => Results.Json(
             new ApiError(studioAuth.Code, studioAuth.Message),
             statusCode: StatusCodes.Status401Unauthorized),
@@ -1482,6 +1627,7 @@ public static class TaskServerEndpoints
         TaskServerProtocolException protocol => Results.Json(
             new ApiError("protocol-unsupported", protocol.Message), statusCode: StatusCodes.Status426UpgradeRequired),
         TaskServerConflictException conflict => Results.Conflict(new ApiError(conflict.Code, conflict.Message)),
+        ReviewPackageConflictException conflict => Results.Conflict(new ApiError(conflict.Code, conflict.Message)),
         KeyNotFoundException => Results.NotFound(new ApiError("not-found", exception.Message)),
         ArgumentException or FormatException => Results.BadRequest(new ApiError("invalid-request", exception.Message)),
         DirectoryNotFoundException => Results.BadRequest(new ApiError("legacy-root-not-found", exception.Message)),

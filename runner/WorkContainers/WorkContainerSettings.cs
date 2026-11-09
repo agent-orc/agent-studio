@@ -7,8 +7,12 @@ namespace AgentRunner.WorkContainers;
 /// today's process and cgroup executor. <c>Shadow</c> keeps that executor and
 /// records the container plan and admission verdict next to each attempt.
 /// <c>Canary</c> lets the host agent run claimed work in a fresh container.
+/// <c>Contained</c> (SM-11, the Linux default) makes the container executor the
+/// default once this host's canary verdict is go, reaches the runtime only
+/// through the narrow launcher and refuses work when a prerequisite is
+/// missing; see <see cref="AttemptContainmentPolicy"/>.
 /// </summary>
-public enum WorkContainerMode { Off, Shadow, Canary }
+public enum WorkContainerMode { Off, Shadow, Canary, Contained }
 
 /// <summary>
 /// Host-local executor configuration. The CPU and memory ceilings are the
@@ -24,7 +28,8 @@ public sealed record WorkContainerSettings(
     long ProfileMaxMemoryBytes,
     long MemoryBytesPerHalfCore,
     int CacheVersion,
-    string Network)
+    string Network,
+    string? Launcher = null)
 {
     public const string ModeVariable = "RUNNER_WORK_CONTAINER_MODE";
     public const string RuntimeVariable = "RUNNER_WORK_CONTAINER_RUNTIME";
@@ -35,6 +40,13 @@ public sealed record WorkContainerSettings(
     public const string MemoryPerHalfCoreVariable = "RUNNER_WORK_CONTAINER_MEMORY_MB_PER_HALF_CORE";
     public const string CacheVersionVariable = "RUNNER_WORK_CONTAINER_CACHE_VERSION";
     public const string NetworkVariable = "RUNNER_WORK_CONTAINER_NETWORK";
+    public const string LauncherVariable = "RUNNER_WORK_CONTAINER_LAUNCHER";
+
+    /// <summary>The work-zone network deploy/zones/zone-policy.json defines and firewalls.</summary>
+    public const string DefaultNetwork = "agent-work";
+
+    /// <summary>The socket of deploy/agent-host/systemd/agent-work-launcher.socket.</summary>
+    public const string DefaultLauncherPath = "/run/agent-work-launcher.sock";
 
     /// <summary>AGT-3019 keeps two cores per host for the system and the host agent.</summary>
     public const int HostReserveHalfCores = 4;
@@ -43,14 +55,20 @@ public sealed record WorkContainerSettings(
     public const string DefaultImageManifestPath = "/etc/agent-host/work-container-images.json";
 
     public static WorkContainerSettings FromEnvironment(
-        Func<string, string?> read, int hostCores, long hostMemoryBytes, string defaultStateDirectory)
+        Func<string, string?> read, int hostCores, long hostMemoryBytes, string defaultStateDirectory,
+        bool? isLinux = null)
     {
-        var mode = (read(ModeVariable) ?? "off").Trim().ToLowerInvariant() switch
+        // SM-11: contained is the Linux default; it runs containers only after
+        // the host's canary verdict is go. Other platforms keep the process executor.
+        var linux = isLinux ?? OperatingSystem.IsLinux();
+        var mode = (read(ModeVariable) ?? "").Trim().ToLowerInvariant() switch
         {
-            "" or "off" or "0" => WorkContainerMode.Off,
+            "" => linux ? WorkContainerMode.Contained : WorkContainerMode.Off,
+            "off" or "0" => WorkContainerMode.Off,
             "shadow" => WorkContainerMode.Shadow,
             "canary" => WorkContainerMode.Canary,
-            var other => throw new InvalidOperationException($"{ModeVariable} must be off, shadow or canary, not '{other}'."),
+            "contained" => WorkContainerMode.Contained,
+            var other => throw new InvalidOperationException($"{ModeVariable} must be off, shadow, canary or contained, not '{other}'."),
         };
         var runtime = (read(RuntimeVariable) ?? "docker").Trim();
         if (runtime is not ("docker" or "podman"))
@@ -70,7 +88,7 @@ public sealed record WorkContainerSettings(
             throw new InvalidOperationException($"{MemoryPerHalfCoreVariable} must be at least 256.");
         var cacheVersion = (int)(ReadDecimal(read, CacheVersionVariable) ?? 1);
         if (cacheVersion < 1) throw new InvalidOperationException($"{CacheVersionVariable} must be positive.");
-        var network = (read(NetworkVariable) ?? "bridge").Trim();
+        var network = (read(NetworkVariable) ?? (mode == WorkContainerMode.Contained ? DefaultNetwork : "bridge")).Trim();
         if (network.Length == 0 || network is "host" || network.StartsWith("container:", StringComparison.Ordinal))
             throw new InvalidOperationException($"{NetworkVariable} may not share the host or another container namespace.");
 
@@ -83,7 +101,11 @@ public sealed record WorkContainerSettings(
             maxMemory,
             perHalfCore,
             cacheVersion,
-            network);
+            network,
+            // Contained mode reaches the runtime only through the launcher; the
+            // canary keeps calling the runtime CLI unless a launcher is named.
+            read(LauncherVariable) is { Length: > 0 } launcher ? launcher.Trim()
+                : mode == WorkContainerMode.Contained ? DefaultLauncherPath : null);
     }
 
     /// <summary>

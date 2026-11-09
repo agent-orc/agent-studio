@@ -9,6 +9,11 @@ public static class CauseBreakerSettingsDefaults
 
 public record ProjectSettings
 {
+    /// <summary>Quality Studio's durable project-to-repository mapping and last registration outcome.</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("qualityStudio")]
+    public QualityStudioRegistration? QualityStudio { get; init; }
+    [System.Text.Json.Serialization.JsonPropertyName("qualityStudio.repositoryId")]
+    public string? QualityStudioRepositoryId { get; init; }
     /// <summary>Documentation-only batch gate pilot. Disabled until a project opts in.</summary>
     public AgentStudio.Pipeline.BatchGateFormationOptions BatchGate { get; init; } = new();
     /// <summary>Optional project override for chat metadata visibility.</summary>
@@ -243,6 +248,9 @@ public record ProjectSettings
         Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public Dictionary<string, PipelineStepSetting>? PipelineSteps { get; init; }
 
+    /// <summary>Consumer class routes that override the workspace selection policy.</summary>
+    public Dictionary<string, ModelSelectionOverride>? ModelSelectionOverrides { get; init; }
+
     /// <summary>
     /// Per-project pipeline-step overrides keyed first by
     /// <see cref="PipelineTypes"/> and then by pipeline step id. Each type owns
@@ -340,6 +348,12 @@ public record ProjectSettings
     /// <see cref="PerCardTestModes.Full"/>, so the Remote Review plan stays as it was.
     /// </summary>
     public ProjectTestingSettings? Testing { get; init; }
+
+    /// <summary>
+    /// Review package mode (<c>review.package</c>, AGT-3400 S4). Null keeps
+    /// <c>off</c>, so no package forms and the per-card review is unchanged.
+    /// </summary>
+    public ProjectReviewSettings? Review { get; init; }
 
     /// <summary>
     /// Per-CLI permission / sandbox mode override. Map of <see cref="CliTypes"/>
@@ -471,6 +485,8 @@ public record ProjectSettings
     /// </summary>
     public IReadOnlyList<ProjectAreaSetting>? Areas { get; init; }
 }
+
+public sealed record QualityStudioRegistration(string? RepositoryId, string State, string? Reason);
 
 /// <summary>
 /// One project addition to the areas registry. The id is the stable
@@ -621,6 +637,15 @@ public record PipelineStepCondition
     /// runtime default" so a partial entry (e.g. only a model choice) leaves
 /// the other dimensions on their defaults.
 /// </summary>
+public sealed record ModelSelectionOverride
+{
+    public AgentStudio.TaskServer.Contracts.SelectionRoute? Primary { get; init; }
+    public IReadOnlyList<AgentStudio.TaskServer.Contracts.SelectionRoute>? Fallbacks { get; init; }
+    public string PinMode { get; init; } = "preference";
+    public Dictionary<string, ModelSelectionOverride>? ByPipelineType { get; init; }
+    public Dictionary<string, ModelSelectionOverride>? ByStep { get; init; }
+}
+
 public record PipelineStepSetting
 {
     /// <summary>Built-in prompt-enrichment block ids explicitly adopted by this project.</summary>
@@ -675,6 +700,9 @@ public record PipelineStepSetting
     /// falls through to the selected model's default level.
     /// </summary>
     public string? ThinkingLevel { get; init; }
+
+    /// <summary>Preference is the default; hard waits when a switch is required.</summary>
+    public string PinMode { get; init; } = "preference";
 
     /// <summary>
     /// Prompt override for LLM-backed steps. Null means "use the catalogue
@@ -1057,6 +1085,17 @@ public record BuildProfile
     public IReadOnlyList<string>? Lockfiles { get; init; }
 
     /// <summary>
+    /// States that <see cref="Lockfiles"/> cover everything
+    /// <see cref="InstallCmd"/> prepares, for example an install command that is
+    /// only <c>npm --prefix frontend ci</c>. Only then may a dependency-cache hit
+    /// on every lockfile scope skip the install command in a gate or Remote
+    /// Review workspace. Leave it false when the command also prepares anything
+    /// else, such as <c>dotnet restore</c>: a skipped restore leaves a cached
+    /// <c>obj</c> without its packages (AGT-3429).
+    /// </summary>
+    public bool InstallCoveredByLockfiles { get; init; }
+
+    /// <summary>
     /// Glob patterns the worktree clean step must preserve (e.g.
     /// <c>["node_modules", ".angular", "bin", "obj"]</c>) so an expensive
     /// dependency/build cache survives recycling. Maps to the clean step's
@@ -1111,6 +1150,7 @@ public record BuildProfile
 /// <summary>Stable test levels used in settings, evidence, and gate logs.</summary>
 public static class TestExecutionLevels
 {
+    public const string BatchPreCheck = "batch-pre-check";
     /// <summary>
     /// Compile evidence only: the derived build / lint commands run, every test
     /// command (including the continuous baseline) is deliberately left out.
@@ -1135,6 +1175,7 @@ public static class TestExecutionLevels
     public static string Normalize(string? value, string fallback = WorkPackage)
         => value?.Trim().ToLowerInvariant() switch
         {
+            BatchPreCheck => BatchPreCheck,
             BuildOnly => BuildOnly,
             CompileOnly => CompileOnly,
             Continuous => Continuous,
@@ -1170,6 +1211,21 @@ public sealed record ProjectTestingSettings
     public string? PerCard { get; init; }
     /// <summary>Integration verification placement; absent means pre-merge.</summary>
     public string? Mode { get; init; }
+}
+
+/// <summary>Project-level review settings (review Dossier AGT-3400).</summary>
+public sealed record ProjectReviewSettings
+{
+    /// <summary><c>off</c> (default), <c>shadow</c> or <c>dossier</c>; see <see cref="ReviewPackageSetting"/>.</summary>
+    public string? Package { get; init; }
+}
+
+/// <summary>Resolves <c>review.package</c>; the values are <see cref="AgentStudio.TaskServer.Contracts.ReviewPackageModes"/>.</summary>
+public static class ReviewPackageSetting
+{
+    public static string Resolve(ProjectSettings? settings)
+        => AgentStudio.TaskServer.Contracts.ReviewPackageModes.Normalize(settings?.Review?.Package)
+            ?? AgentStudio.TaskServer.Contracts.ReviewPackageModes.Off;
 }
 
 public static class IntegrationTestModes

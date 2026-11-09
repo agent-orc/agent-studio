@@ -282,6 +282,67 @@ public sealed class IamAccessMiddlewareTests : IDisposable
     }
 
     [Fact]
+    public async Task A_runner_on_a_route_this_server_does_not_map_is_told_so()
+    {
+        // AGT-3366: the monolith refused the standalone Task Server's feature
+        // routes with 401, so every host logged a refusal every two seconds.
+        var enrolled = _store.EnrollRunner(_store.CreateEnrollment(new RunnerEnrollmentRequest("host", null, null, null)).Code);
+        var claim = $"/api/v1/runners/{enrolled.Runner.Id}/project-probes/alpha";
+
+        var absent = await InvokeUnrouted("POST", claim, Bearer(enrolled.Secret));
+        Assert.Equal((404, AgentStudio.TaskServer.Contracts.RouteAbsenceContract.ErrorCode, false),
+            (absent.Status, absent.Error, absent.Called));
+        absent.Context.Response.Body.Position = 0;
+        using (var body = JsonDocument.Parse(absent.Context.Response.Body))
+            Assert.Equal(AgentStudio.TaskServer.Contracts.RouteAbsenceContract.ErrorCode, body.RootElement.GetProperty("code").GetString());
+
+        var anonymous = await InvokeUnrouted("POST", claim, _ => { });
+        Assert.Equal((401, "authentication-required", false), (anonymous.Status, anonymous.Error, anonymous.Called));
+        var stranger = await InvokeUnrouted("POST", claim, Bearer("not-a-credential"));
+        Assert.Equal((401, false), (stranger.Status, stranger.Called));
+        // A mapped route keeps its refusal.
+        var mapped = await InvokeBearer("POST", "/api/v1/runners/{runnerId}/project-probes/{projectId}", claim, enrolled.Secret);
+        Assert.Equal((401, false), (mapped.Status, mapped.Called));
+    }
+
+    [Fact]
+    public async Task A_runner_reads_card_attachments_only_while_it_holds_the_live_lease()
+    {
+        var leases = new AgentStudio.Runner.RunLeaseService(NullLogger<AgentStudio.Runner.RunLeaseService>.Instance, () => _clock.GetUtcNow().UtcDateTime);
+        var holder = _store.EnrollRunner(_store.CreateEnrollment(new RunnerEnrollmentRequest("holder", null, null, null)).Code);
+        var other = _store.EnrollRunner(_store.CreateEnrollment(new RunnerEnrollmentRequest("other", null, null, null)).Code);
+        var eventsOnly = _store.EnrollRunner(_store.CreateEnrollment(
+            new RunnerEnrollmentRequest("events-only", [RunnerScopes.Events], null, null)).Code);
+        Assert.True(leases.TryAcquire(new RunLeaseAcquireRequest("AGT-1", holder.Runner.Id, "holder", "host", 1, "test")).Granted);
+        const string pattern = "/api/tasks/{jobId}/attachments/{fileName}";
+
+        Task<Outcome> Read(string path, string secret) => Run("GET", pattern, path, Bearer(secret), leases: leases);
+
+        Assert.True((await Read("/api/tasks/AGT-1/attachments/mockup.png", holder.Secret)).Called);
+        var foreign = await Read("/api/tasks/AGT-1/attachments/mockup.png", other.Secret);
+        Assert.Equal((403, "runner-task-denied", false), (foreign.Status, foreign.Error, foreign.Called));
+        var unleased = await Read("/api/tasks/AGT-2/attachments/mockup.png", holder.Secret);
+        Assert.Equal((403, "runner-task-denied"), (unleased.Status, unleased.Error));
+        var unscoped = await Read("/api/tasks/AGT-1/attachments/mockup.png", eventsOnly.Secret);
+        Assert.Equal((403, "runner-scope-denied"), (unscoped.Status, unscoped.Error));
+        var anonymous = await Run("GET", pattern, "/api/tasks/AGT-1/attachments/mockup.png", _ => { }, leases: leases);
+        Assert.Equal((401, false), (anonymous.Status, anonymous.Called));
+        // Other card files stay closed to the lease holder.
+        var status = await Run("GET", "/api/tasks/{jobId}/files/{**path}", "/api/tasks/AGT-1/files/status.md",
+            Bearer(holder.Secret), leases: leases);
+        Assert.Equal((403, "runner-task-denied"), (status.Status, status.Error));
+    }
+
+    [Fact]
+    public async Task A_member_reads_card_attachments_through_the_route_permission()
+    {
+        var developer = Invite("attachment.dev", new IamGrantRequest(IamRoles.Developer, IamScope.Workspace));
+
+        Assert.True((await Invoke("GET", "/api/tasks/{jobId}/attachments/{fileName}",
+            "/api/tasks/AGT-1/attachments/mockup.png", developer)).Called);
+    }
+
+    [Fact]
     public async Task Event_streams_need_a_role_binding()
     {
         var created = _store.CreateUser(new CreateUserRequest("unbound.ops", "Unbound", StudioRoles.Operator, null, Password));
@@ -509,6 +570,10 @@ public sealed class IamAccessMiddlewareTests : IDisposable
     private Task<Outcome> InvokeBearer(string method, string pattern, string path, string token)
         => Run(method, pattern, path, Bearer(token));
 
+    /// <summary>A request routing matched no endpoint for.</summary>
+    private Task<Outcome> InvokeUnrouted(string method, string path, Action<HttpContext> authenticate)
+        => Run(method, null, path, authenticate);
+
     private Task<Outcome> InvokeProxy(string method, SignedIn user)
         => Run(method, "/api/v1/{**path}", "/api/v1/runners", context =>
         {
@@ -524,13 +589,13 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         => context => context.Request.Headers.Authorization = new StringValues("Bearer " + token);
 
     private async Task<Outcome> Run(
-        string method, string pattern, string path, Action<HttpContext> authenticate,
+        string method, string? pattern, string path, Action<HttpContext> authenticate,
         IConfiguration? configuration = null, object[]? metadata = null,
-        TaskScannerService? scanner = null, TaskIndexCache? index = null)
+        TaskScannerService? scanner = null, TaskIndexCache? index = null, AgentStudio.Runner.RunLeaseService? leases = null)
     {
         var called = false;
         var middleware = new AccessSecurityMiddleware(_ => { called = true; return Task.CompletedTask; },
-            configuration ?? _config, _store, scanner: scanner, clock: _clock, taskIndex: index);
+            configuration ?? _config, _store, scanner: scanner, leases: leases, clock: _clock, taskIndex: index);
         var context = new DefaultHttpContext();
         context.Request.Method = method;
         context.Request.Path = path;
@@ -538,8 +603,9 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         context.Request.Host = new HostString("studio.test");
         context.Request.Headers.Origin = "https://studio.test";
         authenticate(context);
-        context.SetEndpoint(new RouteEndpoint(_ => Task.CompletedTask, RoutePatternFactory.Parse(pattern), 0,
-            new EndpointMetadataCollection([new HttpMethodMetadata([method]), .. metadata ?? []]), pattern));
+        if (pattern is not null)
+            context.SetEndpoint(new RouteEndpoint(_ => Task.CompletedTask, RoutePatternFactory.Parse(pattern), 0,
+                new EndpointMetadataCollection([new HttpMethodMetadata([method]), .. metadata ?? []]), pattern));
         context.Response.Body = new MemoryStream();
         await middleware.InvokeAsync(context);
         return new Outcome(context, context.Response.StatusCode, ErrorCode(context), called);

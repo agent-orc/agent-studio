@@ -70,7 +70,6 @@ wall-clock backend.Tests/CycleTimeBackfillTests.cs 2
 wall-clock backend.Tests/DecisionCardPolicyTests.cs 1
 wall-clock backend.Tests/DeliveryRefResolverTests.cs 2
 wall-clock backend.Tests/LeasePlacementEndpointsTests.cs 3
-wall-clock backend.Tests/DemoReplayScopeCompromiseTests.cs 1
 wall-clock backend.Tests/DescribeContextSourcesTests.cs 1
 wall-clock backend.Tests/DocsMarketingDriftAnalysisServiceTests.cs 3
 wall-clock backend.Tests/DriftPostStepRunnerTests.cs 4
@@ -90,7 +89,7 @@ wall-clock backend.Tests/GitStateIndexServiceTests.cs 11
 wall-clock backend.Tests/GlobalSearchDossierTests.cs 1
 wall-clock backend.Tests/GlobalSearchEndpointAccessTests.cs 6
 wall-clock backend.Tests/HostTelemetryStoreTests.cs 6
-wall-clock backend.Tests/HumanReviewVerdictBackfillTests.cs 10
+wall-clock backend.Tests/HumanReviewVerdictBackfillTests.cs 4
 wall-clock backend.Tests/InMemoryStoreTests.cs 2
 wall-clock backend.Tests/IntegrationGateReusePolicyTests.cs 1
 wall-clock backend.Tests/InterruptedIntegrationGateRecoveryTests.cs 2
@@ -127,7 +126,7 @@ wall-clock backend.Tests/ProjectCycleTimeServiceTests.cs 1
 wall-clock backend.Tests/ProjectObservationServiceTests.cs 4
 wall-clock backend.Tests/ProjectProposalManagementTests.cs 1
 wall-clock backend.Tests/ProjectRunnerModeTests.cs 6
-wall-clock backend.Tests/ProjectRunnerPickupAtomicityTests.cs 29
+wall-clock backend.Tests/ProjectRunnerPickupAtomicityTests.cs 25
 wall-clock backend.Tests/ProjectSettingsServiceTests.cs 2
 wall-clock backend.Tests/ProjectTokenUsageEndpointPerfTests.cs 1
 wall-clock backend.Tests/ProjectUrlDiagnosticsTests.cs 2
@@ -166,7 +165,6 @@ wall-clock backend.Tests/StaleProgressArchiverTests.cs 5
 wall-clock backend.Tests/SteerTimeoutMonitorTests.cs 3
 wall-clock backend.Tests/SteeringDocsSummaryDriftServiceTests.cs 2
 wall-clock backend.Tests/StepPromptLogTests.cs 9
-wall-clock backend.Tests/SummaryGenerationFinalizationTests.cs 1
 wall-clock backend.Tests/SummaryGenerationValidationTests.cs 1
 wall-clock backend.Tests/SupersededCommitSweepTests.cs 1
 wall-clock backend.Tests/SupervisorContractTests.cs 1
@@ -273,7 +271,6 @@ wall-clock task-server.Tests/ResultFinalizationStoreTests.cs 1
 wall-clock task-server.Tests/RetentionStoreTests.cs 3
 wall-clock task-server.Tests/RunnerReleaseIdentityStoreTests.cs 1
 wall-clock task-server.Tests/RuntimeCapacitySettingsTests.cs 2
-wall-clock task-server.Tests/StudioEndpointsTests.cs 3
 wall-clock task-server.Tests/StudioHostsTests.cs 2
 wall-clock task-server.Tests/StudioP2ComplianceEndpointsTests.cs 1
 wall-clock task-server.Tests/StudioP2InsightEndpointsTests.cs 1
@@ -325,7 +322,6 @@ fixed-date backend.Tests/CompletedLaneAuditServiceTests.cs
 fixed-date backend.Tests/CompletionClaimPersistenceTests.cs
 fixed-date backend.Tests/CycleTimeBackfillTests.cs
 fixed-date backend.Tests/DecisionCardPolicyTests.cs
-fixed-date backend.Tests/DemoReplayScopeCompromiseTests.cs
 fixed-date backend.Tests/DesignEvidenceParserTests.cs
 fixed-date backend.Tests/DossierImplementationContractTests.cs
 fixed-date backend.Tests/DossierMaintenanceServiceTests.cs
@@ -363,7 +359,6 @@ fixed-date backend.Tests/ObservationParsingTests.cs
 fixed-date backend.Tests/OrchestratorChatNavigationContextTests.cs
 fixed-date backend.Tests/OrchestratorContextDigestServiceTests.cs
 fixed-date backend.Tests/OrchestratorContextEndpointsTests.cs
-fixed-date backend.Tests/OrchestratorContextEnvelopeTests.cs
 fixed-date backend.Tests/OrchestratorSessionRegistryTests.cs
 fixed-date backend.Tests/OrchestratorTaskPromptContextComposerTests.cs
 fixed-date backend.Tests/OrchestratorWorkbenchPromptContextComposerTests.cs
@@ -493,7 +488,6 @@ fixed-date runner.Tests/TaskServerConnectivityMonitorTests.cs
 fixed-date runner.Tests/WorkstationProfileTests.cs
 fixed-date setup.Tests/SetupContractTests.cs
 fixed-date task-server.Tests/ProtocolTests.cs
-fixed-date task-server.Tests/RunnerReleaseIdentityStoreTests.cs
 fixed-date task-server.Tests/StudioP2SupervisorEndpointsTests.cs
 fixed-date task-server.Tests/StudioRunnerOrchestratorTests.cs
 fixed-date task-server.Tests/StudioWorkspaceTests.cs

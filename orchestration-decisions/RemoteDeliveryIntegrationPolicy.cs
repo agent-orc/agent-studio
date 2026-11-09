@@ -8,16 +8,24 @@ public enum RemoteBuildTestGateClass
     Failed,
 }
 
+/// <param name="VerifyDefinitionMissing">
+/// AGT-3428: the delivery is refused because the repository defines no verify
+/// commands, not because a gate was red. The host records the typed
+/// <c>verify-definition-missing</c> code, which no gate triage classifies.
+/// </param>
 public sealed record RemoteDeliveryIntegrationDecision(
     bool ShouldIntegrate,
     RemoteBuildTestGateClass BuildTestGate,
-    string Reason);
+    string Reason,
+    bool VerifyDefinitionMissing = false);
 
 /// <summary>
 /// Pure admission policy for immediate Remote delivery integration. A fenced
 /// result is eligible only after its source run persisted a settled immutable
 /// envelope, the Remote Review reached Pass, and its build/test verdict is
-/// either green or explicitly not applicable.
+/// either green or explicitly not applicable. A plan that found no verify
+/// definition at all (AGT-3428) is not admissible: nothing could check the
+/// delivery, so it is refused with the plan's message instead of merged unverified.
 /// </summary>
 public static class RemoteDeliveryIntegrationPolicy
 {
@@ -64,6 +72,16 @@ public static class RemoteDeliveryIntegrationPolicy
         var buildTests = verdicts
             .Where(verdict => IsBuildTestAspect(verdict.Aspect))
             .ToList();
+        if (!string.IsNullOrWhiteSpace(reviewPlan?.VerifyDefinitionMissing)
+            && buildTests.All(IsNotApplicable))
+        {
+            return new RemoteDeliveryIntegrationDecision(
+                false,
+                RemoteBuildTestGateClass.NotApplicable,
+                reviewPlan.VerifyDefinitionMissing,
+                VerifyDefinitionMissing: true);
+        }
+
         if (buildTests.Count == 0)
         {
             var buildTestWasPlanned = reviewPlan?.Commands.Any(command =>

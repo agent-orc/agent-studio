@@ -129,7 +129,9 @@ test.describe('Git pane — preview, path disambiguation, and diff grouping (AGT
       const hints = page.locator('[data-testid="git-tree-dir-hint"]');
       await expect(hints).toHaveCount(2);
       await expect(hints.filter({ hasText: 'root' })).toHaveCount(1);
-      await expect(hints.filter({ hasText: 'docs/' })).toHaveCount(1);
+      // The file tree folds docs/start into one folder; the closest parent
+      // shown beside this file is therefore start/.
+      await expect(hints.filter({ hasText: 'start/' })).toHaveCount(1);
 
       // Select the root README.md.
       const tree = page.getByTestId('git-files');
@@ -141,7 +143,7 @@ test.describe('Git pane — preview, path disambiguation, and diff grouping (AGT
       await expect(diff.locator('.d2h-file-header')).toHaveCount(1);
 
       // (1) Markdown preview: toggle Preview -> rendered <cac-markdown> body.
-      await page.getByTestId('git-preview-toggle').click();
+      await page.getByTestId('git-preview-option').click();
       await expect(page.getByTestId('git-preview-markdown')).toBeVisible();
       await expect(page.getByTestId('git-preview-markdown')).toContainText('Usage');
       // Select Diff to return to the raw view.
@@ -151,7 +153,7 @@ test.describe('Git pane — preview, path disambiguation, and diff grouping (AGT
       // (1) HTML preview: scripts run, while the opaque origin still blocks
       // access to the Studio parent document.
       await tree.locator('[data-testid="git-tree-file"]').filter({ hasText: 'index.html' }).first().click();
-      await page.getByTestId('git-preview-toggle').click();
+      await page.getByTestId('git-preview-option').click();
       const frame = page.getByTestId('git-preview-html');
       await expect(frame).toBeVisible();
       await expect(frame).toHaveAttribute('sandbox', 'allow-scripts');

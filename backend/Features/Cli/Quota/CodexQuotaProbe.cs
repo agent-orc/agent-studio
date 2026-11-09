@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace AgentStudio.Cli;
@@ -43,34 +42,6 @@ public sealed class CodexQuotaProbe : QuotaProbeBase
         @"5h\s*limit|Weekly\s*limit|Account:",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    // Codex 0.149.0 moved the reset onto a following visual row and can omit
-    // the reset altogether while the status panel is refreshing. Read the
-    // percentage first and make the reset suffix optional. The legacy regexes
-    // below remain as fallbacks for the older single-line panel.
-    private static readonly Regex FiveHourRegex = new(
-        @"5h\s*limit\s*:?\s*(?:\[[^\]]*\]\s*)?(?<left>\d+)\s*%\s*left",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-    private static readonly Regex WeeklyRegex = new(
-        @"Weekly\s*limit\s*:?\s*(?:\[[^\]]*\]\s*)?(?<left>\d+)\s*%\s*left",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-    private static readonly Regex NextLimitHeaderRegex = new(
-        @"(?:5h|Weekly|Spark)\s*limit\s*:?",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-    private static readonly Regex ResetSuffixRegex = new(
-        @"\(?\s*resets\s*(?<reset>[^)\r\n│]+)",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-    private static readonly Regex LegacyFiveHourRegex = new(
-        @"5h\s*limit\s*:?\s*\[[^\]]*\]\s*(?<left>\d+)\s*%\s*left[^()]*\(\s*resets\s*(?<reset>[^)]+)\s*\)",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-    private static readonly Regex LegacyWeeklyRegex = new(
-        @"Weekly\s*limit\s*:?\s*\[[^\]]*\]\s*(?<left>\d+)\s*%\s*left[^()]*\(\s*resets\s*(?<reset>[^)]+)\s*\)",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
     // Header of the Spark sub-block: "<model>-Spark limit:". It is
     // DELIBERATELY version-agnostic. The previous form pinned the model to
     // "GPT-5.3-Codex-Spark"; when the CLI bumped the Spark model (5.3 -> 5.6),
@@ -82,17 +53,6 @@ public sealed class CodexQuotaProbe : QuotaProbeBase
     // alone is both sufficient and immune to future model renames.
     private static readonly Regex SparkHeaderRegex = new(
         @"Spark\s*limit\s*:?",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-    // "Account: someone@example.com (Plus)" — captures the parenthesised plan name.
-    private static readonly Regex PlanRegex = new(
-        @"Account\s*:?[^()\r\n]{1,120}\(\s*(?<plan>[A-Za-z][A-Za-z0-9 +]{0,30})\s*\)",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-    // Fallback footer when /status couldn't render: "5h NN% · weekly NN%".
-    // The footer values are also "% left", so we invert.
-    private static readonly Regex FooterRegex = new(
-        @"5h\s*(?<h5left>\d+)\s*%\s*[·•]\s*weekly\s*(?<wkleft>\d+)\s*%",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     public CodexQuotaProbe(
@@ -207,95 +167,4 @@ public sealed class CodexQuotaProbe : QuotaProbeBase
     public static string? ParsePlan(string snap)
         => AgentStudio.CliHosting.SubscriptionQuotaParser.CodexPlan(snap);
 
-    private static void AddLimitWindow(
-        List<QuotaWindow> windows,
-        string snap,
-        Regex currentRegex,
-        Regex legacyRegex,
-        string label)
-    {
-        var match = currentRegex.Match(snap);
-        if (!match.Success) match = legacyRegex.Match(snap);
-        if (!match.Success
-            || !int.TryParse(match.Groups["left"].Value, out var left))
-        {
-            return;
-        }
-
-        var resetRaw = ReadResetSuffix(snap, match);
-        windows.Add(new QuotaWindow
-        {
-            Label      = label,
-            UsedPct    = 100 - left,
-            Unit       = "%",
-            ResetAt    = resetRaw == null ? null : ParseResetUtc(resetRaw),
-            ResetLabel = resetRaw
-        });
-    }
-
-    private static string? ReadResetSuffix(string snap, Match limitMatch)
-    {
-        if (limitMatch.Groups["reset"].Success)
-            return limitMatch.Groups["reset"].Value.Trim();
-
-        var tail = snap[(limitMatch.Index + limitMatch.Length)..];
-        var nextLimit = NextLimitHeaderRegex.Match(tail);
-        if (nextLimit.Success) tail = tail[..nextLimit.Index];
-        if (tail.Length > 240) tail = tail[..240];
-
-        var reset = ResetSuffixRegex.Match(tail);
-        return reset.Success ? reset.Groups["reset"].Value.Trim() : null;
-    }
-
-    /// <summary>
-    /// Codex reset strings come in two shapes:
-    ///  - "02:33"               (the next 24h occurrence in the user's local TZ)
-    ///  - "21:33 on 3 May"      (a specific upcoming weekly date)
-    /// Returns the UTC instant or null if the format doesn't match.
-    /// </summary>
-    private static DateTime? ParseResetUtc(string raw)
-    {
-        var local = TimeZoneInfo.Local;
-        var nowLocal = DateTime.Now;
-
-        // "HH:MM on D Mon" — weekly variant.
-        var withDate = Regex.Match(raw, @"^(?<time>\d{1,2}:\d{2})\s*on\s*(?<day>\d{1,2})\s*(?<mon>[A-Za-z]+)$", RegexOptions.IgnoreCase);
-        if (withDate.Success)
-        {
-            if (DateTime.TryParseExact(
-                    withDate.Groups["time"].Value, "H:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var t)
-                && int.TryParse(withDate.Groups["day"].Value, out var day)
-                && TryParseMonth(withDate.Groups["mon"].Value, out var month))
-            {
-                var year = nowLocal.Year;
-                var candidate = new DateTime(year, month, day, t.Hour, t.Minute, 0, DateTimeKind.Unspecified);
-                if (candidate < nowLocal.AddDays(-1)) candidate = candidate.AddYears(1);
-                return TimeZoneInfo.ConvertTimeToUtc(candidate, local);
-            }
-            return null;
-        }
-
-        // Plain "HH:MM" — next future occurrence today/tomorrow.
-        if (DateTime.TryParseExact(raw, new[] { "H:mm", "HH:mm", "h:mmtt", "hh:mmtt" },
-                CultureInfo.InvariantCulture, DateTimeStyles.None, out var hm))
-        {
-            var candidate = new DateTime(nowLocal.Year, nowLocal.Month, nowLocal.Day, hm.Hour, hm.Minute, 0, DateTimeKind.Unspecified);
-            if (candidate <= nowLocal) candidate = candidate.AddDays(1);
-            return TimeZoneInfo.ConvertTimeToUtc(candidate, local);
-        }
-
-        return null;
-    }
-
-    private static bool TryParseMonth(string s, out int month)
-    {
-        var formats = new[] { "MMM", "MMMM" };
-        if (DateTime.TryParseExact(s, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt))
-        {
-            month = dt.Month;
-            return true;
-        }
-        month = 0;
-        return false;
-    }
 }

@@ -56,9 +56,6 @@ async function applyMarketingMode(page: Page): Promise<void> {
       [data-testid="dev-banner"] {
         display: none !important;
       }
-      [data-testid="status-bar"] .statusbar__quota {
-        visibility: hidden !important;
-      }
     `,
   });
   await expect(page.getByTestId('dev-banner')).toBeHidden();
@@ -230,7 +227,7 @@ test('presentation still 03 - review evidence', async ({ page }, testInfo) => {
 
 test('presentation still 04 - orchestrator conversation', async ({ page }, testInfo) => {
   await openBoard(page);
-  await page.getByTestId('orch-side-sheet-toggle').click();
+  await page.getByTestId('studio-titlebar-chat').click();
   await expect(page.getByTestId('orch-side-sheet')).toBeVisible();
   await expect(page.getByTestId('orchestrator-conversation')).toContainText('MVP walkthrough');
   await captureBoth(page, testInfo, '04', 'orchestrator-conversation');

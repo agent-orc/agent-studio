@@ -1,7 +1,76 @@
 # Review Domain Map
 
-Version: 2026-10-21
+Version: 2026-11-05
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
+
+## Aspect prompt cache
+
+The four stock Claude aspects freeze a common review-context prefix containing
+the brief, delivery acceptance scope, project and card context, diff summary,
+and results inventory. The review host inserts the authoritative merge-base diff
+at the end of that prefix, before aspect-specific instructions. The first
+Claude aspect completes before the remaining aspects start in parallel, so its
+cache write can serve their reads. Custom prompt overrides and Codex aspects
+retain their existing prompt layout and scheduling. The frozen prompt bytes
+version this layout for review-plan digests. Each grade report shows cache
+creation and read tokens by aspect and as a review total.
+
+If the first aspect reports neither cache creation nor cache read tokens, the
+runner logs `review-aspect-cache-unconfirmed` and runs the remaining aspects
+serially (parallelism 1) instead of in parallel, so they do not issue
+simultaneous cold cache writes.
+
+To measure the effect, open the grade report `remote-review-grade-<attempt>.md`
+in the card's job folder (also linked from the review timeline) for at least
+five Claude-aspect reviews that ran after the deploy. Its "Aspect cache usage"
+table lists `Cache creation tokens` and `Cache read tokens` per aspect and a
+`Review total` row. Compare per review:
+
+- the first aspect (`requirement-fit` in the stock order) against the three
+  later aspects, and
+- the review totals against the baseline from the review settlements of
+  2 November 2026: about 60,000 cache creation tokens per aspect run, about
+  240,000 per review, with cache reads near zero.
+
+The shared prefix works when the first aspect carries most of the review's
+cache creation tokens and each later aspect shows cache read tokens of about
+the first aspect's creation size with only a small creation count of its own
+(its aspect instructions), so the review total of creation tokens drops to
+roughly one prefix plus four small suffixes. A later aspect that again creates
+about the full prefix, or a runner log line `review-aspect-cache-unconfirmed`,
+means the cache was not shared for that review.
+
+Remote coding plans freeze a bounded `results/` evidence view beside the brief
+and diff context. It lists up to 40 active files with sizes, quotes heads of
+small text and CSV/JSON summaries and tails of logs within 12 files, 4,000
+characters per file and 24,000 characters total, and names image files. A
+SHA-256 over every eligible file's path, size and content makes the sealed
+aspect digest change even when the changed file falls outside the excerpt
+budget. `results/history/` and filesystem links are excluded. Credential
+redaction applies to displayed names and excerpts. Requirement-fit and
+tests-and-evidence may cite `results/<file>`; a missing-evidence finding names
+the inspected diff and results inventory or files. Truncated excerpts do not
+establish absence from a full artifact.
+
+## Review report transport budget
+
+The review host caps embedded evidence at 8 MiB per artifact and the serialized
+report at 24 MiB, below the report route's explicit 25 MiB body limit. An
+oversized log is represented by its full byte count and SHA-256 plus a separate
+head-and-tail excerpt with an elision marker and its own digest. The original
+artifact remains on the review host. `artifactsReduced` marks this wire shape so
+preparation failures retain their classification when full log bytes are omitted.
+A 413 response or three consecutive 502
+responses triggers one reduced resend with embedded artifact bytes omitted;
+the outcome, failure classification, and aspect verdicts are unchanged. The
+host persists this choice in the review slot so reattachment cannot restart
+the same oversized submission cycle. Transient failures of the reduced report
+(including 502, 503, and timeouts) retry the same payload up to five times;
+exhaustion is recorded as `ReportDeliveryExhausted`. Another 413 or a permanent
+refusal ends delivery immediately. In-process
+backend test hosts keep full file logs but omit routine information and known
+fixture warnings from verification stdout. Unexpected warnings and all errors
+remain visible there.
 
 Remote Review materializes exact result SHAs through the runner host's bounded
 source object cache (D8 A, AGT-3319). A canonical remote fetch populates a
@@ -66,6 +135,76 @@ contract form one fix item. A third consecutive block of the same cited deep
 finding escalates to a person rather than opening another automatic fix round. The existing card
 round and reissue budgets still govern every review result.
 
+## Package review in shadow (AGT-3400 S4)
+
+Dossier `docs/review-gate-packages/index.html` decides that the context-heavy
+review aspects run once per Dossier wave. Slice S4 implements that package
+review in shadow only. It uses the recommended options: PK3 A (cards of one
+`dossier.path`; cards without a Dossier stay per card), PK4 R-B (build, tests,
+deterministic checks and requirement fit stay per card) and PK5 A (60 minutes,
+at most 4 members, within the material budget, never waiting for coding).
+
+- **Setting.** `PUT /api/projects/{projectName}/review-package` with
+  `{"mode":"off"|"shadow"}` (Owner role) stores `review.package`. The default
+  is `off`, and `off` clears the section. `dossier`, the live mode of S5, is
+  rejected. `GET /api/projects/settings` reports `reviewPackage`.
+- **Subject kind `package`.** A package subject holds the Dossier path, the
+  members in stack order (task, run attempt, result SHA, card-check round,
+  material size, acceptance criteria), a membership digest and a frozen plan.
+  The standalone Task Server stores it in `review_package_subjects` and
+  `review_package_members`; the monolith stores it in its instance folder
+  `review-packages/`. The per-card `review_subjects` table, card subject
+  sidecar and attempt authority are unchanged. A member delivery joins at most
+  one package.
+- **Formation tick.** `ReviewPackageFormationHostedService` runs every 30
+  seconds beside review admission. A card's check passed when every card-check
+  step (tool commands, requirement fit) of one review round of its current
+  result SHA passed, as the S2 baseline defines it. The pure
+  `ReviewPackageFormationPolicy` groups such cards by `dossier.path`: members
+  whose check passed within 60 minutes of the first, at most 4, at most 200
+  files (union of paths) and 12,000 lines. It waits only for cards in Auto
+  Review whose check has not passed, never for a card in a coding lane, and a
+  lone member is a package of one. A card that alone exceeds the budget stays
+  per card. Each decision is appended once to
+  `review-packages/plans/<project>.jsonl` (`GET .../review-packages/formation`).
+- **Stacked candidate.** The review host fetches every member result and the
+  integration ref, then applies the members on the tip in stack order:
+  `references.dependsOn` first, then the Dossier implementation index. Each
+  member's own commits are cherry-picked; a range with a merge commit, or a
+  pick that conflicts, is merged as one merge commit instead. Each member's
+  diff runs from the candidate before it to the candidate after it, so every
+  hunk has one owner. A member that does not stack reports `stack-conflict`; a
+  union above the budget reports `over-budget` and is never truncated.
+- **Aspects.** Code quality, documentation impact, tests and evidence and the
+  new `aspect-cross-card-consistency` run once on the package. Each prompt is
+  `review-package-aspect.md` around the aspect's own rules, with the CLI, model
+  and thinking level of the members' per-card plan. Only the cross-card prompt
+  carries the Dossier excerpt, once. The grade is computed per member from the
+  package verdicts, as the remote per-card grade is.
+- **Structured output.** Every aspect ends with one `package-review` JSON block:
+  one verdict per member with its acceptance criteria, and findings with file
+  and line. A finding without both is discarded. The line's hunk owner owns the
+  finding; a line no member wrote is cross-card and goes to the later member in
+  stack order, naming the others as related. A member block that no finding of
+  that aspect cites is recorded as `concerns`.
+- **Shadow guarantees.** A package report is admitted under
+  `ReviewPackageReportPolicy` and projected into each member's
+  `results/package-review-observations.jsonl` as review observations with level
+  `package`. That journal is separate from `review-observations.jsonl`, so
+  miss-rate cohorts, review depth and the Token Economy export never read it.
+  No package path moves a lane, writes a verdict or settles an attempt; the
+  per-card review runs unchanged.
+- **Shadow report.** `GET /api/projects/{projectName}/review-packages/shadow-report?days=14`
+  compares, per member and aspect, the package verdict and findings with the
+  per-card verdict and findings of the same aspect in the round that passed the
+  card check, and the package token totals with the per-card tokens of the same
+  aspects. `cardBlocksMissed` counts per-card blocks the package did not block.
+- **Review host.** When its per-card claim is empty, the review daemon claims
+  at most one package at a time (`/api/v1/runners/{id}/review-package-claims`),
+  beside the per-card slots and without taking one of them.
+  `RUNNER_PACKAGE_REVIEW=0` turns this off. Shadow packages read public
+  repositories only.
+
 ## Review host placement (D19 A, AGT-3069)
 
 Remote Review subjects retain the source coding host, and each claimed attempt
@@ -112,6 +251,12 @@ still follows the ordinary escalation path until the aspect streak or lifetime
 round limit binds. One linked follow-up card carries all open findings;
 `references.raisedFollowUps` points to it from the delivery. The card has one
 review-budget follow-up; later degraded rounds append their findings to it.
+Engine review settlements reuse an open `engine-follow-up` card linked to the
+same source, including when a later settlement has a different run id. They
+append only findings absent from its brief and write a
+`review_follow_up_routed` event on the source timeline naming the receiving
+card. Once that follow-up reaches Completed, a later settlement may create a
+new one.
 The delivery then follows the ordinary acceptance
 and integration rules. A build/test failure or tests-and-evidence block is
 never degraded. When the per-card budget is spent, such a block moves to
@@ -136,6 +281,16 @@ and Remote Review. A blocking verdict uses the review-finding route while its
 lifetime budget remains available. A real,
 actionable `concerns` verdict gets one automatic coding round by default; the
 project setting `maxReviewConcernRounds` sets the bound and `0` disables it.
+Actionable means the reviewer names a file or symbol in the delivery and a
+missing or wrong behavior. Style, naming, duplication without a behavioral gap,
+and findings with no named location remain advisory. The same classification
+applies to a block downgraded for missing review-material citation. The fix
+round uses the reviewer summary and `missing` text as quoted data. It must also
+fit the card-round and lifetime delivered-review budgets. The batch gate state
+lists cards in Ready or Progress that wait for this fix, with the review attempt,
+aspect, and round limit. `GET /api/projects/{projectName}/review-concerns/daily?days=30`
+reports daily actionable and advisory verdict counts, plus counts whose settled
+delivery integration reached `develop`.
 Set these project controls with `PUT /api/projects/{projectName}/review-follow-up`.
 The JSON body uses `maxConcernRounds` (integer, default `1`, clamped to `0..10`),
 `scopedReviewAfterFinding` (boolean, default `true`), and
@@ -193,6 +348,16 @@ documentation-impact, and no test file was removed for tests-and-evidence.
 Otherwise review falls back to every aspect. A carried verdict records
 `carriedOverFrom`; it is displayed as carried over and is not a fresh pass.
 
+For a new Remote Review delivery, the plan also compares the last passed
+delivery's own patch with the new result's own patch. Each patch is measured
+against its respective merge base with the integration branch, per changed
+path and without hunk line offsets. If every patch matches, the four content
+verdicts carry over from that passed attempt. If only `status.md` or a path
+under `results/` differs, requirement-fit and tests-and-evidence run again,
+while code-quality and documentation-impact carry over. Any other difference,
+missing merge-base evidence, or unavailable prior passing verdict runs the
+full content review. Deterministic tool gates remain in the review plan.
+
 Use this when a change touches ReviewSubject preparation, aspect prompts,
 review-report verdicts, reissue or escalation decisions, the isolation of
 concurrent review attempts, or the evidence shown for a remote grade.
@@ -204,6 +369,31 @@ after a terminal ReviewInfra result and the missing-handoff repair: after
 completed immutable run, no canonical ReviewAttempt, and no durable park gets
 one idempotent replacement attempt. A scheduled ReviewInfra retry is canonical
 authority and is never treated as missing.
+
+The per-card Auto Review stranding watchdog runs every 30 seconds. After
+`AutoReviewStranding:ThresholdMinutes` (30 by default), it checks for a running
+pipeline step, a pending or leased ReviewAttempt, a pending or active formed
+batch, a queued round, and a queued post-processing step. A card with none gets
+a durable intervention receipt in the existing stall-intervention feed and
+its timeline. Report-only cards restart post-processing; coding cards with a
+completed run request a fresh ReviewAttempt; a passed review resumes delivery
+integration or re-enters the batch gate only when its source RunAttempt and
+result SHA match the current completed delivery and the completed review tested
+that SHA. Pending and active formed batches own a card only when their run and
+result SHA match the current delivery; a pending entry must also match its
+current review attempt. An older review starts a fresh review for the new
+delivery. If no safe step can be started, the
+card moves to Escalated with the reason. Each intervention in a lane visit has
+its own receipt. After a successful intervention, the watchdog waits another
+threshold interval before intervening again. It can advance from review recovery
+to batch recovery in the same visit. If the same recovery leaves the card
+ownerless again, it escalates the card with the reason.
+
+When the delivery-chain reconciler finds a stale acceptance or integration
+verdict, it returns the card to Auto Review and requests a fresh review at
+once. A delivery conflict queues the existing integration recovery round,
+which steers the next coding attempt against `develop` and records the round
+on the timeline.
 
 ## Versioned review-library steps
 
@@ -280,6 +470,47 @@ be written only into a pending attempt or a new eligible attempt; a leased
 attempt keeps its plan through report retry and worker adoption.
 
 ## Review material contract
+
+### Screenshot-backed visual review
+
+The standard feature, bug, and task review plans include `aspect-visual-review`
+when the delivery changes a file under `frontend/` ending in `.html`, `.scss`,
+or `.css`. The aspect is recorded in the same pipeline catalogue and verdict
+ledger as requirement fit, code quality, documentation impact, and tests and
+evidence. Its catalogue route selects the Codex image-capable support model
+through the central pipeline model resolver; project step overrides remain
+subject to the normal CLI/model compatibility check.
+
+The executor fetches bounded image artifacts from the source run's `results/`
+delivery, preserves the screenshot names, and places read-only copies beside
+the exact-SHA review checkout. The visual prompt receives those paths, the
+authoritative diff, the hard visual rules, and the relevant admin design rules.
+After screenshots take priority over before screenshots at both the remote
+100-image cap and the local eight-image attachment cap. Both caps count only
+images with valid bounded headers, so unavailable or invalid artifacts cannot
+crowd out a later valid after screenshot. Each artifact read is isolated, so a
+failed remote artifact cannot stop later images from loading.
+The prompt lists readable image paths first, then up to eight artifact failure
+details and a count of further failures, so corrupt artifacts cannot bury a
+valid screenshot path in the review context.
+An artifact must have a PNG, JPEG, or WebP header matching its extension before
+it uses an image slot; matching size and digest alone do not prove the header is
+valid. The server does not decode pixels, so later image viewing can still
+reject damaged payloads.
+Name delivered screenshots under `results/` by surface, stage, viewport width,
+and theme, for example `bars/before-1920-light.png` and
+`bars/after-1920-light.png`. Use the same suffix for matching before and after
+views. A `before` path segment or filename marker (`before-`, `-before`, or
+equivalent underscore or dot separators) marks baseline evidence. An unmarked
+image counts as an after view. At least one readable after image is required;
+include both light and dark themes and a narrow viewport when those surfaces
+change.
+It opens each screenshot, compares matching before and after views, and checks
+layout, spacing, separation, alignment, clipping, and contrast across available
+themes and widths. A visual concern or block cites both the screenshot and the
+affected region. If a frontend template or style changed without a readable
+screenshot, or only before screenshots, the executor guarantees a `concerns`
+verdict naming the missing after evidence. Nonvisual changes skip this aspect.
 
 `runner/RemoteReviewWorkspace.cs` materializes the immutable delivery
 Result-SHA in a disposable candidate checkout. Before the first semantic aspect
@@ -377,12 +608,40 @@ One host runs several fenced ReviewAttempts at once. Isolation is what makes
 that safe, and it has three layers.
 
 **Filesystem and network.** `RemoteReviewWorkspace` roots every writable path
-under the attempt directory (`HOME`, `TMPDIR`, `XDG_CACHE_HOME`,
-`NUGET_PACKAGES`, `npm_config_cache`, `PIP_CACHE_DIR`, `CARGO_HOME`,
-`GRADLE_USER_HOME`, `DOTNET_CLI_HOME`). The lease supplies the attempt's
-`ResourceNamespace` for containers and databases and an eight-port window from
-`PortBase`. The baseline worktree gets its own sub-root inside the same attempt,
-so candidate and baseline never share a cache either.
+under the attempt directory (`HOME`, `XDG_CACHE_HOME`, `npm_config_cache`,
+`PIP_CACHE_DIR`, `CARGO_HOME`, `GRADLE_USER_HOME`, `DOTNET_CLI_HOME`). The lease
+supplies the attempt's `ResourceNamespace` for containers and databases and an
+eight-port window from `PortBase`. The baseline worktree gets its own sub-root
+inside the same attempt, so candidate and baseline never share these caches
+either. Two paths are deliberately outside the attempt directory (AGT-3429):
+
+- `TMPDIR` is a short, owner-only root `/tmp/rv-<12 hex>` named by a digest
+  of the attempt directory (`runner/ReviewAttemptTemp.cs`): `c` for the
+  candidate and one 12-character command segment per baseline or clean repeat.
+  Below the attempt directory a socket path such as Chrome's
+  `$TMPDIR/org.chromium.Chromium.XXXXXX/SingletonSocket` exceeded the 107-byte
+  Unix socket limit and ChromeHeadless could not start. The root's `.owner`
+  file names its attempt; cleanup removes it with the attempt and the retention
+  sweep removes one whose attempt is gone.
+- `NUGET_PACKAGES` and `NUGET_SCRATCH` are the host-stable
+  `.dependency-cache/nuget-packages` and `nuget-scratch`, shared by every
+  attempt and role. The dependency cache preserves `**/obj`, and a cached
+  `project.assets.json` must name a package folder that still exists. The
+  folder is content addressed by package id and version, so candidate and
+  baseline resolve identical bits for identical versions, and the shared
+  scratch folder holds NuGet's extraction locks. See
+  [pipeline.md](pipeline.md) for what a dependency-cache hit may skip.
+
+Before each candidate tool command, the review workspace checks every prepared
+dependency scope for its directory and lockfile marker. A missing scope reruns
+preparation and records the miss in command evidence. An environment diagnosis
+evicts the candidate cache entry and invalidates its scope markers, then the
+next candidate command prepares those scopes again. It keeps the dependency
+directories in place while candidate commands remain. The baseline comparison
+only saves its own cache. If preparation cannot restore a vanished directory,
+the infrastructure result names the scope and the last step observed removing
+it. An exit 127 after a command removes its dependency directory uses the same
+classification rather than reporting a missing toolchain.
 
 **Build servers.** Path isolation does not cover them. On Linux, Roslyn's
 `VBCSCompiler` listens on `/tmp/<pipename>` derived from the compiler directory
@@ -450,9 +709,17 @@ unreviewable: WEB-26/27/28 failed their clone with `could not read Username`,
 classified `SnapshotUnavailable`, and escalated after the infrastructure retry
 budget.
 
-- **Plan.** The project setting `repositoryVisibility` (`public` by default,
-  `PUT /api/projects/{project}/repository-visibility`) is sealed into every
-  review plan as `ReviewPlanDto.PrivateRepository` by `RemoteReviewPlanBuilder`.
+- **Plan.** The effective repository visibility is sealed into every review
+  plan as `ReviewPlanDto.PrivateRepository` by `RemoteReviewPlanBuilder`. It
+  combines the project setting `repositoryVisibility` (`public` by default,
+  `PUT /api/projects/{project}/repository-visibility`) with what the connected
+  GitHub App reports (AGT-3408, `ReviewRepositoryAccessPolicy.EffectiveVisibility`,
+  read through `ProjectRepositoryVisibility`): a repository an adopted
+  installation lists follows GitHub's `private` flag, an explicit `private`
+  setting still wins, and a repository GitHub reports private is never planned
+  public. `GitHubAppBroker` caches the installations' repository lists, refreshed
+  by the host credential service (monolith) or `GitHubAppVisibilityRefreshService`
+  (standalone Task Server); a failed listing keeps the last answer.
   Task Server repository registrations may also declare `repositoryVisibility`.
   The existing project setting is copied to matching registrations when it
   changes and reconciled on startup and periodically, including registrations
@@ -462,6 +729,13 @@ budget.
   Changing it re-plans every ReviewAttempt still queued for the project, like a
   build-profile or pipeline-step edit, so an attempt queued before the flip
   carries the new visibility.
+- **Retry.** An infrastructure retry takes the current visibility, not the
+  failed attempt's. The backend builds every successor's plan afresh. The
+  standalone Task Server keeps one plan per subject, so `InsertReviewRetryAsync`
+  renews its `privateRepository` from the registration and the GitHub report
+  (`ReviewRepositoryAccessPolicy.CurrentPrivateRepository`) when it queues the
+  successor; with neither known, the sealed value stays. A new subject of a
+  repository GitHub reports private is stored private.
 - **Claim filter.** `ReviewRepositoryAccessPolicy` (shared contract) turns a
   private plan plus the subject's repository URL into the required key
   `review:repository-read:<host>/<owner>/<repo>` (lower case, no `.git`, same
@@ -517,16 +791,22 @@ budget.
   integration-ref fetch for baseline comparison runs in a fresh runner-owned
   repository and the workspace copies the objects over the local transport,
   so configuration written by review commands never meets the credential.
-- **Public repositories** keep the credential-free, blob-filtered clone
-  unchanged and never read the credentials file, so a file that turns
-  unreadable or malformed after start-up affects only private reviews. A
+- **Held credential wins.** A review host that holds a credential for exactly
+  the subject's repository (App token or credentials file) fetches with it
+  whatever the plan says (AGT-3408), so a repository wrongly planned public
+  costs nothing on such a host. This widens no access: the lookup matches one
+  canonical repository, and only the clone and fetch processes see it.
+- **Public repositories** without a held credential keep the credential-free
+  clone. A public plan does not depend on the credentials file: a file that
+  turns unreadable or malformed after start-up fails only private reviews. A
   credential-free clone that fails with an authentication signature names the
   missing read access in its `SnapshotUnavailable` detail.
 
 Operator setup: [linux-runner-host.md](../../operations/setup/linux-runner-host.md#private-repositories).
 Tests: `runner.Tests/ReviewPrivateRepositoryTests.cs` (clone through a local
 Basic-auth smart-HTTP server), `runner.Tests/ReviewRepositoryAccessPolicyTests.cs`,
-`backend.Tests/PrivateRepositoryReviewClaimTests.cs`, and
+`backend.Tests/PrivateRepositoryReviewClaimTests.cs`,
+`backend.Tests/GitHubAppBrokerTests.cs`, and
 `task-server.Tests/RemoteReviewAuthorityTests.PrivateRepository.cs`.
 
 ## Review-plane parallelism
@@ -568,6 +848,45 @@ saturation, without a backend restart. The
 operator-facing form of this is in
 [docs/operations/remote-hosts.md](../../operations/remote-hosts.md) and
 [docs/operations/setup/linux-runner-host.md](../../operations/setup/linux-runner-host.md#how-the-review-ceiling-is-derived).
+
+## Aspect execution within one attempt (AGT-3424)
+
+Remote Review runs one attempt's planned commands in two phases
+(`RemoteReviewWorkspace.ExecutePlanAsync`; AGT-3400 Dossier
+`docs/review-gate-packages/index.html`, decision PK7, option X-B):
+
+1. **Tool commands** (build, tests, lint and every other non-agent command) run
+   one after another, as before. An exception in this phase (for example
+   `ToolUnavailable`, `CommandStalled`, `NoCpuProgress`) ends the attempt before
+   any agent aspect starts. A product failure of a tool command still lets the
+   aspects run, as the serial loop did.
+2. **Agent aspects** then run concurrently, at most
+   `RUNNER_REVIEW_ASPECT_PARALLELISM` at a time (default `4`, capped at `4`;
+   `1` restores the serial loop). Aspects start in plan order. The review
+   material is built once before the phase and every aspect only reads it.
+   Each aspect keeps its own derived budget (see the aspect budget contract
+   above), counted from the moment it starts.
+
+Each aspect records into its own evidence lists. The attempt's lists change
+only under one gate, which also serialises the checkpoint writes, so every
+`review-progress.json` holds whole aspects. Resume semantics are unchanged:
+`CanResumeCommand` skips an aspect whose command evidence and verdict are both
+checkpointed, and a resumed attempt reruns only the aspects without a
+checkpoint. Command evidence and verdicts are reported in plan order whatever
+order the aspects finished in.
+
+An infrastructure failure of one aspect (`AspectTimeout`, `ToolUnavailable`,
+`CommandStalled`, a failed checkpoint write) stops the attempt where the serial
+loop would have stopped: it cancels the aspects still running, starts no further
+aspect, and is the one failure reported. Its evidence carries the tool commands
+and every aspect that ran. A result that arrives after the stop is evidence,
+not a checkpoint. A `block` or `concerns` verdict stops nothing.
+
+The aspects share the attempt's one review slot. Host admission
+(`RoleMaxParallelism`, the per-worker resource envelope, the load gate) is
+unchanged and counts attempts, not aspects, so the number of aspect calls and
+their tokens per review stay the same; only the provider's concurrent peak per
+attempt rises, bounded by the cap.
 
 ## Infrastructure retry scheduling
 
@@ -740,14 +1059,13 @@ Three rules keep a hit honest:
 - **Entries expire.** A result older than 24 hours is dropped and re-executed,
   and every baseline SHA the freshly fetched integration ref no longer contains
   is pruned before the first lookup of an attempt.
-- **Only a measured baseline is stored.** A `test-failures` baseline that
-  exits non-zero without a parsed failure name never ran its suite (for
-  example "The argument ... is invalid" from a `--no-build` run in an unbuilt
-  worktree). It ends the attempt as `ReviewInfra/BaselineUnavailable`, naming
-  the step, the exit code and the first output line, and is not cached. Reuse
-  rejects such an entry as well, and an entry recorded under another baseline
-  mode. Parser version 4 (AGT-3089) turned every older entry into a one-time
-  miss. `exit-status` entries with a non-zero exit stay reusable.
+- **Only a measured baseline is stored.** A `test-failures` baseline must
+  report at least one test result. A nonzero exit also needs a parsed failure
+  name for comparison. A run with no test result, such as an unbuilt
+  `--no-build` invocation or a green exit that ran no tests, ends as
+  `ReviewInfra/BaselineUnavailable` and is not cached. Reuse checks the same
+  evidence, including for entries written by older workers. `exit-status`
+  entries carry their result in the exit code and remain reusable.
 - **Reuse is visible.** The verdict summary, the Markdown grade
   (`baselineReused`/`baselineReuse` frontmatter plus a `Baseline` column in the
   command evidence table), and `ReviewProjectionView.Attempts[].BaselineReused`
@@ -831,10 +1149,63 @@ that verdict.
 | Evidence | Diagnosis | Card charge |
 |---|---|---|
 | Baseline green, candidate and clean repeat both have ordinary nonzero exits | `product` | yes |
-| Baseline red or same fingerprint on the baseline or other cards | `environment` | no |
+| Baseline test result red, clean repeat has only failures named on the baseline | `IntegrationBranchDefect` with the pre-existing names | no |
+| Baseline test result red, clean repeat has new failures | `product` with the new and pre-existing names | yes |
+| Baseline test command cannot produce a test result | `ReviewInfra/BaselineUnavailable` | no |
+| Same fingerprint on another card with a green baseline | `environment` | no |
 | Clean repeat green and fingerprint has known intermittent pattern or prior occurrence | `intermittent` | no |
 | Clean repeat green without history, or required evidence unavailable | `unclassified-first-occurrence` | no |
+| Clean repeat green, baseline red on cached state, clean baseline repeat green | `DependencyCacheDefect` or `BaselineResultCacheDefect` | no |
 | Reviewer block without evidence against a changed path | `concern` | no |
+
+**Missing test reports.** A test-failures baseline must report at least one
+completed test, even when it exits zero. The review host retries a baseline
+with no parseable result once and records both attempts. If it still has no
+result, it settles as `ReviewInfra/BaselineUnavailable` and names the captured
+stdout artifact path. A delivery run that exits zero without a test result is
+also retried once. If its retry still has no result, it settles as
+`ReviewInfra/TestReportUnavailable`, unless the delivery changed test
+configuration, the runner or reporter, or added, removed, or renamed a spec. In
+that case the missing report is a product finding that cites the changed setup
+path. The result parser accepts Vitest's `Test Files N passed` summary as well
+as its `Tests N passed` summary. If Angular finished bundling but Vitest did not
+report a run, the infrastructure summary says so and points to the captured
+stdout artifact.
+
+**Red baseline on cached state (AGT-3430).** A baseline that ran on a
+dependency-cache hit, or a baseline result reused from the baseline result
+cache, does not prove the integration branch red while the candidate's clean
+repeat of the same command is green. Before the card or the branch is blamed,
+the runner runs that baseline once more in a fresh same-host clone with fresh
+home, temp and cache directories and without the dependency cache
+(`ReviewCachedBaselinePolicy`). Its evidence has phase `clean-repeat` and
+workspace role `baseline-clean-repeat`. Green settles `ReviewInfra` with
+`DependencyCacheDefect` (a dependency scope of the baseline's preparation was
+restored from the cache, whether the command was then skipped or, since
+AGT-3429, reran over the restored directories) or
+`BaselineResultCacheDefect` (the red result was reused), records the clean
+baseline's exit code 0 as the candidate's `BaselineExitCode`, evicts the stored
+baseline result, the baseline dependency-cache entry and the candidate entry,
+and does not charge the card. Red keeps the measured baseline's attribution
+(`IntegrationBranchDefect` for a build or a test with no new failures). A clean
+baseline that times out, is killed, or runs no test settles
+`ReviewInfra/BaselineUnavailable`. At most one such repeat runs per attempt;
+the recorded evidence carries the bound across a resumed worker.
+`ReviewReportDiagnosisPolicy` accepts a cache classification only with a green
+`clean-repeat` and a green `baseline-clean-repeat` for the same step and
+baseline, otherwise `DiagnosisEvidenceInvalid`.
+
+**Failure text and output tail (AGT-3430).** The summary of a test-failures
+baseline that exited without a test result quotes the lines that explain the
+failure, from stdout and stderr: lines naming an error, `FATAL`, a failure or an
+exception come first, npm's own `npm error` wrapper lines after them, and known
+noise (`npm notice`, `npm warn`) is skipped. Without such a line the first other
+stderr line, else stdout line, is quoted. At most three lines of 240 characters,
+secrets redacted. Every failed command's evidence row also carries
+`OutputTail`: the last 4096 characters
+(`ReviewCommandOutputTailDto.MaximumCharacters`) of stdout and of stderr, each
+with a truncation flag and redacted like the product-failure evidence tail, so
+the cause survives the deleted attempt in the settled report.
 
 The shared decision table is `DeliveryFailureDiagnosis`. Review and gate
 reporters append observations to the Task Server's fingerprint event store via
@@ -876,6 +1247,12 @@ the pure `GateFailureTriagePolicy` assigns one class:
 | `product` | Failing test or build-error names, no environment marker | One fix round per delivery SHA, whose prompt carries the failing items and the reason line |
 | `integration-branch` | AGT-2916 diagnosis `baseline=red` | Opens or joins the cause card for the fingerprint; the card waits on it |
 | `undecidable` | No gate log, a green newest log, conflicting markers (an environment marker and failing items), or a flake label without a re-run | Parks with `[gate-undecidable]`, stating the missing evidence |
+
+A merge whose gate ran no check because the repository defines no verify
+commands never reaches this table: it carries `verify-definition-missing`
+(AGT-3428), which the router does not handle, and parks with the message that
+names the missing `.agent-studio/project.yml`. Legacy `build-gate-failed`
+records whose reason is `no verify commands derivable` are re-typed the same way.
 
 The diagnosis suffix of AGT-2916 wins over text markers because it is an
 experiment. The router re-types the durable merge step to the decided class,
@@ -1070,14 +1447,20 @@ time, per-class totals, the slowest 50 tests, retry status, and host load and
 active test-process count sampled when the report is captured. A missing or
 malformed TRX is logged and does not change the test verdict.
 
-Both gates run for every review of this repository, not only for deliveries that
-touch `runner/` or `task-server/`. A review plan is frozen before the attempt is
-claimed and is immutable by contract, and the plan builder has no merge-base
-diff at that point, so the review plane has no path-scoped command selection.
-The diff-scoped selector (`TestSelectionPlanner` with its impact rules) belongs
-to the local build and test gate. Making the review plan path-scoped would mean
-resolving the delivery diff at plan-build time, which is a separate change to
-the plan contract rather than a configuration entry.
+For a delivery that changes `backend/`, the review plan inserts the declared
+.NET guard commands before its selected tests. These use
+`FullyQualifiedName~.Architecture.|Category=Guard` together with each command's
+existing filter. The guard commands come from the project inventory, so class
+selection cannot omit them, including when it selects no other test class.
+The route inventory's three-profile permission census and the
+`TaskFolderAccessIsolationTest` class carry the Guard category because their
+namespaces do not match the architecture filter.
+
+With full review testing, both suites run for every review of this repository,
+including deliveries outside `runner/` and `task-server/`. A review plan is
+frozen before the attempt is claimed and is immutable by contract. The later
+per-card and batch review selectors use the delivery diff to narrow the
+remaining test commands; the backend guard step above stays in the plan.
 
 When a .NET review test step is red, the clean repeat now keeps the original
 category filter and reruns only the classes that reported failures, up to five
@@ -1089,6 +1472,23 @@ failure remains in the review evidence and the baseline comparison still
 determines attribution. For a planned `--no-build` test, fresh baseline
 worktrees and clean-repeat clones replay the preceding frozen build after
 dependency preparation so the test assembly exists.
+When the clean repeat has no new failures against a baseline that reported
+failed tests, the verification aspect passes and names the pre-existing
+failures in its verdict summary and card review evidence. The review reaches
+`IntegrationBranchDefect`; the batch gate remains the authority for the full
+suite. New failures reproduced on the candidate charge the card even when
+the baseline was red.
+
+For batch-deferred reviews, `RemoteReviewPlanBuilder` compares the delivered
+test project with its merge base before treating a change to
+`backend.Tests/OrchestratorApi.Tests.csproj` as a verify command inventory edit.
+Adding or removing only `None`, `Content`, or `EmbeddedResource` items with
+optional copy metadata keeps the build-only review and leaves the full suite
+to the batch gate. Package and project references, compile items, target
+frameworks, and test discovery properties still disable deferral. Changes to
+`.agent-studio/project.yml`, `frontend/package.json`, `frontend/angular.json`,
+or `backend/OrchestratorApi.csproj` also disable it. The frozen plan records
+the rule that disabled deferral, and the card's review tool gate cites it.
 
 ## No-change results skip the tool gates (AGT-3079)
 
@@ -1145,6 +1545,15 @@ usually exists only under `refs/remotes/origin` in the Studio checkout.
   [pipeline.md](./pipeline.md#acceptance-rail-one-integration-truth-one-refusal).
 - `orchestrator-engine/OrchestrationStageHandlers.cs`: Council records an
   uncited downgrade as a concern without turning it back into a reissue.
+- `contracts/TaskServer.Contracts/ReviewPackageContracts.cs`,
+  `orchestration-decisions/ReviewPackageFormationPolicy.cs`,
+  `backend/Features/Review/Packages/`, `task-server/TaskServerReviewPackageStore.cs`
+  and `runner/PackageReview*.cs`: shadow package review (AGT-3400 S4), covered by
+  `backend.Tests/ReviewPackageFormationPolicyTests.cs`,
+  `backend.Tests/ReviewPackageContractTests.cs`,
+  `backend.Tests/ReviewPackageFormationServiceTests.cs`,
+  `task-server.Tests/ReviewPackageStoreTests.cs` and
+  `runner.Tests/PackageReviewExecutorTests.cs`.
 - `runner.Tests/RemoteReviewWorkspaceTests.cs`: exact docs-diff visibility and
   explicit truncation coverage.
 - `runner.Tests/ReviewConcurrentWorkspaceIsolationTests.cs`: four concurrent
@@ -1271,3 +1680,23 @@ an automatic later-review miss applies only to an earlier approval of the same
 aspect and delivered SHA. The previous finding remains in the full-review prompt.
 This affects review depth only, not the task's
 acceptance or transition decision.
+
+## Quality Studio change ranges on cards
+
+The Review Plane workspace proof supplies the reviewed merge base and immutable
+Result SHA. The task keeps one `results/quality-studio/review-<attempt>.json`
+artifact per review attempt with that range, delivery generation, run attempt,
+commit count excluding superseded commits, mode, and an optional
+`change-review-verdict.v1` document. The Remote Review grade file also records
+the merge base. This preserves an older round when the integration ref moves.
+
+`GET /api/tasks/{id}/quality-studio` projects those artifacts for the Evidence
+tab. It compares the reviewed patch with a no-ff merge's first-parent range
+using `git patch-id --stable`. A missing object leaves patch equality unknown.
+The panel and its signed hand-off range link make only read requests. The
+Review Plane supplies the document as a digest-checked report artifact named
+`change-review-verdict.v1.json`; its producer controls the off, shadow and decide
+mode. An absent artifact does not become a pass. The durable outbox sends a
+present document to Quality Studio's versioned `PUT .../change-reviews` route,
+replays the same key across restarts, and emits an operator-feed event after
+seven days without delivery.

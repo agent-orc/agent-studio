@@ -88,6 +88,10 @@ public record SetRequireDifferentReviewHostRequest
     public bool Required { get; init; }
 }
 
+/// <summary><c>review.package</c> mode (AGT-3400 S4): <c>off</c> or <c>shadow</c>.</summary>
+public sealed record ReviewPackageSettingRequest(string? Mode);
+public sealed record ModelSelectionOverrideRequest(string? PipelineType, ModelSelectionOverride? Override);
+
 /// <summary>AGT-W57 cause breaker parameters for one project.</summary>
 public record SetCauseBreakerRequest
 {
@@ -329,10 +333,13 @@ public static class ProjectSettingsEndpoints
                     testExecution = kv.Value.TestExecution,
                     testingPerCard = PerCardTestModes.Resolve(kv.Value),
                     testingMode = IntegrationTestModes.Resolve(kv.Value),
+                    reviewPackage = ReviewPackageSetting.Resolve(kv.Value),
                     pipelineStepOrder = PipelineTypeSettings.ForType(kv.Value, PipelineTypes.Task)?.PipelineStepOrder
                         ?? Array.Empty<string>(),
                     pipelineStepsByType = kv.Value.PipelineStepsByType
                         ?? new Dictionary<string, Dictionary<string, PipelineStepSetting>>(),
+                    modelSelectionOverrides = kv.Value.ModelSelectionOverrides
+                        ?? new Dictionary<string, ModelSelectionOverride>(),
                     pipelineStepOrderByType = kv.Value.PipelineStepOrderByType
                         ?? new Dictionary<string, IReadOnlyList<string>>(),
                     // Resolved per-CLI permission mode + source for all four CLIs
@@ -458,6 +465,8 @@ public static class ProjectSettingsEndpoints
                     model = s.Model,
                     resolvedModel = resolved?.Model,
                     modelSource = resolved?.Source,
+                    overridesWorkspace = configured is { Model: not null } or { CliType: not null } or { ThinkingLevel: not null }
+                        || ProjectSettingsService.HasModelSelectionOverride(projectSettings, type, s.Id),
                     resolvedThinkingLevel = thinking?.ThinkingLevel,
                     thinkingLevelSource = thinking?.Source,
                     // The core agent run cannot be disabled or model-overridden
@@ -523,6 +532,24 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(result);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
 
+        app.MapPut("/api/projects/{projectName}/model-selection-overrides/{consumer}",
+            (string projectName, string consumer, ModelSelectionOverrideRequest request,
+                ProjectSettingsService settings, TaskScannerService scanner,
+                AgentStudio.Cli.ModelSelectionPolicyStore policy) =>
+        {
+            if (!scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (!policy.Get().Consumers.ContainsKey(consumer))
+                return Results.BadRequest(new { error = "Unknown consumer class." });
+            if (request.PipelineType is not null && !PipelineTypes.IsValid(request.PipelineType))
+                return Results.BadRequest(new { error = "Unknown pipeline type." });
+            if (request.Override is { PinMode: not ("preference" or "hard") })
+                return Results.BadRequest(new { error = "pinMode must be preference or hard." });
+            var updated = settings.SetModelSelectionOverride(projectName, consumer, request.Override,
+                request.PipelineType is null ? null : PipelineTypes.Normalize(request.PipelineType));
+            return Results.Ok(new { projectName, modelSelectionOverrides = updated.ModelSelectionOverrides });
+        });
+
         // Per-project pipeline-step override. Sets enabled / mode / model for
         // one step; an all-null body clears the override (revert to default).
         app.MapPut("/api/projects/{projectName}/pipeline-step", (
@@ -543,6 +570,8 @@ public static class ProjectSettingsEndpoints
                 return Results.BadRequest(new { error = "stepId is required" });
             if (!PipelineTypes.IsValid(req.PipelineType))
                 return Results.BadRequest(new { error = $"Unknown pipeline type '{req.PipelineType}'" });
+            if (req.PinMode is not ("preference" or "hard"))
+                return Results.BadRequest(new { error = "pinMode must be preference or hard." });
             var pipelineType = PipelineTypes.Normalize(req.PipelineType);
 
             // Reject step ids the catalogue does not know so a typo fails loud
@@ -631,11 +660,22 @@ public static class ProjectSettingsEndpoints
                 CliType = req.CliType,
                 Model = req.Model,
                 ThinkingLevel = req.ThinkingLevel,
+                PinMode = req.PinMode,
                 Prompt = normalizedPrompt,
                 PromptBaseDefaultSha = promptBaseDefaultSha,
                 PromptBaseDefaultContent = promptBaseDefaultContent,
                 Condition = req.Condition,
             });
+            settings.SetModelSelectionStepOverride(projectName, pipelineType, stepId,
+                string.IsNullOrWhiteSpace(req.Model) && string.IsNullOrWhiteSpace(req.CliType)
+                    ? null
+                    : new ModelSelectionOverride
+                    {
+                        Primary = new AgentStudio.TaskServer.Contracts.SelectionRoute(
+                            req.CliType ?? (req.Model?.StartsWith("gpt-", StringComparison.OrdinalIgnoreCase) == true ? "codex" : "claude"),
+                            req.Model, req.ThinkingLevel),
+                        PinMode = req.PinMode,
+                    });
             ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
             return Results.Ok(new
             {
@@ -645,6 +685,7 @@ public static class ProjectSettingsEndpoints
                     ?? new Dictionary<string, PipelineStepSetting>(),
                 pipelineStepsByType = settings.Get(projectName).PipelineStepsByType
                     ?? new Dictionary<string, Dictionary<string, PipelineStepSetting>>(),
+                modelSelectionOverrides = settings.Get(projectName).ModelSelectionOverrides,
             });
         });
 
@@ -1092,6 +1133,7 @@ public static class ProjectSettingsEndpoints
                 ? project.RootPath
                 : project.RepositoryPath;
             var verifyPlan = VerifyCommandPlanner.Plan(repositoryPath, profile);
+            var verifyDefinition = VerifyDefinitionPolicy.Inspect(repositoryPath, profile);
             var repositoryDefinition = ProjectDefinitionReader.ReadWorkspace(repositoryPath);
             var contradictions = BuildProfileContradictionPolicy.Evaluate(
                 repositoryDefinition.IsValid ? repositoryDefinition.Definition : null,
@@ -1108,6 +1150,21 @@ public static class ProjectSettingsEndpoints
                 {
                     source = verifyPlan.Source,
                     commands = verifyPlan.Commands,
+                },
+                // AGT-3428: shown at setup, before any card reaches the merge.
+                verifyDefinition = new
+                {
+                    state = verifyDefinition.State switch
+                    {
+                        VerifyDefinitionState.Missing => "missing",
+                        VerifyDefinitionState.DeclaredEmpty => "declared-empty",
+                        _ => "derived",
+                    },
+                    path = ProjectPreparationPaths.Definition,
+                    message = verifyDefinition.Message,
+                    exampleStack = verifyDefinition.Example?.Stack,
+                    exampleDefinition = verifyDefinition.Example?.Definition,
+                    examplePrepareScript = verifyDefinition.Example?.PrepareScript,
                 },
                 contradictions,
             });
@@ -1136,6 +1193,7 @@ public static class ProjectSettingsEndpoints
                 BuildCmds = req.BuildCmds,
                 TestCmds = req.TestCmds,
                 Lockfiles = req.Lockfiles,
+                InstallCoveredByLockfiles = req.InstallCoveredByLockfiles,
                 PreserveGlobs = req.PreserveGlobs,
                 PoolSize = req.PoolSize,
             });
@@ -1191,15 +1249,35 @@ public static class ProjectSettingsEndpoints
             });
         }).RequireStudioRole(StudioRoles.Owner);
 
+        // AGT-3400 S4: review.package. Shadow forms Dossier wave packages beside
+        // the unchanged per-card review; dossier (live, S5) is not accepted yet.
+        app.MapPut("/api/projects/{projectName}/review-package", (
+            string projectName,
+            ReviewPackageSettingRequest req,
+            ProjectSettingsService settings,
+            TaskScannerService scanner) =>
+        {
+            var known = scanner.GetWatchPaths().Any(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            var mode = AgentStudio.TaskServer.Contracts.ReviewPackageModes.Normalize(req.Mode);
+            if (mode is null)
+                return Results.BadRequest(new { error = "mode must be 'off', 'shadow' or 'dossier'." });
+            if (!AgentStudio.TaskServer.Contracts.ReviewPackageModes.IsImplemented(mode))
+                return Results.BadRequest(new { error = "review.package 'dossier' needs per-member settlement (AGT-3400 S5); use 'off' or 'shadow'." });
+            settings.SetReviewPackage(projectName, mode);
+            return Results.Ok(new { mode = ReviewPackageSetting.Resolve(settings.Get(projectName)) });
+        }).RequireStudioRole(StudioRoles.Owner);
+
         app.MapGet("/api/projects/{projectName}/batch-gate", (string projectName,
-            ProjectSettingsService settings, TaskScannerService scanner) =>
+            ProjectSettingsService settings, TaskScannerService scanner, IConfiguration configuration) =>
             scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
-                ? Results.Ok(BatchGateSettingsResponse(settings.Get(projectName).BatchGate))
+                ? Results.Ok(BatchGateSettingsResponse(settings.Get(projectName).BatchGate, configuration, projectName))
                 : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
         app.MapPut("/api/projects/{projectName}/batch-gate", async (string projectName,
             HttpContext context, ProjectSettingsService settings, TaskScannerService scanner,
             ProjectRegistry projects, GitService git, RemoteReviewPlanBuilder remoteReviewPlans,
-            ReviewAttemptTaskLifecycleService reviewLifecycle,
+            ReviewAttemptTaskLifecycleService reviewLifecycle, IConfiguration configuration,
             ILogger<ProjectSettingsService> logger) =>
         {
             if (!scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
@@ -1236,11 +1314,43 @@ public static class ProjectSettingsEndpoints
                     logger.LogError(ex, "batch-gate-replan-failed project={Project}", projectName);
                 }
             });
-            return Results.Ok(BatchGateSettingsResponse(settings.Get(projectName).BatchGate));
+            return Results.Ok(BatchGateSettingsResponse(settings.Get(projectName).BatchGate, configuration, projectName));
         });
         app.MapGet("/api/projects/{projectName}/batch-gate/report", (string projectName, BatchGatePilotService pilot, TaskScannerService scanner) =>
             scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
                 ? Results.Ok(pilot.Report(projectName))
+                : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
+        app.MapGet("/api/projects/{projectName}/batch-gate/failed-tests", (string projectName,
+            int? windowDays, BatchGateStore store, TaskScannerService scanner, TimeProvider clock) =>
+        {
+            var project = scanner.GetWatchPaths().FirstOrDefault(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (project is null)
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (windowDays is < 1 or > 90)
+                return Results.BadRequest(new { error = "windowDays must be between 1 and 90." });
+            return Results.Ok(store.FailedTestRanking(project.Name, clock.GetUtcNow(), windowDays ?? 7));
+        });
+        // AGT-3577: the gate evidence of the isolation run that proved a member red or green.
+        app.MapGet("/api/projects/{projectName}/batch-gate/isolation-evidence", (string projectName,
+            string? parentBatchId, string? taskKey, BatchGateStore store, TaskScannerService scanner) =>
+        {
+            var project = scanner.GetWatchPaths().FirstOrDefault(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (project is null)
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (string.IsNullOrWhiteSpace(parentBatchId) || string.IsNullOrWhiteSpace(taskKey))
+                return Results.BadRequest(new { error = "parentBatchId and taskKey are required." });
+            var path = store.IsolationEvidencePath(project.Name, parentBatchId, taskKey);
+            return path is null
+                ? Results.NotFound(new { error = "No isolation evidence is recorded for this member." })
+                : Results.File(path, "text/plain; charset=utf-8");
+        });
+        app.MapGet("/api/projects/{projectName}/batch-gate/ledger", (string projectName,
+            DateOnly? day, string? type, int? page, int? pageSize,
+            GateRunLedger ledger, TaskScannerService scanner) =>
+            scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
+                ? Results.Ok(ledger.Read(projectName, day, type, page ?? 1, pageSize ?? 50))
                 : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
         app.MapGet("/api/projects/{projectName}/batch-gate/state", (string projectName,
             int? history, BatchGatePilotService pilot,
@@ -1581,7 +1691,8 @@ public static class ProjectSettingsEndpoints
                 git, repositoryPath, integrationRef, subject.ExpectedResultSha)
             : null;
 
-    private static object BatchGateSettingsResponse(BatchGateFormationOptions value) => new
+    internal static object BatchGateSettingsResponse(BatchGateFormationOptions value,
+        IConfiguration? configuration, string project = "Agent Studio") => new
     {
         settings = new
         {
@@ -1594,11 +1705,19 @@ public static class ProjectSettingsEndpoints
             value.LookAheadMinutes,
             urgentTags = value.EffectiveUrgentTags,
             value.RiskPolicy,
+            value.Calibration,
+            value.Stacking,
             value.Overlap,
             value.ReviewTestLevel,
             value.GateTimeoutMinutes,
+            value.MaximumWaitMinutes,
+            value.FlightLeaseDeadlineMinutes,
+            preCheckEnabled = value.PreCheckFor(project),
             advisor = value.Advisor ?? new BatchGateAdvisorOptions(),
         },
+        // The mode that actually applies on this host: a configured advisor the
+        // host cannot run reports "off" with its reason (AGT-3411).
+        advisorEffective = BatchGateAdvisorCarrierPolicy.Resolve(value.Advisor, configuration),
         limits = new { hardMaximumSize = 8 },
     };
 

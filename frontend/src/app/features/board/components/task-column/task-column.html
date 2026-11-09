@@ -138,10 +138,14 @@
                 (click)="collapseToggle.emit()">‹</button>
       </div>
       <app-batch-lane-indicator [laneState]="state()" [projectScope]="projectScope()" [jobs]="allBoardJobs()" />
+      @if (state() === '2-ready') { <app-ready-wait-split [jobs]="jobs()" /> }
       @if (state() === '5-human-review') {
         <app-decision-backlog-hint [tasks]="jobs()" [allTasks]="allBoardJobs()" (taskClick)="jobClick.emit($event)" />
       }
-      <div class="column__body"
+      @if (perProjectNote(); as note) { <p class="column__order-note" data-testid="lane-per-project-note">{{ note }}</p> }
+      <div class="column__body" #laneBody role="region" tabindex="0" [attr.aria-label]="title() + ' cards'"
+           [class.column__body--windowed]="windowed()"
+           (scroll)="cardWindowState.onScroll($event)" (keydown)="cardWindowState.onKeyDown($event)"
            data-board-lane-scroll
            [attr.data-testid]="'lane-scroll-' + state()">
         @if (isArchive()) {
@@ -186,69 +190,57 @@
           } @else if (archiveLoading() && !archiveLoaded()) {
             <div class="column__empty" data-testid="archive-loading">Loading archived tasks…</div>
           }
-        } @else if (isReview()) {
+        } @else if (isReview() && !windowed()) {
           @for (group of reviewGroups(); track group.kind) {
-            <section class="column__subsection"
-                     [attr.data-testid]="'review-subsection-' + group.kind">
+            <section class="column__subsection" [attr.data-testid]="'review-subsection-' + group.kind">
               <h3 class="column__subsection-title">
                 <span class="column__subsection-icon" aria-hidden="true">{{ group.icon }}</span>
-                <span>{{ group.label }}</span>
-                <span class="column__subsection-count">{{ group.jobs.length }}</span>
+                <span>{{ group.label }}</span><span class="column__subsection-count">{{ group.jobs.length }}</span>
               </h3>
               @for (job of group.jobs; track job.taskKey) {
-                <app-job-card
-                  [job]="job"
-                  [compact]="compact()"
-                  [highlightJobId]="highlightJobId()"
-                  [mutationsBlocked]="mutationsBlocked()"
-                  (click)="jobClick.emit(job)"
-                  (deleteRequested)="jobDeleteRequest.emit($event)"
-                  [draggable]="!mutationsBlocked()"
-                  (dragstart)="onDragStart($event, job)" />
+                <app-job-card [job]="job" [compact]="compact()" [highlightJobId]="highlightJobId()"
+                              [mutationsBlocked]="mutationsBlocked()" [draggable]="!mutationsBlocked()"
+                              (click)="jobClick.emit(job)" (deleteRequested)="jobDeleteRequest.emit($event)"
+                              (dragstart)="onDragStart($event, job)" />
               }
-              @if (group.jobs.length === 0) {
-                <div class="column__empty column__empty--subsection">No tasks</div>
-              }
+              @if (group.jobs.length === 0) { <div class="column__empty column__empty--subsection">No tasks</div> }
             </section>
           }
+        } @else if (windowed()) {
+          <app-lane-card-window [window]="cardWindow()" [count]="jobs().length" [review]="isReview()" [compact]="compact()"
+            [highlightJobId]="highlightJobId()" [mutationsBlocked]="mutationsBlocked()" [reorderDisabled]="reorderDisabled()" [dropIndex]="dropIndex"
+            (jobClick)="jobClick.emit($event)" (deleteRequested)="jobDeleteRequest.emit($event)"
+            (pickNextRequested)="jobPickNextRequest.emit($event)"
+            (dragStarted)="onDragStart($event.event, $event.job)"
+            (slotDragOver)="onCardDragOver($event.event, $event.index)"
+            (slotDragLeave)="onCardDragLeave()" (slotDrop)="onCardDrop($event.event, $event.index)" />
         } @else {
           @for (job of jobs(); track job.taskKey; let i = $index) {
             @if (!reorderDisabled() && !mutationsBlocked()) {
-              <div class="column__drop-zone"
-                   [class.column__drop-zone--active]="dropIndex === i"
-                   (dragover)="onCardDragOver($event, i)"
-                   (dragleave)="onCardDragLeave()"
-                   (drop)="onCardDrop($event, i)">
-              </div>
+              <div class="column__drop-zone" [class.column__drop-zone--active]="dropIndex === i"
+                   (dragover)="onCardDragOver($event, i)" (dragleave)="onCardDragLeave()"
+                   (drop)="onCardDrop($event, i)"></div>
             }
-            <app-job-card
-              [job]="job"
-              [compact]="compact()"
-              [highlightJobId]="highlightJobId()"
-              [mutationsBlocked]="mutationsBlocked()"
-              (click)="jobClick.emit(job)"
-              (deleteRequested)="jobDeleteRequest.emit($event)"
-              (pickNextRequested)="jobPickNextRequest.emit($event)"
-              [draggable]="!mutationsBlocked()"
-              (dragstart)="onDragStart($event, job)" />
+            <app-job-card [job]="job" [compact]="compact()" [highlightJobId]="highlightJobId()"
+                          [mutationsBlocked]="mutationsBlocked()" [draggable]="!mutationsBlocked()"
+                          (click)="jobClick.emit(job)" (deleteRequested)="jobDeleteRequest.emit($event)"
+                          (pickNextRequested)="jobPickNextRequest.emit($event)"
+                          (dragstart)="onDragStart($event, job)" />
           }
           @if (!reorderDisabled() && !mutationsBlocked()) {
             <div class="column__drop-zone column__drop-zone--last"
+                 data-testid="lane-drop-slot-end"
                  [class.column__drop-zone--active]="dropIndex === jobs().length"
-                 (dragover)="onCardDragOver($event, jobs().length)"
-                 (dragleave)="onCardDragLeave()"
-                 (drop)="onCardDrop($event, jobs().length)">
-            </div>
+                 (dragover)="onCardDragOver($event, jobs().length)" (dragleave)="onCardDragLeave()"
+                 (drop)="onCardDrop($event, jobs().length)"></div>
           }
-          @if (jobs().length === 0) {
-            <div class="column__empty">No tasks</div>
-          }
-          @if (canAddTask()) {
-            <button type="button" class="column__add" (click)="addTask.emit(state())">
-              <span class="column__add-icon">＋</span>
-              <span>Add task</span>
-            </button>
-          }
+          @if (jobs().length === 0) { <div class="column__empty">No tasks</div> }
+        }
+        @if (canAddTask()) {
+          <button type="button" class="column__add" data-testid="lane-add-task"
+                  (click)="addTask.emit(state())">
+            <span class="column__add-icon">＋</span><span>Add task</span>
+          </button>
         }
       </div>
     </div>

@@ -147,7 +147,7 @@ test.describe('wait on nearby quota reset', () => {
 
     await page.goto('/');
     await hideRecoveryOverlay(page);
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await page.getByTestId('workspace-settings-rail-caps').click();
 
     const panel = page.getByTestId('cli-admin-panel');
@@ -165,7 +165,7 @@ test.describe('wait on nearby quota reset', () => {
     }
 
     const settingsTab = page.getByRole('tab', { name: /Workspace settings/ });
-    await settingsTab.getByRole('button', { name: 'Close tab' }).click();
+    await page.getByTestId('studio-tab-close-workspace-settings').click();
     await expect(settingsTab).not.toBeVisible();
 
     const [project] = await api<WatchPath[]>(devBackend.baseUrl, '/api/watch-paths');

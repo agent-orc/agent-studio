@@ -26,3 +26,15 @@
 .verify-notice__badge { margin-left: auto; padding: var(--studio-spacing-1) var(--studio-spacing-2); border: 1px solid var(--studio-card-muted-border); border-radius: 999px; background: var(--studio-card-muted-bg); color: var(--studio-fg-muted); font-size: 0.68rem; letter-spacing: 0.04em; text-transform: uppercase; }
 .verify-notice__link { color: var(--studio-accent, var(--studio-fg-strong)); text-decoration: underline; }
 .verify-notice__link:hover { color: var(--studio-fg-strong); }
+.verify-notice--missing .verify-notice__dot { background: var(--studio-warn); }
+.verify-notice__example {
+  margin: 0;
+  padding: var(--studio-spacing-2);
+  border: 1px solid var(--studio-card-muted-border);
+  border-radius: 6px;
+  color: var(--studio-fg);
+  font-family: var(--studio-font-mono, monospace);
+  font-size: 0.75rem;
+  white-space: pre;
+  overflow-x: auto;
+}

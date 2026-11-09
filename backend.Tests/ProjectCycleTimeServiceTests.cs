@@ -164,6 +164,9 @@ public sealed class ProjectCycleTimeServiceTests : IDisposable
         Assert.Equal(row.LeadTimeSeconds, Math.Round(s.Sum, 1));
         Assert.Equal(841 + 461, row.ReviewRunSeconds);
         Assert.DoesNotContain("review-start-unknown", row.DataGaps);
+        // Every aspect ran 15 s in the first round and 10 s in the second.
+        Assert.Equal(4, row.ReviewAspectSeconds.Count);
+        Assert.All(row.ReviewAspectSeconds.Values, seconds => Assert.Equal(25, seconds));
     }
 
     [Fact]
@@ -239,6 +242,8 @@ public sealed class ProjectCycleTimeServiceTests : IDisposable
         Assert.Equal(3 * 60, row.Stages.QueueWait);
         Assert.Equal(row.LeadTimeSeconds, Math.Round(row.Stages.Sum, 1));
         Assert.Equal((completed - claim).TotalSeconds, row.CycleTimeSeconds);
+        // Without ledger aspect rows the local pipeline step is the source.
+        Assert.Equal(new Dictionary<string, double> { ["aspect-code-quality"] = 30 }, row.ReviewAspectSeconds);
     }
 
     [Fact]

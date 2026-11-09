@@ -41,14 +41,16 @@ if grep -Eq 'docker\.sock|podman\.sock|^VOLUME' "$repo_root/deploy/work-containe
 fi
 for version in CODEX_CLI_VERSION CLAUDE_CLI_VERSION; do
     expected="$(grep -E "^ARG $version=" "$repo_root/runner/Dockerfile")"
-    grep -Fx "$expected" "$repo_root/deploy/work-container/Dockerfile" > /dev/null || {
-        echo "deploy/work-container/Dockerfile $version differs from runner/Dockerfile" >&2
-        exit 1
-    }
+    for image in backend/Dockerfile deploy/work-container/Dockerfile; do
+        grep -Fx "$expected" "$repo_root/$image" > /dev/null || {
+            echo "$image $version differs from runner/Dockerfile" >&2
+            exit 1
+        }
+    done
 done
 
-grep -F 'ARG CODEX_CLI_VERSION=0.154.0' "$repo_root/runner/Dockerfile" > /dev/null
-grep -F 'ARG CLAUDE_CLI_VERSION=2.1.269' "$repo_root/runner/Dockerfile" > /dev/null
+grep -F 'ARG CODEX_CLI_VERSION=0.166.0' "$repo_root/runner/Dockerfile" > /dev/null
+grep -F 'ARG CLAUDE_CLI_VERSION=2.1.305' "$repo_root/runner/Dockerfile" > /dev/null
 grep -F '"@openai/codex@${CODEX_CLI_VERSION}"' "$repo_root/runner/Dockerfile" > /dev/null
 grep -F '"@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}"' "$repo_root/runner/Dockerfile" > /dev/null
 
@@ -161,7 +163,17 @@ for (const service of ["orchestrator-api", "orchestrator-api-dev"]) {
   if (Object.hasOwn(services[service].environment ?? {}, "TaskRepository"))
     throw new Error(`${service} must not configure a compatibility TaskRepository`);
 }
+// Local state below the service account HOME (~/.local/share) must survive a
+// container recreate, so HOME is a named volume, never the container layer.
+for (const [service, home] of [
+  ["orchestrator-api", "/data/home"], ["orchestrator-api-dev", "/data/home"],
+  ["task-server", "/var/lib/agent-orchestrator/home"], ["task-server-dev", "/var/lib/agent-orchestrator/home"]]) {
+  if (!services[service].volumes?.some(volume => volume.type === "volume" && volume.target === home))
+    throw new Error(`${service} must keep its HOME ${home} on a named volume`);
+}
 ' "$compose_json"
+grep -F 'VOLUME ["/data/workspace", "/data/projects", "/data/home"]' "$repo_root/backend/Dockerfile" > /dev/null
+grep -F -- '--home-dir /var/lib/agent-orchestrator/home' "$repo_root/task-server/Dockerfile" > /dev/null
 
 # The operator-facing profile table must name exactly the services each
 # non-dev profile starts, so the documented install contract cannot drift.

@@ -134,7 +134,7 @@ public sealed class GitFactsBudgetTests(GitFactsBoardFixture board)
 
         var before = runs.Completed.Count;
         indexer.RequestRefresh(GitFactsBoardFixture.ProjectName, "task-event");
-        var run = await runs.NextAsync(before);
+        var run = await runs.NextAsync(before, candidate => candidate.Trigger == "task-event");
 
         Assert.Equal("task-event", run.Trigger);
         Assert.Contains(run.Outcome, IndexRunLog.CompleteOutcomes);
@@ -142,6 +142,26 @@ public sealed class GitFactsBudgetTests(GitFactsBoardFixture board)
         // configuration generation to the watcher, so the run starts none.
         Assert.Equal(0, run.Spawns);
         Assert.Empty(runs.Failures);
+    }
+
+    [Fact]
+    public async Task Index_run_log_waits_for_the_requested_trigger_when_background_work_finishes_first()
+    {
+        var runs = new IndexRunLog();
+        var logger = runs.CreateLogger("git-index");
+        var requested = runs.NextAsync(0, run => run.Trigger == "task-event");
+
+        logger.LogInformation(
+            "git-index-run repository={Repository} spawns={Spawns} ms={ElapsedMs} trigger={Trigger} outcome={Outcome}",
+            GitFactsBoardFixture.ProjectName, 1, 5, "facts", "facts");
+        Assert.False(requested.IsCompleted);
+
+        logger.LogInformation(
+            "git-index-run repository={Repository} spawns={Spawns} ms={ElapsedMs} trigger={Trigger} outcome={Outcome}",
+            GitFactsBoardFixture.ProjectName, 0, 5, "task-event", "unchanged");
+        var run = await requested;
+        Assert.Equal("task-event", run.Trigger);
+        Assert.Equal(0, run.Spawns);
     }
 
     [Fact]
@@ -196,8 +216,10 @@ public sealed class GitFactsBudgetTests(GitFactsBoardFixture board)
     internal static async Task IndexedAsync(GitReadCensusHost host)
     {
         var indexer = host.Services.GetRequiredService<GitStateIndexService>();
+        var reader = host.Services.GetRequiredService<GitCardFactReader>();
         await Until(() => indexer.GetRepositoryStatuses()
-            .Any(status => status.ProjectName == GitFactsBoardFixture.ProjectName && status.GitStateAt is not null));
+            .Any(status => status.ProjectName == GitFactsBoardFixture.ProjectName && status.GitStateAt is not null)
+            && reader.Read(host.Board.WatchPath).Facts?.State == GitPublishedFacts.ReadyState);
     }
 
     /// <summary>Polls a background condition; the budget only turns a hang into a failure.</summary>
@@ -259,6 +281,12 @@ public sealed class IndexRunLog : ILoggerProvider
     {
         await GitFactsBudgetTests.Until(() => _completed.Count > afterCount);
         return Completed[afterCount];
+    }
+
+    public async Task<IndexRun> NextAsync(int afterCount, Func<IndexRun, bool> match)
+    {
+        await GitFactsBudgetTests.Until(() => Completed.Skip(afterCount).Any(match));
+        return Completed.Skip(afterCount).First(match);
     }
 
     public async Task<IndexRun> FirstAsync(Func<IndexRun, bool> match)

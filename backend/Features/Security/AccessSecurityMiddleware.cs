@@ -14,11 +14,20 @@ public sealed class AccessSecurityMiddleware
 {
     public const string HumanPrincipalItem = "AccessSecurity.HumanPrincipal";
     public const string RunnerPrincipalItem = "AccessSecurity.RunnerPrincipal";
+    public const string RunnerCredentialExpiresHeader = "X-Principal-Credential-Expires-At";
     public const string ServiceAccountPrincipalItem = "AccessSecurity.ServiceAccountPrincipal";
     /// <summary>The <see cref="RequestAccess"/> captured with the request's permission decision.</summary>
     public const string RequestAccessItem = "AccessSecurity.RequestAccess";
     public const string AttributionClientIdItem = "AccessSecurity.AttributionClientId";
+    /// <summary>The operator policy step's <see cref="OperatorPolicyDecision"/> for an operator session request (SM-4).</summary>
+    public const string OperatorPolicyItem = "AccessSecurity.OperatorPolicy";
+    /// <summary>The id of the Owner approval a T2 operator request runs under (SM-5).</summary>
+    public const string OperatorApprovalItem = "AccessSecurity.OperatorApproval";
+    private const string ParameterDigestItem = "AccessSecurity.ParameterDigest";
     private const string TaskResolutionItem = "AccessSecurity.TaskResolution";
+    private const string AuditTargetItem = "AccessSecurity.AuditTarget";
+    /// <summary>Bodies above this size are digested by length only, without buffering them.</summary>
+    private const long MaxDigestedBodyBytes = 16L * 1024 * 1024;
     private const string SkipTaskResolutionItem = "AccessSecurity.SkipTaskResolution";
 
     private readonly RequestDelegate _next;
@@ -213,6 +222,10 @@ public sealed class AccessSecurityMiddleware
         {
             context.Items[RunnerPrincipalItem] = runner;
             context.Items["ClientId"] = runner.RunnerId;
+            // SM-9: every answer names the credential's end so the host warns ahead of it.
+            if (runner.CredentialExpiresAt is { } credentialExpiresAt)
+                context.Response.Headers[RunnerCredentialExpiresHeader] =
+                    credentialExpiresAt.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture);
         }
         if (serviceAccount is null)
         {
@@ -220,10 +233,17 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
-        // Every call a service-account or API-token bearer makes is audited,
-        // refused calls included.
+        // Every call a service-account, API-token, or operator session bearer
+        // makes is audited, refused calls included. An operator session runs
+        // inside its actor scope, so every timeline event and audit entry the
+        // request writes names the session (security model SM-1).
         context.Items[ServiceAccountPrincipalItem] = serviceAccount;
         context.Items["ClientId"] = serviceAccount.ActorId;
+        var parameterDigest = await ParameterDigestAsync(context.Request, path);
+        context.Items[ParameterDigestItem] = parameterDigest;
+        var breakGlass = serviceAccount.Operator is { } emergencyActor
+            ? _store.ActiveBreakGlassWindow(emergencyActor.SessionId) : null;
+        using var operatorScope = serviceAccount.Operator is { } operatorActor ? OperatorActorScope.Enter(operatorActor) : null;
         var faulted = false;
         try
         {
@@ -236,8 +256,15 @@ public sealed class AccessSecurityMiddleware
         }
         finally
         {
-            _store.AppendServiceAccountAudit(serviceAccount, context.Request.Method, path,
-                faulted ? StatusCodes.Status500InternalServerError : context.Response.StatusCode);
+            var status = faulted ? StatusCodes.Status500InternalServerError : context.Response.StatusCode;
+            _store.AppendServiceAccountAudit(serviceAccount, context.Request.Method, path, status,
+                AuditTarget(context, path), parameterDigest.Value, context.Items[OperatorPolicyItem] as OperatorPolicyDecision);
+            if (breakGlass is not null)
+                _store.AppendBreakGlassRequestAudit(breakGlass, serviceAccount.ActorId,
+                    context.Request.Method + " " + path, status < 400 ? "ok" : "refused",
+                    AuditTarget(context, path), parameterDigest.Value, status);
+            // SM-5: the result of a request an approval admitted is recorded against that approval.
+            if (context.Items[OperatorApprovalItem] is string approvalId) _store.RecordOperatorApprovalResult(approvalId, status);
         }
     }
 
@@ -302,6 +329,11 @@ public sealed class AccessSecurityMiddleware
         // to a live deploy-job or run lease and checks the matching scope.
         if (path.Equals(AgentStudio.Secrets.SecretEndpoints.ResolvePath, StringComparison.OrdinalIgnoreCase))
         {
+            if (serviceAccount is not null)
+            {
+                await Reject(context, 403, "secret-resolve-denied", "Service accounts and API tokens never read secret values.");
+                return;
+            }
             if (runner is null) { await Reject(context, 401, "runner-authentication-required", "A Runner service credential is required."); return; }
             await _next(context);
             return;
@@ -313,6 +345,10 @@ public sealed class AccessSecurityMiddleware
         var originalPath = context.Items[AgentStudio.Host.StudioV1LegacyRouteAlias.OriginalPathItem] as string;
         var humanTaskFileRead = human is not null && IsRunnerTaskFileRead(context.Request.Method, path);
         var productTaskFileRead = humanTaskFileRead && ContributorAccessPolicy.IsProductSession(human!.User);
+        // A signed-in member reads card attachments through the route's own
+        // permission; only a service credential takes the runner branch.
+        var humanTaskInputRead = humanTaskFileRead
+            || human is not null && IsRunnerTaskAttachmentRead(context.Request.Method, path);
         if (productTaskFileRead
             && !ContributorAccessPolicy.Allows(context.Request.Method, path, null, false))
         {
@@ -322,7 +358,7 @@ public sealed class AccessSecurityMiddleware
         var requiredRunnerScope = RequiredRunnerScope(context.Request.Method, path)
             ?? (originalPath is null ? null : RequiredRunnerScope(context.Request.Method, NormalizePath(originalPath)));
         if (requiredRunnerScope is not null
-            && (human is null || !(humanTaskFileRead || IsHumanSessionRead(context.Request.Method, path)
+            && (human is null || !(humanTaskInputRead || IsHumanSessionRead(context.Request.Method, path)
                 || originalPath is not null && IsHumanSessionRead(context.Request.Method, NormalizePath(originalPath)))))
         {
             if (runner is null) { await Reject(context, 401, "runner-authentication-required", "A Runner service credential is required."); return; }
@@ -333,10 +369,18 @@ public sealed class AccessSecurityMiddleware
                 await Reject(context, 403, "runner-identity-denied", "A Runner may access only its enrolled identity.");
                 return;
             }
-            if (IsRunnerTaskFileRead(context.Request.Method, path)
+            if ((IsRunnerTaskFileRead(context.Request.Method, path) || IsRunnerTaskAttachmentRead(context.Request.Method, path))
                 && !RunnerOwnsTaskInput(path, runner.RunnerId))
             {
-                await Reject(context, 403, "runner-task-denied", "A Runner may read prompt.md only while it holds that task's live lease.");
+                await Reject(context, 403, "runner-task-denied",
+                    "A Runner may read prompt.md and the card's attachments only while it holds that task's live lease.");
+                return;
+            }
+            // SM-9: a card is read only by the runner that holds its lease.
+            if (RunnerCardReadKey(context.Request.Method, originalPath is null ? path : NormalizePath(originalPath)) is { } cardKey
+                && !RunnerHoldsLease(cardKey, runner.RunnerId))
+            {
+                await Reject(context, 403, "runner-card-not-leased", "A runner may read a card only while it holds that card's lease.");
                 return;
             }
             await _next(context);
@@ -346,6 +390,17 @@ public sealed class AccessSecurityMiddleware
         if (runner is not null && IsRunnerSelfRead(context.Request.Method, path, runner.RunnerId))
         {
             await _next(context);
+            return;
+        }
+
+        // A host also calls feature routes that only the standalone Task
+        // Server maps. A runner credential learns that the route does not
+        // exist here, so the host pauses that loop instead of retrying a
+        // refusal. An anonymous caller still gets 401 below. No middleware
+        // after this one answers an unrouted request.
+        if (runner is not null && human is null && context.GetEndpoint() is null)
+        {
+            await RejectUnmappedRoute(context);
             return;
         }
 
@@ -366,6 +421,14 @@ public sealed class AccessSecurityMiddleware
                     ? "Sign in with an owner or operator account to manage the Task Server."
                     : "An authenticated Studio session is required.",
                 loginUrl: managementRequest ? "/api/auth/login" : null);
+            return;
+        }
+        if (human.Session.SecondFactorEnrollmentOnly
+            && path is not "/api/auth/session" and not "/api/auth/logout" and not "/api/auth/change-password"
+            && !path.StartsWith("/api/auth/totp/", StringComparison.Ordinal)
+            && !path.StartsWith("/api/auth/passkeys/", StringComparison.Ordinal))
+        {
+            await Reject(context, 403, "second-factor-enrollment-required", "Register a second factor before continuing.");
             return;
         }
         if (human.User.MustChangePassword && path is not "/api/auth/change-password" and not "/api/auth/logout" and not "/api/auth/session")
@@ -559,8 +622,46 @@ public sealed class AccessSecurityMiddleware
     /// </summary>
     private async Task AuthorizeServiceAccount(HttpContext context, ServiceAccountPrincipal account, string path)
     {
-        if (path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase))
+        // SM-4: the policy step is the only way from an operator session to an
+        // effect. A request outside the catalogue ends here, before any
+        // binding is read; T1 waits for its grant below. A T2 request waits
+        // below for the Owner's approval of exactly this request (SM-5), once
+        // the floors and bindings admitted it; a T2 request the route floor
+        // refuses to every operator session (access administration, the Task
+        // Server plane) ends here and never becomes an approval request.
+        OperatorOperation? operation = null;
+        var breakGlass = account.Operator is { } emergencyActor
+            ? _store.ActiveBreakGlassWindow(emergencyActor.SessionId) : null;
+        if (account.Operator is not null)
+        {
+            operation = await OperatorRequestClassifier.ClassifyAsync(context, IsSafe(context.Request.Method, path),
+                context.RequestServices?.GetService<IOperatorGateEvidence>(), OperatorEnvironmentKind,
+                key => RouteValue(context, path, context.GetEndpoint(), key));
+            var gate = breakGlass is null || operation is null ? OperatorPolicy.TierGate(operation) : null;
+            var awaitsApproval = breakGlass is null && operation is { Tier: OperatorTier.T2 } && !IsTokenDeniedRoute(path);
+            if (gate is not null && !awaitsApproval) context.Items[OperatorPolicyItem] = gate;
+            if (breakGlass is not null && operation is not null)
+                context.Items[OperatorPolicyItem] = OperatorPolicyDecision.Admit(operation);
+            if (gate is { Admitted: false } && !awaitsApproval)
+            {
+                await Reject(context, 403, gate.Reason!, gate.Message, policy: gate);
+                return;
+            }
+            // A request naming an approval that cannot admit it (used, changed, expired, another session's)
+            // is refused here, whatever became of its target; the approval is consumed only below.
+            if (awaitsApproval && ApprovalHeader(context) is { } approvalId)
+            {
+                var check = _store.RedeemOperatorApproval(approvalId, account.AccountId, account.Operator.SessionId, operation!,
+                    ((ParameterDigest)context.Items[ParameterDigestItem]!).Value, consume: false);
+                if (!check.Admitted)
+                {
+                    context.Items[OperatorPolicyItem] = check;
+                    await Reject(context, 403, check.Reason!, check.Message, policy: check);
+                    return;
+                }
+            }
+        }
+        if (IsTokenDeniedRoute(path))
         {
             await Reject(context, 403, "token-route-denied", "Service accounts and API tokens cannot call access administration or Task Server routes.");
             return;
@@ -582,11 +683,21 @@ public sealed class AccessSecurityMiddleware
             await Reject(context, 403, "human-session-required", "A service account has no Studio session.");
             return;
         }
+        // An operator session never administers access, reads or writes the
+        // audit trail, takes Owner-reserved installation changes, or resolves
+        // a secret value, whatever its bindings say.
+        if (account.Operator is not null && OperatorDeniedPermission(required.Permission))
+        {
+            await Reject(context, 403, "operator-route-denied",
+                "An operator agent session cannot administer access, change the audit trail, or resolve secrets.");
+            return;
+        }
         var safeMethod = IsSafe(context.Request.Method, path);
         var (subject, bindings) = _store.PrincipalBindings(IamPrincipalKind.ServiceAccount, account.AccountId);
         context.Items[SkipTaskResolutionItem] = (safeMethod || account.Origin != ServiceAccountOrigins.ApiToken)
             && WorkspaceBindingsDecide(subject, bindings);
         var target = await TargetAsync(context, path, required, safeMethod);
+        context.Items[AuditTargetItem] = target;
         var decision = PermissionEvaluator.Evaluate(required.Permission, subject, bindings, target, SameProject);
         var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
         if (await RejectedByRoleRequirement(context, projected.LegacyRole)) return;
@@ -598,6 +709,14 @@ public sealed class AccessSecurityMiddleware
         if (!safeMethod && projected.LegacyRole == StudioRoles.Viewer)
         {
             await Reject(context, 403, "role-denied", "Viewer role is read-only.");
+            return;
+        }
+        // The operator agent role keeps installation operation read-only: its
+        // writes address projects, whatever principal holds it (OP-1).
+        if (!safeMethod && projected.Role == IamRoles.OperatorAgent
+            && target.Scope is not (ProjectRouteScope.Addressed or ProjectRouteScope.DeferredToHandler))
+        {
+            await Reject(context, 403, "project-scope-denied", "The operator agent role cannot make installation-wide changes.");
             return;
         }
         // An API token (AGT-3186) writes only project-addressed routes, even
@@ -621,9 +740,166 @@ public sealed class AccessSecurityMiddleware
             Id = account.ActorId, UserId = account.ActorId, TokenHash = string.Empty, CsrfHash = string.Empty,
             CreatedAt = now, LastSeenAt = now, ExpiresAt = now, AbsoluteExpiresAt = now,
         };
+        if (breakGlass is null && operation is { Tier: OperatorTier.T1 })
+        {
+            var granted = _store.AdmitOperatorGrant(account.AccountId, operation,
+                OperatorRequestClassifier.GrantTarget(operation, target, key => key == "project"
+                    ? context.Items["OperatorLog.Project"] as string
+                    : RouteValue(context, path, context.GetEndpoint(), key)),
+                SameProject);
+            context.Items[OperatorPolicyItem] = granted;
+            if (!granted.Admitted)
+            {
+                await Reject(context, 403, granted.Reason!, granted.Message, policy: granted);
+                return;
+            }
+        }
+        if (breakGlass is null && operation is { Tier: OperatorTier.T2 }
+            && !await AdmitOperatorApprovalAsync(context, account, operation, path)) return;
         context.Items[HumanPrincipalItem] = new HumanPrincipal(user, session);
         context.Items[RequestAccessItem] = new RequestAccess(subject, bindings, required.Permission, SameProject, projected.Role);
         await _next(context);
+    }
+
+    /// <summary>
+    /// SM-5: a T2 operator request runs only under the Owner's approval of
+    /// exactly this request. Without an approval id it opens (or repeats) an
+    /// approval request and is refused with <c>approval-required</c>; with one
+    /// it runs only when the approval belongs to this session, matches the
+    /// operation and the parameter digest, is approved, unused, and inside
+    /// its 15 minutes. The store marks the approval used before the handler
+    /// runs; the result is recorded after it.
+    /// </summary>
+    private async Task<bool> AdmitOperatorApprovalAsync(HttpContext context, ServiceAccountPrincipal account, OperatorOperation operation, string path)
+    {
+        var op = account.Operator!;
+        var digest = (ParameterDigest)context.Items[ParameterDigestItem]!;
+        var approvalId = ApprovalHeader(context);
+        OperatorPolicyDecision decision;
+        if (approvalId is null)
+        {
+            if (!digest.Complete)
+            {
+                decision = OperatorPolicyDecision.Refuse(OperatorApprovalReasons.Unbindable, operation,
+                    "This request body is too large to bind to an approval. The Owner runs it in Studio.");
+                context.Items[OperatorPolicyItem] = decision;
+                await Reject(context, 403, decision.Reason!, decision.Message, policy: decision);
+                return false;
+            }
+            (OperatorApproval Approval, bool Created) requested;
+            try
+            {
+                requested = _store.RequestOperatorApproval(new OperatorApprovalRequestFacts(
+                    account.AccountId, op.SessionId, op.Actor, op.DelegatedBy, operation, context.Request.Method.ToUpperInvariant(), path,
+                    context.Request.QueryString.Value ?? "", await OperatorApprovalParameters.DisplayAsync(context.Request), digest.Value,
+                    AuditTarget(context, path),
+                    OperatorInstructionSources.Normalize(context.Request.Headers[OperatorApprovalHeaders.InstructionSource].ToString()),
+                    StatedReason(context.Request.Headers[OperatorApprovalHeaders.Reason].ToString())));
+            }
+            catch (SecurityOperationException exception)
+            {
+                await Reject(context, exception.Status, exception.Code, exception.Message);
+                return false;
+            }
+            decision = OperatorPolicy.TierGate(operation)! with { ApprovalId = requested.Approval.Id };
+            context.Items[OperatorPolicyItem] = decision;
+            if (requested.Created)
+                context.RequestServices?.GetService<OperatorApprovalNotifier>()?.Enqueue(_store.ToOperatorApprovalResponse(requested.Approval));
+            await Reject(context, 403, decision.Reason!,
+                $"'{operation.Id}' is high risk (T2). The Owner decides approval request {requested.Approval.Id} in Studio; "
+                + $"repeat this exact request with the {OperatorApprovalHeaders.Approval} header once it is approved.",
+                policy: decision);
+            return false;
+        }
+        decision = _store.RedeemOperatorApproval(approvalId, account.AccountId, op.SessionId, operation, digest.Value);
+        context.Items[OperatorPolicyItem] = decision;
+        if (!decision.Admitted)
+        {
+            await Reject(context, 403, decision.Reason!, decision.Message, policy: decision);
+            return false;
+        }
+        context.Items[OperatorApprovalItem] = decision.ApprovalId;
+        return true;
+    }
+
+    private static string? ApprovalHeader(HttpContext context)
+        => context.Request.Headers[OperatorApprovalHeaders.Approval].ToString().Trim() is { Length: > 0 } id ? id : null;
+
+    /// <summary>The agent's stated reason: percent-decoded, trimmed, at most 500 characters.</summary>
+    private static string? StatedReason(string header)
+    {
+        if (string.IsNullOrWhiteSpace(header)) return null;
+        string decoded;
+        try { decoded = Uri.UnescapeDataString(header); }
+        catch (UriFormatException) { decoded = header; }
+        decoded = decoded.Trim();
+        return decoded.Length <= 500 ? decoded : decoded[..500];
+    }
+
+    /// <summary>Access administration and the versioned Task Server plane: no bearer principal reaches them.</summary>
+    private static bool IsTokenDeniedRoute(string path)
+        => path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase)
+           || path.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The canonical environment key of an environment id a project declares, for the operator catalogue.</summary>
+    private string? OperatorEnvironmentKind(string project, string environmentId)
+        => ResolveEnvironmentKey(ProjectRouteAddress.Addressed(project), environmentId);
+
+    private static bool OperatorDeniedPermission(string permission)
+        => permission is IamPermissions.AccessRead or IamPermissions.AccessManage or IamPermissions.WorkspaceAdminister
+            or IamPermissions.SecretsResolve;
+
+    /// <summary>
+    /// What a bearer request addressed, for its audit entry: the task a
+    /// single-task route names and the project(s) it resolved to, or the
+    /// workspace for an installation-wide route.
+    /// </summary>
+    private static string? AuditTarget(HttpContext context, string path)
+    {
+        var target = context.Items[AuditTargetItem] as PermissionTarget;
+        var projects = target?.Projects.OfType<string>().Where(project => project.Length > 0).ToArray() ?? [];
+        var scope = projects.Length > 0 ? "project:" + string.Join(",", projects)
+            : target?.Scope == ProjectRouteScope.WorkspaceWide ? "workspace"
+            : null;
+        string? task = null;
+        if (path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase) && IsParameterSegment(context.GetEndpoint(), 2))
+            task = "task:" + Uri.UnescapeDataString(path["/api/tasks/".Length..].Split('/', 2)[0]);
+        return scope is null ? task : task is null ? scope : scope + "/" + task;
+    }
+
+    /// <summary>
+    /// <c>sha256:</c> over the method, path, query, and body of a bearer
+    /// request. The body stays readable for the handler; a body above
+    /// <see cref="MaxDigestedBodyBytes"/> contributes only its length.
+    /// </summary>
+    /// <summary>A request's parameter digest; <see cref="Complete"/> is false when the body was too large to digest in full.</summary>
+    private sealed record ParameterDigest(string Value, bool Complete);
+
+    private static async Task<ParameterDigest> ParameterDigestAsync(HttpRequest request, string path)
+    {
+        var complete = true;
+        using var hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+        hash.AppendData(System.Text.Encoding.UTF8.GetBytes($"{request.Method.ToUpperInvariant()}\n{path}\n{request.QueryString.Value}\n"));
+        if (request.ContentLength is > MaxDigestedBodyBytes)
+        {
+            hash.AppendData(System.Text.Encoding.UTF8.GetBytes($"body-length:{request.ContentLength}"));
+            complete = false;
+        }
+        else if (request.ContentLength is > 0 || request.Headers.TransferEncoding.Count > 0)
+        {
+            request.EnableBuffering();
+            var buffer = new byte[81920];
+            int read;
+            long total = 0;
+            while ((read = await request.Body.ReadAsync(buffer, request.HttpContext.RequestAborted)) > 0 && total <= MaxDigestedBodyBytes)
+            {
+                hash.AppendData(buffer, 0, read);
+                total += read;
+            }
+            complete = read == 0;
+            request.Body.Position = 0;
+        }
+        return new ParameterDigest("sha256:" + Convert.ToHexStringLower(hash.GetHashAndReset()), complete);
     }
 
     private static StudioUser ProjectedUser(
@@ -751,7 +1027,10 @@ public sealed class AccessSecurityMiddleware
            || IsReadOnlyPost(method, path);
 
     private static bool IsSelfServiceAuth(string path)
-        => path is "/api/auth/logout" or "/api/auth/change-password" or "/api/auth/session";
+        => path is "/api/auth/logout" or "/api/auth/change-password" or "/api/auth/session" or "/api/auth/step-up"
+           || path.StartsWith("/api/auth/sessions", StringComparison.Ordinal)
+           || path.StartsWith("/api/auth/totp/", StringComparison.Ordinal)
+           || path.StartsWith("/api/auth/passkeys/", StringComparison.Ordinal);
 
     private bool SameProject(string bound, string requested)
         => ProjectAccessAuthorization.SameProject(bound, requested, _projects);
@@ -785,7 +1064,8 @@ public sealed class AccessSecurityMiddleware
             if (HttpMethods.IsPut(method) && path.EndsWith("/capabilities", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsPut(method) && path.Split('/').Length == 5) return RunnerScopes.Claim;
             if (HttpMethods.IsPost(method) && (path.EndsWith("/claims", StringComparison.OrdinalIgnoreCase)
-                || path.EndsWith("/review-claims", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
+                || path.EndsWith("/review-claims", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith("/review-package-claims", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
             if (HttpMethods.IsPost(method) && path.EndsWith("/repository-credentials", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
             if (HttpMethods.IsPost(method) && path.EndsWith("/reports", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsPost(method) && path.EndsWith("/capability-failures", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
@@ -795,6 +1075,13 @@ public sealed class AccessSecurityMiddleware
             if (HttpMethods.IsPut(method) && path.EndsWith("/quota/report", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
             if (HttpMethods.IsGet(method) && (path.EndsWith("/cli-update", StringComparison.OrdinalIgnoreCase)
                 || path.EndsWith("/provider-comparison", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
+            // Device sign-in and Git setup (HostSetupEndpoints): the host claims a session and reports on it.
+            var segments = path.Split('/');
+            if (segments.Length >= 7 && segments[5].Equals("device-login", StringComparison.OrdinalIgnoreCase)
+                && (HttpMethods.IsGet(method) || HttpMethods.IsPost(method))) return RunnerScopes.Claim;
+            if (segments.Length >= 7 && segments[5].Equals("git-setups", StringComparison.OrdinalIgnoreCase)
+                && HttpMethods.IsPost(method))
+                return segments.Length == 7 ? RunnerScopes.Claim : RunnerScopes.Events;
         }
         if (HttpMethods.IsGet(method) && (path is "/api/v1/projects" or "/api/v1/artifact-limits"
             || path.StartsWith("/api/v1/failure-fingerprints", StringComparison.OrdinalIgnoreCase))) return RunnerScopes.Claim;
@@ -812,6 +1099,12 @@ public sealed class AccessSecurityMiddleware
             if (HttpMethods.IsPost(method) && path.EndsWith("/reclaim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
             if (HttpMethods.IsPost(method) && path.EndsWith("/report", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
             if (HttpMethods.IsPost(method) && path.EndsWith("/cleanup", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
+        }
+        // AGT-3400 S4: shadow review package attempts.
+        if (path.StartsWith("/api/v1/review-packages/attempts/", StringComparison.OrdinalIgnoreCase))
+        {
+            if (HttpMethods.IsPost(method) && path.EndsWith("/lease/renew", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Lease;
+            if (HttpMethods.IsPost(method) && path.EndsWith("/report", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         }
         if (path.StartsWith("/api/v1/integrations/", StringComparison.OrdinalIgnoreCase))
         {
@@ -845,10 +1138,12 @@ public sealed class AccessSecurityMiddleware
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/orchestrator-decisions/complete", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/logs", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Logs;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/events", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
+        if (HttpMethods.IsPost(method) && path.Equals("/api/model-selection/events", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
         if ((HttpMethods.IsPost(method) || HttpMethods.IsGet(method))
             && path.StartsWith("/api/runner/artifacts", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Artifacts;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/completion", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
         if (HttpMethods.IsGet(method) && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase) && path.Contains("/files/", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
+        if (IsRunnerTaskAttachmentRead(method, path)) return RunnerScopes.Claim;
         if (HttpMethods.IsGet(method) && path.Equals("/api/system/about", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/project-chat/claim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/project-chat/renew", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Lease;
@@ -900,7 +1195,8 @@ public sealed class AccessSecurityMiddleware
         => path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/container", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/drain", StringComparison.OrdinalIgnoreCase)
-           || path.Equals("/healthz/orchestration-engine", StringComparison.OrdinalIgnoreCase);
+           || path.Equals("/healthz/orchestration-engine", StringComparison.OrdinalIgnoreCase)
+           || path.Equals(AgentStudio.Readiness.ServerReadinessEndpoints.ProbePath, StringComparison.OrdinalIgnoreCase);
     private static bool IsTelemetryIntake(string method, string path)
         => HttpMethods.IsPost(method)
            && (path.Equals("/api/telemetry/otlp/v1/metrics", StringComparison.OrdinalIgnoreCase)
@@ -909,6 +1205,7 @@ public sealed class AccessSecurityMiddleware
         => path.Equals("/api/auth/status", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/bootstrap", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/auth/passkeys/assertion-options", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/invite/accept", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/runner-enroll", StringComparison.OrdinalIgnoreCase);
 
@@ -917,22 +1214,57 @@ public sealed class AccessSecurityMiddleware
            && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
            && path.Contains("/files/", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary><c>GET /api/tasks/{key}/attachments/{name}</c>, one attachment of a card.</summary>
+    private static bool IsRunnerTaskAttachmentRead(string method, string path)
+    {
+        if (!HttpMethods.IsGet(method) || !path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)) return false;
+        var segments = path["/api/tasks/".Length..].Split('/');
+        return segments.Length == 3 && segments[0].Length > 0 && segments[2].Length > 0
+               && segments[1].Equals("attachments", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool IsReadOnlyPost(string method, string path)
         => HttpMethods.IsPost(method)
-           && path.Equals("/api/tasks/reference-status", StringComparison.OrdinalIgnoreCase);
+           && (path.Equals("/api/tasks/reference-status", StringComparison.OrdinalIgnoreCase)
+               || path.Equals("/api/operator/deploy/plan", StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// The card input a host reads for its run: <c>prompt.md</c> and the
+    /// card's attachments, only while the host holds the task's live lease.
+    /// </summary>
     private bool RunnerOwnsTaskInput(string path, string runnerId)
     {
         if (_leases is null) return false;
         var rest = path["/api/tasks/".Length..];
+        string taskKey;
         var fileMarker = rest.IndexOf("/files/", StringComparison.OrdinalIgnoreCase);
-        if (fileMarker <= 0) return false;
-        var taskKey = Uri.UnescapeDataString(rest[..fileMarker]);
-        var relativePath = Uri.UnescapeDataString(rest[(fileMarker + "/files/".Length)..]);
-        if (!relativePath.Equals("prompt.md", StringComparison.OrdinalIgnoreCase)) return false;
+        if (fileMarker > 0)
+        {
+            var relativePath = Uri.UnescapeDataString(rest[(fileMarker + "/files/".Length)..]);
+            if (!relativePath.Equals("prompt.md", StringComparison.OrdinalIgnoreCase)) return false;
+            taskKey = Uri.UnescapeDataString(rest[..fileMarker]);
+        }
+        else if (IsRunnerTaskAttachmentRead(HttpMethods.Get, path))
+            taskKey = Uri.UnescapeDataString(rest.Split('/')[0]);
+        else
+            return false;
         var lease = _leases.Peek(taskKey).Lease;
         return lease is not null && string.Equals(lease.RunnerId, runnerId, StringComparison.Ordinal);
     }
+
+    /// <summary>The task key of a versioned card read, <c>GET /api/v1/projects/{project}/tasks/{task}</c>.</summary>
+    internal static string? RunnerCardReadKey(string method, string path)
+    {
+        if (!HttpMethods.IsGet(method) || !path.StartsWith("/api/v1/projects/", StringComparison.OrdinalIgnoreCase))
+            return null;
+        var parts = path.Split('/');
+        return parts.Length == 7 && parts[5].Equals("tasks", StringComparison.OrdinalIgnoreCase)
+            ? Uri.UnescapeDataString(parts[6])
+            : null;
+    }
+
+    private bool RunnerHoldsLease(string taskKey, string runnerId)
+        => _leases?.Peek(taskKey).Lease is { } lease && string.Equals(lease.RunnerId, runnerId, StringComparison.Ordinal);
 
     private static string NormalizePath(string? value)
     {
@@ -1043,6 +1375,12 @@ public sealed class AccessSecurityMiddleware
         // The task collection filters per task; creation checks its body
         // project against the route's permission in the handler.
         if (path.Equals("/api/tasks", StringComparison.OrdinalIgnoreCase))
+            return ProjectRouteAddress.DeferredToHandler;
+        // The operator decision stream filters each event by its project; the
+        // watcher lease belongs to the installation (operator agent level OP-2).
+        // The batch triage read (OP-4) lists only the projects the caller may
+        // read; its handler checks project.read per project.
+        if (path.StartsWith("/api/operator/", StringComparison.OrdinalIgnoreCase))
             return ProjectRouteAddress.DeferredToHandler;
         // Report, supervisor, bus, and runtime routes name their project in the
         // segment after the area (/api/drift/{project}/...); their literal
@@ -1170,12 +1508,27 @@ public sealed class AccessSecurityMiddleware
         return true;
     }
 
+    /// <summary>
+    /// 404 for a route this server does not map. The body carries the code
+    /// as <c>error</c>, like every refusal here, and as <c>code</c>, the
+    /// field the host's Task Server client reads.
+    /// </summary>
+    private static async Task RejectUnmappedRoute(HttpContext context)
+    {
+        const string code = AgentStudio.TaskServer.Contracts.RouteAbsenceContract.ErrorCode;
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        context.Response.ContentType = "application/json";
+        context.Response.Headers.CacheControl = "no-store";
+        await context.Response.WriteAsJsonAsync(new { error = code, code, message = "This server does not map the route." });
+    }
+
     private static async Task Reject(
         HttpContext context,
         int status,
         string code,
         string message,
-        string? loginUrl = null)
+        string? loginUrl = null,
+        OperatorPolicyDecision? policy = null)
     {
         // A refused write never reaches the provider. Preserve the real actor in its audit.
         if (status == StatusCodes.Status403Forbidden)
@@ -1188,7 +1541,12 @@ public sealed class AccessSecurityMiddleware
         context.Response.StatusCode = status;
         context.Response.ContentType = "application/json";
         context.Response.Headers.CacheControl = "no-store";
-        if (loginUrl is null)
+        if (policy is not null)
+            await context.Response.WriteAsJsonAsync(new
+            {
+                error = code, message, operation = policy.Operation?.Id, tier = policy.Operation?.Tier, approvalId = policy.ApprovalId,
+            });
+        else if (loginUrl is null)
             await context.Response.WriteAsJsonAsync(new { error = code, message });
         else
             await context.Response.WriteAsJsonAsync(new { error = code, message, loginUrl });

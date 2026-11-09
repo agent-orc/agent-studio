@@ -27,6 +27,7 @@ public sealed class QuotaService
     private readonly CliVersionTracker? _versionTracker;
     private readonly QuotaHistoryStore? _history;
     private readonly bool _networked;
+    private readonly bool _pinnedDemo;
     private readonly TimeProvider _clock;
     private readonly ConcurrentDictionary<string, QuotaSnapshot> _pendingHostDrops = new();
     private readonly Dictionary<string, DateTime> _seenHostObservations = new(StringComparer.Ordinal);
@@ -50,6 +51,14 @@ public sealed class QuotaService
         _history = history;
         _networked = !SecurityProfiles.IsLocal(configuration);
         _clock = clock ?? TimeProvider.System;
+        _pinnedDemo = DemoQuotaSnapshots.Enabled(configuration);
+        if (_pinnedDemo)
+        {
+            // AGT-3593: a demo or worktree test backend shares the runner host.
+            // Never read the host's quota, neither by probing nor from a cache file.
+            _logger.LogInformation("Quota probes disabled: serving the pinned demo quota snapshot.");
+            return;
+        }
 
         // Hydrate the in-memory cache from disk on startup so the
         // header / strip have something to render before the first
@@ -80,6 +89,7 @@ public sealed class QuotaService
 
     public QuotaReport GetCached()
     {
+        if (_pinnedDemo) return PinnedDemoReport();
         return new QuotaReport
         {
             TtlSeconds = (int)_ttl.TotalSeconds,
@@ -121,6 +131,7 @@ public sealed class QuotaService
     public QuotaSnapshot? GetCachedFor(string cliType)
     {
         if (string.IsNullOrWhiteSpace(cliType)) return null;
+        if (_pinnedDemo) return PinnedDemoFor(cliType);
         if (_networked)
         {
             var hosted = _cache.Where(entry => entry.Key.StartsWith(cliType + ":", StringComparison.OrdinalIgnoreCase))
@@ -137,7 +148,7 @@ public sealed class QuotaService
     /// <summary>Accept a parsed host reading through the same cache, gate and history path.</summary>
     public void IngestHostReading(AgentStudio.TaskServer.Contracts.HostQuotaReadingDto reading)
     {
-        if (!_networked || !AgentStudio.TaskServer.Contracts.HostQuotaCoordinator.Valid(
+        if (_pinnedDemo || !_networked || !AgentStudio.TaskServer.Contracts.HostQuotaCoordinator.Valid(
                 reading.Provider, reading.SubscriptionKey)) return;
         var key = reading.Provider + ":" + reading.SubscriptionKey;
         lock (_hostIngestGate)
@@ -204,7 +215,7 @@ public sealed class QuotaService
     /// </summary>
     public QuotaReport GetWithBackgroundRefresh(CancellationToken ct = default)
     {
-        if (_networked) return GetCached();
+        if (_networked || _pinnedDemo) return GetCached();
         // The HTTP request token is deliberately not passed to the refresh.
         // A disconnected client must not cancel shared cache maintenance, and
         // no synchronous CLI startup work may run on the GET request thread.
@@ -233,14 +244,14 @@ public sealed class QuotaService
     /// <summary>Force a re-probe of every CLI and await all of them.</summary>
     public async Task<QuotaReport> RefreshAllAsync(CancellationToken ct = default)
     {
-        if (_networked) return GetCached();
+        if (_networked || _pinnedDemo) return GetCached();
         await Task.WhenAll(_probes.Keys.Select(k => RefreshAsync(k, ct)));
         return GetCached();
     }
 
     public async Task<QuotaSnapshot?> RefreshAsync(string cliType, CancellationToken ct = default)
     {
-        if (_networked) return GetCachedFor(cliType);
+        if (_networked || _pinnedDemo) return GetCachedFor(cliType);
         if (!_probes.TryGetValue(cliType, out var probe)) return null;
         var sem = _locks.GetOrAdd(cliType, _ => new SemaphoreSlim(1, 1));
         if (!await sem.WaitAsync(0, ct))
@@ -385,7 +396,7 @@ public sealed class QuotaService
     /// </summary>
     public Task InvalidateForGroundTruthLimit(string cliType, string reason, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(cliType)) return Task.CompletedTask;
+        if (string.IsNullOrWhiteSpace(cliType) || _pinnedDemo) return Task.CompletedTask;
 
         var existing = _cache.TryGetValue(cliType, out var s) ? s : new QuotaSnapshot { CliType = cliType };
         _cache[cliType] = existing with
@@ -402,6 +413,20 @@ public sealed class QuotaService
 
         return RefreshAsync(cliType, ct);
     }
+
+    private QuotaReport PinnedDemoReport()
+    {
+        var now = _clock.GetUtcNow().UtcDateTime;
+        return new QuotaReport
+        {
+            At = now,
+            TtlSeconds = (int)_ttl.TotalSeconds,
+            Snapshots = _probes.Keys.Select(k => DemoQuotaSnapshots.For(k, now)).ToList()
+        };
+    }
+
+    private QuotaSnapshot? PinnedDemoFor(string cliType)
+        => _probes.ContainsKey(cliType) ? DemoQuotaSnapshots.For(cliType, _clock.GetUtcNow().UtcDateTime) : null;
 
     /// <summary>
     /// Append a trusted snapshot to the quota history (AGT-3001). The store

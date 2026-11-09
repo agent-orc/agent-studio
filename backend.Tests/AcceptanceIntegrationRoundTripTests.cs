@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Hosting;
@@ -14,6 +16,8 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
+using AgentStudio.TestSupport;
+using AgentStudio.Watcher;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 using Xunit;
@@ -55,20 +59,29 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Directory.CreateDirectory(_tempDir);
         foreach (var state in TaskStates.All) Directory.CreateDirectory(Path.Combine(_watchPath, state));
 
-        RunGit(_tempDir, "init", "--bare", "-q", "--initial-branch=main", _origin);
-        RunGit(_tempDir, "init", "-q", "-b", "main", _repo);
-        RunGit(_repo, "config", "user.email", "test@example.com");
-        RunGit(_repo, "config", "user.name", "test");
-        File.WriteAllText(Path.Combine(_repo, "shared.txt"), "base\n");
-        RunGit(_repo, "add", "-A");
-        RunGit(_repo, "commit", "-q", "-m", "seed");
-        RunGit(_repo, "remote", "add", "origin", _origin);
-        RunGit(_repo, "push", "-q", "-u", "origin", "main");
-        RunGit(_repo, "remote", "set-head", "origin", "main");
-        RunGit(_repo, "checkout", "-q", "-b", "develop");
-        RunGit(_repo, "push", "-q", "-u", "origin", "develop");
-        RunGit(_repo, "checkout", "-q", "main");
-        RunGit(_repo, "branch", "-D", "develop");
+        // Built once per test process; each test starts from a copy (AGT-3419).
+        GitRepositoryTemplate.CopyTo("acceptance-integration:repo-and-origin:v1",
+            SeedRepositoryAndOrigin, ("repo", _repo), ("origin.git", _origin));
+    }
+
+    private static void SeedRepositoryAndOrigin(string root)
+    {
+        var repo = Path.Combine(root, "repo");
+        var origin = Path.Combine(root, "origin.git");
+        RunGit(root, "init", "--bare", "-q", "--initial-branch=main", origin);
+        RunGit(root, "init", "-q", "-b", "main", repo);
+        RunGit(repo, "config", "user.email", "test@example.com");
+        RunGit(repo, "config", "user.name", "test");
+        File.WriteAllText(Path.Combine(repo, "shared.txt"), "base\n");
+        RunGit(repo, "add", "-A");
+        RunGit(repo, "commit", "-q", "-m", "seed");
+        RunGit(repo, "remote", "add", "origin", origin);
+        RunGit(repo, "push", "-q", "-u", "origin", "main");
+        RunGit(repo, "remote", "set-head", "origin", "main");
+        RunGit(repo, "checkout", "-q", "-b", "develop");
+        RunGit(repo, "push", "-q", "-u", "origin", "develop");
+        RunGit(repo, "checkout", "-q", "main");
+        RunGit(repo, "branch", "-D", "develop");
     }
 
     [Fact]
@@ -620,6 +633,163 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                 == LaneChangeCauses.AcceptanceIntegrationFailed);
     }
 
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Stale_delivery_verdict_requests_a_fresh_review_and_records_the_handoff()
+    {
+        var deliverySha = PublishDelivery("stale-handoff.txt", "new delivery\n");
+        var deps = Build(deliverySha, guarded: true);
+        var previous = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt;
+        Assert.NotNull(previous);
+        var reviewLifecycle = new ReviewAttemptTaskLifecycleService(deps.Authority,
+            deps.Scanner, deps.Timeline, NullLogger<ReviewAttemptTaskLifecycleService>.Instance);
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(deps.Merge, deps.Scanner,
+            deps.Provenance, deps.Pipeline, deps.Timeline, AgentRounds(deps),
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance, deps.Authority);
+        var stranding = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
+            reviewLifecycle, null!, null!, deps.Settings, deps.Pipeline, null!,
+            deps.Transitions, null!, null!, null!, null!, deps.Configuration,
+            NullLogger<AutoReviewStrandingWatchdog>.Instance, coordinator);
+        var reconciler = new DeliveryChainReconciler(deps.Scanner, deps.Integration,
+            deps.Transitions, deps.Configuration, NullLogger<DeliveryChainReconciler>.Instance,
+            stranding: stranding, timeline: deps.Timeline);
+
+        Assert.Equal(1, await reconciler.RunOnceAsync());
+
+        var returned = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.AutoReview, returned.State);
+        var requested = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt;
+        Assert.NotNull(requested);
+        Assert.NotEqual(previous.AttemptId, requested.AttemptId);
+        Assert.Equal(AttemptLifecycleState.Pending, requested.State);
+        Assert.Equal(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha,
+            GitService.IntegrationLaneRef("develop")).Code);
+        var timeline = deps.Timeline.ReadAll(returned.FolderPath).ToArray();
+        var integratedAt = Array.FindIndex(timeline, entry => entry.Kind == TimelineEventKinds.IntegrationSucceeded);
+        var reviewedAt = Array.FindIndex(timeline, entry => entry.Kind == TimelineEventKinds.DeliveryReviewRequested);
+        Assert.True(integratedAt >= 0 && reviewedAt > integratedAt);
+        Assert.Contains(deps.Timeline.ReadAll(returned.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.DeliveryReviewRequested);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Stale_delivery_verdict_queues_a_merge_round_when_current_delivery_conflicts()
+    {
+        var deliverySha = PublishDelivery("shared.txt", "delivery version\n");
+        RunGit(_repo, "checkout", "-q", "-b", "develop", "origin/develop");
+        File.WriteAllText(Path.Combine(_repo, "shared.txt"), "develop version\n");
+        RunGit(_repo, "add", "shared.txt");
+        RunGit(_repo, "commit", "-q", "-m", "develop edits shared");
+        RunGit(_repo, "push", "-q", "origin", "develop");
+        RunGit(_repo, "checkout", "-q", "main");
+        var deps = Build(deliverySha, guarded: true);
+        var reviewLifecycle = new ReviewAttemptTaskLifecycleService(deps.Authority,
+            deps.Scanner, deps.Timeline, NullLogger<ReviewAttemptTaskLifecycleService>.Instance);
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(deps.Merge, deps.Scanner,
+            deps.Provenance, deps.Pipeline, deps.Timeline, AgentRounds(deps),
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance, deps.Authority);
+        var stranding = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
+            reviewLifecycle, null!, null!, deps.Settings, deps.Pipeline, null!,
+            deps.Transitions, null!, null!, null!, null!, deps.Configuration,
+            NullLogger<AutoReviewStrandingWatchdog>.Instance, coordinator);
+        var reconciler = new DeliveryChainReconciler(deps.Scanner, deps.Integration,
+            deps.Transitions, deps.Configuration, NullLogger<DeliveryChainReconciler>.Instance,
+            stranding: stranding, timeline: deps.Timeline);
+
+        Assert.Equal(1, await reconciler.RunOnceAsync());
+
+        var queued = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.Ready, queued.State);
+        Assert.Equal(ContinueModes.Steer, queued.PendingIntent?.Mode);
+        Assert.Contains(deps.Timeline.ReadAll(queued.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
+        Assert.DoesNotContain(deps.Timeline.ReadAll(queued.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.DeliveryReviewRequested);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Stranding_watchdog_starts_missing_review_in_both_transition_modes(bool engineMode)
+    {
+        var deliverySha = PublishDelivery("stranded-review.txt", "delivered work\n");
+        var deps = Build(deliverySha, initialState: TaskStates.AutoReview,
+            seedContent: false, engineMode: engineMode);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.True(TaskJsonFile.UpdateField(card.FolderPath, "enteredLaneAt",
+            VerificationFixtureAtUtc, NullLogger.Instance));
+        deps.Scanner.InvalidateCache();
+        var reviewLifecycle = new ReviewAttemptTaskLifecycleService(deps.Authority,
+            deps.Scanner, deps.Timeline, NullLogger<ReviewAttemptTaskLifecycleService>.Instance);
+        var batches = new BatchGateStore(_tempDir);
+        var records = new StallInterventionStore(() => _tempDir);
+        var log = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
+        var projector = new WatcherActivityProjector(log, deps.Scanner, deps.Configuration,
+            NullLogger<WatcherActivityProjector>.Instance);
+        var receipts = new StallInterventionReceipts(log, projector, deps.Scanner, deps.Timeline,
+            NullLogger<StallInterventionReceipts>.Instance);
+        var watchdog = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
+            reviewLifecycle, batches, null!, deps.Settings, deps.Pipeline,
+            new AutoReviewPostProcessingQueue(), deps.Transitions, null!, null!,
+            records, receipts, deps.Configuration, NullLogger<AutoReviewStrandingWatchdog>.Instance);
+
+        Assert.Equal(1, await watchdog.RunOnceAsync());
+        Assert.Equal(AttemptLifecycleState.Pending,
+            deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt?.State);
+        Assert.Contains(records.All(), record => record.Action == AutoReviewStrandingAction.StartStep.ToString());
+    }
+
+    [Fact]
+    public async Task Stranding_watchdog_requests_new_review_when_passed_review_covers_older_run()
+    {
+        var deliverySha = PublishDelivery("stranded-new-run.txt", "delivered work\n");
+        var deps = Build(deliverySha, initialState: TaskStates.AutoReview);
+        var olderReview = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt!;
+        Assert.Equal(ReviewTerminalOutcome.Pass, olderReview.Outcome);
+        var acquired = deps.Authority.AcquireRun(TaskKey, "PROJ-FIXTURE", null,
+            "agent-runner-01", "host-fixture", 60, "new-run-fixture").RunAttempt!;
+        var settled = deps.Authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(acquired.AttemptId, acquired.LastFence,
+                acquired.AuthorityEpoch, "settle-new-run-fixture"),
+            Outcome = "done",
+            ResultSha = deliverySha,
+            ResultEnvelope = new Contract.ImmutableResultEnvelope("PROJ-FIXTURE",
+                acquired.AttemptId, Git(_repo, "rev-parse", $"{deliverySha}^").Out.Trim(),
+                deliverySha, $"refs/heads/{DeliveryRef}", null,
+                new string('a', 64), RepositoryUrl: _origin),
+        });
+        Assert.True(settled.Accepted);
+        Assert.Equal(olderReview.AttemptId,
+            deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt?.AttemptId);
+
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.True(TaskJsonFile.UpdateField(card.FolderPath, "enteredLaneAt",
+            VerificationFixtureAtUtc, NullLogger.Instance));
+        deps.Scanner.InvalidateCache();
+        var reviewLifecycle = new ReviewAttemptTaskLifecycleService(deps.Authority,
+            deps.Scanner, deps.Timeline, NullLogger<ReviewAttemptTaskLifecycleService>.Instance);
+        var records = new StallInterventionStore(() => _tempDir);
+        var log = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
+        var projector = new WatcherActivityProjector(log, deps.Scanner, deps.Configuration,
+            NullLogger<WatcherActivityProjector>.Instance);
+        var receipts = new StallInterventionReceipts(log, projector, deps.Scanner, deps.Timeline,
+            NullLogger<StallInterventionReceipts>.Instance);
+        var watchdog = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
+            reviewLifecycle, new BatchGateStore(_tempDir), null!, deps.Settings,
+            deps.Pipeline, new AutoReviewPostProcessingQueue(), deps.Transitions,
+            null!, null!, records, receipts, deps.Configuration,
+            NullLogger<AutoReviewStrandingWatchdog>.Instance);
+
+        Assert.Equal(1, await watchdog.RunOnceAsync());
+        var currentReview = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt!;
+        Assert.NotEqual(olderReview.AttemptId, currentReview.AttemptId);
+        Assert.Equal(acquired.AttemptId, currentReview.SourceRunAttemptId);
+        Assert.Equal(deliverySha, currentReview.Subject.ExpectedResultSha);
+        Assert.Contains(records.All(), record => record.Action == AutoReviewStrandingAction.StartStep.ToString());
+    }
+
     /// <summary>
     /// AGT-3098 - AGT-2882: accepted with an override against its delivery
     /// evidence (run attempt lost, delivery integrated), but the merge step
@@ -806,6 +976,15 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             });
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+
+        // AGT-3582: the read-only check the task detail asks before it offers
+        // the action agrees with the POST below.
+        using var check = await client.GetAsync(
+            $"/api/tasks/{Slug}/failure/continue?watchPath={Uri.EscapeDataString(_watchPath)}")
+            .WaitAsync(AsyncTestDeadline);
+        Assert.True(check.StatusCode == HttpStatusCode.OK, await check.Content.ReadAsStringAsync());
+        using (var checkPayload = JsonDocument.Parse(await check.Content.ReadAsStringAsync()))
+            Assert.True(checkPayload.RootElement.GetProperty("available").GetBoolean(), checkPayload.RootElement.ToString());
 
         using var response = await client.PostAsJsonAsync(
             $"/api/tasks/{Slug}/failure/continue?watchPath={Uri.EscapeDataString(_watchPath)}",
@@ -2060,6 +2239,44 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     }
 
     [Fact]
+    public async Task PersistedPendingPush_RecoversAutoReviewCard_WithAutoPushNever_AndReleasesBatch()
+    {
+        var deliverySha = PublishDelivery("pending-push-restart.txt", "approved delivery\n");
+        var markerRoot = Path.Combine(_tempDir, "pending-pushes");
+        var reservations = new BatchIntegrationReservationService(markerRoot);
+        var lostQueue = new IntegrationPushQueue();
+        var deps = Build(deliverySha, pushQueue: lostQueue,
+            initialState: TaskStates.AutoReview, reservations: reservations);
+        var folder = deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath;
+        var merged = await deps.Merge.RunAsync(Project, Slug, folder, _watchPath,
+            "develop", CancellationToken.None, IntegrationStrategies.DirectMerge,
+            PipelineTypes.Task);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, merged.Outcome);
+        Assert.True(lostQueue.Reader.TryRead(out _));
+        Assert.NotNull(reservations.GetWait(Project));
+
+        var restarted = new BatchIntegrationReservationService(markerRoot);
+        var waitingBatch = restarted.AcquireBatchAsync(Project, CancellationToken.None);
+        Assert.False(waitingBatch.IsCompleted);
+        var recoveredRunner = new MergeIntoDevelopRunner(
+            new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration),
+            deps.Pipeline, NullLogger<MergeIntoDevelopRunner>.Instance,
+            batchReservations: restarted);
+        var backstop = new IntegrationPushBackstopHostedService(deps.Scanner,
+            deps.Settings, deps.Pipeline, recoveredRunner, deps.Configuration,
+            NullLogger<IntegrationPushBackstopHostedService>.Instance,
+            reservations: restarted);
+
+        Assert.Equal(1, await backstop.RunOnceAsync());
+        using var grant = await waitingBatch.WaitAsync(AsyncTestDeadline);
+        Assert.Null(restarted.GetWait(Project));
+        Assert.Equal(merged.MergedSha,
+            Git(_origin, "-c", "safe.bareRepository=all", "rev-parse", "develop").Out.Trim());
+        Assert.Equal(PipelineStepStatus.Passed, deps.Pipeline.Read(folder)!.Steps.Last(
+            step => step.StepId == PipelineCatalogue.MergeIntoDevelopPushStepId).Status);
+    }
+
+    [Fact]
     public async Task IntegrationPushQueue_DroppedByRestart_IsRecoveredFromDurablePipelineFacts()
     {
         var deliverySha = PublishDelivery("restart.txt", "survives restart\n");
@@ -2865,6 +3082,278 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(IntegrationVerificationEvidence.IntegrationRecord, verification?.Evidence);
     }
 
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Acceptance_AncestorGate_RequiresEveryLaterPublicationToHaveItsOwnGate(
+        bool gateFirstPublication, bool gateSecondPublication)
+    {
+        var deliverySha = PublishDelivery("ancestor-delivery.txt", "verified delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(deliverySha);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        IntegrationVerificationStore.Write(card.FolderPath, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = deliverySha,
+            IntegrationBranch = "develop",
+            DeliveryShas = [deliverySha],
+            Evidence = IntegrationVerificationEvidence.MergeGate,
+            GateVerdict = nameof(BuildTestGateVerdict.Ok),
+            Reason = "The pre-develop build gate passed on this delivery tree.",
+        });
+
+        var first = PublishLaterCommit("later-first.txt");
+        if (gateFirstPublication)
+            Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
+                PassedPublishedGate(first, "AGT-LATER-1")));
+        var second = PublishLaterCommit("later-second.txt");
+        if (gateSecondPublication)
+            Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
+                PassedPublishedGate(second, "AGT-LATER-2")));
+
+        var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+        if (gateFirstPublication && gateSecondPublication)
+        {
+            Assert.Equal(MoveJobStatus.Success, accepted.Status);
+            var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+            Assert.Contains(deliverySha, completed.CompletionClaim?.Evidence);
+            Assert.Contains(IntegrationGateJournal.PreDevelopBuildGateStep, completed.CompletionClaim?.Evidence);
+            Assert.Contains(TaskKey, completed.CompletionClaim?.Evidence);
+        }
+        else
+        {
+            Assert.Equal(MoveJobStatus.IntegrationFailed, accepted.Status);
+            Assert.Contains(gateSecondPublication ? first : second, accepted.Message);
+        }
+    }
+
+    [Fact]
+    public async Task Acceptance_VerificationTreeOutsideThePublishedBranch_IsRefused()
+    {
+        var deliverySha = PublishDelivery("different-tree.txt", "delivered\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(deliverySha);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        RunGit(_repo, "checkout", "-q", "-b", "unrelated-verification", "main");
+        File.WriteAllText(Path.Combine(_repo, "unrelated-verification.txt"), "unrelated\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "unrelated verification tree");
+        var unrelated = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "checkout", "-q", "main");
+        IntegrationVerificationStore.Write(card.FolderPath, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = unrelated,
+            IntegrationBranch = "develop",
+            DeliveryShas = [deliverySha],
+            Evidence = IntegrationVerificationEvidence.MergeGate,
+            GateVerdict = nameof(BuildTestGateVerdict.Ok),
+        });
+
+        var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+
+        Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
+        Assert.Contains("integrated-unverified", refused.Message);
+        Assert.Contains(unrelated, refused.Message);
+    }
+
+    [Fact]
+    public void Acceptance_BatchGateCannotReplaceFirstParentVerificationAncestry()
+    {
+        var deliverySha = PublishDelivery("batch-side-delivery.txt", "delivered\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(deliverySha);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+
+        RunGit(_repo, "checkout", "-q", "-b", "verified-side", deliverySha);
+        File.WriteAllText(Path.Combine(_repo, "side.txt"), "verified side\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "verified side commit");
+        var verifiedSide = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "checkout", "-q", "-B", "published-batch", "origin/develop");
+        RunGit(_repo, "merge", "-q", "--no-ff", "verified-side", "-m", "batch publication");
+        var batchSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+
+        var batches = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
+        WriteBatchEvidence(batches, "side-batch", deliverySha, batchSha);
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        var service = new TaskIntegrationStatusService(git, deps.Settings, deps.Pipeline,
+            NullLogger<TaskIntegrationStatusService>.Instance, batchGates: batches)
+        {
+            TestStatusOverride = _ => VerifiedStatus(deliverySha, verifiedSide),
+        };
+
+        var status = service.BuildForAcceptance(card);
+
+        Assert.Equal(IntegrationVerificationStates.Unverified, status.Verification?.State);
+        Assert.Contains("first-parent", status.Verification?.Reason);
+        Assert.Contains(verifiedSide, status.Verification?.Reason);
+    }
+
+    [Fact]
+    public void Acceptance_BatchGateCoversMappedVerifiedCommitOnFirstParentLine()
+    {
+        var deliverySha = PublishDelivery("mapped-batch-delivery.txt", "delivered\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(deliverySha);
+        var replaySha = PublishLaterCommit("mapped-batch-replay.txt");
+        var candidateSha = PublishLaterCommit("mapped-batch-candidate.txt");
+        var batches = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
+        WriteBatchEvidence(batches, "mapped-batch", deliverySha, candidateSha);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)! with
+        {
+            IntegrationRecords =
+            [
+                new TaskIntegrationRecord
+                {
+                    Id = $"batch-map:mapped-batch:run:{TaskKey}",
+                    Classification = IntegrationRecordClasses.CuratedMapping,
+                    SourceSha = deliverySha,
+                    IntegrationSha = replaySha,
+                },
+            ],
+        };
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        var service = new TaskIntegrationStatusService(git, deps.Settings, deps.Pipeline,
+            NullLogger<TaskIntegrationStatusService>.Instance, batchGates: batches)
+        {
+            TestStatusOverride = _ => VerifiedStatus(deliverySha, replaySha),
+        };
+
+        var status = service.BuildForAcceptance(card);
+
+        Assert.Equal(IntegrationVerificationStates.Verified, status.Verification?.State);
+        Assert.Contains("batch gate mapped-batch run run", status.Verification?.Reason);
+    }
+
+    [Fact]
+    public void Acceptance_MissingRepositoryOrTip_PreservesEarlierVerification()
+    {
+        var deliverySha = PublishDelivery("missing-facts.txt", "delivered\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(deliverySha);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        var service = new TaskIntegrationStatusService(git, deps.Settings, deps.Pipeline,
+            NullLogger<TaskIntegrationStatusService>.Instance)
+        {
+            TestStatusOverride = _ => VerifiedStatus(deliverySha, deliverySha),
+        };
+
+        var missingRoot = service.BuildForAcceptance(card with { WatchPath = Path.Combine(_tempDir, "missing") });
+        Assert.Equal(IntegrationVerificationStates.Verified, missingRoot.Verification?.State);
+
+        RunGit(_repo, "update-ref", "-d", "refs/remotes/origin/develop");
+        var missingTip = service.BuildForAcceptance(card);
+        Assert.Equal(IntegrationVerificationStates.Verified, missingTip.Verification?.State);
+    }
+
+    [Fact]
+    public void Acceptance_StaleGateEvidence_DoesNotAddGitCallsPerEntry()
+    {
+        var deliverySha = PublishDelivery("bounded-gates.txt", "delivered\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(deliverySha);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var laterSha = PublishLaterCommit("bounded-later.txt");
+        Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
+            PassedPublishedGate(laterSha, "AGT-LATER")));
+        var batches = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        var service = new TaskIntegrationStatusService(git, deps.Settings, deps.Pipeline,
+            NullLogger<TaskIntegrationStatusService>.Instance, batchGates: batches)
+        {
+            TestStatusOverride = _ => VerifiedStatus(deliverySha, deliverySha),
+        };
+        int CountCalls()
+        {
+            using var telemetry = GitProcessTelemetry.BeginRequest(
+                "acceptance-publication-budget", NullLogger.Instance, includeNested: true);
+            Assert.Equal(IntegrationVerificationStates.Verified,
+                service.BuildForAcceptance(card).Verification?.State);
+            return GitProcessTelemetry.CurrentTally()!.Value.Spawns;
+        }
+        var baseline = CountCalls();
+        for (var i = 0; i < 40; i++)
+        {
+            var staleSha = i.ToString("x40");
+            Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
+                PassedPublishedGate(staleSha, $"AGT-STALE-{i}")));
+            WriteBatchEvidence(batches, $"stale-{i}", deliverySha, staleSha);
+        }
+
+        var withStaleEvidence = CountCalls();
+
+        Assert.True(withStaleEvidence <= baseline,
+            $"Stale evidence added Git calls: baseline={baseline}, with evidence={withStaleEvidence}.");
+        Assert.InRange(withStaleEvidence, 1, 8);
+    }
+
+    private static TaskIntegrationStatus VerifiedStatus(string deliverySha, string verificationSha) => new()
+    {
+        Status = IntegrationStatuses.Integrated,
+        Sha = deliverySha,
+        IntegrationBranch = "develop",
+        Verification = new TaskIntegrationVerification
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = verificationSha,
+            Evidence = IntegrationVerificationEvidence.MergeGate,
+            GateVerdict = nameof(BuildTestGateVerdict.Ok),
+            Reason = "Gate pre-develop-build-gate passed.",
+        },
+    };
+
+    private static void WriteBatchEvidence(BatchGateStore batches, string batchId,
+        string baseSha, string candidateSha)
+    {
+        var folder = batches.BatchDirectory(batchId);
+        var runs = Path.Combine(folder, "runs");
+        Directory.CreateDirectory(runs);
+        var evidence = Path.Combine(folder, "gate.log");
+        File.WriteAllText(evidence, "passed");
+        var scope = new BatchGateScope(Project, "fixture", "develop", "profile", "digest", "version");
+        var at = DateTimeOffset.UnixEpoch.AddDays(1);
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        File.WriteAllText(Path.Combine(folder, "manifest.json"), JsonSerializer.Serialize(
+            new BatchGateManifest(batchId, scope, baseSha, "membership", at, [], [], []), options));
+        File.WriteAllText(Path.Combine(folder, "publication.json"), JsonSerializer.Serialize(
+            new BatchGatePublication(batchId, "membership", "run", baseSha, candidateSha,
+                candidateSha, 1, 1, at), options));
+        var runFile = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("run")))
+            + ".verdict.json";
+        File.WriteAllText(Path.Combine(runs, runFile), JsonSerializer.Serialize(
+            new BatchGateRunVerdict("run", batchId, "membership", candidateSha, "digest",
+                "pass", "pass", evidence, at), options));
+    }
+
+    private string PublishLaterCommit(string name)
+    {
+        RunGit(_repo, "checkout", "-q", "-B", "later-publications", "origin/develop");
+        File.WriteAllText(Path.Combine(_repo, name), name + "\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "later published delivery");
+        var sha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        return sha;
+    }
+
+    private static PublishedGateEvidence PassedPublishedGate(string sha, string sourceJobId)
+        => new(Project, "develop", sha, IntegrationGateJournal.PreDevelopBuildGateStep,
+            sourceJobId, nameof(BuildTestGateVerdict.Ok), "passed", sha,
+            DateTimeOffset.UnixEpoch.AddDays(1));
+
     [Fact]
     public async Task OperatorAcceptance_SurvivesWorkerAndRestartBackstop()
     {
@@ -3484,6 +3973,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         IBuildTestGateRunner? gateRunner = null,
         bool writeReviewSubject = true,
         IntegrationPushQueue? pushQueue = null,
+        BatchIntegrationReservationService? reservations = null,
         bool configureIntegrationBranch = true,
         string? recordedIntegrationBranch = null,
         string initialState = TaskStates.HumanReview,
@@ -3491,7 +3981,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         string? briefVersion = null,
         bool seedContent = true,
         bool authorityRebuilt = false,
-        bool guarded = false)
+        bool guarded = false,
+        bool engineMode = false)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -3502,6 +3993,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                 ["WatchPaths:0:RepositoryPath"] = _repo,
                 ["TaskRepository"] = _tempDir,
                 ["DeliveryChain:Guarded"] = guarded ? "true" : "false",
+                ["Orchestration:Transitions:CodingCompletion"] = engineMode ? "Engine" : "Monolith",
+                ["Orchestration:Transitions:ReviewReport"] = engineMode ? "Engine" : "Monolith",
             })
             .Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
@@ -3517,7 +4010,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
             notifier,
             NullLogger<TaskMutationService>.Instance);
-        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config,
+            new FixtureSettingsWriter());
         if (configureIntegrationBranch)
             settings.SetIntegrationBranch(Project, "develop");
         settings.SetIntegrationStrategy(Project, integrationStrategy);
@@ -3564,6 +4058,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             pipeline,
             NullLogger<MergeIntoDevelopRunner>.Instance,
             pushQueue: pushQueue,
+            batchReservations: reservations,
             attemptAuthority: authority,
             projectSettings: settings,
             preMainTestGate: gateRunner == null ? null : new PreMainTestGate(gateRunner),
@@ -3791,6 +4286,24 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         AcceptedIntegrationQueue? AcceptedQueue,
         AttemptAuthorityService Authority,
         TaskChangeNotifier Notifier);
+
+    /// <summary>
+    /// Replaces the fixture's settings file atomically (temp file, then
+    /// rename) like the production writer, without its two fsyncs per write
+    /// (AGT-3567). Build stores three or four settings per test; on a loaded
+    /// runner those flushes took several seconds per class run, and no test
+    /// here depends on the settings surviving a power loss.
+    /// </summary>
+    private sealed class FixtureSettingsWriter : AgentStudio.Persistence.IAtomicJsonFileWriter
+    {
+        public void Write(string path, string content)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var temporary = $"{path}.{Guid.NewGuid():N}.tmp";
+            File.WriteAllText(temporary, content);
+            File.Move(temporary, path, overwrite: true);
+        }
+    }
 
     private sealed class BlockingBuildTestGateRunner(BuildTestGateResult result)
         : IBuildTestGateRunner

@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using AgentStudio.Runner;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Prompts;
 
@@ -51,9 +52,7 @@ public sealed class PromptCallTelemetryService
             if (!string.IsNullOrWhiteSpace(taskRepository))
                 return Path.Combine(taskRepository, "logs", LogFileName);
 
-            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            if (string.IsNullOrWhiteSpace(local)) local = Path.GetTempPath();
-            return Path.Combine(local, "agent-taskboard", "logs", LogFileName);
+            return LocalStateRoot.Combine("agent-taskboard", "logs", LogFileName);
         }
     }
 

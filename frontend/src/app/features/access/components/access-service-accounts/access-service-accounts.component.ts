@@ -7,9 +7,11 @@ import {
   type ServiceAccount,
   type ServiceAccountToken,
 } from '../../models/access.model';
+import { isOperatorAgentAccount } from '../../models/operator-agent.model';
 import { ACCESS_CLOCK } from '../../services/access-clock';
 import { AccessService } from '../../services/access.service';
 import { AccessGrantFormComponent } from '../access-grant-form/access-grant-form.component';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -22,7 +24,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 @Component({
   selector: 'app-access-service-accounts',
   standalone: true,
-  imports: [AccessGrantFormComponent],
+  imports: [AccessGrantFormComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './access-service-accounts.component.html',
   styleUrl: './access-service-accounts.component.scss',
@@ -35,7 +37,8 @@ export class AccessServiceAccountsComponent {
   readonly grant = signal<IamGrant | null>(null);
   readonly tokenDays = signal(90);
   readonly issued = signal<OneTimeServiceAccountToken | null>(null);
-  readonly accounts = computed(() => this.access.overview()?.serviceAccounts ?? []);
+  /** Operator agents are service accounts too, but they are managed only in the operator panel. */
+  readonly accounts = computed(() => (this.access.overview()?.serviceAccounts ?? []).filter(account => !isOperatorAgentAccount(account)));
   readonly lifetimes: readonly number[] = [30, 90, 365];
   readonly time = formatAccessTime;
 
@@ -45,6 +48,22 @@ export class AccessServiceAccountsComponent {
     return overview.bindings
       .filter(binding => binding.principalKind === 'service-account' && binding.principalId === account.id)
       .map(binding => `${overview.roles.find(role => role.id === binding.role)?.displayName ?? binding.role} · ${scopeLabel(binding.scope, this.access.projects())}`);
+  }
+
+  /**
+   * The roles an API token is bound to, by display name and description, so
+   * the Owner sees what an operator token may do (OP-1: `operator-agent`).
+   */
+  tokenRoles(account: ServiceAccount): { id: string; name: string; description: string }[] {
+    const overview = this.access.overview();
+    if (!overview) return [];
+    const ids = [...new Set(overview.bindings
+      .filter(binding => binding.principalKind === 'service-account' && binding.principalId === account.id)
+      .map(binding => binding.role))];
+    return ids.map(id => {
+      const role = overview.roles.find(candidate => candidate.id === id);
+      return { id, name: role?.displayName ?? id, description: role?.description ?? '' };
+    });
   }
 
   isApiToken(account: ServiceAccount): boolean {

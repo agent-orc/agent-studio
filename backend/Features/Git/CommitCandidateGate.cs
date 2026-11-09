@@ -224,6 +224,18 @@ public sealed class CommitCandidateGate
                 continue;
             }
 
+            // .security/ is refused before its content is read, hashed or scanned.
+            if (SecurityStorePathPolicy.IsSecurityStorePath(normalized))
+            {
+                findings.Add(new CommitGateFinding(
+                    "security-store-path", CommitGateSeverities.Warning, normalized,
+                    "The .security/ folder is local state and was excluded from the commit.",
+                    "policy", ExcludesCandidate: true));
+                snapshots.Add((new CommitCandidateManifestEntry(normalized, status, 0, null, null, false, false,
+                    "security-store-path"), []));
+                continue;
+            }
+
             byte[] bytes = [];
             long size = 0;
             string? sha256 = null;

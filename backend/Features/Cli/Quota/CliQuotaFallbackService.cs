@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Cli;
 
@@ -15,6 +16,7 @@ public sealed class CliQuotaFallbackService
     private readonly IConfiguration _config;
     private readonly ILogger<CliQuotaFallbackService> _logger;
     private readonly IModelEquivalenceCatalog? _equivalence;
+    private readonly ModelSelectionPolicyStore? _policy;
     private readonly object _lock = new();
     private Dictionary<string, CliModelRouteProfile> _profiles = new(StringComparer.OrdinalIgnoreCase);
     private bool _loaded;
@@ -22,11 +24,13 @@ public sealed class CliQuotaFallbackService
     public CliQuotaFallbackService(
         IConfiguration config,
         ILogger<CliQuotaFallbackService> logger,
-        IModelEquivalenceCatalog? equivalence = null)
+        IModelEquivalenceCatalog? equivalence = null,
+        ModelSelectionPolicyStore? policy = null)
     {
         _config = config;
         _logger = logger;
         _equivalence = equivalence;
+        _policy = policy;
     }
 
     public IReadOnlyDictionary<string, CliModelRouteProfile> GetAll()
@@ -60,86 +64,36 @@ public sealed class CliQuotaFallbackService
         return normalized;
     }
 
+    /// <summary>
+    /// Thin adapter over <see cref="ModelSelectionPlanner.ResolveRoute"/> (MS-5):
+    /// the primary/fallback rule lives in the shared planner; this service
+    /// supplies the persisted profiles and the equivalence catalogue. Kept
+    /// until the remaining consumers call the selection service (MS-6).
+    /// </summary>
     public CliRouteDecision Resolve(
         string? requestedCliType,
         string? requestedModel,
         string? requestedThinkingLevel,
         Func<string?, CapEvaluation> evaluateQuota,
         bool preferFallback = false,
-        Func<string, string?, bool>? modelAccepted = null)
+        Func<string, string?, bool>? modelAccepted = null,
+        bool sameClassOnly = false,
+        Func<string, bool>? fallbackProviderAllowed = null)
+        => ModelSelectionPlanner.ResolveRoute(
+            requestedCliType, requestedModel, requestedThinkingLevel, RoutingFacts(), evaluateQuota,
+            preferFallback, modelAccepted, sameClassOnly, fallbackProviderAllowed);
+
+    /// <summary>The routing map as planner facts: persisted profiles plus the Token Economy catalogue.</summary>
+    public SelectionRoutingFacts RoutingFacts()
     {
-        var cli = Clean(requestedCliType)?.ToLowerInvariant() ?? CliTypes.Claude;
         EnsureLoaded();
-        CliModelRouteProfile? profile;
-        lock (_lock) _profiles.TryGetValue(cli, out profile);
-
-        var primaryModel = Clean(requestedModel) ?? profile?.PrimaryModel;
-        var primaryThinking = Clean(requestedThinkingLevel) ?? profile?.PrimaryThinkingLevel;
-        var cap = evaluateQuota(cli);
-        if (!cap.Blocked && !preferFallback)
-            return new(cli, primaryModel, primaryThinking, false, null, cap);
-
-        var effective = EffectiveFallback(cli, profile, primaryModel, primaryThinking);
-        if (effective is null)
-            return new(cli, primaryModel, primaryThinking, false,
-                preferFallback ? "operator prefers fallback, but no comparable route is available" : cap.DescribeReason(), cap);
-
-        var (fallbackCli, fallbackModel, fallbackThinking) = effective.Value;
-        if (modelAccepted is not null && !modelAccepted(fallbackCli, fallbackModel))
-            return new(cli, primaryModel, primaryThinking, false,
-                $"fallback {fallbackCli}/{fallbackModel} is not accepted by the claiming host", cap);
-        var fallbackCap = string.Equals(fallbackCli, cli, StringComparison.OrdinalIgnoreCase)
-            ? CapEvaluation.NotBlocked
-            : evaluateQuota(fallbackCli);
-        if (fallbackCap.Blocked)
-            return new(cli, primaryModel, primaryThinking, false,
-                $"primary {cap.DescribeReason()}; fallback {fallbackCap.DescribeReason()}", cap);
-
-        var isOverride = profile is not null && !string.IsNullOrWhiteSpace(profile.FallbackModel);
-        return new(
-            fallbackCli,
-            fallbackModel,
-            fallbackThinking,
-            true,
-            preferFallback ? "operator preference" : cap.DescribeReason(),
-            cap,
-            preferFallback ? "operator-preference" : "quota-cap",
-            isOverride ? "override" : "catalogue",
-            isOverride ? null : _equivalence?.Version);
+        return new SelectionRoutingFacts(Profile, _equivalence, ModelMetadataRegistry.ThinkingLevelsFor);
     }
 
-    /// <summary>
-    /// The fallback CLI/model/thinking level that would apply for
-    /// <paramref name="cli"/> right now: the operator's explicit
-    /// <paramref name="profile"/> when it names a fallback model, else the
-    /// equivalence-catalogue-derived pair for the other CLI family. Returns
-    /// null when neither source has an answer (no fallback configured, no
-    /// known equivalence tier, or this CLI has no "other family" partner).
-    /// </summary>
-    private (string CliType, string? Model, string? ThinkingLevel)? EffectiveFallback(
-        string cli, CliModelRouteProfile? profile, string? primaryModel, string? primaryThinking)
+    private CliModelRouteProfile? Profile(string cliType)
     {
-        if (profile is not null && !string.IsNullOrWhiteSpace(profile.FallbackModel))
-            return (profile.FallbackCliType ?? cli, profile.FallbackModel, profile.FallbackThinkingLevel);
-
-        var otherFamily = OtherFamily(cli);
-        if (otherFamily is null || _equivalence is null) return null;
-        var equivalent = _equivalence.TryGetRoute(cli, primaryModel, primaryThinking, otherFamily);
-        return equivalent is null ? null : (otherFamily, equivalent.ToModel, equivalent.ToThinkingLevel);
+        lock (_lock) return _profiles.TryGetValue(cliType, out var profile) ? profile : null;
     }
-
-    /// <summary>
-    /// The counterpart CLI family a catalogue-derived fallback would route to.
-    /// Only Claude and Codex have a documented equivalence tier today; Gemini
-    /// and any future CLI type have no automatic catalogue partner, so an
-    /// operator override remains required for them.
-    /// </summary>
-    private static string? OtherFamily(string cli) => cli switch
-    {
-        _ when string.Equals(cli, CliTypes.Codex, StringComparison.OrdinalIgnoreCase) => CliTypes.Claude,
-        _ when string.Equals(cli, CliTypes.Claude, StringComparison.OrdinalIgnoreCase) => CliTypes.Codex,
-        _ => null,
-    };
 
     /// <summary>
     /// Read-only projection of the profile GET /model-routes returns: the
@@ -156,7 +110,7 @@ public sealed class CliQuotaFallbackService
         lock (_lock) _profiles.TryGetValue(cli, out profile);
         if (profile is not null && !string.IsNullOrWhiteSpace(profile.FallbackModel)) return profile;
 
-        var otherFamily = OtherFamily(cli);
+        var otherFamily = ModelSelectionPlanner.OtherFamily(cli);
         var equivalent = otherFamily is null || _equivalence is null
             ? null
             : _equivalence.TryGetRoute(cli, profile?.PrimaryModel, profile?.PrimaryThinkingLevel, otherFamily);
@@ -177,6 +131,12 @@ public sealed class CliQuotaFallbackService
         {
             if (_loaded) return;
             _loaded = true;
+            if (_policy is not null)
+            {
+                _profiles = new Dictionary<string, CliModelRouteProfile>(_policy.Get().LegacyProfiles,
+                    StringComparer.OrdinalIgnoreCase);
+                return;
+            }
             var path = ResolvePath();
             if (!File.Exists(path)) return;
             try
@@ -192,6 +152,11 @@ public sealed class CliQuotaFallbackService
 
     private void Persist()
     {
+        if (_policy is not null)
+        {
+            foreach (var profile in _profiles.Values) _policy.SetLegacyProfile(profile);
+            return;
+        }
         var path = ResolvePath();
         try
         {
@@ -206,39 +171,12 @@ public sealed class CliQuotaFallbackService
     {
         var root = _config["TaskRepository"];
         if (string.IsNullOrWhiteSpace(root))
-            root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "agent-taskboard");
+            root = LocalStateRoot.Combine("agent-taskboard");
         return Path.Combine(root, FileName);
     }
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }
 
-public sealed record CliModelRouteProfile
-{
-    public string CliType { get; init; } = "";
-    public string? PrimaryModel { get; init; }
-    public string? PrimaryThinkingLevel { get; init; }
-    public string? FallbackCliType { get; init; }
-    public string? FallbackModel { get; init; }
-    public string? FallbackThinkingLevel { get; init; }
-    /// <summary>
-    /// True when <see cref="GetEffectiveProfile"/> filled the fallback fields
-    /// from the equivalence catalogue because the operator configured none.
-    /// Always false on a profile read from <see cref="GetAll"/> or persisted
-    /// via <see cref="Set"/> - this is a read-time display marker, never
-    /// written to <c>cli-model-routing.json</c>.
-    /// </summary>
-    public bool IsFallbackDerived { get; init; }
-    public string? CatalogueVersion { get; init; }
-}
-
-public sealed record CliRouteDecision(
-    string CliType,
-    string? Model,
-    string? ThinkingLevel,
-    bool IsFallback,
-    string? Reason,
-    CapEvaluation PrimaryCap,
-    string? FallbackReason = null,
-    string? FallbackSource = null,
-    string? CatalogueVersion = null);
+// CliModelRouteProfile and CliRouteDecision live in the contracts package
+// (ModelSelection/QuotaDecisionContracts.cs).

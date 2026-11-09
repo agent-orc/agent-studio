@@ -32,6 +32,19 @@ public sealed class AccessSecurityTests : IDisposable
     }
 
     [Fact]
+    public void Issued_session_csrf_and_runner_secrets_are_masked_by_the_redactor()
+    {
+        var (store, _, _) = NewStore();
+        var owner = store.Bootstrap(new BootstrapRequest("issued.owner", "correct horse battery staple!", "Issued Owner"));
+        var enrollment = store.CreateEnrollment(new RunnerEnrollmentRequest("issued-runner-01", null, null, null));
+        var runner = store.EnrollRunner(enrollment.Code);
+
+        // The CSRF token has no recognisable shape; only the issued literal masks it.
+        foreach (var issued in new[] { owner.CsrfToken, owner.SessionToken, enrollment.Code, runner.Secret })
+            Assert.Equal("echo [REDACTED_CREDENTIAL] done", AgentStudio.Security.CredentialRedactor.Redact($"echo {issued} done"));
+    }
+
+    [Fact]
     public void Bootstrap_password_session_and_runner_secrets_are_hashed_at_rest()
     {
         var (store, _, _) = NewStore();
@@ -49,6 +62,21 @@ public sealed class AccessSecurityTests : IDisposable
         Assert.Contains("pbkdf2-sha512$600000$", persisted);
         Assert.NotNull(store.AuthenticateSession(owner.SessionToken));
         Assert.NotNull(store.AuthenticateRunner(runner.Secret));
+    }
+
+    [Fact]
+    public void Authentication_stamps_are_persisted_by_flush_not_by_reads()
+    {
+        var (store, _, _) = NewStore();
+        var enrollment = store.CreateEnrollment(new RunnerEnrollmentRequest("reader", null, null, null));
+        var runner = store.EnrollRunner(enrollment.Code);
+        var path = Path.Combine(store.SecurityFolder, "access-state.json");
+        var before = File.ReadAllText(path);
+
+        Assert.NotNull(store.AuthenticateRunner(runner.Secret));
+        Assert.Equal(before, File.ReadAllText(path));
+        store.FlushLastSeen();
+        Assert.NotEqual(before, File.ReadAllText(path));
     }
 
     [Fact]
@@ -338,7 +366,6 @@ public sealed class AccessSecurityTests : IDisposable
             ("PUT", "/api/v1/runs/run/result-handoff", RunnerScopes.Completion),
             ("POST", "/api/v1/runs/run/revoked-reference", RunnerScopes.Completion),
             ("GET", "/api/v1/projects", RunnerScopes.Claim),
-            ("GET", "/api/v1/projects/project/tasks/task", RunnerScopes.Claim),
             ("GET", "/api/v1/reviews/attempts/attempt", RunnerScopes.Claim),
             ("POST", "/api/v1/reviews/attempts/attempt/lease/renew", RunnerScopes.Lease),
             ("POST", "/api/v1/reviews/attempts/attempt/reclaim", RunnerScopes.Claim),
@@ -382,6 +409,11 @@ public sealed class AccessSecurityTests : IDisposable
             var wrongScope = scope == RunnerScopes.Claim ? RunnerScopes.Logs : RunnerScopes.Claim;
             Assert.Equal(403, (await Invoke(config, store, method, path, bearer: scoped[wrongScope])).Context.Response.StatusCode);
         }
+        // SM-9: the scope admits the card read, but only the lease holder reaches it.
+        var cardRead = await Invoke(config, store, "GET", "/api/v1/projects/project/tasks/task", bearer: runner.Secret);
+        Assert.False(cardRead.Called.Value);
+        Assert.Equal(403, cardRead.Context.Response.StatusCode);
+        Assert.Equal(401, (await Invoke(config, store, "GET", "/api/v1/projects/project/tasks/task")).Context.Response.StatusCode);
         Assert.Equal(403, (await Invoke(config, store, "PUT", "/api/v1/runners/runner_other", bearer: runner.Secret)).Context.Response.StatusCode);
         Assert.True((await Invoke(config, store, "POST", "/api/v1/protocol/compatibility", bearer: runner.Secret)).Called.Value);
         Assert.Equal(401, (await Invoke(config, store, "POST", "/api/v1/protocol/compatibility")).Context.Response.StatusCode);

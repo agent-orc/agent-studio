@@ -1,4 +1,8 @@
-import { ChangeDetectionStrategy, Component, computed, effect, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
+import { QualityStudioPanelComponent } from '../quality-studio-panel/quality-studio-panel.component';
+import { QualityStudioStatusService } from '../quality-studio-panel/quality-studio-status.service';
+import { AuthSessionState } from '../../../../services/auth.service';
+import { QualityStudioService } from '../../../../services/quality-studio.service';
 import { SectionHeaderComponent } from '../../../../components/section-header/section-header.component';
 import { StudioSidebarHeaderComponent } from '../../../../components/studio-sidebar-header/studio-sidebar-header.component';
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
@@ -58,12 +62,16 @@ const PROJECT_SHELL_STATE_STORAGE_PREFIX = 'atp.projectShell.v1.';
 @Component({
   selector: 'app-project-shell',
   standalone: true,
-  imports: [SectionHeaderComponent, StudioSidebarHeaderComponent, StudioIconComponent, TooltipDirective, TreeRowComponent],
+  imports: [SectionHeaderComponent, StudioSidebarHeaderComponent, StudioIconComponent, TooltipDirective, TreeRowComponent, QualityStudioPanelComponent],
+  providers: [QualityStudioStatusService],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-shell.component.html',
   styleUrl: './project-shell.component.scss',
 })
 export class ProjectShellComponent {
+  private readonly qualityStudio = inject(QualityStudioStatusService);
+  private readonly quality = inject(QualityStudioService);
+  private readonly auth = inject(AuthSessionState);
   readonly collapsedRailWidth = 44;
   readonly minRailWidth = 176;
   readonly maxRailWidth = 360;
@@ -106,6 +114,8 @@ export class ProjectShellComponent {
   );
 
   constructor() {
+    effect(() => this.qualityStudio.load(this.projectName()));
+    effect(() => this.quality.ensure(this.projectName()));
     effect(() => {
       this.restorePersistedState(this.projectName());
     });
@@ -129,7 +139,7 @@ export class ProjectShellComponent {
       { id: 'config',     label: 'Config' },
     ];
     return order.map(({ id, label }) => {
-      const inGroup = PROJECT_RAIL_ITEMS.filter(i => i.group === id);
+      const inGroup = PROJECT_RAIL_ITEMS.filter(i => i.group === id && this.showsItem(i));
       const nodes = inGroup
         .filter(i => !i.parent)
         .map<ProjectRailNode>(item => ({
@@ -147,8 +157,14 @@ export class ProjectShellComponent {
   });
 
   readonly compactRailItems = computed<readonly ProjectRailCompactItem[]>(() =>
-    PROJECT_RAIL_ITEMS.filter(isCompactRailItem),
+    PROJECT_RAIL_ITEMS.filter(item => this.showsItem(item)).filter(isCompactRailItem),
   );
+
+  private showsItem(item: ProjectRailItem): boolean {
+    return item.key !== 'quality-studio' || this.qualityStudio.status()?.connected === true
+      || this.auth.status()?.user?.role === 'owner'
+      || this.quality.status(this.projectName())?.configured === true;
+  }
 
   setRailCollapsed(collapsed: boolean): void {
     this.railCollapsed.set(collapsed);

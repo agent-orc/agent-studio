@@ -18,6 +18,7 @@ namespace AgentRunner;
 /// </summary>
 public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFacts.ISourceFactsClient
 {
+    private const int ArtifactChunkBytes = Contract.ArtifactChunkProtocol.MaxChunkBytes;
     private static readonly JsonSerializerOptions Json = CreateJsonOptions();
     private static readonly JsonSerializerOptions TaskServerContractJson =
         new(JsonSerializerDefaults.Web);
@@ -62,7 +63,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         _http = new HttpClient(CreateServiceHandler(options))
         {
             BaseAddress = new Uri(options.ServerUrl),
-            Timeout = TimeSpan.FromSeconds(options.ServerRequestTimeoutSeconds),
+            Timeout = EffectiveRequestTimeout(options.ServerRequestTimeoutSeconds),
         };
         _configuredClientId = options.ClientId;
         _usesServiceCredential = !string.IsNullOrWhiteSpace(options.AuthToken);
@@ -104,7 +105,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         }
         if (!string.IsNullOrWhiteSpace(options.AuthTokenFile))
             handler = new ReloadingPrincipalCredentialHandler(options.AuthTokenFile, handler);
-        return handler;
+        return new CredentialExpiryWarningHandler(handler, message => Console.Error.WriteLine(message), TimeProvider.System);
     }
 
     /// <summary>
@@ -131,7 +132,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         _deviceLoginRunnerId = runnerId;
         if (options is not null)
         {
-            var configuredTimeout = TimeSpan.FromSeconds(options.ServerRequestTimeoutSeconds);
+            var configuredTimeout = EffectiveRequestTimeout(options.ServerRequestTimeoutSeconds);
             if (_http.Timeout == Timeout.InfiniteTimeSpan || _http.Timeout > configuredTimeout)
                 _http.Timeout = configuredTimeout;
         }
@@ -176,7 +177,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         if (!response.IsSuccessStatusCode)
             throw new TaskServerException((int)response.StatusCode, $"Task Server protocol negotiation failed: {Trim(detail)}");
         var compatibility = JsonSerializer.Deserialize<Contract.ProtocolCompatibilityResponse>(detail, Json);
-        if (compatibility?.Supported != true)
+        if (compatibility?.Supported != true || compatibility.Server.Current < RunnerOptions.ProtocolVersion)
             throw new TaskServerException(426, compatibility?.Reason ?? "Task Server protocol is not compatible.");
         var serverCapabilities = compatibility.Server.Capabilities ?? [];
         _supportsCredentialObservationV2 = serverCapabilities.Contains("credential-observation-v2", StringComparer.Ordinal);
@@ -766,6 +767,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
                     req.EffectiveMaxParallelismAppliedAt ?? _centralHostMaxParallelismAppliedAt,
                 BootstrapMaxParallelism = req.BootstrapMaxParallelism ?? _options?.HostMaxParallelism,
                 CapabilityInstanceId = RunnerInstanceId,
+                RepositoryCredentialGeneration = req.RepositoryCredentialGeneration ?? RepositoryCredentialRouting.Generation,
                 RequiredCapabilities = _options is null
                     ? req.RequiredCapabilities
                     : RunnerCapabilityProbe.CodingHostRequirements(_options),
@@ -815,13 +817,11 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             claim.Run.RunId);
         _v1Leases[claim.Task.TaskKey] = (claim.Run.RunId, legacyLease, RunnerInstanceId);
         if (!string.IsNullOrWhiteSpace(claim.Task.Body)) _v1TaskBodies[claim.Task.TaskKey] = claim.Task.Body;
-        var selectedIntent = claim.ContinuationIntent is { Receipt.ExplicitSelection: true } intent
-            ? intent : null;
-        var selectedFields = selectedIntent?.Selection;
-        // Provider fallback is a whole route from a previous refusal. Once an
-        // operator selects any continuation field, filling the other fields
-        // from that route can cross provider boundaries.
-        var providerFallback = selectedIntent is null ? claim.ModelFallback : null;
+        // The route rule (mechanical route, then an explicit operator
+        // selection, then a provider-refusal fallback) is the shared
+        // model-selection planner's (MS-5).
+        var route = ModelSelectionPlanner.ClaimRoute(
+            claim.MechanicalFreshRoute, claim.ContinuationIntent, claim.ModelFallback);
         return new RunnerClaimResponse(
             RunnerClaimStatus.Claimed,
             claim.Task.TaskKey,
@@ -842,26 +842,15 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             ReconciliationActions: FromContract(claim.ReconciliationActions),
             // A required mechanical route wins. Otherwise operator fields
             // resolve with normal host settings as one route.
-            RunSpec: claim.MechanicalFreshRoute is { } mechanicalRoute
-                ? new RunSpecDto(mechanicalRoute.CliType, mechanicalRoute.Model, mechanicalRoute.ThinkingLevel,
-                    ContextMode: CodingAgentRunner.Model.CliContextModes.Clean,
+            RunSpec: !route.HasRoute && claim.MechanicalFreshRoute is null && claim.FollowUp is null
+                ? new RunSpecDto(BriefVersion: claim.Run.BriefVersion)
+                : new RunSpecDto(
+                    route.CliType,
+                    route.Model,
+                    route.ThinkingLevel,
+                    ContextMode: route.CleanContext ? CodingAgentRunner.Model.CliContextModes.Clean : null,
                     FollowUp: claim.FollowUp,
-                    BriefVersion: claim.Run.BriefVersion)
-                : selectedIntent is null && providerFallback is null && claim.FollowUp is null
-                    ? new RunSpecDto(BriefVersion: claim.Run.BriefVersion)
-                    : new RunSpecDto(
-                        selectedIntent is not null && (selectedFields is null || selectedFields.CliType
-                            || selectedFields.Model || selectedFields.ThinkingLevel)
-                            ? selectedIntent.CliType : providerFallback?.CliType,
-                        selectedIntent is not null && (selectedFields is null || selectedFields.Model)
-                            ? selectedIntent.Model : providerFallback?.To,
-                        selectedIntent is not null && (selectedFields is null || selectedFields.ThinkingLevel)
-                            ? selectedIntent.ThinkingLevel : providerFallback?.ThinkingLevel,
-                        ContextMode: providerFallback is null
-                            ? null
-                            : CodingAgentRunner.Model.CliContextModes.Clean,
-                        FollowUp: claim.FollowUp,
-                        BriefVersion: claim.Run.BriefVersion),
+                    BriefVersion: claim.Run.BriefVersion),
             ContinuationBaseRef: claim.ContinuationBaseRef,
             ContinuationBaseSha: claim.ContinuationBaseSha,
             ContinuationBaseReason: claim.ContinuationBaseReason,
@@ -1062,6 +1051,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
     public async Task<long> GetHostAllocationVersionAsync(string hostId, CancellationToken ct)
     {
         using var response = await _http.GetAsync($"/api/v1/hosts/{Uri.EscapeDataString(hostId)}/runtime-capacity", ct);
+        await ThrowIfRouteAbsentAsync(response, ct);
         if (response.StatusCode == HttpStatusCode.NotFound) return 0;
         var detail = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
@@ -1117,8 +1107,17 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         using var response = await _http.GetAsync("/api/v1/projects", ct);
         var detail = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
-            throw new TaskServerException((int)response.StatusCode, $"Project list failed: {Trim(detail)}");
-        return JsonSerializer.Deserialize<Contract.ProjectDto[]>(detail, TaskServerContractJson) ?? [];
+            throw new TaskServerException((int)response.StatusCode, $"Project list failed: {Trim(detail)}",
+                TryReadApiErrorCode(detail));
+        var projects = JsonSerializer.Deserialize<Contract.ProjectDto[]>(detail, TaskServerContractJson) ?? [];
+        // A monolith aliases this path to the Studio project summary, which has
+        // no projectId. It has no Task Server project list, so say that instead
+        // of handing callers projects without an id.
+        if (projects.Any(project => string.IsNullOrWhiteSpace(project?.ProjectId)))
+            throw new TaskServerException(404,
+                "This server answers /api/v1/projects with the Studio project summary, not the Task Server project list.",
+                RouteAbsenceContract.ErrorCode);
+        return projects;
     }
 
     public async Task<Contract.ProjectRepositoryStatusDto?> GetProjectRepositoryAsync(
@@ -1126,6 +1125,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
     {
         using var response = await _http.GetAsync(
             $"/api/v1/projects/{Uri.EscapeDataString(projectId)}/repository", ct);
+        await ThrowIfRouteAbsentAsync(response, ct);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<Contract.ProjectRepositoryStatusDto>(
@@ -1145,8 +1145,9 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         using var response = await _http.PostAsJsonAsync(
             $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/git-setups/claim", new { }, ct);
         // A monolith has no setup queue: its first-run setup runs on the Studio host itself.
+        await ThrowIfRouteAbsentAsync(response, ct);
         if (response.StatusCode is HttpStatusCode.NoContent or HttpStatusCode.NotFound) return null;
-        response.EnsureSuccessStatusCode();
+        await ThrowForClaimStatusAsync(response, "Git setup claim", ct);
         return await response.Content.ReadFromJsonAsync<Contract.RunnerGitSetupWork>(
             TaskServerContractJson, ct);
     }
@@ -1313,6 +1314,17 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         return JsonSerializer.Deserialize<Contract.ArtifactContentDto>(detail, Json);
     }
 
+    public async Task<IReadOnlyList<Contract.ArtifactDto>> ListRunArtifactsAsync(
+        string runId, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/v1/runs/{Uri.EscapeDataString(runId)}/artifacts", ct);
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode, $"Artifact list failed: {Trim(detail)}");
+        return JsonSerializer.Deserialize<Contract.ArtifactDto[]>(detail, Json) ?? [];
+    }
+
     /// <summary>
     /// AGT-3063: a shadow orchestrator decision call queued on the monolith
     /// authority. The runner runs it with its own provider credential.
@@ -1376,8 +1388,11 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         using var response = await _http.PostAsJsonAsync(
             $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/claim",
             new { }, Json, ct);
-        if (response.StatusCode == HttpStatusCode.NotFound) return null;
-        response.EnsureSuccessStatusCode();
+        await ThrowIfRouteAbsentAsync(response, ct);
+        // The Task Server answers an empty queue with an empty 200; the monolith with 204.
+        if (response.StatusCode is HttpStatusCode.NoContent or HttpStatusCode.NotFound) return null;
+        await ThrowForClaimStatusAsync(response, "Device sign-in claim", ct);
+        if (response.Content.Headers.ContentLength == 0) return null;
         return await response.Content.ReadFromJsonAsync<Contract.DeviceLoginClaimDto>(Json, ct);
     }
 
@@ -1395,6 +1410,21 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<Contract.DeviceLoginRunnerStateDto>(Json, ct))?.State;
+    }
+
+    /// <summary>
+    /// The Owner's pasted Claude authorization code. The server hands it out once; null until the
+    /// Owner submits it. The caller writes it to the CLI and never logs it.
+    /// </summary>
+    public async Task<string?> TakeDeviceLoginCodeAsync(string handle, CancellationToken ct)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/{Uri.EscapeDataString(handle)}/code",
+            new { }, Json, ct);
+        if (response.StatusCode == HttpStatusCode.NoContent) return null;
+        response.EnsureSuccessStatusCode();
+        if (response.Content.Headers.ContentLength == 0) return null;
+        return (await response.Content.ReadFromJsonAsync<Contract.DeviceLoginCodeDto>(Json, ct))?.Code;
     }
 
     public async Task CompleteDeviceLoginAsync(string handle,
@@ -1456,6 +1486,8 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
     {
         if (!_useV1 && !_supportsCapabilityAdvertisement) return;
         var options = _options ?? throw new InvalidOperationException("Runner options are unavailable.");
+        if (telemetry is not null)
+            telemetry = telemetry with { Containers = await RunnerCapabilityProbe.ContainersAsync(ct) };
         var request = new Contract.CapabilityAdvertisementRequest(
             options.RunnerId,
             RunnerInstanceId,
@@ -1927,20 +1959,27 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             var bytes = Convert.FromBase64String(artifact.ContentBase64);
             var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
             var key = $"runner-artifact:{authority.RunId}:{artifact.Path}:{sha}";
-            await PostJsonAsync<Contract.ArtifactIngestRequest, Contract.ArtifactDto>(
-                $"/api/v1/runs/{Uri.EscapeDataString(authority.RunId)}/artifacts",
-                new Contract.ArtifactIngestRequest(
-                    $"art_{Guid.NewGuid():N}",
-                    artifact.Path,
-                    MediaType(artifact.Path),
-                    artifact.ContentBase64,
-                    sha,
-                    key,
-                    authority.Fence,
-                    authority.RunnerId,
-                    authority.InstanceId,
-                    authority.LeaseId),
-                ct);
+            if (bytes.Length > ArtifactChunkBytes)
+            {
+                await UploadArtifactChunksAsync(authority, artifact.Path, bytes, sha, key, ct);
+            }
+            else
+            {
+                await PostJsonAsync<Contract.ArtifactIngestRequest, Contract.ArtifactDto>(
+                    $"/api/v1/runs/{Uri.EscapeDataString(authority.RunId)}/artifacts",
+                    new Contract.ArtifactIngestRequest(
+                        $"art_{Guid.NewGuid():N}",
+                        artifact.Path,
+                        MediaType(artifact.Path),
+                        artifact.ContentBase64,
+                        sha,
+                        key,
+                        authority.Fence,
+                        authority.RunnerId,
+                        authority.InstanceId,
+                        authority.LeaseId),
+                    ct);
+            }
             files.Add(artifact.Path);
         }
         if (!req.FinalizeResult)
@@ -1955,6 +1994,39 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             ResultDocumentStatus: finalization.Status == Contract.ResultFinalizationStatus.Ready
                 ? "generated"
                 : $"degraded:{finalization.Error ?? "summary retry budget exhausted"}");
+    }
+
+    private async Task UploadArtifactChunksAsync(
+        RunOutboxAuthority authority, string path, byte[] bytes,
+        string sha, string key, CancellationToken ct, long? sequence = null,
+        string? artifactId = null)
+    {
+        var baseUrl = $"/api/v1/runs/{Uri.EscapeDataString(authority.RunId)}/artifact-chunks";
+        var count = (bytes.Length + ArtifactChunkBytes - 1) / ArtifactChunkBytes;
+        using var response = await _http.GetAsync(
+            $"/api/v1/runs/{Uri.EscapeDataString(authority.RunId)}/artifact-chunks/{sha}?count={count}&sizeBytes={bytes.LongLength}", ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode,
+                $"Artifact chunk status failed: {(int)response.StatusCode}",
+                ProxyErrorCode((int)response.StatusCode));
+        var status = await response.Content.ReadFromJsonAsync<Contract.ArtifactChunkStatus>(Json, ct)
+            ?? throw new InvalidDataException("Task Server returned empty artifact chunk status.");
+        var received = status.ReceivedIndices.ToHashSet();
+        for (var index = 0; index < count; index++)
+        {
+            if (received.Contains(index)) continue;
+            var offset = index * ArtifactChunkBytes;
+            var length = Math.Min(ArtifactChunkBytes, bytes.Length - offset);
+            await PostJsonAsync<Contract.ArtifactChunkRequest, Contract.ArtifactChunkStatus>(
+                baseUrl,
+                new Contract.ArtifactChunkRequest(path, MediaType(path), sha, bytes.LongLength,
+                    index, count, Convert.ToBase64String(bytes.AsSpan(offset, length))), ct);
+        }
+        await PostJsonAsync<Contract.ArtifactChunkCompleteRequest, Contract.ArtifactDto>(
+            $"/api/v1/runs/{Uri.EscapeDataString(authority.RunId)}/artifact-chunks/complete",
+            new Contract.ArtifactChunkCompleteRequest(artifactId ?? $"art_{Guid.NewGuid():N}", path,
+                MediaType(path), sha, bytes.LongLength, count, key, authority.Fence,
+                authority.RunnerId, authority.InstanceId, authority.LeaseId, sequence), ct);
     }
 
     public async Task<ArtifactTransferLimitsResponse> GetArtifactTransferLimitsAsync(
@@ -2065,6 +2137,8 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         _v1CompletedLeases[req.TaskKey] = req.LeaseId;
         var targetState = string.Equals(typedOutcome,
             Contract.ExecutionOutcomeKind.MechanicalFallback.ToString(), StringComparison.Ordinal)
+            || string.Equals(typedOutcome,
+                Contract.ExecutionOutcomeKind.TransientModelCapacity.ToString(), StringComparison.Ordinal)
             ? "2-ready"
             : !string.IsNullOrWhiteSpace(req.NeedsInputMessage)
                 || req.OutcomeDecision?.Outcome == Contract.ExecutionOutcomeKind.ProviderRejectedRequest
@@ -2121,6 +2195,14 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             {
                 var payload = JsonSerializer.Deserialize<DurableArtifactPayload>(item.PayloadJson, Json)
                               ?? throw new InvalidDataException("Durable artifact payload is empty.");
+                var bytes = Convert.FromBase64String(payload.ContentBase64);
+                if (bytes.Length > ArtifactChunkBytes)
+                {
+                    await UploadArtifactChunksAsync(authority, payload.Name, bytes,
+                        payload.Sha256, item.IdempotencyKey, ct, item.Sequence,
+                        $"art_{HashId(item.IdempotencyKey)}");
+                    return;
+                }
                 await SendJsonAsync<Contract.ArtifactIngestRequest, Contract.ArtifactDto>(
                     HttpMethod.Post,
                     $"/api/v1/runs/{Uri.EscapeDataString(authority.RunId)}/artifacts",
@@ -2322,7 +2404,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             throw new TaskServerException(
                 (int)resp.StatusCode,
                 $"POST {url} -> {(int)resp.StatusCode}: {(resp.StatusCode == HttpStatusCode.RequestEntityTooLarge ? text : Trim(text))}",
-                errorCode);
+                ProxyErrorCode((int)resp.StatusCode) ?? errorCode);
         }
         return await resp.Content.ReadFromJsonAsync<TResp>(Json, ct);
     }
@@ -2354,6 +2436,61 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
 
     private static string Trim(string s) => s.Length <= 300 ? s : s[..300] + "...";
 
+    /// <summary>
+    /// Throws when the server answered that it does not map the called route,
+    /// so a caller that reads a 404 as "nothing there" does not poll an absent
+    /// feature as if it were idle (<see cref="FeatureRouteAbsence"/>).
+    /// </summary>
+    /// <summary>
+    /// A refused claim carries its status and error code, so the poll loop can log
+    /// why it fails instead of a bare <see cref="HttpRequestException"/>.
+    /// </summary>
+    private static async Task ThrowForClaimStatusAsync(HttpResponseMessage response, string operation, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode) return;
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        throw new TaskServerException((int)response.StatusCode,
+            $"{operation} failed with {(int)response.StatusCode}.", TryReadRefusalCode(detail));
+    }
+
+    /// <summary>The Task Server's <c>code</c>, or the monolith's <c>error</c> refusal field.</summary>
+    private static string? TryReadRefusalCode(string response)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(response);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+            foreach (var name in new[] { "code", "error" })
+                if (document.RootElement.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String)
+                    return value.GetString();
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static async Task ThrowIfRouteAbsentAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.StatusCode != HttpStatusCode.NotFound) return;
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        if (TryReadApiErrorCode(detail) == RouteAbsenceContract.ErrorCode)
+            throw new TaskServerException(404,
+                $"{response.RequestMessage?.Method} {response.RequestMessage?.RequestUri?.AbsolutePath} is not mapped on this server.",
+                RouteAbsenceContract.ErrorCode);
+    }
+
+    private static string? ProxyErrorCode(int statusCode) => statusCode switch
+    {
+        413 => "ProxyBodyLimitExceeded",
+        524 => "ProxyOriginTimeout",
+        _ => null,
+    };
+
+    internal static TimeSpan EffectiveRequestTimeout(int configuredSeconds)
+        => TimeSpan.FromSeconds(Math.Clamp(configuredSeconds, 1, 90));
+
     private static string? TryReadApiErrorCode(string response)
     {
         try
@@ -2370,8 +2507,19 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
 }
 
 /// <summary>A non-success HTTP reply from the Task Server, carrying the status code for branching.</summary>
-public sealed class TaskServerException(int statusCode, string message, string? errorCode = null) : Exception(message)
+public sealed class TaskServerException(int statusCode, string message, string? errorCode = null)
+    : Exception(statusCode switch
+    {
+        413 => $"ProxyBodyLimitExceeded: {message}",
+        524 => $"ProxyOriginTimeout: {message}",
+        _ => message,
+    })
 {
     public int StatusCode { get; } = statusCode;
-    public string? ErrorCode { get; } = errorCode;
+    public string? ErrorCode { get; } = statusCode switch
+    {
+        413 => "ProxyBodyLimitExceeded",
+        524 => "ProxyOriginTimeout",
+        _ => errorCode,
+    };
 }

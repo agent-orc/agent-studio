@@ -34,6 +34,9 @@ public sealed class GitWorkspace
     private PushProtectionCause? _pushProtectionRecovery;
 
     private const int MaxSalvagePublishAttempts = 3;
+    /// <summary>The bounded wait between transient remote push failures.</summary>
+    internal RepositoryPushRecovery PushRecovery { get; init; } = RepositoryPushRecovery.Host;
+    internal Action<string>? PushRetryRecorded { get; set; }
 
     public GitWorkspace(
         RunnerOptions options,
@@ -115,6 +118,7 @@ public sealed class GitWorkspace
     public SalvageReconciliationResult? PickupReconciliation => _pickupReconciliation;
     public PushProtectionCause? PushProtectionRecovery => _pushProtectionRecovery;
     private string PushProtectionMarkerPath => WorktreeLeasePath + ".push-protection.json";
+    private string RetainedWorktreeMarkerPath => WorktreeLeasePath + ".retained.json";
 
     private sealed record PushProtectionMarker(
         string TaskKey, string? ProjectId, string? RunAttemptId, string Branch, string BaseSha,
@@ -139,6 +143,85 @@ public sealed class GitWorkspace
         catch (Exception error)
         {
             _log($"push-protection-recovery-marker-failed path={RepoPath} error={OneLine(error.Message)}");
+        }
+    }
+
+    private sealed record RetainedWorktreeMarker(
+        string TaskKey, string? ProjectId, string? RunAttemptId, string Branch, string BaseSha, string LocalSha);
+
+    /// <summary>
+    /// A finished checkout whose push failed for any other reason than push
+    /// protection, such as a refused credential, stays on this host. The marker
+    /// lets the card's next round on this host continue from it in place.
+    /// </summary>
+    private async Task RecordRetainedWorktreeAsync(WorktreeSalvageException ex)
+    {
+        if (ex.PushProtection is not null) return;
+        if (!Directory.Exists(RepoPath) || string.IsNullOrWhiteSpace(BaseSha)) return;
+        try
+        {
+            var head = await ProcessRunner.RunAsync("git", ["rev-parse", "HEAD"], workingDirectory: RepoPath);
+            if (!head.Success) return;
+            var marker = new RetainedWorktreeMarker(_safeTaskKey, _projectId, _sourceRunAttemptId, _workBranch,
+                BaseSha!, head.StdOut.Trim());
+            Directory.CreateDirectory(Path.GetDirectoryName(RetainedWorktreeMarkerPath)!);
+            var temporary = RetainedWorktreeMarkerPath + ".tmp-" + Guid.NewGuid().ToString("N");
+            File.WriteAllText(temporary, JsonSerializer.Serialize(marker));
+            File.Move(temporary, RetainedWorktreeMarkerPath, overwrite: true);
+            _log($"worktree-retained-marker path={RepoPath} localSha={marker.LocalSha}");
+        }
+        catch (Exception error)
+        {
+            _log($"worktree-retained-marker-failed path={RepoPath} error={OneLine(error.Message)}");
+        }
+    }
+
+    /// <summary>
+    /// Continues from a checkout an earlier round of this card retained on this
+    /// host, when it is still exactly what that round left and contains the
+    /// continuation base this round was given. Anything else takes the normal
+    /// path, which secures the checkout before it is removed.
+    /// </summary>
+    private async Task<bool> TryResumeRetainedWorktreeAsync(CancellationToken ct)
+    {
+        if (!File.Exists(RetainedWorktreeMarkerPath) || !File.Exists(WorktreeLeasePath)) return false;
+        try
+        {
+            var marker = JsonSerializer.Deserialize<RetainedWorktreeMarker>(
+                await File.ReadAllTextAsync(RetainedWorktreeMarkerPath, ct));
+            using var lease = JsonDocument.Parse(await File.ReadAllTextAsync(WorktreeLeasePath, ct));
+            if (marker is null || marker.TaskKey != _safeTaskKey || marker.ProjectId != _projectId ||
+                marker.Branch != _workBranch ||
+                lease.RootElement.GetProperty("taskKey").GetString() != _safeTaskKey ||
+                lease.RootElement.GetProperty("projectId").GetString() != _projectId ||
+                lease.RootElement.GetProperty("runAttemptId").GetString() != marker.RunAttemptId ||
+                lease.RootElement.GetProperty("owner").GetString() != _options.RunnerId ||
+                lease.RootElement.GetProperty("worktreePath").GetString() != RepoPath)
+                return false;
+            var head = (await Git(["rev-parse", "HEAD"], RepoPath, ct)).StdOut.Trim();
+            if (!string.Equals(head, marker.LocalSha, StringComparison.OrdinalIgnoreCase)
+                || !await IsAncestorAsync(marker.BaseSha, head, ct))
+                return false;
+            if (_continuationBaseRequired)
+            {
+                if (_continuationBaseRef is null || _continuationBaseSha is null) return false;
+                var continuation = await FetchRemoteBranchHeadAsync(_continuationBaseRef, ct);
+                if (!string.Equals(continuation, _continuationBaseSha, StringComparison.OrdinalIgnoreCase)
+                    || !await IsAncestorAsync(continuation!, head, ct))
+                    return false;
+            }
+            _startedHead = marker.BaseSha;
+            _startedFromSalvage = true;
+            _preparedIntegrationBranch = _baseBranch;
+            WriteWorktreeLease(marker.BaseSha);
+            File.Delete(RetainedWorktreeMarkerPath);
+            _log($"worktree-retained-resumed path={RepoPath} localSha={head} previousAttempt={marker.RunAttemptId ?? "legacy"}");
+            return true;
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _log($"worktree-retained-resume-rejected path={RepoPath} error={OneLine(error.Message)}");
+            return false;
         }
     }
 
@@ -243,6 +326,8 @@ public sealed class GitWorkspace
                         _log($"push-protection-recovery-ready path={RepoPath} cause={_pushProtectionRecovery!.Summary}");
                         return _workBranch;
                     }
+                    if (await TryResumeRetainedWorktreeAsync(ct))
+                        return _workBranch;
                     var retained = HasFencedGeneration
                         ? await SecureAndRemoveAsync(
                             "Unknown",
@@ -616,6 +701,7 @@ public sealed class GitWorkspace
             catch (WorktreeSalvageException ex)
             {
                 await RecordPushProtectionFailureAsync(ex);
+                await RecordRetainedWorktreeAsync(ex);
                 throw;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -689,6 +775,7 @@ public sealed class GitWorkspace
             catch (WorktreeSalvageException ex)
             {
                 await RecordPushProtectionFailureAsync(ex);
+                await RecordRetainedWorktreeAsync(ex);
                 throw;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1023,6 +1110,7 @@ public sealed class GitWorkspace
         }
 
         string? immutableResultRef = null;
+        string? immutableResultFailure = null;
         if (!quarantine && !string.IsNullOrWhiteSpace(sourceRunAttemptId))
         {
             var candidateRef = _fencingToken.HasValue
@@ -1048,6 +1136,7 @@ public sealed class GitWorkspace
                 // escalating. The already verified salvage fence remains the
                 // delivery proof and recovery source.
                 _log($"immutable-result-ref-push-failed ref={candidateRef} path={RepoPath} error={OneLine(ex.Message)}; completing without result envelope");
+                immutableResultFailure = OneLine(ex.Message);
             }
         }
         if (removeAfterSecure)
@@ -1062,7 +1151,8 @@ public sealed class GitWorkspace
                 ResultSha: head,
                 Reconciliation: reconciliation,
                 ImmutableResultRef: immutableResultRef,
-                DeliveryProof: deliveryProof)
+                DeliveryProof: deliveryProof,
+                ResultRefFailure: immutableResultFailure)
             : new WorktreeTeardownResult(
                 false,
                 null,
@@ -1070,7 +1160,8 @@ public sealed class GitWorkspace
                 null,
                 ResultSha: head,
                 ImmutableResultRef: immutableResultRef,
-                DeliveryProof: deliveryProof);
+                DeliveryProof: deliveryProof,
+                ResultRefFailure: immutableResultFailure);
     }
 
     private async Task<SalvageReconciliationResult> PublishImmutableSalvageAsync(
@@ -1169,6 +1260,7 @@ public sealed class GitWorkspace
         {
             if (File.Exists(WorktreeLeasePath)) File.Delete(WorktreeLeasePath);
             if (File.Exists(PushProtectionMarkerPath)) File.Delete(PushProtectionMarkerPath);
+            if (File.Exists(RetainedWorktreeMarkerPath)) File.Delete(RetainedWorktreeMarkerPath);
             _log($"worktree-lease-released task={_safeTaskKey} lease={WorktreeLeasePath}");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -1213,6 +1305,10 @@ public sealed class GitWorkspace
                 _log($"worktree-salvage-reconciled kind=divergent canonicalRef=refs/heads/{_workBranch} canonicalSha={remoteHead} localSha={localHead} recoveryRef=refs/heads/{recoveryBranch} recoverySha={localHead} authoritativeBaseRef=refs/heads/{_workBranch} authoritativeBaseSha={remoteHead}");
                 return result;
             }
+            catch (RepositoryPushFailedException)
+            {
+                throw;
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 lastError = ex;
@@ -1245,7 +1341,7 @@ public sealed class GitWorkspace
                 $"or legacy '{_workBranch}' collision refs.");
         }
         _log($"worktree-salvage-push-started branch={branch} sha={ShortSha(expectedHead)} path={RepoPath}");
-        await Git(["push", "origin", $"HEAD:refs/heads/{branch}"], RepoPath, ct);
+        await PushAsync($"HEAD:refs/heads/{branch}", ct);
         var published = await RemoteBranchHeadAsync(branch, ct);
         if (!string.Equals(published, expectedHead, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException(
@@ -1292,7 +1388,7 @@ public sealed class GitWorkspace
         CancellationToken ct)
     {
         _log($"result-transfer-started ref={immutableRef} sha={expectedHead} path={RepoPath}");
-        await Git(["push", "origin", $"HEAD:{immutableRef}"], RepoPath, ct);
+        await PushAsync($"HEAD:{immutableRef}", ct);
         var result = await ProjectGitAsync(
             ["ls-remote", RegisteredRepositoryUrl(), immutableRef],
             SharedRepoPath, ct);
@@ -1309,6 +1405,33 @@ public sealed class GitWorkspace
                 $"Immutable result ref '{immutableRef}' resolved to '{published ?? "missing"}', expected '{expectedHead}'.");
         }
         _log($"result-transfer-completed ref={immutableRef} sha={expectedHead} path={RepoPath}");
+    }
+
+    /// <summary>
+    /// Retry a transient server failure on the same refspec while the caller
+    /// retains the worktree and its lease heartbeat remains active.
+    /// </summary>
+    private async Task PushAsync(string refspec, CancellationToken ct)
+    {
+        IReadOnlyList<string> args = ["push", "origin", refspec];
+        var retries = 0;
+        while (true)
+        {
+            var result = await ProjectGitAsync(args, RepoPath, ct);
+            if (result.Success) return;
+            var failure = $"git {string.Join(' ', args)} failed ({result.ExitCode}): {result.StdErr.Trim()}";
+            var output = $"{result.StdErr}\n{result.StdOut}";
+            if (RepositoryPushRecoveryPolicy.NextDelay(output, retries) is not { } delay)
+                throw new RepositoryPushFailedException(RepositoryPushRecoveryPolicy.IsTransient(output)
+                    ? $"{failure}; transient push retries exhausted after {retries} retries"
+                    : failure);
+            retries++;
+            var eventLine = $"worktree-push-transient-retry refspec={refspec} retry={retries}/{RepositoryPushRecoveryPolicy.Delays.Count} " +
+                $"delaySeconds={(int)delay.TotalSeconds} path={RepoPath} error={OneLine(result.StdErr)}";
+            _log(eventLine);
+            PushRetryRecorded?.Invoke("[runner] " + eventLine);
+            await PushRecovery.DelayAsync(delay, ct);
+        }
     }
 
     private async Task<bool> IsAncestorAsync(string ancestor, string descendant, CancellationToken ct)
@@ -1509,7 +1632,8 @@ public sealed record WorktreeTeardownResult(
     string? ResultSha = null,
     SalvageReconciliationResult? Reconciliation = null,
     string? ImmutableResultRef = null,
-    RemoteDeliveryProof? DeliveryProof = null)
+    RemoteDeliveryProof? DeliveryProof = null,
+    string? ResultRefFailure = null)
 {
     public static WorktreeTeardownResult NoWork { get; } = new(false, null, null, null, null);
     public static WorktreeTeardownResult NoResult { get; } = new(false, null, null, null, null);

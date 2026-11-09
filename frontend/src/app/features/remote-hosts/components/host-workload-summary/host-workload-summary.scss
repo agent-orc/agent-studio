@@ -12,11 +12,11 @@
   flex-wrap: wrap;
   gap: var(--studio-spacing-2);
   color: var(--studio-fg-strong);
-  font-size: 12px;
+  font-size: var(--studio-font-size-sm);
 }
 .workloads__head span {
-  color: var(--studio-fg-muted);
-  font-size: 11px;
+  color: var(--studio-fg-dim);
+  font-size: var(--studio-font-size-sm);
 }
 .workloads__grid {
   display: grid;
@@ -30,18 +30,18 @@
   padding: var(--studio-spacing-2) 0;
 }
 .workload--stale {
-  color: var(--studio-fg-muted);
+  color: var(--studio-fg-dim);
   opacity: 0.62;
 }
 .workload__kind {
   color: var(--studio-accent-3-strong);
-  font-size: 10px;
+  font-size: var(--studio-font-size-sm);
   font-weight: 700;
   letter-spacing: 0.06em;
 }
 .workload strong {
   color: var(--studio-fg-strong);
-  font-size: 13px;
+  font-size: var(--studio-font-size-md);
   font-variant-numeric: tabular-nums;
 }
 .workload__warning {
@@ -51,6 +51,6 @@
   vertical-align: middle;
 }
 .workload small {
-  color: var(--studio-fg-muted);
-  font-size: 10px;
+  color: var(--studio-fg-dim);
+  font-size: var(--studio-font-size-sm);
 }

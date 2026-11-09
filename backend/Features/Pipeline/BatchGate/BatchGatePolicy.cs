@@ -2,6 +2,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Git;
+using AgentStudio.Shared;
+using AgentStudio.TaskServer.Contracts.BatchGate;
 
 namespace AgentStudio.Pipeline;
 
@@ -42,6 +44,13 @@ public enum BatchExclusionReason
     ActivePerTaskGate,
     NotDocumentationOnly,
     NextBatch,
+    OverlapSeparate,
+    MaximumSize,
+    NoLongerPending,
+    AlreadyIntegrated,
+    ReplayConflict,
+    UnattributableReplay,
+    PreCheckNotAdmitted,
 }
 
 public sealed record BatchGateScope(
@@ -58,7 +67,8 @@ public sealed record BatchGateSubject(
     bool DocumentationOnly, DateTimeOffset ReviewCompletedAtUtc,
     long EnqueueSequence);
 
-public sealed record BatchGateExclusion(string TaskKey, BatchExclusionReason Reason);
+public sealed record BatchGateExclusion(string TaskKey, BatchExclusionReason Reason,
+    string? Detail = null);
 
 public sealed record BatchGateFormationOptions(
     bool Enabled = false, int CloseSize = 4, int MaximumSize = 8,
@@ -68,8 +78,14 @@ public sealed record BatchGateFormationOptions(
     int MinimumSize = 2, int LookAheadMinutes = 45,
     IReadOnlyList<string>? UrgentTags = null, string RiskPolicy = "balanced",
     string Overlap = "adjacent", string ReviewTestLevel = "work-package",
-    int GateTimeoutMinutes = 150, BatchGateAdvisorOptions? Advisor = null)
+    int GateTimeoutMinutes = 150, BatchGateAdvisorOptions? Advisor = null,
+    bool? PreCheckEnabled = null, string Calibration = "empirical",
+    string Stacking = "off",
+    int MaximumWaitMinutes = AgentStudio.OrchestrationDecisions.BatchGateStartPolicy.DefaultMaximumWaitMinutes,
+    int FlightLeaseDeadlineMinutes = AgentStudio.OrchestrationDecisions.BatchGateStartPolicy.DefaultFlightLeaseDeadlineMinutes)
 {
+    public bool PreCheckFor(string project) => PreCheckEnabled
+        ?? string.Equals(project, "Agent Studio", StringComparison.OrdinalIgnoreCase);
     public string EffectiveScope => !DocumentationOnly || Scope == "code" ? "code" : Scope;
     public IReadOnlyList<string> EffectiveUrgentTags => UrgentTags ?? ["urgent"];
     public string? InvalidField =>
@@ -83,9 +99,13 @@ public sealed record BatchGateFormationOptions(
         Planner == "threshold" && (PressureSize < 1 || PressureSize > CloseSize) ? "pressureSize" :
         ReviewQueuePressure < 1 ? "reviewQueuePressure" :
         RiskPolicy is not ("conservative" or "balanced" or "aggressive") ? "riskPolicy" :
+        Calibration is not ("legacy" or "empirical") ? "calibration" :
+        Stacking is not ("off" or "1") ? "stacking" :
         Overlap is not ("adjacent" or "separate") ? "overlap" :
         ReviewTestLevel is not ("work-package" or "build-only") ? "reviewTestLevel" :
         GateTimeoutMinutes is < 1 or > 360 ? "gateTimeoutMinutes" :
+        MaximumWaitMinutes is < 1 or > 1440 ? "maximumWaitMinutes" :
+        FlightLeaseDeadlineMinutes is < 1 or > 1440 ? "flightLeaseDeadlineMinutes" :
         UrgentTags is { Count: > 32 } || UrgentTags?.Any(tag => string.IsNullOrWhiteSpace(tag) || tag.Length > 64) == true ? "urgentTags" :
         (Advisor ?? new()).InvalidField;
     public bool IsValid => InvalidField is null;
@@ -107,11 +127,15 @@ public sealed record BatchGateManifest(
     DateTimeOffset ClosedAtUtc, IReadOnlyList<BatchGateSubject> Members,
     IReadOnlyList<BatchGateExclusion> Exclusions,
     IReadOnlyList<string> EligibleKeys,
-    string? ParentBatchId = null);
+    string? ParentBatchId = null, string? FormationReason = null,
+    IReadOnlyList<BatchPlanCard>? PlanningCards = null,
+    bool Diagnostic = false,
+    string? ReformedFromBatchId = null,
+    string? StackedOnBatchId = null);
 
 public sealed record BatchGateFormation(
     BatchGateManifest? Manifest, IReadOnlyList<BatchGateExclusion> Exclusions,
-    IReadOnlyList<string> EligibleKeys, bool UsePerTaskGate);
+    IReadOnlyList<string> EligibleKeys, bool UsePerTaskGate, string? Reason = null);
 
 public static class BatchGatePolicy
 {
@@ -134,7 +158,7 @@ public static class BatchGatePolicy
             .Select(key => eligible[key]).ToArray();
         if (selected.Length < options.MinimumSize)
             return new(null, exclusions, selected.Select(item => item.TaskKey).ToArray(),
-                selected.Length > 0);
+                selected.Length > 0, "close requested below minimum batch size");
         exclusions.AddRange(eligible.Keys.Except(selected.Select(item => item.TaskKey), StringComparer.Ordinal)
             .Select(key => new BatchGateExclusion(key, BatchExclusionReason.NextBatch)));
         var digest = MembershipDigest(baseSha, scope, selected);
@@ -147,7 +171,9 @@ public static class BatchGatePolicy
         IEnumerable<BatchGateSubject> candidates, BatchGateScope scope,
         string baseSha, BatchGateFormationOptions options,
         DateTimeOffset now, int reviewQueueLength = 0, bool loadThrottled = false,
-        bool gateBacklog = false)
+        bool gateBacklog = false, bool baseRed = false,
+        IReadOnlySet<string>? priorityKeys = null, int queuedPartners = 0,
+        bool projectGateBusy = false)
     {
         if (!options.IsValid) throw new ArgumentOutOfRangeException(nameof(options));
         var eligible = new List<BatchGateSubject>();
@@ -158,7 +184,12 @@ public static class BatchGatePolicy
             if (reason is { } excluded) exclusions.Add(new(subject.TaskKey, excluded));
             else eligible.Add(subject);
         }
-        eligible.Sort(Compare);
+        eligible.Sort((a, b) =>
+        {
+            var priority = (priorityKeys?.Contains(b.TaskKey) == true).CompareTo(
+                priorityKeys?.Contains(a.TaskKey) == true);
+            return priority != 0 ? priority : Compare(a, b);
+        });
         var keys = eligible.Select(x => x.TaskKey).ToArray();
         if (!options.Enabled || eligible.Count == 0)
             return new(null, exclusions, keys, UsePerTaskGate: !options.Enabled);
@@ -169,12 +200,31 @@ public static class BatchGatePolicy
         // slot queue alone as a per-task gate, until it aged out.
         var pressure = eligible.Count >= options.PressureSize
             && (reviewQueueLength >= options.ReviewQueuePressure || loadThrottled || gateBacklog);
-        if (eligible.Count < options.CloseSize && !deadline && !pressure)
+        // AGT-3414: a documentation-only gate runs no test, so waiting for a
+        // partner saves no suite and such a set closes at once. A backlogged
+        // gate queue keeps the AGT-3219 rules: each gate still takes a slot.
+        // A base recorded red keeps its hold instead of gating another candidate.
+        var closesAtOnce = !gateBacklog && !baseRed
+            && eligible.All(subject => subject.DocumentationOnly);
+        if (eligible.Count < options.CloseSize && !deadline && !pressure && !closesAtOnce)
+            return new(null, exclusions, keys, false);
+        // AGT-3466: a lone card past its deadline waits for queued cards that
+        // only lack their pre-check; they join it at their own deadline.
+        if (eligible.Count == 1 && deadline && queuedPartners > 0)
+            return new(null, exclusions, keys, false);
+        // A gate already using this project's slot gives a due card time to
+        // meet the next partner. Starting its own gate would queue another run.
+        if (eligible.Count == 1 && deadline && projectGateBusy)
             return new(null, exclusions, keys, false);
         if (eligible.Count == 1 && deadline)
             return new(null, exclusions, keys, !gateBacklog || reviewQueueLength == 0
                 || AgentStudio.Runner.MonolithTransitionAdapter.BatchBacklogAgedOut(
-                    eligible[0].ReviewCompletedAtUtc, now, options.DeadlineMinutes));
+                    eligible[0].ReviewCompletedAtUtc, now, options.DeadlineMinutes),
+                "oldest eligible card reached deadline without a batch partner");
+
+        if (eligible.Count < options.MinimumSize)
+            return new(null, exclusions, keys, false,
+                "eligible members below minimum batch size");
 
         var selected = eligible.Take(options.MaximumSize).ToArray();
         exclusions.AddRange(eligible.Skip(options.MaximumSize)
@@ -185,6 +235,22 @@ public static class BatchGatePolicy
             selected, exclusions.ToArray(), keys);
         return new(manifest, exclusions, keys, false);
     }
+
+    /// <summary>
+    /// AGT-3414: the test level of a batch or per-task gate. Documentation-only
+    /// subjects run the build-only level, the build and lint commands without
+    /// any test; anything else runs the complete suite. The gated diff is
+    /// classified again so a stale or wrong subject flag cannot skip a test:
+    /// an unknown diff, a mixed one or one without subjects runs the suite.
+    /// A project whose plan has no build or lint command runs the suite too;
+    /// the build-only level would leave nothing to verify.
+    /// </summary>
+    public static string GateTestLevel(IReadOnlyCollection<BatchGateSubject> subjects,
+        IReadOnlyList<string>? gatedPaths, bool buildStepPlanned)
+        => buildStepPlanned && subjects.Count > 0
+           && subjects.All(subject => subject.DocumentationOnly)
+           && DocsOnlyDeliveryPolicy.IsDocsOnly(gatedPaths)
+            ? TestExecutionLevels.BuildOnly : TestExecutionLevels.Full;
 
     /// <summary>
     /// AGT-3103: a waiting member whose result SHA the integration branch

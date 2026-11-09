@@ -50,6 +50,52 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public void Read_does_not_create_or_rewrite_deployment_state()
+    {
+        var (service, _, _) = Build();
+        var statePath = Path.Combine(_root, "workspace", "deployments", "demo.json");
+        Assert.False(File.Exists(statePath));
+        Assert.NotNull(service.Read("demo"));
+        Assert.False(File.Exists(statePath));
+    }
+
+    [Fact]
+    public void Read_projects_lost_host_without_changing_queue_across_restart()
+    {
+        var (service, repo, watch) = Build();
+        var stage = service.Declarations("demo")!.Single(item => item.Id == "stage");
+        Assert.NotNull(service.QueueDeployment("demo", stage, _artifact, "operator", rollback: false));
+        var claimed = service.Claim("stage-host")!;
+        var statePath = Path.Combine(_root, "workspace", "deployments", "demo.json");
+        var persisted = File.ReadAllText(statePath);
+
+        _clock.Advance(ProjectEnvironmentService.HostLostAfter);
+        Assert.Equal("failed", Assert.Single(service.Read("demo")!.Jobs).Status);
+        Assert.Equal(persisted, File.ReadAllText(statePath));
+
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "workspace"),
+            ["WatchPaths:0:Name"] = "demo", ["WatchPaths:0:Path"] = watch,
+            ["WatchPaths:0:RootPath"] = repo, ["WatchPaths:0:RepositoryPath"] = repo,
+        }).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var restarted = new ProjectEnvironmentService(config, scanner,
+            new GitService(NullLogger<GitService>.Instance, scanner, config),
+            new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config), _clock);
+        Assert.Equal("failed", Assert.Single(restarted.Read("demo")!.Jobs).Status);
+        Assert.Equal(persisted, File.ReadAllText(statePath));
+        Assert.Null(restarted.Claim("stage-host"));
+        var durable = JsonNode.Parse(File.ReadAllText(statePath))!;
+        Assert.Equal("failed", durable["jobs"]![0]!["status"]!.GetValue<string>());
+        Assert.Single(durable["history"]!.AsArray());
+        Assert.Equal("failed", Assert.Single(restarted.Read("demo")!.Jobs).Status);
+        Assert.Equal(claimed.Id, Assert.Single(restarted.Read("demo")!.Jobs).Id);
+        Assert.Single(restarted.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").History);
+    }
+
+    [Fact]
     public async Task ScheduledVolumeBackup_UsesInjectedClock_AndRestoreIsAudited()
     {
         var (environments, repo, _) = Build();
@@ -497,6 +543,10 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var claimed = service.Claim("preview-host")!;
         Assert.Equal(queued.Id, claimed.Id);
         Assert.False(service.Report("demo", claimed.Id, new DeployReportRequest(claimed.LeaseToken!, true, "health-ok")));
+        Assert.False(service.Report("demo", claimed.Id, new DeployReportRequest(claimed.LeaseToken!, true, "health-ok",
+            ScreenshotBase64: Convert.ToBase64String(PngFixture.Create(4097, 1)))));
+        Assert.False(service.Report("demo", claimed.Id, new DeployReportRequest(claimed.LeaseToken!, true, "health-ok",
+            ScreenshotBase64: Convert.ToBase64String(PngFixture.Create(1, 1)[..20]))));
         var png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC";
         Assert.True(service.Report("demo", claimed.Id,
             new DeployReportRequest(claimed.LeaseToken!, true, "health-ok", ScreenshotBase64: png)));
@@ -1597,6 +1647,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
             CancellationToken ct = default) => throw new NotSupportedException();
         public Task DeleteAsync(SecretScope scope, string name, SecretActor actor,
             CancellationToken ct = default) => throw new NotSupportedException();
+        public Task EnsureWritableAsync(SecretScope scope, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<SecretAuditEntry>> ReadAuditAsync(SecretScope? scope, int limit,
             CancellationToken ct = default) => throw new NotSupportedException();
         public Task<ResolvedSecret> GetForPlatformAsync(SecretReference reference, string purpose, CancellationToken ct = default)
@@ -1611,14 +1662,17 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     {
         var repo = Path.Combine(_root, "repo");
         var watch = Path.Combine(_root, "workspace", "projects", project);
-        Directory.CreateDirectory(repo);
         Directory.CreateDirectory(watch);
-        Git(repo, "init", "-b", "develop");
-        Git(repo, "config", "user.email", "test@example.com");
-        Git(repo, "config", "user.name", "Test User");
-        File.WriteAllText(Path.Combine(repo, "initial"), "initial");
-        Git(repo, "add", ".");
-        Git(repo, "commit", "-m", "initial");
+        // Built once per test process; each test starts from a copy (AGT-3419).
+        GitRepositoryTemplate.CopyTo("project-environment:initial:v1", repo, seed =>
+        {
+            Git(seed, "init", "-b", "develop");
+            Git(seed, "config", "user.email", "test@example.com");
+            Git(seed, "config", "user.name", "Test User");
+            File.WriteAllText(Path.Combine(seed, "initial"), "initial");
+            Git(seed, "add", ".");
+            Git(seed, "commit", "-m", "initial");
+        });
         var declarations = Path.Combine(repo, "docs", "deployments", "environments");
         Directory.CreateDirectory(declarations);
         File.WriteAllText(Path.Combine(declarations, "stage.json"), JsonSerializer.Serialize(new

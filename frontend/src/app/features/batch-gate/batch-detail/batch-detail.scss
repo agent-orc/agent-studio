@@ -1,4 +1,29 @@
-.batch-detail { padding: var(--studio-spacing-3); border: 1px solid var(--studio-border); border-radius: var(--studio-action-radius-sm); background: var(--studio-bg-elevated); }
-.batch-detail h2 { margin: 0 0 var(--studio-spacing-2); font-size: 1rem; }
-.batch-detail p { margin: 0 0 var(--studio-spacing-2); }
-.batch-detail button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+@use '../../../../styles/mixins' as m;
+
+// AGT-3463: a non-member renders no element, so the host must not take a slot
+// in the task-detail flex column either.
+:host { display: contents; }
+
+.batch-detail {
+  @include m.deck-panel(var(--studio-spacing-3));
+  display: grid;
+  gap: var(--studio-spacing-2);
+  color: var(--studio-fg);
+  font-size: 0.82rem;
+}
+.batch-detail__head { @include m.deck-panel-head; align-items: center; }
+.batch-detail p { margin: 0; }
+.batch-detail__summary { font-variant-numeric: tabular-nums; }
+.batch-detail code { overflow-wrap: anywhere; }
+.batch-detail .studio-button { margin: 0; }
+.batch-detail__proven-red {
+  display: grid;
+  gap: var(--studio-spacing-2);
+  justify-items: start;
+  padding: var(--studio-spacing-2);
+  border: 1px solid color-mix(in srgb, var(--studio-status-danger) 40%, var(--studio-border));
+  border-radius: var(--studio-action-radius-sm);
+  background: color-mix(in srgb, var(--studio-status-danger) 5%, var(--studio-bg-surface));
+}
+.batch-detail__proven-red app-batch-proven-red { justify-self: stretch; }
+.batch-detail__tests { display: grid; gap: var(--studio-spacing-1); margin: 0; padding-left: var(--studio-spacing-5); }

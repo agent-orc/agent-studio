@@ -8,6 +8,7 @@
       Edit this project's onboarding values and execution behavior, then review
       the workspace defaults it inherits.
     </p>
+    <app-settings-jump-links [links]="[{ target: 'batch-settings', label: 'Batch verification', testId: 'project-settings-jump-batch' }]" />
   </header>
   <section class="ps-settings__section" aria-label="Project basics">
     <app-project-basics-card [projectName]="projectName()" />
@@ -21,6 +22,7 @@
     }
   </section>
   <app-project-execution-definition [projectName]="projectName()" />
+  <app-quality-studio-connection-settings />
   <app-batch-settings [project]="projectName()" />
   @if (workspaceId() && projectId()) {
     @defer { <app-workspace-quota [workspaceId]="workspaceId()!" [projectId]="projectId()" /> }
@@ -37,8 +39,6 @@
     </header>
     <app-project-urls-panel [projectName]="projectName()" [quickSetup]="true" />
   </section>
-
-
   <section class="ps-settings__section" aria-labelledby="ps-settings-inherited">
     <header class="ps-settings__section-head">
       <h3 id="ps-settings-inherited" class="ps-settings__section-title">Workspace defaults</h3>

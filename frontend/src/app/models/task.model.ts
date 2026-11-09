@@ -329,9 +329,10 @@ export interface NeedsInputStatus {
 export interface TaskDependencyReference {
   key: string;
   releaseGate?: boolean;
+  requiresCompletion?: boolean;
 }
 
-/** Legacy edges stay strings; only release-gated edges need the object shape. */
+/** Plain edges stay strings; completion and release gates use the object shape. */
 export type TaskDependency = string | TaskDependencyReference;
 
 export function taskDependencyKey(dependency: TaskDependency): string {
@@ -409,6 +410,8 @@ export interface WaitsOnItem {
   resolved: boolean;
   fulfilled: boolean;
   releaseGate?: boolean;
+  requiresCompletion?: boolean;
+  fulfillmentRule?: 'completion' | 'explicit-release' | 'integrated-delivery' | 'delivery-integration';
   targetReleased?: boolean;
   waitingForRelease?: boolean;
   /**
@@ -584,6 +587,8 @@ export interface BetterCandidateNote {
 }
 
 export interface TaskInfo {
+  attentionHolder?: string | null;
+  qualityStudioVerdict?: 'pass' | 'concerns' | 'block' | string | null;
   id: string;
   taskKey: string;
   preview?: TaskPreview | null;
@@ -1240,6 +1245,25 @@ export interface ContinueTaskResponse {
   status: 'started' | 'queued' | 'saved';
   execution?: CliExecution | null;
   queued?: ContinueTaskQueuedInfo | null;
+  /** AGT-3483: the result ref a queued round starts from; absent when it keeps today's checkout. */
+  base?: ContinueRoundBase | null;
+}
+
+/**
+ * Mirrors backend `ContinueRoundBaseInfo` (AGT-3483). `source` is
+ * `latest-result`, `explicit`, `review-fix-round` or `existing`.
+ */
+export interface ContinueRoundBase {
+  ref: string;
+  sha: string;
+  source: string;
+  resultAttemptId?: string | null;
+}
+
+/** `GET /api/tasks/{id}/failure/continue` (AGT-3582): the failure continuation guard, read only. */
+export interface FailureContinuationCheck {
+  available: boolean;
+  reason: string | null;
 }
 
 export interface ContinueTaskQueuedInfo {
@@ -1454,6 +1478,45 @@ export interface TaskDetail {
    * `docs/system/contracts/filesystem.md` "results/review-evidence.jsonl".
    */
   reviewEvidence: ReviewEvidenceEntry[];
+}
+
+export interface QualityChangeFinding {
+  fingerprint: string;
+  ruleId: string;
+  severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
+  path: string;
+  line: number;
+  message: string;
+}
+
+export interface QualityChangeDocument {
+  verdict: 'pass' | 'concerns' | 'block' | 'provider-unavailable' | 'timeout' | 'auth-failure' | 'unparseable';
+  ruleSetHash: string;
+  findings: QualityChangeFinding[];
+}
+
+export interface QualityChangeRound {
+  round: number;
+  attemptId: string;
+  runAttemptId: string;
+  repositoryId: string | null;
+  baseSha: string;
+  headSha: string;
+  commitCount: number;
+  mode: 'off' | 'shadow' | 'decide';
+  reviewedAtUtc: string;
+  document: QualityChangeDocument | null;
+  unavailableReason: string | null;
+}
+
+export interface QualityChangeView {
+  state: 'not-registered' | 'waiting' | 'reviewing' | 'pass' | 'concerns' | 'block' | 'unavailable' | 'shadow' | 'outdated' | 'not-reviewed';
+  repositoryId: string | null;
+  currentHead: string | null;
+  rounds: QualityChangeRound[];
+  landedSha: string | null;
+  landedBaseSha: string | null;
+  landedPatchEqualsReviewedPatch: boolean | null;
 }
 
 export interface ResultHistoryEntry {
@@ -1915,7 +1978,7 @@ export type ProjectUrlStartResponse = ProjectUrlProcessSnapshot;
 export type ProjectUrlDiagnosisClass =
   | 'not-started' | 'starting' | 'command-unavailable' | 'invalid-cwd'
   | 'process-exited' | 'port-in-use' | 'port-never-opened' | 'timeout' | 'http-error-response'
-  | 'content-not-renderable' | 'invalid-configuration' | 'running';
+  | 'content-not-renderable' | 'invalid-configuration' | 'running' | 'local-only';
 
 /** AGT-2180 — bounded, redacted evidence snapshot behind the offline card. */
 export interface ProjectUrlDiagnostic {
@@ -2090,8 +2153,16 @@ export interface TaskLiveQueue {
   kind: 'runner' | 'review' | string;
   /** One-based slot position. Absent while waiting between passes; see `reason`. */
   position?: number | null;
-  /** Human-readable reason there is no `position`, e.g. "waiting for review executor: ...". */
+  /**
+   * Human-readable reason there is no `position`, e.g. "waiting for review
+   * executor: ...", or, with `reasonCode`, why the runner is not picking the card.
+   */
   reason?: string | null;
+  /**
+   * AGT-3579: `RunnerPickupWaitCodes` token for a Ready card the runner is not
+   * picking (runner gate or candidate skip). Absent when no reason is recorded.
+   */
+  reasonCode?: RunnerPickupWaitCode | string | null;
   /**
    * AGT-3094: `reviewing` while a review executor holds the ReviewAttempt lease,
    * `stalled` when nothing will review the delivery without an operator, else
@@ -2188,6 +2259,34 @@ export interface ProjectRunnerStatus {
   pendingModeActiveTaskCount?: number;
   /** Title of the sole remaining snapshot task, when exactly one remains. */
   pendingModeActiveTaskTitle?: string | null;
+  /** ADR-0052: the project's concurrency cap, clamped to at least 1. */
+  maxParallelism?: number;
+  /** ADR-0052: how many of the `maxParallelism` slots a running task fills. */
+  occupiedSlots?: number;
+  /** Free-text rationale of the last pick decision or candidate skip. */
+  lastPickReason?: string | null;
+  /** AGT-3579: the runner gate that ended the last pickup tick; null when it reached the candidates. */
+  pickupGate?: RunnerPickupWait | null;
+  /** AGT-3579: candidates the last pickup pass skipped; empty while `pickupGate` is set. */
+  pickupSkips?: RunnerPickupSkip[];
+}
+
+/** AGT-3579: mirrors backend `RunnerPickupWaitCodes`. */
+export type RunnerPickupWaitCode =
+  | 'manual-mode' | 'paused' | 'breaker-cooldown' | 'pending-mode' | 'test-subject'
+  | 'build-profile' | 'slots-full' | 'load-throttle' | 'provider-limit' | 'quota-defer'
+  | 'parallel-conflict';
+
+/** AGT-3579: why the runner is not picking; mirrors backend `RunnerPickupWait`. */
+export interface RunnerPickupWait {
+  code: RunnerPickupWaitCode | string;
+  /** One operator-facing sentence. */
+  detail: string;
+}
+
+/** AGT-3579: one Ready candidate the last pickup pass skipped. */
+export interface RunnerPickupSkip extends RunnerPickupWait {
+  jobId: string;
 }
 
 export interface ProviderLimitStatus {
@@ -2506,6 +2605,14 @@ export interface ParkedBlockerStatus {
   parkedForSeconds?: number;
   /** The original freetext park reason, verbatim. */
   reason: string;
+  /**
+   * Lane-change cause that parked the card (`acceptance-integration-failed`,
+   * `escalated`, ...). AGT-3586: the park copy is chosen from it. Absent on
+   * markers written before the field existed.
+   */
+  cause?: string | null;
+  /** Short qualifier of `cause`, e.g. `missing-delivery` or an escalation category. */
+  causeDetail?: string | null;
   /**
    * Latest sweep verdict: `blocked`, `recallable`, or `undeterminable`.
    * Absent on board cards; /details/overview carries it.

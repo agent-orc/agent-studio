@@ -73,12 +73,214 @@ public sealed class PerCardReviewPlanTests : IDisposable
         Assert.Contains("bash scripts/npm-frontend.sh run lint", shells);
         Assert.Contains("dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter "
             + "\"(Category!=MachineBound)&(FullyQualifiedName~FooServiceTests)\"", shells);
+        Assert.Contains("dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter "
+            + "\"(Category!=MachineBound)&(FullyQualifiedName~.Architecture.|Category=Guard)\"", shells);
         Assert.DoesNotContain(BackendTest, shells);
         Assert.DoesNotContain(FrontendUnit, shells);
         Assert.DoesNotContain("bash scripts/npm-frontend.sh run typecheck", shells);
         Assert.Equal(TestExecutionLevels.WorkPackage, plan.TestLevel);
         Assert.Matches("^[0-9a-f]{64}$", plan.TestSelectionDigest!);
         Assert.False(plan.BuildTestDeferredToBatch);
+    }
+
+    [Fact]
+    public void BackendReviewRunsDeclaredGuardsWhenClassSelectionFindsNoTest()
+    {
+        var verify = VerifyCommandPlanner.Plan(_repo, null);
+        var selected = verify with
+        {
+            Commands = verify.Commands.Where(command => command.Kind != VerifyCommandKind.Test).ToArray(),
+        };
+
+        var plan = V1ReviewPlaneEndpoints.FallbackPlan(_repo, null, "develop",
+            ["backend/FooService.cs"], selected);
+
+        Assert.Contains(plan.Commands, command => command.Arguments.Contains(
+            "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter "
+            + "\"(Category!=MachineBound)&(FullyQualifiedName~.Architecture.|Category=Guard)\""));
+        Assert.DoesNotContain(plan.Commands, command => command.Arguments.Contains(BackendTest));
+    }
+
+    [Fact]
+    public void ResultsEvidenceChangeChangesSealedAspectDigest()
+    {
+        var resultSha = Commit("backend/FooService.cs");
+        var results = Path.Combine(_folder, "results");
+        Directory.CreateDirectory(results);
+        var report = Path.Combine(results, "duration-comparison.md");
+        File.WriteAllText(report, "Before 120 seconds, after 80 seconds.\n");
+        var first = Contract.ReviewLibraryStepPolicy.Seal(
+            Build(new ProjectSettings(), resultSha, "backend/FooService.cs"), resultSha);
+        File.WriteAllText(report, "Before 120 seconds, after 60 seconds.\n");
+        var second = Contract.ReviewLibraryStepPolicy.Seal(
+            Build(new ProjectSettings(), resultSha, "backend/FooService.cs"), resultSha);
+
+        var firstAspect = Assert.Single(first.Commands, command => command.Aspect == "requirement-fit");
+        var secondAspect = Assert.Single(second.Commands, command => command.Aspect == "requirement-fit");
+        Assert.Contains("Before 120 seconds, after 80 seconds", firstAspect.Prompt);
+        Assert.NotEqual(firstAspect.LibraryStep!.Digest, secondAspect.LibraryStep!.Digest);
+    }
+
+    [Fact]
+    public void BackendReviewRunsGuardsWhenThePlanBuilderResolvesTheDiff()
+    {
+        var resultSha = Commit("backend/FooService.cs");
+        var plan = Builder().Build(new TaskInfo
+        {
+            Id = "task", TaskKey = "task", ProjectName = "project",
+            WatchPath = _repo, FolderPath = _folder, State = TaskStates.AutoReview,
+        }, _repo, new ProjectSettings(), "develop", resultSha,
+            changedFiles: null, immutableResultRef: ResultRef);
+
+        Assert.Contains(plan.Commands, command => command.Arguments.Contains(
+            "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter "
+            + "\"(Category!=MachineBound)&(FullyQualifiedName~.Architecture.|Category=Guard)\""));
+    }
+
+    [Theory]
+    [InlineData("merge", 0, 4)]
+    [InlineData("code", 4, 0)]
+    [InlineData("status", 2, 2)]
+    public void PassedDeliveryOwnChangeControlsContentReview(
+        string round, int expectedAgentCommands, int expectedCarriedVerdicts)
+    {
+        var previousSha = Commit("backend/FooService.cs");
+        var previousBase = Git("merge-base", "develop", previousSha).Trim();
+        RecordPassedReview(previousSha, previousBase);
+
+        Write("backend/Unrelated.cs", "namespace AgentStudio; public class Unrelated { }\n");
+        Git("add", ".");
+        Git("commit", "-qm", "integration change");
+        Git("switch", "-q", "agent-studio/results/task");
+        Git("merge", "-q", "develop");
+        if (round == "code")
+        {
+            File.AppendAllText(Path.Combine(_repo, "backend/FooService.cs"), "// another line\n");
+            Git("add", ".");
+            Git("commit", "-qm", "change card code");
+        }
+        else if (round == "status")
+        {
+            Write("status.md", "Delivery evidence updated.\n");
+            Git("add", ".");
+            Git("commit", "-qm", "update status");
+        }
+        var resultSha = Git("rev-parse", "HEAD").Trim();
+        Git("switch", "-q", "develop");
+
+        var plan = Builder().Build(new TaskInfo
+        {
+            Id = "task", TaskKey = "task", ProjectName = "project",
+            WatchPath = _repo, FolderPath = _folder, State = TaskStates.AutoReview,
+        }, _repo, new ProjectSettings(), "develop", resultSha, null, ResultRef);
+
+        var agents = plan.Commands.Where(command =>
+            Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)).ToArray();
+        Assert.Equal(expectedAgentCommands, agents.Length);
+        Assert.Equal(expectedCarriedVerdicts, plan.CarriedVerdicts?.Count ?? 0);
+        if (round == "status")
+            Assert.Equal(["requirement-fit", "tests-and-evidence"],
+                agents.Select(command => command.Aspect).Order(StringComparer.Ordinal).ToArray());
+        if (round == "merge")
+            Assert.All(plan.CarriedVerdicts!, verdict => Assert.Equal("review-1", verdict.CarriedOverFrom));
+        Assert.Contains(plan.Commands, command => command.Aspect == "build-tests");
+    }
+
+    private void RecordPassedReview(string resultSha, string mergeBase)
+    {
+        var report = new Contract.ReviewReportRequest(
+            "executor", "instance", "lease", 1, "report-1", "Pass", null, null,
+            new Contract.ReviewWorkspaceProofDto("repo", resultSha, resultSha, resultSha,
+                false, false, "workspace", "namespace", MergeBaseSha: mergeBase),
+            new Contract.ReviewEnvironmentDto("host", "executor", "instance", "linux", "x64", "test",
+                new Dictionary<string, string>(), new Dictionary<string, string>()),
+            [], [],
+            new[] { "requirement-fit", "code-quality", "documentation-impact", "tests-and-evidence" }
+                .Select(aspect => new Contract.ReviewVerdictDto(aspect, "pass", "clean", "Passed."))
+                .ToArray(),
+            BriefSha256: BriefVersionStore.ReadOrCreate(_folder));
+        RemoteReviewSettlementJournal.Write(_folder, new RemoteReviewSettlementEntry
+        {
+            AttemptId = "review-1", TaskKey = "task", IdempotencyKey = "report-1",
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(report), Report = report,
+            ReceivedAtUtc = new DateTime(2026, 11, 2, 12, 0, 0, DateTimeKind.Utc),
+        });
+    }
+
+    [Fact]
+    public void AgentStudioTestOnlyDiffRunsTheChangedClassAndBuild()
+    {
+        Write("backend.Tests/Delivery/FocusedTests.cs",
+            "namespace AgentStudio.Tests;\npublic sealed class FocusedTests { [Fact] public void Runs() { } }\n");
+        Git("add", ".");
+        Git("commit", "-qm", "focused test baseline");
+        var sha = Commit("backend.Tests/Delivery/FocusedTests.cs");
+
+        var plan = Build(Settings(PerCardTestModes.Affected), sha,
+            "backend.Tests/Delivery/FocusedTests.cs");
+
+        Assert.Contains(plan.Commands, command => command.Aspect == "build-tests"
+            && command.Arguments.Contains("echo build"));
+        Assert.Contains(plan.Commands, command => command.Arguments.Any(argument =>
+            argument.Contains("FullyQualifiedName~FocusedTests", StringComparison.Ordinal)));
+        Assert.False(plan.BuildTestDeferredToBatch);
+    }
+
+    [Fact]
+    public void AgentStudioSharedTestHelperRunsTheWholeTestProject()
+    {
+        Write("backend.Tests/SharedFixtureTests.cs", "namespace AgentStudio.Tests;\npublic sealed class SharedFixtureTests { }\n");
+        Git("add", ".");
+        Git("commit", "-qm", "shared test fixture");
+        var sha = Commit("backend.Tests/SharedFixtureTests.cs");
+
+        var plan = Build(Settings(PerCardTestModes.Affected), sha,
+            "backend.Tests/SharedFixtureTests.cs");
+
+        Assert.Contains(plan.Commands, command => command.Arguments.Contains(BackendTest));
+        Assert.Contains(plan.Commands, command => command.Arguments.Contains("echo build"));
+    }
+
+    [Theory]
+    [InlineData("tests/TokenEconomy.Tests/WebsiteCostFrontierDataTests.cs")]
+    [InlineData("tests/TokenEconomy.Tests/TokenEconomy.Tests.csproj")]
+    public void TokenEconomyTestDiffRunsItsProjectAndSynthesizesBuild(string changed)
+    {
+        Write("src/TokenEconomy/TokenEconomy.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
+        Write("tests/TokenEconomy.Tests/TokenEconomy.Tests.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup>"
+            + "<ItemGroup><ProjectReference Include=\"../../src/TokenEconomy/TokenEconomy.csproj\" /></ItemGroup></Project>\n");
+        Write("tests/TokenEconomy.Tests/WebsiteCostFrontierDataTests.cs",
+            "namespace TokenEconomy.Tests;\npublic sealed class WebsiteCostFrontierDataTests { [Fact] public void Runs() { } }\n");
+        Write(".agent-studio/project.yml",
+            "schemaVersion: 1\nstack: [dotnet]\ntoolVersions:\ncommands:\n"
+            + "  prepare: .agent-studio/prepare\n  build: []\n  test:\n"
+            + "    - dotnet test tests/TokenEconomy.Tests/TokenEconomy.Tests.csproj --no-build --filter Category!=MachineBound\n"
+            + "  lint: []\ntestSuites: []\ncachePaths: []\ncapabilities: [git]\nenvironment: {}\n");
+        Git("add", ".");
+        Git("commit", "-qm", "token economy project definition");
+        var sha = Commit(changed);
+
+        var plan = Build(Settings(PerCardTestModes.Affected), sha, changed);
+
+        Assert.Contains(plan.Commands, command => command.Arguments.Any(argument =>
+            argument.Contains("dotnet test tests/TokenEconomy.Tests/TokenEconomy.Tests.csproj", StringComparison.Ordinal)));
+        Assert.Contains(plan.Commands, command => command.Arguments.Any(argument =>
+            argument.Contains("dotnet build", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void DocumentationOnlyDiffDoesNotSynthesizeACompiledBuild()
+    {
+        Write("docs/notes.md", "Notes.\n");
+        Git("add", ".");
+        Git("commit", "-qm", "documentation baseline");
+        var sha = Commit("docs/notes.md");
+
+        var plan = Build(Settings(PerCardTestModes.Affected), sha, "docs/notes.md");
+
+        Assert.DoesNotContain(plan.Commands, command => command.Arguments.Any(argument =>
+            argument.StartsWith("dotnet build", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -190,7 +392,8 @@ public sealed class PerCardReviewPlanTests : IDisposable
     private string Commit(string path)
     {
         Git("switch", "-qc", "agent-studio/results/task");
-        File.AppendAllText(Path.Combine(_repo, path), path.EndsWith(".json", StringComparison.Ordinal) ? "\n" : "// changed\n");
+        File.AppendAllText(Path.Combine(_repo, path), path.EndsWith(".json", StringComparison.Ordinal)
+            ? "\n" : path.EndsWith(".csproj", StringComparison.Ordinal) ? "<!-- changed -->\n" : "// changed\n");
         Git("add", ".");
         Git("commit", "-qm", "delivery");
         var sha = Git("rev-parse", "HEAD").Trim();

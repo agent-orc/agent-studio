@@ -35,7 +35,7 @@
       <tbody>
         @for (row of rows(); track row.id) {
           <tr [attr.data-testid]="'deployment-project-' + row.id">
-            <th scope="row"><button type="button" class="deployment-dashboard__project" (click)="openDeployment.emit(row.name)">{{ row.name }} @if (row.tenant) { <span>· {{ row.tenant }}</span> }</button></th>
+            <th scope="row"><button type="button" class="deployment-dashboard__project" (click)="openDeployment.emit(row.name)">{{ row.name }} @if (row.tenant) { <span>· {{ row.tenant }}</span> }</button><a [href]="'#/projects/' + projectSlug(row.name) + '/operations/structure'" [attr.data-testid]="'deployment-structure-' + row.id">Structure</a></th>
             @for (environment of visibleEnvironments(); track environment.id) {
               <td>
                 @if (statusFor(row, environment.id); as status) {

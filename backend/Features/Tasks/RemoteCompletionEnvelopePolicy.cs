@@ -25,8 +25,8 @@ public sealed record RemoteCompletionEnvelopeDecision(
 /// Prevents any terminal coding RunAttempt from being treated as delivered
 /// unless the server can persist its complete immutable result envelope.
 /// Environment-preparation failures are exempt because no coding checkout ran.
-/// A mechanical fallback is also exempt: it returns the fenced attempt to Ready
-/// for a new coding generation and is not a delivered ReviewSubject.
+/// Mechanical fallback and transient model capacity are also exempt: they
+/// return the fenced attempt to Ready and create no delivered ReviewSubject.
 /// </summary>
 public static class RemoteCompletionEnvelopePolicy
 {
@@ -37,10 +37,11 @@ public static class RemoteCompletionEnvelopePolicy
         bool hasResultSha,
         bool hasBaseSha,
         bool hasImmutableResultRef,
-        bool hasArtifactManifestDigest)
+        bool hasArtifactManifestDigest,
+        string? reportedReason = null)
     {
         var outcome = reportedOutcome?.Trim().ToLowerInvariant() ?? string.Empty;
-        if (!requiresEnvelope || outcome == "environmentfailure" || outcome == "mechanicalfallback")
+        if (!requiresEnvelope || outcome is "environmentfailure" or "mechanicalfallback" or "transientfailure")
         {
             return new RemoteCompletionEnvelopeDecision(
                 RemoteCompletionEnvelopeDisposition.NotRequired,
@@ -60,11 +61,16 @@ public static class RemoteCompletionEnvelopePolicy
                 outcome);
         }
 
+        var pushFailure = reportedReason?.IndexOf("[runner-result-ref-push-failed:", StringComparison.Ordinal);
+        var pushFailureDetail = pushFailure is >= 0
+            ? " " + reportedReason![pushFailure.Value..Math.Min(reportedReason.Length, pushFailure.Value + 500)]
+            : string.Empty;
         return new RemoteCompletionEnvelopeDecision(
             RemoteCompletionEnvelopeDisposition.FailDelivery,
             RemoteDeliveryFailurePolicy.DeliveryFailed,
             "Remote coding completion did not carry a complete immutable result envelope "
-            + $"(missing: {string.Join(", ", missing)}). The delivery failed and no ReviewSubject was created.",
+            + $"(missing: {string.Join(", ", missing)}). The delivery failed and no ReviewSubject was created."
+            + pushFailureDetail,
             missing);
     }
 }

@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import type { CliType } from '../../../../models/task.model';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
@@ -10,10 +10,7 @@ import { HostTelemetryHistoryComponent } from '../host-telemetry-history/host-te
 import { HostReleaseIdentityComponent } from '../host-release-identity/host-release-identity';
 import { RemoteHostDetailSummaryComponent } from '../remote-host-detail-summary/remote-host-detail-summary';
 import { HostCredentialsComponent } from '../host-credentials/host-credentials';
-import {
-  RemoteHostRoleRowComponent,
-  roleSlotTotal,
-} from '../remote-host-role-row/remote-host-role-row';
+import { roleSlotTotal } from '../../models/role-slots';
 import {
   RuntimeCapacityEditorComponent,
   type HostProjectPolicyChange,
@@ -27,6 +24,7 @@ import {
   hostRoleLabel,
   hostIsStale,
   hostStatusLabel,
+  hostStatusIndicatorTone,
   hostStatusTone,
   meterTone,
   ramUsedPct,
@@ -39,10 +37,12 @@ import {
   type RemoteChatUsage,
 } from '../../models/remote-host.model';
 import { freshHostTelemetry, latestHostTelemetry } from '../../models/running-truth';
+import { claimLoadGateLabel } from '../../models/claim-load-gate';
 import type { StableReleaseIdentity } from '../../models/host-release-drift';
 import {
   claudeSignInTarget,
   providerAuthBadgesForHost,
+  providerAuthTone,
   providerLoginStateLabel,
   providerSignInLabel,
   signInTarget,
@@ -51,6 +51,8 @@ import {
 import { CodexSignInDialogService } from '../../services/codex-sign-in-dialog.service';
 import { ClaudeSignInDialogService } from '../../services/claude-sign-in-dialog.service';
 import { HostCredentialBadgeComponent } from '../../../credentials/host-credential-badge/host-credential-badge.component';
+import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { hostReadiness, hostReadinessTone } from '../../models/host-readiness';
 /** One meter row (RAM / CPU / Disk) resolved for the template. */
 interface Meter {
   key: string;
@@ -63,13 +65,12 @@ interface Meter {
  * One execution location in the Remote-Hosts table (AGT-1921 / AGT-2629): one
  * compact row with detail. The parent preserves disclosure across sorting.
  *
- * Status is encoded with a dot + a badge, and acute states (degraded / offline)
+ * Status is encoded with the shared status indicator, and acute states (degraded / offline)
  * additionally wash the affected row with a warn / error tint, never a left
  * accent bar (style-guide R1). History (retired / draining) renders calm (R4).
  */
 @Component({
-  // eslint-disable-next-line @angular-eslint/component-selector -- A native tbody keeps valid table and accessibility semantics.
-  selector: 'tbody[appRemoteHostCard]',
+  selector: 'app-remote-host-card',
   standalone: true,
   imports: [
     DatePipe,
@@ -80,10 +81,10 @@ interface Meter {
     HostTelemetryHistoryComponent,
     HostReleaseIdentityComponent,
     RuntimeCapacityEditorComponent,
-    RemoteHostRoleRowComponent,
     RemoteHostDetailSummaryComponent,
     HostCredentialsComponent,
     HostCredentialBadgeComponent,
+    StatusIndicatorComponent,
   ],
   templateUrl: './remote-host-card.html',
   styleUrl: './remote-host-card.scss',
@@ -96,10 +97,14 @@ interface Meter {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class RemoteHostCardComponent {
+  readonly readinessTone = hostReadinessTone;
   readonly providerLoginStateLabel = providerLoginStateLabel;
+  readonly providerAuthTone = providerAuthTone;
   private readonly codexSignIn = inject(CodexSignInDialogService);
   private readonly claudeSignIn = inject(ClaudeSignInDialogService);
   readonly host = input.required<RemoteHost>();
+  readonly readiness = computed(() => hostReadiness(this.host(), this.now()));
+  readonly repositoryAccess = input('Unknown');
   readonly roles = input<readonly RemoteHost[]>([]);
   readonly rolesShareRelease = computed(() => {
     const roles = this.roles();
@@ -122,6 +127,7 @@ export class RemoteHostCardComponent {
     return this.allChatUsage().filter(row => names.has(row.hostName.toLowerCase()));
   });
   readonly expanded = input(false);
+  readonly linkedSection = input<DetailSection | null>(null);
   /** The release every row is measured against; null until it is loaded. */
   readonly stableRelease = input<StableReleaseIdentity | null>(null);
   /** Injected clock so the relative heartbeat label ticks without a per-card timer. */
@@ -132,10 +138,13 @@ export class RemoteHostCardComponent {
   readonly setup = output<RemoteHost>();
   readonly expandedChange = output<boolean>();
   readonly expandedSections = signal<readonly DetailSection[]>([]);
+  private readonly openLinkedSection = effect(() => this.linkedSection() &&
+    this.expandedSections.update(current => [...new Set([...current, this.linkedSection()!])]));
   readonly relativeHeartbeat = relativeHeartbeat;
   readonly liveLoading = computed(() => this.host().liveDataState === 'loading');
   readonly liveError = computed(() => this.host().liveDataState === 'error');
   readonly tone = computed(() => this.liveLoading() ? 'idle' : hostStatusTone(this.host().status));
+  readonly indicatorTone = computed<StatusTone>(() => this.liveLoading() ? 'running' : hostStatusIndicatorTone(this.host().status));
   readonly statusLabel = computed(() => this.liveLoading() ? 'Loading live status' : hostStatusLabel(this.host().status));
   readonly statusReason = computed(() => this.host().status === 'degraded' ? 'A runner role is degraded. Inspect its role row and Capabilities detail.' : null);
   readonly roleLabel = computed(() => hostRoleLabel(this.host().role));
@@ -149,6 +158,10 @@ export class RemoteHostCardComponent {
     const ageLabel = age < 60_000 ? `${Math.floor(age / 1000)}s`
       : age < 3_600_000 ? `${Math.floor(age / 60_000)}m` : `${Math.floor(age / 3_600_000)}h`;
     return `${link.state[0].toUpperCase()}${link.state.slice(1)} · ${ageLabel} ago`;
+  });
+  readonly linkIndicatorTone = computed<StatusTone>(() => {
+    const state = this.host().runnerLink?.state;
+    return state === 'up' ? 'success' : state === 'paused' || !state ? 'neutral' : 'warning';
   });
   readonly linkTooltip = computed(() => {
     const link = this.host().runnerLink;
@@ -268,6 +281,8 @@ export class RemoteHostCardComponent {
   readonly cliDriftCount = computed(() => this.host().installedClis?.filter(cli => cli.isBelowTarget).length ?? 0);
   readonly cliUpdateActive = computed(() => ['draining', 'ready', 'upgrading', 'probing']
     .includes(this.host().cliUpdate?.state ?? ''));
+  readonly cliUpdateTone = computed<StatusTone>(() => this.cliUpdateActive() ? 'running'
+    : this.host().cliUpdate?.state === 'failed' ? 'danger' : 'neutral');
   readonly cliUpdateLabel = computed(() => {
     const update = this.host().cliUpdate;
     if (!update) return null;
@@ -295,10 +310,13 @@ export class RemoteHostCardComponent {
   });
   readonly capacitySummary = computed(() => {
     const total = this.roleSlotCapacity();
-    return total === null
+    const slots = total === null
       ? `${this.totalActiveSlots()} active · capacity not reported`
       : `${this.totalActiveSlots()} / ${total} role slots active`;
+    const gate = this.host().claimLoadGate;
+    return gate ? `${slots} · ${claimLoadGateLabel(gate)}` : slots;
   });
+  readonly claimLoadGateLabel = claimLoadGateLabel;
   readonly projectAccessSummary = computed(() => {
     const failed = this.failedProjectPreflights().length;
     if (failed) return `${failed} ${failed === 1 ? 'project block' : 'project blocks'}`;
@@ -354,9 +372,7 @@ export class RemoteHostCardComponent {
     if (host.role !== 'remote' || host.status === 'retired' || host.busyAction) return;
     this.setup.emit(host);
   }
-
 }
-
 export type DetailSection =
   | 'identity'
   | 'connection'

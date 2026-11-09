@@ -1,4 +1,5 @@
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Security;
 
 namespace AgentStudio.TaskServer;
 
@@ -22,6 +23,13 @@ public static class StudioEndpoints
 
         MapAuthEndpoints(studio);
         MapOrchestratorEndpoints(studio);
+        studio.MapGet("/operator-log", (string? project, long? after, TaskServerStore store) =>
+            after is < 0 ? Results.BadRequest(new { error = "invalid-cursor" })
+                : Results.Ok(new { entries = store.ReadOperatorLog(project, after ?? 0) }));
+        studio.MapPost("/operator-log", (HttpContext context, TaskServerOperatorLogWrite write,
+            TaskServerStore store, CancellationToken ct) => TaskServerEndpoints.InvokeAsync(
+                () => store.AppendOperatorLogAsync(write, TaskServerEndpoints.Actor(context), ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         MapRunnerEndpoints(studio);
         studio.MapGet("/board", async (HttpContext context, TaskServerStore store, CancellationToken ct)
             => await TaskServerEndpoints.InvokeAsync(async () =>
@@ -68,7 +76,9 @@ public static class StudioEndpoints
         {
             try
             {
-                var session = await store.LoginStudioAsync(request, ct);
+                var session = await store.LoginStudioAsync(request, ct,
+                    context.Connection.RemoteIpAddress?.ToString(), context.Request.Headers.UserAgent.ToString(),
+                    request.Passkey, RequestOrigin(context), RequestRpId(context));
                 SetStudioSessionCookies(context, session.SessionToken, session.CsrfToken);
                 return Results.Ok(session);
             }
@@ -97,7 +107,95 @@ public static class StudioEndpoints
             => await TaskServerEndpoints.InvokeAsync(
                 () => store.ChangeStudioPasswordAsync(StudioSessionToken(context), request, ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+
+        auth.MapPost("/totp/start", async (HttpContext context, TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(async () => new { secret = await store.BeginStudioTotpAsync(StudioSessionToken(context), ct) }))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        auth.MapPost("/totp/confirm", async (HttpContext context, StudioConfirmTotpRequest request,
+            TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(async () => new { recoveryCodes = await store.ConfirmStudioTotpAsync(StudioSessionToken(context), request.Code, ct) }))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        auth.MapPost("/passkeys/assertion-options", (HttpContext context, StudioPasskeyLoginRequest request,
+            TaskServerStore store) => TaskServerEndpoints.InvokeAsync(() => Task.FromResult(new
+            {
+                challenge = store.BeginStudioPasskeyAssertion(request.Username, context.Connection.RemoteIpAddress?.ToString() ?? "unknown"),
+                rpId = RequestRpId(context)
+            }))).RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        auth.MapPost("/passkeys/register-options", async (HttpContext context, TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(async () =>
+            {
+                var token = StudioSessionToken(context);
+                var challenge = await store.BeginStudioPasskeyRegistrationAsync(token, ct);
+                var status = await store.GetStudioAuthStatusAsync(token, ct, touch: false);
+                return new { challenge, rpId = RequestRpId(context),
+                    userId = status.User?.UserId, username = status.User?.Username };
+            })).RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        auth.MapPost("/passkeys/register", async (HttpContext context, PasskeyRegistrationProof proof,
+            TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(async () => new
+            {
+                recoveryCodes = await store.RegisterStudioPasskeyAsync(StudioSessionToken(context), proof,
+                    RequestOrigin(context), RequestRpId(context), ct)
+            })).RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        auth.MapPost("/passkeys/step-up-options", async (HttpContext context, TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(async () => new
+            {
+                challenge = await store.BeginStudioPasskeyStepUpAsync(StudioSessionToken(context), ct),
+                rpId = RequestRpId(context)
+            })).RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        auth.MapPost("/step-up", async (HttpContext context, StudioStepUpRequest request,
+            TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(async () =>
+            {
+                if (request.Passkey is not null)
+                    await store.VerifyStudioPasskeyStepUpAsync(StudioSessionToken(context), request.Passkey,
+                        RequestOrigin(context), RequestRpId(context), ct);
+                else await store.VerifyStudioStepUpAsync(StudioSessionToken(context), request.Code, ct);
+                return new { verified = true };
+            })).RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        auth.MapGet("/sessions", async (HttpContext context, TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(() => store.ListStudioSessionsAsync(StudioSessionToken(context), null, ct)));
+        auth.MapDelete("/sessions/{id}", async (string id, HttpContext context, TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(async () =>
+            {
+                await store.RevokeStudioSessionsAsync(StudioSessionToken(context), null, id, ct);
+                return new { revoked = true };
+            })).RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        auth.MapPost("/sessions/revoke-others", async (HttpContext context, TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(async () =>
+            {
+                await store.RevokeStudioSessionsAsync(StudioSessionToken(context), null, null, ct);
+                return new { revoked = true };
+            })).RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        auth.MapGet("/users/{id}/sessions", async (string id, HttpContext context, TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(() => store.ListStudioSessionsAsync(StudioSessionToken(context), id, ct)));
+        auth.MapDelete("/users/{id}/sessions/{sessionId}", async (string id, string sessionId, HttpContext context,
+            TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(async () =>
+            {
+                await store.RevokeStudioSessionsAsync(StudioSessionToken(context), id, sessionId, ct);
+                return new { revoked = true };
+            })).RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        auth.MapPost("/users/{id}/sessions/revoke-others", async (string id, HttpContext context,
+            TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(async () =>
+            {
+                await store.RevokeStudioSessionsAsync(StudioSessionToken(context), id, null, ct);
+                return new { revoked = true };
+            })).RequireTaskServerScope(TaskServerScopes.TasksWrite);
     }
+
+    private static string RequestOrigin(HttpContext context)
+    {
+        var forwarded = context.Request.Headers["X-Studio-Public-Origin"].FirstOrDefault();
+        if (Uri.TryCreate(forwarded, UriKind.Absolute, out var origin)
+            && (origin.Scheme is "http" or "https") && origin.AbsolutePath == "/"
+            && string.IsNullOrEmpty(origin.Query) && string.IsNullOrEmpty(origin.UserInfo))
+            return origin.GetLeftPart(UriPartial.Authority);
+        return context.Request.Scheme + "://" + context.Request.Host;
+    }
+
+    private static string RequestRpId(HttpContext context) => new Uri(RequestOrigin(context)).Host;
 
     private static void MapOrchestratorEndpoints(RouteGroupBuilder studio)
     {

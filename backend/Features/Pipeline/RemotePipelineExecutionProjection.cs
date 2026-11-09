@@ -1,4 +1,6 @@
 using System.Globalization;
+using AgentStudio.Runner;
+using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
 
@@ -34,7 +36,8 @@ internal static class RemotePipelineExecutionProjection
         TaskInfo task,
         IReadOnlyList<SessionEvent> sessions,
         IReadOnlyList<TimelineEvent> timeline,
-        TaskTokenSummary? tokenSummary)
+        TaskTokenSummary? tokenSummary,
+        BatchGateStore? batchGates = null)
     {
         var remoteSessions = sessions
             .Where(IsRemoteSession)
@@ -120,6 +123,13 @@ internal static class RemotePipelineExecutionProjection
                 decisionId,
                 BuildDecisionStep(decisionId, grade, attempt, decisionCalls));
         }
+
+        var settlement = ReadLatestSettlement(task.FolderPath, startedAt);
+        if (settlement is not null)
+            ProjectSettlement(steps, pipeline, settlement.Value.Entry,
+                settlement.Value.Number, decisionId);
+        if (batchGates is not null)
+            ProjectBatchGate(steps, pipeline, task, batchGates, settlement?.Entry);
 
         var latestProjectedAt = new[]
             {
@@ -293,26 +303,46 @@ internal static class RemotePipelineExecutionProjection
             });
         }
 
-        var agentCalls = calls
+        var reviewCalls = calls.Where(call =>
+            call.ParticipantId?.StartsWith(RemotePipelineReviewEvidenceProjector.ReviewParticipantPrefix,
+                StringComparison.Ordinal) == true
+            && ReviewStepId(call.ParticipantId) is not null).ToList();
+        var remaining = calls.Where(call => !reviewCalls.Contains(call)).ToList();
+        var agentCalls = remaining
             .Where(call => TokenParticipants.IsAgent(call.ParticipantId))
             .ToList();
         if (agentCalls.Count == 0)
-            agentCalls = calls.Where(call => grade is null || call.Ts <= (coreCompletedAt ?? grade.ReceivedAt)).ToList();
-        if (agentCalls.Count == 0)
-            agentCalls.Add(calls[0]);
+            agentCalls = remaining.Where(call => grade is null || call.Ts <= (coreCompletedAt ?? grade.ReceivedAt)).ToList();
+        if (agentCalls.Count == 0 && remaining.Count > 0)
+            agentCalls.Add(remaining[0]);
 
         var agentSet = agentCalls.ToHashSet();
-        var decisionCalls = calls.Where(call => !agentSet.Contains(call)).ToList();
+        foreach (var group in reviewCalls.GroupBy(call =>
+                     ReviewStepId(call.ParticipantId), StringComparer.OrdinalIgnoreCase))
+        {
+            if (group.Key is not null) result[group.Key] = group.ToList();
+        }
+        var decisionCalls = remaining.Where(call => !agentSet.Contains(call)).ToList();
         if (grade is null && decisionCalls.Count > 0)
         {
             agentCalls.AddRange(decisionCalls);
             decisionCalls.Clear();
         }
 
-        result[PipelineCatalogue.CoreAgentRunStepId] = agentCalls;
+        if (agentCalls.Count > 0) result[PipelineCatalogue.CoreAgentRunStepId] = agentCalls;
         if (grade is not null && decisionCalls.Count > 0)
             result[decisionStepId] = decisionCalls;
         return result;
+    }
+
+    private static string? ReviewStepId(string? participant)
+    {
+        if (participant is null) return null;
+        var marker = participant.IndexOf(":step:", StringComparison.Ordinal);
+        if (marker < 0) return null;
+        var start = marker + ":step:".Length;
+        var end = participant.IndexOf(":usage:", start, StringComparison.Ordinal);
+        return end > start ? participant[start..end] : null;
     }
 
     private static string ResolveDecisionStepId(TaskPipeline pipeline) =>
@@ -341,6 +371,208 @@ internal static class RemotePipelineExecutionProjection
                 Reason = NotApplicableReason,
             };
         }
+    }
+
+    private static (RemoteReviewSettlementEntry Entry, int Number)? ReadLatestSettlement(
+        string folder, DateTime startedAt)
+    {
+        var logs = TaskPaths.LogsDir(folder);
+        if (!Directory.Exists(logs)) return null;
+        var entries = Directory.EnumerateFiles(logs, "remote-review-settlement-*.json")
+            .Select(path => Path.GetFileNameWithoutExtension(path)["remote-review-settlement-".Length..])
+            .Select(id => RemoteReviewSettlementJournal.Read(folder, id).Entry)
+            .Where(entry => entry is not null)
+            .Select(entry => entry!)
+            .OrderBy(entry => entry.ReceivedAtUtc)
+            .ToArray();
+        var latest = entries.LastOrDefault(entry => entry.ReceivedAtUtc >= startedAt);
+        return latest is null ? null : (latest, Array.IndexOf(entries, latest) + 1);
+    }
+
+    private static void ProjectSettlement(List<PipelineStepExecution> steps, TaskPipeline pipeline,
+        RemoteReviewSettlementEntry entry, int number, string decisionId)
+    {
+        var report = entry.Report;
+        var gradeVerdict = report.Outcome.Trim().ToLowerInvariant() switch
+        {
+            "productfailure" => "product-failure",
+            "reviewinfra" => "review-infra",
+            "integrationbranchdefect" => "integration-branch-defect",
+            var value => value,
+        };
+        var gradeRef = $"remote-review-grade-{entry.AttemptId}.md";
+        var agentCommands = report.Commands
+            .Where(command => Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))
+            .ToArray();
+        var firstCommand = agentCommands.MinBy(command => command.StartedAt);
+        var lastCommand = agentCommands.MaxBy(command => command.FinishedAt);
+        var gradeStartedAt = firstCommand?.StartedAt ?? entry.ReceivedAtUtc;
+        var gradeDurationMs = firstCommand is null || lastCommand is null ? 0
+            : Math.Max(0, (long)(lastCommand.FinishedAt - gradeStartedAt).TotalMilliseconds);
+        var grade = steps.FirstOrDefault(step => step.StepId == decisionId);
+        if (grade is not null)
+        {
+            var passed = string.Equals(report.Outcome, "Pass", StringComparison.OrdinalIgnoreCase);
+            Upsert(steps, pipeline, decisionId, grade with
+            {
+                Status = passed ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
+                Verdict = gradeVerdict,
+                VerdictSummary = report.Summary,
+                Reason = $"Remote Review attempt {number}: {report.Summary ?? report.Outcome}",
+                EvidenceRef = gradeRef,
+                Model = lastCommand?.Model ?? grade.Model,
+                ReviewCli = lastCommand is null ? grade.ReviewCli
+                    : Path.GetFileNameWithoutExtension(lastCommand.FileName),
+                StartedAt = gradeStartedAt,
+                CompletedAt = entry.ReceivedAtUtc,
+                DurationMs = gradeDurationMs,
+                ExecutionLocation = "remote",
+                ExecutionAttemptId = entry.AttemptId,
+                ReviewAttemptNumber = number,
+            });
+        }
+        if (decisionId != PipelineCatalogue.CodeReviewGradeStepId)
+        {
+            var row = steps.FirstOrDefault(step => step.StepId == PipelineCatalogue.CodeReviewGradeStepId);
+            if (row is not null)
+                Upsert(steps, pipeline, row.StepId, row with
+                {
+                    Status = string.Equals(report.Outcome, "Pass", StringComparison.OrdinalIgnoreCase)
+                        ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
+                    Verdict = gradeVerdict,
+                    VerdictSummary = report.Summary,
+                    Reason = $"Remote Review attempt {number}: {report.Summary ?? report.Outcome}",
+                    EvidenceRef = gradeRef,
+                    Model = lastCommand?.Model ?? row.Model,
+                    ReviewCli = lastCommand is null ? row.ReviewCli
+                        : Path.GetFileNameWithoutExtension(lastCommand.FileName),
+                    StartedAt = gradeStartedAt,
+                    CompletedAt = entry.ReceivedAtUtc,
+                    DurationMs = gradeDurationMs,
+                    ExecutionLocation = "remote",
+                    ExecutionAttemptId = entry.AttemptId,
+                    ReviewAttemptNumber = number,
+                });
+        }
+
+        foreach (var verdict in report.Verdicts)
+        {
+            var stepId = verdict.Aspect.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
+                ? verdict.Aspect : "aspect-" + verdict.Aspect;
+            var row = steps.FirstOrDefault(step => string.Equals(step.StepId, stepId,
+                StringComparison.OrdinalIgnoreCase));
+            if (row is null) continue;
+            var command = report.Commands.LastOrDefault(item =>
+                string.Equals(item.StepId, stepId, StringComparison.OrdinalIgnoreCase)
+                && Contract.ReviewCommandKinds.IsAgent(item.ExecutionKind));
+            var failed = command is not null && Contract.ReviewFailureAttributionPolicy.Failed(command);
+            var status = verdict.Status.ToLowerInvariant();
+            Upsert(steps, pipeline, stepId, row with
+            {
+                Status = failed || status is "block" or "blocked" or "fail" or "failed" or "infrastructure"
+                    ? PipelineStepStatus.Failed : PipelineStepStatus.Passed,
+                Verdict = status,
+                VerdictSummary = verdict.Summary,
+                Reason = verdict.Summary,
+                Model = command?.Model ?? row.Model,
+                ThinkingLevel = command?.ThinkingLevel ?? row.ThinkingLevel,
+                ReviewCli = command is null ? row.ReviewCli : Path.GetFileNameWithoutExtension(command.FileName),
+                StartedAt = command?.StartedAt ?? row.StartedAt,
+                CompletedAt = command?.FinishedAt ?? row.CompletedAt,
+                DurationMs = command is null ? row.DurationMs
+                    : Math.Max(0, (long)(command.FinishedAt - command.StartedAt).TotalMilliseconds),
+                InputTokens = command?.InputTokens ?? row.InputTokens,
+                OutputTokens = command?.OutputTokens ?? row.OutputTokens,
+                CacheReadTokens = command?.CacheReadTokens ?? row.CacheReadTokens,
+                CacheCreationTokens = command?.CacheCreationTokens ?? row.CacheCreationTokens,
+                EvidenceRef = gradeRef,
+                ExecutionLocation = "remote",
+                ExecutionAttemptId = entry.AttemptId,
+                ReviewAttemptNumber = number,
+            });
+        }
+        foreach (var skipped in report.SkippedAspects ?? [])
+        {
+            var stepId = skipped.Aspect.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
+                ? skipped.Aspect : "aspect-" + skipped.Aspect;
+            var row = steps.FirstOrDefault(step => string.Equals(step.StepId, stepId,
+                StringComparison.OrdinalIgnoreCase));
+            if (row is null || row.Status is not (PipelineStepStatus.Pending or PipelineStepStatus.Skipped)) continue;
+            Upsert(steps, pipeline, stepId, row with
+            {
+                Status = PipelineStepStatus.Skipped, Reason = skipped.Reason,
+                ExecutionAttemptId = entry.AttemptId, ReviewAttemptNumber = number,
+            });
+        }
+        if (report.Verdicts.Any(item => item.Aspect == "build-tests"
+            && item.Classification == "DeferredToBatch"))
+        {
+            var row = steps.FirstOrDefault(step => step.StepId == PipelineCatalogue.BuildTestGateStepId);
+            if (row is not null && row.Status is PipelineStepStatus.Pending or PipelineStepStatus.Skipped)
+                Upsert(steps, pipeline, row.StepId, row with
+                {
+                    Status = PipelineStepStatus.Skipped,
+                    Reason = "Build and tests deferred to the batch gate.",
+                    Verdict = "deferred-to-batch",
+                    ExecutionAttemptId = entry.AttemptId,
+                    ReviewAttemptNumber = number,
+                });
+        }
+        else if (!report.Commands.Any(command => command.Phase == "verification"
+            && !Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)))
+        {
+            var row = steps.FirstOrDefault(step => step.StepId == PipelineCatalogue.BuildTestGateStepId);
+            if (row is not null && row.Status is PipelineStepStatus.Pending or PipelineStepStatus.Skipped)
+                Upsert(steps, pipeline, row.StepId, row with
+                {
+                    Status = PipelineStepStatus.Skipped,
+                    Reason = "This Remote Review did not run build or test commands.",
+                    ExecutionAttemptId = entry.AttemptId,
+                    ReviewAttemptNumber = number,
+                });
+        }
+    }
+
+    private static void ProjectBatchGate(List<PipelineStepExecution> steps, TaskPipeline pipeline,
+        TaskInfo task, BatchGateStore store, RemoteReviewSettlementEntry? settlement)
+    {
+        if (settlement is null || !settlement.Report.Verdicts.Any(item =>
+                item.Aspect == "build-tests" && item.Classification == "DeferredToBatch")) return;
+        var ownership = BatchGateOwnershipStore.Read(task.FolderPath);
+        var batchId = ownership?.ReviewAttemptId == settlement?.AttemptId
+            ? ownership.BatchId : null;
+        if (batchId is null && settlement is not null)
+            batchId = store.ListManifests()
+                .Where(manifest => manifest.ClosedAtUtc.UtcDateTime >= settlement.ReceivedAtUtc
+                    && manifest.Members.Any(member => member.TaskKey == task.TaskKey)
+                    && store.ReadPublication(manifest.BatchId) is { } publication
+                    && store.TryReadMember(manifest.BatchId, task.TaskKey,
+                        publication.BatchRunId) is not null)
+                .OrderByDescending(manifest => manifest.ClosedAtUtc)
+                .FirstOrDefault()?.BatchId;
+        if (batchId is null) return;
+        var row = steps.FirstOrDefault(step => step.StepId == PipelineCatalogue.BuildTestGateStepId);
+        if (row is null) return;
+        var state = store.LatestState(batchId);
+        var publication = store.ReadPublication(batchId);
+        var runId = publication?.BatchRunId ?? state.BatchRunId ?? ownership?.BatchRunId;
+        var verdict = runId is null ? null : store.ReadVerdict(batchId, runId);
+        var phase = state.Phase.ToString().ToLowerInvariant();
+        var passed = publication is not null && string.Equals(verdict?.Outcome, "pass", StringComparison.OrdinalIgnoreCase);
+        Upsert(steps, pipeline, row.StepId, row with
+        {
+            Status = passed ? PipelineStepStatus.Passed
+                : state.Phase is BatchPhase.Red or BatchPhase.Abandoned
+                    ? PipelineStepStatus.Failed : PipelineStepStatus.Skipped,
+            Verdict = verdict?.Outcome ?? phase,
+            Reason = $"Batch {batchId}: {phase}; verdict {verdict?.Outcome ?? "pending"}"
+                + (publication is null ? "." : $"; published {publication.VerifiedRemoteSha}."),
+            CompletedAt = publication?.VerifiedAtUtc.UtcDateTime ?? verdict?.CompletedAtUtc.UtcDateTime,
+            ReviewedResultSha = publication?.VerifiedRemoteSha ?? verdict?.TestedCandidateSha,
+            BatchGate = new BatchGatePipelineEvidence(batchId, phase, verdict?.Outcome,
+                publication?.VerifiedRemoteSha),
+            ExecutionLocation = "batch",
+        });
     }
 
     private static void ReconcileLegacyRemoteAspectSteps(

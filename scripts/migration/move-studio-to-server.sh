@@ -130,10 +130,36 @@ server_clone_workspace() {
   fi
 }
 
-server_sync_workspace() {
-  dir=$1; head=$2
-  git -C "$dir" cat-file -e "$head^{commit}" || fail "source HEAD $head did not arrive on the server"
-  git -C "$dir" reset -q --hard "$head"
+# server_adopt_refs <dir> <head> <branch>: a clone holds only the remote's branches.
+# The workstation pushed its local branches to refs/move/heads/* and its
+# refs/agent-studio/* (integration lanes, batch candidates, backups) as they
+# are. Every pushed branch becomes a local branch at the workstation's commit,
+# then <branch> is checked out (taken from the remote when the workstation has
+# no such branch), or <head> detached when no branch is named.
+server_adopt_refs() {
+  dir=$1; head=$2; branch=$3
+  if [ -n "$head" ]; then
+    git -C "$dir" cat-file -e "$head^{commit}" || fail "source HEAD $head did not arrive on the server"
+  fi
+  # Detached first, so the branch checked out now can move too. Staging is never edited by hand.
+  ! git -C "$dir" rev-parse -q --verify HEAD >/dev/null || git -C "$dir" checkout -q -f --detach
+  git -C "$dir" for-each-ref --format='%(refname:lstrip=3)' refs/move/heads/ | while IFS= read -r name; do
+    git -C "$dir" update-ref "refs/heads/$name" "refs/move/heads/$name"
+    if ! git -C "$dir" config "branch.$name.remote" >/dev/null && git -C "$dir" rev-parse -q --verify "refs/remotes/origin/$name" >/dev/null; then
+      git -C "$dir" branch -q --set-upstream-to="origin/$name" "$name"
+    fi
+  done
+  if [ -n "$branch" ]; then
+    if git -C "$dir" rev-parse -q --verify "refs/move/heads/$branch" >/dev/null; then
+      git -C "$dir" checkout -q -f "$branch"
+    elif git -C "$dir" rev-parse -q --verify "refs/remotes/origin/$branch" >/dev/null; then
+      git -C "$dir" checkout -q -f -B "$branch" --track "origin/$branch"
+    else
+      fail "branch $branch is neither on the workstation nor on the remote of $dir"
+    fi
+  elif [ -n "$head" ]; then
+    git -C "$dir" checkout -q -f --detach "$head"
+  fi
 }
 
 server_clone_checkout() {
@@ -167,6 +193,36 @@ server_relocate() {
   relocate_paths "$@" >"$root/move-bin/relocate-report.json" \
     || fail "path relocation has unresolved paths; see $root/move-bin/relocate-report.json and add them with --extra-mapping"
   relocate_paths "$@" --apply >/dev/null
+  # A project without a repository visibility setting takes what the
+  # workstation's anonymous probe found, so a private repository arrives private.
+  if [ -f "$root/move-bin/visibility.json" ]; then
+    node "$root/move-bin/move-studio-to-server.mjs" carry-visibility --workspace "$2" \
+      --visibility "$root/move-bin/visibility.json" || fail 'cannot carry the repository visibility into project-settings.json'
+  fi
+}
+
+# verify_cards <workspace> <storage>: the copy must hold as many cards per
+# project as the source had at inventory time (move-bin/cards.tsv).
+verify_cards() {
+  node "$root/move-bin/move-studio-to-server.mjs" verify-cards --expected "$root/move-bin/cards.tsv" \
+    --workspace "$1" --storage "$2"
+}
+
+# Projects whose checkout was derived from <repo>/.orchestrator/jobs lose that
+# link once their task storage moves to /data/projects/.task-storage.
+server_link_repositories() {
+  [ ! -s "$1/move-bin/repository-paths.json" ] \
+    || node "$1/move-bin/move-studio-to-server.mjs" repository-paths --workspace "$2" --paths "$1/move-bin/repository-paths.json"
+}
+
+# refresh_git_indexes <compose command...>: cp -a and the ownership change give
+# every file a new inode, ctime, and owner, so the first Git command in a copy
+# re-hashes the whole tree (85,000 files in the workspace) and holds
+# .git/index.lock meanwhile. Refresh each index as the service user before the
+# API starts.
+refresh_git_indexes() {
+  "$@" run --rm --no-deps -T --entrypoint sh api -c \
+    'for repo in /data/workspace /data/projects/*; do [ ! -d "$repo/.git" ] || git -C "$repo" update-index -q --refresh >/dev/null || exit 1; done'
 }
 
 server_disable_push() {
@@ -174,6 +230,27 @@ server_disable_push() {
   for remote in $(git -C "$repo" remote); do
     git -C "$repo" remote set-url --push "$remote" no-push://move-rehearsal
   done
+}
+
+# The readiness report the server computes about itself (AGT-3412), read from
+# inside the API container: its probe route answers loopback callers only.
+# Lists every check that is not ready with its remedy; never fails the move,
+# which already switched by the time it runs.
+server_readiness() {
+  report=$1; domain=$2; shift 2
+  attempt=0
+  until "$@" exec -T api curl --fail --silent --show-error --max-time 10 -H "Host: $domain" \
+      http://127.0.0.1:5031/healthz/readiness >"$report" 2>/dev/null \
+      && [ "$(json_field state <"$report" 2>/dev/null)" != pending ]; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 60 ]; then
+      echo 'readiness: the server computed no readiness report within two minutes; open the operations page and Recheck'
+      return 0
+    fi
+    sleep 2
+  done
+  node "$script_dir/readiness-report.mjs" "$report" || true
+  echo "readiness: report kept at $report"
 }
 
 server_smoke() {
@@ -241,6 +318,7 @@ server_smoke() {
   rm -f "$work/runner.curl"
   [ "$status" = 200 ] || fail "runner: claim with the test credential returned HTTP $status"
   echo "check: runner claim ok ($runner_name, status $(json_field status <"$work/claim.json"))"
+  server_readiness "$root/move-bin/rehearsal-readiness.json" "$host" compose
 }
 
 server_rehearse() {
@@ -287,15 +365,18 @@ server_rehearse() {
   fi
   trap teardown EXIT
   trap 'exit 130' HUP INT TERM
-  mkdir -p "$rehearsal/data/home" "$rehearsal/data/caddy-data" "$rehearsal/data/caddy-config" "$rehearsal/data/projects"
+  mkdir -p "$rehearsal/data/home" "$rehearsal/data/api-tmp" "$rehearsal/data/caddy-data" "$rehearsal/data/caddy-config" "$rehearsal/data/projects"
   cp -a "$root/move-staging/workspace" "$rehearsal/data/workspace"
   if [ -d "$root/move-staging/projects" ]; then cp -a "$root/move-staging/projects/." "$rehearsal/data/projects/"; fi
   if [ -d "$root/move-staging/storage" ]; then
     mkdir -p "$rehearsal/data/projects/.task-storage"
     cp -a "$root/move-staging/storage/." "$rehearsal/data/projects/.task-storage/"
   fi
+  verify_cards "$rehearsal/data/workspace" "$rehearsal/data/projects/.task-storage" \
+    || fail 'the rehearsal copy holds a different number of cards than the source; see above'
   server_relocate "$root" "$rehearsal/data/workspace" "$rehearsal/data/projects"
   echo 'check: path relocation ok (0 unresolved)'
+  server_link_repositories "$root" "$rehearsal/data/workspace"
   server_disable_push "$rehearsal/data/workspace"
   for checkout in "$rehearsal/data/projects"/*; do
     [ -d "$checkout/.git" ] && server_disable_push "$checkout"
@@ -339,7 +420,9 @@ networks:
       config: !override
         - subnet: $subnet.0/24
 EOF
-  as_service_owner 10001:10001 "$rehearsal/data" /site/workspace /site/projects /site/home
+  as_service_owner 10001:10001 "$rehearsal/data" /site/workspace /site/projects /site/home /site/api-tmp
+  refresh_git_indexes compose || fail 'git index refresh in the rehearsal copy failed'
+  echo 'check: git indexes refreshed'
   compose up -d --quiet-pull >/dev/null
   server_smoke "$host" "$port" "$rehearsal"
 }
@@ -358,6 +441,8 @@ server_apply() {
   relocate_paths "$root" "$root/move-staging/workspace" "$root/move-staging/projects" >"$root/move-bin/relocate-report.json" \
     || refuse "staging has unresolved Windows paths (see $root/move-bin/relocate-report.json); the live data was not touched"
   echo 'check: staging relocates with 0 unresolved paths'
+  verify_cards "$root/move-staging/workspace" "$root/move-staging/storage" \
+    || refuse 'staging holds a different number of cards than the source (see above); the live data was not touched'
   for name in workspace projects; do
     [ ! -e "$data_dir/$name.pre-move-$stamp" ] || refuse "$data_dir/$name.pre-move-$stamp already exists"
   done
@@ -393,10 +478,15 @@ server_apply() {
     mkdir -p "$data_dir/projects/.task-storage"
     cp -a "$root/move-staging/storage/." "$data_dir/projects/.task-storage/"
   fi
+  verify_cards "$data_dir/workspace" "$data_dir/projects/.task-storage" \
+    || fail 'the switched data holds a different number of cards than the source; see above'
   server_relocate "$root" "$data_dir/workspace" "$data_dir/projects"
   echo 'check: path relocation ok (0 unresolved)'
+  server_link_repositories "$root" "$data_dir/workspace"
   protect_access_state "$data_dir/workspace"
   as_service_owner 10001:10001 "$data_dir" /site/workspace /site/projects /site/home
+  refresh_git_indexes live || fail 'git index refresh in the moved data failed'
+  echo 'check: git indexes refreshed'
   live up -d --quiet-pull >/dev/null
   attempt=0
   until live exec -T frontend wget -q -T 10 -O - --header "Host: $domain" --header 'X-Forwarded-Proto: https' http://api:5031/api/auth/status >"$root/move-bin/status.json" 2>/dev/null; do
@@ -418,6 +508,7 @@ server_apply() {
   rm -rf "$root/move-staging"
   echo 'staging: removed'
   live ps --format '{{.Service}} {{.State}}'
+  server_readiness "$root/move-bin/readiness.json" "$domain" live
 }
 
 if [ "${1:-}" = --server-side ]; then
@@ -430,7 +521,7 @@ if [ "${1:-}" = --server-side ]; then
     preflight) server_preflight "$@" ;;
     moved-state) server_moved_state "$@" ;;
     clone-workspace) server_clone_workspace "$@" ;;
-    sync-workspace) server_sync_workspace "$@" ;;
+    adopt-refs) server_adopt_refs "$@" ;;
     receive-archive) server_receive_archive "$@" ;;
     ensure-dir) if [ -d "$1" ]; then echo existing; else private_dir "$1"; echo created; fi ;;
     remove-paths) cd "$1" && xargs -0 rm -rf -- ;;
@@ -458,10 +549,11 @@ Usage: move-studio-to-server.sh [--dry-run | --transfer | --rehearse | --apply] 
   --extra-mapping FILE   JSON of additional Windows prefix -> Linux path entries
   --rehearsal-port N     loopback port for the rehearsal stack (default: 18443)
   --rehearsal-subnet P   first three octets of the rehearsal network (default: 172.30.84)
-  --yes                  skip the interactive confirmation of --apply
+  --yes                  skip the interactive confirmation of --apply and never offer to accept token hits
   --force                apply again although Studio already moved (discards the server's state)
 Environment: MOVE_WORKSPACE, MOVE_DEVSPACE, MOVE_STABLE_HEALTH_URL, STABLE_MAINTENANCE_FILE,
-  MOVE_REHEARSAL_OWNER_USERNAME, MOVE_REHEARSAL_OWNER_PASSWORD.
+  MOVE_REHEARSAL_OWNER_USERNAME, MOVE_REHEARSAL_OWNER_PASSWORD, MOVE_SKIP_DIRS,
+  MOVE_ACCEPTED_TOKEN_HITS (reviewed token hits; default <state-dir>/accepted-token-hits.tsv).
 EOF
 }
 
@@ -541,7 +633,13 @@ staging="$server_root/move-staging"
 # Native (Windows) spelling of a path when running under Git Bash.
 native_path() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s\n' "$1"; fi; }
 
-server_side() {
+# ssh forwards its standard input to the remote command whether that command
+# reads it or not. Inside a `while read` loop it would swallow the rest of the
+# loop's input, so server_side never passes stdin on; only server_side_input
+# does, for the commands that stream data (archives, path lists, the owner login).
+server_side() { server_side_input "$@" </dev/null; }
+
+server_side_input() {
   remote_command="sh $(sq "$server_root/move-bin/move-studio-to-server.sh") --server-side"
   for argument in "$@"; do remote_command="$remote_command $(sq "$argument")"; done
   ssh -o BatchMode=yes "$server" "$remote_command"
@@ -559,6 +657,9 @@ for tool in git node tar gzip ssh curl; do
   command -v "$tool" >/dev/null 2>&1 || fail "missing local tool: $tool"
 done
 mkdir -p "$state_dir"
+# Token hits the operator reviewed and accepted; the planner reads this file on every pass.
+MOVE_ACCEPTED_TOKEN_HITS=${MOVE_ACCEPTED_TOKEN_HITS:-$state_dir/accepted-token-hits.tsv}
+export MOVE_ACCEPTED_TOKEN_HITS
 
 inventory() {
   git -C "$workspace" ls-files -z >"$state_dir/tracked.z"
@@ -566,36 +667,95 @@ inventory() {
   : >"$state_dir/remotes.tsv"
   node "$script_dir/move-studio-to-server.mjs" projects --workspace "$(native_path "$workspace")" >"$state_dir/projects.tsv"
   tab=$(printf '\t')
-  while IFS="$tab" read -r project_id repository; do
-    url=$(git -C "$repository" remote get-url origin 2>/dev/null | strip_url)
+  # Loops over plan files read from descriptor 3: a command inside that reads
+  # standard input (ssh, git, node) can then never consume the loop's input.
+  while IFS="$tab" read -r project_id repository <&3; do
+    url=$(git -C "$repository" remote get-url origin 2>/dev/null </dev/null | strip_url)
     [ -z "$url" ] || printf '%s\t%s\n' "$project_id" "$url" >>"$state_dir/remotes.tsv"
-  done <"$state_dir/projects.tsv"
+  done 3<"$state_dir/projects.tsv"
+  # Anonymous probe per repository: one that asks for credentials is private.
+  # Every credential source is off, so a token on this workstation cannot make it look public.
+  : >"$state_dir/visibility-probes.tsv"
+  probe_timeout=
+  ! command -v timeout >/dev/null 2>&1 || probe_timeout='timeout 30'
+  node "$script_dir/move-studio-to-server.mjs" probe-targets --workspace "$(native_path "$workspace")" \
+    --remotes "$state_dir/remotes.tsv" >"$state_dir/probe-targets.tsv"
+  while IFS="$tab" read -r project_id url; do
+    probe_status=0
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true SSH_ASKPASS=true GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+      $probe_timeout git -c credential.helper= ls-remote --heads -- "$url" >/dev/null 2>"$state_dir/probe.err" </dev/null \
+      || probe_status=$?
+    printf '%s\t%s\t%s\n' "$project_id" "$probe_status" "$(tr '\t\r\n' '   ' <"$state_dir/probe.err" | cut -c1-300)" \
+      >>"$state_dir/visibility-probes.tsv"
+  done <"$state_dir/probe-targets.tsv"
+  rm -f "$state_dir/probe.err"
+
   set -- inventory --workspace "$(native_path "$workspace")" --tracked "$state_dir/tracked.z" --dirty "$state_dir/dirty.z" \
-    --remotes "$state_dir/remotes.tsv" --home "$(native_path "$HOME")" \
+    --remotes "$state_dir/remotes.tsv" --visibility-probes "$state_dir/visibility-probes.tsv" --home "$(native_path "$HOME")" \
     --credential-helper "$(git -C "$workspace" config --get credential.helper || true)" --out-dir "$state_dir"
   [ -z "$extra_mapping" ] || set -- "$@" --extra-mapping "$extra_mapping"
-  inventory_status=0
-  node "$script_dir/move-studio-to-server.mjs" "$@" || inventory_status=$?
-  case "$inventory_status" in
-    0) ;;
-    3) [ "$mode" = dry-run ] || fail 'blocking inventory issues above; resolve the source task storage, token hit, repository URL, or path before moving' ;;
-    *) fail "inventory failed with exit $inventory_status" ;;
-  esac
+  while :; do
+    inventory_status=0
+    node "$script_dir/move-studio-to-server.mjs" "$@" || inventory_status=$?
+    case "$inventory_status" in
+      0) return 0 ;;
+      3) [ "$mode" = dry-run ] || fail 'blocking inventory issues above; resolve the source task storage, token hit, repository URL, or path before moving' ;;
+      4)
+        [ "$mode" != dry-run ] || return 0
+        accept_token_hits || fail "token hits above block the move; remove each token, or review them and accept them (run without --yes and answer accept, or append $state_dir/token-hits.tsv to $MOVE_ACCEPTED_TOKEN_HITS)"
+        continue ;;
+      *) fail "inventory failed with exit $inventory_status" ;;
+    esac
+    return 0
+  done
 }
+
+# Only token hits block: a new harmless hit (a test fixture in a task log, for
+# example) can turn up between the rehearsal and the switch. The operator may
+# accept it here, so the pass and, during --apply, the outage window go on.
+accept_token_hits() {
+  log 'token hits in Studio state that were not accepted before:'
+  tab=$(printf '\t')
+  while IFS="$tab" read -r hit_token hit_path; do
+    log "  $hit_token in $hit_path"
+  done <"$state_dir/token-hits.tsv"
+  [ "$assume_yes" -ne 1 ] || return 1
+  printf 'If every hit is harmless, accept them; the files then travel to the server. Type "accept" to continue: '
+  IFS= read -r answer || answer=
+  [ "$answer" = accept ] || return 1
+  cat "$state_dir/token-hits.tsv" >>"$MOVE_ACCEPTED_TOKEN_HITS"
+  log "accepted; recorded in $MOVE_ACCEPTED_TOKEN_HITS"
+}
+
+# send_refs <local repository> <server directory>: HEAD, every local branch, and
+# refs/agent-studio/*, including commits the remote does not have yet. --prune
+# drops refs the workstation deleted since an earlier pass.
+send_refs() {
+  # receive-pack runs outside the --server-side dispatch, so it needs its own umask.
+  git -C "$1" push -q --prune --receive-pack='umask 077 && git-receive-pack' "$server:$2" \
+    '+HEAD:refs/move/source-head' '+refs/heads/*:refs/move/heads/*' '+refs/agent-studio/*:refs/agent-studio/*'
+}
+
+# Workstation spelling of a registry path: Git Bash needs /c/... for a C:\ path.
+local_path() { if command -v cygpath >/dev/null 2>&1; then cygpath -u "$1"; else printf '%s\n' "$1"; fi; }
 
 transfer_pass() {
   upload "$self" move-studio-to-server.sh
   upload "$script_dir/relocate-workspace-paths.mjs" relocate-workspace-paths.mjs
+  upload "$script_dir/readiness-report.mjs" readiness-report.mjs
   upload "$state_dir/path-map.json" path-map.json
+  upload "$script_dir/move-studio-to-server.mjs" move-studio-to-server.mjs
+  upload "$state_dir/repository-paths.json" repository-paths.json
+  upload "$state_dir/visibility.json" visibility.json
+  upload "$state_dir/cards.tsv" cards.tsv
   git -C "$workspace" remote get-url origin >/dev/null 2>&1 || fail 'the workspace has no origin remote to clone on the server'
   workspace_url=$(git -C "$workspace" remote get-url origin | strip_url)
   clone_state=$(server_side clone-workspace "$staging/workspace" "$workspace_url")
   # A fresh clone invalidates what earlier passes recorded as sent.
   [ "$clone_state" != cloned ] || rm -f "$state_dir/manifest.json"
   head=$(git -C "$workspace" rev-parse HEAD)
-  # receive-pack runs outside the --server-side dispatch, so it needs its own umask.
-  git -C "$workspace" push -q --receive-pack='umask 077 && git-receive-pack' "$server:$staging/workspace" "+$head:refs/move/source-head"
-  server_side sync-workspace "$staging/workspace" "$head"
+  send_refs "$workspace" "$staging/workspace"
+  server_side adopt-refs "$staging/workspace" "$head" "$(git -C "$workspace" symbolic-ref -q --short HEAD || true)"
   log "workspace history at $head on the server ($clone_state clone)"
 
   set -- delta --inventory "$state_dir/inventory.json" --copy "$state_dir/copy.z" --remove "$state_dir/remove.z" \
@@ -607,26 +767,39 @@ transfer_pass() {
       tar_status=0
       tar -C "$workspace" --null -T "$state_dir/copy.z" --warning=no-file-changed -cf - || tar_status=$?
       echo "$tar_status" >"$state_dir/tar.status"
-    } | gzip -1 | server_side receive-archive "$staging/workspace"
+    } | gzip -1 | server_side_input receive-archive "$staging/workspace"
     # Exit 1 means a file changed while it was read; its new mtime sends it again next pass.
     case "$(cat "$state_dir/tar.status")" in 0|1) ;; *) fail 'tar failed while streaming the untracked state' ;; esac
   fi
-  [ ! -s "$state_dir/remove.z" ] || server_side remove-paths "$staging/workspace" <"$state_dir/remove.z"
+  [ ! -s "$state_dir/remove.z" ] || server_side_input remove-paths "$staging/workspace" <"$state_dir/remove.z"
   mv "$state_dir/manifest.next.json" "$state_dir/manifest.json"
 
+  # The server clones each checkout, then gets the workstation's local branches
+  # and refs/agent-studio/* and checks out the integration branch: the
+  # project's configured IntegrationBranch, otherwise the workstation's branch.
   tab=$(printf '\t')
-  while IFS="$tab" read -r name url; do
+  while IFS="$tab" read -r name checkout_source configured_branch url; do
     [ -n "$url" ] || fail "checkout $name has no repository URL"
     server_side clone-checkout "$staging/projects/$name" "$url" </dev/null
-    log "checkout /data/projects/$name from $url"
+    checkout_local=$(local_path "$checkout_source")
+    branch=$configured_branch
+    [ "$branch" != - ] || branch=
+    if git -C "$checkout_local" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+      send_refs "$checkout_local" "$staging/projects/$name" </dev/null
+      [ -n "$branch" ] || branch=$(git -C "$checkout_local" symbolic-ref -q --short HEAD || true)
+      server_side adopt-refs "$staging/projects/$name" "$(git -C "$checkout_local" rev-parse HEAD)" "$branch" </dev/null
+    else
+      log "warning: no workstation checkout at $checkout_source; /data/projects/$name has only the remote's branches"
+      [ -z "$branch" ] || server_side adopt-refs "$staging/projects/$name" '' "$branch" </dev/null
+    fi
+    log "checkout /data/projects/$name from $url on ${branch:-a detached HEAD}"
   done <"$state_dir/checkouts.tsv"
 
   # Task storage in a project checkout is usually untracked. A clone cannot
   # carry it, so each external StorageLocation has its own manifest and delta.
-  while IFS="$tab" read -r storage_id storage_source; do
+  while IFS="$tab" read -r storage_id storage_source <&3; do
     [ -n "$storage_id" ] || continue
-    storage_local=$storage_source
-    if command -v cygpath >/dev/null 2>&1; then storage_local=$(cygpath -u "$storage_source"); fi
+    storage_local=$(local_path "$storage_source")
     [ -d "$storage_local" ] || fail "task storage $storage_id disappeared before transfer: $storage_source"
     storage_stage="$staging/storage/$storage_id"
     storage_state=$(server_side ensure-dir "$storage_stage")
@@ -644,13 +817,13 @@ transfer_pass() {
         tar_status=0
         tar -C "$storage_local" --null -T "$storage_copy" --warning=no-file-changed -cf - || tar_status=$?
         echo "$tar_status" >"$state_dir/storage-$storage_id.tar.status"
-      } | gzip -1 | server_side receive-archive "$storage_stage"
+      } | gzip -1 | server_side_input receive-archive "$storage_stage"
       case "$(cat "$state_dir/storage-$storage_id.tar.status")" in 0|1) ;; *) fail "tar failed while streaming task storage $storage_id" ;; esac
     fi
-    [ ! -s "$storage_remove" ] || server_side remove-paths "$storage_stage" <"$storage_remove"
+    [ ! -s "$storage_remove" ] || server_side_input remove-paths "$storage_stage" <"$storage_remove"
     mv "$state_dir/storage-$storage_id.manifest.next.json" "$storage_manifest"
     log "task storage $storage_id staged at /data/projects/.task-storage/$storage_id"
-  done <"$state_dir/storage.tsv"
+  done 3<"$state_dir/storage.tsv"
 }
 
 server_side_preflight() {
@@ -752,9 +925,9 @@ case "$mode" in
     if [ -n "${MOVE_REHEARSAL_OWNER_USERNAME:-}" ]; then
       # The owner login travels on stdin, never on a command line.
       printf '%s\n%s\n' "$MOVE_REHEARSAL_OWNER_USERNAME" "${MOVE_REHEARSAL_OWNER_PASSWORD:-}" \
-        | server_side rehearse "$server_root" "$rehearsal_port" "$rehearsal_subnet" login
+        | server_side_input rehearse "$server_root" "$rehearsal_port" "$rehearsal_subnet" login
     else
-      server_side rehearse "$server_root" "$rehearsal_port" "$rehearsal_subnet" bootstrap </dev/null
+      server_side rehearse "$server_root" "$rehearsal_port" "$rehearsal_subnet" bootstrap
     fi
     log 'Rehearsal passed. Staging keeps the transferred state, so --apply only sends the final delta.'
     ;;
@@ -816,5 +989,6 @@ case "$mode" in
     log 'Studio now runs on the server. Stable stays stopped: the watchdog is in maintenance and api.sh refuses to start past the guard.'
     rollback_hint
     log 'Then: sign in at the public URL, re-point remote runners, and complete the credential replacements listed above.'
+    log "Fix every FAIL line of the readiness report above before the first card runs; the operations page shows the same report ($server_root/move-bin/readiness.json)."
     ;;
 esac

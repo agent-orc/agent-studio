@@ -42,10 +42,7 @@ public static class ProjectPreparationPaths
         if (!OperatingSystem.IsWindows() && IsWritableDirectory(ServiceCacheRoot))
             return ServiceCacheRoot;
 
-        var localData = Environment.GetFolderPath(
-            Environment.SpecialFolder.LocalApplicationData,
-            Environment.SpecialFolderOption.Create);
-        return Path.Combine(localData, "agent-studio", "cache");
+        return LocalStateRoot.Combine("agent-studio", "cache");
     }
 
     /// <summary>
@@ -289,6 +286,7 @@ public sealed record ProjectExecutionDefinition(
     QualityDefinition? Quality)
 {
     public ProjectDeploymentDefinition? Deployment { get; init; }
+    public ProjectStructureDefinition? Structure { get; init; }
     public string? DeliveryFullSuite { get; init; }
 }
 
@@ -335,6 +333,16 @@ public static partial class ProjectDefinitionReader
     /// <param name="hosts">Registered deploy hosts; null checks only the shape of deploy targets.</param>
     public static ProjectDefinitionReadResult Parse(string yaml, string? workspace = null,
         ProjectDeployHostRegistry? hosts = null)
+        => Parse(yaml, ProjectDefinitionValidator.WorkspaceFiles(workspace), hosts);
+
+    /// <summary>
+    /// Parses a definition whose referenced files are looked up through
+    /// <paramref name="repositoryFileExists"/> (a repository-relative path with
+    /// forward slashes). Review uses this to validate a delivery at its exact
+    /// commit without a checkout.
+    /// </summary>
+    public static ProjectDefinitionReadResult Parse(string yaml, Func<string, bool>? repositoryFileExists,
+        ProjectDeployHostRegistry? hosts = null)
     {
         var issues = new List<ProjectDefinitionIssue>();
         if (string.IsNullOrWhiteSpace(yaml))
@@ -349,7 +357,7 @@ public static partial class ProjectDefinitionReader
             "schemaVersion", "stack", "toolVersions", "commands", "testSuites",
             "cachePaths", "capabilities", "environment", "devServer", "image", "release",
             "project", "quality", "pipeline", "artifacts", "environments", "lifecycles", "deploy",
-            "variables", "tenants", "channels", "runbooks", "delivery",
+            "variables", "tenants", "channels", "runbooks", "delivery", "structure",
         };
         foreach (var line in lines.Where(line => line.Indent == 0))
         {
@@ -390,14 +398,18 @@ public static partial class ProjectDefinitionReader
                 "delivery.fullSuite must be required, optional, or off."));
 
         if (!int.TryParse(schemaVersion, out var version)) version = 0;
+        var structure = lines.Any(line => line.Indent == 0 && KeyValue(line.Text).Key == "structure")
+            ? ParseStructure(lines, issues)
+            : null;
         var definition = new ProjectExecutionDefinition(
             version, stack, tools, commands, suites, caches, capabilities,
             environment, devServer, NullIfBlank(image), release, project, quality)
         {
-            Deployment = ParseDeployment(lines, issues),
+            Deployment = ParseDeployment(lines, issues, structure ?? ProjectStructureDefinition.Empty),
+            Structure = structure,
             DeliveryFullSuite = fullSuite,
         };
-        issues.AddRange(ProjectDefinitionValidator.Validate(definition, workspace, hosts));
+        issues.AddRange(ProjectDefinitionValidator.Validate(definition, repositoryFileExists, hosts));
         issues = LocateIssues(lines, issues);
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(yaml)))
             .ToLowerInvariant();
@@ -857,6 +869,20 @@ public static partial class ProjectDefinitionValidator
         ProjectExecutionDefinition definition,
         string? workspace = null,
         ProjectDeployHostRegistry? hosts = null)
+        => Validate(definition, WorkspaceFiles(workspace), hosts);
+
+    /// <summary>Existence check for repository-relative paths inside <paramref name="workspace"/>; null without a workspace.</summary>
+    public static Func<string, bool>? WorkspaceFiles(string? workspace)
+        => workspace is null
+            ? null
+            : path => File.Exists(Path.Combine(workspace, path.Replace('/', Path.DirectorySeparatorChar)));
+
+    /// <param name="repositoryFileExists">Null checks only the shape of referenced paths, not their presence.</param>
+    /// <param name="hosts">Registered deploy hosts; null checks only the shape of deploy targets.</param>
+    public static IReadOnlyList<ProjectDefinitionIssue> Validate(
+        ProjectExecutionDefinition definition,
+        Func<string, bool>? repositoryFileExists,
+        ProjectDeployHostRegistry? hosts = null)
     {
         var issues = new List<ProjectDefinitionIssue>();
         if (definition.SchemaVersion is not (1 or 2))
@@ -869,7 +895,10 @@ public static partial class ProjectDefinitionValidator
             issues.Add(new("quality", "v1-does-not-support-quality", "schemaVersion 1 does not support the quality section. Use schemaVersion 2."));
 
         if (definition.SchemaVersion == 1 && definition.Deployment is not null)
-            issues.Add(new("deploy", "v1-does-not-support-deployment", "schemaVersion 1 does not support pipeline, artifacts, environments, lifecycles, channels, runbooks, deploy, variables, or tenants. Use schemaVersion 2."));
+            issues.Add(new("deploy", "v1-does-not-support-deployment", "schemaVersion 1 does not support pipeline, artifacts, environments, lifecycles, channels, runbooks, deploy, variables, tenants, or structure. Use schemaVersion 2."));
+
+        if (definition.SchemaVersion == 1 && definition.Structure is not null)
+            issues.Add(new("structure", "v1-does-not-support-structure", "schemaVersion 1 does not support structure declarations. Use schemaVersion 2."));
 
         if (definition.SchemaVersion == 2 && definition.Project is null)
             issues.Add(new("project", "v2-project-required", "schemaVersion 2 requires a project section."));
@@ -877,8 +906,7 @@ public static partial class ProjectDefinitionValidator
             issues.Add(new("stack", "stack-required", "At least one stack is required."));
         if (!SafeRelativePath(definition.Commands.Prepare))
             issues.Add(new("commands.prepare", "prepare-path-invalid", "Prepare must be a repository-relative path without traversal."));
-        else if (workspace is not null && !File.Exists(Path.Combine(
-                     workspace, definition.Commands.Prepare.Replace('/', Path.DirectorySeparatorChar))))
+        else if (repositoryFileExists is not null && !repositoryFileExists(definition.Commands.Prepare))
             issues.Add(new("commands.prepare", "prepare-script-missing", "The prepare script does not exist in the subject checkout."));
 
         foreach (var tool in definition.ToolVersions)
@@ -887,8 +915,7 @@ public static partial class ProjectDefinitionValidator
                 issues.Add(new($"toolVersions.{tool.Key}", "tool-name-invalid", "Tool names use letters, numbers, underscore, dot, or hyphen."));
             if (!SafeRelativePath(tool.Value))
                 issues.Add(new($"toolVersions.{tool.Key}", "tool-manifest-invalid", "Tool version references must be repository-relative paths."));
-            else if (workspace is not null && !File.Exists(Path.Combine(
-                         workspace, tool.Value.Replace('/', Path.DirectorySeparatorChar))))
+            else if (repositoryFileExists is not null && !repositoryFileExists(tool.Value))
                 issues.Add(new($"toolVersions.{tool.Key}", "tool-manifest-missing", "The referenced tool manifest does not exist in the subject checkout."));
         }
 
@@ -952,8 +979,7 @@ public static partial class ProjectDefinitionValidator
                 {
                     if (!SafeRelativePath(identity.Source) || identity.Source!.Contains('\\'))
                         issues.Add(new($"{path}.source", "release-source-invalid", "Release identity sources must use repository-relative paths with forward slashes and no traversal."));
-                    else if (workspace is not null && !File.Exists(Path.Combine(
-                                 workspace, identity.Source!.Replace('/', Path.DirectorySeparatorChar))))
+                    else if (repositoryFileExists is not null && !repositoryFileExists(identity.Source!))
                         issues.Add(new($"{path}.source", "release-source-missing", "The release identity source does not exist in the subject checkout."));
                 }
                 else
@@ -1183,7 +1209,7 @@ public static partial class ProjectPreparationExecutor
         var read = ProjectDefinitionReader.ReadWorkspace(workspace);
         if (!read.IsValid || read.Definition is null || read.DefinitionSha256 is null)
             return new(true, false, null, read.Issues, string.Empty, null,
-                PreparationFailureKind.Definition, "definition:invalid", "Repository execution definition is invalid.");
+                PreparationFailureKind.Definition, "definition:invalid", ProjectDefinitionIssueText.InvalidReason(read.Issues));
 
         var started = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
@@ -1469,22 +1495,26 @@ public static partial class ProjectPreparationExecutor
         CancellationToken cancellationToken)
     {
         var bindings = new List<CacheBinding>();
+        // Input discovery must never enter the executor-owned cache. Its staging
+        // directories are renamed during publication, and only the final entry
+        // path is a readable cache source (under the per-key entry lock).
+        IReadOnlyList<string> Inputs(string pattern) => Files(workspace, pattern, cacheRoot);
         if (definition.Stack.Contains("node", StringComparer.OrdinalIgnoreCase)
-            || Files(workspace, "package-lock.json").Count > 0)
+            || Inputs("package-lock.json").Count > 0)
             bindings.Add(Binding("npm", "NPM_CONFIG_CACHE", workspace, cacheRoot, runRoot,
-                Files(workspace, "package-lock.json"), ToolInputs(definition.ToolVersions, "node"), log,
+                Inputs("package-lock.json"), ToolInputs(definition.ToolVersions, "node"), log,
                 entryLockWait, cancellationToken));
         if (definition.Stack.Contains("dotnet", StringComparer.OrdinalIgnoreCase)
-            || Files(workspace, "*.csproj").Count > 0)
+            || Inputs("*.csproj").Count > 0)
             bindings.Add(Binding("nuget", "NUGET_PACKAGES", workspace, cacheRoot, runRoot,
-                Files(workspace, "packages.lock.json").Count > 0
-                    ? Files(workspace, "packages.lock.json")
-                    : Files(workspace, "*.csproj"), ToolInputs(definition.ToolVersions, "dotnet", "dotnetSdk"), log,
+                Inputs("packages.lock.json").Count > 0
+                    ? Inputs("packages.lock.json")
+                    : Inputs("*.csproj"), ToolInputs(definition.ToolVersions, "dotnet", "dotnetSdk"), log,
                 entryLockWait, cancellationToken));
         if (definition.Stack.Contains("playwright", StringComparer.OrdinalIgnoreCase)
-            || Files(workspace, "playwright.config.*").Count > 0)
+            || Inputs("playwright.config.*").Count > 0)
             bindings.Add(Binding("playwright", "PLAYWRIGHT_BROWSERS_PATH", workspace, cacheRoot, runRoot,
-                Files(workspace, "package-lock.json"), ToolInputs(definition.ToolVersions, "node"), log,
+                Inputs("package-lock.json"), ToolInputs(definition.ToolVersions, "node"), log,
                 entryLockWait, cancellationToken));
         return bindings;
     }
@@ -1700,13 +1730,17 @@ public static partial class ProjectPreparationExecutor
         return Convert.ToHexString(SHA256.HashData(stream.ToArray())).ToLowerInvariant();
     }
 
-    private static IReadOnlyList<string> Files(string root, string pattern)
+    private static IReadOnlyList<string> Files(string root, string pattern, string cacheRoot)
     {
         var result = new List<string>();
         var pending = new Queue<string>();
+        var cachePath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(cacheRoot));
+        var pathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         pending.Enqueue(root);
         while (pending.TryDequeue(out var directory))
         {
+            if (string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory)), cachePath, pathComparison))
+                continue;
             try
             {
                 result.AddRange(Directory.EnumerateFiles(directory, pattern, SearchOption.TopDirectoryOnly));
@@ -1717,9 +1751,9 @@ public static partial class ProjectPreparationExecutor
                     pending.Enqueue(child);
                 }
             }
-            catch (UnauthorizedAccessException)
+            catch (Exception exception) when (exception is UnauthorizedAccessException or DirectoryNotFoundException)
             {
-                // A bounded block may ignore an inaccessible generated subtree.
+                // A generated subtree may be inaccessible or disappear during discovery.
             }
         }
         return result.OrderBy(path => path, StringComparer.Ordinal).ToArray();
@@ -1873,32 +1907,42 @@ public static partial class ProjectPreparationExecutor
             var parent = Path.GetDirectoryName(binding.EntryPath)!;
             Directory.CreateDirectory(parent);
             var staging = binding.EntryPath + ".staging-" + Guid.NewGuid().ToString("N");
-            Directory.CreateDirectory(staging);
-            var content = Path.Combine(staging, "content");
-            CopyDirectory(binding.WorkingPath, content);
-            File.WriteAllText(Path.Combine(staging, "manifest.json"), JsonSerializer.Serialize(new
-            {
-                schemaVersion = 2,
-                block = binding.Block,
-                key = binding.Key,
-                createdAtUtc = DateTimeOffset.UtcNow,
-                inputs = binding.Inputs,
-                writeOnce = true,
-                // AGT-2858: recorded at publication so the retention sweep can
-                // apply its size bound without walking every cached file tree.
-                sizeBytes = ProjectPreparationCacheSweep.Measure(content),
-            }, Json));
+            // Invariant: only this writer touches staging. Readers copy only the
+            // published entry under its key lock; rename publishes it atomically.
+            // The losing writer retains its private run copy and removes only its
+            // own staging path before recording the canonical published entry.
             try
             {
-                Directory.Move(staging, binding.EntryPath);
-                binding.PublicationState = "published";
-                log?.Invoke($"project-prepare cache block={binding.Block} key={binding.Key} state=published");
+                Directory.CreateDirectory(staging);
+                var content = Path.Combine(staging, "content");
+                CopyDirectory(binding.WorkingPath, content);
+                File.WriteAllText(Path.Combine(staging, "manifest.json"), JsonSerializer.Serialize(new
+                {
+                    schemaVersion = 2,
+                    block = binding.Block,
+                    key = binding.Key,
+                    createdAtUtc = DateTimeOffset.UtcNow,
+                    inputs = binding.Inputs,
+                    writeOnce = true,
+                    // AGT-2858: recorded at publication so the retention sweep can
+                    // apply its size bound without walking every cached file tree.
+                    sizeBytes = ProjectPreparationCacheSweep.Measure(content),
+                }, Json));
+                try
+                {
+                    Directory.Move(staging, binding.EntryPath);
+                    binding.PublicationState = "published";
+                    log?.Invoke($"project-prepare cache block={binding.Block} key={binding.Key} state=published");
+                }
+                catch (IOException) when (InspectEntry(binding.EntryPath, binding.Block, binding.Key) == CacheEntryInspection.Hit)
+                {
+                    binding.PublicationState = "already-published";
+                    log?.Invoke($"project-prepare cache block={binding.Block} key={binding.Key} state=already-published");
+                }
             }
-            catch (IOException) when (Directory.Exists(binding.EntryPath))
+            finally
             {
                 DeleteBestEffort(staging);
-                binding.PublicationState = "already-published";
-                log?.Invoke($"project-prepare cache block={binding.Block} key={binding.Key} state=already-published");
             }
         }
     }

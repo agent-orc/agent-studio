@@ -90,7 +90,7 @@ public sealed class StallInterventionPolicyTests
 
         Assert.Equal((AiOperatorDisposition.Propose, AutonomyClass.A2, StallInterventionActions.ProposeRestartService, reason),
             (decision.Disposition, decision.Autonomy, decision.Effect, decision.ReasonCode));
-        Assert.Contains("nothing was changed", decision.Intervention!.Done);
+        Assert.Contains("No action was taken", decision.Intervention!.Done);
     }
 
     [Fact]
@@ -219,7 +219,7 @@ public sealed class StallInterventionPolicyTests
 
         Assert.Equal((AiOperatorDisposition.Propose, AutonomyClass.A2, StallInterventionActions.ProposeReviewToolchain),
             (decision.Disposition, decision.Autonomy, decision.Effect));
-        Assert.Contains("add compose-render to the review image", decision.Intervention!.Proposal);
+        Assert.Contains("Add compose-render to the review image", decision.Intervention!.Proposal);
     }
 
     [Fact]
@@ -451,6 +451,27 @@ public sealed class StallInterventionPolicyTests
     }
 
     [Fact]
+    public void Receipt_carries_the_undo_text_of_restore_restart_and_escalation_but_not_of_a_proposal()
+    {
+        var restore = Decide(FollowUp(StallInterventionActions.LowerAdmission, true, true, 20, 0.4)).Intervention!;
+        var restart = Decide(Facts(StallKinds.IdleCapacity, "host:kori-review-01:review") with
+        {
+            Service = new StallServiceFacts("kori-review-01", "review", "review-daemon", true, false,
+                Now.AddMinutes(-40), WaitingCount: 15, FreeSlots: 3, false, BusySlots: 0, ClaimableWaiting: 15),
+        }).Intervention!;
+        var escalation = Decide(FollowUp(StallInterventionActions.LowerAdmission, false, true, 0, 3.0)).Intervention!;
+        var proposal = Decide(Overload(admission: 1)).Intervention!;
+
+        Assert.Equal(StallInterventionActions.RestoreAdmission, restore.Action);
+        Assert.EndsWith("8 is your own value again; to lower it, set it in Settings > Capacity.", restore.Receipt);
+        Assert.EndsWith(restart.Undo, restart.Receipt);
+        Assert.Contains("Nothing to undo", restart.Receipt);
+        Assert.EndsWith("Nothing was changed by this step.", escalation.Receipt);
+        Assert.Equal(string.Empty, proposal.Undo);
+        Assert.DoesNotContain("Nothing to undo", proposal.Receipt);
+    }
+
+    [Fact]
     public void Persisting_overload_while_more_runs_are_active_than_the_new_admission_drains_instead_of_escalating()
     {
         var draining = FollowUp(StallInterventionActions.LowerAdmission, cleared: false, effectObserved: true, 0, 3.9);
@@ -536,7 +557,7 @@ public sealed class StallInterventionPolicyTests
 
         Assert.Equal(StallInterventionPolicy.WaitingForLogin, waiting.ReasonCode);
         Assert.Equal(StallInterventionActions.ConfirmCleared, renewed.Effect);
-        Assert.Contains("route attempts to agent-runner-01 again", renewed.Intervention!.Done);
+        Assert.Contains("attempts route to agent-runner-01 again", renewed.Intervention!.Done);
         Assert.Equal((AiOperatorDisposition.Ask, StallInterventionPolicy.EffectMissing), (lost.Disposition, lost.ReasonCode));
     }
 

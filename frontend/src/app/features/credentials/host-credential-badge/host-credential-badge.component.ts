@@ -1,10 +1,12 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import type { RemoteHost } from '../../remote-hosts/models/remote-host.model';
 import { CredentialInventoryService } from '../credential-inventory.service';
+import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
 
 @Component({
   selector: 'app-host-credential-badge',
   standalone: true,
+  imports: [StatusIndicatorComponent],
   templateUrl: './host-credential-badge.component.html',
   styleUrl: './host-credential-badge.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

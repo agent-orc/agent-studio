@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
 
@@ -83,9 +84,7 @@ public sealed class ModelRoutingPolicyStateStore : IModelRoutingModeProvider
     {
         var root = _configuration["TaskRepository"];
         if (string.IsNullOrWhiteSpace(root))
-            root = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "agent-taskboard");
+            root = LocalStateRoot.Combine("agent-taskboard");
         return Path.Combine(root, FileName);
     }
 }

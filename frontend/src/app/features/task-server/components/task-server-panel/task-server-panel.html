@@ -19,7 +19,7 @@
   </header>
 
   @if (loading() && !status()) {
-    <p class="ts__hint" role="status" data-testid="task-server-querying">Querying the Task Server. Connection status is pending.</p>
+    <p class="ts__hint" role="status" data-testid="task-server-querying"><app-status-indicator tone="running" label="Querying the Task Server. Connection status is pending." [compact]="true" /></p>
   }
 
   @if (unavailable(); as unavailableState) {
@@ -54,7 +54,8 @@
     </div>
     } @else {
       <p class="ts__hint" role="status" data-testid="task-server-statistics-pending">
-        {{ s.statistics.state === 'failed' ? 'Statistics are temporarily unavailable.' : 'Store and evidence statistics are being computed.' }}
+        <app-status-indicator [tone]="s.statistics.state === 'failed' ? 'warning' : 'running'" [compact]="true"
+          [label]="s.statistics.state === 'failed' ? 'Statistics are temporarily unavailable.' : 'Store and evidence statistics are being computed.'" />
       </p>
     }
 
@@ -66,9 +67,8 @@
       @if (connection(); as c) {
         <section class="ts__block" data-testid="task-server-connection" [attr.data-tone]="healthTone(c.health)">
           <header class="ts__block-head">
-            <span class="ts__dot" [attr.data-tone]="healthTone(c.health)" aria-hidden="true"></span>
             <h3 class="ts__block-title">Connection</h3>
-            <span class="ts__badge" [attr.data-tone]="healthTone(c.health)" data-testid="task-server-health">{{ healthLabel(c.health) }}</span>
+            <app-status-indicator class="ts__status" [tone]="indicatorTone(healthTone(c.health))" [label]="healthLabel(c.health)" testId="task-server-health" />
           </header>
           <dl class="ts__rows">
             <div class="ts__row">
@@ -82,7 +82,7 @@
             <div class="ts__row"><dt>Version</dt><dd>{{ c.version || '-' }}</dd></div>
             <div class="ts__row"><dt>Identity</dt><dd class="ts__mono">{{ c.id }}</dd></div>
             <div class="ts__row"><dt>Protocol</dt><dd>{{ c.protocolMinimum }} - {{ c.protocolMaximum }}</dd></div>
-            <div class="ts__row"><dt>Readiness</dt><dd>{{ c.ready ? 'Ready' : 'Not ready' }}</dd></div>
+            <div class="ts__row"><dt>Readiness</dt><dd><app-status-indicator [tone]="c.ready ? 'success' : 'warning'" [label]="c.ready ? 'Ready' : 'Not ready'" [compact]="true" testId="task-server-readiness" /></dd></div>
             <div class="ts__row"><dt>Uptime</dt><dd>{{ c.uptimeLabel || '-' }}</dd></div>
             <div class="ts__row"><dt>Auth</dt><dd>{{ c.authMode }}</dd></div>
           </dl>
@@ -112,9 +112,8 @@
       @if (evidence(); as ev) {
         <section class="ts__block" data-testid="task-server-evidence" [attr.data-tone]="evidenceStateTone(ev.state)">
           <header class="ts__block-head">
-            <span class="ts__dot" [attr.data-tone]="evidenceStateTone(ev.state)" aria-hidden="true"></span>
             <h3 class="ts__block-title">Evidence</h3>
-            <span class="ts__badge" [attr.data-tone]="evidenceStateTone(ev.state)" data-testid="task-server-evidence-state">{{ evidenceStateLabel(ev.state) }}</span>
+            <app-status-indicator class="ts__status" [tone]="evidenceIndicatorTone(ev.state)" [label]="evidenceStateLabel(ev.state)" testId="task-server-evidence-state" />
           </header>
           <dl class="ts__rows">
             <div class="ts__row"><dt>Event files</dt><dd>{{ s.statistics.state === 'ready' ? ev.eventFiles : '-' }}</dd></div>
@@ -127,10 +126,11 @@
 
     <div class="ts__blocks">
       <section class="ts__block" data-testid="task-server-maintenance">
-        <header class="ts__block-head"><h3 class="ts__block-title">Maintenance</h3><span class="ts__badge">{{ s.maintenance.mode }}</span></header>
+        <header class="ts__block-head"><h3 class="ts__block-title">Maintenance</h3>
+          <app-status-indicator class="ts__status" [tone]="s.maintenance.mode === 'normal' ? 'success' : 'warning'" [label]="s.maintenance.mode" testId="task-server-maintenance-mode" /></header>
         <dl class="ts__rows">
-          <div class="ts__row"><dt>Drain</dt><dd>{{ s.maintenance.drainRequested ? 'Requested' : 'Open' }}</dd></div>
-          <div class="ts__row"><dt>Shutdown</dt><dd>{{ s.maintenance.shutdownPrepared ? 'Prepared' : 'Service manager owned' }}</dd></div>
+          <div class="ts__row"><dt>Drain</dt><dd><app-status-indicator [tone]="s.maintenance.drainRequested ? 'warning' : 'success'" [label]="s.maintenance.drainRequested ? 'Requested' : 'Open'" [compact]="true" /></dd></div>
+          <div class="ts__row"><dt>Shutdown</dt><dd><app-status-indicator [tone]="s.maintenance.shutdownPrepared ? 'warning' : 'neutral'" [label]="s.maintenance.shutdownPrepared ? 'Prepared' : 'Service manager owned'" [compact]="true" /></dd></div>
           <div class="ts__row"><dt>Reason</dt><dd>{{ s.maintenance.reason || '-' }}</dd></div>
         </dl>
       </section>
@@ -138,12 +138,16 @@
         <header class="ts__block-head"><h3 class="ts__block-title">Migrations</h3><span class="ts__badge">{{ s.migrations.length }} active</span></header>
         <dl class="ts__rows">
           @for (migration of s.migrations; track migration.id) {
-            <div class="ts__row"><dt>{{ migration.id }}</dt><dd>{{ migration.state }}</dd></div>
-          } @empty { <div class="ts__row"><dt>State</dt><dd>No active migrations</dd></div> }
+            <div class="ts__row"><dt>{{ migration.id }}</dt><dd><app-status-indicator [tone]="migrationTone(migration.state)" [label]="migration.state" [compact]="true" /></dd></div>
+          } @empty { <div class="ts__row"><dt>State</dt><dd><app-status-indicator tone="neutral" label="No active migrations" [compact]="true" /></dd></div> }
         </dl>
       </section>
       <section class="ts__block" data-testid="task-server-backups" [attr.data-tone]="s.backups.lastFailure ? 'error' : 'ok'">
-        <header class="ts__block-head"><h3 class="ts__block-title">Backups</h3><span class="ts__badge" [attr.data-tone]="s.backups.lastFailure ? 'error' : 'ok'">{{ s.statistics.state === 'ready' ? s.backups.items.length + ' retained' : 'Calculating' }}</span></header>
+        <header class="ts__block-head"><h3 class="ts__block-title">Backups</h3>
+          <app-status-indicator class="ts__status" testId="task-server-backups-state"
+            [tone]="s.backups.lastFailure ? 'danger' : s.statistics.state === 'ready' ? 'success' : 'running'"
+            [label]="s.statistics.state === 'ready' ? s.backups.items.length + ' retained' : 'Calculating'"
+            [detail]="s.backups.lastFailure" /></header>
         <dl class="ts__rows">
           <div class="ts__row"><dt>Retention</dt><dd>{{ s.backups.retentionCount }}</dd></div>
           <div class="ts__row"><dt>Latest</dt><dd>{{ s.statistics.state === 'ready' ? (s.backups.items[0]?.verificationState || 'None') : 'Calculating' }}</dd></div>
@@ -151,7 +155,8 @@
         </dl>
       </section>
       <section class="ts__block" data-testid="task-server-security">
-        <header class="ts__block-head"><h3 class="ts__block-title">Access security</h3><span class="ts__badge">{{ s.security.available ? 'Integrated' : 'Pending dependency' }}</span></header>
+        <header class="ts__block-head"><h3 class="ts__block-title">Access security</h3>
+          <app-status-indicator class="ts__status" [tone]="s.security.available ? 'success' : 'warning'" [label]="s.security.available ? 'Integrated' : 'Pending dependency'" testId="task-server-security-state" /></header>
         <dl class="ts__rows">
           <div class="ts__row"><dt>Users</dt><dd>{{ s.security.userCount }}</dd></div>
           <div class="ts__row"><dt>Host credentials</dt><dd>{{ s.security.credentialRunnerCount }}</dd></div>

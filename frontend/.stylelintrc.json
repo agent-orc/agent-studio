@@ -124,7 +124,6 @@
         "src/app/features/project-detail/components/project-proposals-panel/project-proposals-panel.component.scss",
         "src/app/features/cli/components/cli-admin-panel/cli-admin-panel.scss",
         "src/app/features/cli/components/cli-console/cli-console.scss",
-        "src/app/features/cli/components/cli-sessions-panel/cli-sessions-panel.scss",
         "src/app/features/dev-tools/components/update-stable-console/update-stable-console.component.scss",
         "src/app/features/task-detail/components/activity-log-view/activity-log-view.scss",
         "src/app/features/task-detail/components/beautiful-results/beautiful-results.component.scss",
@@ -141,9 +140,11 @@
         "src/app/features/task-detail/task-detail.scss",
         "src/app/features/orchestrator/components/global-orchestrator-card/global-orchestrator-card.scss",
         "src/app/features/orchestrator/components/orchestrator-feed/orchestrator-feed.scss",
+        "src/app/features/orchestrator/components/orchestrator-side-sheet-host/orchestrator-side-sheet-host.component.scss",
         "src/app/features/orchestrator/components/prompt-admin-panel/prompt-admin-panel.component.scss",
         "src/app/features/project-chat/components/project-chat-list/project-chat-list.component.scss",
         "src/app/features/project-chat/components/project-chat-rail/project-chat-rail.component.scss",
+        "src/app/features/shell/components/workspace-overlays-host/workspace-overlays-host.component.scss",
         "src/app/features/project-detail/components/analysis-report-drilldown/analysis-report-drilldown.scss",
         "src/app/features/project-detail/components/autonomy-slider/autonomy-slider.scss",
         "src/app/features/project-detail/components/project-analysis-reports-section/project-analysis-reports-section.scss",
@@ -188,7 +189,12 @@
       "comment": "Scoped spacing-token enforcement for the lane rail and new components. Padding/margin/gap must source --studio-spacing-* tokens. If a raw value is structurally necessary, use a targeted disable with rationale.",
       "files": [
         "src/app/features/retention/**/*.scss",
+        "src/app/features/backups/**/*.scss",
+        "src/app/features/access/components/access-operator-agents/access-operator-agents.component.scss",
+        "src/app/features/access/components/access-operator-activity/access-operator-activity.component.scss",
         "src/app/features/remote-hosts/components/execution-infrastructure/execution-infrastructure.scss",
+        "src/app/components/status-indicator/status-indicator.component.scss",
+        "src/app/features/board/components/ready-wait-split/ready-wait-split.component.scss",
         "src/app/components/tag-chips/tag-chips.component.scss",
         "src/app/components/tag-filters/tag-filters.component.scss",
         "src/app/components/tag-proposals/tag-proposals.component.scss",
@@ -196,6 +202,7 @@
         "src/app/features/project-detail/components/project-pipeline-definition/project-pipeline-definition.scss",
         "src/app/features/project-detail/components/project-pipeline-diagram/project-pipeline-diagram.scss",
         "src/app/features/project-detail/components/task-detail-latency/task-detail-latency.component.scss",
+        "src/app/features/project-detail/components/settings-jump-links/settings-jump-links.scss",
         "src/app/features/usage-cockpit/**/*.scss",
         "src/app/features/token-analysis/**/*.scss",
         "src/app/features/deployments/components/delivery-lanes/delivery-lanes.scss",
@@ -218,6 +225,8 @@
         "src/app/features/quota/components/quota-curve/quota-curve.scss",
         "src/app/features/quota/components/quota-forecast-panel/quota-forecast-panel.scss",
         "src/app/features/board/components/task-column/task-column.scss",
+        "src/app/features/studio-shell/_studio-tab.scss",
+        "src/app/features/studio-shell/components/explorer-workspace-tree/_row-actions.scss",
         "src/app/features/secrets/project-secrets-page/project-secrets-page.component.scss",
         "src/app/features/board/components/dossier-group-board/dossier-group-board.component.scss",
         "src/app/features/project-detail/components/dossier-card-list/dossier-card-list.component.scss",
@@ -325,7 +334,14 @@
         "src/app/features/task-detail/components/protocol-pane/previous-results-control/previous-results-control.component.scss",
         "src/app/features/test-evidence/components/test-evidence-status/test-evidence-status.component.scss",
         "src/app/features/deployments/components/card-environment-badges/card-environment-badges.scss",
-        "src/app/components/task-preview/task-preview.component.scss"
+        "src/app/features/structure/structure-view/structure-view.component.scss",
+        "src/app/components/task-preview/task-preview.component.scss",
+        "src/app/features/flow-health/components/flow-health-page/flow-health-page.scss",
+        "src/app/features/project-detail/components/quality-studio-panel/quality-studio-panel.component.scss",
+        "src/app/features/project-detail/components/quality-studio-connection-settings/quality-studio-connection-settings.component.scss",
+        "src/app/features/board/components/lane-card-window/lane-card-window.scss",
+        "src/app/features/board/components/task-column/_task-column-drop-zone.scss",
+        "src/app/features/board/components/board-group-switcher/board-group-switcher.scss"
       ],
       "rules": {
         "color-no-hex": null,
@@ -357,12 +373,39 @@
       }
     },
     {
+      "comment": "Environment surfaces enforce spacing and type tokens.",
+      "files": ["src/app/features/remote-hosts/**/*.scss"],
+      "rules": {
+        "declaration-property-value-allowed-list": {
+          "font-size": ["/^var\\(--studio-font-size-(sm|md|lg|xl|2xl)\\)$/"]
+        },
+        "scale-unlimited/declaration-strict-value": [
+          ["padding", "padding-top", "padding-right", "padding-bottom", "padding-block", "padding-inline",
+           "margin", "margin-top", "margin-right", "margin-bottom", "margin-block", "margin-inline",
+           "gap", "row-gap", "column-gap", "font-size"],
+          { "ignoreValues": ["transparent", "currentColor", "inherit", "initial", "unset", "none", "revert", "revert-layer", "0", "auto"],
+            "ignoreFunctions": false, "disableFix": true, "severity": "error" }
+        ]
+      }
+    },
+    {
       "comment": "Living styling-guide proof slice: raw hex colors are an error on the Task Detail decision actions.",
       "files": [
         "src/app/features/task-detail/components/escalation-summary/_escalation-summary-actions.scss"
       ],
       "rules": {
         "color-no-hex": true
+      }
+    },
+    {
+      "comment": "New Studio mobile tab-bar rules use theme and spacing tokens.",
+      "files": ["src/app/features/studio-shell/_studio-shell-mobile-tabbar.scss"],
+      "rules": {
+        "color-no-hex": true,
+        "scale-unlimited/declaration-strict-value": [
+          ["padding", "padding-block", "padding-inline", "margin", "gap", "row-gap", "column-gap"],
+          { "ignoreValues": ["0", "auto"], "ignoreFunctions": false, "disableFix": true, "severity": "error" }
+        ]
       }
     }
   ],

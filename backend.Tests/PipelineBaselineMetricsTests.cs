@@ -1,5 +1,8 @@
 using AgentStudio.Git;
 using AgentStudio.Pipeline;
+using AgentStudio.Runner;
+using System.Text.Json;
+using Contract = AgentStudio.TaskServer.Contracts;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -265,6 +268,57 @@ public sealed class PipelineBaselineMetricsTests : IDisposable
         File.SetLastWriteTimeUtc(path, at.UtcDateTime);
     }
 
+    [Fact]
+    public void Full_suite_runs_are_attributed_to_their_origin()
+    {
+        var start = Now.AddHours(-3);
+        Receipt(1, "Fail", 600000, Now.AddMinutes(-80), level: "full");
+        Receipt(2, "Ok", 300000, Now.AddMinutes(-20), level: "work-package");
+        Journal("attempt-full", Now.AddMinutes(-100),
+            Command("verify-1", start, 30, extra: DotnetTest("Category!=MachineBound")),
+            Command("verify-2", start, 5, extra: "\"workspaceRole\":\"baseline-1\"," + DotnetTest("FullyQualifiedName~Foo")));
+        Journal("attempt-selected", Now.AddMinutes(-90),
+            Command("verify-1", start, 5, extra: DotnetTest("FullyQualifiedName~Foo|FullyQualifiedName~Bar")),
+            Command("verify-2", start, 5, extra: DotnetTest("Category!=MachineBound")));
+        Journal("attempt-docs", Now.AddMinutes(-85), Command("verify-1", start, 1));
+        Review("attempt-legacy", Now.AddMinutes(-70), Row("verify-1", "60000"));
+        var candidate = new BatchGateExecutionFact("fixture", "batch-1", "run-1", new string('c', 40), "Fail", "host",
+            Now.AddMinutes(-60), Now.AddMinutes(-30), 0, 0, "evidence.jsonl", 1800000, ["card-1", "card-2"]);
+        var probe = candidate with { BatchId = "batch-2", BatchRunId = "run-2", Outcome = "Ok" };
+        var fallback = candidate with { BatchId = null, BatchRunId = null, Outcome = "Ok" };
+        var baseCheck = candidate with { BatchRunId = null, Outcome = "Ok" };
+        var stale = fallback with { CompletedAtUtc = Now.AddDays(-9) };
+
+        var breakdown = GateEconomicsEndpoints.ProjectRow("fixture", [_root], since: Now.AddDays(-7), now: Now,
+            retest: null, batchMetrics:
+            [
+                new BatchGateMetric("fixture", 2, candidate),
+                new BatchGateMetric("fixture", 1, probe, Isolation: true),
+            ], gateFacts: [fallback, baseCheck, stale]).Baseline!.FullSuiteBreakdown!;
+
+        Assert.Equal(1, breakdown.BatchCandidates);
+        Assert.Equal(1, breakdown.IsolationProbes);
+        Assert.Equal(1, breakdown.PerCardFallback);
+        Assert.Equal(1, breakdown.IntegrationGate);
+        Assert.Equal(1, breakdown.BaseChecks);
+        Assert.Equal(1, breakdown.ReviewFullSelections);
+        Assert.Equal(1, breakdown.ReviewAttemptsUnknown);
+        Assert.Null(breakdown.Promotion);
+        Assert.Equal(6, breakdown.Known);
+    }
+
+    [Theory]
+    [InlineData("dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound", true)]
+    [InlineData("bash -lc dotnet test runner.Tests/AgentRunner.Tests.csproj", true)]
+    [InlineData("dotnet test backend.Tests/OrchestratorApi.Tests.csproj --filter FullyQualifiedName~ReviewBaselineTests", false)]
+    [InlineData("dotnet test backend.Tests/OrchestratorApi.Tests.csproj --filter \"ClassName=Foo\"", false)]
+    [InlineData("dotnet build agent-taskboard.sln", false)]
+    public void Review_attempt_is_a_full_selection_only_without_a_class_filter(string commandLine, bool full)
+        => Assert.Equal(full, FullSuiteOrigins.IsFullSelection([commandLine]));
+
+    private static string DotnetTest(string filter)
+        => $"\"fileName\":\"dotnet\",\"arguments\":[\"test\",\"backend.Tests/OrchestratorApi.Tests.csproj\",\"--filter\",\"{filter}\"]";
+
     private void Review(string attemptId, DateTimeOffset receivedAt, params string[] rows)
         => ReviewIn(_root, attemptId, receivedAt, rows);
 
@@ -283,12 +337,55 @@ public sealed class PipelineBaselineMetricsTests : IDisposable
 
     private void Journal(string attemptId, DateTimeOffset receivedAt, params string[] commands)
     {
-        var logs = Directory.CreateDirectory(Path.Combine(_root, "logs")).FullName;
-        var path = Path.Combine(logs, $"remote-review-settlement-{attemptId}.json");
-        File.WriteAllText(path,
-            $"{{\"version\":1,\"attemptId\":\"{attemptId}\",\"receivedAtUtc\":\"{receivedAt:O}\"," +
-            $"\"report\":{{\"commands\":[{string.Join(",", commands)}]}}}}");
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var evidence = commands.Select(command =>
+        {
+            var parsed = JsonSerializer.Deserialize<Contract.ReviewCommandEvidenceDto>(command, options)!;
+            return parsed with
+            {
+                Aspect = parsed.Aspect ?? "build-tests",
+                FileName = parsed.FileName ?? "dotnet",
+                Arguments = parsed.Arguments ?? [],
+                ExpectedResultSha = parsed.ExpectedResultSha ?? "expected",
+                HeadBefore = parsed.HeadBefore ?? "head",
+                TreeBefore = parsed.TreeBefore ?? "tree",
+                ExitCode = parsed.ExitCode ?? 0,
+                StdoutSha256 = parsed.StdoutSha256 ?? new string('a', 64),
+                StderrSha256 = parsed.StderrSha256 ?? new string('b', 64),
+            };
+        }).ToArray();
+        var report = new Contract.ReviewReportRequest("executor", "instance", "lease", 1, "key", "Pass", null, null,
+            new Contract.ReviewWorkspaceProofDto("repo", "expected", "actual", "tree", false, false,
+                "workspace", "namespace"),
+            new Contract.ReviewEnvironmentDto("host", "executor", "instance", "os", "arch", "runtime",
+                new Dictionary<string, string>(), new Dictionary<string, string>()),
+            evidence, [], []);
+        RemoteReviewSettlementJournal.Write(_root, new RemoteReviewSettlementEntry
+        {
+            AttemptId = attemptId,
+            TaskKey = "fixture",
+            IdempotencyKey = report.IdempotencyKey,
+            Report = report,
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
+            ReceivedAtUtc = receivedAt.UtcDateTime,
+        });
+        var path = RemoteReviewSettlementJournal.PathFor(_root, attemptId);
         File.SetLastWriteTimeUtc(path, receivedAt.UtcDateTime);
+    }
+
+    [Fact]
+    public void Review_baseline_reader_skips_a_corrupt_settlement()
+    {
+        Journal("attempt-corrupt", Now.AddMinutes(-5), Command("verify-1", Now.AddMinutes(-10), 1));
+        var path = RemoteReviewSettlementJournal.PathFor(_root, "attempt-corrupt");
+        var changed = File.ReadAllText(path).Replace("\"outcome\": \"Pass\"",
+            "\"outcome\": \"ProductFailure\"", StringComparison.Ordinal);
+        Assert.NotEqual(File.ReadAllText(path), changed);
+        File.WriteAllText(path, changed);
+
+        Assert.Equal(RemoteReviewSettlementReadStatus.Repair,
+            RemoteReviewSettlementJournal.Read(_root, "attempt-corrupt").Status);
+        Assert.Empty(PipelineBaselineMetrics.ReadReviews(_root, Now.AddDays(-1)));
     }
 
     private static string Command(string step, DateTimeOffset started, int minutes,

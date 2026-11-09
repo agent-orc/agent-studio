@@ -2,7 +2,7 @@
 
 @if (routeStatus() !== 'unknown') {
   <section class="route" [attr.data-tone]="routeStatus()" data-testid="remote-host-task-server-route-state">
-    <strong>Task Server route {{ routeStatus() }}</strong>
+    <strong>Task Server route <app-status-indicator [tone]="routeStatus() === 'reachable' ? 'success' : routeStatus() === 'degraded' ? 'warning' : 'danger'" [label]="routeStatus()" [compact]="true" /></strong>
     <span>{{ routeDetail() }}</span>
     @if (h.taskServerConnection?.failureStartedAt) {
       <span>
@@ -44,9 +44,8 @@
                  [attr.data-testid]="'remote-host-capability-' + capability.key">
           <div class="capability__head">
             <strong>{{ capability.key }}</strong>
-            <span class="state" [attr.data-tone]="tone(capability)">
-              {{ displayState(capability) }}
-            </span>
+            <app-status-indicator [tone]="indicatorTone(capability)" [label]="displayState(capability)" [compact]="true"
+              [testId]="'remote-host-capability-state-' + capability.key" />
           </div>
           <dl>
             <div><dt>Reason</dt><dd>{{ capability.reason || capability.detail || 'Healthy advertisement' }}</dd></div>

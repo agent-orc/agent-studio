@@ -8,6 +8,12 @@ public static class GateEnvironmentRetrySources
 
     /// <summary>The explicit "Retry integration" operator action.</summary>
     public const string Operator = "operator";
+
+    /// <summary>
+    /// Resumption of a gate this service's own stop interrupted. Not a rung:
+    /// a planned restart says nothing about the gate host.
+    /// </summary>
+    public const string Shutdown = "shutdown";
 }
 
 /// <param name="AttemptsSpent">
@@ -72,9 +78,9 @@ public static class GateEnvironmentRetryReceipts
         // budget that would park the card on its very next failure.
         var lastOperatorRetry = retries.LastOrDefault(entry =>
             entry.Details?.GetValueOrDefault(SourceKey) == GateEnvironmentRetrySources.Operator);
-        var spent = lastOperatorRetry is null
-            ? retries.Count
-            : retries.Count(entry => Utc(entry.Ts) > Utc(lastOperatorRetry.Ts));
+        var spent = retries.Count(entry =>
+            entry.Details?.GetValueOrDefault(SourceKey) != GateEnvironmentRetrySources.Shutdown
+            && (lastOperatorRetry is null || Utc(entry.Ts) > Utc(lastOperatorRetry.Ts)));
 
         var parked = entries.Any(entry =>
             entry.Kind == TimelineEventKinds.IntegrationGateEnvironmentParked

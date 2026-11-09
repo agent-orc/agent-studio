@@ -275,7 +275,7 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
                 request.AttemptId,
                 current.Subject.SubjectId,
                 entry.Report,
-                entry.ReportSha256,
+                RemoteReviewSettlementJournal.ReportHash(entry),
                 request.ReceivedAt,
                 ct);
             // The attempt-named evidence file above is inert history. The shared

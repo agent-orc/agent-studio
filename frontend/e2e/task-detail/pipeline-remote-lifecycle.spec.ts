@@ -271,6 +271,10 @@ async function installRoutes(page: Page, projected: () => boolean) {
   );
   await page.route('**/api/clients', (route) => route.fulfill(json([])));
   await page.route('**/api/cli/usage**', (route) => route.fulfill(json({ items: [] })));
+  await page.route('**/api/usage/cockpit**', route => route.fulfill({
+    status: 503, contentType: 'text/plain', body: 'Unavailable',
+  }));
+  await page.route('**/api/projects/*/workbenches**', route => route.fulfill(json({ items: [] })));
   await page.route('**/api/cli/quota**', (route) =>
     route.fulfill(
       json({
@@ -337,7 +341,7 @@ async function expandAllPipelineSections(page: Page) {
   }
 }
 
-test('AGT-2427 before and after: remote lifecycle, review, gate, ledger cost and calls', async ({
+test('AGT-2427 before and after: remote lifecycle, review, gate, and ledger cost', async ({
   page,
 }, testInfo) => {
   let projected = false;
@@ -368,7 +372,6 @@ test('AGT-2427 before and after: remote lifecycle, review, gate, ledger cost and
     'not-run',
   );
   await expect(page.getByTestId('overview-pipeline-total-cost')).toContainText('$0.00');
-  await expect(page.getByTestId('agent-work-calls')).toContainText('1 calls');
 
   await mkdir(RESULTS_DIR, { recursive: true });
   const before = join(RESULTS_DIR, 'AGT-2427-remote-pipeline-before.png');
@@ -387,10 +390,10 @@ test('AGT-2427 before and after: remote lifecycle, review, gate, ledger cost and
   const coreRow = page.locator('[data-step-id="core-agent-run"]');
   const aspectRow = page.locator('[data-step-id="aspect-code-quality"]');
   const gateRow = page.locator('[data-step-id="post-build-test-gate"]');
-  const decisionRow = page.locator('[data-step-id="post-orchestrator-decision"]');
+  const decisionRow = page.locator('[data-testid="overview-pipeline-step"][data-step-id="post-orchestrator-decision"]');
   await expect(coreRow).toHaveAttribute('data-status', 'passed', { timeout: 15_000 });
   await expect(coreRow).toContainText('10m');
-  await expect(aspectRow).toHaveAttribute('data-status', 'skipped');
+  await expect(aspectRow).toHaveAttribute('data-status', 'notApplicable');
   await expect(aspectRow).toContainText('executed remotely · not applicable');
   await expect(
     page.locator('[data-testid="overview-pipeline-group"][data-phase="aspect"]'),
@@ -404,7 +407,6 @@ test('AGT-2427 before and after: remote lifecycle, review, gate, ledger cost and
   );
   await expect(page.getByTestId('overview-pipeline-total-tokens')).toContainText('10k');
   await expect(page.getByTestId('overview-pipeline-total-cost')).toContainText('$0.32');
-  await expect(page.getByTestId('agent-work-calls')).toContainText('4 calls');
 
   const after = join(RESULTS_DIR, 'AGT-2427-remote-pipeline-after.png');
   await page.screenshot({ path: after, fullPage: true });
@@ -412,4 +414,40 @@ test('AGT-2427 before and after: remote lifecycle, review, gate, ledger cost and
     path: after,
     contentType: 'image/png',
   });
+});
+
+test('remote review concerns and published batch appear on pipeline rows', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('taskboard.panesVisible', JSON.stringify({ prompt: true, protocol: false, git: false }));
+  });
+  await installRoutes(page, () => true);
+  const response = pipelineResponse(true);
+  const aspect = response.execution.steps.find(item => item.stepId === 'aspect-code-quality')!;
+  Object.assign(aspect, {
+    status: 'passed', verdict: 'concerns', verdictSummary: 'One assertion needs evidence.',
+    model: 'gpt-6', reviewCli: 'codex', executionAttemptId: 'review_2', reviewAttemptNumber: 2,
+    durationMs: 60000, inputTokens: 90, outputTokens: 10,
+  });
+  const gateRow = response.execution.steps.find(item => item.stepId === 'post-build-test-gate')!;
+  Object.assign(gateRow, {
+    batchGate: { batchId: 'batch-1', phase: 'published', verdict: 'pass',
+      publishedSha: 'abcdef1234567890' },
+  });
+  const id = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await page.route(new RegExp(`/api/tasks/${id}/pipeline(\\?|$)`), route => route.fulfill(json(response)));
+  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await expect(page.getByTestId('overview-pipeline')).toBeVisible();
+  await expandAllPipelineSections(page);
+  const aspectRow = page.locator('[data-step-id="aspect-code-quality"]');
+  await expect(aspectRow).toHaveAttribute('data-status', 'passed');
+  await expect(aspectRow.getByTestId('overview-pipeline-step-verdict')).toContainText('concerns');
+  await expect(aspectRow.getByTestId('overview-pipeline-step-summary')).toContainText('One assertion needs evidence.');
+  await expect(aspectRow.getByTestId('overview-pipeline-review-attempt')).toContainText('#2');
+  await expect(page.locator('[data-step-id="post-build-test-gate"]')
+    .getByTestId('overview-pipeline-batch-gate')).toContainText('batch-1 · published · pass · abcdef123456');
+  await mkdir(RESULTS_DIR, { recursive: true });
+  await page.screenshot({ path: join(RESULTS_DIR, 'AGT-3457-remote-review-batch.png'), fullPage: true });
+  await aspectRow.getByTestId('overview-pipeline-review-attempt').click();
+  await expect(page.getByTestId('pane-protocol')).toBeVisible();
+  await expect(page.locator('#runs-modal-title')).toContainText('Review attempt review_2');
 });

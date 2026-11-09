@@ -2,6 +2,7 @@ using AgentStudio.Clients;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
+using AgentStudio.Security;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Watcher;
@@ -22,6 +23,13 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
     private readonly IConfiguration _configuration;
 
     public string Name => "operational-stalls";
+
+    public static bool UseLegacyClientIdentities(IConfiguration configuration)
+        => SecurityProfiles.IsLocal(configuration);
+
+    public static string RoleOf(IEnumerable<string> capabilityKeys)
+        => capabilityKeys.Contains(Contract.CapabilityProtocol.ReviewExecutor, StringComparer.Ordinal)
+            ? "review" : "coding";
 
     public OperationalStallProbe(ClientIdentityStore clients, HostTelemetryStore telemetry,
         AttemptAuthorityService attempts, BatchGateStore gates, TaskScannerService tasks,
@@ -45,7 +53,8 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
     public IReadOnlyList<WatcherSignalObservation> Collect(string workspaceRoot, DateTime nowUtc)
     {
         var thresholds = WatcherOptions.FromConfiguration(_configuration).OperationalThresholds;
-        var clients = _clients.ListAll().Where(x => x.RunnerDaemonState is not null).ToArray();
+        var clients = UseLegacyClientIdentities(_configuration)
+            ? _clients.ListAll().Where(x => x.RunnerDaemonState is not null).ToArray() : [];
         var allReviewHosts = _reviewHosts.ListCapabilitySnapshots();
         var reviewHosts = allReviewHosts
             .Where(x => nowUtc - x.LastSeenAt <= TimeSpan.FromMinutes(10)
@@ -95,11 +104,20 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
         var pendingGate = _gates.ListPending();
         var heartbeats = clients.Where(x => x.Kind != ClientIdentityKind.Retired)
             .Select(x => new HostHeartbeatFact(x.DisplayName, "coding", x.LastSeenAt ?? nowUtc, [],
-                Stopped: x.RunnerDaemonState != "running"))
-            .Concat(allReviewHosts.Select(x => new HostHeartbeatFact(x.HostId, "review", x.LastSeenAt,
-                pendingReviews.Select(p => p.TaskKey).Distinct().ToArray())))
+                Stopped: x.RunnerDaemonState != "running", RunningAttempt: x.RunnerActiveSlots > 0))
+            .Concat(allReviewHosts.Select(x =>
+            {
+                var review = RoleOf(x.Capabilities.Select(capability => capability.Key)) == "review";
+                return new HostHeartbeatFact(x.HostId, review ? "review" : "coding", x.LastSeenAt,
+                    review ? pendingReviews.Where(attempt => OperationalStallProbe.CanClaim(_reviewHosts, x, attempt))
+                        .Select(attempt => attempt.TaskKey).Distinct().ToArray() : [],
+                    RunningAttempt: review
+                        ? _attempts.ListActiveReviewAttempts().Any(attempt => attempt.Lease?.HostId == x.HostId)
+                        : x.Telemetry?.ActiveSlots > 0);
+            }))
             .Concat(_pullGates.Hosts().Select(host => new HostHeartbeatFact(host.Id, "gate",
-                host.LastHeartbeat.UtcDateTime, [])))
+                host.LastHeartbeat.UtcDateTime, [],
+                RunningAttempt: _pullGates.Workload(host.Id)?.Busy > 0)))
             .ToArray();
         bool CanClaim(Contract.RunnerCapabilitySnapshotDto host, ReviewAttemptDto attempt)
             => OperationalStallProbe.CanClaim(_reviewHosts, host, attempt);
@@ -109,16 +127,18 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
                 "review", x.Host.RoleMaxParallelism!.Value - x.Host.Telemetry!.ActiveSlots,
                 x.Eligible.Length, x.Eligible.Length == 0 ? nowUtc : x.Eligible.Min(y => y.CreatedAt),
                 x.Eligible.Select(y => y.TaskKey).Distinct().ToArray())).ToList();
-        var slots = _gateSlots.Snapshot();
+        var slots = _gateSlots.ReportedOrLocalSnapshot();
         var gateHost = _configuration["RemoteGate:SshHost"]?.Trim();
         if (pendingGate.Count > 0 && !string.IsNullOrWhiteSpace(gateHost)
             && !_pullGates.Hosts().Any(host => host.Id == gateHost)
-            && _gateSlots.Reachability == "reachable" && slots.Total > slots.Busy)
+            && _gateSlots.Reachability == "reachable"
+            && _gateSlots.RemoteSnapshot(TimeSpan.FromMinutes(10)) is not null
+            && slots.Total > slots.Busy)
             capacity.Add(new CapacityStallFact(QuotaProbeSignalProbe.WorkspaceProject, gateHost,
                 "gate", slots.Total - slots.Busy, pendingGate.Count,
                 pendingGate.Min(y => y.EnqueuedAtUtc.UtcDateTime),
                 pendingGate.Select(y => y.Subject.TaskKey).Distinct().ToArray()));
-        foreach (var host in _pullGates.Hosts())
+        foreach (var host in _pullGates.HealthyHosts())
         {
             var workload = _pullGates.Workload(host.Id);
             var oldest = _pullGates.OldestQueuedAtUtc();

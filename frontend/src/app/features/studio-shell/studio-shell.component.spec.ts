@@ -174,7 +174,7 @@ describe('StudioShellComponent titlebar breadcrumb', () => {
 });
 
 describe('StudioShellComponent global search', () => {
-  it('renders the search input after the titlebar trigger is clicked', () => {
+  it('renders the search input after the titlebar trigger is clicked', async () => {
     TestBed.configureTestingModule({
       imports: [StudioShellComponent],
       providers: [
@@ -192,6 +192,8 @@ describe('StudioShellComponent global search', () => {
     expect(trigger).not.toBeNull();
 
     trigger!.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
     fixture.detectChanges();
 
     expect(root.querySelector('[data-testid="global-search-input"]')).not.toBeNull();

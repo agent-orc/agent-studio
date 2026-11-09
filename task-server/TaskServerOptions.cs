@@ -1,3 +1,5 @@
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.TaskServer;
 
 public sealed class TaskServerOptions
@@ -9,6 +11,7 @@ public sealed class TaskServerOptions
     public string ListenUrl { get; set; } = "http://127.0.0.1:5071";
     public string? QuotaAdmissionBaseUrl { get; set; }
     public string? QuotaAdmissionBearerToken { get; set; }
+    public string? ModelSelectionBearerToken { get; set; }
     public int MinimumLeaseSeconds { get; set; } = 30;
     public int MaximumLeaseSeconds { get; set; } = 900;
     /// <summary>Shadow is the default. Canary admission requires an explicit operator switch.</summary>
@@ -38,6 +41,7 @@ public sealed class TaskServerOptions
     public string? AttemptCredentialWrappingKeyFile { get; set; }
     public int ResultRetentionDays { get; set; } = 30;
     public int ResultFinalizationMaxAttempts { get; set; } = 3;
+    public int ResultFinalizationGenerationTimeoutSeconds { get; set; } = 60;
     public bool ResultRefGcEnabled { get; set; } = true;
     public int ResultRefGcSweepMinutes { get; set; } = 360;
     public int ResultRefGcBatchSize { get; set; } = 50;
@@ -47,8 +51,8 @@ public sealed class TaskServerOptions
     public int InventoryGraceSeconds { get; set; } = 120;
     public int RunnerInfrastructureFailureBudget { get; set; } = 3;
     public int MaximumEventPayloadBytes { get; set; } = 256 * 1024;
-    public long MaxRequestBodyBytes { get; set; } = 25L * 1024 * 1024;
-    public long ResultArtifactMaxFileBytes { get; set; } = 8L * 1024 * 1024;
+    public long MaxRequestBodyBytes { get; set; } = AgentStudio.TaskServer.Contracts.ReviewReportLimits.MaxRequestBodyBytes;
+    public long ResultArtifactMaxFileBytes { get; set; } = AgentStudio.TaskServer.Contracts.ReviewReportLimits.MaxEmbeddedArtifactBytes;
     public long ResultArtifactMaxTotalBytes { get; set; } = 100L * 1024 * 1024;
     /// <summary>Size cap of the derived source data store (AGT-3318); least recently read objects are evicted above it.</summary>
     public long SourceFactsMaxStoredBytes { get; set; } = 512L * 1024 * 1024;
@@ -60,6 +64,17 @@ public sealed class TaskServerOptions
     public string? RunnerBearerToken { get; set; }
     public int PrincipalRotationOverlapSeconds { get; set; } = 300;
     public int MaximumPrincipalRotationOverlapSeconds { get; set; } = 3600;
+    /// <summary>
+    /// Lifetime of a newly issued runner credential (SM-9, D7 A). Rotation with
+    /// overlap renews it; 0 issues credentials without expiry.
+    /// </summary>
+    public int RunnerCredentialLifetimeDays { get; set; } = 30;
+    /// <summary>
+    /// A host without an explicit project policy claims and reads nothing (SM-9).
+    /// Unset follows authentication: on with <c>AUTH=bearer</c>, off for the
+    /// unauthenticated local compatibility store, where a missing policy admits all.
+    /// </summary>
+    public bool? RequireHostProjectPolicy { get; set; }
     public string? RetentionArchivePath { get; set; }
     public bool RetentionSchedulerEnabled { get; set; } = true;
     public int RetentionScheduleHour { get; set; } = 3;
@@ -76,8 +91,8 @@ public sealed class TaskServerOptions
     public bool WorkspaceExportPush { get; set; }
     public string WorkspaceExportBranch { get; set; } = "main";
     public int WorkspaceExportPushTimeoutSeconds { get; set; } = 600;
-    public string CodexCliTargetVersion { get; set; } = "0.154.0";
-    public string ClaudeCliTargetVersion { get; set; } = "2.1.269";
+    public string CodexCliTargetVersion { get; set; } = "0.166.0";
+    public string ClaudeCliTargetVersion { get; set; } = "2.1.305";
 
     public string ResolveRetentionArchivePath()
         => string.IsNullOrWhiteSpace(RetentionArchivePath)
@@ -103,10 +118,7 @@ public sealed class TaskServerOptions
     public string ResolveDataDirectory()
     {
         if (string.Equals(DataDirectory, "user-data", StringComparison.OrdinalIgnoreCase))
-        {
-            var userData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            return Path.Combine(userData, "AgentStudio", "task-server");
-        }
+            return LocalStateRoot.Combine("AgentStudio", "task-server");
         return Path.GetFullPath(Path.IsPathRooted(DataDirectory)
             ? DataDirectory
             : Path.Combine(AppContext.BaseDirectory, DataDirectory));

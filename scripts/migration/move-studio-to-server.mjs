@@ -2,8 +2,10 @@
 // Pure planning half of move-studio-to-server.sh: workspace inventory
 // classification, path mapping generation, and delta selection. The shell
 // script owns every process, SSH, Git, tar, and Docker side effect; this module
-// only reads the workspace and writes plan files into the local state directory.
-import { closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, statSync, writeFileSync } from 'node:fs';
+// reads the workspace and writes plan files into the local state directory. On
+// the server, `repository-paths` writes the planned RepositoryPath values into
+// the relocated registry copy.
+import { closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -216,9 +218,27 @@ export function skippedFolders(value = process.env.MOVE_SKIP_DIRS) {
   return (value ?? '').split(':').map(item => item.trim()).filter(Boolean).map(normalized);
 }
 
-/** The operator's reviewed token hits, from the file `MOVE_ACCEPTED_TOKEN_HITS` names. */
+/** The operator's reviewed token hits, from the file `MOVE_ACCEPTED_TOKEN_HITS` names. A missing file accepts nothing. */
 export function acceptedTokenHits(file = process.env.MOVE_ACCEPTED_TOKEN_HITS) {
-  return new Set(file ? readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean) : []);
+  return new Set(file && existsSync(file) ? readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean) : []);
+}
+
+/**
+ * The lines that would accept every blocking token hit, in the format
+ * `acceptedTokenHits` reads. The shell offers them to the operator, so a new
+ * harmless hit found between the rehearsal and the switch does not cost the pass.
+ */
+export function tokenHitLines(issues) {
+  return issues.filter(issue => issue.code === 'token-in-state').map(issue => `${issue.token}\t${issue.path}`);
+}
+
+/**
+ * Inventory exit code: 0 clean, 4 when only token hits block (the operator may
+ * accept them after review), 3 when any other issue blocks.
+ */
+export function inventoryExitCode(issues) {
+  if (issues.length === 0) return 0;
+  return issues.every(issue => issue.code === 'token-in-state') ? 4 : 3;
 }
 
 export function summarize(entries) {
@@ -254,7 +274,7 @@ export function readProjectRegistry(workspace) {
   for (const candidate of [primary, primary + '.bak']) {
     if (!existsSync(candidate)) continue;
     let parsed;
-    try { parsed = JSON.parse(readFileSync(candidate, 'utf8')); }
+    try { parsed = JSON.parse(readFileSync(candidate, 'utf8').replace(/^\uFEFF/, '')); }
     catch (error) {
       if (candidate === primary) { primaryError = error; continue; }
       throw new Error(`Project registry backup is invalid: ${error.message}`);
@@ -285,11 +305,120 @@ const isUsableRemote = value => {
   return /^(?:https?|ssh|git):\/\/[^\s]+$/i.test(trimmed);
 };
 
+/**
+ * Same rule as ProjectRepoResolver.DeriveFromStorage: a task folder at
+ * `<repo>/.orchestrator/jobs` implies the repository is its grandparent. A
+ * filesystem root above `.orchestrator` is not a repository.
+ */
+export function deriveRepositoryFromStorage(storageLocation) {
+  const match = /^(.*?)[\\/]+\.orchestrator[\\/]+jobs[\\/]*$/i.exec(storageLocation ?? '');
+  if (!match || !match[1] || /^[a-z]:$/i.test(match[1])) return null;
+  return match[1];
+}
+
+/**
+ * The checkout a project works in, as Studio resolves it. Without a
+ * RepositoryPath or RootPath the API derives it from in-repo task storage;
+ * that derivation counts only when the derived folder is a Git checkout.
+ */
+export function projectRepository(project, isRepository = () => false) {
+  const explicit = project.repositoryPath ?? project.rootPath;
+  if (explicit) return { path: explicit, derived: false };
+  const derived = deriveRepositoryFromStorage(project.storageLocation);
+  return derived && isRepository(derived) ? { path: derived, derived: true } : null;
+}
+
+/** Configured IntegrationBranch per project, keyed by the names project-settings.json may use (id or display name). */
+export function integrationBranches(settings, projects) {
+  const entries = Object.entries(settings && typeof settings === 'object' ? settings : {});
+  const branches = {};
+  for (const project of projects) {
+    const names = [project.id, project.displayName].filter(Boolean).map(name => name.toLowerCase());
+    const entry = entries.find(([key]) => names.includes(key.toLowerCase()));
+    const branch = String(field(entry?.[1], 'IntegrationBranch') ?? '').trim();
+    if (branch) branches[project.id] = branch;
+  }
+  return branches;
+}
+
+/** Reads `<workspace>/project-settings.json`, where the API keeps project settings. Absent or unreadable means none. */
+export function readProjectSettings(workspace) {
+  const file = path.join(workspace, 'project-settings.json');
+  if (!existsSync(file)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  }
+  catch { return {}; }
+}
+
 /** Same rule as RemoteProjectRepositoryResolver: the project URL whose id or label is "repo" or "repository". */
 export function registryRepositoryUrl(project) {
   const entry = project.urls.find(url => url.id.toLowerCase() === 'repo'
     || ['repo', 'repository'].includes(url.label.toLowerCase()));
   return isUsableRemote(entry?.url) ? entry.url.trim() : null;
+}
+
+/**
+ * The https form an anonymous `git ls-remote` can probe, without credentials:
+ * a GitHub ssh remote becomes its https URL; another ssh host cannot be probed
+ * without a key and yields null.
+ */
+export function anonymousProbeUrl(value) {
+  const url = stripUrlCredentials(value);
+  if (!url) return null;
+  const github = /^(?:ssh:\/\/)?(?:[^@/\s]+@)?github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(url);
+  if (github && !/^https?:/i.test(url)) return `https://github.com/${github[1]}/${github[2]}.git`;
+  return /^https?:\/\//i.test(url) ? url : null;
+}
+
+// What git prints when a repository needs credentials: GitHub answers an anonymous
+// request for a private repository with "Repository not found".
+const missingReadAccess = /could not read Username|Authentication failed|Repository not found|terminal prompts disabled|HTTP 40[13]/i;
+
+/** Visibility from one anonymous ls-remote: public when it succeeds, private when it asks for credentials, else unknown. */
+export function classifyAnonymousProbe({ exitCode, stderr = '' }) {
+  if (exitCode === 0) return 'public';
+  return missingReadAccess.test(stderr) ? 'private' : null;
+}
+
+const visibilityValue = value => {
+  const lower = String(value ?? '').trim().toLowerCase();
+  return lower === 'private' || lower === 'public' ? lower : null;
+};
+
+/**
+ * AGT-3408: the repository visibility of each project. An explicit setting
+ * travels inside project-settings.json; a project without one takes the result
+ * of the workstation's anonymous probe, which the move then writes into the
+ * server copy, so a private repository reaches the server marked private.
+ */
+export function projectVisibilities({ projects, settings, probes = {} }) {
+  return projects.map(project => {
+    const configured = visibilityValue(field(field(settings, project.displayName), 'RepositoryVisibility'));
+    if (configured) return { id: project.id, displayName: project.displayName, visibility: configured, source: 'setting' };
+    const probed = probes[project.id] ? classifyAnonymousProbe(probes[project.id]) : null;
+    return probed
+      ? { id: project.id, displayName: project.displayName, visibility: probed, source: 'probe' }
+      : { id: project.id, displayName: project.displayName, visibility: null, source: 'unknown' };
+  });
+}
+
+/** Writes each carried visibility into a settings map, never over a value the project already has. */
+export function carryVisibility(settings, carried) {
+  const result = { ...settings };
+  const changed = [];
+  for (const [displayName, value] of Object.entries(carried)) {
+    const visibility = visibilityValue(value);
+    if (!visibility) continue;
+    const key = Object.keys(result).find(candidate => candidate.toLowerCase() === displayName.toLowerCase()) ?? displayName;
+    const current = result[key] && typeof result[key] === 'object' ? result[key] : {};
+    if (visibilityValue(field(current, 'RepositoryVisibility'))) continue;
+    const existing = Object.keys(current).find(candidate => candidate.toLowerCase() === 'repositoryvisibility');
+    result[key] = { ...current, [existing ?? 'RepositoryVisibility']: visibility };
+    changed.push(displayName);
+  }
+  return { settings: result, changed };
 }
 
 const slug = value => normalized(value).split('/').pop().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|-+$/g, '') || 'project';
@@ -298,9 +427,13 @@ const slug = value => normalized(value).split('/').pop().toLowerCase().replace(/
  * Builds the relocate-workspace-paths mapping: the workspace prefix goes to
  * /data/workspace and every checkout outside it to /data/projects/<name>.
  * Checkouts are not copied; the server clones each from its repository URL
- * (registry URL first, the workstation's origin remote second).
+ * (registry URL first, the workstation's origin remote second). A checkout
+ * derived from task storage loses that link once the storage moves to
+ * /data/projects/.task-storage, so `repositoryPaths` names the RepositoryPath
+ * the server writes into the registry. `integrationBranch` is the branch the
+ * projects of a checkout configure; conflicting values leave it unset.
  */
-export function generateMapping({ workspace, projects, remotes = {}, extra = {} }) {
+export function generateMapping({ workspace, projects, remotes = {}, extra = {}, isRepository = () => false, branches = {} }) {
   const mapping = {};
   const issues = [];
   const extraPrefixes = Object.keys(extra);
@@ -309,11 +442,14 @@ export function generateMapping({ workspace, projects, remotes = {}, extra = {} 
 
   const byCheckout = new Map();
   for (const project of projects) {
-    const repository = project.repositoryPath ?? project.rootPath;
+    const resolved = projectRepository(project, isRepository);
+    const repository = resolved?.path;
     if (!repository || covered(repository)) continue;
     const key = comparable(repository);
-    const checkout = byCheckout.get(key) ?? { source: repository, projects: [], urls: [] };
+    const checkout = byCheckout.get(key) ?? { source: repository, projects: [], urls: [], derived: [], branches: [] };
     checkout.projects.push(project.id);
+    if (resolved.derived) checkout.derived.push(project.id);
+    if (branches[project.id]) checkout.branches.push(branches[project.id]);
     const url = registryRepositoryUrl(project) ?? (isUsableRemote(remotes[project.id]) ? remotes[project.id].trim() : null);
     if (url) {
       const stripped = stripUrlCredentials(url);
@@ -324,6 +460,7 @@ export function generateMapping({ workspace, projects, remotes = {}, extra = {} 
   }
 
   const used = new Set();
+  const repositoryPaths = {};
   const checkouts = [...byCheckout.values()]
     .sort((a, b) => comparable(a.source).localeCompare(comparable(b.source)))
     .map(checkout => {
@@ -336,8 +473,12 @@ export function generateMapping({ workspace, projects, remotes = {}, extra = {} 
       if (urls.length === 0) issues.push({ code: 'missing-repository-url', projects: checkout.projects, path: checkout.source });
       if (urls.length > 1) issues.push({ code: 'conflicting-repository-urls', projects: checkout.projects, urls });
       if (windowsPath.test(checkout.source)) mapping[checkout.source] = target;
+      for (const id of checkout.derived) repositoryPaths[id] = target;
+      const configured = [...new Set(checkout.branches)];
       return {
         name, source: checkout.source, target, repositoryUrl: urls[0] ?? null, projects: checkout.projects,
+        integrationBranch: configured.length === 1 ? configured[0] : null,
+        ...(checkout.derived.length ? { derivedProjects: checkout.derived } : {}),
         ...(checkout.strippedCredentials ? { strippedCredentials: true } : {}),
       };
     });
@@ -370,7 +511,23 @@ export function generateMapping({ workspace, projects, remotes = {}, extra = {} 
   }
   // A broad operator mapping must never redirect task storage away from its copied root.
   for (const root of storageRoots) if (windowsPath.test(root.source)) mapping[root.source] = root.target;
-  return { mapping, checkouts, storageRoots, issues };
+  return { mapping, checkouts, storageRoots, repositoryPaths, issues };
+}
+
+/**
+ * Writes the planned RepositoryPath into every registry project that has none.
+ * Projects with an explicit path keep it. Returns the ids it changed.
+ */
+export function setRepositoryPaths(registry, repositoryPaths) {
+  const changed = [];
+  for (const project of field(registry, 'Projects') ?? []) {
+    const target = repositoryPaths[String(field(project, 'Id') ?? '')];
+    if (!target || field(project, 'RepositoryPath')) continue;
+    const key = Object.keys(project).find(candidate => candidate.toLowerCase() === 'repositorypath') ?? 'RepositoryPath';
+    project[key] = target;
+    changed.push(String(field(project, 'Id')));
+  }
+  return changed;
 }
 
 /**
@@ -480,11 +637,12 @@ export function tokenStateIssues(entries, roots = []) {
  */
 export function buildInventory({
   workspace, files, tracked, dirty, projects, remotes, extra, home, exists, credentialHelper, now,
-  scanTokens = null, storageSnapshots = [],
+  scanTokens = null, storageSnapshots = [], isRepository = () => false, settings = {}, probes = {},
 }) {
   const classified = classifyWorkspace({ files, tracked, dirty });
   const entries = scanTokens ? screenTokens(classified, { scan: scanTokens, accepted: acceptedTokenHits() }) : classified;
-  const plan = generateMapping({ workspace, projects, remotes, extra });
+  const plan = generateMapping({ workspace, projects, remotes, extra, isRepository, branches: integrationBranches(settings, projects) });
+  const visibilities = new Map(projectVisibilities({ projects, settings, probes }).map(item => [item.id, item]));
   return {
     generatedAt: now().toISOString(),
     workspace,
@@ -493,9 +651,11 @@ export function buildInventory({
     projects: projects.map(project => ({
       id: project.id, displayName: project.displayName, archived: project.archived,
       storageLocation: project.storageLocation, repositoryPath: project.repositoryPath, rootPath: project.rootPath,
+      repositoryVisibility: visibilities.get(project.id).visibility, visibilitySource: visibilities.get(project.id).source,
     })),
     mapping: plan.mapping,
     checkouts: plan.checkouts,
+    repositoryPaths: plan.repositoryPaths,
     storageRoots: storageSnapshots,
     issues: [...plan.issues, ...tokenStateIssues(entries, taskRoots(workspace, projects)),
       ...storageSnapshots.flatMap(root => root.issues)],
@@ -522,13 +682,20 @@ export function formatInventory(inventory) {
     for (const [label, value] of [['storage', project.storageLocation], ['repository', project.repositoryPath], ['root', project.rootPath]]) {
       if (value) lines.push(`    ${label}: ${value}`);
     }
+    if (project.visibilitySource === 'setting') lines.push(`    visibility: ${project.repositoryVisibility} (project setting)`);
+    else if (project.visibilitySource === 'probe') lines.push(`    visibility: ${project.repositoryVisibility} (anonymous probe; written to the server copy)`);
+    else if (project.visibilitySource === 'unknown') lines.push('    visibility: unknown (the server takes it from the GitHub App, otherwise public)');
   }
   lines.push('Path mapping:');
   for (const [from, to] of Object.entries(inventory.mapping)) lines.push(`  ${from} -> ${to}`);
   lines.push('Server checkouts (cloned, not copied):');
   for (const checkout of inventory.checkouts) {
     const note = checkout.strippedCredentials ? '; credentials removed from the URL, the server uses its own' : '';
-    lines.push(`  ${checkout.target} <- ${checkout.repositoryUrl ?? 'NO REPOSITORY URL'} (${checkout.projects.join(', ')}${note})`);
+    const branch = checkout.integrationBranch ? `integration branch ${checkout.integrationBranch}` : 'branch checked out on the workstation';
+    lines.push(`  ${checkout.target} <- ${checkout.repositoryUrl ?? 'NO REPOSITORY URL'} (${checkout.projects.join(', ')}; ${branch}${note})`);
+    if (checkout.derivedProjects) {
+      lines.push(`    derived from task storage; RepositoryPath ${checkout.target} is written for ${checkout.derivedProjects.join(', ')}`);
+    }
   }
   lines.push('Task storage copied as separate delta roots:');
   for (const root of inventory.storageRoots) {
@@ -543,9 +710,78 @@ export function formatInventory(inventory) {
     lines.push('Blocking issues:');
     for (const issue of inventory.issues) lines.push(`  ${issue.code}: ${JSON.stringify(issue)}`);
   }
+  if (inventoryExitCode(inventory.issues) === 4) {
+    lines.push('Only token hits block. If each one is harmless (a test fixture, for example), accept it after review; it then travels.');
+  }
   return lines.join('\n');
 }
 
+/**
+ * Where each project's cards live, relative to the transferred trees: inside
+ * the workspace copy or in its own task storage root. Projects without a
+ * storage location or with a refused storage id have no card location.
+ */
+export function cardLocations({ workspace, projects, storageRoots }) {
+  const locations = [];
+  for (const project of projects) {
+    const storage = project.storageLocation;
+    if (!storage) continue;
+    if (isUnder(storage, workspace)) {
+      const relative = normalized(storage).slice(normalized(workspace).length + 1);
+      locations.push({ id: project.id, location: relative ? `workspace/${relative}` : 'workspace', relative });
+      continue;
+    }
+    const root = storageRoots.find(item => item.id === project.id);
+    if (root) locations.push({ id: project.id, location: `storage/${root.id}`, source: root.source });
+  }
+  return locations;
+}
+
+// Same exclusions as the Task Server's legacy migration scan.
+const nonCardDirectories = new Set(['results', 'attachments', 'logs', 'test-results']);
+
+/** A card is a folder that holds task.json or job.json. A missing root holds none. */
+export function countCards(root) {
+  if (!existsSync(root) || !statSync(root).isDirectory()) return 0;
+  let count = 0;
+  const walk = directory => {
+    const items = readdirSync(directory, { withFileTypes: true });
+    if (items.some(item => item.isFile() && (item.name === 'task.json' || item.name === 'job.json'))) count++;
+    for (const item of items) {
+      if (!item.isDirectory() || skippedDirectories.has(item.name) || nonCardDirectories.has(item.name.toLowerCase())) continue;
+      walk(path.join(directory, item.name));
+    }
+  };
+  walk(root);
+  return count;
+}
+
+/** Resolves a cards.tsv location against the workspace copy and the task storage folder on the server. */
+export function resolveCardLocation(location, { workspace, storage }) {
+  if (location === 'workspace') return workspace;
+  if (location.startsWith('workspace/')) {
+    const relative = location.slice('workspace/'.length);
+    assertSafeRelative(relative);
+    return path.join(workspace, ...relative.split('/'));
+  }
+  const id = location.startsWith('storage/') ? location.slice('storage/'.length) : '';
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id)) throw new Error(`Unknown card location: ${JSON.stringify(location)}`);
+  return path.join(storage, id);
+}
+
+/** Compares the source card counts with the copy. Returns the projects whose counts differ. */
+export function compareCardCounts(expected, count) {
+  return expected.map(item => ({ ...item, server: count(item.location) }))
+    .map(item => ({ ...item, matches: item.server === item.source }));
+}
+
+const readCards = file => readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean).map(line => {
+  const [id, location, source] = line.split('\t');
+  if (!id || !location || !/^\d+$/.test(source ?? '')) throw new Error(`Invalid cards line: ${JSON.stringify(line)}`);
+  return { id, location, source: Number(source) };
+});
+
+const isGitCheckout = folder => existsSync(path.join(folder, '.git'));
 const readList = file => (file && existsSync(file) ? readFileSync(file, 'utf8').split('\0').filter(Boolean) : []);
 const readJson = (file, fallback) => (file && existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : fallback);
 
@@ -556,6 +792,24 @@ function parseArgs(args) {
     options[args[index].slice(2)] = args[++index];
   }
   return options;
+}
+
+/** `<project-id>\t<exit code>\t<stderr line>` per anonymous probe the shell ran. */
+function readProbes(file) {
+  const probes = {};
+  if (!file || !existsSync(file)) return probes;
+  for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const [id, exitCode, ...stderr] = line.split('\t');
+    if (id && exitCode !== undefined && exitCode !== '') probes[id] = { exitCode: Number(exitCode), stderr: stderr.join('\t') };
+  }
+  return probes;
+}
+
+/** The carried visibilities: only probe results, a setting already travels inside project-settings.json. */
+export function carriedVisibilities(inventory) {
+  return Object.fromEntries(inventory.projects
+    .filter(project => project.visibilitySource === 'probe')
+    .map(project => [project.displayName, project.repositoryVisibility]));
 }
 
 function readRemotes(file) {
@@ -580,16 +834,58 @@ export function runCli(argv, {
   }
   if (command === 'projects') {
     for (const project of readProjectRegistry(options.workspace)) {
-      const repository = project.repositoryPath ?? project.rootPath;
-      if (repository) write(`${project.id}\t${repository}\n`);
+      const repository = projectRepository(project, isGitCheckout);
+      if (repository) write(`${project.id}\t${repository.path}\n`);
     }
+    return 0;
+  }
+  if (command === 'repository-paths') {
+    // Server side, after relocation: link projects whose checkout was derived from task storage.
+    const repositoryPaths = readJson(options.paths, {});
+    const changed = new Set();
+    const primary = path.join(options.workspace, '.metadata', 'projects.json');
+    for (const file of [primary, primary + '.bak']) {
+      if (!existsSync(file)) continue;
+      const text = readFileSync(file, 'utf8');
+      const bom = text.startsWith('\uFEFF') ? '\uFEFF' : '';
+      let registry;
+      try { registry = JSON.parse(text.slice(bom.length)); }
+      catch (error) {
+        if (file === primary) throw new Error(`Project registry is invalid: ${file}: ${error.message}`);
+        continue;
+      }
+      const ids = setRepositoryPaths(registry, repositoryPaths);
+      if (ids.length === 0) continue;
+      writeFileSync(file + '.next', bom + JSON.stringify(registry, null, 2) + '\n');
+      renameSync(file + '.next', file);
+      ids.forEach(id => changed.add(id));
+    }
+    write(`RepositoryPath written for ${changed.size ? [...changed].join(', ') : 'no project'}\n`);
+    return 0;
+  }
+  if (command === 'probe-targets') {
+    // The anonymous URL each project's repository is probed at: registry URL first, workstation origin second.
+    const remotes = readRemotes(options.remotes);
+    for (const project of readProjectRegistry(options.workspace)) {
+      const url = anonymousProbeUrl(registryRepositoryUrl(project) ?? remotes[project.id] ?? '');
+      if (url) write(`${project.id}\t${url}\n`);
+    }
+    return 0;
+  }
+  if (command === 'carry-visibility') {
+    const file = path.join(options.workspace, 'project-settings.json');
+    const { settings, changed } = carryVisibility(readProjectSettings(options.workspace), readJson(options.visibility, {}));
+    if (changed.length) writeFileSync(file, JSON.stringify(settings, null, 2) + '\n');
+    write(`Repository visibility carried for ${changed.length} project(s)${changed.length ? ': ' + changed.join(', ') : ''}\n`);
     return 0;
   }
   if (command === 'inventory') {
     const out = options['out-dir'];
     const registry = readProjectRegistry(options.workspace);
+    const settings = readProjectSettings(options.workspace);
     const plan = generateMapping({ workspace: options['source-workspace'] ?? options.workspace,
-      projects: registry, remotes: readRemotes(options.remotes), extra: readJson(options['extra-mapping'], {}) });
+      projects: registry, remotes: readRemotes(options.remotes), extra: readJson(options['extra-mapping'], {}),
+      isRepository: isGitCheckout });
     const storageSnapshots = plan.storageRoots.map(root => {
       if (!existsSync(root.source)) {
         return { ...root, entries: [], issues: [{ code: 'missing-storage-root', projects: [root.id], path: root.source }] };
@@ -624,13 +920,25 @@ export function runCli(argv, {
       now,
       scanTokens: relative => scanFileContent(path.join(options.workspace, ...relative.split('/'))),
       storageSnapshots,
+      isRepository: isGitCheckout,
+      settings,
+      probes: readProbes(options['visibility-probes']),
     });
     writeFileSync(path.join(out, 'inventory.json'), JSON.stringify(inventory, null, 2) + '\n');
     writeFileSync(path.join(out, 'path-map.json'), JSON.stringify(inventory.mapping, null, 2) + '\n');
-    writeFileSync(path.join(out, 'checkouts.tsv'), inventory.checkouts.map(item => `${item.name}\t${item.repositoryUrl ?? ''}\n`).join(''));
+    // Empty fields would collapse under the shell's tab IFS: the branch uses '-' and the possibly empty URL comes last.
+    writeFileSync(path.join(out, 'checkouts.tsv'), inventory.checkouts
+      .map(item => `${item.name}\t${item.source}\t${item.integrationBranch ?? '-'}\t${item.repositoryUrl ?? ''}\n`).join(''));
+    writeFileSync(path.join(out, 'visibility.json'), JSON.stringify(carriedVisibilities(inventory), null, 2) + '\n');
     writeFileSync(path.join(out, 'storage.tsv'), inventory.storageRoots.map(item => `${item.id}\t${item.source}\n`).join(''));
+    // Card counts per project, compared with the server copy by verify-cards.
+    const cards = cardLocations({ workspace: options['source-workspace'] ?? options.workspace, projects: registry, storageRoots: plan.storageRoots })
+      .map(item => `${item.id}\t${item.location}\t${countCards(item.source ?? path.join(options.workspace, ...item.relative.split('/').filter(Boolean)))}\n`);
+    writeFileSync(path.join(out, 'cards.tsv'), cards.join(''));
+    writeFileSync(path.join(out, 'repository-paths.json'), JSON.stringify(inventory.repositoryPaths, null, 2) + '\n');
+    writeFileSync(path.join(out, 'token-hits.tsv'), tokenHitLines(inventory.issues).map(line => line + '\n').join(''));
     write(formatInventory(inventory) + '\n');
-    return inventory.issues.length ? 3 : 0;
+    return inventoryExitCode(inventory.issues);
   }
   if (command === 'delta') {
     const inventory = readJson(options.inventory, null);
@@ -644,7 +952,18 @@ export function runCli(argv, {
     write(`Delta: ${delta.copy.length} to copy, ${delta.remove.length} to remove, ${delta.unchanged} unchanged\n`);
     return 0;
   }
-  throw new Error('Usage: move-studio-to-server.mjs projects|inventory|delta|strip-url [--option value]...');
+  if (command === 'verify-cards') {
+    const roots = { workspace: options.workspace, storage: options.storage };
+    if (!options.expected || !roots.workspace || !roots.storage) throw new Error('verify-cards needs --expected, --workspace, and --storage');
+    const results = compareCardCounts(readCards(options.expected), location => countCards(resolveCardLocation(location, roots)));
+    for (const item of results) {
+      write(item.matches
+        ? `check: cards ${item.id} ${item.server} on the server, as on the source\n`
+        : `card count differs for ${item.id}: source ${item.source}, server ${item.server} (${item.location})\n`);
+    }
+    return results.every(item => item.matches) ? 0 : 4;
+  }
+  throw new Error('Usage: move-studio-to-server.mjs projects|probe-targets|inventory|delta|carry-visibility|repository-paths|verify-cards|strip-url [--option value]...');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -332,6 +332,10 @@ public static class TestTempRoot
             return;
         }
 
+        // On Unix a read-only folder refuses the removal of its entries, so its
+        // write permission comes back before the entries go (a Git repository
+        // template is read-only throughout, AGT-3419).
+        ClearReadOnly(path, attributes);
         foreach (var entry in Directory.EnumerateFileSystemEntries(path))
         {
             var entryAttributes = File.GetAttributes(entry);
@@ -352,7 +356,6 @@ public static class TestTempRoot
             DeleteWithoutFollowingReparsePoints(entry);
         }
 
-        ClearReadOnly(path, attributes);
         Directory.Delete(path);
     }
 

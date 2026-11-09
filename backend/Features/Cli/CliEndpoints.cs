@@ -16,6 +16,42 @@ public static class CliEndpoints
 
         var cliGroup = app.MapGroup("/api/cli");
 
+        app.MapGet("/api/model-selection/effective", (
+            string? project, string? pipelineType, ModelSelectionEffectiveService selection) =>
+        {
+            if (!string.IsNullOrWhiteSpace(pipelineType) && !AgentStudio.Shared.PipelineTypes.IsValid(pipelineType))
+                return Results.BadRequest(new { error = "Unknown pipelineType." });
+            return Results.Ok(new { project, pipelineType, routes = selection.Get(project, pipelineType) });
+        });
+
+        app.MapGet("/api/model-selection/policy", (ModelSelectionPolicyStore policy) => Results.Ok(policy.Get()));
+        app.MapPut("/api/model-selection/policy/consumers/{consumer}",
+            (string consumer, ConsumerModelPolicy setting, ModelSelectionPolicyStore policy) =>
+        {
+            if (!policy.Get().Consumers.ContainsKey(consumer))
+                return Results.BadRequest(new { error = "Unknown consumer class." });
+            if (setting.CostGuardFactor is <= 0)
+                return Results.BadRequest(new { error = "costGuardFactor must be positive." });
+            if (setting.Primary is { } primary && !CliTypes.IsValid(primary.Cli))
+                return Results.BadRequest(new { error = "Primary route has an unknown CLI." });
+            if (setting.Fallbacks?.Routes.Any(route => !CliTypes.IsValid(route.Cli)) == true)
+                return Results.BadRequest(new { error = "Fallback route has an unknown CLI." });
+            return Results.Ok(policy.SetConsumer(consumer, setting));
+        });
+        app.MapGet("/api/model-selection/events", (string? provider, string? project,
+            string? consumer, string? rule, string? from, string? to, string? cursor,
+            string? taskKey, string? eventId, DateTimeOffset? since, DateTimeOffset? until,
+            ModelSelectionLedger ledger) =>
+            Results.Ok(ledger.Query(provider, project, consumer, rule, from, to, cursor,
+                taskKey: taskKey, eventId: eventId, since: since, until: until)));
+        app.MapGet("/api/model-selection/active", (ModelSelectionLedger ledger) => Results.Ok(ledger.Active()));
+        app.MapPost("/api/model-selection/events", (ModelSelectionEvent entry, ModelSelectionLedger ledger) =>
+        {
+            if (string.IsNullOrWhiteSpace(entry.Id) || string.IsNullOrWhiteSpace(entry.Kind)
+                || string.IsNullOrWhiteSpace(entry.Consumer)) return Results.BadRequest(new { error = "Missing selection event fields." });
+            return Results.Ok(new { added = ledger.Append(entry), id = entry.Id });
+        });
+
         cliGroup.MapGet("/types", () => Results.Ok(CliTypes.All));
 
         // Per-CLI completion contract: how each backend signals turn
@@ -23,36 +59,6 @@ public static class CliEndpoints
         // from the live adapter mappings; the Admin/CLI page renders it so
         // the contract shown is the real one, not a frontend guess.
         cliGroup.MapGet("/contracts", () => Results.Ok(CliCompletionContracts.All));
-
-        // ── Working Memory (ASS-1748 / T1c): per-CLI persistent-state panel ──
-        // GET lists the memory / session state a CLI keeps on disk (path, size,
-        // last-used, preview) plus its protected auth / config entries; DELETE
-        // removes a single memory / session state. The delete is guarded inside
-        // CliWorkingMemoryService so this surface can never remove credentials -
-        // auth / config entries are reported Deletable=false and refused.
-        cliGroup.MapGet("/{cliType}/working-memory", (string cliType, CliWorkingMemoryService mem) =>
-        {
-            if (!CliTypes.IsValid(cliType))
-                return Results.BadRequest(new { error = $"Unknown cliType '{cliType}'" });
-            return Results.Ok(mem.Describe(cliType));
-        });
-
-        cliGroup.MapDelete("/{cliType}/working-memory", (string cliType, string? path, CliWorkingMemoryService mem) =>
-        {
-            if (!CliTypes.IsValid(cliType))
-                return Results.BadRequest(new { error = $"Unknown cliType '{cliType}'" });
-            if (string.IsNullOrWhiteSpace(path))
-                return Results.BadRequest(new { error = "path query parameter is required" });
-
-            var result = mem.Delete(cliType, path);
-            return result.Status switch
-            {
-                CliWorkingMemoryDeleteStatus.Deleted => Results.Ok(result),
-                CliWorkingMemoryDeleteStatus.NotFound => Results.Json(result, statusCode: StatusCodes.Status404NotFound),
-                CliWorkingMemoryDeleteStatus.Protected => Results.Json(result, statusCode: StatusCodes.Status403Forbidden),
-                _ => Results.Json(result, statusCode: StatusCodes.Status500InternalServerError),
-            };
-        });
 
         cliGroup.MapGet("/{cliType}/models", async (HttpContext context, string cliType, bool? refresh, CliRouter router, CancellationToken ct) =>
         {
@@ -163,37 +169,6 @@ public static class CliEndpoints
                 activeJobByProject[name] = projectStatus.ActiveJobId;
             }
             return Results.Ok(sessions.BuildReport(router, activeJobByProject));
-        });
-
-        // Lazy deep-read of one session (row expand in the CLI-session tool).
-        // Parses exactly one transcript on demand so the list report stays
-        // body-free even with thousands of sessions.
-        cliGroup.MapGet("/{cliType}/session-detail", (string cliType, string id, string? cwd, SessionRegistry sessions) =>
-        {
-            if (!CliTypes.IsValid(cliType))
-                return Results.BadRequest(new { error = $"Unknown cliType '{cliType}'" });
-            if (string.IsNullOrWhiteSpace(id))
-                return Results.BadRequest(new { error = "id query parameter is required" });
-            return Results.Ok(sessions.BuildSessionDetail(cliType, id, cwd));
-        });
-
-        // Guarded single-session cleanup. SessionRegistry confirms the resolved
-        // path lives under the CLI's own session store before deleting; anything
-        // outside is refused, so this can only remove a transcript.
-        cliGroup.MapDelete("/{cliType}/session", (string cliType, string id, string? cwd, SessionRegistry sessions) =>
-        {
-            if (!CliTypes.IsValid(cliType))
-                return Results.BadRequest(new { error = $"Unknown cliType '{cliType}'" });
-            if (string.IsNullOrWhiteSpace(id))
-                return Results.BadRequest(new { error = "id query parameter is required" });
-
-            var result = sessions.DeleteSession(cliType, id, cwd);
-            return result.Status switch
-            {
-                "Deleted" => Results.Ok(result),
-                "NotFound" => Results.Json(result, statusCode: StatusCodes.Status404NotFound),
-                _ => Results.Json(result, statusCode: StatusCodes.Status500InternalServerError),
-            };
         });
 
         // ── Quota: per-CLI subscription quota for the right-hand sidesheet ──
@@ -350,11 +325,12 @@ public static class CliEndpoints
             SetCliFallbackPreferenceRequest req,
             CliFallbackPreferenceService preferences,
             QuotaService quota,
-            CliQuotaCapsService caps) =>
+            CliQuotaCapsService caps,
+            TimeProvider clock) =>
         {
             if (!CliTypes.IsValid(req.CliType))
                 return Results.BadRequest(new { error = $"Unknown cliType '{req.CliType}'" });
-            var now = DateTime.UtcNow;
+            var now = clock.GetUtcNow().UtcDateTime;
             var reset = quota.GetCachedFor(req.CliType)?.Windows
                 .Where(window => window.ResetAt > now)
                 .OrderByDescending(window => (window.UsedPct ?? 0)

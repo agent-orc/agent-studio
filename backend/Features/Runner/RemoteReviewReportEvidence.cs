@@ -64,6 +64,10 @@ internal static class RemoteReviewReportEvidence
         if (!string.IsNullOrWhiteSpace(request.FailureClassification))
             text.AppendLine($"failureClassification: {Yaml(request.FailureClassification)}");
         text.AppendLine($"expectedResultSha: {Yaml(request.Workspace.ExpectedResultSha)}");
+        if (!string.IsNullOrWhiteSpace(request.Workspace.MergeBaseSha))
+            text.AppendLine($"mergeBaseSha: {Yaml(request.Workspace.MergeBaseSha)}");
+        if (!string.IsNullOrWhiteSpace(request.QualityStudioCodeQualityMode))
+            text.AppendLine($"qualityStudioCodeQualityMode: {Yaml(request.QualityStudioCodeQualityMode)}");
         text.AppendLine($"actualHead: {Yaml(request.Workspace.ActualHead)}");
         text.AppendLine($"reportSha256: {Yaml(reportSha256)}");
         if (!string.IsNullOrWhiteSpace(request.BriefSha256))
@@ -145,6 +149,18 @@ internal static class RemoteReviewReportEvidence
         }
 
         text.AppendLine();
+        var agentCommands = request.Commands
+            .Where(command => Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))
+            .ToArray();
+        text.AppendLine("## Aspect cache usage");
+        text.AppendLine();
+        text.AppendLine("| Aspect | Cache creation tokens | Cache read tokens |");
+        text.AppendLine("| --- | ---: | ---: |");
+        foreach (var command in agentCommands)
+            text.AppendLine($"| {Cell(command.Aspect)} | {command.CacheCreationTokens} | {command.CacheReadTokens} |");
+        text.AppendLine($"| **Review total** | **{agentCommands.Sum(command => command.CacheCreationTokens)}** | **{agentCommands.Sum(command => command.CacheReadTokens)}** |");
+        text.AppendLine();
+
         text.AppendLine("## Command evidence");
         text.AppendLine();
         if (request.Commands.Count == 0)

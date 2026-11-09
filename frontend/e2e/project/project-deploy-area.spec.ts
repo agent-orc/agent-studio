@@ -186,6 +186,70 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
+  test('shows release card verdicts and opens the stored release range in both themes', async ({ page }) => {
+    const releases = deployReleasesFixture();
+    const release = releases[0];
+    release.cardKeys = ['WEB-35', 'WEB-36', 'WEB-37'];
+    release.quality = {
+      cards: [{ key: 'WEB-35', verdict: 'pass' }, { key: 'WEB-36', verdict: 'concerns' },
+        { key: 'WEB-37', verdict: 'block' }],
+      pass: 1, concerns: 1, block: 1, notReviewed: 0, worstVerdict: 'block',
+      rangeVerdict: 'not-reviewed',
+      range: { repositoryId: 'repo-website', baseSha: 'a'.repeat(40), headSha: release.commitSha, requiresConfirmation: false },
+      rangeUnavailableReason: null,
+    };
+    let reviewRequests = 0;
+    let openedUrl: string | null = null;
+    await page.route(/\/change-review(?:\?|$)/, route => {
+      reviewRequests++;
+      return route.fulfill({ status: 500, body: 'Unexpected review request' });
+    });
+    await page.context().route('**/api/integrations/quality-studio/open**', route => {
+      openedUrl = route.request().url();
+      return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>Opened</title>' });
+    });
+    await openDeploy(page, fullMocks({ releases }));
+    await page.getByTestId('deploy-tab-releases').click();
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await expect(page.getByTestId(`deploy-release-quality-${release.id}`)).toContainText('Quality: Block · 1 pass, 1 concerns, 1 block, 0 not reviewed');
+      await expect(page.getByTestId('deploy-release-quality-counts')).toContainText('1 pass · 1 concerns · 1 block · 0 not reviewed');
+      await expect(page.getByRole('list', { name: 'Card Quality verdicts' }).getByRole('listitem')).toHaveCount(3);
+      await expect(page.getByTestId('deploy-release-range-verdict')).toContainText('Not reviewed');
+      await capture(page, `deploy-release-quality-${theme}`);
+    }
+    await page.getByTestId('deploy-release-open-quality').click();
+    await expect.poll(() => openedUrl).not.toBeNull();
+    const target = new URL(new URL(openedUrl!).searchParams.get('return')!, 'https://quality.example');
+    expect(target.searchParams.get('base')).toBe('a'.repeat(40));
+    expect(target.searchParams.get('head')).toBe(release.commitSha);
+    expect(reviewRequests).toBe(0);
+  });
+
+  test('shows a stored release range verdict in both themes without starting a review', async ({ page }) => {
+    const releases = deployReleasesFixture();
+    releases[0].quality = {
+      cards: [], pass: 0, concerns: 0, block: 0, notReviewed: 0,
+      worstVerdict: 'not-reviewed', rangeVerdict: 'concerns',
+      range: { repositoryId: 'repo-website', baseSha: 'a'.repeat(40),
+        headSha: releases[0].commitSha, requiresConfirmation: false },
+      rangeUnavailableReason: null,
+    };
+    let reviewRequests = 0;
+    await page.route(/\/change-review(?:\?|$)/, route => {
+      reviewRequests++;
+      return route.fulfill({ status: 500, body: 'Unexpected review request' });
+    });
+    await openDeploy(page, fullMocks({ releases }));
+    await page.getByTestId('deploy-tab-releases').click();
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await expect(page.getByTestId('deploy-release-range-verdict')).toContainText('Release range: Concerns');
+      await capture(page, `deploy-release-stored-range-${theme}`);
+    }
+    expect(reviewRequests).toBe(0);
+  });
+
   test('shows the pre-delivery verdict and candidate SHA on the release header', async ({ page }) => {
     const releases = deployReleasesFixture();
     releases[0].preDeliveryVerdict = { project: PROJECT, commitSha: 'c'.repeat(40),
@@ -254,6 +318,64 @@ test.describe('Project Deploy area (mocked)', () => {
     expect(firstPageRequests).toHaveLength(0);
     await expect(page.getByTestId('deploy-release-detail')).toContainText('version-35');
     await capture(page, 'operations-older-release');
+  });
+
+  test('Operations shows installation backups with the stale warning and the off-host copy in both themes (AGT-3574)', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z', environments: [],
+      dora: { successfulProductionDeploys: 0, deploysPerWeek: null, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: null, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    }));
+    const backup = (id: string, createdAt: string, verification: string, offHost: string) => ({
+      id, createdAt, sizeBytes: 412 * 1024 * 1024, sha256: 'a'.repeat(64), fileCount: 18_240,
+      verification, offHost, unsettledFiles: 0,
+    });
+    const newest = backup('studio-backup-20261019T060000Z-a1b2c3', '2026-10-19T06:00:00+00:00', 'verified', 'failed');
+    let stale = true;
+    await page.route('**/api/v1/management/backups', route => answer(route, {
+      state: stale ? 'failing' : 'ok', configured: true, running: false, keyId: '3f2a9c0d11e4b7a8', secretKeyId: '0b1c2d3e4f5a6b7c',
+      intervalHours: 6, verifyIntervalHours: 24, staleAfterHours: 12, retentionCount: 12,
+      nextBackupAt: '2026-10-20T06:00:00+00:00',
+      lastGood: newest, lastGoodAgeHours: stale ? 26 : 2, stale,
+      lastRun: { at: '2026-10-20T06:00:00+00:00', trigger: 'schedule', outcome: stale ? 'failed' : 'succeeded',
+        backupId: null, error: stale ? 'Backup source workspace is not readable.' : null, durationMilliseconds: 900 },
+      lastVerification: { at: '2026-10-19T06:10:00+00:00', backupId: newest.id, outcome: 'verified',
+        detail: 'Restored 18240 files and 3 checkout records into an empty staging host; every hash matched.' },
+      offHost: { kind: 'sftp', target: 'sftp://studio@backup.example:22/srv/studio-backups', state: stale ? 'failed' : 'current',
+        lastUploadedId: 'studio-backup-20261019T000000Z-9f8e7d', lastUploadedAt: '2026-10-19T00:01:00+00:00',
+        lastError: stale ? 'sftp exited with 255: Connection timed out' : null },
+      warnings: stale ? [
+        { code: 'backup-stale', severity: 'danger', message: 'The newest good backup is 26 hours old; the threshold is 12 hours.' },
+        { code: 'backup-failed', severity: 'danger', message: 'The last backup run failed: Backup source workspace is not readable.' },
+        { code: 'offhost-failed', severity: 'danger', message: 'The off-host copy failed: sftp exited with 255: Connection timed out' },
+      ] : [],
+      backups: [newest, backup('studio-backup-20261019T000000Z-9f8e7d', '2026-10-19T00:00:00+00:00', 'unverified', 'uploaded')],
+      generatedAt: '2026-10-20T08:00:00+00:00',
+    }));
+    await page.getByTestId('deploy-tab-operations').click();
+    const backups = page.getByTestId('operations-backups');
+    await expect(backups.getByTestId('operations-backups-state')).toHaveAttribute('data-state', 'failing');
+    await expect(backups.getByTestId('operations-backups-warnings').locator('[data-code="backup-stale"]')).toContainText('26 hours old');
+    await expect(backups.getByTestId('operations-backups-age')).toHaveAttribute('data-stale', 'true');
+    await expect(backups.getByTestId('operations-backups-age')).toContainText('26 h');
+    await expect(backups.getByTestId('operations-backups-size')).toContainText('412.0 MB');
+    await expect(backups.getByTestId('operations-backups-verification')).toContainText('Verified');
+    await expect(backups.getByTestId('operations-backups-offhost')).toContainText('Copy failed');
+    await expect(backups.getByTestId('operations-backups-offhost')).toContainText('sftp://studio@backup.example');
+    await expect(backups.getByTestId('operations-backups-list').locator('tbody tr')).toHaveCount(2);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      fs.mkdirSync(results, { recursive: true });
+      await backups.screenshot({ path: path.join(results, `operations-backups-stale-${theme}--mocked.png`) });
+    }
+
+    stale = false;
+    await backups.getByTestId('operations-backups-refresh').click();
+    await expect(backups.getByTestId('operations-backups-state')).toHaveAttribute('data-state', 'ok');
+    await expect(backups.getByTestId('operations-backups-warnings')).toHaveCount(0);
+    await expect(backups.getByTestId('operations-backups-offhost')).toContainText('Copied');
+    await backups.screenshot({ path: path.join(results, 'operations-backups-current-dark--mocked.png') });
   });
 
   test('Operations shows deploy markers, DORA and telemetry empty state in both themes', async ({ page }) => {

@@ -60,9 +60,43 @@ public sealed class DetachedReviewWorkerOptionsTests
         }
     }
 
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(3, 3)]
+    [InlineData(9, 4)]
+    public void Worker_options_carry_the_aspect_parallelism_capped_at_four(int configured, int expected)
+    {
+        var spec = Spec(null, null) with { ReviewAspectParallelism = configured };
+
+        var restored = JsonSerializer.Deserialize<DetachedReviewSpec>(
+            JsonSerializer.Serialize(spec, JsonOptions),
+            JsonOptions)!;
+
+        Assert.Equal(expected, DurableReviewProcess.WorkerOptions(restored).ReviewAspectParallelism);
+    }
+
+    [Fact]
+    public void A_spec_without_aspect_parallelism_falls_back_to_the_environment()
+    {
+        var previous = Environment.GetEnvironmentVariable("RUNNER_REVIEW_ASPECT_PARALLELISM");
+        try
+        {
+            Environment.SetEnvironmentVariable("RUNNER_REVIEW_ASPECT_PARALLELISM", "1");
+            Assert.Equal(1, DurableReviewProcess.WorkerOptions(Spec(null, null)).ReviewAspectParallelism);
+
+            Environment.SetEnvironmentVariable("RUNNER_REVIEW_ASPECT_PARALLELISM", null);
+            Assert.Equal(4, DurableReviewProcess.WorkerOptions(Spec(null, null)).ReviewAspectParallelism);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("RUNNER_REVIEW_ASPECT_PARALLELISM", previous);
+        }
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    private static DetachedReviewSpec Spec(int? commandSilenceWatchdogSeconds, int? reviewNoCpuProgressSeconds)
+    internal static DetachedReviewSpec Spec(
+        int? commandSilenceWatchdogSeconds, int? reviewNoCpuProgressSeconds, string? stateDir = null)
     {
         var createdAt = new DateTime(2026, 9, 16, 15, 0, 0, DateTimeKind.Utc);
         var subject = new ReviewSubjectDto(
@@ -100,6 +134,6 @@ public sealed class DetachedReviewWorkerOptionsTests
             [],
             CommandSilenceWatchdogSeconds: commandSilenceWatchdogSeconds,
             ReviewNoCpuProgressSeconds: reviewNoCpuProgressSeconds,
-            StateDir: Path.Combine(Path.GetTempPath(), "review-state"));
+            StateDir: stateDir ?? Path.Combine(Path.GetTempPath(), "review-state"));
     }
 }

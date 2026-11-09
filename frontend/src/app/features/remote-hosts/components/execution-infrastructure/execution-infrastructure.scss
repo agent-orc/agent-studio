@@ -1,8 +1,21 @@
 :host { display: block; }
-.infrastructure { margin-bottom: var(--studio-spacing-4); padding: var(--studio-spacing-3); border: 1px solid var(--studio-border); background: var(--studio-surface-muted); font-size: 11px; }
-.infrastructure h3 { margin: 0 0 var(--studio-spacing-2); font-size: 12px; }
-.infrastructure__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--studio-spacing-3); }
+.infrastructure { margin-bottom: var(--studio-spacing-4); padding: var(--studio-spacing-3) 0; border-top: 1px solid var(--studio-border); font-size: var(--studio-font-size-md); }
+.infrastructure h3 { margin: 0 0 var(--studio-spacing-2); font-size: var(--studio-font-size-md); }
+.infrastructure__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--studio-spacing-3); }
 .infrastructure__grid p { display: grid; align-content: start; gap: var(--studio-spacing-1); min-width: 0; margin: 0; }
 .infrastructure__grid span { overflow-wrap: anywhere; color: var(--studio-fg-dim); }
 .infrastructure__error { color: var(--severity-high); }
+.infrastructure__capacity { margin-top: var(--studio-spacing-4); border-top: 1px solid var(--studio-border); padding-top: var(--studio-spacing-3); }
+.infrastructure__capacity h4 { margin: 0 0 var(--studio-spacing-2); }
+.infrastructure__capacity p { color: var(--studio-fg-muted); }
+.infrastructure__capacity-use { font-variant-numeric: tabular-nums; }
+.infrastructure__capacity-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--studio-spacing-3); margin-bottom: var(--studio-spacing-3); }
+.infrastructure__capacity-fields label { display: grid; gap: var(--studio-spacing-1); }
+.infrastructure__capacity-fields input[type='number'] { width: 100%; padding: var(--studio-spacing-2); border: 1px solid var(--studio-border); border-radius: var(--studio-action-radius-sm); background: var(--studio-bg-elevated); color: var(--studio-fg); font-variant-numeric: tabular-nums; }
+.infrastructure__capacity-fields .infrastructure__capacity-check { display: flex; align-items: center; }
+.infrastructure__capacity button { cursor: pointer; min-height: 32px; padding: var(--studio-spacing-2) var(--studio-spacing-3); border: 1px solid var(--studio-accent); border-radius: var(--studio-action-radius-sm); background: var(--studio-accent); color: var(--studio-on-accent); font: inherit; font-weight: 600; }
+.infrastructure__capacity button:hover:not(:disabled) { background: var(--studio-bg-hover); color: var(--studio-fg-strong); }
+.infrastructure__capacity-actions { display: flex; align-items: center; gap: var(--studio-spacing-2); }
+.infrastructure__capacity-actions .studio-button { margin: 0; }
+.infrastructure__capacity :is(button, input):focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 @media (max-width: 1100px) { .infrastructure__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

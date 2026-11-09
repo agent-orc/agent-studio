@@ -21,6 +21,7 @@ async function stubHostLoad(
   telemetrySlots: number,
   load1: number,
   cliRepairs: unknown[] = [],
+  postProcessing: { reviewing: number; waiting: number } = { reviewing: 0, waiting: 0 },
 ): Promise<void> {
   const now = new Date().toISOString();
   const baseTask = (id: string, projectName: string) => ({
@@ -60,6 +61,22 @@ async function stubHostLoad(
       acquiredAt: now,
     },
   }));
+  // Post Processing cards (AGT-3589): the footer review entry counts these.
+  const reviewActivity = new Date(Date.now() - 7 * 60_000).toISOString();
+  const autoReview = Array.from({ length: postProcessing.reviewing + postProcessing.waiting }, (_, index) => ({
+    ...baseTask(`review-${index + 1}`, 'review-project'),
+    state: '4-auto-review',
+    lastActivity: reviewActivity,
+    liveStatus: {
+      attempt: 1,
+      activeStep: null,
+      nextSteps: [],
+      queue: index < postProcessing.reviewing
+        ? { kind: 'review', state: 'reviewing', executorId: 'agent-runner-review-01', since: now }
+        : null,
+      latestEventAt: reviewActivity,
+    },
+  }));
   const activeProjectNames = [...local, ...remote].map(task => task.projectName);
   const projectNames = Array.from(
     { length: 16 },
@@ -76,25 +93,26 @@ async function stubHostLoad(
     },
   ]));
 
-  await page.route('**/api/v1/studio/auth/status', json({
+  const authStatus = {
     profile: 'local',
     bootstrapRequired: false,
     authenticated: true,
     user: null,
-  }));
+  };
+  await page.route('**/api/auth/status', json(authStatus));
+  await page.route('**/api/v1/studio/auth/status', json(authStatus));
   await page.route('**/api/environment**', json({ isDev: false, devTools: {} }));
   await page.route('**/api/watch-paths', json(projectNames.map((name, index) => ({
     name,
     path: `/mock/project-${index + 1}`,
     rootPath: `/mock/project-${index + 1}`,
   }))));
-  await page.route('**/api/v1/studio/board', json({
-    preparation: [],
-    ready: [],
+  await page.route(/\/api\/v1\/studio\/board(?:\?|$)/, json({
+    backlog: [], preparation: [], orchestratorPrep: [], ready: [],
     progress: [...local, ...remote],
-    review: [],
-    completed: [],
-    archive: [],
+    failedPickup: [], codeNotComplete: [], autoReview, humanReview: [],
+    escalated: [], review: [], completed: [], archive: [],
+    gitStateAt: null, stale: false,
   }));
   await page.route('**/api/tasks', json([]));
   await page.route('**/api/v1/studio/runner/status', json({ projects: runnerProjects, cliRepairs }));
@@ -149,7 +167,13 @@ async function stubHostLoad(
     }],
     findings: [],
   }));
-  await page.route('**/api/v1/management/remote-hosts', json([]));
+  await page.route('**/api/v1/management/remote-hosts', json([{
+    runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'agent-runner-01',
+    instanceId: 'agent-runner-01:coding', runnerVersion: '0.3.0', protocolVersion: 3,
+    status: 'active', registeredAt: now, lastSeenAt: now,
+    hostAdmission: { hostId: 'agent-runner-01', admissionState: 'open' },
+    capabilities: [], roleMaxParallelism: 8,
+  }]));
 }
 
 test.describe('Status bar execution-host load companion signal', () => {
@@ -212,10 +236,11 @@ test.describe('Status bar execution-host load companion signal', () => {
     await expect(running).toContainText('2 local · remote idle');
     await running.click();
 
-    await expect(page).toHaveURL(/#\/workspace\/settings\/execution-hosts(?:&|$)/);
+    await expect(page).toHaveURL(/#\/workspace\/settings\/environment(?:&|$)/);
     await expect(page.getByTestId('remote-hosts-panel')).toBeVisible();
     await expect(page.getByTestId('remote-hosts-panel').getByRole('heading', { level: 2 }))
-      .toHaveText('Execution Hosts');
+      .toHaveText('Environment');
+    await expect(page.getByTestId('remote-hosts-table')).toBeVisible();
   });
 
   test('high load without runs becomes a quiet hint in both themes', async ({ page }) => {
@@ -247,7 +272,7 @@ test.describe('Status bar execution-host load companion signal', () => {
   });
 
   test('review workers own elevated host load and expose both plane ceilings', async ({ page }) => {
-    await stubHostLoad(page, 0, 0, 4, 8.4);
+    await stubHostLoad(page, 0, 0, 4, 8.4, [], { reviewing: 4, waiting: 7 });
     const now = new Date().toISOString();
     const telemetry = (clientId: string, activeSlots: number) => ({
       clientId,
@@ -354,7 +379,9 @@ test.describe('Status bar execution-host load companion signal', () => {
     await expect(review).toContainText('review 4/6');
     await expect(review).toContainText('7 waiting');
     await review.hover();
-    await expect(page.getByTestId('cac-tooltip')).toContainText('4 processing, 7 waiting');
+    await expect(page.getByTestId('cac-tooltip')).toContainText(
+      'Post Processing holds 11 cards: 7 waiting for review, 4 under review.',
+    );
     await expect(page.getByTestId('cac-tooltip')).toContainText(
       'Review: 1 host connected. agent-runner-review-01: 4/6 slots busy.',
     );
@@ -367,6 +394,38 @@ test.describe('Status bar execution-host load companion signal', () => {
     await page.getByTestId('status-bar').screenshot({
       path: join(RESULTS_DIR, 'status-bar-plane-utilization-light--mocked.png'),
     });
+  });
+
+  // AGT-3589 (walkthrough F14): the footer read "review idle" while Post
+  // Processing held ten cards, and those cards read "Between steps · Last
+  // activity 0s ago". The empty auto-review queue below is that situation.
+  test('review entry counts waiting Post Processing cards and idle cards name the wait', async ({ page }) => {
+    await stubHostLoad(page, 0, 0, 0, 0.8, [], { reviewing: 0, waiting: 10 });
+    await page.route('**/api/runner/auto-review-queue', json({
+      queueDepth: 0, activeJobs: 0, isStagnant: false, stagnantSince: null, stagnantThresholdMinutes: 20,
+      drainRatePerMinute: 0, medianReviewDurationMs: null, throughputWindowMinutes: 15,
+      observedAt: new Date().toISOString(),
+    }));
+    await page.goto('/');
+
+    const review = page.getByTestId('status-bar-review');
+    await expect(review).toContainText('review 0 · 10 waiting');
+    await expect(review).not.toContainText('review idle');
+    await expect(review).toHaveAttribute('data-signal-tone', 'mismatch');
+    await review.hover();
+    await expect(page.getByTestId('cac-tooltip')).toContainText(
+      'Post Processing holds 10 cards: 10 waiting for review, 0 under review.',
+    );
+
+    const current = page.getByTestId('task-live-current').first();
+    await expect(current).toContainText('Waiting for review');
+    await expect(current).not.toContainText('Between steps');
+    await expect(page.getByTestId('task-live-status').first()).toContainText(/Last activity 7m\d\ds ago/);
+
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.screenshot({ path: join(RESULTS_DIR, `f14-review-waiting-${theme}--mocked.png`) });
+    }
   });
 
   test('several reported runs with almost no load become the inverse quiet hint', async ({ page }) => {

@@ -77,7 +77,11 @@ internal sealed class BatchMoveJob
         ProjectNames = projectNames;
         Cause = cause;
         CreatedAt = DateTimeOffset.UtcNow;
+        Operator = OperatorActorScope.Current;
     }
+
+    /// <summary>The operator agent session that queued the job, so its moves stay attributed to it.</summary>
+    public OperatorActor? Operator { get; }
 
     public string Id { get; }
     public IReadOnlyList<BatchMoveItem> Items { get; }
@@ -161,7 +165,8 @@ public sealed class BatchMoveItemExecutor(
     TaskScannerService scanner,
     RunLeaseService leases,
     AttemptAuthorityService authority,
-    TimelineLog timeline) : IBatchMoveItemExecutor
+    TimelineLog timeline,
+    AgentStudio.Pipeline.BatchIsolationGuard isolation) : IBatchMoveItemExecutor
 {
     public async Task<BatchMoveItemResult> ExecuteAsync(
         BatchMoveItem item,
@@ -172,6 +177,15 @@ public sealed class BatchMoveItemExecutor(
         try
         {
             var card = scanner.FindJob(item.JobId, item.WatchPath);
+            if (card is not null
+                && AgentStudio.Pipeline.BatchIsolationGuardPolicy.IsRequeue(card.State, item.TargetState)
+                && isolation.Find(card) is { } isolating)
+                return new BatchMoveItemResult
+                {
+                    JobId = item.JobId,
+                    Status = "rejected",
+                    Message = $"{AgentStudio.Pipeline.BatchIsolationGuardPolicy.Code}: flight {isolating.FlightId}",
+                };
             var live = card is not null && item.TargetState != card.State
                 ? leases.Peek(card.TaskKey).Lease : null;
             var intent = RunDispositionPolicy.ParseMoveIntent(item.RunIntent);
@@ -284,6 +298,7 @@ public sealed class BatchMoveJobCoordinator : BackgroundService
 
     private async Task RunJobAsync(BatchMoveJob job, CancellationToken stoppingToken)
     {
+        using var operatorScope = job.Operator is { } operatorActor ? OperatorActorScope.Enter(operatorActor) : null;
         job.Start();
         var total = Stopwatch.StartNew();
         var itemMoveMs = 0.0;

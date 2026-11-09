@@ -27,6 +27,26 @@ public sealed class OrchestratorChatWorkingDirectoryTests : IDisposable
     }
 
     [Fact]
+    public void Networked_chat_reports_runner_setup_before_a_first_turn()
+    {
+        var watchPath = Directory.CreateDirectory(Path.Combine(_root, "networked-tasks")).FullName;
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root,
+            ["Security:Profile"] = "networked",
+            ["WatchPaths:0:Name"] = "project-a",
+            ["WatchPaths:0:Path"] = watchPath,
+        }).Build();
+        var service = BuildService(config, projects: null, NullLogger<OrchestratorChatService>.Instance);
+
+        var readiness = service.ResolveExecutionReadiness("project-a", watchPath);
+
+        Assert.False(readiness.Ready);
+        Assert.Equal("runner-not-configured", readiness.Code);
+        Assert.Contains("No Runner", readiness.Reason);
+    }
+
+    [Fact]
     public void ResolveWorkingDirectory_WithoutRootPath_UsesRegistryRepositoryPath()
     {
         var watchPath = Directory.CreateDirectory(Path.Combine(_root, "registry-tasks")).FullName;

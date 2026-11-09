@@ -50,7 +50,46 @@ internal static class RunnerCapabilityProbe
                     && RunnerModelAcceptanceProbe.IsProbeableModelId(route.Model))
             .Distinct()
             .ToArray();
-        return routed.Length > 0 ? routed : BuiltInModelCandidates(options);
+        var baseline = routed.Length > 0 ? routed : BuiltInModelCandidates(options);
+        // Probe declared siblings and policy equivalents before a rejection.
+        // A server-supplied primary list otherwise hides the built-in routes.
+        var fallbackCandidates = options.Role == "coding" ? baseline.SelectMany(route => route switch
+        {
+            (CliSelection.CodexCli, "gpt-6-sol") => new[]
+            {
+                (CliSelection.CodexCli, "gpt-5.6-sol"),
+                (CliSelection.ClaudeCli, "claude-sonnet-5"),
+                (CliSelection.ClaudeCli, "claude-opus-5"),
+            },
+            (CliSelection.CodexCli, "gpt-5.6-sol") => new[]
+            {
+                (CliSelection.ClaudeCli, "claude-sonnet-5"),
+                (CliSelection.ClaudeCli, "claude-opus-5"),
+            },
+            (CliSelection.CodexCli, "gpt-6-luna") => new[]
+            {
+                (CliSelection.CodexCli, "gpt-5.6-luna"),
+            },
+            _ => Array.Empty<(string, string)>(),
+        }).Where(route => providers.Contains(route.Item1))
+            : Enumerable.Empty<(string, string)>();
+        baseline = baseline.Concat(fallbackCandidates).Distinct().ToArray();
+        // Include these two in cached host probes before routing switches to
+        // them. Old CLIs cannot serve them, so skip the paid calls.
+        var codex = CodingCliBinaries(options).FirstOrDefault(item => item.CliType == CliSelection.CodexCli);
+        var installation = codex.Binary is null ? null : InspectCli(codex.Binary);
+        if (configured is null && installation is not null && CodexModels(installation) is not null
+            && CodexModelCatalogs.TryGetValue($"{installation.Path}\0{installation.Version}", out var catalogue))
+            RunnerModelAcceptanceProbe.Shared.NoteCatalogueRefresh(
+                CliSelection.CodexCli, $"{installation.Version}:{catalogue.ObservedAt.Ticks}");
+        if (installation is null || !CodexCliRelease.OffersGpt61(installation.Version))
+            return baseline.Where(route => route.Provider != CliSelection.CodexCli
+                || route.Model is not (CodexCliRelease.Gpt61Sol or CodexCliRelease.Gpt61Terra)).ToArray();
+        return baseline.Concat(new[]
+        {
+            (CliSelection.CodexCli, CodexCliRelease.Gpt61Sol),
+            (CliSelection.CodexCli, CodexCliRelease.Gpt61Terra),
+        }).Distinct().ToArray();
     }
 
     private static IReadOnlyList<(string Provider, string Model)> BuiltInModelCandidates(RunnerOptions options)
@@ -103,8 +142,13 @@ internal static class RunnerCapabilityProbe
                 "foundation",
                 null,
                 new Uri(options.ServerUrl).Authority,
-                connectivity?.Status == TaskServerConnectivityStates.Unreachable ? "unavailable" : "ready",
-                ConnectivityDetail(connectivity)),
+                ConnectivityUnavailable(connectivity) ? "unavailable" : "ready",
+                ConnectivityDetail(connectivity)) with
+                {
+                    Since = connectivity?.FailureStartedAt,
+                    HttpStatus = connectivity?.HttpStatus,
+                    Request = connectivity?.Request,
+                },
             Capability($"platform:{Platform()}", "platform", RuntimeInformation.OSDescription, RuntimeInformation.ProcessArchitecture.ToString()),
             Capability($"platform:{PlatformClass()}", "platform", RuntimeInformation.OSDescription, RuntimeInformation.ProcessArchitecture.ToString()),
         };
@@ -200,6 +244,8 @@ internal static class RunnerCapabilityProbe
             && ZonePolicyCapability.Describe(options.ZonePolicyStatePath, ZoneKinds.Work, clock ?? TimeProvider.System,
                 hostBootId ?? ZonePolicyStateStore.CurrentBootId()) is { } zonePolicy)
             list.Add(zonePolicy);
+        list.Add(WorkContainers.AttemptContainmentCapability.Describe(
+            WorkContainers.AttemptContainmentCapability.Decide(options, clock: clock)));
         return list;
     }
 
@@ -215,6 +261,7 @@ internal static class RunnerCapabilityProbe
             CapabilityProtocol.TaskServerConnectivity,
         }
         .Concat(options.RequiredCapabilities)
+        .Concat(WorkContainers.AttemptContainmentCapability.Requirement(options))
         .Concat(options.IsWorkstation
             ? options.WorkstationRequiredTools.Select(tool => $"toolchain:{tool}")
             : [])
@@ -237,6 +284,7 @@ internal static class RunnerCapabilityProbe
             CapabilityProtocol.TaskServerConnectivity,
         }
         .Concat(options.RequiredCapabilities)
+        .Concat(WorkContainers.AttemptContainmentCapability.Requirement(options))
         .Concat(options.IsWorkstation
             ? options.WorkstationRequiredTools.Select(tool => $"toolchain:{tool}")
             : [])
@@ -257,6 +305,7 @@ internal static class RunnerCapabilityProbe
             ReviewCapabilities.LibraryStepV1,
         }
         .Concat(options.RequiredCapabilities)
+        .Concat(WorkContainers.AttemptContainmentCapability.Requirement(options))
         .Distinct(StringComparer.Ordinal)
         .ToArray();
 
@@ -332,7 +381,8 @@ internal static class RunnerCapabilityProbe
     public static HostTelemetrySnapshotDto? Telemetry(
         HostTelemetrySample? sample,
         ReviewPlaneBudgetDto? reviewPlane = null,
-        SalvageStoreDto? salvageStore = null)
+        SalvageStoreDto? salvageStore = null,
+        ClaimLoadGateDto? claimLoadGate = null)
         => sample is null
             ? null
             : new HostTelemetrySnapshotDto(
@@ -364,7 +414,39 @@ internal static class RunnerCapabilityProbe
                 BuildNodeSweep.Latest?.DotnetProcesses,
                 BuildNodeSweep.Latest?.StaleBuildNodes,
                 BuildNodeSweep.Latest is null ? null : BuildNodeSweep.TerminatedTotal,
-                BuildNodeSweep.Latest?.ObservedAt);
+                BuildNodeSweep.Latest?.ObservedAt,
+                ClaimLoadGate: claimLoadGate);
+
+    /// <summary>A missing Docker daemon leaves the optional inventory absent for older hosts.</summary>
+    public static async Task<IReadOnlyList<HostContainerSummaryDto>?> ContainersAsync(CancellationToken ct)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(3));
+        try
+        {
+            var result = await ProcessRunner.RunAsync("docker",
+                ["ps", "-a", "--no-trunc", "--format", "{{.ID}}"],
+                ct: deadline.Token);
+            if (!result.Success) return null;
+            var ids = result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (ids.Length == 0) return [];
+            if (ids.Length > 200) return null;
+            var inspected = await ProcessRunner.RunAsync("docker",
+                ["inspect", "--format", "{{.Name}}\t{{.Image}}\t{{.State.Status}}", .. ids],
+                ct: deadline.Token);
+            if (!inspected.Success) return null;
+            return inspected.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.TrimEnd('\r').Split('\t'))
+                .Where(parts => parts.Length == 3 && parts[0].Length > 0)
+                .Select(parts => new HostContainerSummaryDto(parts[0].TrimStart('/'),
+                    parts[1].StartsWith("sha256:", StringComparison.Ordinal) ? parts[1] : null,
+                    parts[2]))
+                .ToArray();
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException
+                                   || ex is OperationCanceledException && !ct.IsCancellationRequested)
+        { return null; }
+    }
 
     private static string ConnectivityDetail(TaskServerConnectivitySnapshot? connectivity)
     {
@@ -372,10 +454,16 @@ internal static class RunnerCapabilityProbe
             return "Task Server route has not completed its first observed request yet.";
         if (connectivity.Status == TaskServerConnectivityStates.Reachable)
             return $"Task Server route reachable; observed {connectivity.ObservedAt:o}.";
-        return $"Task Server route unavailable since {connectivity.FailureStartedAt:o}; " +
+        return $"Task Server route {(ConnectivityUnavailable(connectivity) ? "unavailable" : "has failures")} "
+               + $"since {connectivity.FailureStartedAt:o}; " +
                $"{connectivity.ConsecutiveFailures} consecutive request failures. " +
                (connectivity.LastError ?? "No transport detail was captured.");
     }
+
+    private static bool ConnectivityUnavailable(TaskServerConnectivitySnapshot? connectivity)
+        => connectivity is { Status: TaskServerConnectivityStates.Unreachable,
+            ConsecutiveFailures: >= 3, FailureStartedAt: { } since, ObservedAt: { } observed }
+           && observed - since >= TimeSpan.FromSeconds(60);
 
     public static string Provider(string cliBinary)
     {
@@ -386,7 +474,7 @@ internal static class RunnerCapabilityProbe
     public static bool IsProviderAuthenticationFailure(ProcessResult result)
     {
         if (result.ExitCode == 0) return false;
-        return ProviderAccessClassifier.Classify(
+        return ProviderAccessClassifier.ClassifyRun(
                 result.ExitCode,
                 result.StdOut,
                 result.StdErr)
@@ -550,6 +638,17 @@ internal static class RunnerCapabilityProbe
                              .Where(candidate => candidate.Provider == cliType)
                              .Select(candidate => candidate.Model).ToArray()))
                 capabilities.Add(modelCapability);
+            if (cliType == CliSelection.CodexCli && installation is not null)
+            {
+                foreach (var model in new[] { CodexCliRelease.Gpt61Sol, CodexCliRelease.Gpt61Terra })
+                {
+                    if (CodexCliRelease.OffersGpt61(installation.Version)) continue;
+                    capabilities.Add(new AdvertisedCapabilityDto(
+                        CapabilityProtocol.ModelAcceptance(cliType, model), "model-acceptance", "unavailable",
+                        Identity: $"{cliType}/{model}",
+                        Detail: $"This CLI version does not offer {model}: codex-cli {installation.Version} requires {CodexCliRelease.Gpt61MinimumVersion} or newer."));
+                }
+            }
         }
     }
 
@@ -1504,7 +1603,7 @@ public sealed class ProviderAuthProbe
         if (operatorStopped || signal is not null || hostShutdown)
             return Current(cliBinary);
 
-        var evidence = ProviderAccessClassifier.Classify(
+        var evidence = ProviderAccessClassifier.ClassifyRun(
             result.ExitCode,
             result.StdOut,
             result.StdErr,
@@ -1845,7 +1944,7 @@ public sealed class ProviderAuthProbe
 
     private static readonly Regex Whitespace = new(@"\s+", RegexOptions.Compiled);
 
-    private static string Excerpt(string? value, int maxChars = 200)
+    internal static string Excerpt(string? value, int maxChars = 200)
     {
         var single = Whitespace.Replace(value ?? string.Empty, " ").Trim();
         var redacted = SecretShaped.Replace(single, "[redacted]");

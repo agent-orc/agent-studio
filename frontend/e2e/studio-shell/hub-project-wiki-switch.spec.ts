@@ -301,7 +301,7 @@ test.describe('Project ⇄ Wiki switch with the Hub tab already open (AGT-2023)'
     // current Deck tab instead of replacing it.
     await rail(page, 'wiki').click();
     const wikiTab = page.getByTestId(`studio-tab-hub:${PROJECT}:wiki`);
-    await expect(wikiTab).toHaveAttribute('aria-selected', 'true');
+    await expect(wikiTab.getByRole('tab')).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByTestId(`studio-tab-hub:${PROJECT}`)).toHaveCount(1);
     await shot(page, 'acceptance-01-internal-link-opens-app-tab.png');
 
@@ -309,15 +309,15 @@ test.describe('Project ⇄ Wiki switch with the Hub tab already open (AGT-2023)'
     // destination is activated and its count stays at one.
     await page.getByTestId(`studio-tab-hub:${PROJECT}`).click();
     await wikiRow(page).click();
-    await expect(wikiTab).toHaveAttribute('aria-selected', 'true');
+    await expect(wikiTab.getByRole('tab')).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByTestId(`studio-tab-hub:${PROJECT}:wiki`)).toHaveCount(1);
     await shot(page, 'acceptance-02-repeat-click-focuses-existing-tab.png');
 
     // (c) Workspace Settings is immediately left of Wiki, but Deck was the
     // previously active tab. Closing Wiki must therefore activate Deck.
-    await wikiTab.getByRole('button', { name: 'Close tab' }).click();
-    await expect(page.getByTestId(`studio-tab-hub:${PROJECT}`)).toHaveAttribute('aria-selected', 'true');
-    await expect(page.getByTestId('studio-tab-workspace-settings')).toHaveAttribute('aria-selected', 'false');
+    await wikiTab.getByRole('button', { name: /^Close / }).click();
+    await expect(page.getByTestId(`studio-tab-hub:${PROJECT}`).getByRole('tab')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByTestId('studio-tab-workspace-settings').getByRole('tab')).toHaveAttribute('aria-selected', 'false');
     await shot(page, 'acceptance-03-active-close-returns-to-mru.png');
   });
 

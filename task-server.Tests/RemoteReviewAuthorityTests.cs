@@ -1258,6 +1258,9 @@ public sealed partial class RemoteReviewAuthorityTests
         await using (var firstFactory = new ReviewApiFactory(temp.Path))
         {
             var firstStore = firstFactory.Services.GetRequiredService<TaskServerStore>();
+            // SM-9: an authenticated Task Server admits claims only on hosts with a project policy.
+            foreach (var host in new[] { "coding-host", "host-a" })
+                await firstStore.UpdateHostProjectPolicyAsync(host, new UpdateHostProjectPolicyRequest(true, [], 0), "owner", default);
             await SeedReviewSubjectAsync(firstStore);
             await RegisterReviewerAsync(firstStore, "review-http", "instance-a", "host-a");
             claim = await firstStore.ClaimReviewAsync(
@@ -1467,8 +1470,10 @@ public sealed partial class RemoteReviewAuthorityTests
         Assert.Equal("4-auto-review", (await TaskAsync(store, subject.TaskId)).State);
     }
 
-    [Fact]
-    public async Task Preparation_failure_preserves_full_command_evidence_and_retries_as_infrastructure()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Preparation_failure_preserves_classification_when_report_artifacts_are_reduced(bool reduced)
     {
         using var temp = new TempDirectory();
         var store = Store(temp.Path);
@@ -1520,6 +1525,7 @@ public sealed partial class RemoteReviewAuthorityTests
             Outcome = "ReviewInfra",
             FailureClassification = "PreparationFailed",
             Summary = "Preparation command 'prepare-dependencies' exited 9; budget=120000ms.",
+            ArtifactsReduced = reduced,
             Commands = [failed],
             Artifacts =
             [
@@ -1528,13 +1534,13 @@ public sealed partial class RemoteReviewAuthorityTests
                     "text/plain; charset=utf-8",
                     stdoutDigest,
                     stdout.LongLength,
-                    Convert.ToBase64String(stdout)),
+                    reduced ? null : Convert.ToBase64String(stdout)),
                 new ReviewArtifactEvidenceDto(
                     "candidate.prepare-dependencies.stderr.log",
                     "text/plain; charset=utf-8",
                     stderrDigest,
                     stderr.LongLength,
-                    Convert.ToBase64String(stderr)),
+                    reduced ? null : Convert.ToBase64String(stderr)),
             ],
             Verdicts = [],
         };
@@ -2788,7 +2794,8 @@ public sealed partial class RemoteReviewAuthorityTests
         string title = "Task",
         bool policyDifferentHost = false,
         string codingHost = "coding-host",
-        ReviewPlanDto? plan = null)
+        ReviewPlanDto? plan = null,
+        string? codingPrincipal = null)
     {
         var workspaces = await store.ListWorkspacesAsync(default);
         var workspace = workspaces.FirstOrDefault()
@@ -2808,7 +2815,8 @@ public sealed partial class RemoteReviewAuthorityTests
                 [ReviewCapabilities.CodingExecutor]),
             "test",
             default);
-        var coding = await store.ClaimAsync(new ClaimRequest(codingId, codingInstance), codingId, default);
+        var coding = await store.ClaimAsync(
+            new ClaimRequest(codingId, codingInstance), codingId, default, codingPrincipal);
         var resultRef = FencedGitRefs.ImmutableResult(
             coding.Run!.RunId,
             coding.Lease!.Fence,

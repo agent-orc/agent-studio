@@ -2,262 +2,253 @@
   "documented": {
     "src/app/app.html": {
       "reason": "Studio navigation and independent pane controls keep their own semantics.",
-      "signatures": [
-        "5a8c8577bb08ed46"
+      "controls": [
+        "testid:'lane-group-focus-' + g.id:pressed"
       ]
     },
     "src/app/components/file-source-history/file-source-history.component.html": {
       "reason": "History run rows select a document version from a timeline list.",
-      "signatures": [
-        "9f1eb68ec9ff02da"
+      "controls": [
+        "testid:'file-source-history-run-' + (entry.runIndex ?? entry.sha):pressed"
       ]
     },
     "src/app/components/project-basics-form/project-basics-form.component.html": {
       "reason": "Project colour swatches form a visual palette with many colour choices.",
-      "signatures": [
-        "0a34beeaaa4fb4c8"
+      "controls": [
+        "class:pbf__swatch:pressed"
+      ]
+    },
+    "src/app/features/studio-shell/studio-shell.component.html": {
+      "reason": "Titlebar auto mode controls project execution and stays independently focusable beside the project picker.",
+      "controls": [
+        "testid:studio-titlebar-auto-toggle:class"
       ]
     },
     "src/app/components/cli-model-selector/cli-model-selector.component.html": {
       "reason": "Model catalogue uses a long wrapping radio list and roving keyboard contract.",
-      "signatures": [
-        "0d1d8d21561c613e",
-        "159071461c4d17e3",
-        "3692a31770550021",
-        "6bfd55ea3553c836",
-        "b760cb3d6df1a4d8"
+      "controls": [
+        "testid:pickerTestidPrefix() + '-cli-' + option.id:checked",
+        "testid:pickerTestidPrefix() + '-model-' + modelOption.id:checked",
+        "testid:pickerTestidPrefix() + '-model-' + modelOption.id:checked",
+        "testid:pickerTestidPrefix() + '-model-default':checked",
+        "testid:pickerTestidPrefix() + '-thinking-' + level:checked"
       ]
     },
     "src/app/features/token-analysis/components/token-analysis-kind-bars/token-analysis-kind-bars.html": {
       "reason": "Chart row labels select a data series, not a compact preference.",
-      "signatures": [
-        "3504adc617ece4eb"
+      "controls": [
+        "testid:'token-analysis-kind-row-' + row.label:pressed"
       ]
     },
     "src/app/features/token-analysis/components/token-analysis-scatter/token-analysis-scatter.html": {
       "reason": "Chart marks select a plotted data point, not a compact preference.",
-      "signatures": [
-        "e8e4f30dd375eb1e"
+      "controls": [
+        "class:sc__mark sc__mark--{{ point.group }}:class"
       ]
     },
     "src/app/features/token-analysis/components/token-analysis-card-table/token-analysis-card-table.html": {
       "reason": "Table rows select a card for analysis, not a compact preference.",
-      "signatures": [
-        "f2449e111fd4821e"
+      "controls": [
+        "class:tt__open:pressed"
       ]
     },
     "src/app/features/task-detail/components/activity-log-view/activity-log-view.html": {
       "reason": "These are actual view tabs with tablist semantics.",
-      "signatures": [
-        "70c4b3b561e070f9"
+      "controls": [
+        "testid:activity-log-mode-conversation:class"
       ]
     },
     "src/app/features/task-detail/components/prompt-pane/overview-pane/overview-pane.component.html": {
       "reason": "Run strip and independent controls have their own timeline semantics.",
-      "signatures": [
-        "1d208da9c96eb91c",
-        "7ea39b7471ecbb3c",
-        "c882ce7fa46e009d"
+      "controls": [
+        "testid:overview-pipeline-run-option:class",
+        "testid:overview-pipeline-run-option:class",
+        "testid:overview-pipeline-toggle-disabled:pressed"
       ]
     },
     "src/app/features/task-detail/components/git-pane/task-commit-rounds/task-commit-rounds.component.html": {
       "reason": "Commit round list selects historical records, not a compact preference.",
-      "signatures": [
-        "09907a91991a15e4",
-        "a7df801d9b4bdc47",
-        "e1bd33e9e980a2a6"
+      "controls": [
+        "class:commit-chain__button:pressed",
+        "class:commit-chain__button:pressed",
+        "class:commit-chain__button:pressed"
       ]
     },
     "src/app/features/task-detail/components/protocol-pane/run-timeline/run-timeline.component.html": {
       "reason": "Timeline entries select a run, not a compact preference.",
-      "signatures": [
-        "f5db80e2ae15f40c"
+      "controls": [
+        "testid:'run-icon-' + item.run.index:pressed"
       ]
     },
     "src/app/features/board/components/kanban-filter-sidesheet/kanban-filter-sidesheet.component.html": {
       "reason": "Filter chips with counts support many independently applied filters.",
-      "signatures": [
-        "554a4ef270f08805"
+      "controls": [
+        "testid:'kanban-filter-type-' + opt.value:pressed"
       ]
     },
     "src/app/features/board/components/project-tabs/project-tabs.component.html": {
       "reason": "Project navigation tabs retain their tablist semantics.",
-      "signatures": [
-        "aeb478e157155ab2"
+      "controls": [
+        "testid:'auto-toggle-' + name:class"
       ]
     },
     "src/app/features/tokens/components/token-usage-section/token-usage-section.component.html": {
       "reason": "Section navigation uses current-page semantics.",
-      "signatures": [
-        "46649157638a6428",
-        "4898d1681dca2575",
-        "c1428e27fb006c56",
-        "eab609851867f8f3"
+      "controls": [
+        "testid:token-usage-nav-analysis:class",
+        "testid:token-usage-nav-claude:class",
+        "testid:token-usage-nav-codex:class",
+        "testid:token-usage-nav-workspace:class"
       ]
     },
     "src/app/features/tokens/components/workspace-token-timeline/workspace-token-timeline.html": {
       "reason": "Project legend chips toggle independent series visibility.",
-      "signatures": [
-        "b3ca724c26ef0b6e"
+      "controls": [
+        "testid:'wtt-legend-' + p.project:pressed"
       ]
     },
     "src/app/features/project-token-usage/components/project-token-usage-panel/project-token-usage-panel.component.html": {
       "reason": "Project filter chips toggle independent project visibility.",
-      "signatures": [
-        "b5fd87a342aa6ef8"
+      "controls": [
+        "testid:'heatmap-row-btn-' + row.jobId:pressed"
       ]
     },
     "src/app/features/verbose-debug/components/verbose-debug-overlay/verbose-debug-overlay.component.html": {
       "reason": "Verbose debug sections are real tabs with tablist semantics.",
-      "signatures": [
-        "9a2de27eacd18592"
+      "controls": [
+        "testid:'verbose-debug-tab-' + tab.id:class"
       ]
     },
     "src/app/features/shell/components/statusbar-item/statusbar-item.component.html": {
       "reason": "Status bar controls are independent actions.",
-      "signatures": [
-        "86fd81dba73e3ca6"
+      "controls": [
+        "testid:testid():pressed"
       ]
     },
     "src/app/features/project-detail/components/project-shell/project-shell.component.html": {
       "reason": "Project section navigation uses current-page semantics.",
-      "signatures": [
-        "b7e1e5d508ab70e0"
+      "controls": [
+        "testid:'project-shell-mini-rail-' + item.key:class"
       ]
     },
     "src/app/features/project-detail/components/page-action-bar/page-action-bar.html": {
       "reason": "Page action bar controls are independent actions.",
-      "signatures": [
-        "b5eacd959fad1c15"
+      "controls": [
+        "testid:page-action-pin-home:pressed"
       ]
     },
     "src/app/features/project-detail/components/project-git-changes/project-git-changes.component.html": {
       "reason": "Changed file rows select a file in a list.",
-      "signatures": [
-        "4422f4588e175203"
+      "controls": [
+        "testid:git-file-row:class"
       ]
     },
     "src/app/features/project-detail/components/project-wiki-section/project-wiki-section.html": {
       "reason": "Wiki tree and navigation controls select pages or independent options.",
-      "signatures": [
-        "1aea31b48a9ac1da",
-        "2e1ecc520b2feb00",
-        "b7c2d457a1572c3d",
-        "b7dfc2bc0a433ac5",
-        "beea1b36b6d150a6"
+      "controls": [
+        "testid:project-wiki-overview-node:pressed",
+        "testid:project-wiki-star-toggle:pressed",
+        "testid:project-wiki-tab-doc:class",
+        "testid:project-wiki-tab-report:class",
+        "testid:project-wiki-tab-source:class"
       ]
     },
     "src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.html": {
       "reason": "Two-line deployment target cards contain additional descriptive content.",
-      "signatures": [
-        "25aedff2cd1581d5"
+      "controls": [
+        "class:deployment__target-choice:class"
       ]
     },
     "src/app/features/project-detail/components/project-drift-section/project-drift-section.html": {
       "reason": "Architecture marble buttons select a map element for drilldown.",
-      "signatures": [
-        "aa7f5b69c58cdb7b"
+      "controls": [
+        "testid:'project-drift-marble-' + row.element.elementId:class"
       ]
     },
     "src/app/features/project-detail/components/project-proposals-panel/project-proposals-panel.component.html": {
       "reason": "Proposal rows select records from a list.",
-      "signatures": [
-        "021600b7db94fdd1"
+      "controls": [
+        "testid:'proposal-row-' + item.id:class"
       ]
     },
     "src/app/features/project-detail/components/project-integration-panel/project-integration-panel.component.html": {
       "reason": "Integration filter chips have counts and many options.",
-      "signatures": [
-        "23729f4aba3c3e32",
-        "283bb96e65513849",
-        "75a0433101378528",
-        "79aeacbe5639c9c7",
-        "884c0e1eae3927b4",
-        "e55adc9604f9131a",
-        "ffa4aff0b3ab0032"
+      "controls": [
+        "testid:integration-filter-all:pressed",
+        "testid:integration-filter-conflict:pressed",
+        "testid:integration-filter-legacy-unverifiable:pressed",
+        "testid:integration-filter-merged:pressed",
+        "testid:integration-filter-skipped:pressed",
+        "testid:integration-filter-superseded:pressed",
+        "testid:integration-filter-waiting:pressed"
       ]
     },
     "src/app/features/project-detail/components/project-wiki-section/wiki-search-results/wiki-search-results.component.html": {
       "reason": "Wiki tree and navigation controls select pages or independent options.",
-      "signatures": [
-        "dc6b9046e788952e"
+      "controls": [
+        "testid:'wiki-search-star-' + result.relPath:pressed"
       ]
     },
     "src/app/features/project-detail/components/project-wiki-section/wiki-folder-view/wiki-folder-view.component.html": {
       "reason": "Wiki tree and navigation controls select pages or independent options.",
-      "signatures": [
-        "5291bc3641832c77"
+      "controls": [
+        "testid:'wiki-folder-star-' + child.relPath:pressed"
       ]
     },
     "src/app/features/studio-shell/components/global-search/global-search.component.html": {
       "reason": "Search domain controls are independent toggles.",
-      "signatures": [
-        "0efd0688c04be4b7",
-        "2507d3476c55006c"
+      "controls": [
+        "class:search-result:class",
+        "testid:'global-search-domain-' + option.domain:pressed"
       ]
     },
     "src/app/features/studio-shell/components/diff-tab-view/diff-tab-view.component.html": {
       "reason": "Document navigation tabs retain their own tab semantics.",
-      "signatures": [
-        "855dfd5c451f6fa5"
+      "controls": [
+        "class:diff__file:pressed"
       ]
     },
     "src/app/features/studio-shell/components/studio-activity-bar/studio-activity-bar.component.html": {
-      "reason": "Activity bar buttons navigate among product areas.",
-      "signatures": [
-        "7513eb676320f1f2",
-        "e82237c2c5933d34",
-        "ec598792edfe75da",
-        "ed423528dd6bb629"
+      "reason": "Activity bar buttons navigate among product areas and expose the current destination with aria-current.",
+      "controls": [
+        "testid:'studio-ab-' + item.key:class",
+        "testid:studio-ab-chats:class",
+        "testid:studio-ab-workbenches:class"
       ]
     },
     "src/app/features/studio-shell/components/studio-tab-actions/studio-tab-actions.component.html": {
       "reason": "Pane visibility buttons are independent toggles.",
-      "signatures": [
-        "10d0f966346eb87a",
-        "137e87f4a064ab55",
-        "3906a4b02831a08a",
-        "8602e31cf96dd928"
-      ]
-    },
-    "src/app/features/cli/components/cli-sessions-panel/cli-sessions-panel.html": {
-      "reason": "Session filter chips have counts and many options.",
-      "signatures": [
-        "55bfbd4e71e73b94",
-        "5e98f798f4bc1fae",
-        "a0e142b87ade585a"
-      ]
-    },
-    "src/app/features/remote-hosts/components/remote-hosts-panel/remote-hosts-panel.html": {
-      "reason": "Show retired is an independent visibility toggle.",
-      "signatures": [
-        "df07be96dd69b785"
+      "controls": [
+        "testid:studio-board-dossier-toggle:pressed",
+        "testid:studio-pane-toggle-git:pressed",
+        "testid:studio-pane-toggle-prompt:pressed",
+        "testid:studio-pane-toggle-protocol:pressed"
       ]
     },
     "src/app/features/orchestrator/components/prompt-catalogue-nav/prompt-catalogue-nav.component.html": {
       "reason": "Prompt catalogue rows navigate a tree.",
-      "signatures": [
-        "bcf3ccbded9e9490"
+      "controls": [
+        "testid:prompt-admin-only-overrides:pressed"
       ]
     },
     "src/app/features/orchestrator/components/orchestrator-chat-usage-header/orchestrator-chat-usage-header.component.html": {
       "reason": "Usage metadata is an independent show-hide toggle.",
-      "signatures": [
-        "67861fb70f7186e3"
+      "controls": [
+        "testid:chat-metadata-toggle:pressed"
       ]
     },
     "src/app/features/orchestrator/components/orchestrator-side-sheet/orchestrator-side-sheet.component.html": {
       "reason": "Side sheet controls select a section or toggle independent filters.",
-      "signatures": [
-        "07c23b4e18338cf7",
-        "d3dade4a25cc751a"
+      "controls": [
+        "testid:orch-context-send-toggle:pressed",
+        "testid:orch-side-sheet-pin:pressed"
       ]
     },
     "src/app/features/orchestrator/components/orchestrator-feed/orchestrator-feed.html": {
       "reason": "Feed side filters contain counts and many options.",
-      "signatures": [
-        "445d77201ea2eb7e",
-        "98465564f8e368df"
+      "controls": [
+        "testid:'feed-kind-' + filter.id:class",
+        "testid:feed-project-all:class"
       ]
     }
   }

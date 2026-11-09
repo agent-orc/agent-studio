@@ -85,6 +85,7 @@ public sealed class PromptEnrichmentService
 
         IntakeEnrichmentManifest manifest;
         var repositoryRoot = string.Empty;
+        string? verifyNotice = null;
         try
         {
             var catalogue = guidesOverride is not null
@@ -107,6 +108,8 @@ public sealed class PromptEnrichmentService
                 ?? string.Equals(catalogue?.ProjectKey, "PROJ-002", StringComparison.OrdinalIgnoreCase),
                 PipelineTypeSettings.ForTask(settings, task)?.PipelineSteps?
                     .GetValueOrDefault(PipelineCatalogue.PromptEnrichmentStepId)?.EnrichmentBlockIds);
+            verifyNotice = VerifyDefinitionNotice(task, repositoryRoot, settings?.BuildProfile);
+            if (verifyNotice is not null) warnings.Add(VerifyDefinitionPolicy.Summary);
         }
         catch (Exception ex)
         {
@@ -124,8 +127,8 @@ public sealed class PromptEnrichmentService
 
         var fallback = warnings.Any(warning =>
             warning.StartsWith("Selection failed open", StringComparison.Ordinal));
-        var context = applyEnrichment && manifest.Constraints.Count > 0
-            ? RenderLaunchContext(manifest)
+        var context = applyEnrichment && (manifest.Constraints.Count > 0 || verifyNotice is not null)
+            ? RenderLaunchContext(manifest, verifyNotice)
             : string.Empty;
         var launchPrompt = AppendContext(authoredPrompt, context);
         var status = fallback
@@ -190,6 +193,28 @@ public sealed class PromptEnrichmentService
         return new PromptEnrichmentPreparation(authoredPrompt, launchPrompt, context, report);
     }
 
+    /// <summary>
+    /// AGT-3428: a coding run learns at its start that no check can verify its
+    /// delivery, instead of the merge finding out after review. It is a state
+    /// notice, not a catalogue block: it names a file that does not exist, so
+    /// it stays outside the source-verified constraint list.
+    /// </summary>
+    internal static string? VerifyDefinitionNotice(TaskInfo task, string? repositoryRoot, BuildProfile? profile)
+    {
+        if (!string.Equals(TaskModes.Normalize(task.Mode), TaskModes.Coding, StringComparison.Ordinal)
+            || string.IsNullOrWhiteSpace(repositoryRoot) || !Directory.Exists(repositoryRoot))
+            return null;
+        var report = VerifyDefinitionPolicy.Inspect(repositoryRoot, profile);
+        if (!report.IsMissing) return null;
+        var text = new StringBuilder();
+        text.AppendLf($"### No verify commands defined (`{VerifyDefinitionPolicy.EnrichmentBlockId}`)");
+        text.AppendLf();
+        text.AppendLf(report.Message!.TrimEnd());
+        text.AppendLf();
+        text.AppendLf("Add the definition only when this task asks for it; otherwise name the missing file in your final reply.");
+        return text.ToString();
+    }
+
     public static PromptEnrichmentReport? ReadReport(string jobFolder)
     {
         try
@@ -227,7 +252,7 @@ public sealed class PromptEnrichmentService
         return composed.Length == 0 ? string.Empty : composed + "\n\n";
     }
 
-    public static string RenderLaunchContext(IntakeEnrichmentManifest manifest)
+    public static string RenderLaunchContext(IntakeEnrichmentManifest manifest, string? verifyNotice = null)
     {
         var builder = new StringBuilder();
         builder.AppendLf("## Prompt enrichment");
@@ -236,6 +261,11 @@ public sealed class PromptEnrichmentService
         builder.AppendLf();
         foreach (var constraint in manifest.Constraints)
             builder.Append(IntakeRunner.RenderConstraintMarkdown(constraint));
+        if (verifyNotice is not null)
+        {
+            builder.AppendLf();
+            builder.Append(verifyNotice);
+        }
         return builder.ToString().TrimEnd();
     }
 

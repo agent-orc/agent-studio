@@ -114,6 +114,17 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// </summary>
     internal static readonly TimeSpan VerdictlessBackfillMinimumAge = TimeSpan.FromMinutes(10);
 
+    /// <summary>
+    /// When <see cref="HumanReviewEscalation"/> landed (commit c0661a559). From
+    /// then on every park writes its own verdict, so a card that entered Human
+    /// Review later is not one the verdict-less boot repair was written for.
+    /// </summary>
+    internal static readonly DateTime EscalationFunnelIntroducedUtc =
+        new(2026, 6, 2, 1, 59, 27, DateTimeKind.Utc);
+
+    internal const string VerdictlessLegacyParkReason =
+        "Parked in human review before the escalation funnel existed (June 2026); no review verdict was recorded for it.";
+
     private readonly TaskScannerService _scanner;
     private readonly ITaskAccess _taskAccess;
     private readonly OrchestratorChatLog _chatLog;
@@ -130,7 +141,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
     /// <summary>
     /// Default aspect runner ids when <c>ReviewDecisionOrchestrator:AspectRunners</c>
-    /// is not configured. ADR-0025 slice 1 ships these four; missing
+    /// is not configured. Missing
     /// config falls back to default-on rather than no-aspects.
     /// </summary>
     private static readonly string[] DefaultAspectRunners =
@@ -138,7 +149,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         "requirement-fit",
         "code-quality",
         "documentation-impact",
-        "tests-and-evidence"
+        "tests-and-evidence",
+        "visual-review"
     };
 
     private readonly Queue<DateTime> _callTimestamps = new();
@@ -228,6 +240,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private readonly DecisionCardRequests? _decisionRequests;
     private readonly MonolithOrchestrationStore? _orchestration;
     private readonly ReviewInputDecisionGateway? _reviewInputDecisions;
+    private readonly QuotaAdmissionService? _quotaAdmission;
 
     /// <summary>
     /// Stable prefix on the <c>Reason</c> field of every
@@ -286,7 +299,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         DecisionCardRequests? decisionRequests = null,
         MonolithOrchestrationStore? orchestration = null,
         TimeProvider? timeProvider = null,
-        ReviewInputDecisionGateway? reviewInputDecisions = null)
+        ReviewInputDecisionGateway? reviewInputDecisions = null,
+        QuotaAdmissionService? quotaAdmission = null)
     {
         _scanner = scanner;
         _stateMachine = stateMachine;
@@ -327,6 +341,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _decisionRequests = decisionRequests;
         _orchestration = orchestration;
         _reviewInputDecisions = reviewInputDecisions;
+        _quotaAdmission = quotaAdmission;
 
         _statusSnapshot.ConfigureEscalationRateAlert(
             _configuration.GetValue(
@@ -401,11 +416,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         }
 
         // Pure data-repair, run on EVERY boot regardless of the Enabled flag:
-        // give an old 5-human-review card with durable run provenance but no
-        // orchestrator verdict a retroactive Escalate verdict + status.md stub
-        // so the board can explain it. Age, provenance, terminal-lane, and
-        // latest-operator-move guards keep accepted or explicitly placed cards
-        // out of this legacy migration.
+        // give a 5-human-review card parked before the escalation funnel, with
+        // durable run provenance but no orchestrator verdict, a retroactive
+        // Escalate verdict + status.md stub so the board can explain it. Lane
+        // entry date, review subject, age, provenance, terminal-lane, and
+        // latest-operator-move guards keep every other card out of it.
         try { BackfillVerdictlessHumanReview(workspace!, stoppingToken); }
         catch (OperationCanceledException) { return; }
         catch (Exception ex) { _logger.LogWarning(ex, "ReviewDecisionOrchestrator: verdict-less human-review backfill failed"); }
@@ -528,6 +543,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                                 _logger.LogWarning(ex,
                                     "ReviewDecisionOrchestrator failed to process lightweight report {Project}/{JobId}",
                                     entry.Name, pending.Job.Id);
+                                await EscalatePostProcessingFailureAsync(
+                                    workspace, entry, pending.Job,
+                                    "lightweight-review-threw:" + ex.GetType().Name + ": " + ex.Message,
+                                    CancellationToken.None);
                             }
                             finally
                             {
@@ -536,9 +555,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                             continue;
                         }
 
-                        // Defer to the read-only parallel pool. The cheap
-                        // enabled-checks happen here so a disabled/no-aspect
-                        // project never occupies a slot.
+                        // The project can deliberately turn off the aspect
+                        // pipeline. That kill switch leaves DONE for an
+                        // operator instead of treating it as a failed step.
                         if (aspects.Count == 0 ||
                             !_configuration.GetValue("ReviewDecisionOrchestrator:AspectsEnabled", true))
                         {
@@ -620,6 +639,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                         _logger.LogWarning(ex,
                             "ReviewDecisionOrchestrator failed to process {Project}/{JobId}",
                             entry.Name, pending.Job.Id);
+                        await EscalatePostProcessingFailureAsync(
+                            workspace, entry, pending.Job,
+                            "review-dispatch-threw:" + ex.GetType().Name + ": " + ex.Message,
+                            CancellationToken.None);
                     }
                     finally
                     {
@@ -781,6 +804,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     workspace, entry, pending, cliBinary, model, aspectModel,
                     TimeSpan.FromSeconds(aspectTimeoutSeconds), maxPerHour,
                     ConfiguredMaxReissues(entry.Name), ct);
+                if (result.Status == PostProcessingCardStatus.Blocked
+                    && result.Reason is not ("aspect-reviews-disabled" or "no-aspect-runners-resolved"))
+                    result = await EscalatePostProcessingFailureAsync(
+                        workspace, entry, pending.Job, result.Reason, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -796,7 +823,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 _logger.LogWarning(ex,
                     "ReviewDecisionOrchestrator failed to post-process {Project}/{JobId}",
                     entry.Name, pending.Job.Id);
-                result = PostProcessingCardResult.Blocked("dispatch-threw:" + ex.GetType().Name);
+                result = await EscalatePostProcessingFailureAsync(
+                    workspace, entry, pending.Job,
+                    "dispatch-threw:" + ex.GetType().Name + ": " + ex.Message,
+                    CancellationToken.None);
             }
             finally
             {
@@ -811,9 +841,73 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // 4-auto-review card at all - a lane move that already took it out, or
         // a sentinel that a previous tick resolved. Both are "nothing to do
         // here", not a fault of this card.
-        return skipReason is null
+        var skipped = skipReason is null
             ? PostProcessingCardResult.Deferred("card-not-pending-in-auto-review")
             : ClassifySkip(skipReason);
+        if (skipped.Status == PostProcessingCardStatus.Blocked
+            && _scanner.FindJob(jobId, entry.Path) is { } blocked)
+            return await EscalatePostProcessingFailureAsync(
+                workspace, entry, blocked, skipped.Reason, ct);
+        return skipped;
+    }
+
+    private async Task<PostProcessingCardResult> EscalatePostProcessingFailureAsync(
+        string workspace, WatchPathEntry entry, TaskInfo job, string failure, CancellationToken ct)
+    {
+        var current = _scanner.FindJob(job.Id, entry.Path) ?? job;
+        if (current.State != TaskStates.AutoReview)
+            return PostProcessingCardResult.Decided("post-processing-lane-already-changed");
+        var reason = "Post-processing could not reach a review decision: "
+            + ResultFinalizationPolicy.Limit(CredentialRedactor.Redact(failure));
+        MoveJobOutcome moved;
+        if (_humanReviewEscalation is not null)
+        {
+            moved = await _humanReviewEscalation.EscalateAsync(
+                current.Id, entry.Path, entry.Name,
+                HumanReviewEscalationCategories.AutoReviewEscalation,
+                reason, ct, expectedSourceState: TaskStates.AutoReview);
+        }
+        else
+        {
+            moved = GuardedMoveJob(current.Id, TaskStates.Escalated, entry.Path,
+                reason: reason, transitionCause: LaneChangeCauses.Escalated,
+                transitionDetail: "post-processing-failure");
+            if (moved.Status == MoveJobStatus.Success)
+                AppendReviewDecision(workspace, new ReviewDecisionRecord(
+                    DateTime.UtcNow, current.Id, entry.Name,
+                    ReviewDecisionKind.Escalate, reason,
+                    "(deterministic post-processing failure)", "(no model call)", string.Empty),
+                    current.FolderPath, moved.NewFolderPath);
+        }
+        if (moved.Status != MoveJobStatus.Success)
+        {
+            EmitVerdictTimeline(current.FolderPath, TimelineEventKinds.PostStepFinished,
+                TimelineActors.Orchestrator,
+                "Post-processing failed and escalation could not move the card: " + moved.Status + ". " + reason,
+                new Dictionary<string, string>
+                {
+                    ["stepId"] = PipelineCatalogue.OrchestratorDecisionStepId,
+                    ["status"] = "failed",
+                    ["moveStatus"] = moved.Status.ToString(),
+                });
+            return PostProcessingCardResult.Blocked("escalation-move-failed:" + moved.Status + ":" + failure);
+        }
+
+        var folder = moved.NewFolderPath ?? current.FolderPath;
+        try
+        {
+            RecordOrchestratorDecisionStep(folder, PipelineStepStatus.Failed,
+                DecisionVerdictEscalate, reason);
+            _pipelineLog?.Complete(folder, pendingStepReason: reason);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not close failed post-processing pipeline for {JobId}", current.Id);
+        }
+        EmitVerdictTimeline(folder, TimelineEventKinds.OrchestratorEscalated,
+            TimelineActors.Orchestrator, reason,
+            new Dictionary<string, string> { ["cause"] = "post-processing-failure" });
+        return PostProcessingCardResult.Decided("post-processing-failure-escalated");
     }
 
     /// <summary>
@@ -991,6 +1085,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                         _logger.LogWarning(ex,
                             "ReviewDecisionOrchestrator failed to process {Project}/{JobId}",
                             entry.Name, pending.Job.Id);
+                        await EscalatePostProcessingFailureAsync(
+                            workspace, entry, pending.Job,
+                            "aspect-review-threw:" + ex.GetType().Name + ": " + ex.Message,
+                            CancellationToken.None);
                     }
                     finally
                     {
@@ -1148,9 +1246,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// <summary>
     /// One-shot boot repair for the bug
     /// <c>karten-landen-in-5-human-review-ohne-verdict-und-ohne-statusmarkdown</c>:
-    /// every old card parked in <c>5-human-review</c> whose per-project decision
-    /// journal holds NO record for that job and whose task folder proves a prior
-    /// agent run gets a retroactive
+    /// every card that entered <c>5-human-review</c> before
+    /// <see cref="EscalationFunnelIntroducedUtc"/>, whose per-project decision
+    /// journal holds NO record for that job, which carries no review subject,
+    /// and whose task folder proves a prior agent run gets a retroactive
     /// <see cref="ReviewDecisionKind.Escalate"/> verdict (category
     /// <see cref="HumanReviewEscalationCategories.UnknownLegacy"/>) and a minimal
     /// <c>status.md</c> stub, written through <see cref="HumanReviewEscalation"/>
@@ -1195,6 +1294,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             if (string.IsNullOrWhiteSpace(job.ProjectName)) continue;
             if (DateTime.UtcNow - job.CreatedAt < VerdictlessBackfillMinimumAge) continue;
             if (!HasRunProvenance(job)) continue;
+            // Only the pre-funnel parks this repair was written for. A later
+            // card without a journal record reached the lane through a path
+            // that explains itself elsewhere (a passed review, an integration
+            // park), and moving it would state something false about it.
+            if (!EnteredHumanReviewBeforeFunnel(job)) continue;
+            if (File.Exists(ReviewSubjectStore.PathFor(job.FolderPath))) continue;
 
             if (!decisionsByProject.TryGetValue(job.ProjectName, out var records))
             {
@@ -1214,7 +1319,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             _humanReviewEscalation.Escalate(
                 job.Id, job.WatchPath, job.ProjectName,
                 HumanReviewEscalationCategories.UnknownLegacy,
-                "Parked in human review before the escalation funnel existed; no automated review ran.");
+                VerdictlessLegacyParkReason);
 
             repaired++;
             _logger.LogInformation(
@@ -1224,6 +1329,36 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         if (repaired > 0)
             _logger.LogInformation("ReviewDecisionOrchestrator: verdict-less human-review backfill repaired {Repaired} card(s).", repaired);
+    }
+
+    /// <summary>
+    /// The later of the card's lane-entry stamp and its latest lane change, so
+    /// a recent move is never read as a legacy park. A timeline that cannot be
+    /// read leaves the stamp alone.
+    /// </summary>
+    private bool EnteredHumanReviewBeforeFunnel(TaskInfo job)
+    {
+        var entered = job.EnteredLaneAt.Kind == DateTimeKind.Unspecified
+            ? DateTime.SpecifyKind(job.EnteredLaneAt, DateTimeKind.Utc)
+            : job.EnteredLaneAt.ToUniversalTime();
+        try
+        {
+            var latestLaneChange = _timeline?.ReadAll(job.FolderPath)
+                .LastOrDefault(evt => string.Equals(evt.Kind, TimelineEventKinds.LaneChanged, StringComparison.Ordinal));
+            if (latestLaneChange is not null)
+            {
+                var moved = latestLaneChange.Ts.Kind == DateTimeKind.Unspecified
+                    ? DateTime.SpecifyKind(latestLaneChange.Ts, DateTimeKind.Utc)
+                    : latestLaneChange.Ts.ToUniversalTime();
+                if (moved > entered) entered = moved;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "ReviewDecisionOrchestrator: lane-entry read failed for {Project}/{JobId}.",
+                job.ProjectName, job.Id);
+        }
+        return entered < EscalationFunnelIntroducedUtc;
     }
 
     private bool HasLatestOperatorLaneVerdict(TaskInfo job)
@@ -1372,6 +1507,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             _logger.LogWarning(ex,
                 "ReviewDecisionOrchestrator CLI invocation failed for {Project}/{JobId}",
                 entry.Name, pending.Job.Id);
+            await EscalatePostProcessingFailureAsync(workspace, entry, pending.Job,
+                "review-decision-model-threw:" + ex.GetType().Name + ": " + ex.Message,
+                CancellationToken.None);
             return;
         }
 
@@ -2241,6 +2379,22 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         using var pipelineAttempt = pipelineRecord == null
             ? null
             : _pipelineLog!.EnterAttempt(current.FolderPath, pipelineRecord.Attempt);
+        var failedSummary = pipelineRecord?.Steps.FirstOrDefault(step =>
+            step.StepId == PipelineCatalogue.SummaryAssessmentStepId
+            && step.Status == PipelineStepStatus.Failed);
+        if (failedSummary is not null)
+        {
+            if (!SummaryGenerationService.TryRestoreAgentReportStatus(current, out var source))
+            {
+                await EscalatePostProcessingFailureAsync(workspace, entry, current,
+                    "post-summary-assessment failed (" + (failedSummary.Reason ?? "no reason recorded")
+                    + ") and no agent status or final message could be recovered.", ct);
+                return;
+            }
+            EmitVerdictTimeline(current.FolderPath, TimelineEventKinds.ResultSummaryPending,
+                TimelineActors.System,
+                "Summary assessment failed; review uses the agent's " + source + ".");
+        }
         var isResearch = TaskModes.Normalize(current.Mode) == TaskModes.Research;
         var primaryReport = Path.Combine(current.FolderPath, "results", "report.html");
         var hasPrimaryResult = isResearch
@@ -2330,6 +2484,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 ? LoadStatusSummary(current.FolderPath)
                 : string.Empty;
         var diffSummary = LoadDiffSummary(entry, current);
+        var visualChangedPaths = ResolveLocalVisualChangedPaths(entry, current);
         var resultsInventory = ResultsInventory.Render(current.FolderPath);
         var cardMode = ReviewCardMode.Describe(current.Mode);
         WritePostProcessingOutcome(current, PostProcessingOutcomes.FindingsAdded,
@@ -2349,6 +2504,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             StatusSummary: statusSummary)
         {
             ResultsInventory = resultsInventory,
+            VisualChangedPaths = visualChangedPaths,
             CardMode = cardMode,
             AcceptanceScope = RequirementAcceptanceScope.Describe(
                 current.AcceptanceScope,
@@ -2403,6 +2559,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         if (gate.IsIncomplete)
         {
             await HandleCompletionGateAsync(workspace, entry, pending, current, gate, ct);
+            return;
+        }
+
+        var definitionGate = RunProjectDefinitionCheck(workspace, entry, current);
+        if (definitionGate.IsIncomplete)
+        {
+            await HandleCompletionGateAsync(workspace, entry, pending, current, definitionGate, ct);
             return;
         }
 
@@ -2589,7 +2752,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             Tags = current.Tags,
         };
         var enabledAspects = aspects
-            .Where(id => PipelineStepConfigResolver.ShouldRun(settings, $"aspect-{id}", conditionContext))
+            .Where(id => PipelineStepConfigResolver.ShouldRun(settings, $"aspect-{id}", conditionContext)
+                && (!string.Equals(id, "visual-review", StringComparison.OrdinalIgnoreCase)
+                    || visualChangedPaths is null
+                    || VisualReviewEvidence.IsFrontendVisualChange(visualChangedPaths)))
             .ToList();
         var scopedReview = PlanLocalScopedReview(current, entry, enabledAspects, projectSettings);
         enabledAspects = scopedReview.RunAspects.ToList();
@@ -2656,6 +2822,27 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             };
         }
 
+        foreach (var aspectId in enabledAspects)
+        {
+            var stepId = $"aspect-{aspectId}";
+            var aspectCli = cliForAspect?.Invoke(aspectId) ?? NormalizeReviewCliType(cliBinary);
+            var candidateModel = modelForAspect?.Invoke(aspectId) ?? aspectModel;
+            var aspectThinking = thinkingLevelForAspect?.Invoke(aspectId);
+            var admission = _quotaAdmission?.Plan(new QuotaAdmissionRequest(
+                aspectCli, candidateModel, aspectThinking, entry.Name, 0,
+                $"local-review:{stepId}", SameClassOnly: true));
+            if (admission is not { ShouldLaunch: false }) continue;
+            _pipelineLog?.RecordStep(current.FolderPath, new PipelineStepExecution
+            {
+                StepId = stepId,
+                Kind = StepKind.Aspect,
+                Status = PipelineStepStatus.Pending,
+                Reason = admission.Reason,
+                Model = candidateModel,
+                ThinkingLevel = aspectThinking,
+            });
+            return;
+        }
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Aspects);
         var aspectSubject = ResolveBuildTestGateSubject(current, entry.Path);
@@ -2666,6 +2853,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         };
         var report = await _aspectRunner.RunAsync(inputs, enabledAspects, cliBinary, aspectModel, perAspectTimeout, ct,
             modelForAspect, thinkingLevelForAspect, promptForAspect, cliForAspect, modelSourceForAspect);
+        if (report.HasQuotaDeferred) return;
         if (ReviewResultWasSuperseded(current, entry, aspectSubject, report)) return;
         if (scopedReview.CarriedVerdicts.Count > 0)
         {
@@ -3697,10 +3885,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                         StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
                 ledger.AspectIds.Contains(verdict.Aspect, StringComparer.OrdinalIgnoreCase))).ToArray()));
         var run = decisions.Where(item => item.Run).Select(item => item.Aspect)
+            .Concat(enabledAspects.Where(aspect => aspect == "visual-review"))
             .Concat(enabledAspects.Where(aspect => !previous.ContainsKey(aspect)))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var carried = decisions.Where(item => !item.Run)
+        var carried = decisions.Where(item => !item.Run && item.Aspect != "visual-review")
             .Select(item => previous[item.Aspect])
             .Select(verdict => new AspectVerdict(
                 verdict.Aspect,
@@ -5313,9 +5502,32 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var thinkingLevel = catalogueStep is null
                 ? null
                 : PipelineStepConfigResolver.ResolveThinkingLevel(projectSettings, catalogueStep, cli, model);
+            var gradeAdmission = _quotaAdmission?.Plan(new QuotaAdmissionRequest(
+                cli, model, thinkingLevel, entry.Name, 0, "review-grade", SameClassOnly: true));
+            if (gradeAdmission is { ShouldLaunch: false })
+            {
+                _pipelineLog?.RecordStep(job.FolderPath, new PipelineStepExecution
+                {
+                    StepId = stepId,
+                    Kind = StepKind.Orchestrator,
+                    Status = PipelineStepStatus.Pending,
+                    Reason = gradeAdmission.Reason,
+                    Model = model,
+                    ThinkingLevel = thinkingLevel,
+                });
+                return null;
+            }
+            if (gradeAdmission is not null)
+            {
+                cli = gradeAdmission.CliType;
+                model = gradeAdmission.Model ?? model;
+                thinkingLevel = gradeAdmission.ThinkingLevel;
+            }
             selectedModel = model;
             selectedThinkingLevel = thinkingLevel;
-            selectedModelSource = modelResolution?.Source ?? PipelineStepConfigResolver.ModelSourceRuntime;
+            selectedModelSource = gradeAdmission?.IsFallback == true
+                ? gradeAdmission.ModelFallback?.Reason == "operator-preference" ? "operator-switch" : "quota-cap"
+                : modelResolution?.Source ?? PipelineStepConfigResolver.ModelSourceRuntime;
 
             var (diff, commitLabel) = BuildGradeDiff(entry, job, buildGateResult);
 
@@ -6158,6 +6370,44 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// result as a first-class pipeline timeline row. A missing required entry
     /// gates delivery; an unreferenced card records NotApplicable.
     /// </summary>
+    /// <summary>
+    /// Validates the delivery's <c>.agent-studio/project.yml</c> at the exact
+    /// commit the build gate will test (AOW-15). Without git, a subject SHA, or
+    /// a readable file the check passes; the build gate stays the backstop.
+    /// </summary>
+    private CompletionGate.Decision RunProjectDefinitionCheck(
+        string workspace,
+        WatchPathEntry entry,
+        TaskInfo current)
+    {
+        var sha = ResolveBuildTestGateSubject(current, entry.Path).Sha;
+        if (_git is null || string.IsNullOrWhiteSpace(sha))
+            return new CompletionGate.Decision { Source = CompletionGate.CompletionGateSource.ProjectDefinition };
+        var repositoryRoot = string.IsNullOrWhiteSpace(entry.RepositoryPath)
+            ? entry.RootPath
+            : entry.RepositoryPath;
+        try
+        {
+            var decision = ProjectDefinitionGate.Evaluate(
+                _git.GetFileAtCommit(repositoryRoot, sha, ProjectPreparationPaths.Definition),
+                path => _git.FileExistsAtCommit(repositoryRoot, sha, path),
+                CountPriorReissues(workspace, entry.Name, current.Id),
+                ConfiguredMaxReissues(entry.Name));
+            if (decision.IsIncomplete)
+                _logger.LogInformation(
+                    "project-definition-invalid project={Project} job={JobId} sha={Sha} action={Action} reason={Reason}",
+                    entry.Name, current.Id, sha, decision.Action, decision.Reason);
+            return decision;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Project definition check failed for {Project}/{JobId}; the build gate decides",
+                entry.Name, current.Id);
+            return new CompletionGate.Decision { Source = CompletionGate.CompletionGateSource.ProjectDefinition };
+        }
+    }
+
     private DossierMaintenanceReview? RunDossierMaintenancePostStep(
         WatchPathEntry entry,
         TaskInfo current)
@@ -7156,6 +7406,26 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 "ReviewDecisionOrchestrator: full-range diff summary failed for {Project}/{JobId}; falling back to single-commit view",
                 project, job.Id);
             return AppendBranchDiffSummary(BuildDiffSummary(EmptyAggregate, job.Commit), entry, job);
+        }
+    }
+
+    private IReadOnlyList<string>? ResolveLocalVisualChangedPaths(WatchPathEntry entry, TaskInfo job)
+    {
+        if (_git is null) return null;
+        try
+        {
+            var repoRoot = _git.ResolveRepoRoot(job.Id, entry.Path);
+            var resultSha = ResolveBuildTestGateSubject(job, entry.Path).Sha;
+            if (string.IsNullOrWhiteSpace(repoRoot) || string.IsNullOrWhiteSpace(resultSha))
+                return null;
+            var configuredBase = _projectSettings?.Get(entry.Name)?.IntegrationBranch;
+            var baseBranch = _git.ResolveIntegrationBranch(repoRoot, configuredBase);
+            return _git.ChangedPathsAgainstMergeBase(repoRoot, baseBranch, resultSha);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Visual review changed paths could not be resolved for {JobId}", job.Id);
+            return null;
         }
     }
 

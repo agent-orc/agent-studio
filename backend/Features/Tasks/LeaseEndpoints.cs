@@ -30,6 +30,55 @@ public static class LeaseEndpoints
     internal static readonly SemaphoreSlim ClaimGate = new(1, 1);
     private static readonly AgentStudio.Shared.RemoteRequeueLogLimiter DeferredLeaseLogs = new();
 
+    private static void RecordModelHealthEvent(ModelSelectionLedger ledger, TimelineLog timeline,
+        TaskInfo task, string runnerId, string? attemptId, string kind, string rule,
+        string provider, string model, string reason, DateTime? expiresAt = null)
+    {
+        var entry = new ModelSelectionEvent
+        {
+            Kind = kind, Consumer = "coding", Host = runnerId, Project = task.ProjectName,
+            TaskKey = task.TaskKey, AttemptId = attemptId,
+            From = new ModelSelectionRoute(provider, model, task.ThinkingLevel),
+            To = new ModelSelectionRoute(provider, model, task.ThinkingLevel),
+            Rule = rule, Reason = reason,
+            ReturnToPrimaryAt = expiresAt is { } deadline ? new DateTimeOffset(deadline, TimeSpan.Zero) : null,
+        };
+        ledger.Append(entry);
+        timeline.Append(task.FolderPath, $"model.{kind}", TimelineActors.System,
+            $"{reason} Selection event {entry.Id}.", runId: attemptId,
+            details: new Dictionary<string, string> { ["selectionEventId"] = entry.Id });
+    }
+
+    private static IReadOnlyList<AgentStudio.TaskServer.Contracts.ProviderModelFallback> RejectionCandidates(
+        ModelRoutingPolicyRegistry routing, IModelEquivalenceCatalog catalogue,
+        string? cli, string? model, string? thinking, bool unauthorized, bool includeSibling,
+        bool continuation = false)
+    {
+        var provider = CliTypes.Normalize(cli);
+        var sibling = includeSibling ? routing.ProviderRejectionFallback(provider, model) : null;
+        var equivalent = catalogue.TryGetRoute(provider, model, thinking,
+            provider == CliTypes.Codex ? CliTypes.Claude : CliTypes.Codex);
+        AgentStudio.TaskServer.Contracts.ProviderModelFallback? policyEquivalent = null;
+        if (provider == CliTypes.Codex
+            && model is ModelIds.Gpt6Sol or ModelIds.Gpt56Sol
+            && string.Equals(thinking, "xhigh", StringComparison.OrdinalIgnoreCase)
+            && routing.Policy.Tiers.FirstOrDefault(tier => tier.Id == "sol-xhigh")
+                ?.VendorOverrides.GetValueOrDefault("anthropic") is { } highEquivalent)
+            policyEquivalent = new(model!, highEquivalent.Model,
+                continuation ? "The declared same-tier Opus xhigh route after Sol capacity."
+                    : unauthorized ? "provider-unauthorized-policy-equivalent" : "model-capacity-policy-equivalent",
+                CliTypes.Claude, highEquivalent.ThinkingLevel);
+        return AgentStudio.TaskServer.Contracts.ProviderRejectionFallbackRoutes.Candidates(
+            provider, unauthorized,
+            sibling is null ? null : new(model!, sibling.ToModel,
+                continuation ? sibling.Reason : "model-capacity-sibling", provider, thinking),
+            equivalent is null ? null : new(model!, equivalent.ToModel,
+                continuation ? "The catalogue equivalent after a provider model refusal."
+                    : unauthorized ? "provider-unauthorized-equivalent" : "model-capacity-equivalent",
+                equivalent.ToCliType, equivalent.ToThinkingLevel),
+            policyEquivalent);
+    }
+
     public static void MapLeaseEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/api/runner/lease");
@@ -402,6 +451,7 @@ public static class LeaseEndpoints
             RunLeaseService leases,
             RemoteRunStopRequestStore stops,
             TaskSessionLog sessions,
+            TimelineLog timeline,
             HttpContext context,
             AgentStudio.Clients.ClientIdentityStore clients,
             AgentStudio.Clients.HostTelemetryStore telemetry,
@@ -415,10 +465,13 @@ public static class LeaseEndpoints
             DossierMaintenanceService dossierMaintenance,
             RemoteDispatchRejectionStore dispatchRejections,
             CliQuotaWaitPolicyService quotaWaitPolicy,
-            QuotaAdmissionService quotaAdmission,
+            IModelSelectionService modelSelection,
+            ModelSelectionLedger selectionLedger,
             QuotaAdmissionRecorder quotaAdmissionRecorder,
+            IModelEquivalenceCatalog equivalenceCatalog,
             TaskMutationService mutations,
             ModelRoutingPolicyRegistry modelRouting,
+            TaskListGitProjectionCache dependencyGitProjection,
             OrchestratorDecisionStore decisionReceipts,
             CancellationToken ct) =>
         {
@@ -718,6 +771,7 @@ public static class LeaseEndpoints
                     .ToHashSet(StringComparer.OrdinalIgnoreCase));
                 foreach (var interrupted in progressTasks)
                 {
+                    if (!RunnerProjectBinding.Allows(runnerPrincipal, interrupted.ProjectName, projects)) continue;
                     var project = settings.Get(interrupted.ProjectName);
                     if (!ProjectExecutionPolicy.AllowsAutomaticPickup(project)
                         || !ProjectExecutionPolicy.IsAssignedRemote(project, req.RunnerId, req.RunnerName))
@@ -837,21 +891,28 @@ public static class LeaseEndpoints
                         admission.ReasonCode));
                 }
 
-                var eligible = liveSnapshot
+                var dependencyTargets = waitsOn.DependencyTargets(liveSnapshot.Where(t => t.State == TaskStates.Ready));
+                var dependencyStatuses = dependencyGitProjection.ReadDependencyIntegration(dependencyTargets);
+                var routable = liveSnapshot
                     .Where(t => !t.Fixture && t.State == TaskStates.Ready
                         && !t.WaitingForEngineDecision)
+                    // SM-9: a runner credential claims only cards of its bound projects.
+                    .Where(t => RunnerProjectBinding.Allows(runnerPrincipal, t.ProjectName, projects))
                     .Where(t =>
                     {
                         var project = settings.Get(t.ProjectName);
                         return RemoteDispatchEligibility.IsAssignedAndRoutable(
-                            t, project, req.RunnerId, req.RunnerName, waitsOn);
+                            t, project, req.RunnerId, req.RunnerName, waitsOn, dependencyStatuses);
                     })
-                    .OrderBy(t => t.Order)
-                    .ThenBy(t => t.CreatedAt);
+                    .ToList();
+                // AGT-3587: claim in each project's displayed Ready order, the
+                // same order the local runner and the board use.
+                var eligible = LaneSortApplier.PickupOrder(routable, settings.Get);
                 var occupiedByProject = ProjectExecutionPolicy.ProjectOccupancy(liveSnapshot);
 
                 TaskInfo? candidate = null;
                 QuotaAdmissionPlan? candidateQuotaPlan = null;
+                var candidateHostHealthFallback = false;
                 RemoteProjectRepository? repository = null;
                 TaskInfo? failedPreflightCandidate = null;
                 RemoteProjectRepository? failedPreflightRepository = null;
@@ -860,6 +921,14 @@ public static class LeaseEndpoints
                 string? capabilityMismatch = null;
                 foreach (var task in eligible)
                 {
+                    var readyKey = task.Key ?? task.TaskKey ?? task.Id;
+                    var earlierRun = leases.Inspect(readyKey);
+                    if (earlierRun is { State: "active", Lease: not null })
+                    {
+                        RecordRejection(task, "earlier-run-still-leased",
+                            $"Earlier run attempt {earlierRun.Lease.AttemptId} still holds a lease until {earlierRun.Lease.ExpiresAt:O}.");
+                        continue;
+                    }
                     var taskProjectSettings = settings.Get(task.ProjectName);
                     var projectSlot = ProjectExecutionPolicy.EvaluateProjectSlot(
                         occupiedByProject, task.ProjectName, taskProjectSettings);
@@ -893,19 +962,108 @@ public static class LeaseEndpoints
                     // fallback family (e.g. claude-only during a codex outage)
                     // can still claim a codex-configured card once quota
                     // routes it to claude.
-                    var quotaPlan = quotaAdmission.Plan(new QuotaAdmissionRequest(
-                        task.CliType,
-                        task.Model,
-                        task.ThinkingLevel,
-                        task.ProjectName,
+                    var pendingRoute = task.PendingIntent?.ModelFallback;
+                    var requestedCli = pendingRoute?.CliType ?? task.CliType;
+                    var requestedModel = pendingRoute?.To ?? task.Model;
+                    var requestedThinking = pendingRoute?.ThinkingLevel ?? task.ThinkingLevel;
+                    if (!string.IsNullOrWhiteSpace(requestedModel)
+                        && capabilityRegistry.TakeExpiredModelCapacity(req.RunnerId.Trim(),
+                            CliTypes.Normalize(requestedCli), requestedModel))
+                        RecordModelHealthEvent(selectionLedger, timeline, task, req.RunnerId,
+                            null, "health-cleared", "model-capacity",
+                            CliTypes.Normalize(requestedCli), requestedModel,
+                            $"The capacity retry window ended for {requestedModel} on this host.");
+                    // MS-5 selection remains the admission boundary; health
+                    // marks supply host facts and a pending switch supplies the
+                    // route for this fresh attempt.
+                    ModelSelectionCall SelectionCall(string? cli, string? model, string? thinking,
+                        string executionPath) => new(
+                        new AgentStudio.TaskServer.Contracts.SelectionRequest
+                        {
+                            Consumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.Coding,
+                            Project = task.ProjectName,
+                            TaskKey = task.Key ?? (string.IsNullOrEmpty(task.TaskKey) ? task.Id : task.TaskKey),
+                            Pins = new AgentStudio.TaskServer.Contracts.SelectionPins(
+                                cli,
+                                pendingRoute is not null || executionPath == "remote-coding-claim-capacity"
+                                    ? model : task.PinMode != "hard" && task.PreferenceExpiresAt > DateTime.UtcNow
+                                    ? task.PreferenceModel ?? task.Model : task.Model,
+                                pendingRoute is not null || executionPath == "remote-coding-claim-capacity"
+                                    ? thinking : task.PinMode != "hard" && task.PreferenceExpiresAt > DateTime.UtcNow
+                                    ? task.PreferenceThinkingLevel ?? task.ThinkingLevel : task.ThinkingLevel,
+                                task.PinMode == "hard" ? AgentStudio.TaskServer.Contracts.SelectionPinMode.Hard
+                                    : AgentStudio.TaskServer.Contracts.SelectionPinMode.Preference),
+                            IsExplicitPin = task.ModelExplicit,
+                            TaskType = task.TaskType,
+                            Host = new AgentStudio.TaskServer.Contracts.SelectionHost(req.RunnerName),
+                        },
+                        executionPath,
                         hostActiveRuns,
-                        "remote-coding-claim",
-                        (provider, model) => capabilityRegistry.AcceptsModel(
-                            req.RunnerId.Trim(), req.CapabilityInstanceId, provider, model),
-                        req.RunnerName,
-                        (provider, model) => capabilityRegistry.ModelAdmission(
-                            req.RunnerId.Trim(), req.CapabilityInstanceId, provider, model)
-                            == AgentStudio.TaskServer.Contracts.ModelAcceptanceAdmission.Accepted));
+                        HostAccepts: (provider, candidateModel) => capabilityRegistry.AcceptsModel(
+                            req.RunnerId.Trim(), req.CapabilityInstanceId, provider, candidateModel),
+                        HostAcceptsFallback: (provider, candidateModel) => capabilityRegistry.ModelAdmission(
+                            req.RunnerId.Trim(), req.CapabilityInstanceId, provider, candidateModel)
+                            == AgentStudio.TaskServer.Contracts.ModelAcceptanceAdmission.Accepted,
+                        CorrectnessFloor: () =>
+                        {
+                            var promptPath = Path.Combine(task.FolderPath, "prompt.md");
+                            var promptText = File.Exists(promptPath)
+                                ? File.ReadAllText(promptPath) : string.Empty;
+                            return modelRouting.CorrectnessFloor(task.TaskType, task.Title, promptText);
+                        },
+                        DecisionKey: req.IdempotencyKey);
+                    var selection = modelSelection.Select(SelectionCall(
+                        requestedCli, requestedModel, requestedThinking, "remote-coding-claim"));
+                    var quotaPlan = selection.Admission;
+                    var unauthorizedOnHost = capabilityRegistry.IsProviderUnauthorized(
+                        req.RunnerId.Trim(), CliTypes.Normalize(requestedCli));
+                    var capacityOnHost = quotaPlan.Outcome == QuotaAdmissionOutcome.HostCapabilityMissing
+                        && !string.IsNullOrWhiteSpace(requestedModel)
+                        && capabilityRegistry.HasModelCapacity(req.RunnerId.Trim(),
+                            CliTypes.Normalize(requestedCli), requestedModel);
+                    var hostHealthFallback = false;
+                    if (capacityOnHost || unauthorizedOnHost)
+                    {
+                        var promptPath = Path.Combine(task.FolderPath, "prompt.md");
+                        var promptText = File.Exists(promptPath) ? File.ReadAllText(promptPath) : string.Empty;
+                        var floor = modelRouting.CorrectnessFloor(task.TaskType, task.Title, promptText);
+                        var choices = RejectionCandidates(modelRouting, equivalenceCatalog,
+                            requestedCli, requestedModel, requestedThinking, unauthorizedOnHost, capacityOnHost);
+                        // The MS-7 hard pin waits for its requested route.
+                        foreach (var choice in task.PinMode == "hard" ? [] : choices)
+                        {
+                            if (!modelRouting.RouteMeetsFloor(choice.To, choice.ThinkingLevel, floor)
+                                || capabilityRegistry.ModelAdmission(req.RunnerId.Trim(), req.CapabilityInstanceId,
+                                    choice.CliType, choice.To)
+                                    != AgentStudio.TaskServer.Contracts.ModelAcceptanceAdmission.Accepted)
+                                continue;
+                            var candidatePlan = modelSelection.Select(SelectionCall(
+                                choice.CliType, choice.To, choice.ThinkingLevel,
+                                "remote-coding-claim-capacity")).Admission;
+                            if (!candidatePlan.ShouldLaunch
+                                || !modelRouting.RouteMeetsFloor(candidatePlan.Model ?? choice.To,
+                                    candidatePlan.ThinkingLevel, floor)) continue;
+                            quotaPlan = candidatePlan with
+                            {
+                                Outcome = QuotaAdmissionOutcome.LaunchFallback,
+                                IsFallback = true,
+                                Reason = unauthorizedOnHost
+                                    ? $"{requestedCli} is unauthorized on this host; switched to {candidatePlan.Model}."
+                                    : $"{requestedModel} is at capacity on this host; switched to {candidatePlan.Model}.",
+                                ModelFallback = new ModelFallbackInfo(requestedModel ?? string.Empty, candidatePlan.Model ?? choice.To,
+                                    choice.Reason, candidatePlan.CliType, candidatePlan.ThinkingLevel),
+                            };
+                            hostHealthFallback = true;
+                            break;
+                        }
+                        if (unauthorizedOnHost && !quotaPlan.IsFallback)
+                            quotaPlan = quotaPlan with
+                            {
+                                Outcome = QuotaAdmissionOutcome.HostCapabilityMissing,
+                                IsFallback = false,
+                                Reason = $"{requestedCli} is unauthorized on this host and no accepted equivalent clears the floor.",
+                            };
+                    }
                     if (quotaPlan.IsDeferred)
                     {
                         if (quotaPlan.Outcome == QuotaAdmissionOutcome.HostCapabilityMissing)
@@ -932,7 +1090,8 @@ public static class LeaseEndpoints
                                 Reason = quotaPlan.Reason,
                                 Scope = "quota",
                             });
-                        quotaAdmissionRecorder.EmitAdmissionDecision(task, quotaPlan, source: "remote-claim");
+                        quotaAdmissionRecorder.EmitAdmissionDecision(task, quotaPlan, source: "remote-claim",
+                            host: req.RunnerId);
                         RecordRejection(task, "quota-admission", quotaPlan.Reason);
                         logger.LogInformation(
                             "remote-runner-coding-claim-skipped-quota runner={Runner} task={TaskKey} outcome={Outcome} reason={Reason}",
@@ -941,33 +1100,6 @@ public static class LeaseEndpoints
                             quotaPlan.Outcome,
                             quotaPlan.Reason);
                         continue;
-                    }
-                    if (quotaPlan.IsFallback)
-                    {
-                        var promptPath = Path.Combine(task.FolderPath, "prompt.md");
-                        var promptText = File.Exists(promptPath)
-                            ? File.ReadAllText(promptPath) : string.Empty;
-                        var floor = modelRouting.CorrectnessFloor(task.TaskType, task.Title, promptText);
-                        if (!modelRouting.RouteMeetsFloor(quotaPlan.Model ?? string.Empty, quotaPlan.ThinkingLevel, floor))
-                        {
-                            var held = quotaPlan with
-                            {
-                                Outcome = QuotaAdmissionOutcome.Wait,
-                                IsFallback = false,
-                                Reason = $"waiting: no host-accepted fallback clears this card's correctness floor; next reset {quotaPlan.NextResetAt:O}",
-                            };
-                            QuotaWaitMarker.Write(task.FolderPath, new QuotaWaitRecord
-                            {
-                                CliType = task.CliType ?? "claude",
-                                StartedAt = now,
-                                ResetAt = held.NextResetAt ?? now.AddMinutes(10),
-                                Reason = held.Reason,
-                                Scope = "quota",
-                            });
-                            quotaAdmissionRecorder.EmitAdmissionDecision(task, held, source: "remote-claim");
-                            RecordRejection(task, "quota-admission", held.Reason);
-                            continue;
-                        }
                     }
                     var cliType = quotaPlan.CliType;
                     var modelCapability = capabilityRegistry.CliModelCapabilityFor(
@@ -1038,7 +1170,7 @@ public static class LeaseEndpoints
                         if (cached is not null
                             && string.Equals(cached.RegistrationFingerprint,
                                 ProjectDeliveryPreflightFingerprint.Create(repository), StringComparison.Ordinal)
-                            && ProjectDeliveryPreflightPolicy.IsFresh(cached, now)
+                            && ProjectDeliveryPreflightPolicy.Applies(cached, now, req.RepositoryCredentialGeneration)
                             && !string.Equals(cached.Status, "ready", StringComparison.OrdinalIgnoreCase))
                         {
                             RecordRejection(
@@ -1053,6 +1185,7 @@ public static class LeaseEndpoints
                         }
                         candidate = task;
                         candidateQuotaPlan = quotaPlan;
+                        candidateHostHealthFallback = hostHealthFallback;
                         break;
                     }
 
@@ -1162,6 +1295,7 @@ public static class LeaseEndpoints
                         // Server receipt time is the cache authority. A host
                         // clock cannot make a stale proof live indefinitely.
                         CheckedAt = DateTime.UtcNow,
+                        CredentialGeneration = req.RepositoryCredentialGeneration,
                     });
                     logger.Log(succeeded ? LogLevel.Information : LogLevel.Warning,
                         "remote-runner-project-preflight project={Project} projectId={ProjectId} runner={Runner} status={Status} detail={Detail}",
@@ -1171,7 +1305,7 @@ public static class LeaseEndpoints
                 var projectPreflight = clients.FindRunnerProjectPreflight(clientId, repository.ProjectId);
                 if (projectPreflight is null
                     || !string.Equals(projectPreflight.RegistrationFingerprint, registrationFingerprint, StringComparison.Ordinal)
-                    || !ProjectDeliveryPreflightPolicy.IsFresh(projectPreflight, DateTime.UtcNow))
+                    || !ProjectDeliveryPreflightPolicy.Applies(projectPreflight, DateTime.UtcNow, req.RepositoryCredentialGeneration))
                 {
                     return Results.Ok(WithCapacity(new RunnerClaimResponse(
                         RunnerClaimStatus.PreflightRequired,
@@ -1262,8 +1396,15 @@ public static class LeaseEndpoints
                     BriefVersion = briefVersion,
                 });
                 if (!acquire.Granted || acquire.Lease is null)
+                {
+                    logger.LogWarning(
+                        "remote-runner-lease-acquire-refused project={Project} task={TaskKey} runner={Runner} outcome={Outcome} message={Message}",
+                        candidate.ProjectName, taskKey, req.RunnerName, acquire.Outcome, acquire.Message);
+                    RecordRejection(candidate, "lease-acquire-refused",
+                        $"Lease acquire refused: {acquire.Outcome}: {acquire.Message ?? "no detail"}");
                     return Results.Ok(WithCapacity(new RunnerClaimResponse(
                         RunnerClaimStatus.Empty, Message: acquire.Message ?? acquire.Outcome)));
+                }
 
                 stops.RetireSuperseded(taskKey, acquire.Lease.AttemptId, acquire.Lease.FencingToken);
                 var stashedIntent = candidate.PendingIntent is null
@@ -1334,10 +1475,34 @@ public static class LeaseEndpoints
                 if (candidateQuotaPlan is not null)
                 {
                     var claimedInfo = candidate with { FolderPath = claimedFolderPath };
-                    quotaAdmissionRecorder.EmitAdmissionDecision(claimedInfo, candidateQuotaPlan, source: "remote-claim");
+                    quotaAdmissionRecorder.EmitAdmissionDecision(claimedInfo, candidateQuotaPlan, source: "remote-claim",
+                        host: req.RunnerId, attemptId: acquire.Lease.AttemptId);
                     QuotaWaitMarker.Clear(claimedInfo.FolderPath);
                     if (candidateQuotaPlan.IsFallback)
                     {
+                        if (candidateHostHealthFallback)
+                        {
+                            var switchReceipt = new ModelSelectionEvent
+                            {
+                                Kind = "switched", Consumer = "remote-claim", Host = req.RunnerId,
+                                Project = candidate.ProjectName, TaskKey = taskKey,
+                                AttemptId = acquire.Lease.AttemptId,
+                                From = new ModelSelectionRoute(candidate.CliType, candidate.Model,
+                                    candidate.ThinkingLevel),
+                                To = new ModelSelectionRoute(candidateQuotaPlan.CliType,
+                                    candidateQuotaPlan.Model, candidateQuotaPlan.ThinkingLevel),
+                                Rule = candidateQuotaPlan.ModelFallback?.Reason ?? "model-capacity",
+                                Reason = candidateQuotaPlan.Reason,
+                            };
+                            selectionLedger.Append(switchReceipt);
+                            timeline.Append(claimedFolderPath, "model.switched", TimelineActors.System,
+                                $"Model selection event {switchReceipt.Id}.",
+                                runId: acquire.Lease.AttemptId,
+                                details: new Dictionary<string, string>
+                                {
+                                    ["selectionEventId"] = switchReceipt.Id,
+                                });
+                        }
                         QuotaFallbackMarker.Write(claimedFolderPath, new QuotaFallbackRecord
                         {
                             CliType = candidateQuotaPlan.CliType,
@@ -1508,7 +1673,9 @@ public static class LeaseEndpoints
             RunTimeoutContinuationService timeoutContinuations,
             RemoteRunStopRequestStore stops,
             ProviderRejectionContinuationService providerRejectionContinuations,
+            ModelSelectionLedger selectionLedger,
             ModelRoutingPolicyRegistry modelRouting,
+            IModelEquivalenceCatalog equivalenceCatalog,
             V1ReviewExecutorRegistry capabilityRegistry,
             QuotaAdmissionService quotaAdmission,
             MonolithOrchestrationStore orchestration,
@@ -1539,16 +1706,21 @@ public static class LeaseEndpoints
                     req.TaskKey, reportedOutcome, TaskStates.Progress, $"No task '{req.TaskKey}'."));
 
             var outcome = reportedOutcome.Trim().ToLowerInvariant();
+            var modelCapacity = req.OutcomeDecision?.Outcome
+                == AgentStudio.TaskServer.Contracts.ExecutionOutcomeKind.TransientModelCapacity;
             var providerRejection = req.OutcomeDecision?.Outcome
                                     == AgentStudio.TaskServer.Contracts.ExecutionOutcomeKind.ProviderRejectedRequest
                 ? req.OutcomeDecision.ProviderRejection
-                : null;
+                : modelCapacity
+                    ? new AgentStudio.TaskServer.Contracts.ProviderRequestRejection(
+                        "model_capacity", null, "Selected model is at capacity.")
+                    : null;
             var targetState = MonolithTransitionAdapter.TransitionDecisionPolicyCompletionLane(outcome, providerRejection is not null);
             var operatorStopped = string.Equals(outcome, "stopped", StringComparison.Ordinal);
             if (targetState.Length == 0)
                 return Results.BadRequest(new RemoteRunCompletionResponse(
                     req.TaskKey, reportedOutcome, TaskStates.Progress,
-                    "Outcome must be Done, NoOp, Blocked, NeedsInput, Unknown, EnvironmentFailure, Stopped, or MechanicalFallback."));
+                    "Outcome must be Done, NoOp, Blocked, NeedsInput, Unknown, EnvironmentFailure, Stopped, MechanicalFallback, or TransientFailure."));
 
             if (targetState == TaskStates.AutoReview
                 && (!ReviewSubjectStore.IsValidResultSha(req.ResultSha)
@@ -1641,7 +1813,8 @@ public static class LeaseEndpoints
                 hasResultSha: ReviewSubjectStore.IsValidResultSha(req.ResultSha),
                 hasBaseSha: ReviewSubjectStore.IsValidResultSha(req.BaseSha),
                 hasImmutableResultRef: !string.IsNullOrWhiteSpace(req.ImmutableResultRef),
-                hasArtifactManifestDigest: IsSha256(req.ArtifactManifestDigest));
+                hasArtifactManifestDigest: IsSha256(req.ArtifactManifestDigest),
+                reportedReason: req.Reason);
             var responseOutcome = reportedOutcome;
             string? unverifiedDelivery = null;
             if (envelopeDecision.ShouldPersist)
@@ -1710,6 +1883,23 @@ public static class LeaseEndpoints
                     req.TaskKey, reportedOutcome, task.State,
                     "Superseded run completion already recorded.", RunAttemptId: attemptId));
             }
+            if (req.OutcomeDecision?.Outcome
+                    == AgentStudio.TaskServer.Contracts.ExecutionOutcomeKind.TransientModelCapacity
+                && req.OutcomeDecision.RawFacts.EffectiveCliType is { Length: > 0 } capacityCli
+                && req.OutcomeDecision.RawFacts.EffectiveModel is { Length: > 0 } capacityModel)
+            {
+                var capacityEvidence = AgentStudio.TaskServer.Contracts.ProviderAccessClassifier.ClassifyRun(
+                    1, req.OutcomeDecision.RawFacts.StdOut, req.OutcomeDecision.RawFacts.StdErr);
+                capabilityRegistry.MarkModelCapacity(req.RunnerId.Trim(), capacityCli, capacityModel,
+                    capacityEvidence.LimitedUntil?.UtcDateTime);
+                var capacityNow = DateTime.UtcNow;
+                var capacityUntil = capacityEvidence.LimitedUntil?.UtcDateTime is { } retryAt && retryAt > capacityNow
+                    ? retryAt : capacityNow.AddMinutes(15);
+                RecordModelHealthEvent(selectionLedger, timeline, task, req.RunnerId,
+                    attemptId, "health-marked", "model-capacity", capacityCli, capacityModel,
+                    $"{capacityModel} is at capacity on host {capabilityRegistry.HostIdOf(req.RunnerId.Trim()) ?? req.RunnerId} until {capacityUntil:u}.",
+                    capacityUntil);
+            }
             var settledRun = settled.RunAttempt ?? authority.GetRun(attemptId);
             var terminalAt = settledRun?.TerminalAt ?? DateTime.UtcNow;
             var terminalResult = settledRun?.TerminalOutcome ?? outcome;
@@ -1750,7 +1940,7 @@ public static class LeaseEndpoints
                     tokenReceipt.Warning);
             }
             var currentBriefVersion = BriefVersionStore.ReadOrCreate(task.FolderPath);
-            if (RunDispositionPolicy.DecideCompletion(
+            if (outcome != "transientfailure" && RunDispositionPolicy.DecideCompletion(
                     settledRun?.BriefVersion, currentBriefVersion)
                 == RemoteCompletionDisposition.OfferOlderBrief)
             {
@@ -2054,15 +2244,24 @@ public static class LeaseEndpoints
                         req.SalvageRecoveryBranch,
                         req.SalvageRecoveryCommitSha)
                     : null;
-                var declaredFallback = modelRouting.ProviderRejectionFallback(effectiveCli, providerRejectionModel);
+                var hostInstance = capabilityRegistry.CurrentInstanceId(req.RunnerId.Trim());
+                var candidates = RejectionCandidates(modelRouting, equivalenceCatalog,
+                    effectiveCli, providerRejectionModel, providerRejectionThinking,
+                    unauthorized: false, includeSibling: true, continuation: true);
                 var promptPath = Path.Combine(task.FolderPath, "prompt.md");
                 var promptText = File.Exists(promptPath) ? File.ReadAllText(promptPath) : string.Empty;
                 var floor = modelRouting.CorrectnessFloor(task.TaskType, task.Title, promptText);
-                var meetsFloor = declaredFallback is not null
-                                 && modelRouting.RouteMeetsFloor(
-                                     declaredFallback.ToModel,
-                                     providerRejectionThinking,
-                                     floor);
+                var selected = candidates.FirstOrDefault(candidate =>
+                    modelRouting.RouteMeetsFloor(candidate.To, candidate.ThinkingLevel, floor)
+                    && capabilityRegistry.ModelAdmission(req.RunnerId.Trim(), hostInstance,
+                        candidate.CliType, candidate.To)
+                        == AgentStudio.TaskServer.Contracts.ModelAcceptanceAdmission.Accepted);
+                var declaredFallback = selected is null ? null : new ProviderRejectionModelFallback
+                {
+                    CliType = selected.CliType, FromModel = selected.From,
+                    ToModel = selected.To, Reason = selected.Reason,
+                };
+                var meetsFloor = declaredFallback is not null;
                 var refusalCount = string.IsNullOrWhiteSpace(providerRejectionModel)
                     ? 1
                     : providerRejectionContinuations.CountRefusals(task, providerRejectionModel) + 1;
@@ -2072,7 +2271,11 @@ public static class LeaseEndpoints
                     fallback: declaredFallback,
                     fallbackMeetsFloor: meetsFloor,
                     refusalCount: refusalCount,
-                    rejectedRunWasFallback: activeModelFallback is not null);
+                    rejectedRunWasFallback: activeModelFallback is not null && declaredFallback is null);
+                if (providerRejectionPlan.PinCard
+                    && (modelCapacity || declaredFallback is not null
+                        && !string.Equals(declaredFallback.CliType, effectiveCli, StringComparison.OrdinalIgnoreCase)))
+                    providerRejectionPlan = providerRejectionPlan with { PinCard = false };
             }
             var details = new Dictionary<string, string>
             {
@@ -2288,6 +2491,22 @@ public static class LeaseEndpoints
             task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
             if (task.State == TaskStates.Ready && task.PendingIntent is not null)
             {
+                // A fenced next run cannot infer its base from the old work
+                // branch. Preserve this delivery as its starting commit unless
+                // a newer queued continuation already selected another base.
+                if (outcome is ("done" or "noop")
+                    && !string.IsNullOrWhiteSpace(deliveryBranch)
+                    && ReviewSubjectStore.IsValidResultSha(resultSha)
+                    && ContinuationBaseStore.Read(task.FolderPath) is null
+                    && !ContinuationBaseStore.TrySaveWhen(task.FolderPath, null,
+                        new ContinuationBaseRecord(deliveryBranch!, resultSha!,
+                            "queued-follow-up-after-live-run", attemptId, DateTime.UtcNow),
+                        () => scanner.FindJob(task.Id, task.WatchPath) is
+                            { State: TaskStates.Ready, PendingIntent: not null })
+                    && ContinuationBaseStore.Read(task.FolderPath) is null)
+                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable,
+                        title: "Queued continuation base persistence failed",
+                        detail: $"Run {attemptId} settled, but its delivery base was not saved. Retry completion.");
                 if (!timeline.Append(task.FolderPath, "run-completion-superseded",
                     TimelineActors.System,
                     $"Run {attemptId} finished after a newer continuation was queued; the continuation remains ready.",
@@ -2491,6 +2710,11 @@ public static class LeaseEndpoints
                         req.RunnerId.Trim(),
                         req.OutcomeDecision?.RawFacts.EffectiveCliType ?? task.CliType ?? "codex",
                         providerRejectionModel!);
+                    RecordModelHealthEvent(selectionLedger, timeline, task, req.RunnerId,
+                        attemptId, "health-marked", "model-unavailable",
+                        req.OutcomeDecision?.RawFacts.EffectiveCliType ?? task.CliType ?? "codex",
+                        providerRejectionModel!,
+                        $"{providerRejectionModel} is unavailable on this host until the next catalogue refresh.");
                     var holdPlan = quotaAdmission.Plan(new QuotaAdmissionRequest(
                         task.CliType, task.Model, task.ThinkingLevel, task.ProjectName, 0,
                         "remote-model-rejection",
@@ -2519,6 +2743,16 @@ public static class LeaseEndpoints
                         Scope = "model-capability",
                     });
                     scanner.InvalidateCache();
+                    var selection = new ModelSelectionEvent
+                    {
+                        Kind = "waiting", Consumer = "remote-completion", Host = req.RunnerId,
+                        Project = task.ProjectName, TaskKey = task.TaskKey, AttemptId = attemptId,
+                        From = new ModelSelectionRoute(task.CliType, providerRejectionModel, task.ThinkingLevel),
+                        Rule = "host-model-unavailable", Reason = holdReason,
+                        Evidence = new ModelSelectionEvidence(providerRejection.Message, "model-unavailable"),
+                        ReturnToPrimaryAt = holdPlan.NextResetAt,
+                    };
+                    selectionLedger.Append(selection);
                     timeline.Append(holdFolder, TimelineEventKinds.QuotaAdmissionDecision,
                         TimelineActors.System, holdReason, runId: attemptId,
                         details: new Dictionary<string, string>
@@ -2527,6 +2761,7 @@ public static class LeaseEndpoints
                             ["reason"] = "host-model-unavailable",
                             ["host"] = req.RunnerId,
                             ["model"] = providerRejectionModel!,
+                            ["selectionEventId"] = selection.Id,
                         });
                     return Results.Ok(new RemoteRunCompletionResponse(
                         req.TaskKey, responseOutcome, TaskStates.Ready, holdReason,
@@ -2882,7 +3117,7 @@ public static class LeaseEndpoints
                     // one is requeued for another delivery round by the runner, and
                     // an operator stop returns the card without claiming either.
                     transitionCause: deliveryFailure is null && !operatorStopped
-                        && outcome != "mechanicalfallback"
+                        && outcome is not ("mechanicalfallback" or "transientfailure")
                         ? LaneChangeCauses.Delivered
                         : LaneChangeCauses.RunnerRequeue,
                     transitionDetail: operatorStopped
@@ -2921,19 +3156,21 @@ public static class LeaseEndpoints
                         position);
                 }
             }
-            if (outcome == "mechanicalfallback"
-                && !string.IsNullOrWhiteSpace(req.ImmutableResultRef)
-                && !string.IsNullOrWhiteSpace(req.ResultSha))
+            if (outcome is "mechanicalfallback" or "transientfailure"
+                && !string.IsNullOrWhiteSpace(req.ImmutableResultRef ?? req.SalvageRecoveryBranch ?? req.SalvageBranch)
+                && ReviewSubjectStore.IsValidResultSha(req.ResultSha ?? req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha))
             {
                 var ready = scanner.FindJob(task.Id, task.WatchPath) ?? task;
                 if (!AgentStudio.Runner.ContinuationBaseStore.Save(
                     ready.FolderPath,
                     new AgentStudio.Runner.ContinuationBaseRecord(
-                        req.ImmutableResultRef, req.ResultSha,
-                        req.SessionContinuation?.FallbackReason ?? "mechanical-fallback",
+                        req.ImmutableResultRef ?? req.SalvageRecoveryBranch ?? req.SalvageBranch!,
+                        req.ResultSha ?? req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha!,
+                        outcome == "transientfailure" ? "transient-model-capacity" :
+                            req.SessionContinuation?.FallbackReason ?? "mechanical-fallback",
                         attemptId, DateTime.UtcNow)))
                     loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerCompletion").LogWarning(
-                        "mechanical-fallback-continuation-base-save-failed task={TaskKey} attempt={AttemptId}",
+                        "transient-continuation-base-save-failed task={TaskKey} attempt={AttemptId}",
                         req.TaskKey, attemptId);
             }
             if (outcome == "mechanicalfallback")
@@ -3080,7 +3317,7 @@ public static class LeaseEndpoints
     };
 
     /// <summary>
-    /// Server-side occupancy of one execution host: the tasks in Progress whose
+    /// Server-side occupancy of one execution host: tasks in Progress or Ready whose
     /// current run lease belongs to this host. This is the count host capacity
     /// admission spends, so a daemon that under-reports (or a second daemon
     /// process on the same machine) cannot exceed the central ceiling.
@@ -3095,7 +3332,7 @@ public static class LeaseEndpoints
         foreach (var task in snapshot)
         {
             if (task.Fixture) continue;
-            if (task.State != TaskStates.Progress) continue;
+            if (task.State is not (TaskStates.Progress or TaskStates.Ready)) continue;
             var key = task.Key ?? task.TaskKey ?? task.Id;
             if (string.IsNullOrWhiteSpace(key)) continue;
             var inspection = leases.Inspect(key);

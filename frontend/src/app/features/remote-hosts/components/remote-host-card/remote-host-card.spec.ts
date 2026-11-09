@@ -79,14 +79,70 @@ function mount(host: RemoteHost, expanded = true, expandSections = true) {
 }
 
 describe('RemoteHostCardComponent', () => {
-  it('keeps the primary table row compact until its detail is disclosed', () => {
+  it('shows a closed claim gate beside occupied slots', () => {
+    const fixture = mount({ ...HOST, activeTaskCount: 7, roleMaxParallelism: 10,
+      claimLoadGate: { state: 'closed', loadPerCore: 5.51, threshold: 4,
+        sustainedSeconds: 702, since: '2026-07-10T11:48:00Z', activeSlots: 7 } }, false);
+    const slots = fixture.nativeElement.querySelector('[data-testid="remote-host-machine-slots"]');
+    expect(slots?.textContent).toContain('Not claiming: load 5.5 per core above 4.0 for 12 min');
+    expect(slots?.querySelector('[data-testid="remote-host-claim-load-gate"]')).toBeTruthy();
+  });
+
+  it('keeps retired actions in the selected detail and emits delete', () => {
+    const host = { ...HOST, status: 'retired' as const };
+    const fixture = mount(host, true, false);
+    let action: { kind: string; id: string } | undefined;
+    fixture.componentInstance.action.subscribe(value => { action = value; });
+    const revive = fixture.nativeElement.querySelector('[data-testid="remote-host-action-revive"]');
+    const remove = fixture.nativeElement.querySelector('[data-testid="remote-host-action-delete"]') as HTMLButtonElement;
+    expect(revive).toBeTruthy();
+    expect(remove).toBeTruthy();
+    remove.click();
+    expect(action).toEqual({ kind: 'delete', id: HOST.id });
+  });
+
+  it('shows review restart and quota facts in the selected detail', () => {
+    const fixture = mount({ ...HOST, serviceRole: 'review', restartedAt: '2026-07-10T11:55:00Z',
+      reviewsLost: 6, roleMaxParallelism: 6, reviewPlane: {
+        observedAt: '2026-07-10T11:59:00Z', cpuMax: '400000 100000',
+        planeCpuCores: 4, cpuQuotaPercent: 400, hostCores: 12,
+        workerEnvelopeCores: 2.4, workerEnvelopeCpuQuotaPercent: 480,
+        currentCeiling: 2, rollingReviewDurationSeconds: 2453,
+        throttledShare: 0.34, sustainedThrottling: true,
+        alarmSuggestion: 'Raise the review role quota.',
+      } });
+    const el: HTMLElement = fixture.nativeElement;
+    expect(el.querySelector('[data-testid="remote-host-role-restart"]')?.textContent).toContain('6 reviews lost');
+    expect(el.querySelector('[data-testid="remote-host-review-plane"]')?.textContent)
+      .toContain('CPU quota 4 cores · 2 slot ceiling · throttled 34%');
+    expect(el.querySelector('[data-testid="remote-host-review-plane-alarm"]')?.textContent)
+      .toContain('Raise the review role quota.');
+    expect(el.querySelector('[data-testid="remote-host-machine-slots"]')?.textContent).toContain('0 / 2');
+  });
+
+  it('shows compact facts before the detail disclosures', () => {
     const el: HTMLElement = mount(HOST, false).nativeElement;
-    expect(el.querySelector('[data-testid="remote-host-detail-row"]')).toBeNull();
-    expect(el.querySelector('[data-testid="remote-host-slots-summary"]')?.textContent).toContain('0 / 20');
+    expect(el.querySelector('[data-testid="remote-host-detail-row"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="remote-host-machine-slots"]')?.textContent).toContain('0 / 20');
-    expect(el.querySelector('[data-testid="remote-host-load"]')?.textContent).toContain('54%');
+    expect(el.querySelector('[data-testid="remote-host-detail-toggle-load"]')?.textContent).toContain('54%');
     expect(el.querySelector('[data-testid="remote-host-release"]')?.textContent)
       .toContain('release-20260811.1');
+  });
+
+  it('shows the runner link state with a tone, icon, and readable text', () => {
+    const fixture = mount({ ...HOST, runnerLink: {
+      runnerId: 'runner-1', kind: 'ssh-reverse', state: 'up',
+      since: '2026-07-10T11:59:00Z', lastHeartbeatAt: null, lastProbe: null,
+      lastError: null, attempt: 0, nextRetryAt: null, childPid: null,
+      notificationRaisedAt: null,
+    } });
+    const indicator = fixture.nativeElement.querySelector(
+      '[data-testid="remote-host-link-state-detail"] [data-testid="status-indicator"]',
+    ) as HTMLElement;
+    expect(indicator.dataset['tone']).toBe('success');
+    expect(indicator.dataset['icon']).toBe('check');
+    expect(indicator.textContent).toContain('up');
+    expect(indicator.querySelector('[aria-hidden="true"]')).not.toBeNull();
   });
 
   it('opens to compact one-line section summaries before revealing internals', () => {
@@ -108,6 +164,8 @@ describe('RemoteHostCardComponent', () => {
     const el: HTMLElement = mount(HOST).nativeElement;
     expect(el.querySelector('[data-testid="remote-host-name"]')?.textContent).toContain('agent-runner');
     expect(el.querySelector('[data-testid="remote-host-status"]')?.textContent).toContain('Online');
+    expect(el.querySelector<HTMLElement>('[data-testid="remote-host-status"]')?.dataset['tone']).toBe('success');
+    expect(el.querySelector<HTMLElement>('[data-testid="remote-host-status"]')?.dataset['icon']).toBe('check');
     expect(el.querySelector('.host__role')?.textContent).toContain('Remote');
     expect(el.querySelectorAll('.meter').length).toBe(3);
     // RAM 24/62 GB used => 39%
@@ -125,6 +183,7 @@ describe('RemoteHostCardComponent', () => {
       stats: null,
     }).nativeElement;
     expect(el.querySelector('[data-testid="remote-host-status"]')?.textContent).toContain('Loading live status');
+    expect(el.querySelector<HTMLElement>('[data-testid="remote-host-status"]')?.dataset['tone']).toBe('running');
     expect(el.querySelector('[data-testid="remote-host-run-pool"]')?.textContent).toContain('Loading daemon telemetry');
     expect(el.textContent).not.toContain('Daemonstopped');
     expect(el.querySelector('[data-testid="remote-host-stale"]')).toBeNull();
@@ -135,6 +194,7 @@ describe('RemoteHostCardComponent', () => {
     // The host binding lands on the component host element itself.
     expect(el.getAttribute('data-tone')).toBe('error');
     expect(el.querySelector('[data-testid="remote-host-status"]')?.textContent).toContain('Offline');
+    expect(el.querySelector<HTMLElement>('[data-testid="remote-host-status"]')?.dataset['icon']).toBe('close');
   });
 
   it('shows the independent read-only badge when the startup push probe fails', () => {
@@ -150,7 +210,7 @@ describe('RemoteHostCardComponent', () => {
       .query(By.css('[data-testid="remote-host-git-status"]'))
       .injector.get(AppTooltipDirective);
     expect(tooltip.appTooltip()).toContain('permission denied');
-    expect(badge?.getAttribute('data-tone')).toBe('error');
+    expect(badge?.getAttribute('data-tone')).toBe('danger');
     expect(el.querySelector('[data-testid="remote-host-activity"]')?.textContent)
       .toContain('Task inflowopen');
   });
@@ -267,7 +327,7 @@ describe('RemoteHostCardComponent', () => {
       .toContain('Fallback repo: ok');
     const workflow = el.querySelector('[data-testid="remote-host-workflow-status"]');
     expect(workflow?.textContent).toContain('Fallback workflow: permission missing');
-    expect(workflow?.getAttribute('data-tone')).toBe('warn');
+    expect(workflow?.getAttribute('data-tone')).toBe('warning');
     const fix = el.querySelector('[data-testid="remote-host-token-scope-fix"]');
     expect(fix?.textContent).toContain('Grant the token');
     expect(fix?.querySelector('a')?.getAttribute('href'))

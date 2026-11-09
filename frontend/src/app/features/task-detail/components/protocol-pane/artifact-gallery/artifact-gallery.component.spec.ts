@@ -14,7 +14,6 @@ const IMAGE = (id: string): ConversationArtifact => ({
   fileName: `${id}.png`,
   label: `${id}.png`,
   url: `/api/results/${id}.png`,
-  thumbnailUrl: `/api/thumbs/${id}.webp`,
   contentUrl: null,
 });
 
@@ -26,13 +25,37 @@ function documentArtifact(kind: ConversationArtifact['kind'], extension: string)
     fileName: `delivery.${extension}`,
     label: `delivery.${extension}`,
     url: `/api/results/delivery.${extension}`,
-    thumbnailUrl: null,
     contentUrl: `/api/files/results/delivery.${extension}`,
   };
 }
 
 describe('ArtifactGalleryComponent', () => {
-  it('renders lazy thumbnail URLs and opens only the full images in the lightbox', async () => {
+  it('uses listing dimensions and shows a large image placeholder without fetching its pixels', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ArtifactGalleryComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ArtifactGalleryComponent);
+    fixture.componentRef.setInput('artifacts', [
+      { ...IMAGE('small'), url: '/api/tasks/job-1/screenshot?path=small.png' },
+      { ...IMAGE('large'), url: '/api/tasks/job-1/screenshot?path=large.png' },
+    ]);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelectorAll('img')).toHaveLength(0);
+    TestBed.inject(HttpTestingController).expectOne('/api/tasks/job-1/screenshots').flush({ screenshots: [
+      { relativePath: 'results/small.png', sizeBytes: 94_000, width: 1200, height: 800 },
+      { relativePath: 'results/large.png', sizeBytes: 2_500_000, width: 3000, height: 2000 },
+    ] });
+    await fixture.whenStable();
+    const images = fixture.nativeElement.querySelectorAll('img') as NodeListOf<HTMLImageElement>;
+    expect(images).toHaveLength(1);
+    expect(images[0].getAttribute('width')).toBe('1200');
+    expect(images[0].getAttribute('height')).toBe('800');
+    expect(fixture.nativeElement.querySelector('[data-testid="artifact-gallery-large-placeholder"]')?.textContent)
+      .toContain('2.5 MB');
+  });
+
+  it('renders lazy original URLs and opens them in the lightbox', async () => {
     await TestBed.configureTestingModule({
       imports: [ArtifactGalleryComponent],
       providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
@@ -43,9 +66,11 @@ describe('ArtifactGalleryComponent', () => {
 
     const thumbnails = [...fixture.nativeElement.querySelectorAll('img')] as HTMLImageElement[];
     expect(thumbnails.map((image) => image.getAttribute('src'))).toEqual([
-      '/api/thumbs/light.webp', '/api/thumbs/dark.webp',
+      '/api/results/light.png', '/api/results/dark.png',
     ]);
     expect(thumbnails.every((image) => image.getAttribute('loading') === 'lazy')).toBe(true);
+    expect(thumbnails.every((image) => image.getAttribute('decoding') === 'async')).toBe(true);
+    expect(thumbnails.every((image) => image.getAttribute('width') === '360')).toBe(true);
 
     (fixture.nativeElement.querySelector('[data-testid="artifact-gallery-thumbnail"]') as HTMLButtonElement).click();
     await fixture.whenStable();

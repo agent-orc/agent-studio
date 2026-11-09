@@ -171,7 +171,10 @@ public sealed record RunnerClaimRequest(
     // RUNNER_MAX_PARALLELISM. Seeds the central host ceiling on first contact.
     int? BootstrapMaxParallelism = null,
     string? CapabilityInstanceId = null,
-    IReadOnlyList<string>? RequiredCapabilities = null);
+    IReadOnlyList<string>? RequiredCapabilities = null,
+    // Changes whenever this host's repository credential files change, so the
+    // server re-runs a failed delivery preflight at once.
+    string? RepositoryCredentialGeneration = null);
 
 public sealed record RunnerProcessInventory(
     DateTime ObservedAt,
@@ -485,7 +488,13 @@ public sealed record ArtifactIngestResponse(
 public sealed record ArtifactTransferLimitsResponse(
     long MaxRequestBodyBytes,
     long MaxFileBytes,
-    long MaxTotalBytes);
+    long MaxTotalBytes,
+    long? MaxChunkedFileBytes = null)
+{
+    public long TransferFileLimitBytes => MaxChunkedFileBytes is > 0
+        ? MaxChunkedFileBytes.Value
+        : MaxFileBytes;
+}
 
 public sealed record ArtifactTransferIssue(
     string Path,

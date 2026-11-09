@@ -136,6 +136,9 @@ public static class TimelineEventKinds
     /// "claimed=done" verdict and reissued the run.
     /// </summary>
     public const string QualityLoopReopened = "quality_loop_reopened";
+
+    /// <summary>A settled review sent findings to a linked follow-up card.</summary>
+    public const string ReviewFollowUpRouted = "review_follow_up_routed";
     /// <summary>A per-card budget disposition, including its open aspects and round counts.</summary>
     public const string CardRoundBudgetDisposition = "card_round_budget_disposition";
     /// <summary>A human review verdict was recorded.</summary>
@@ -162,6 +165,12 @@ public static class TimelineEventKinds
     public const string IntegrationOverridden = "integration_overridden";
     /// <summary>Written exception to the current-brief content acceptance gate.</summary>
     public const string CompletionContentOverridden = "completion_content_overridden";
+    /// <summary>
+    /// AGT-3467: the settlement journal of the card's current review reads as
+    /// repair, so completion has no content verdict. Written once per review
+    /// attempt; details carry the attempt and the journal's repair reason.
+    /// </summary>
+    public const string ReviewSettlementRepairRequired = "review_settlement_repair_required";
     /// <summary>
     /// AGT-3076: an operator override accepted a card whose RunAttempt the
     /// attempt authority store no longer holds. Details carry the authority
@@ -260,6 +269,8 @@ public static class TimelineEventKinds
     /// <c>status</c> and <c>undo</c>.
     /// </summary>
     public const string StallInterventionRecorded = "stall_intervention_recorded";
+    /// <summary>A stale delivery verdict caused a fresh ReviewAttempt request.</summary>
+    public const string DeliveryReviewRequested = "delivery_review_requested";
     /// <summary>
     /// The task was completed out-of-band (operator chat, external agent, a
     /// remote host) and reconciled through

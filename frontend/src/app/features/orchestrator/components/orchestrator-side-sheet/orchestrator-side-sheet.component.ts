@@ -13,10 +13,12 @@ import {
   viewChild,
 } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
+import { TASK_REFERENCE_CHAT_PROVIDER } from '../../../../services/task-reference-chat.provider';
 import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from '../../../../utils/visible-interval';
 import type { WatchPathEntry } from '../../../../models/task.model';
 import type {
   ChatExecutionContext,
+  ChatExecutionReadiness,
   ComposerLocationContext,
   OrchestratorChatTurn,
   OrchestratorContextSourceOption,
@@ -67,6 +69,7 @@ import { UiPreferencesService } from '../../../shell/state/ui-preferences.servic
 import { PlanStripComponent } from '../../../plan-strip';
 import { OrchestratorTaskPlanStore } from '../../state/orchestrator-task-plan.store';
 import { StudioPanelStateService } from '../../../studio-shell/services/studio-panel-state.service';
+import { ConversationScrollFocusDirective } from '../../../../directives/conversation-scroll-focus.directive';
 
 /**
  * Push-layout side sheet hosting automatic context-keyed orchestrator chats.
@@ -79,6 +82,7 @@ import { StudioPanelStateService } from '../../../studio-shell/services/studio-p
   imports: [
     ChatComponent,
     ConversationViewComponent,
+    ConversationScrollFocusDirective,
     AppTooltipDirective,
     SidesheetComponent,
     OrchestratorContextHeaderComponent,
@@ -93,13 +97,10 @@ import { StudioPanelStateService } from '../../../studio-shell/services/studio-p
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './orchestrator-side-sheet.component.html',
   styleUrl: './orchestrator-side-sheet.component.scss',
-  providers: [OrchestratorContextDigestService, OrchestratorTaskPlanStore],
+  providers: [TASK_REFERENCE_CHAT_PROVIDER, OrchestratorContextDigestService, OrchestratorTaskPlanStore],
   host: {
     '[class.is-open]': 'open()',
-    // When open, drive the host width from the persisted user choice so
-    // the resize handle can grow / shrink the panel live. When closed the
-    // binding evaluates to null and the static `:host { width: 0 }` rule
-    // from the .scss wins, so the close transition still works.
+    // Use the saved width while open; the host style sets the closed width.
     '[style.width.px]': 'open() ? panelWidth() : null'
   }
 })
@@ -108,6 +109,8 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   readonly composerModel = inject(OrchestratorComposerModelService);
   readonly projects = input<string[]>([]);
   readonly preferredProject = input<string | null>(null);
+  readonly requestedProject = input<{ projectName: string } | null>(null);
+  readonly projectRequestHandled = output<{ projectName: string }>();
   /** One-shot shell event for an explicit project entry from an empty editor. */
   readonly projectEntryRevision = input(0);
   readonly watchPaths = input<WatchPathEntry[]>([]);
@@ -356,6 +359,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   });
   readonly errorMsg = signal<string | null>(null);
   readonly executionContext = signal<ChatExecutionContext | null>(null);
+  readonly executionReadiness = signal<ChatExecutionReadiness | null>(null);
   /** Project scope may explicitly omit context once. Task and Dossier scope are mandatory. */
   readonly contextDismissed = signal(false);
   readonly contextAttachments = signal<OrchestratorContextSourceOption[]>([]);
@@ -498,6 +502,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
       this.open();
       if (this.open() && key) {
         this.localTurns.set([]);
+        this.executionReadiness.set(null);
         untracked(() => this.contextDigestState.load(key, false));
         if (proj) this.refresh(false);
       }
@@ -544,6 +549,13 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
         if (projects.includes(preferred) && preferred !== this.activeProject()) {
           this.activeProject.set(preferred);
         }
+      });
+    });
+    effect(() => {
+      const request = this.requestedProject();
+      if (request) untracked(() => {
+        this.setActiveProject(request.projectName);
+        this.projectRequestHandled.emit(request);
       });
     });
 
@@ -834,6 +846,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
         if (this.contextKey() !== key) return;
         this.turns.set(resp.turns ?? []);
         this.executionContext.set(resp.executionContext ?? null);
+        this.executionReadiness.set(resp.executionReadiness ?? null);
         this.errorMsg.set(null);
         if (reconcileMissingSession
           && !this.contextSessions().some((session) => session.contextKey === key)) {
@@ -845,6 +858,8 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
         if (this.contextKey() !== key) return;
         const message = orchestratorContextErrorMessage(err, 'Failed to load orchestrator chat');
         this.errorMsg.set(message);
+        this.executionReadiness.set({ ready: false, code: 'readiness-unavailable',
+          reason: 'Chat readiness could not be checked. Refresh to try again.' });
         if (!silent) this.loading.set(false);
       }
     });
@@ -859,6 +874,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   private readonly bugEventTargets = new Map<string, { jobId: string; watchPath: string }>();
 
   async onSubmit(event: ChatSubmitEvent): Promise<void> {
+    if (this.loading() || this.executionReadiness()?.ready === false) return;
     const proj = this.effectiveProject();
     if (!proj) return;
     // Snapshot once so a navigation change during the request cannot split

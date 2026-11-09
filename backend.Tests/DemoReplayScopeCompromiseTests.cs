@@ -8,6 +8,8 @@ using AgentStudio.TaskServer.Contracts;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -28,6 +30,7 @@ public sealed class DemoReplayScopeCompromiseTests : IDisposable
     private readonly string _workspace;
     private readonly string _watchPath;
     private readonly string _taskFolder;
+    private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 8, 9, 8, 0, 0, TimeSpan.Zero));
     private readonly ECDsa _signingKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
     private readonly DemoReplaySignedTrace _trace;
 
@@ -198,7 +201,7 @@ public sealed class DemoReplayScopeCompromiseTests : IDisposable
                 DemoReplayTraceSignature.FramePayload(TraceId, _trace.Digest, outsideFrame),
                 HashAlgorithmName.SHA256)),
             outsideFrame,
-            DateTime.UtcNow);
+            _clock.GetUtcNow().UtcDateTime);
         var outsideResponse = await PostFrameAsync(anonymous, secret, outside);
         Assert.Equal(HttpStatusCode.Forbidden, outsideResponse.StatusCode);
         Assert.Equal(DemoReplayDenialCodes.SceneKeyDenied, await ErrorCodeAsync(outsideResponse));
@@ -288,7 +291,7 @@ public sealed class DemoReplayScopeCompromiseTests : IDisposable
 
     private const string BootstrapCode = "demo-replay-setup-code";
 
-    private static async Task<string> BootstrapOwnerAsync(HttpClient browser)
+    private async Task<string> BootstrapOwnerAsync(HttpClient browser)
     {
         var bootstrap = await browser.PostAsJsonAsync("/api/auth/bootstrap", new
         {
@@ -301,7 +304,22 @@ public sealed class DemoReplayScopeCompromiseTests : IDisposable
         });
         bootstrap.EnsureSuccessStatusCode();
         var auth = await bootstrap.Content.ReadFromJsonAsync<AuthStatusResponse>();
-        return auth!.CsrfToken!;
+        var csrf = auth!.CsrfToken!;
+        using var start = new HttpRequestMessage(HttpMethod.Post, "/api/auth/totp/start")
+        {
+            Content = JsonContent.Create(new { }),
+        };
+        start.Headers.Add("X-CSRF-Token", csrf);
+        var started = await browser.SendAsync(start);
+        started.EnsureSuccessStatusCode();
+        var secret = (await started.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("secret").GetString()!;
+        using var confirm = new HttpRequestMessage(HttpMethod.Post, "/api/auth/totp/confirm")
+        {
+            Content = JsonContent.Create(new { code = SecondFactorCodes.CurrentTotp(secret, _clock.GetUtcNow().UtcDateTime) }),
+        };
+        confirm.Headers.Add("X-CSRF-Token", csrf);
+        (await browser.SendAsync(confirm)).EnsureSuccessStatusCode();
+        return csrf;
     }
 
     private static async Task<HttpResponseMessage> EnrollAsync(
@@ -331,6 +349,7 @@ public sealed class DemoReplayScopeCompromiseTests : IDisposable
         => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
+            builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(_clock));
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["TaskRepository"] = _workspace,

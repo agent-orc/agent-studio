@@ -3,7 +3,6 @@
     <app-crash-recovery-prompt />
     <app-statusbar-item
       bullet="●"
-      [pulsing]="runningCount() > 0"
       [signalTone]="hostLoad()?.tone ?? 'unknown'"
       [signalCorrelation]="hostLoad()?.correlation ?? 'unknown'"
       [label]="runningLabel()"
@@ -13,7 +12,6 @@
       (activated)="navigateToExecutionHosts()" />
     <app-statusbar-item class="statusbar__review"
       bullet="◎"
-      [pulsing]="reviewActiveSlots() > 0"
       [signalTone]="reviewAttention() ? 'mismatch' : (reviewActiveSlots() > 0 ? 'working' : null)"
       [label]="reviewLabel()"
       [tooltip]="reviewTooltip()"
@@ -37,11 +35,6 @@
         testid="status-bar-cli-repair" />
     }
 
-    <span class="statusbar__sep" aria-hidden="true"></span>
-
-    <div class="statusbar__quota">
-      <app-usage-hover-panel (openCliAdmin)="openCliAdmin.emit()" />
-    </div>
     @if (activeFallback(); as fallback) {
       <app-statusbar-item
         [button]="false"
@@ -52,43 +45,37 @@
     }
   </div>
 
-  <div class="statusbar__group statusbar__group--center statusbar__group--spacer"></div>
-
-  <div class="statusbar__group statusbar__group--right">
-    <app-statusbar-item icon="grid"     label="Usage"             tooltip="CLI usage: caps, sessions & token spend"
-                        testid="status-bar-usage"
-                        [active]="usageOpen()"
-                        (activated)="toggleUsage.emit()" />
-    <app-statusbar-item icon="bot"      [label]="orchestratorLabel()" [tooltip]="orchestratorTooltip()"
-                        testid="orch-side-sheet-toggle"
-                        [active]="orchestratorOpen()"
-                        [pulsing]="orchestratorActiveChatCount() > 0"
-                        [signalTone]="orchestratorActiveChatCount() > 0 ? 'working' : null"
-                        (activated)="toggleOrchestrator.emit()" />
-    <app-statusbar-item icon="activity" label="Feed"              tooltip="Activity across all projects"
-                        testid="status-bar-feed"
-                        [active]="feedOpen()"
-                        (activated)="toggleFeed.emit()" />
-    <app-statusbar-item icon="settings" label="Settings"          tooltip="Workspace settings (CLI management, system prompts, token usage, visual evidence, summary)"
-                        testid="status-bar-settings"
-                        [active]="settingsOpen()"
-                        (activated)="toggleSettings.emit()" />
-    @if (showSignOut()) {
-      <app-statusbar-item icon="close" label="Sign out" [tooltip]="'Sign out ' + signedInLabel()"
-                          testid="status-bar-sign-out"
-                          (activated)="signOut.emit()" />
-    }
-
-    <span class="statusbar__sep" aria-hidden="true"></span>
-
-    <app-cli-model-selector
-      class="statusbar__defaults"
-      [cliType]="defaultCli()"
-      [model]="defaultModel()"
-      [thinkingLevel]="defaultThinkingLevel()"
-      eyebrow="Defaults for new tasks"
-      triggerTestid="status-bar-defaults"
-      pickerTestidPrefix="status-bar-defaults-picker"
-      (commit)="onDefaultCommit($event)" />
+  @if (visibleUsageClis().length || usage.snapshot()?.cost) {
+    <span class="statusbar__sep" aria-hidden="true" data-testid="status-bar-separator"></span>
+  }
+  <div class="statusbar__group statusbar__group--right statusbar__usage"
+       role="group" aria-label="Subscription usage" data-testid="status-bar-usage-entries">
+      @for (cli of visibleUsageClis(); track cli.cliId) {
+        @let v = usageView(cli);
+        <button type="button" class="statusbar__item statusbar__item--btn statusbar__usage-entry" [attr.data-testid]="'footer-usage-' + cli.cliId"
+                [attr.data-state]="v.state" [attr.data-usage-trigger]="'cli:' + cli.cliId.toLowerCase()"
+                [attr.aria-label]="v.ariaLabel" [title]="usageTooltip(cli)"
+                (click)="openUsageDetail.emit({ section: 'cli', cliId: cli.cliId })">
+          <strong>{{ v.name }}</strong>
+          @if (v.weekly.reported) { <span>WK {{ v.weekly.value }}</span> }
+          @if (v.session.reported) { <span>Session {{ v.session.value }}</span> }
+          @if (v.state === 'stale') { <span class="statusbar__age">{{ age(cli.fetchedAt) }}</span> }
+        </button>
+        @if (hostProblem(cli.cliId); as problem) {
+          <button type="button" class="statusbar__item statusbar__item--btn statusbar__host-problem" [attr.data-testid]="'footer-host-problem-' + cli.cliId"
+                  [title]="'Open Execution Hosts to restore ' + v.name + ' sign-in.'"
+                  (click)="navigateToExecutionHosts()">{{ v.name }}: {{ problem }}</button>
+        }
+      }
+      @if (usage.snapshot()?.cost; as cost) {
+        @let c = costView();
+        <button type="button" class="statusbar__item statusbar__item--btn statusbar__usage-entry" data-testid="footer-usage-cost"
+                [attr.data-state]="c.state" data-usage-trigger="cost" [title]="c.detail"
+                (click)="openUsageDetail.emit({ section: 'cost', cliId: null })">
+          <strong>Today</strong> <span>{{ c.value }}</span>
+          @if (c.state === 'stale') { <span class="statusbar__age">{{ age(cost.coverage.observedAt) }}</span> }
+        </button>
+      }
+      <app-usage-alarm-status />
   </div>
 </div>

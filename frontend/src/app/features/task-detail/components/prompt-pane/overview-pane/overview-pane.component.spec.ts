@@ -1630,6 +1630,56 @@ describe('OverviewPaneComponent (smoke)', () => {
     expect(opened).toEqual(['aspect-requirement-fit.md']);
   });
 
+  it.each(['pass', 'concerns'])('pipeline block: remote %s review links to its attempt', async verdict => {
+    const fixture = await build(baseJob({ state: '4-auto-review' }));
+    const pipe = agentPipeline();
+    pipe.execution!.steps.push({
+      stepId: 'aspect-code-quality', kind: 'aspect', status: 'passed', model: 'gpt-6',
+      reviewCli: 'codex', executionAttemptId: 'review_2', reviewAttemptNumber: 2,
+      durationMs: 60000, inputTokens: 90, outputTokens: 10,
+      cacheReadTokens: 0, cacheCreationTokens: 0, verdict,
+      verdictSummary: 'Checked the diff.',
+    });
+    TestBed.inject(TaskPipelinePollService).pipeline.set(pipe);
+    fixture.detectChanges();
+    for (const group of fixture.componentInstance.pipelineGroups()) {
+      if (fixture.componentInstance.isGroupCollapsed(group)) fixture.componentInstance.toggleGroup(group);
+    }
+    fixture.detectChanges();
+    const row = fixture.nativeElement.querySelector('[data-step-id="aspect-code-quality"]') as HTMLElement;
+    expect(row.querySelector('[data-testid="overview-pipeline-step-summary"]')?.textContent).toContain('Checked the diff.');
+    const link = row.querySelector('[data-testid="overview-pipeline-review-attempt"]') as HTMLButtonElement;
+    expect(link.textContent).toContain('Review attempt #2');
+    const opened: string[] = [];
+    fixture.componentInstance.reviewAttemptRequested.subscribe(id => opened.push(id));
+    link.click();
+    expect(opened).toEqual(['review_2']);
+  });
+
+  it('pipeline block: published batch gate names its batch, verdict and SHA', async () => {
+    const fixture = await build(baseJob({ state: '4-auto-review' }));
+    const pipe = agentPipeline();
+    pipe.pipeline.allSteps!.push({
+      id: 'post-build-test-gate', displayName: 'Build and tests', kind: 'tool',
+      runMode: 'sequential', dependsOn: [], idempotent: true, stub: false,
+    });
+    pipe.execution!.steps.push({
+      stepId: 'post-build-test-gate', kind: 'tool', status: 'passed', durationMs: 0,
+      inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+      batchGate: { batchId: 'batch-1', phase: 'published', verdict: 'pass',
+        publishedSha: 'abcdef1234567890' },
+    });
+    TestBed.inject(TaskPipelinePollService).pipeline.set(pipe);
+    fixture.detectChanges();
+    for (const group of fixture.componentInstance.pipelineGroups()) {
+      if (fixture.componentInstance.isGroupCollapsed(group)) fixture.componentInstance.toggleGroup(group);
+    }
+    fixture.detectChanges();
+    const row = fixture.nativeElement.querySelector('[data-step-id="post-build-test-gate"]') as HTMLElement;
+    expect(row.querySelector('[data-testid="overview-pipeline-batch-gate"]')?.textContent)
+      .toContain('batch-1 · published · pass · abcdef123456');
+  });
+
   it('pipeline block: model qualification renders selected model, reasoning, and override explanation', async () => {
     const fixture = await build(baseJob({ state: '3-progress' }));
     TestBed.inject(TaskPipelinePollService).pipeline.set({

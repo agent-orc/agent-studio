@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -14,9 +15,9 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -25,13 +26,162 @@ namespace AgentStudio.Tests;
 /// AGT-3230: response headers per route class, host-only session cookies,
 /// same-origin proof for browser changes and the forwarded client address,
 /// all through the real networked pipeline.
+///
+/// <para>The tests here share one host (AGT-3416). It starts without an
+/// owner; a test that needs an owner session takes one from
+/// <see cref="Host.OwnerSession"/>.</para>
 /// </summary>
-public sealed class NetworkedEdgeHardeningTests : IDisposable
+public sealed class NetworkedEdgeHardeningTests(NetworkedEdgeHardeningTests.Host host)
+    : NetworkedEdgeHardeningTestBase, IClassFixture<NetworkedEdgeHardeningTests.Host>
 {
-    private const string Studio = "https://studio.test";
-    private const string Password = "correct horse battery staple!";
-    private const string ProjectName = "edge-hardening";
-    private const string TaskKey = "AGT-EDGE-HARDENING";
+    private readonly Host _host = host;
+
+    /// <summary>The networked host with no remote address, setting or service of a test's own.</summary>
+    public sealed class Host() : SharedTestHost("studio-edge-hardening-")
+    {
+        private readonly Lock _gate = new();
+        private bool _bootstrapped;
+
+        private FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 10, 20, 8, 0, 0, TimeSpan.Zero));
+
+        protected override void ConfigureHost(IWebHostBuilder builder) => Configure(builder, Root, Clock);
+
+        /// <summary>
+        /// A session of the host's one owner. The first call bootstraps the
+        /// owner, as each test did on a host of its own; later calls sign the
+        /// same owner in.
+        /// </summary>
+        public (StudioUser User, string SessionToken, string CsrfToken) OwnerSession()
+        {
+            var store = Services.GetRequiredService<AccessSecurityStore>();
+            lock (_gate)
+            {
+                if (_bootstrapped) return store.Login("first.owner", Password, "edge-hardening-owner");
+                _bootstrapped = true;
+                return store.Bootstrap(new BootstrapRequest("first.owner", Password, null));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Api_shell_rejection_and_health_responses_carry_the_baseline_headers()
+    {
+        using var client = NewClient(_host.Factory);
+
+        foreach (var (method, path, status) in new[]
+                 {
+                     (HttpMethod.Get, "/api/auth/status", HttpStatusCode.OK),
+                     (HttpMethod.Get, "/api/tasks", HttpStatusCode.Unauthorized),
+                     (HttpMethod.Post, "/hubs/jobs/negotiate", HttpStatusCode.Unauthorized),
+                     (HttpMethod.Get, "/healthz", HttpStatusCode.OK),
+                 })
+        {
+            using var response = await client.SendAsync(new HttpRequestMessage(method, path));
+            Assert.Equal(status, response.StatusCode);
+            AssertBaseline(response, StudioResponseHeaderPolicy.ApiContentSecurityPolicy);
+        }
+    }
+
+    [Fact]
+    public async Task Recovery_console_keeps_its_own_policy_that_runs_its_inline_script()
+    {
+        using var client = NewClient(_host.Factory);
+
+        using var recovery = await client.GetAsync("/recovery");
+
+        Assert.Equal(HttpStatusCode.OK, recovery.StatusCode);
+        Assert.Contains("Task Server bootstrap and recovery", await recovery.Content.ReadAsStringAsync());
+        var policy = Header(recovery, "Content-Security-Policy");
+        Assert.Equal(RecoveryConsole.ContentSecurityPolicy, policy);
+        Assert.Contains("script-src 'unsafe-inline'", policy);
+        Assert.Contains("connect-src 'self'", policy);
+        Assert.Contains("frame-ancestors 'self'", policy);
+        Assert.DoesNotContain("sandbox", policy);
+        Assert.Equal("SAMEORIGIN", Header(recovery, "X-Frame-Options"));
+    }
+
+    [Fact]
+    public async Task Agent_written_task_html_served_by_the_files_route_is_sandboxed_without_script()
+    {
+        // The files route answers with the stored text and its media type and
+        // no policy of its own; the header middleware decides the policy when
+        // the response starts.
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        await using var app = builder.Build();
+        app.UseStudioResponseHeaders();
+        app.MapGet("/api/tasks/{jobId}/files/{**path}", (string jobId, string path) =>
+            Results.Text("<html><body><script>alert(document.cookie)</script></body></html>", "text/html", System.Text.Encoding.UTF8));
+        await app.StartAsync();
+        using var client = app.GetTestClient();
+        client.BaseAddress = new Uri("https://localhost");
+
+        using var html = await client.GetAsync($"/api/tasks/{TaskKey}/files/x.html");
+
+        Assert.True(html.StatusCode == HttpStatusCode.OK,
+            $"Expected a rendered task result, got {(int)html.StatusCode}: {await html.Content.ReadAsStringAsync()}");
+        Assert.Equal("text/html", html.Content.Headers.ContentType?.MediaType);
+        AssertSandboxedDocument(html);
+        Assert.Equal(StudioResponseHeaderPolicy.StrictTransportSecurity, Header(html, "Strict-Transport-Security"));
+        await app.StopAsync();
+    }
+
+    [Fact]
+    public async Task Networked_profile_ignores_legacy_domain_cookie_name()
+    {
+        var owner = _host.OwnerSession();
+        using var client = NewClient(_host.Factory);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/session");
+        request.Headers.Add("Cookie", $"{AccessSecurityStore.InsecureSessionCookieName}={owner.SessionToken}");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        using var secret = new HttpRequestMessage(HttpMethod.Get, "/api/secrets");
+        secret.Headers.Add("Cookie", $"{AccessSecurityStore.InsecureSessionCookieName}={owner.SessionToken}");
+        using var secretResponse = await client.SendAsync(secret);
+        Assert.Equal(HttpStatusCode.Unauthorized, secretResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task Websocket_upgrade_to_the_job_hub_needs_the_studio_origin()
+    {
+        var owner = _host.OwnerSession();
+        using var client = NewClient(_host.Factory);
+
+        Assert.Equal("origin-mismatch", await RejectionAsync(HubUpgradeAsync(client, owner.SessionToken, "https://other.studio.test")));
+        Assert.Equal("cross-site-request", await RejectionAsync(HubUpgradeAsync(client, owner.SessionToken, fetchSite: "same-site")));
+        Assert.Equal("opaque-origin-denied", await RejectionAsync(HubUpgradeAsync(client, owner.SessionToken, "null")));
+
+        foreach (var (origin, fetchSite) in new[] { (Studio, (string?)null), (null, "same-origin"), (null, null) })
+        {
+            using var admitted = await HubUpgradeAsync(client, owner.SessionToken, origin, fetchSite);
+            Assert.NotEqual(HttpStatusCode.Forbidden, admitted.StatusCode);
+            Assert.NotEqual(HttpStatusCode.Unauthorized, admitted.StatusCode);
+        }
+
+        // The same check holds through a real WebSocket handshake.
+        var sockets = _host.Factory.Server.CreateWebSocketClient();
+        sockets.ConfigureRequest = request =>
+        {
+            request.Scheme = "https";
+            request.Host = new HostString("studio.test");
+            request.Headers.Cookie = $"{AccessSecurityStore.SessionCookieName}={owner.SessionToken}";
+            request.Headers.Origin = "https://other.studio.test";
+        };
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(
+            () => sockets.ConnectAsync(new Uri("wss://studio.test/hubs/jobs"), CancellationToken.None));
+    }
+}
+
+/// <summary>
+/// The networked edge tests that each build the host they need: a remote
+/// address, a published commit, a preview upstream, a broken or proxied
+/// workspace, an ambiguous edge setting, or a host whose first owner the test
+/// itself bootstraps.
+/// </summary>
+public sealed class NetworkedEdgeHardeningOwnHostTests : NetworkedEdgeHardeningTestBase, IDisposable
+{
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "studio-edge-hardening-" + Guid.NewGuid().ToString("N"));
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 20, 8, 0, 0, TimeSpan.Zero));
 
@@ -94,22 +244,34 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
     }
 
     [Fact]
-    public async Task Api_shell_rejection_and_health_responses_carry_the_baseline_headers()
+    public async Task Readiness_probe_answers_only_inside_the_container_and_the_page_route_needs_a_session()
     {
-        using var factory = BuildFactory();
-        using var client = NewClient(factory);
-
-        foreach (var (method, path, status) in new[]
-                 {
-                     (HttpMethod.Get, "/api/auth/status", HttpStatusCode.OK),
-                     (HttpMethod.Get, "/api/tasks", HttpStatusCode.Unauthorized),
-                     (HttpMethod.Post, "/hubs/jobs/negotiate", HttpStatusCode.Unauthorized),
-                     (HttpMethod.Get, "/healthz", HttpStatusCode.OK),
-                 })
+        using (var factory = BuildFactory(remoteIp: "127.0.0.1"))
         {
-            using var response = await client.SendAsync(new HttpRequestMessage(method, path));
-            Assert.Equal(status, response.StatusCode);
-            AssertBaseline(response, StudioResponseHeaderPolicy.ApiContentSecurityPolicy);
+            using var client = NewClient(factory);
+            using (var pending = await client.GetAsync("/healthz/readiness"))
+            {
+                Assert.Equal(HttpStatusCode.OK, pending.StatusCode);
+                Assert.Equal("pending", JsonDocument.Parse(await pending.Content.ReadAsStringAsync()).RootElement.GetProperty("state").GetString());
+            }
+            await factory.Services.GetRequiredService<AgentStudio.Readiness.ServerReadinessMonitor>().RefreshAsync(CancellationToken.None);
+            using var probe = await client.GetAsync("/healthz/readiness");
+            Assert.Equal(HttpStatusCode.OK, probe.StatusCode);
+            var report = JsonDocument.Parse(await probe.Content.ReadAsStringAsync()).RootElement;
+            Assert.Equal("2026-10-20T08:00:00+00:00", report.GetProperty("computedAt").GetString());
+            var ids = report.GetProperty("checks").EnumerateArray().Select(check => check.GetProperty("id").GetString()).ToArray();
+            Assert.Contains("git-identity", ids);
+            Assert.Contains("committer-identity", ids);
+            Assert.Contains("state-writable", ids);
+            Assert.Contains("gate-worker", ids);
+            using var page = await client.GetAsync("/api/system/readiness");
+            Assert.Equal(HttpStatusCode.Unauthorized, page.StatusCode);
+        }
+        using (var factory = BuildFactory(remoteIp: "203.0.113.15", repository: Path.Combine(_workspace, "remote-readiness")))
+        {
+            using var client = NewClient(factory);
+            using var denied = await client.GetAsync("/healthz/readiness");
+            Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
         }
     }
 
@@ -157,32 +319,12 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
     }
 
     [Fact]
-    public async Task Recovery_console_keeps_its_own_policy_that_runs_its_inline_script()
-    {
-        using var factory = BuildFactory();
-        using var client = NewClient(factory);
-
-        using var recovery = await client.GetAsync("/recovery");
-
-        Assert.Equal(HttpStatusCode.OK, recovery.StatusCode);
-        Assert.Contains("Task Server bootstrap and recovery", await recovery.Content.ReadAsStringAsync());
-        var policy = Header(recovery, "Content-Security-Policy");
-        Assert.Equal(RecoveryConsole.ContentSecurityPolicy, policy);
-        Assert.Contains("script-src 'unsafe-inline'", policy);
-        Assert.Contains("connect-src 'self'", policy);
-        Assert.Contains("frame-ancestors 'self'", policy);
-        Assert.DoesNotContain("sandbox", policy);
-        Assert.Equal("SAMEORIGIN", Header(recovery, "X-Frame-Options"));
-    }
-
-    [Fact]
     public async Task Preview_proxy_and_task_result_html_keep_their_own_sandbox_policy()
     {
         var resultsPath = Path.Combine(_workspace, "projects", ProjectName, "3-progress", TaskKey, "results");
         Directory.CreateDirectory(resultsPath);
         File.WriteAllText(Path.Combine(resultsPath, "report.html"), "<html><body>report</body></html>");
-        using (var source = new Image<Rgba32>(16, 16, new Rgba32(32, 80, 140)))
-            source.SaveAsPng(Path.Combine(resultsPath, "image.png"));
+        PngFixture.Write(Path.Combine(resultsPath, "image.png"), 16, 16);
         File.WriteAllText(Path.Combine(resultsPath, "..", "x.html"), "<html><body><script>alert(document.cookie)</script></body></html>");
         Directory.CreateDirectory(Path.Combine(_workspace, "projects", ProjectName, "docs"));
         File.WriteAllText(Path.Combine(_workspace, "projects", ProjectName, "docs", "diagram.svg"),
@@ -239,11 +381,11 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
             Assert.Equal("no-store", Header(image, "Cache-Control"));
         }
 
-        using (var thumbnail = await SendAsync(client, HttpMethod.Get,
-                   $"/api/tasks/{TaskKey}/thumbnail?path=image.png", owner.SessionToken))
+        using (var listing = await SendAsync(client, HttpMethod.Get,
+                   $"/api/tasks/{TaskKey}/screenshots", owner.SessionToken))
         {
-            Assert.Equal(HttpStatusCode.OK, thumbnail.StatusCode);
-            Assert.Equal("no-store", Header(thumbnail, "Cache-Control"));
+            Assert.Equal(HttpStatusCode.OK, listing.StatusCode);
+            Assert.Equal("no-store", Header(listing, "Cache-Control"));
         }
 
         // A signed-in member reads card files through the route permission. Stored
@@ -256,42 +398,6 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         using var anonymous = await client.GetAsync($"/api/tasks/{TaskKey}/files/x.html");
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
         Assert.DoesNotContain("<script>", await anonymous.Content.ReadAsStringAsync());
-    }
-
-    [Fact]
-    public async Task Agent_written_task_html_served_by_the_files_route_is_sandboxed_without_script()
-    {
-        // The files route answers with the stored text and its media type and
-        // no policy of its own; the header middleware decides the policy when
-        // the response starts.
-        var builder = WebApplication.CreateBuilder();
-        builder.WebHost.UseTestServer();
-        await using var app = builder.Build();
-        app.UseStudioResponseHeaders();
-        app.MapGet("/api/tasks/{jobId}/files/{**path}", (string jobId, string path) =>
-            Results.Text("<html><body><script>alert(document.cookie)</script></body></html>", "text/html", System.Text.Encoding.UTF8));
-        await app.StartAsync();
-        using var client = app.GetTestClient();
-        client.BaseAddress = new Uri("https://localhost");
-
-        using var html = await client.GetAsync($"/api/tasks/{TaskKey}/files/x.html");
-
-        Assert.True(html.StatusCode == HttpStatusCode.OK,
-            $"Expected a rendered task result, got {(int)html.StatusCode}: {await html.Content.ReadAsStringAsync()}");
-        Assert.Equal("text/html", html.Content.Headers.ContentType?.MediaType);
-        AssertSandboxedDocument(html);
-        Assert.Equal(StudioResponseHeaderPolicy.StrictTransportSecurity, Header(html, "Strict-Transport-Security"));
-        await app.StopAsync();
-    }
-
-    private static void AssertSandboxedDocument(HttpResponseMessage response)
-    {
-        var policy = Header(response, "Content-Security-Policy");
-        Assert.Equal(StudioResponseHeaderPolicy.DocumentContentSecurityPolicy, policy);
-        Assert.StartsWith("sandbox;", policy);
-        Assert.Contains("default-src 'none'", policy);
-        Assert.DoesNotContain("script-src", policy);
-        Assert.Equal("nosniff", Header(response, "X-Content-Type-Options"));
     }
 
     [Fact]
@@ -315,25 +421,6 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
         foreach (var deletion in logout.Headers.GetValues("Set-Cookie"))
             Assert.DoesNotContain("domain=", deletion, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task Networked_profile_ignores_legacy_domain_cookie_name()
-    {
-        using var factory = BuildFactory();
-        var owner = factory.Services.GetRequiredService<AccessSecurityStore>()
-            .Bootstrap(new BootstrapRequest("first.owner", Password, null));
-        using var client = NewClient(factory);
-        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/session");
-        request.Headers.Add("Cookie", $"{AccessSecurityStore.InsecureSessionCookieName}={owner.SessionToken}");
-
-        using var response = await client.SendAsync(request);
-
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        using var secret = new HttpRequestMessage(HttpMethod.Get, "/api/secrets");
-        secret.Headers.Add("Cookie", $"{AccessSecurityStore.InsecureSessionCookieName}={owner.SessionToken}");
-        using var secretResponse = await client.SendAsync(secret);
-        Assert.Equal(HttpStatusCode.Unauthorized, secretResponse.StatusCode);
     }
 
     [Fact]
@@ -365,38 +452,6 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         // they stay outside the Origin rule; CSRF still guards the session.
         using var enroll = await SendAsync(client, HttpMethod.Post, "/api/auth/runner-enroll", body: new { code });
         enroll.EnsureSuccessStatusCode();
-    }
-
-    [Fact]
-    public async Task Websocket_upgrade_to_the_job_hub_needs_the_studio_origin()
-    {
-        using var factory = BuildFactory();
-        var owner = factory.Services.GetRequiredService<AccessSecurityStore>()
-            .Bootstrap(new BootstrapRequest("first.owner", Password, null));
-        using var client = NewClient(factory);
-
-        Assert.Equal("origin-mismatch", await RejectionAsync(HubUpgradeAsync(client, owner.SessionToken, "https://other.studio.test")));
-        Assert.Equal("cross-site-request", await RejectionAsync(HubUpgradeAsync(client, owner.SessionToken, fetchSite: "same-site")));
-        Assert.Equal("opaque-origin-denied", await RejectionAsync(HubUpgradeAsync(client, owner.SessionToken, "null")));
-
-        foreach (var (origin, fetchSite) in new[] { (Studio, (string?)null), (null, "same-origin"), (null, null) })
-        {
-            using var admitted = await HubUpgradeAsync(client, owner.SessionToken, origin, fetchSite);
-            Assert.NotEqual(HttpStatusCode.Forbidden, admitted.StatusCode);
-            Assert.NotEqual(HttpStatusCode.Unauthorized, admitted.StatusCode);
-        }
-
-        // The same check holds through a real WebSocket handshake.
-        var sockets = factory.Server.CreateWebSocketClient();
-        sockets.ConfigureRequest = request =>
-        {
-            request.Scheme = "https";
-            request.Host = new HostString("studio.test");
-            request.Headers.Cookie = $"{AccessSecurityStore.SessionCookieName}={owner.SessionToken}";
-            request.Headers.Origin = "https://other.studio.test";
-        };
-        await Assert.ThrowsAnyAsync<InvalidOperationException>(
-            () => sockets.ConnectAsync(new Uri("wss://studio.test/hubs/jobs"), CancellationToken.None));
     }
 
     [Fact]
@@ -474,7 +529,98 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         Assert.Equal((HttpStatusCode)429, await LoginAsync(spoofing, "198.51.100.99", Password));
     }
 
-    private static async Task<AuthStatusResponse> StatusAsync(HttpClient client, string forwardedFor)
+    private WebApplicationFactory<Program> BuildFactory(
+        string? remoteIp = null, bool previewUpstream = false, string? projectPath = null, string? repository = null,
+        IReadOnlyDictionary<string, string?>? settings = null, string? publishedSha = null)
+        => new WebApplicationFactory<Program>().WithWebHostBuilder(builder => Configure(
+            builder, _workspace, _clock, remoteIp, previewUpstream, projectPath, repository, settings, publishedSha));
+
+    public void Dispose() => TestTempRoot.TryDelete(_workspace);
+}
+
+/// <summary>
+/// The requests, header checks and host configuration of the networked edge
+/// classes. <see cref="NetworkedEdgeHardeningTests"/> shares one host;
+/// <see cref="NetworkedEdgeHardeningOwnHostTests"/> holds the tests that need a
+/// host of their own.
+/// </summary>
+public abstract class NetworkedEdgeHardeningTestBase
+{
+    protected const string Studio = "https://studio.test";
+    protected const string Password = "correct horse battery staple!";
+    protected const string ProjectName = "edge-hardening";
+    protected const string TaskKey = "AGT-EDGE-HARDENING";
+
+    /// <summary>
+    /// The networked host of these classes, on <paramref name="workspace"/> and
+    /// <paramref name="clock"/>. The optional arguments are the configurations
+    /// the tests of <see cref="NetworkedEdgeHardeningOwnHostTests"/> each need.
+    /// </summary>
+    internal static void Configure(
+        IWebHostBuilder builder, string workspace, TimeProvider clock,
+        string? remoteIp = null, bool previewUpstream = false, string? projectPath = null, string? repository = null,
+        IReadOnlyDictionary<string, string?>? settings = null, string? publishedSha = null)
+    {
+        builder.UseEnvironment("Test");
+        builder.ConfigureTestServices(services =>
+        {
+            services.AddSingleton<TimeProvider>(clock);
+            services.RemoveAll<AccessSecurityStore>();
+            services.AddSingleton(provider => new AccessSecurityStore(
+                provider.GetRequiredService<IConfiguration>(),
+                provider.GetRequiredService<ILogger<AccessSecurityStore>>(),
+                provider.GetRequiredService<TimeProvider>(),
+                VerifyPasswordOnce, HashPasswordOnce));
+        });
+        if (publishedSha is not null)
+            builder.ConfigureTestServices(services => services.AddSingleton(new PublishedArtifactSha(publishedSha)));
+        if (remoteIp is not null)
+            builder.ConfigureServices(services => services.AddSingleton<IStartupFilter>(new RemoteIpStartupFilter(IPAddress.Parse(remoteIp))));
+        if (previewUpstream)
+            builder.ConfigureTestServices(services => services.AddHttpClient("project-url-preview")
+                .ConfigurePrimaryHttpMessageHandler(() => new PreviewUpstream()));
+        builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = repository ?? workspace,
+            ["Security:Profile"] = "networked",
+            ["Security:BootstrapCode"] = "website-setup-code",
+            ["Security:TrustedProxyAddresses"] = "172.30.83.3",
+            ["AllowedHosts"] = "studio.test",
+            ["WatchPaths:0:Name"] = projectPath is null ? null : ProjectName,
+            ["WatchPaths:0:Path"] = projectPath,
+            ["WatchPaths:0:RootPath"] = projectPath,
+            ["WatchPaths:0:RepositoryPath"] = projectPath,
+        }.Concat(settings ?? new Dictionary<string, string?>())));
+    }
+
+    /// <summary>
+    /// The real PBKDF2 hash and check, each run once per password (and stored
+    /// hash) in this process (AGT-3567). The throttle tests bootstrap four
+    /// hosts and send dozens of logins with the same two passwords; at 600,000
+    /// iterations each hash took one to four seconds on a loaded runner. The
+    /// throttle, the hash slots and the responses are unchanged, and every
+    /// distinct pair is still hashed by <see cref="PasswordSecretHasher.HashPassword"/>
+    /// and verified by <see cref="PasswordSecretHasher.VerifyPassword"/>.
+    /// </summary>
+    private static bool VerifyPasswordOnce(string password, string encoded)
+        => VerifiedPasswords.GetOrAdd((password, encoded),
+            pair => PasswordSecretHasher.VerifyPassword(pair.Password, pair.Encoded));
+
+    private static string HashPasswordOnce(string password)
+        => HashedPasswords.GetOrAdd(password, PasswordSecretHasher.HashPassword);
+
+    private static readonly ConcurrentDictionary<(string Password, string Encoded), bool> VerifiedPasswords = new();
+    private static readonly ConcurrentDictionary<string, string> HashedPasswords = new(StringComparer.Ordinal);
+
+    protected static string Header(HttpResponseMessage response, string name)
+        => response.Headers.TryGetValues(name, out var values) || response.Content.Headers.TryGetValues(name, out values)
+            ? string.Join(", ", values)
+            : string.Empty;
+
+    protected static HttpClient NewClient(WebApplicationFactory<Program> factory)
+        => factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri(Studio), HandleCookies = false });
+
+    protected static async Task<AuthStatusResponse> StatusAsync(HttpClient client, string forwardedFor)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/status");
         request.Headers.Add("X-Forwarded-For", forwardedFor);
@@ -483,7 +629,7 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         return (await response.Content.ReadFromJsonAsync<AuthStatusResponse>())!;
     }
 
-    private static async Task<HttpStatusCode> LoginAsync(HttpClient client, string forwardedFor, string password)
+    protected static async Task<HttpStatusCode> LoginAsync(HttpClient client, string forwardedFor, string password)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/login")
         {
@@ -495,7 +641,7 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         return response.StatusCode;
     }
 
-    private static Task<HttpResponseMessage> HubUpgradeAsync(
+    protected static Task<HttpResponseMessage> HubUpgradeAsync(
         HttpClient client, string session, string? origin = null, string? fetchSite = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, "/hubs/jobs");
@@ -509,7 +655,7 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         return client.SendAsync(request);
     }
 
-    private static void AssertBaseline(HttpResponseMessage response, string contentSecurityPolicy)
+    protected static void AssertBaseline(HttpResponseMessage response, string contentSecurityPolicy)
     {
         Assert.Equal(contentSecurityPolicy, Header(response, "Content-Security-Policy"));
         Assert.Equal("SAMEORIGIN", Header(response, "X-Frame-Options"));
@@ -521,7 +667,7 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         Assert.Contains("no-store", Header(response, "Cache-Control").Split(',', StringSplitOptions.TrimEntries));
     }
 
-    private static async Task<HttpResponseMessage> SendAsync(
+    protected static async Task<HttpResponseMessage> SendAsync(
         HttpClient client, HttpMethod method, string path, string? session = null, string? origin = null,
         string? fetchSite = null, string? csrf = null, object? body = null)
     {
@@ -534,7 +680,7 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         return await client.SendAsync(request);
     }
 
-    private static async Task<string?> RejectionAsync(Task<HttpResponseMessage> pending)
+    protected static async Task<string?> RejectionAsync(Task<HttpResponseMessage> pending)
     {
         using var response = await pending;
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
@@ -542,7 +688,7 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         return body.GetProperty("error").GetString();
     }
 
-    private static void AssertHostOnly(string setCookie, bool httpOnly)
+    protected static void AssertHostOnly(string setCookie, bool httpOnly)
     {
         var attributes = setCookie.Split(';', StringSplitOptions.TrimEntries).Skip(1)
             .Select(attribute => attribute.ToLowerInvariant()).ToList();
@@ -553,41 +699,15 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         Assert.Equal(httpOnly, attributes.Contains("httponly"));
     }
 
-    private static string Header(HttpResponseMessage response, string name)
-        => response.Headers.TryGetValues(name, out var values) || response.Content.Headers.TryGetValues(name, out values)
-            ? string.Join(", ", values)
-            : string.Empty;
-
-    private static HttpClient NewClient(WebApplicationFactory<Program> factory)
-        => factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri(Studio), HandleCookies = false });
-
-    private WebApplicationFactory<Program> BuildFactory(
-        string? remoteIp = null, bool previewUpstream = false, string? projectPath = null, string? repository = null,
-        IReadOnlyDictionary<string, string?>? settings = null, string? publishedSha = null)
-        => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment("Test");
-            builder.ConfigureTestServices(services => services.AddSingleton<TimeProvider>(_clock));
-            if (publishedSha is not null)
-                builder.ConfigureTestServices(services => services.AddSingleton(new PublishedArtifactSha(publishedSha)));
-            if (remoteIp is not null)
-                builder.ConfigureServices(services => services.AddSingleton<IStartupFilter>(new RemoteIpStartupFilter(IPAddress.Parse(remoteIp))));
-            if (previewUpstream)
-                builder.ConfigureTestServices(services => services.AddHttpClient("project-url-preview")
-                    .ConfigurePrimaryHttpMessageHandler(() => new PreviewUpstream()));
-            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["TaskRepository"] = repository ?? _workspace,
-                ["Security:Profile"] = "networked",
-                ["Security:BootstrapCode"] = "website-setup-code",
-                ["Security:TrustedProxyAddresses"] = "172.30.83.3",
-                ["AllowedHosts"] = "studio.test",
-                ["WatchPaths:0:Name"] = projectPath is null ? null : ProjectName,
-                ["WatchPaths:0:Path"] = projectPath,
-                ["WatchPaths:0:RootPath"] = projectPath,
-                ["WatchPaths:0:RepositoryPath"] = projectPath,
-            }.Concat(settings ?? new Dictionary<string, string?>())));
-        });
+    protected static void AssertSandboxedDocument(HttpResponseMessage response)
+    {
+        var policy = Header(response, "Content-Security-Policy");
+        Assert.Equal(StudioResponseHeaderPolicy.DocumentContentSecurityPolicy, policy);
+        Assert.StartsWith("sandbox;", policy);
+        Assert.Contains("default-src 'none'", policy);
+        Assert.DoesNotContain("script-src", policy);
+        Assert.Equal("nosniff", Header(response, "X-Content-Type-Options"));
+    }
 
     private sealed class RemoteIpStartupFilter(IPAddress address) : IStartupFilter
     {
@@ -616,6 +736,4 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
             return Task.FromResult(response);
         }
     }
-
-    public void Dispose() => TestTempRoot.TryDelete(_workspace);
 }

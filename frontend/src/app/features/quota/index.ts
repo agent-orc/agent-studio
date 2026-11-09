@@ -1,8 +1,7 @@
 /** Quota feature public API. Cycle 9h / ADR-0034. */
 export { QuotaApiService } from './services/quota-api.service';
-export type { CliModelRouteProfile, CliModelFallbackRoute, CliFallbackState, CliModelRoutesResponse, CliQuotaWaitPolicy, ProjectCliQuotaWaitPolicy, ModelRoutingRecommendation, ModelRoutingPolicyView } from './services/quota-api.service';
-export { QuotaStripComponent } from './components/quota-strip/quota-strip';
-export { HeaderQuotaComponent } from './components/header-quota/header-quota';
+export type { CliModelRouteProfile, CliModelFallbackRoute, CliFallbackState, CliModelRoutesResponse, CliQuotaWaitPolicy, ProjectCliQuotaWaitPolicy, ModelRoutingRecommendation, ModelRoutingPolicyView,
+  EffectiveModelSelection, ConsumerModelPolicy, ConsumerPolicyRoute, ModelSelectionPolicy } from './services/quota-api.service';
 export { QuotaForecastPanelComponent } from './components/quota-forecast-panel/quota-forecast-panel';
 export { QuotaCurveComponent } from './components/quota-curve/quota-curve';
 export { TaskCardQuotaNoticeComponent } from './components/task-card-quota-notice/task-card-quota-notice';

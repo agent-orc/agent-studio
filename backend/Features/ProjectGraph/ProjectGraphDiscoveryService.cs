@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.ProjectGraph;
 
@@ -40,7 +41,7 @@ public sealed class ProjectGraphDiscoveryService
         var taskRepository = configuration["TaskRepository"];
         _snapshotRoot = !string.IsNullOrWhiteSpace(taskRepository)
             ? Path.Combine(taskRepository, ".metadata", "project-graph")
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "agent-taskboard", "project-graph");
+            : LocalStateRoot.Combine("agent-taskboard", "project-graph");
     }
 
     public ProjectGraphSnapshot? GetCurrent(string projectName)

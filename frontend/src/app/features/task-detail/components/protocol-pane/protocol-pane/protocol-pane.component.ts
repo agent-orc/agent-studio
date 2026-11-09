@@ -41,10 +41,10 @@ import { RunTimelineComponent } from '../run-timeline/run-timeline.component';
 import { RunGitViewerComponent } from '../run-git-viewer/run-git-viewer.component';
 
 import { FeatureFlagsService } from '../../../../../services/feature-flags.service';
-import { VerboseDebugOverlayComponent } from '../../../../../features/verbose-debug';
+import { VerboseDebugOverlayComponent } from '../../../../../features/verbose-debug/lazy';
 import { TaskService } from '../../../../../services/task.service';
 import type { ConversationEvent, RawLineRange } from 'coding-agent-chat/core';
-import { ConversationViewComponent } from 'coding-agent-chat/conversation';
+import { ProtocolConversationComponent } from '../protocol-conversation/protocol-conversation.component';
 import { mergeByTimestamp, projectConversation } from 'coding-agent-chat/core';
 import { BeautifulResultsComponent } from '../../beautiful-results/beautiful-results.component';
 import { ResultViewComponent } from '../result-view/result-view.component';
@@ -67,7 +67,6 @@ import {
 import { generatedFileProvenance } from '../../generated-file-provenance.util';
 import { ModelPriceStore } from '../../../../tokens/model-prices';
 import { presentActivityEvents, stripLegacyCompletionLines } from '../activity-event-presentation';
-import { ActivityEventPresentationDirective } from '../activity-event-presentation.directive';
 import { mergeReplayEvents, projectRunnerReplay } from '../runner-event-replay';
 import { RunnerReplayMetadataComponent } from '../runner-replay-metadata/runner-replay-metadata';
 import { projectStructuredActivityContent } from '../structured-activity-projection';
@@ -120,7 +119,7 @@ interface InterimSummaryState {
   imports: [
     ActivityLogViewComponent,
     PlanStripComponent,
-    ConversationViewComponent,
+    ProtocolConversationComponent,
     RunTimelineComponent,
     RunGitViewerComponent,
     VerboseDebugOverlayComponent,
@@ -137,7 +136,6 @@ interface InterimSummaryState {
     RunnerReplayMetadataComponent,
     TaskInspectorTabComponent,
     DecisionSurfaceComponent,
-    ActivityEventPresentationDirective,
     TaskArtifactLinksDirective,
     DetailKeyboardSurfaceDirective,
     TaskPreviewComponent,
@@ -156,6 +154,7 @@ export class ProtocolPaneComponent implements OnDestroy {
   readonly isActiveJob = input<boolean>(false);
 
   readonly activeInspectorTab = model<InspectorTab>('protocol');
+  readonly reviewAttemptFocus = input<string | null>(null);
   readonly followupPrompt = input<string>('');
   readonly canSendChat = input(false);
   readonly chatSendLabel = input<string>('Send');
@@ -219,6 +218,9 @@ export class ProtocolPaneComponent implements OnDestroy {
   readonly nextGenChatEvents = signal<ConversationEvent[]>([]);
 
   constructor() {
+    effect(() => {
+      if (this.reviewAttemptFocus()) this.runsModalOpen.set(true);
+    });
     // A fresh task opens at its readable Activity stream. Clearing the
     // explicit pick when the job changes keeps a Trace
     // choice made on one task from leaking into the next.
@@ -604,7 +606,6 @@ export class ProtocolPaneComponent implements OnDestroy {
   onInspectorTabChange(id: string): void {
     if (id === 'task' || id === 'activity' || id === 'protocol') {
       this.activeInspectorTab.set(id);
-      this.focusTabSurface();
     }
   }
 

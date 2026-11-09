@@ -8,6 +8,7 @@ using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using AgentStudio.TaskServer.Contracts.BatchGate;
+using AgentStudio.TestSupport;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -51,24 +52,32 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         _origin = Path.Combine(_workspace, "origin.git");
         foreach (var state in TaskStates.All)
             Directory.CreateDirectory(Path.Combine(_watchPath, state));
-        Directory.CreateDirectory(_repo);
-        Git(_workspace, "init", "-q", "--bare", "--initial-branch=develop", _origin);
-        Git(_repo, "init", "-q", "-b", "develop");
-        Git(_repo, "config", "user.email", "batch-test@example.invalid");
-        Git(_repo, "config", "user.name", "Batch Test");
-        Directory.CreateDirectory(Path.Combine(_repo, ".agent-studio"));
-        File.WriteAllText(Path.Combine(_repo, ".agent-studio", "prepare"), "#!/bin/sh\nexit 0\n");
-        File.WriteAllText(Path.Combine(_repo, ".agent-studio", "project.yml"),
+        GitRepositoryTemplate.CopyTo("batch-gate-pilot:repo-and-origin:v1", _workspace, SeedRepositoryAndOrigin);
+    }
+
+    // Built once per test process; each test starts from a copy (AGT-3419).
+    private static void SeedRepositoryAndOrigin(string root)
+    {
+        var repo = Path.Combine(root, "repo");
+        var origin = Path.Combine(root, "origin.git");
+        Directory.CreateDirectory(repo);
+        Git(root, "init", "-q", "--bare", "--initial-branch=develop", origin);
+        Git(repo, "init", "-q", "-b", "develop");
+        Git(repo, "config", "user.email", "batch-test@example.invalid");
+        Git(repo, "config", "user.name", "Batch Test");
+        Directory.CreateDirectory(Path.Combine(repo, ".agent-studio"));
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "prepare"), "#!/bin/sh\nexit 0\n");
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "project.yml"),
             "schemaVersion: 1\nstack: [custom]\ntoolVersions:\ncommands:\n"
             + "  prepare: .agent-studio/prepare\n  build:\n  test: [echo test]\n"
             + "  lint:\ntestSuites:\ncachePaths:\ncapabilities: [linux]\nenvironment:\n");
-        File.WriteAllText(Path.Combine(_repo, "README.md"), "Batch pilot.\n");
-        Git(_repo, "add", ".");
-        Git(_repo, "commit", "-qm", "base");
-        Git(_repo, "remote", "add", "origin", _origin);
-        Git(_repo, "push", "-q", "origin", "develop");
+        File.WriteAllText(Path.Combine(repo, "README.md"), "Batch pilot.\n");
+        Git(repo, "add", ".");
+        Git(repo, "commit", "-qm", "base");
+        Git(repo, "remote", "add", "origin", origin);
+        Git(repo, "push", "-q", "origin", "develop");
         // Publication fast-forwards the local integration ref; keep it unchecked-out.
-        Git(_repo, "checkout", "-q", "--detach");
+        Git(repo, "checkout", "-q", "--detach");
     }
 
     public void Dispose()
@@ -107,6 +116,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         using (var body = JsonDocument.Parse(await valid.Content.ReadAsStringAsync()))
         {
             Assert.Equal("code", body.RootElement.GetProperty("settings").GetProperty("scope").GetString());
+            Assert.Equal("off", body.RootElement.GetProperty("settings").GetProperty("stacking").GetString());
             Assert.Equal(8, body.RootElement.GetProperty("limits").GetProperty("hardMaximumSize").GetInt32());
         }
 
@@ -301,6 +311,56 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         builder.Build(ProjectName, "develop", pending, settings, _clock);
 
         Assert.Equal(1, builder.DiffReadCount);
+    }
+
+    [Fact]
+    public async Task State_route_reads_risk_from_the_tick_cache_and_starts_no_git()
+    {
+        // AGT-3413: the route ran merge-base and diff for every pending card.
+        var observer = new GitReadRecorder();
+        using var factory = BuildFactory(testServices: services =>
+            services.AddSingleton<AgentStudio.Git.IGitReadRequestObserver>(observer));
+        using var client = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-STATE-CACHE", "docs/state-cache.md");
+        var route = $"/api/projects/{ProjectName}/batch-gate/state?history=10";
+
+        // Cold: the tick has not read the diff, so the card keeps the lane estimate.
+        using (var cold = JsonDocument.Parse(await client.GetStringAsync(route)))
+        {
+            var pending = Assert.Single(cold.RootElement.GetProperty("pending").EnumerateArray());
+            Assert.Equal(member.Key, pending.GetProperty("taskKey").GetString());
+            Assert.Equal(.08, pending.GetProperty("risk").GetDouble());
+            Assert.Empty(pending.GetProperty("paths").EnumerateArray());
+            Assert.Equal(JsonValueKind.Null, pending.GetProperty("riskAgeMinutes").ValueKind);
+        }
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var expected = Assert.Single(Builder(factory).Build(ProjectName, "develop",
+            store.ListPending(), Settings(factory), _clock).Waiting);
+        // Past the tick's five-minute reuse window the route still answers the last known value.
+        _clock = _clock.AddMinutes(7);
+
+        using (var warm = JsonDocument.Parse(await client.GetStringAsync(route)))
+        {
+            var pending = Assert.Single(warm.RootElement.GetProperty("pending").EnumerateArray());
+            Assert.Equal(expected.Risk, pending.GetProperty("risk").GetDouble());
+            Assert.Equal(["docs/state-cache.md"], pending.GetProperty("paths").EnumerateArray()
+                .Select(path => path.GetString()!).ToArray());
+            Assert.Equal(7, pending.GetProperty("riskAgeMinutes").GetDouble());
+        }
+        var reads = observer.Records.Where(record =>
+            record.RouteTemplate == "/api/projects/{projectName}/batch-gate/state").ToArray();
+        Assert.Equal(2, reads.Length);
+        Assert.All(reads, record => Assert.Empty(record.Commands));
+    }
+
+    private sealed class GitReadRecorder : AgentStudio.Git.IGitReadRequestObserver
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<AgentStudio.Git.GitReadRequestRecord> Records { get; } = new();
+        public void OnCompleted(AgentStudio.Git.GitReadRequestRecord record) => Records.Enqueue(record);
     }
 
     [Fact]
@@ -823,6 +883,47 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Formed_batch_starts_while_a_per_task_fallback_gate_is_running()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        var slots = factory.Services.GetRequiredService<GateSlotUsageTracker>();
+        slots.Acquired("capacity-probe", 3);
+        slots.Released("capacity-probe");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.WaitForFlightsInTick = false;
+        var releaseFallback = new TaskCompletionSource<BuildTestGateResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _gate.FallbackAsync = (request, _) => releaseFallback.Task;
+        _gate.Batch = request => Green(request.ExpectedSha);
+        _gate.Merge = request => Green(request.ExpectedSha);
+
+        SeedMember(factory, "CODE-SOLO", "backend/solo.cs");
+        _clock = _clock.AddMinutes(16);
+        await pilot.TickAsync(CancellationToken.None);
+        await _gate.FirstFallbackStarted;
+        Assert.True(_gate.Requests.First(request => request.Executor == "batch-fallback")
+            .ReserveBatchSlot);
+
+        SeedMember(factory, "CODE-BATCH-A", "backend/batch-a.cs");
+        SeedMember(factory, "CODE-BATCH-B", "backend/batch-b.cs");
+        try
+        {
+            await pilot.TickAsync(CancellationToken.None);
+            await _gate.FirstBatchStarted;
+            Assert.Equal(1, _gate.BatchRuns);
+            Assert.False(releaseFallback.Task.IsCompleted);
+        }
+        finally
+        {
+            releaseFallback.TrySetResult(Green(_gate.Requests.First(request =>
+                request.Executor == "batch-fallback").ExpectedSha));
+            await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        }
+    }
+
+    [Fact]
     public async Task Paused_member_published_under_another_sha_leaves_as_integrated_without_a_gate()
     {
         using var factory = BuildFactory();
@@ -882,13 +983,14 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task All_conflict_cascade_returns_deferred_members_to_the_per_task_gate()
+    public async Task Two_conflicts_send_agent_rounds_and_replan_four_deferred_members_without_fallback()
     {
         using var factory = BuildFactory();
         _ = factory.CreateClient();
-        EnableBatchGate(factory, closeSize: 8);
-        var members = Enumerable.Range(1, 8)
-            .Select(index => SeedMember(factory, $"DOC-CONFLICT-{index}", "README.md"))
+        EnableBatchGate(factory, closeSize: 6);
+        var members = Enumerable.Range(1, 6)
+            .Select(index => SeedMember(factory, $"DOC-CONFLICT-{index}",
+                index <= 2 ? "README.md" : $"docs/deferred-{index}.md"))
             .ToArray();
         var originalBase = RemoteTip();
         Git(_repo, "checkout", "-q", "--detach", originalBase);
@@ -896,31 +998,36 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Git(_repo, "add", "README.md");
         Git(_repo, "commit", "-qm", "integration conflict");
         Git(_repo, "push", "-q", "origin", "HEAD:develop");
-        _gate.Batch = _ => throw new InvalidOperationException("An all-conflict batch reached the suite.");
-        _gate.Fallback = request => Red(request.ExpectedSha);
+        _gate.Batch = request => Green(request.ExpectedSha);
+        _gate.Fallback = _ => throw new InvalidOperationException("A deferred or conflicted member ran a per-task gate.");
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var store = factory.Services.GetRequiredService<BatchGateStore>();
 
+        var manifest = ClosePendingBatch(factory);
         await pilot.TickAsync(CancellationToken.None);
 
-        var manifest = Assert.Single(store.ListManifests());
         AssertPhase(store, manifest.BatchId, BatchPhase.Abandoned);
-        Assert.Equal(0, _gate.BatchRuns);
-        Assert.Equal(8, _gate.FallbackRuns);
-        Assert.Empty(store.ListPending());
-        foreach (var member in members)
-        {
-            AssertLane(member.Key, TaskStates.Escalated);
-            Assert.Null(Ownership(member.Key));
-        }
-        Assert.Equal(3, members.Count(member =>
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Equal(2, members.Count(member =>
             store.ReadReplay(manifest.BatchId, member.Key).Outcome == "conflict"));
-        Assert.Equal(5, members.Count(member =>
+        Assert.Equal(4, members.Count(member =>
             store.ReadReplay(manifest.BatchId, member.Key).Outcome == "cascade-deferred"));
+        foreach (var member in members.Take(2))
+        {
+            AssertLane(member.Key, TaskStates.Ready);
+            Assert.Contains("README.md", File.ReadAllText(Path.Combine(_watchPath,
+                TaskStates.Ready, member.Key, "prompt.md")));
+        }
+        await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        var next = Assert.Single(store.ListManifests().Where(item => item.BatchId != manifest.BatchId));
+        Assert.Equal(members.Skip(2).Select(item => item.Key),
+            next.Members.Select(item => item.TaskKey));
+        Assert.Equal(0, _gate.FallbackRuns);
     }
 
     [Fact]
-    public async Task Ejected_member_can_enter_the_integration_fallback_after_batch_reservation_releases()
+    public async Task Conflicted_member_starts_agent_round_after_batch_reservation_releases()
     {
         using var factory = BuildFactory();
         _ = factory.CreateClient();
@@ -933,16 +1040,189 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Git(_repo, "commit", "-qm", "integration conflict");
         Git(_repo, "push", "-q", "origin", "HEAD:develop");
         _gate.Batch = _ => throw new InvalidOperationException("Ejected member reached the batch suite.");
-        _gate.Fallback = request => Green(request.ExpectedSha);
+        _gate.Fallback = _ => throw new InvalidOperationException("A conflicted member ran a per-task gate.");
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var store = factory.Services.GetRequiredService<BatchGateStore>();
-
         await pilot.TickAsync(CancellationToken.None);
 
-        Assert.Equal(1, _gate.FallbackRuns);
-        Assert.Single(store.ListPending());
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Empty(store.ListPending());
+        AssertLane(member.Key, TaskStates.Ready);
+    }
+
+    [Fact]
+    public async Task Lone_cascade_deferred_member_joins_next_batch_without_a_per_task_gate()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var conflicted = SeedMember(factory, "DOC-LONE-CONFLICT", "README.md");
+        var deferred = SeedMember(factory, "DOC-LONE-DEFERRED", "docs/deferred.md");
+        Git(_repo, "checkout", "-q", "--detach", RemoteTip());
+        File.WriteAllText(Path.Combine(_repo, "README.md"), "Integration changed this line.\n");
+        Git(_repo, "add", "README.md");
+        Git(_repo, "commit", "-qm", "integration conflict");
+        Git(_repo, "push", "-q", "origin", "HEAD:develop");
+        _gate.Batch = request => Green(request.ExpectedSha);
+        _gate.Fallback = _ => throw new InvalidOperationException("A deferred member ran a per-task gate.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
+        settings.SetBatchGate(ProjectName, settings.Get(ProjectName).BatchGate with { MinimumSize = 1 });
+        var manifest = ClosePendingBatch(factory);
+
+        await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+
+        Assert.Equal("conflict", store.ReadReplay(manifest.BatchId, conflicted.Key).Outcome);
+        Assert.Equal("cascade-deferred", store.ReadReplay(manifest.BatchId, deferred.Key).Outcome);
+        var next = Assert.Single(store.ListManifests(), item => item.BatchId != manifest.BatchId);
+        Assert.Equal(deferred.Key, Assert.Single(next.Members).TaskKey);
+        AssertLane(conflicted.Key, TaskStates.Ready);
+        AssertLane(deferred.Key, TaskStates.HumanReview);
+        Assert.Equal(0, _gate.FallbackRuns);
+    }
+
+    // AGT-3414: a documentation-only delivery runs what a documentation batch
+    // runs, the build and lint commands without a test, on either path.
+    [Fact]
+    public async Task Documentation_batch_at_minimum_closes_at_once_and_runs_no_test()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        WithBuildStep();
+        var member = SeedMember(factory, "DOC-AT-ONCE", "docs/at-once.md");
+        var partner = SeedMember(factory, "DOC-AT-ONCE-PARTNER", "docs/at-once-partner.md");
+        string? level = null;
+        _gate.Batch = request => { level = request.RequiredTestLevel; return Green(request.ExpectedSha); };
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests());
+        Assert.Equal([member.Key, partner.Key], manifest.Members.Select(item => item.TaskKey));
+        AssertPhase(store, manifest.BatchId, BatchPhase.Published);
+        Assert.Equal(TestExecutionLevels.BuildOnly, level);
+        Assert.Equal(0, _gate.FallbackRuns);
+        AssertLane(member.Key, TaskStates.HumanReview);
+        AssertLane(partner.Key, TaskStates.HumanReview);
+    }
+
+    [Fact]
+    public async Task Per_task_fallback_of_a_documentation_card_runs_no_test()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        WithBuildStep();
+        var member = SeedMember(factory, "DOC-FALLBACK-LEVEL", "README.md");
+        DisableBatchGate(factory);
+        _gate.Fallback = request => Green(request.ExpectedSha);
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+
+        Assert.Equal(TestExecutionLevels.BuildOnly, FallbackLevel());
         Assert.Equal(member.ResultSha, Ownership(member.Key)?.FallbackTestedSha);
-        AssertLane(member.Key, TaskStates.AutoReview);
+    }
+
+    [Fact]
+    public async Task Per_task_fallback_of_a_code_card_runs_the_complete_suite()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        WithBuildStep();
+        SeedMember(factory, "CODE-FALLBACK-LEVEL", "src/Fallback.cs");
+        DisableBatchGate(factory);
+        _gate.Fallback = request => Green(request.ExpectedSha);
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+
+        Assert.Equal(TestExecutionLevels.Full, FallbackLevel());
+    }
+
+    [Fact]
+    public async Task Per_task_fallback_of_a_mixed_delivery_runs_the_complete_suite()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2, scope: "code");
+        WithBuildStep();
+        var member = SeedMember(factory, "MIXED-FALLBACK-LEVEL", "docs/mixed.md",
+            parentSha: CodeCommit("src/MixedFallback.cs"));
+        Assert.False(Assert.Single(factory.Services.GetRequiredService<BatchGateStore>()
+            .ListPending()).Subject.DocumentationOnly);
+        DisableBatchGate(factory);
+        _gate.Fallback = request => Green(request.ExpectedSha);
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+
+        Assert.Equal(TestExecutionLevels.Full, FallbackLevel());
+        Assert.Equal(member.ResultSha, Ownership(member.Key)?.FallbackTestedSha);
+    }
+
+    [Fact]
+    public async Task Mixed_candidate_runs_the_complete_suite_even_with_a_documentation_flag()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1, scope: "code");
+        WithBuildStep();
+        SeedMember(factory, "MIXED-FORGED-FLAG", "docs/forged.md",
+            parentSha: CodeCommit("src/Forged.cs"));
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = Assert.Single(store.ListPending());
+        var path = Assert.Single(Directory.GetFiles(Path.Combine(
+            Path.GetDirectoryName(store.BatchDirectory("unused"))!, "pending"), "*.json"));
+        File.WriteAllText(path, JsonSerializer.Serialize(pending with
+        {
+            Subject = pending.Subject with { DocumentationOnly = true },
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        string? level = null;
+        _gate.Batch = request => { level = request.RequiredTestLevel; return Green(request.ExpectedSha); };
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
+
+        Assert.Equal(1, _gate.BatchRuns);
+        Assert.Equal(TestExecutionLevels.Full, level);
+    }
+
+    // The single per-task gate request's test level.
+    private string? FallbackLevel()
+        => Assert.Single(_gate.Requests, request => request.Executor == "batch-fallback").RequiredTestLevel;
+
+    // The build-only level needs a non-test command to run: the integration
+    // branch's project definition gains a build command.
+    private void WithBuildStep()
+    {
+        Git(_repo, "checkout", "-q", "--detach", "refs/remotes/origin/develop");
+        File.WriteAllText(Path.Combine(_repo, ".agent-studio", "project.yml"),
+            "schemaVersion: 1\nstack: [custom]\ntoolVersions:\ncommands:\n"
+            + "  prepare: .agent-studio/prepare\n  build: [echo build]\n  test: [echo test]\n"
+            + "  lint:\ntestSuites:\ncachePaths:\ncapabilities: [linux]\nenvironment:\n");
+        Git(_repo, "add", ".");
+        Git(_repo, "commit", "-qm", "build step");
+        Git(_repo, "push", "-q", "origin", "HEAD:develop");
+        Git(_repo, "fetch", "-q", "origin");
+    }
+
+    // A disabled pilot hands every queued member to its per-task gate.
+    private static void DisableBatchGate(WebApplicationFactory<Program> factory)
+        => factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetBatchGate(ProjectName, new BatchGateFormationOptions(Enabled: false));
+
+    // A code commit on top of origin's develop that is not published there.
+    private string CodeCommit(string path)
+    {
+        Git(_repo, "checkout", "-q", "--detach", RemoteTip());
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(_repo, path))!);
+        File.WriteAllText(Path.Combine(_repo, path), "class Code {}\n");
+        Git(_repo, "add", ".");
+        Git(_repo, "commit", "-qm", "code " + path);
+        return Git(_repo, "rev-parse", "HEAD");
     }
 
     [Fact]
@@ -1279,7 +1559,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Published_recovery_does_not_wait_for_an_ejected_members_running_fallback()
+    public async Task Published_batch_releases_admitted_member_and_starts_conflict_round()
     {
         using var factory = BuildFactory();
         _ = factory.CreateClient();
@@ -1292,41 +1572,31 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Git(_repo, "add", "README.md");
         Git(_repo, "commit", "-qm", "integration conflict");
         Git(_repo, "push", "-q", "origin", "HEAD:develop");
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _gate.Batch = request => Green(request.ExpectedSha);
-        _gate.FallbackAsync = async (request, ct) =>
-        {
-            await release.Task.WaitAsync(ct);
-            return Red(request.ExpectedSha);
-        };
+        _gate.Fallback = _ => throw new InvalidOperationException("A conflicted member ran a per-task gate.");
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         pilot.WaitForFlightsInTick = false;
         var store = factory.Services.GetRequiredService<BatchGateStore>();
-        try
-        {
-            await pilot.TickAsync(CancellationToken.None);
-            // The batch flight publishes and releases the admitted member; the
-            // ejected member's fallback stays parked on the gate.
-            await pilot.WaitForFlightsAsync(includeFallbacks: false, CancellationToken.None);
-            await _gate.FirstFallbackStarted;
-            Assert.Contains(store.ListManifests(), manifest =>
-                store.LatestState(manifest.BatchId).Phase == BatchPhase.Published);
-            Assert.Equal(1, _gate.FallbackRuns);
-            Assert.True(Directory.Exists(Path.Combine(_watchPath,
-                TaskStates.HumanReview, admitted.Key)));
-            await pilot.TickAsync(CancellationToken.None);
-            AssertLane(admitted.Key, TaskStates.HumanReview);
-            AssertLane(ejected.Key, TaskStates.AutoReview);
-            var fact = Assert.Single(store.ListExecutions(ProjectName).Where(f => f.BatchRunId is not null));
-            Assert.Equal([admitted.Key], fact.MemberKeys);
-            Assert.Equal(2, store.ReadManifest(fact.BatchId!).Members.Count);
-            var row = GateEconomicsEndpoints.ProjectRow(ProjectName, [],
-                since: fact.StartedAtUtc.AddDays(-1), now: fact.CompletedAtUtc,
-                retest: null, batchMetrics:
-                [new BatchGateMetric(ProjectName, fact.MemberKeys!.Count, fact, Published: true)]);
-            Assert.Equal(1, row.GatedMerges);
-        }
-        finally { release.TrySetResult(); }
+        var closed = ClosePendingBatch(factory);
+        await pilot.TickAsync(CancellationToken.None);
+        await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        Assert.Contains(store.ListManifests(), manifest =>
+            store.LatestState(manifest.BatchId).Phase == BatchPhase.Published);
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath,
+            TaskStates.HumanReview, admitted.Key)));
+        await pilot.TickAsync(CancellationToken.None);
+        AssertLane(admitted.Key, TaskStates.HumanReview);
+        AssertLane(ejected.Key, TaskStates.Ready);
+        var fact = Assert.Single(store.ListExecutions(ProjectName).Where(f => f.BatchRunId is not null));
+        Assert.Equal([admitted.Key], fact.MemberKeys);
+        Assert.Equal(closed.BatchId, fact.BatchId);
+        Assert.Equal(2, store.ReadManifest(fact.BatchId!).Members.Count);
+        var row = GateEconomicsEndpoints.ProjectRow(ProjectName, [],
+            since: fact.StartedAtUtc.AddDays(-1), now: fact.CompletedAtUtc,
+            retest: null, batchMetrics:
+            [new BatchGateMetric(ProjectName, fact.MemberKeys!.Count, fact, Published: true)]);
+        Assert.Equal(1, row.GatedMerges);
     }
 
     [Fact]
@@ -1420,8 +1690,153 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Equal(publication.TestedCandidateSha, RemoteTip());
         Assert.False(TreeHas(RemoteTip(), "docs/offender.md"));
         AssertMergedMember(store, survivor.BatchId, publication.BatchRunId, fixRound);
-        Assert.Equal(1, _gate.FallbackRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Contains(store.ListIsolationFindings(ProjectName), finding =>
+            finding.TaskKey == offender.Key && finding.Status == "proven-red");
         AssertLane(offender.Key, TaskStates.Escalated);
+    }
+
+    [Fact]
+    public async Task Isolation_publishes_green_child_and_continues_after_other_member_changes_delivery()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 3);
+        var a = SeedMember(factory, "DOC-ISO-A", "docs/iso-a.md");
+        var b = SeedMember(factory, "DOC-ISO-B", "docs/iso-b.md");
+        var c = SeedMember(factory, "DOC-ISO-C", "docs/iso-c.md");
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var changed = false;
+        _gate.Batch = request =>
+        {
+            var hasA = TreeHas(request.ExpectedSha!, "docs/iso-a.md");
+            var hasB = TreeHas(request.ExpectedSha!, "docs/iso-b.md");
+            var hasC = TreeHas(request.ExpectedSha!, "docs/iso-c.md");
+            if (hasB && hasC && !hasA && !changed)
+            {
+                changed = true;
+                Supersede(authority, b.Key);
+            }
+            return hasB ? Red(request.ExpectedSha) : Green(request.ExpectedSha);
+        };
+        _gate.Fallback = _ => throw new InvalidOperationException("Isolation member ran fallback.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.True(changed);
+        AssertLane(a.Key, TaskStates.HumanReview);
+        Assert.Null(Ownership(b.Key));
+        Assert.Contains(store.ListManifests(), child => child.ParentBatchId is not null
+            && child.Members.Select(member => member.TaskKey).SequenceEqual([c.Key])
+            && store.ListRuns(child.BatchId).Count > 0);
+        Assert.Contains(store.ListIsolationFindings(ProjectName), finding =>
+            finding.TaskKey == b.Key && finding.Status == "superseded");
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.NotEqual(store.ListManifests().Single(parent => parent.ParentBatchId is null).BaseSha,
+            RemoteTip());
+    }
+
+    [Fact]
+    public async Task Red_pair_and_green_child_persist_the_culprit_across_restart()
+    {
+        using var factory = BuildFactory();
+        var client = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var a = SeedMember(factory, "DOC-PAIR-A", "docs/pair-a.md");
+        var b = SeedMember(factory, "DOC-PAIR-B", "docs/pair-b.md");
+        SeedMember(factory, "DOC-PAIR-C", "docs/pair-c.md");
+        SeedMember(factory, "DOC-PAIR-D", "docs/pair-d.md");
+        _gate.Batch = request => TreeHas(request.ExpectedSha!, "docs/pair-b.md")
+            ? Red(request.ExpectedSha) : Green(request.ExpectedSha);
+        _gate.Fallback = _ => throw new InvalidOperationException("Proven culprit ran fallback.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var findings = store.ListIsolationFindings(ProjectName);
+        Assert.Contains(findings, finding => finding.TaskKey == b.Key
+            && finding.Status == "proven-red");
+        Assert.Contains(findings, finding => finding.TaskKey == a.Key
+            && finding.Status == "proven-green");
+        AssertLane(b.Key, TaskStates.Escalated);
+        AssertLane(a.Key, TaskStates.HumanReview);
+        using var state = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/{ProjectName}/batch-gate/state"));
+        var culprit = Assert.Single(state.RootElement.GetProperty("isolationFindings").EnumerateArray(),
+            finding => finding.GetProperty("status").GetString() == "proven-red");
+        // AGT-3577: the finding names the child run that proved it and opens its evidence.
+        var proving = culprit.GetProperty("provingBatchId").GetString();
+        Assert.Contains(store.ListManifests(), manifest => manifest.BatchId == proving
+            && manifest.ParentBatchId == culprit.GetProperty("parentBatchId").GetString()
+            && manifest.Members.Any(member => member.TaskKey == b.Key));
+        Assert.Contains(store.ListRuns(proving!), run =>
+            run.BatchRunId == culprit.GetProperty("provingRunId").GetString());
+        Assert.True(culprit.GetProperty("evidenceAvailable").GetBoolean());
+        using var evidence = await client.GetAsync(
+            $"/api/projects/{ProjectName}/batch-gate/isolation-evidence?parentBatchId="
+            + Uri.EscapeDataString(culprit.GetProperty("parentBatchId").GetString()!)
+            + "&taskKey=" + Uri.EscapeDataString(b.Key));
+        Assert.Equal(System.Net.HttpStatusCode.OK, evidence.StatusCode);
+        Assert.StartsWith("text/plain", evidence.Content.Headers.ContentType?.ToString());
+        using var report = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/{ProjectName}/batch-gate/report"));
+        Assert.Contains(report.RootElement.GetProperty("isolationFindings").EnumerateArray(),
+            finding => finding.GetProperty("status").GetString() == "proven-green");
+
+        factory.Dispose();
+        using var restarted = BuildFactory();
+        _ = restarted.CreateClient();
+        EnableBatchGate(restarted, closeSize: 4);
+        Assert.Contains(restarted.Services.GetRequiredService<BatchGateStore>()
+            .ListIsolationFindings(ProjectName), finding =>
+            finding.TaskKey == b.Key && finding.Status == "proven-red");
+    }
+
+    [Fact]
+    public async Task Interrupted_isolation_replans_from_child_findings()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 3);
+        var a = SeedMember(factory, "DOC-RECOVER-A", "docs/recover-a.md");
+        var b = SeedMember(factory, "DOC-RECOVER-B", "docs/recover-b.md");
+        var c = SeedMember(factory, "DOC-RECOVER-C", "docs/recover-c.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var parent = ClosePendingBatch(factory);
+        store.AppendState(new BatchGateState(parent.BatchId, parent.MembershipDigest,
+            BatchPhase.Running, null, 1, _clock));
+        CloseChild([a.Key, b.Key], BatchPhase.Red);
+        CloseChild([a.Key], BatchPhase.Green);
+        CloseChild([b.Key, c.Key], BatchPhase.Running);
+        _gate.Batch = request => Green(request.ExpectedSha);
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+
+        Assert.Contains(store.ListIsolationFindings(ProjectName), finding =>
+            finding.TaskKey == b.Key && finding.Status == "proven-red");
+        Assert.Contains(store.ListManifests(), manifest =>
+            manifest.ParentBatchId is null && manifest.BatchId != parent.BatchId
+            && manifest.Members.Select(member => member.TaskKey).SequenceEqual([a.Key, c.Key]));
+        AssertLane(b.Key, TaskStates.Escalated);
+
+        void CloseChild(string[] keys, BatchPhase phase)
+        {
+            var members = parent.Members.Where(member => keys.Contains(member.TaskKey)).ToArray();
+            var digest = BatchGatePolicy.MembershipDigest(parent.BaseSha, parent.Scope, members);
+            var child = parent with
+            {
+                BatchId = Guid.NewGuid().ToString("N"),
+                MembershipDigest = digest,
+                Members = members,
+                ParentBatchId = parent.BatchId,
+            };
+            store.CloseManifest(child);
+            store.AppendState(new BatchGateState(child.BatchId, digest, phase, null, 1, _clock));
+        }
     }
 
     // A merged member keeps every delivery SHA: the candidate merge has the
@@ -1611,6 +2026,11 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Assert.Single(store.ListPending());
         Assert.Single(store.ListManifests());
         Assert.Contains("integration-branch-red", JsonSerializer.Serialize(pilot.State(ProjectName)));
+        using var state = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/{ProjectName}/batch-gate/state"));
+        var shown = Assert.Single(state.RootElement.GetProperty("batches").EnumerateArray());
+        Assert.Equal("integration-branch-red", shown.GetProperty("phaseReason").GetString());
+        Assert.False(shown.GetProperty("baseVerdict").GetProperty("provisional").GetBoolean());
         Assert.Equal(1, pilot.Report(ProjectName).IntegrationBranchRedBatches);
         using var report = JsonDocument.Parse(await client.GetStringAsync(
             $"/api/projects/{ProjectName}/batch-gate/report"));
@@ -1630,6 +2050,126 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         var retry = Assert.Single(store.ListManifests(), item => item.BatchId != manifest.BatchId);
         AssertPhase(store, retry.BatchId, BatchPhase.Published);
         AssertLane(member.Key, TaskStates.HumanReview);
+    }
+
+    [Fact]
+    public async Task Contended_base_red_is_rechecked_before_the_batch_can_pause()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        SeedMember(factory, "DOC-CONTENDED-BASE", "docs/contended-base.md");
+        _gate.Batch = request => Red(request.ExpectedSha);
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        _gate.Base = request => _gate.BaseRuns == 1
+            ? Red(request.ExpectedSha) with { GateCollisionDetected = true }
+            : Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests(), item => item.ParentBatchId is null);
+        Assert.NotEqual("integration-branch-red", store.LatestState(manifest.BatchId).Reason);
+        Assert.Equal(2, _gate.BaseRuns);
+        Assert.Equal("pass", store.ReadBaseVerdict(ProjectName, manifest.BaseSha,
+            manifest.Scope.GateProfileDigest)?.Outcome);
+    }
+
+    [Fact]
+    public async Task Deterministic_red_with_flaky_quarantine_enters_isolation()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        SeedMember(factory, "DOC-MIXED-RED", "docs/mixed-red.md");
+        _gate.Batch = request => Red(request.ExpectedSha) with
+        {
+            RetryPerformed = true,
+            FlakyQuarantinedFailures = ["Product.Tests.Flaky"],
+        };
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        _gate.Base = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests(), item => item.ParentBatchId is null);
+        Assert.NotEqual("flaky quarantine requires a fresh gate verdict",
+            store.LatestState(manifest.BatchId).Reason);
+        Assert.Equal("deterministic-suite-red", store.ReadVerdict(manifest.BatchId,
+            Assert.Single(store.ListRuns(manifest.BatchId)).BatchRunId)?.Classification);
+    }
+
+    [Fact]
+    public async Task Distinct_base_and_candidate_test_failures_isolate_members()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        SeedMember(factory, "DOC-TEST-A", "docs/test-a.md");
+        SeedMember(factory, "DOC-TEST-B", "docs/test-b.md");
+        _gate.Batch = request => Red(request.ExpectedSha) with
+        {
+            Processes = [new BuildTestGateProcessEvidence
+            {
+                ExitCode = 1, StandardOutput = "  Failed Product.Tests.Member [1 ms]",
+            }],
+        };
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        _gate.Base = request => Red(request.ExpectedSha) with
+        {
+            Processes = [new BuildTestGateProcessEvidence
+            {
+                ExitCode = 1, StandardOutput = "  Failed Product.Tests.Base [1 ms]",
+            }],
+        };
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var primary = Assert.Single(store.ListManifests(), item => item.ParentBatchId is null);
+        Assert.NotEqual("integration-branch-red", store.LatestState(primary.BatchId).Reason);
+        Assert.Contains(store.ListManifests(), item => item.ParentBatchId == primary.BatchId);
+    }
+
+    [Fact]
+    public async Task Legacy_cached_base_failure_uses_saved_test_names_for_isolation()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        SeedMember(factory, "DOC-LEGACY-BASE", "docs/legacy-base.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = Assert.Single(store.ListPending());
+        var baseSha = RemoteTip();
+        var evidence = Path.Combine(_workspace, "legacy-base.json");
+        File.WriteAllText(evidence, JsonSerializer.Serialize(Red(baseSha) with
+        {
+            Processes = [new BuildTestGateProcessEvidence
+            {
+                ExitCode = 1, StandardOutput = "  Failed Product.Tests.Base [1 ms]",
+            }],
+        }));
+        store.RecordBaseVerdict(new BatchGateBaseVerdict(ProjectName, baseSha,
+            pending.Subject.GateProfileDigest, "fail", null, "legacy red", evidence, _clock));
+        _gate.Batch = request => Red(request.ExpectedSha) with
+        {
+            Processes = [new BuildTestGateProcessEvidence
+            {
+                ExitCode = 1, StandardOutput = "  Failed Product.Tests.Member [1 ms]",
+            }],
+        };
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var primary = Assert.Single(store.ListManifests(), item => item.ParentBatchId is null);
+        Assert.NotEqual("integration-branch-red", store.LatestState(primary.BatchId).Reason);
+        Assert.Equal(0, _gate.BaseRuns);
     }
 
     [Fact]
@@ -1948,9 +2488,9 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
 
         // With an interrupted publication, the process stops after the remote
         // push and before it schedules the ejected member's fallback.
+        var closed = ClosePendingBatch(factory);
         await pilot.TickAsync(CancellationToken.None);
 
-        var closed = Assert.Single(store.ListManifests());
         Assert.Equal(2, closed.Members.Count);
         Assert.Equal("unattributable", store.ReadReplay(closed.BatchId, contained.Key).Outcome);
         if (interruptedPublication)
@@ -2557,6 +3097,42 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Batch_deferred_actionable_concern_waits_for_a_fix_before_admission()
+    {
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", ReviewRunnerId);
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-CONCERN", "docs/concern.md", settleReview: false);
+        await RegisterReviewExecutorAsync(http);
+        var claimed = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{ReviewRunnerId}/review-claims",
+            new Contract.ReviewClaimRequest(ReviewRunnerId, ReviewInstance, 300, AvailableSlots: 1));
+        claimed.EnsureSuccessStatusCode();
+        var claim = (await claimed.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>())!;
+        var report = PassingReport(claim, "batch-concern") with
+        {
+            Verdicts = [new Contract.ReviewVerdictDto("code-quality", "concerns", "RemoteAspectVerdict",
+                "docs/concern.md omits the required retry behavior.", "docs/concern.md",
+                "Describe how retry errors are handled.")],
+        };
+
+        var response = await http.PostAsJsonAsync(
+            $"/api/v1/reviews/attempts/{claim.Attempt!.AttemptId}/report", report);
+
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        Assert.Empty(factory.Services.GetRequiredService<BatchGateStore>().ListPending());
+        AssertLane(member.Key, TaskStates.Ready);
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, member.Key);
+        var round = Assert.IsType<ReviewConcernRoundLedger>(ReviewConcernRoundStore.Read(folder));
+        Assert.Equal(1, round.Used);
+        Assert.True(round.StillOpen);
+        var followUp = await File.ReadAllTextAsync(Path.Combine(folder, "orchestrator-follow-up.md"));
+        Assert.Contains("docs/concern.md omits the required retry behavior.", followUp);
+        Assert.Contains("Describe how retry errors are handled.", followUp);
+    }
+
+    [Fact]
     public async Task Deferred_review_with_a_base_branch_defect_still_enters_the_batch()
     {
         using var factory = BuildFactory();
@@ -3067,7 +3643,8 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
         settings.SetIntegrationBranch(ProjectName, "develop");
         settings.SetBatchGate(ProjectName, new BatchGateFormationOptions(
-            Enabled: true, Scope: scope, CloseSize: closeSize, PressureSize: 1));
+            Enabled: true, Scope: scope, CloseSize: closeSize,
+            MinimumSize: Math.Min(2, closeSize), PressureSize: 1));
     }
 
     private static BatchGateSnapshotBuilder Builder(WebApplicationFactory<Program> factory,
@@ -3267,13 +3844,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
                 // Keep only the queue consumer needed by report requests; the
                 // periodic host loops can otherwise resume a seeded review or
                 // move its lane between the tick and the assertion.
-                for (var index = services.Count - 1; index >= 0; index--)
-                {
-                    var descriptor = services[index];
-                    if (descriptor.ServiceType == typeof(IHostedService)
-                        && descriptor.ImplementationType?.Namespace?.StartsWith("AgentStudio.", StringComparison.Ordinal) == true)
-                        services.RemoveAt(index);
-                }
+                services.RemoveAll<IHostedService>();
                 services.AddHostedService<RemoteReviewEvidenceProjectionWorker>();
                 services.AddSingleton<MonolithOrchestrationRecoveryService>();
             });
@@ -3340,11 +3911,20 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             = request => Green(request.ExpectedSha);
         public Func<BuildTestGateRequest, BuildTestGateResult> Fallback { get; set; }
             = _ => throw new InvalidOperationException("No per-task gate result is scripted.");
+        /// <summary>
+        /// The merge-into-develop gate of the publish step. Unset, it counts as
+        /// a per-task gate as before.
+        /// </summary>
+        public Func<BuildTestGateRequest, BuildTestGateResult>? Merge { get; set; }
+        public Func<BuildTestGateRequest, BuildTestGateResult> PreCheck { get; set; }
+            = request => Green(request.ExpectedSha);
         public Func<BuildTestGateRequest, CancellationToken, Task<BuildTestGateResult>>? BatchAsync { get; set; }
         public Func<BuildTestGateRequest, CancellationToken, Task<BuildTestGateResult>>? FallbackAsync { get; set; }
         private int _batchRuns;
         private int _baseRuns;
         private int _fallbackRuns;
+        private int _mergeRuns;
+        private int _preCheckRuns;
         private readonly TaskCompletionSource _batchStarted =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _fallbackStarted =
@@ -3352,15 +3932,21 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         public int BatchRuns => Volatile.Read(ref _batchRuns);
         public int BaseRuns => Volatile.Read(ref _baseRuns);
         public int FallbackRuns => Volatile.Read(ref _fallbackRuns);
+        public int MergeRuns => Volatile.Read(ref _mergeRuns);
+        public int PreCheckRuns => Volatile.Read(ref _preCheckRuns);
         /// <summary>Completes when the first batch suite starts.</summary>
         public Task FirstBatchStarted => _batchStarted.Task.WaitAsync(HangGuard);
         /// <summary>Completes when the first per-task gate starts.</summary>
         public Task FirstFallbackStarted => _fallbackStarted.Task.WaitAsync(HangGuard);
 
+        /// <summary>Every request in arrival order.</summary>
+        public System.Collections.Concurrent.ConcurrentQueue<BuildTestGateRequest> Requests { get; } = new();
+
         public Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
             IReadOnlyList<string>? changedFiles, BuildProfile? profile, PostStepMode mode,
             TimeSpan timeout, CancellationToken ct)
         {
+            Requests.Enqueue(request);
             if (request.GateId == "batch-gate")
             {
                 Interlocked.Increment(ref _batchRuns);
@@ -3371,6 +3957,16 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             {
                 Interlocked.Increment(ref _baseRuns);
                 return Task.FromResult(Base(request));
+            }
+            if (Merge is not null && request.Executor == "merge-into-develop-build-gate")
+            {
+                Interlocked.Increment(ref _mergeRuns);
+                return Task.FromResult(Merge(request));
+            }
+            if (request.GateId == "batch-pre-check")
+            {
+                Interlocked.Increment(ref _preCheckRuns);
+                return Task.FromResult(PreCheck(request));
             }
             Interlocked.Increment(ref _fallbackRuns);
             _fallbackStarted.TrySetResult();

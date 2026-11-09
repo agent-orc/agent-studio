@@ -9,7 +9,8 @@
       <em>content</em> lives in Prompts; changes apply to the next run.
     </p>
   </header>
-  <app-pipeline-health-block [projectName]="projectName()" />
+  <app-pipeline-health-block [projectName]="projectName()" (openFlowHealth)="openFlowHealth.emit()" />
+  <app-gate-slot-board [projectName]="projectName()" />
   @if (loadError(); as err) {
     <p class="pp__error" data-testid="pipeline-load-error">{{ err }}</p>
   }
@@ -25,6 +26,7 @@
           <span class="pp__group-meta">{{ groupSummary(group) }}</span>
           <span class="pp__group-caret" aria-hidden="true">▾</span>
         </summary>
+        @if (group.phase === 'aspect') { <app-aspect-model-bulk-apply [steps]="group.rows" [applyToSteps]="applyAspectAgent" (policyApplied)="refreshEffective()" /> }
         <div class="pp__rows" role="list">
           @for (step of group.rows; track step.id) {
             <details class="pp__row" role="listitem"
@@ -79,9 +81,10 @@
                   }
                   @if (step.usesModel) {
                     <span class="pp__chip"
-                          [cacTooltip]="'Effective model: ' + modelSummary(step) + ' (' + modelSourceLabel(step.effectiveModelSource) + ')'">
+                          [cacTooltip]="'Configured model: ' + modelSummary(step) + ' (' + modelSourceLabel(step.effectiveModelSource) + ')'">
                       {{ modelSummary(step) }}
                     </span>
+                    @if (step.overridesWorkspace) { <span class="pp__chip pp__chip--muted" [attr.data-testid]="'pipeline-step-workspace-override-' + step.id">overrides workspace</span> }
                     <app-model-migration-badge [model]="step.effectiveModel" [pending]="!!stepBusy[step.id]" testId="pipeline-step-model-migration" (apply)="onStepAgentCommit(step.id, { cliType: asCliType(step.effectiveCliType) ?? 'claude', model: $event, thinkingLevel: step.effectiveThinkingLevel || null })" />
                   }
                   @if (step.usesPrompt) {
@@ -108,6 +111,7 @@
                   [disabled]="!!stepBusy[step.id]"
                   (enabledChange)="onStepEnabledChange(step.id, $event)" />
                 <span class="pp__summary-caret" aria-hidden="true">▾</span>
+                @if (step.usesModel) { <app-pipeline-step-effective-route [stepId]="step.id" [route]="effectiveRoutes().get(step.id)" [configuredCli]="step.effectiveCliType" [configuredModel]="step.effectiveModel" /> }
               </summary>
               <div class="pp__details"><p class="pp__purpose">{{ stepPurpose(step) }}</p>
                 <app-pipeline-step-execution [projectName]="projectName()" [step]="step" />
@@ -172,6 +176,10 @@
                         [pickerTestidPrefix]="'pipeline-step-agent-picker-' + step.id"
                         (commit)="onStepAgentCommit(step.id, $event)" />
                       @if (step.model || step.thinkingLevel || step.cliType) {
+                        <select [value]="step.pinMode ?? 'preference'" [attr.aria-label]="'Pin mode for ' + step.displayName" [attr.data-testid]="'pipeline-step-pin-mode-' + step.id"
+                                [disabled]="!step.enabled || !!stepBusy[step.id]" (change)="onStepPinModeChange(step.id, $any($event.target).value)">
+                          <option value="preference">Preference</option><option value="hard">Hard pin</option>
+                        </select>
                         <button type="button" class="pp__link"
                                 [attr.data-testid]="'pipeline-step-agent-reset-' + step.id"
                                 [disabled]="!step.enabled || stepBusy[step.id]"

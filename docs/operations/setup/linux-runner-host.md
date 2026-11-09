@@ -25,6 +25,18 @@ windows only. The Task Server keeps the last reading for 600 seconds. Other
 hosts with a healthy sign-in take over when the lease expires or a probe fails.
 Gate, post, and integration role images do not need this change.
 
+The authenticated host channel uses `POST /api/v1/runners/{runnerId}/quota/claim`
+with `instanceId`, `provider`, and a SHA-256 `subscriptionKey`. A granted claim
+returns a `probeId`. The same runner submits `PUT
+/api/v1/runners/{runnerId}/quota/report` with that probe ID, the actual
+`observedAt`, CLI version, plan, parsed window labels, used percentages and reset
+times, or a short error. The route requires the matching runner identity and
+provider capability; read-only keys cannot report. The 90-second probe lease
+prevents concurrent reads, and the 600-second reading TTL prevents a probe per
+host. Studio reads the Task Server's parsed readings through its internal
+`GET /api/v1/quota/readings` sync. No terminal transcript, token or account
+secret is part of the wire contract.
+
 An older coding or review host keeps its existing claim and execution behavior.
 It does not report quota; a mixed fleet starts reporting as soon as one updated
 host with the same sign-in is deployed. The Studio server never starts a
@@ -129,7 +141,9 @@ therefore needs two steps before any of its cards can be reviewed remotely
 (AGT-3077):
 
 1. Mark the project private through the project settings API, with an
-   operator session, so its review plans require read access:
+   operator session, so its review plans require read access. A repository
+   the connected GitHub App lists is marked private automatically when GitHub
+   reports it private (see [github-app.md](github-app.md#repository-visibility)):
 
    ```bash
    curl -X PUT "$TASK_SERVER/api/projects/<project>/repository-visibility" \
@@ -539,7 +553,7 @@ Ubuntu LTS. Install the runtime the runner and the agent CLIs need:
 sudo apt-get update && sudo apt-get install -y git curl build-essential
 # dotnet 10 SDK (or runtime) and node 22 via the usual channels, then:
 sudo npm install --global --prefix /usr/local \
-  @anthropic-ai/claude-code@2.1.269 @openai/codex@0.154.0
+  @anthropic-ai/claude-code@2.1.305 @openai/codex@0.166.0
 npx playwright install --with-deps chromium
 ```
 
@@ -573,7 +587,7 @@ target after applying the file.
 ### CLI version policy and managed updates
 
 The Task Server release owns pinned targets for Codex CLI and Claude Code. The
-defaults for this release are Codex CLI `0.154.0` and Claude Code `2.1.269`.
+defaults for this release are Codex CLI `0.166.0` and Claude Code `2.1.305`.
 Each Coding and Review daemon reports the installed version, resolved path, and
 check timestamp through the same capability probe. Execution Hosts shows the
 age of that observation. A yellow **Update due** chip means the installed
@@ -598,7 +612,7 @@ Execution Hosts and verify that Coding and Review both show zero active slots.
 Then, from a root-owned SSH session, run exactly the release-pinned helper:
 
 ```bash
-sudo /usr/local/sbin/agent-runner-deploy update-clis 0.154.0 2.1.269
+sudo /usr/local/sbin/agent-runner-deploy update-clis 0.166.0 2.1.305
 sudo systemctl status agent-runner.service agent-runner-review.service --no-pager
 sudo journalctl -t agent-runner-deploy -n 20 --no-pager
 ```
@@ -609,7 +623,7 @@ assets first. If that is impossible during an incident, the historical root-SSH
 fallback is the following pinned global install:
 
 ```bash
-sudo npm install --global @openai/codex@0.154.0 @anthropic-ai/claude-code@2.1.269
+sudo npm install --global @openai/codex@0.166.0 @anthropic-ai/claude-code@2.1.305
 sudo -u agent-runner codex --version
 sudo -u agent-runner claude --version
 sudo systemctl restart agent-runner.service agent-runner-review.service
@@ -975,10 +989,11 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_BASE_BRANCH` | `--base-branch` | `main` | Fallback when the task branch is absent on origin. |
 | `RUNNER_WORKDIR` | `--workdir` | `$TMPDIR/agent-runner-work` | Where repo checkouts, result files, and attempt evidence live. |
 | `RUNNER_ROLE` | `--role` | `coding` | `coding`, the separately registered `review` service, the separately registered `gate` service, or the separately registered `integration` service. The gate role uses its own runner identity, credential, state directory, and disposable `RUNNER_REVIEW_WORKDIR`; see the [claimable gate contract](../../system/domains/runner.md#claimable-gate-host-and-task-api). The integration role (AGT-3061) claims accepted deliveries from a standalone Task Server under the project's publication lease, merges them into the registered integration ref in a disposable repository below `RUNNER_STATE_DIR`, and pushes without force; the host's Git credentials must allow that push. |
-| `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly. The reusable `.baseline-cache` and `.verify-cache` are preserved; see [Baseline verify result cache](#baseline-verify-result-cache) and [Verify result reuse after ReviewInfra](#verify-result-reuse-after-reviewinfra). |
+| `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly. The reusable `.baseline-cache`, `.verify-cache` and `.dependency-cache` are preserved; the shared NuGet folder `.dependency-cache/nuget-packages` drops package versions older than 30 days while no attempt is active. Attempt temp directories live in `/tmp/rv-<digest>` and are removed with their attempt; see [Baseline verify result cache](#baseline-verify-result-cache) and [Verify result reuse after ReviewInfra](#verify-result-reuse-after-reviewinfra). |
 | `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Comma-separated read-only credential variable names admitted into the cleared review environment. |
 | `RUNNER_REVIEW_GIT_CREDENTIALS_FILE` | `--review-git-credentials-file` | (none) | Review role only. Owner-only `git credential-store` file with one read-only, repository-scoped `https://` credential per private repository. Registers `review:repository-read:<host>/<owner>/<repo>` and is used only by the review clone and fetch processes; see [Private repositories](#private-repositories). |
 | `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` | `--review-no-cpu-progress-seconds` | `900` | Floor for the hang watchdog on review commands. A command's whole process tree must burn at least one percent of one core within the *effective* window; otherwise the tree is killed and the attempt is reported as `ReviewInfra/NoCpuProgress`. The effective window is `max(this value, 50%` of that command's own budget`)` (AGT-2851), so a legitimately quiet suite with a large budget is not killed for sitting near 0% CPU during a real test wait. `0` disables the watchdog outright, ignoring the budget-derived floor. Linux only: the tree's CPU time is read from `/proc`. See [Review parallelism and build-server isolation](#review-parallelism-and-build-server-isolation). |
+| `RUNNER_REVIEW_ASPECT_PARALLELISM` | `--review-aspect-parallelism` | `4` | Agent review aspects one Remote Review attempt runs at the same time, after its tool commands have finished (AGT-3424). `1` runs them serially; values above `4` are capped at `4`. The aspects share the attempt's review slot, so this does not admit more attempts. See [Aspect execution within one attempt](../../system/domains/review.md#aspect-execution-within-one-attempt-agt-3424). |
 | `RUNNER_STATE_DIR` | `--state-dir` | `$RUNNER_WORKDIR/.runner-state` | Durable slot, attempt, PID, worker result, and file-backed output state used for planned restart reattachment. Keep it on persistent local storage. The daemon removes this variable and its `AGENT_HOST_STATE_DIR` alias from coding and review child processes. |
 | `AGENT_STUDIO_CLEAN_CONTEXT_ROOT` | none | `$XDG_STATE_HOME/agent-studio/clean-context` or `~/.local/state/agent-studio/clean-context` | Persistent non-temporary root for task-isolated Claude and Codex homes. Keep it on host-local storage. The same task reuses its marker-validated home across attempts and daemon restarts; inactive homes expire after seven days. |
 | `RUNNER_CLI_TYPE` | `--cli-type` | `claude` | Default coding provider. Accepted values are `claude` and `codex`; a card-level typed run spec may select either available provider. |
@@ -1099,8 +1114,9 @@ its centrally versioned live capacity.
 
 Review slots used to be limited by a resource the workspace fence did not cover.
 `RemoteReviewWorkspace` roots every writable path of an attempt under the attempt
-directory (`HOME`, `TMPDIR`, `NUGET_PACKAGES`, `DOTNET_CLI_HOME`,
-`XDG_CACHE_HOME`) and the Task Server hands each attempt a private
+directory (`HOME`, `DOTNET_CLI_HOME`, `XDG_CACHE_HOME`), gives it a short private
+`TMPDIR` below `/tmp/rv-<digest>`, shares one host-stable `NUGET_PACKAGES`
+folder in the dependency cache (AGT-3429), and the Task Server hands each attempt a private
 `ResourceNamespace` and an eight-port window. The .NET build servers sit outside
 that fence: on Linux, Roslyn's `VBCSCompiler` listens on `/tmp/<pipename>` derived
 from the compiler directory and the user name, and reusable MSBuild worker nodes
@@ -1276,6 +1292,49 @@ is advertised as unavailable and only blocks cards pinned to that provider.
   CodingAgentRunner renders them from the typed request.
 
 ### Per-worker resource envelope
+
+#### Shared Studio host CPU priority
+
+On a host that also runs the Studio API, web, and engine containers, run the
+host hardening install with `--shared-studio-host`, or run
+`sudo bash deploy/runner-host/apply-containment.sh` during the next host install.
+The setting is opt-in; omit it on a host that runs only agents. The install
+places Coding, Review, and the combined host-agent service in `agent-work.slice` with `CPUWeight=50` and
+`IOWeight=50`. The Studio containers use `studio.slice` at weight 100 for both.
+The weights are relative under contention; the existing role quotas and worker
+envelopes still apply. To set site-specific weights, pass
+`--agent-cpu-weight`, `--studio-cpu-weight`, `--agent-io-weight`, and
+`--studio-io-weight` to either install command. The agent CPU weight must be
+lower than the Studio CPU weight. For example:
+
+```bash
+sudo bash scripts/harden-agent-runner-host.sh --apply --shared-studio-host \
+  --agent-cpu-weight 50 --studio-cpu-weight 100
+```
+
+The installer writes service `Slice=` drop-ins and both slice units. It does
+not move running processes: drain Coding and Review, restart Coding, and replace
+Review through `agent-runner-deploy restart-review`. Recreate the Studio
+containers with `deploy/compose/monolith-networked/compose.runner-host.yaml`
+and the engine with its Compose file after the slices are installed. Docker
+must use its systemd cgroup driver. Detached workers, their CLIs, build tools,
+Node processes, and browsers inherit the service cgroup and stay under
+`agent-work.slice`, including across a daemon restart. Existing workers remain
+in their previous cgroup until they exit, so drain before switching.
+
+```bash
+sudo bash deploy/runner-host/apply-containment.sh --check
+systemctl show -p CPUWeight -p IOWeight studio.slice agent-work.slice
+systemctl show -p Slice -p ControlGroup agent-runner.service agent-runner-review.service
+systemd-cgls --unit agent-work.slice
+```
+
+The read-only `--check` probe reports weights and placement. Its tree should
+show the runner units and their `worker-*` descendants. Run
+`sudo bash deploy/runner-host/apply-containment.sh --remove` to disable the
+shared-host setup at the next drained restart. It removes the installed units
+and drop-ins; processes move only after the relevant services and containers
+are restarted or recreated.
 
 A role's `CPUQuota` bounds the whole plane; it cannot stop one run from eating
 that plane. On 17.09.2026 three coding runs on this host, all asked to reproduce
@@ -1625,7 +1684,11 @@ Review and integration gates run the .NET suites without a coverage collector
    tip is visible. A red prepare or build ends the run as `setup-failed`. It
    refuses a checkout with tracked changes.
 4. **Hands the reports to Quality Studio.** It calls
-   `POST <QUALITY_STUDIO_BASE_URL>/api/repos/<QUALITY_STUDIO_REPO_ID>/sensors/coverage/scan`.
+   `POST <QUALITY_STUDIO_BASE_URL>/api/repos/<mapped repository id>/sensors/coverage/scan`.
+   Set `QUALITY_STUDIO_SETTINGS_PATH` to Studio's `project-settings.json`
+   and `QUALITY_STUDIO_PROJECT_NAME` to the project's display name. The command
+   reads `qualityStudio.repositoryId` from that file. `QUALITY_STUDIO_REPO_ID`
+   remains a logged fallback for unconnected local installations.
    The sensor reads `coverage/dotnet/**/*.cobertura.xml` and
    `coverage/frontend/lcov.info` and records the checkout's HEAD as the
    measured commit; HEAD is still the commit the suites ran against. The
@@ -2524,18 +2587,20 @@ executor; enable a cluster profile for it only through a separate acceptance.
 DP-S3 uses Dossier decision D3 option A: a fresh Linux work container per
 claimed attempt, with the process and cgroup executor retained as rollback
 (option B). Windows keeps the worktree process executor in a Job Object and
-never needs Docker. The switch is host-local and defaults to `off`:
+never needs Docker. The switch is host-local; since SM-11 it defaults to
+`contained` on Linux (see [below](#per-attempt-containment-by-default-sm-11)):
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `RUNNER_WORK_CONTAINER_MODE` | `off` | `shadow` records `executor-shadow.json` beside each detached worker; `canary` enables `agent-host work-container run`. |
+| `RUNNER_WORK_CONTAINER_MODE` | `contained` on Linux, `off` elsewhere | `contained` (SM-11) runs attempts in containers once the host's canary verdict is go and fails closed afterwards; `shadow` records `executor-shadow.json` beside each detached worker; `canary` enables `agent-host work-container run` without the SM-11 prerequisites; `off` is the rollback. |
 | `RUNNER_WORK_CONTAINER_RUNTIME` | `docker` | `docker` or `podman`; the host agent calls the CLI, the work container never gets its socket. |
 | `RUNNER_WORK_CONTAINER_IMAGES` | `/etc/agent-host/work-container-images.json` | Digest-pinned role image manifest. |
 | `RUNNER_WORK_CONTAINER_MAX_CPUS` | host cores minus 2 | Host profile ceiling for one grant and for all live grants. |
 | `RUNNER_WORK_CONTAINER_MAX_MEMORY_MB` | RAM minus max(4 GiB, 15%) | Host profile memory ceiling. |
 | `RUNNER_WORK_CONTAINER_MEMORY_MB_PER_HALF_CORE` | `2048` | Memory limit granted per AGT-3019 half-core. |
 | `RUNNER_WORK_CONTAINER_CACHE_VERSION` | `1` | Generation of the npm, NuGet and repository-mirror cache volumes. |
-| `RUNNER_WORK_CONTAINER_NETWORK` | `bridge` | `host` and `container:*` are refused. |
+| `RUNNER_WORK_CONTAINER_NETWORK` | `agent-work` in contained mode, else `bridge` | `host` and `container:*` are refused; the launcher admits only networks of the applied work zone. |
+| `RUNNER_WORK_CONTAINER_LAUNCHER` | `/run/agent-work-launcher.sock` in contained mode | Every runtime call goes to the socket-activated root launcher; set it in canary mode to use the launcher there too. |
 
 Detached coding and review workers stay on the process executor in every mode.
 The DP-S5 coding canary uses Task Server's brokered GitHub App read token,
@@ -2614,6 +2679,73 @@ noisy; its gate p50 was 3500 ms in one run and 8397 ms in the next. Treat it
 as an upper bound, not as a container speedup. The verdict is no-go only
 because the role image layers were already local, so the cold pull is
 unproven. Record a cold pull on a fresh canary host before widening.
+
+#### Per-attempt containment by default (SM-11)
+
+Security-model decision SM-D6 option H2: on Linux the work-container executor
+is the default after its canary. The steps below apply to every host that
+runs agents.
+
+1. **Leave the runtime group, install the launcher.** As root, run
+   `scripts/harden-agent-runner-host.sh --apply`. It removes the service
+   account from `sudo`, `docker` and `podman`, installs
+   `/usr/local/sbin/agent-work-launcher` (root-owned, mode 0755), creates
+   `/etc/agent-host/work-container-launcher.env` from
+   [`work-container-launcher.env.example`](../../../deploy/agent-host/work-container-launcher.env.example)
+   if it is absent, installs and enables
+   [`agent-work-launcher.socket`](../../../deploy/agent-host/systemd/agent-work-launcher.socket)
+   with the service group as `SocketGroup`, and verifies that sudo grants no
+   direct `docker` or `podman`. If the host agent runs under another account
+   than the hardened service user, set `SocketGroup` to that account's group.
+   End existing login sessions; they keep their old groups.
+2. **Apply the work-zone egress policy** with `agent-host zone-policy apply
+   --execute` and its timer, as in
+   [Zone network policy](zone-network-policy.md#install-on-a-docker-host).
+   The launcher reads `ZONE_POLICY_STATE` from its configuration and refuses
+   every work container while that state is missing, failed, stale or from an
+   earlier boot.
+3. **Install the role image manifest** (`image-promote`, above).
+4. **Record the canary verdict.** As the operator (root; the service user has
+   no runtime access any more), run `scripts/work-container-proof.sh
+   <report-dir>` on the host. The proof writes `rollout-verdict.json` into the
+   host's work-container state directory (`--verdict-dir` overrides it); only a
+   go verdict that also passed acceptance turns contained mode on.
+5. **Check and probe.**
+
+   ```sh
+   agent-host work-container check
+   agent-host work-container probe --host <host-id> --repository-key <key> \
+     --source <bare.git or https URL> --sha <exact-sha> --report <dir> \
+     --forbidden-paths <runner credential file>,<provider login dirs>,<another project's checkout> \
+     --blocked-addresses <address outside the allowlist>:443
+   ```
+
+   `check` prints the decision per role and exits 1 when any role is
+   refused. `probe` runs one attempt through the executor and exits 0 only
+   when the container saw none of the paths, no runtime socket, no
+   secret-shaped variable and no other repository mirror, could not connect
+   to the blocked addresses, ran as an attempt UID, and was cleaned up. Use
+   a documentation address such as one from 192.0.2.0/24 for the blocked
+   probe. Keep `containment-probe.json` with the host's evidence.
+   `scripts/work-container-containment-probe.sh <report-dir> <host-id>
+   <paths> <addresses>` wraps both commands for a checkout of this repository.
+
+After the verdict, the daemons require their `attempt-containment`
+capability. When it reads `unavailable`, the Environment view shows the reason
+(`runtime-group-member`, `launcher-missing`, `role-image-unpinned`,
+`zone-policy-unavailable` or `network-outside-work-zone`) and the host claims
+no coding or review work until it is fixed. To roll back, set
+`RUNNER_WORK_CONTAINER_MODE=off`; removing `rollout-verdict.json` returns the
+host to the pre-canary process executor.
+
+Each attempt now runs under its own UID from 200000 and mounts per-repository
+caches named `agent-cache-<cache>-<repository>-v<n>`. The former shared
+volumes (`agent-cache-npm-v<n>`, `agent-cache-nuget-v<n>`,
+`agent-cache-repo-v<n>`) are no longer mounted; remove them with `docker
+volume rm` once no canary attempt from before the upgrade is running.
+Detached Claude and Codex sessions keep the process executor until provider
+attempt tokens exist; see the
+[security overview](../security/overview.md#per-attempt-containment-sm-11).
 
 #### Claimed gate migration (DP-S4)
 

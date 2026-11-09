@@ -73,6 +73,50 @@ public sealed class DeviceLoginEndpointTests
         Assert.NotNull(sessions.Claim("host-a", "review-a"));
     }
 
+    [Fact]
+    public async Task Only_the_owner_session_submits_one_claude_code_and_the_reply_never_echoes_it()
+    {
+        using var temp = new TempDirectory();
+        var studioToken = "studio-" + Guid.NewGuid().ToString("N");
+        await using var factory = new Factory(temp.Path, studioToken);
+        await RegisterAsync(factory, "coding-a", "host-a");
+        using var operatorEdge = Client(factory, studioToken, StudioUserRoles.Operator);
+        using var owner = Client(factory, studioToken, StudioUserRoles.Owner);
+        var started = await owner.PostAsJsonAsync(Sessions, new StartDeviceLoginRequest("host-a", "claude", "coding-a"));
+        var session = (await started.Content.ReadFromJsonAsync<DeviceLoginSessionDto>())!;
+        var code = Convert.ToHexString(Guid.NewGuid().ToByteArray()) + "#" + Guid.NewGuid().ToString("N");
+        var codePath = $"{Sessions}/{session.Handle}/code";
+        operatorEdge.DefaultRequestHeaders.Add("X-Device-Login-Session", session.SessionKey);
+
+        Assert.Equal("owner-role-required", await ErrorCodeAsync(
+            await operatorEdge.PostAsJsonAsync(codePath, new DeviceLoginCodeRequest(code)), HttpStatusCode.Forbidden));
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await owner.PostAsJsonAsync(codePath, new DeviceLoginCodeRequest(code))).StatusCode);
+        owner.DefaultRequestHeaders.Add("X-Device-Login-Session", session.SessionKey);
+        Assert.Equal("code-not-expected", await ErrorCodeAsync(
+            await owner.PostAsJsonAsync(codePath, new DeviceLoginCodeRequest(code)), HttpStatusCode.Conflict));
+
+        var sessions = factory.Services.GetRequiredService<DeviceLoginSessions>();
+        Assert.NotNull(sessions.Claim("host-a", "coding-a"));
+        Assert.True(sessions.Instructions(session.Handle, "coding-a",
+            new DeviceLoginInstructionsRequest("https://claude.com/cai/oauth/authorize?code=true", null)));
+        Assert.Equal("invalid-code", await ErrorCodeAsync(
+            await owner.PostAsJsonAsync(codePath, new DeviceLoginCodeRequest("not a code")), HttpStatusCode.BadRequest));
+
+        using var accepted = await owner.PostAsJsonAsync(codePath, new DeviceLoginCodeRequest(code));
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        Assert.Equal("no-store", accepted.Headers.CacheControl?.ToString());
+        Assert.DoesNotContain(code, await accepted.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Equal("code-not-expected", await ErrorCodeAsync(
+            await owner.PostAsJsonAsync(codePath, new DeviceLoginCodeRequest(code)), HttpStatusCode.Conflict));
+        var status = await owner.GetStringAsync($"{Sessions}/{session.Handle}");
+        Assert.Contains("\"codeState\":\"submitted\"", status, StringComparison.Ordinal);
+        Assert.DoesNotContain(code, status, StringComparison.Ordinal);
+
+        Assert.True(sessions.TakeCode(session.Handle, "coding-a", out var delivered));
+        Assert.Equal(code, delivered);
+    }
+
     private static async Task RegisterAsync(Factory factory, string runner, string host)
         => await factory.Services.GetRequiredService<TaskServerStore>().RegisterRunnerAsync(runner,
             new RegisterRunnerRequest(runner, host, runner + "-instance", "1.0", TaskServerProtocol.Current,

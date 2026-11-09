@@ -30,6 +30,11 @@ Encode status a different way:
 - **Badge** - a small labelled chip.
 - **Dot** - a single status dot next to the title.
 
+For a state label, use the shared `<app-status-indicator>`: a tone icon in
+front of the visible text, never colour alone. Tones, the state-to-tone
+mapping, and when a tag or count is meant instead live in
+[status-indicator.md](status-indicator.md).
+
 Why: the left stripe reads as visual noise and never as hierarchy; it makes
 every panel look busy without adding legibility. Background tone, a badge, or a
 dot all carry the same information and read cleaner in both themes.

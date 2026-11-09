@@ -76,7 +76,7 @@ public sealed class SecretPolicyTests
     public void Workload_scope_matrix(string reference, string kind, string project, string? environment, bool allowed, string code)
     {
         var decision = SecretAccessPolicy.ForWorkload(SecretReference.Parse(reference),
-            new SecretWorkload(kind, "runner_1", project, environment), "deploy:stage");
+            new SecretWorkload(kind, "runner_1", project, environment, ["MAIL"]), "deploy:stage");
 
         Assert.Equal(allowed, decision.Allowed);
         Assert.Equal(code, decision.Code);
@@ -90,8 +90,32 @@ public sealed class SecretPolicyTests
     public void Workload_needs_a_purpose(string? purpose)
     {
         var decision = SecretAccessPolicy.ForWorkload(SecretReference.Parse("secret://workspace/MAIL"),
-            new SecretWorkload("task-run", "runner_1", "memowikis", null), purpose);
+            new SecretWorkload("task-run", "runner_1", "memowikis", null, ["MAIL"]), purpose);
         Assert.Equal("invalid-purpose", decision.Code);
+    }
+
+    [Theory]
+    [InlineData("secret://workspace/MAIL")]
+    [InlineData("secret://memowikis/MAIL")]
+    public void Task_run_without_declaration_reads_no_secret(string reference)
+    {
+        var decision = SecretAccessPolicy.ForWorkload(SecretReference.Parse(reference),
+            new SecretWorkload("task-run", "runner_1", "memowikis", null), "task:build");
+        Assert.False(decision.Allowed);
+        Assert.Equal("workload-undeclared", decision.Code);
+    }
+
+    [Fact]
+    public void Task_run_reads_only_declared_names()
+    {
+        var workload = new SecretWorkload("task-run", "runner_1", "memowikis", null, ["MAIL"]);
+        Assert.True(SecretAccessPolicy.ForWorkload(SecretReference.Parse("secret://workspace/MAIL"), workload, "task:build").Allowed);
+        Assert.True(SecretAccessPolicy.ForWorkload(SecretReference.Parse("secret://memowikis/MAIL"), workload, "task:build").Allowed);
+        Assert.Equal("reference-not-declared",
+            SecretAccessPolicy.ForWorkload(SecretReference.Parse("secret://workspace/STRIPE_KEY"), workload, "task:build").Code);
+        Assert.Equal("platform-secret", SecretAccessPolicy.ForWorkload(
+            SecretReference.Parse($"secret://workspace/{SecretAccessPolicy.GitHubAppPrivateKeyName}"),
+            workload with { DeclaredNames = [SecretAccessPolicy.GitHubAppPrivateKeyName] }, "task:build").Code);
     }
 
     [Fact]
@@ -162,11 +186,17 @@ public sealed class SecretPolicyTests
     {
         var runner = Runner("runner_1", RunnerScopes.Lease);
         var request = new SecretWorkloadRequest("task-run", TaskKey: "AGT-1", LeaseId: "lease-1");
-        var run = new TaskRunLease("AGT-1", "memowikis", "runner_1", "lease-1");
+        var run = new TaskRunLease("AGT-1", "memowikis", "runner_1", "lease-1", ["MAIL"]);
 
         var (workload, decision) = SecretWorkloadBinding.Decide(runner, request, null, run);
         Assert.True(decision.Allowed);
         Assert.Null(workload!.Environment);
+        Assert.Equal(["MAIL"], workload.DeclaredNames!);
+
+        var (undeclared, refused) = SecretWorkloadBinding.Decide(runner, request, null, run with { DeclaredNames = null });
+        Assert.Null(undeclared);
+        Assert.Equal("workload-undeclared", refused.Code);
+        Assert.Equal("workload-undeclared", SecretWorkloadBinding.Decide(runner, request, null, run with { DeclaredNames = [] }).Decision.Code);
 
         Assert.Equal("runner-scope-denied", SecretWorkloadBinding.Decide(Runner("runner_1", RunnerScopes.Logs), request, null, run).Decision.Code);
         Assert.Equal("workload-lease-invalid", SecretWorkloadBinding.Decide(runner, request with { LeaseId = "stale" }, null, run).Decision.Code);

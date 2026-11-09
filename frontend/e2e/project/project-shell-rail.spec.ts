@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import { api } from '../helpers/api';
+import { setTheme } from '../helpers/theme';
 
 /**
  * Project page shell with left-rail navigation. Some rails still use the
@@ -137,7 +138,31 @@ test('opens the project shell from the kanban tab and lands on Overview', async 
   // Hash reflects the selected project shell.
   expect(projectRoute(page)).toMatch(/^#\/projects\/[^/]+$/);
 
-  await page.screenshot({ path: path.join(SCREENSHOT_DIR, '00-shell-overview.png'), fullPage: true });
+  await page.screenshot({ path: path.join(SCREENSHOT_DIR, '00-shell-overview--real.png'), fullPage: true });
+});
+
+test('Quality Studio panel retries a missing registration', async ({ page }) => {
+  await page.route('**/api/projects/*/quality-studio', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ connected: true, repositoryId: null,
+      state: 'not-registered', reason: 'root-missing' }),
+  }));
+  await page.route('**/api/projects/*/quality-studio/reconcile', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ connected: true, repositoryId: 'proj-002',
+      state: 'registered', reason: null }),
+  }));
+  await openShell(page);
+  await page.getByTestId('project-shell-rail-quality-studio').click();
+  await expect(page.getByTestId('quality-studio-reason')).toContainText('root-missing');
+  await setTheme(page, 'light');
+  await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'quality-studio-not-registered-light--mocked.png') });
+  await page.getByTestId('quality-studio-register').click();
+  await expect(page.getByTestId('quality-studio-state')).toContainText('Registered');
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, `quality-studio-panel-${theme}--mocked.png`) });
+  }
 });
 
 test('every rail entry routes to its panel', async ({ page }) => {
@@ -169,7 +194,7 @@ test('every rail entry routes to its panel', async ({ page }) => {
     }
 
     if (item.key === 'agent-activity')
-      await page.screenshot({ path: path.join(SCREENSHOT_DIR, '01-rail-agent-activity.png'), fullPage: true });
+      await page.screenshot({ path: path.join(SCREENSHOT_DIR, '01-rail-agent-activity--real.png'), fullPage: true });
   }
 
 });

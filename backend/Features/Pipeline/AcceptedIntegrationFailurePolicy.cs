@@ -62,6 +62,18 @@ public static class AcceptedIntegrationFailureCodes
     public const string BranchSyncFailed = "branch-sync-failed";
 
     /// <summary>
+    /// The integration fetch failed because Git's credential for origin was
+    /// missing or refused. A transient host fault, not a fact about the delivery:
+    /// the bounded gate-environment ladder replays the integration and parks the
+    /// card only when the ladder is spent.
+    /// </summary>
+    public const string GitCredentialUnavailable = "git-credential-unavailable";
+
+    /// <summary>The typed code of a failed integration-branch sync.</summary>
+    public static string ForBranchSync(string? error)
+        => RunFailureClassifier.IsGitCredentialRefusal(error) ? GitCredentialUnavailable : BranchSyncFailed;
+
+    /// <summary>
     /// The main/develop lineage forbids advancing the release line (main is not
     /// an ancestor of develop). Distinct from <see cref="IntegrationPushBlocked"/>,
     /// which is the push step's lineage block after a successful merge.
@@ -76,6 +88,20 @@ public static class AcceptedIntegrationFailureCodes
 
     /// <summary>The mandatory pre-main test gate is not wired, so main is not advanced.</summary>
     public const string GateUnavailable = "gate-unavailable";
+
+    /// <summary>
+    /// The repository defines no verify commands and nothing is derivable, so
+    /// no check ran (AGT-3428). A setup defect, not a red gate: the gate failure
+    /// router never classifies it, and the reason names the missing file.
+    /// </summary>
+    public const string VerifyDefinitionMissing = "verify-definition-missing";
+
+    /// <summary>
+    /// The release line moved during every bounded full-suite run on the merge
+    /// result of a delivery that was behind it (AGT-3435). Nothing was published;
+    /// the delivery itself needs no change.
+    /// </summary>
+    public const string ReleaseLineMoving = "release-line-moving";
 
     /// <summary>
     /// Maps a non-successful merge result onto its typed code. An
@@ -142,6 +168,13 @@ public static class AcceptedIntegrationFailurePolicy
 
         var code = NormalizePersistedCode(persistedCode)
             ?? InferCode(verdict, reason);
+        // AGT-3428: a not-applicable gate used to be recorded as a red build or
+        // delivery gate. Its text still identifies the missing definition.
+        if (code is AcceptedIntegrationFailureCodes.BuildGateFailed
+                or AcceptedIntegrationFailureCodes.DeliveryGateFailed
+            && (VerifyDefinitionPolicy.DescribesMissingDefinition(reason)
+                || VerifyDefinitionPolicy.DescribesMissingDefinition(verdictSummary)))
+            code = AcceptedIntegrationFailureCodes.VerifyDefinitionMissing;
 
         // AGT-2749: classify off the raw evidence (not the code-specific
         // fallback copy below) so a git network timeout or a gate-run budget
@@ -263,6 +296,14 @@ public static class AcceptedIntegrationFailurePolicy
                     verdictSummary,
                     "The integration branch could not be synchronized with origin."),
                 RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.GitCredentialUnavailable => new(
+                code,
+                "Git credential unavailable",
+                FirstNonBlank(
+                    reason,
+                    verdictSummary,
+                    "The integration branch could not be fetched because the Git credential for origin was missing or refused."),
+                RebaseRecoveryAvailable: false),
             AcceptedIntegrationFailureCodes.LineageBlocked => new(
                 code,
                 "Lineage blocked",
@@ -291,6 +332,24 @@ public static class AcceptedIntegrationFailurePolicy
                 code,
                 "Gate unavailable",
                 FirstNonBlank(reason, verdictSummary, "The mandatory integration gate is not available."),
+                RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.VerifyDefinitionMissing => new(
+                code,
+                "Verify commands missing",
+                // A legacy record carries only the bare gate reason; the generic
+                // message still names the file and shows an example.
+                FirstNonBlank(
+                    HasPrefix(reason) ? reason : null,
+                    HasPrefix(verdictSummary) ? verdictSummary : null,
+                    VerifyDefinitionPolicy.Message(VerifyDefinitionPolicy.ExampleFor(null))),
+                RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.ReleaseLineMoving => new(
+                code,
+                "Release line kept moving",
+                FirstNonBlank(
+                    reason,
+                    verdictSummary,
+                    "The release line moved during every full-suite run on the merge result; nothing was published."),
                 RebaseRecoveryAvailable: false),
             _ => new(
                 AcceptedIntegrationFailureCodes.IntegrationError,
@@ -388,13 +447,19 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.StaleAttempt => AcceptedIntegrationFailureCodes.StaleAttempt,
             AcceptedIntegrationFailureCodes.WorktreeUnavailable => AcceptedIntegrationFailureCodes.WorktreeUnavailable,
             AcceptedIntegrationFailureCodes.BranchSyncFailed => AcceptedIntegrationFailureCodes.BranchSyncFailed,
+            AcceptedIntegrationFailureCodes.GitCredentialUnavailable => AcceptedIntegrationFailureCodes.GitCredentialUnavailable,
             AcceptedIntegrationFailureCodes.LineageBlocked => AcceptedIntegrationFailureCodes.LineageBlocked,
             AcceptedIntegrationFailureCodes.RebaseAttributionFailed => AcceptedIntegrationFailureCodes.RebaseAttributionFailed,
             AcceptedIntegrationFailureCodes.IntegrationRefUnresolved => AcceptedIntegrationFailureCodes.IntegrationRefUnresolved,
             AcceptedIntegrationFailureCodes.GateUnavailable => AcceptedIntegrationFailureCodes.GateUnavailable,
+            AcceptedIntegrationFailureCodes.VerifyDefinitionMissing => AcceptedIntegrationFailureCodes.VerifyDefinitionMissing,
+            AcceptedIntegrationFailureCodes.ReleaseLineMoving => AcceptedIntegrationFailureCodes.ReleaseLineMoving,
             _ => null,
         };
     }
+
+    private static bool HasPrefix(string? text)
+        => text?.Contains(VerifyDefinitionPolicy.MessagePrefix, StringComparison.Ordinal) == true;
 
     private static string FirstNonBlank(params string?[] values)
         => values.First(value => !string.IsNullOrWhiteSpace(value))!.Trim();

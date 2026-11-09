@@ -56,6 +56,12 @@ is low-risk. When in doubt, `pass`.
 Screenshots, logs, and reports under results/ ARE evidence - check this
 inventory before flagging "no evidence". A read-only / concept card legitimately
 ships no code diff; its deliverable is the results/ artefact or a `docs/` commit.
+Use the quoted `results/` text as evidence, including measurements and test
+summaries that do not appear in the repository diff. Image names prove delivery
+of an image; this aspect does not inspect its pixels. When flagging missing
+evidence, put the diff sections and `results/` files or inventory actually
+checked in `evidence_checked`, and state the exact missing item in `missing`.
+Do not infer absence from a truncated excerpt alone.
 
 ## Status summary (the agent's own report)
 
@@ -76,6 +82,8 @@ test sections, or result artifacts you actually checked. For a `block`,
 `missing` must name the exact absent test or evidence contract. A block with
 `evidence_checked=none` or `missing=none` is downgraded to `concerns` and marked
 `block-without-citation`. Then emit exactly one verdict sentinel on its own line:
+
+`concerns` needs a concrete gap too: `missing` names it in one sentence. Without a gap the status is `pass`.
 
 ```
 [[ASPECT_VERDICT: status=<pass|concerns|block>; summary=<one short sentence>; evidence_checked=<files or diff sections checked>; missing=<exact gap, or none>]]

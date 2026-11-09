@@ -31,7 +31,6 @@ async function stub(page: Page) {
   await page.route('**/api/cli/quota/caps', json({ defaultCapPct: 95, caps: {} }));
   await page.route('**/api/cli/quota/model-routes', json({ profiles: {} }));
   await page.route('**/api/cli/contracts', json([]));
-  await page.route('**/api/cli/working-memory*', json({ available: false, root: null, capturedAt: new Date().toISOString(), entries: [] }));
   await page.route('**/api/cli/sessions*', json({ sessions: [] }));
   await page.route('**/api/cli/models*', json({ types: [] }));
   await page.route('**/api/cli/usage', json({ entries: [] }));
@@ -57,7 +56,7 @@ async function stub(page: Page) {
 }
 
 async function openSettings(page: Page) {
-  await page.getByTestId('studio-ab-settings').click();
+  await page.getByTestId('studio-titlebar-settings').click();
   await expect(page.getByTestId('workspace-settings-inline')).toBeVisible({ timeout: 10_000 });
 }
 
@@ -74,7 +73,7 @@ test.describe('Settings consolidation (AGT-2035)', () => {
     await openSettings(page);
     await expect(page.getByTestId('workspace-settings-title')).toHaveText('Settings');
 
-    for (const key of ['overview', 'appearance', 'updates', 'workspaces', 'caps', 'working-memory', 'prompts', 'retention', 'tokens', 'screenshots']) {
+    for (const key of ['overview', 'appearance', 'updates', 'workspaces', 'caps', 'prompts', 'retention', 'tokens', 'screenshots']) {
       await expect(page.getByTestId(`workspace-settings-rail-${key}`)).toBeVisible();
     }
     // Summary is gone.
@@ -121,13 +120,5 @@ test.describe('Settings consolidation (AGT-2035)', () => {
     await expect(page.getByTestId('cli-admin-panel')).not.toContainText('Usage detail');
   });
 
-  test('Working memory is its own section; Token usage hosts the relocated usage detail', async ({ page }) => {
-    await openSettings(page);
-    await page.getByTestId('workspace-settings-rail-working-memory').click();
-    await expect(page.getByTestId('workspace-working-memory')).toBeVisible();
 
-    await page.getByTestId('workspace-settings-rail-tokens').click();
-    await expect(page.getByTestId('token-usage-section')).toBeVisible();
-    await expect(page.getByTestId('token-usage-detail')).toBeVisible();
-  });
 });

@@ -9,6 +9,9 @@ import type { WatcherCase } from '../../../watcher/models/watcher.model';
 import { minutes, type AttemptVisibility, type AttemptVisibilitySnapshot,
   type EnvironmentFlowSnapshot } from './environment-flow.model';
 import { EnvironmentHealthOverviewComponent } from '../../../environment-health';
+import { ServerReadinessPanelComponent } from '../../../server-readiness';
+import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { claimLoadGateLabel } from '../../../remote-hosts/models/claim-load-gate';
 
 interface DecisionReceipt {
   receiptId: string; taskId: string | null; chosenAction: string; callStatus: string; endedAt: string;
@@ -17,7 +20,7 @@ interface DecisionReceipt {
 @Component({
   selector: 'app-environment-flow',
   standalone: true,
-  imports: [EnvironmentHealthOverviewComponent],
+  imports: [EnvironmentHealthOverviewComponent, ServerReadinessPanelComponent, StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './environment-flow.component.html',
   styleUrl: './environment-flow.component.scss',
@@ -80,6 +83,7 @@ export class EnvironmentFlowComponent implements OnInit, OnDestroy {
   }
 
   readonly minutes = minutes;
+  readonly claimLoadGateLabel = claimLoadGateLabel;
   hostAttempts(host: RemoteHost): readonly AttemptVisibility[] {
     const hostId = host.hostAdmission?.hostId ?? host.id;
     return this.attempts().filter(item => item.hostId === hostId);

@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { TaskInfo } from '../../../models/task.model';
 import {
   providerAuthBadgesForSnapshot,
+  providerAuthBadgesForHost,
   providerAuthWaitReason,
   modelCliVersionWaitReason,
 } from './provider-auth.model';
-import type { TaskServerRunnerCapabilitySnapshot } from './remote-host.model';
+import type { RemoteHost, TaskServerRunnerCapabilitySnapshot } from './remote-host.model';
 
 const NOW = Date.parse('2026-08-04T12:00:00Z');
 const UP_LINK = {
@@ -24,6 +25,11 @@ describe('provider auth projection', () => {
       { ...baseline, key: 'model-acceptance:codex:gpt-6-sol', category: 'model-acceptance', advertisedStatus: 'unavailable' },
     );
     expect(providerAuthBadgesForSnapshot(host, NOW)[0].acceptedModels).toEqual(['gpt-6-luna']);
+    const executionHost = {
+      id: 'host-berlin', name: 'runner-berlin', status: 'online',
+      lastHeartbeatAt: '2026-08-04T11:59:50Z', capabilityHealth: host.capabilities,
+    } as unknown as RemoteHost;
+    expect(providerAuthBadgesForHost(executionHost, NOW)[0].acceptedModels).toEqual(['gpt-6-luna']);
   });
   it('shows the model CLI minimum as the Ready-card wait reason', () => {
     const task = {

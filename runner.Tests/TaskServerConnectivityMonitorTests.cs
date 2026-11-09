@@ -55,6 +55,21 @@ public sealed class TaskServerConnectivityMonitorTests
         Assert.Equal(started.AddMinutes(7), monitor.Snapshot.LastRecoveredAt);
     }
 
+    [Fact]
+    public void Failure_keeps_status_and_request_as_separate_fields()
+    {
+        var monitor = new TaskServerConnectivityMonitor(_ => { });
+        var now = new DateTime(2026, 8, 1, 15, 30, 0, DateTimeKind.Utc);
+        monitor.RecordFailure(now, "claim poll", new TaskServerException(524, "origin timeout"),
+            TimeSpan.FromSeconds(5), 0);
+        Assert.Equal(524, monitor.Snapshot.HttpStatus);
+        Assert.Equal("POST /api/runner/claim", monitor.Snapshot.Request);
+        Assert.Equal(now, monitor.Snapshot.FailureStartedAt);
+        monitor.RecordSuccess(now.AddSeconds(1), "claim poll");
+        Assert.Null(monitor.Snapshot.HttpStatus);
+        Assert.Null(monitor.Snapshot.Request);
+    }
+
     [Theory]
     [InlineData(5, 1, 5)]
     [InlineData(5, 6, 30)]

@@ -185,6 +185,35 @@ public sealed class DeliveryFailureDiagnosisTests
         Assert.Equal("DiagnosisEvidenceInvalid", normalized.FailureClassification);
     }
 
+    [Theory]
+    [InlineData(ReviewBaselineModes.TestFailures, true, "ProductFailure")]
+    [InlineData(ReviewBaselineModes.TestFailures, false, "ReviewInfra")]
+    [InlineData(ReviewBaselineModes.ExitStatus, true, "ReviewInfra")]
+    public void Red_baseline_can_charge_only_reproduced_new_test_failures(
+        string mode, bool hasNewFailure, string expected)
+    {
+        var failed = FailedCommand("verify-6", DeliveryFailureDiagnosis.Product, true) with
+        {
+            BaselineExitCode = 1,
+            NewFailures = hasNewFailure ? ["Product.Tests.NewFailure"] : [],
+            PreExistingFailures = ["Product.Tests.OldFailure"],
+        };
+        var report = EmptyReport("ProductFailure") with
+        {
+            Commands = [failed, failed with
+            {
+                Phase = "clean-repeat", WorkspaceRole = "clean-repeat", Diagnosis = null,
+            }],
+        };
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto("verify-6", "build-tests", "dotnet", [],
+                CompareToBaseline: true, BaselineMode: mode)], []);
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, plan);
+
+        Assert.Equal(expected, normalized.Outcome);
+    }
+
     [Fact]
     public void Mixed_failure_with_missing_diagnosis_cannot_charge()
     {
@@ -443,6 +472,71 @@ public sealed class DeliveryFailureDiagnosisTests
             Verdicts = [new ReviewVerdictDto("requirements", "pass", "RemoteAspectVerdict", summary)],
         };
         Assert.Equal("Pass", ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], [])).Outcome);
+    }
+
+    /// <summary>
+    /// AGT-3430: a cache that served a red baseline is review infrastructure,
+    /// not an integration-branch defect, once both clean runs passed.
+    /// </summary>
+    [Theory]
+    [InlineData(ReviewCachedBaselinePolicy.DependencyCacheDefect)]
+    [InlineData(ReviewCachedBaselinePolicy.BaselineResultCacheDefect)]
+    public void Cache_defect_with_green_clean_repeat_and_green_clean_baseline_is_review_infrastructure(
+        string classification)
+    {
+        var report = CacheDefectReport(classification, cleanBaselineExit: 0);
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+
+        Assert.Equal("ReviewInfra", normalized.Outcome);
+        Assert.Equal(classification, normalized.FailureClassification);
+    }
+
+    [Theory]
+    [InlineData(1, 0, 0)]
+    [InlineData(null, 0, 0)]
+    [InlineData(0, 1, 0)]
+    [InlineData(0, 0, 1)]
+    public void Cache_defect_without_both_clean_proofs_is_invalid_evidence(
+        int? cleanBaselineExit, int cleanRepeatExit, int reportedBaselineExit)
+    {
+        var report = CacheDefectReport(
+            ReviewCachedBaselinePolicy.DependencyCacheDefect, cleanBaselineExit, cleanRepeatExit, reportedBaselineExit);
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+
+        Assert.Equal("ReviewInfra", normalized.Outcome);
+        Assert.Equal("DiagnosisEvidenceInvalid", normalized.FailureClassification);
+    }
+
+    private static ReviewReportRequest CacheDefectReport(
+        string classification, int? cleanBaselineExit, int cleanRepeatExit = 0, int reportedBaselineExit = 0)
+    {
+        var baselineSha = new string('b', 40);
+        var candidate = FailedCommand("verify-1", classification, false) with
+        {
+            BaselineSha = baselineSha,
+            BaselineExitCode = reportedBaselineExit,
+        };
+        var commands = new List<ReviewCommandEvidenceDto>
+        {
+            candidate,
+            candidate with { Phase = "clean-repeat", WorkspaceRole = "clean-repeat", ExitCode = cleanRepeatExit,
+                Diagnosis = null },
+            candidate with { WorkspaceRole = "baseline-0123456789ab", HeadBefore = baselineSha, Diagnosis = null,
+                BaselineExitCode = null },
+        };
+        if (cleanBaselineExit is { } exit)
+            commands.Add(candidate with
+            {
+                Phase = ReviewCachedBaselinePolicy.Phase,
+                WorkspaceRole = ReviewCachedBaselinePolicy.WorkspaceRole,
+                HeadBefore = baselineSha,
+                ExitCode = exit,
+                Diagnosis = null,
+                BaselineExitCode = null,
+            });
+        return EmptyReport("ReviewInfra") with { FailureClassification = classification, Commands = commands };
     }
 
     private static ReviewReportRequest EmptyReport(string outcome)

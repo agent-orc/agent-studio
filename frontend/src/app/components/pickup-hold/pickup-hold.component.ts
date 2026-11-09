@@ -1,20 +1,14 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import type { PickupHoldResolution, PickupHoldStatus, TaskInfo } from '../../models/task.model';
+import { pickupHoldMechanismLabel, titleCaseToken } from '../../models/ready-wait-reason';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
 import { NowTickService } from '../../services/now-tick.service';
 import { TaskService } from '../../services/task.service';
 import type { Observable } from 'rxjs';
+import { RemoteHostsService } from '../../features/remote-hosts';
+import { effectivePickupHold } from './effective-pickup-hold';
 
 export type PickupHoldVariant = 'card' | 'detail';
-
-/** Mechanism keys as the backend `PickupHoldMechanisms` spells them. */
-const MECHANISM_LABELS: Record<string, string> = {
-  'dependency-gate': 'Dependency gate',
-  'dispatch-rejection': 'Dispatch refused',
-  'crash-backoff': 'Crash cooldown',
-  'pickup-policy': 'Pickup policy',
-  'execution-placement': 'Execution placement',
-};
 
 export const PICKUP_HOLD_RESOLUTION_KINDS = {
   dropDependency: 'drop-dependency',
@@ -84,11 +78,13 @@ export const PICKUP_HOLD_RESOLUTION_ACTIONABILITY: Readonly<
 })
 export class PickupHoldComponent {
   private readonly tasks = inject(TaskService, { optional: true });
+  private readonly remoteHosts = inject(RemoteHostsService, { optional: true });
   private readonly now = inject(NowTickService).now;
   readonly task = input.required<TaskInfo>();
   readonly variant = input<PickupHoldVariant>('card');
 
-  readonly hold = computed<PickupHoldStatus | null>(() => this.task().pickupHold ?? null);
+  readonly hold = computed<PickupHoldStatus | null>(() =>
+    effectivePickupHold(this.task(), this.remoteHosts?.hosts() ?? []));
 
   /** `open` for an honest wait, `blocked` for a gate that can never open. */
   readonly tone = computed(() => ((this.hold()?.classification === 'unsatisfiable' || this.hold()?.unsatisfiable) ? 'blocked'
@@ -97,12 +93,11 @@ export class PickupHoldComponent {
   readonly classificationLabel = computed(() => {
     const classification = this.hold()?.classification
       ?? (this.hold()?.unsatisfiable ? 'unsatisfiable' : 'satisfiable-soon');
-    return titleCase(classification);
+    return titleCaseToken(classification);
   });
 
   readonly mechanismLabel = computed(() => {
-    const mechanism = this.hold()?.mechanism ?? '';
-    return MECHANISM_LABELS[mechanism] ?? titleCase(mechanism);
+    return pickupHoldMechanismLabel(this.hold()?.mechanism ?? '');
   });
 
   /**
@@ -227,13 +222,6 @@ export class PickupHoldComponent {
       },
     });
   }
-}
-
-function titleCase(value: string): string {
-  const words = value.split(/[-_\s]+/).filter(Boolean);
-  if (words.length === 0) return 'Held';
-  return words.map((word, index) =>
-    index === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word).join(' ');
 }
 
 /** Age at `nowMs`, from the hold start the board card carries. */

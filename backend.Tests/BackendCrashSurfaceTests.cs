@@ -49,7 +49,7 @@ public class BackendCrashSurfaceTests
 
         Assert.Equal("System.InvalidOperationException", record.ExceptionType);
         Assert.Contains("simulated hosted-service crash", record.Message);
-        Assert.Contains("[REDACTED]", record.Message); // anthropic key was scrubbed
+        Assert.Contains("[REDACTED_CREDENTIAL]", record.Message); // anthropic key was scrubbed
         Assert.False(string.IsNullOrEmpty(record.TopFrame));
 
         var markerPath = Path.Combine(temp.Path, "last-crash.json");

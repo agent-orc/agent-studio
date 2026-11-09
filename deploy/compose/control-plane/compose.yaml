@@ -20,10 +20,11 @@ services:
     user: "0:0"
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
-    command: ["chown -R 10001:10001 /var/lib/agent-orchestrator/store /var/lib/agent-orchestrator/backup"]
+    command: ["chown -R 10001:10001 /var/lib/agent-orchestrator/store /var/lib/agent-orchestrator/backup /var/lib/agent-orchestrator/home"]
     volumes:
       - store:/var/lib/agent-orchestrator/store
       - backup:/var/lib/agent-orchestrator/backup
+      - home:/var/lib/agent-orchestrator/home
     logging: *bounded-logging
 
   task-server:
@@ -37,6 +38,8 @@ services:
     volumes:
       - store:/var/lib/agent-orchestrator/store
       - backup:/var/lib/agent-orchestrator/backup
+      # HOME of the service account; holds its local state (~/.local/share).
+      - home:/var/lib/agent-orchestrator/home
     environment:
       LISTEN_URL: http://0.0.0.0:5071
       AllowedHosts: "*"
@@ -161,6 +164,7 @@ networks:
 volumes:
   store:
   backup:
+  home:
   edge-tls:
   edge-config:
 

@@ -9,7 +9,7 @@ namespace AgentStudio.Pipeline;
 /// slots (no runtime today; future tasks plug requirement-clarification
 /// / context-retrieval / wiki-guidance upkeep here). The Core step is the
 /// CLI agent run owned by <see cref="TaskRunnerService"/>. Post-steps
-/// run the four <see cref="StepKind.Aspect"/> verdicts in parallel
+/// run the configured <see cref="StepKind.Aspect"/> verdicts in parallel
 /// (the load-bearing behavioural change in this phase), the
 /// git-commit-attribution slot (ADR "Commit-Attribution-Regel";
 /// behaviour implemented in
@@ -70,7 +70,7 @@ public static class PipelineCatalogue
     };
 
     /// <summary>
-    /// The four aspect step ids ship as parallel post-steps. Kept in
+    /// The aspect step ids ship as parallel post-steps. Kept in
     /// sync with <see cref="AspectRunnerService.Catalogue"/> -
     /// <see cref="PipelineCatalogueAsserts.AspectStepsMatchAspectRunnerCatalogue"/>
     /// fails the build if they drift.
@@ -81,6 +81,7 @@ public static class PipelineCatalogue
         "aspect-code-quality",
         "aspect-documentation-impact",
         "aspect-tests-and-evidence",
+        "aspect-visual-review",
     };
 
     public const string CoreAgentRunStepId = "core-agent-run";
@@ -605,6 +606,8 @@ public static class PipelineCatalogue
                 RunMode = StepRunMode.Parallel,
                 Idempotent = true,
                 PromptTemplate = def.PromptTemplate,
+                CliType = aspectId == "aspect-visual-review" ? CliTypes.Codex : null,
+                Model = aspectId == "aspect-visual-review" ? PipelineStepModelDefaults.SupportModel : null,
             });
         }
 

@@ -32,6 +32,9 @@ and the Task Server validates and records the resulting intent and receipt.
 | `POST /api/v1/reviews/attempts/{attemptId}/report` | Settle the attempt with a terminal outcome. Two-phase (below). |
 | `POST /api/v1/reviews/attempts/{attemptId}/cleanup` | Report workspace teardown after a terminal report. |
 | `GET /api/v1/reviews/attempts/{attemptId}` | Read the current attempt state. |
+| `POST /api/v1/runners/{runnerId}/review-package-claims` | Claim a queued shadow review package (AGT-3400 S4). |
+| `POST /api/v1/review-packages/attempts/{attemptId}/lease/renew` | Extend a package attempt lease. |
+| `POST /api/v1/review-packages/attempts/{attemptId}/report` | Report per-member verdicts and attributed findings of a package attempt. |
 
 Every write carries `AttemptId`, `Fence`, `AuthorityEpoch`, and `IdempotencyKey`
 (`AttemptWriteReference`). The attempt authority (`AttemptAuthorityService` in
@@ -39,6 +42,23 @@ the monolith; `review_attempts` in the standalone store) is the single writer;
 a request whose fence or epoch does not match the current record fails closed
 (`StaleFence`, `AuthorityEpochMismatch`, `Superseded`) rather than silently
 applying.
+
+## Package subjects (AGT-3400 S4)
+
+`contracts/TaskServer.Contracts/ReviewPackageContracts.cs` pins review subject
+kind `package`: the members of one Dossier wave reviewed together in shadow.
+The orchestrator creates one with `POST /api/v1/review-packages` (scope
+`orchestration:write`, idempotent by membership digest), lists them with
+`GET /api/v1/review-packages?project=` and asks which package holds a member
+delivery with `GET /api/v1/review-packages/members/{taskKey}/{runAttemptId}`.
+The monolith creates packages in its own store when it serves the v1 plane.
+A package attempt is leased, renewed and reported under
+`ReviewPackageLeasePolicy`: a report must carry the current lease, fence,
+executor and instance, a replay with the same key and payload is a duplicate,
+and a package gets at most two leases before it is abandoned. Admission
+applies `ReviewPackageReportPolicy`. A package report never changes a task
+state, review attempt or settlement; the domain rules are in
+[review.md](../domains/review.md#package-review-in-shadow-agt-3400-s4).
 
 ## Concept brief and aspect coverage
 
@@ -83,8 +103,8 @@ The file-backed endpoint has these durable and asynchronous parts:
 
 1. **Prepare and settle (synchronous, durable).** The monolith validates and
    normalizes the report, then atomically writes
-   `logs/remote-review-settlement-{attemptId}.json` with the canonical payload,
-   its hash, the submitted payload hash for normalized report replay, and any
+   `logs/remote-review-settlement-{attemptId}.json` with a bounded report,
+   its hash, the accepted full-report hash, the submitted payload hash for normalized report replay, and any
    delivery gate decision with its own digest before calling
    `AttemptAuthorityService.SettleReview`. The ReviewAttempt remains the sole
    verdict authority. A prepared journal without an accepted authority report
@@ -105,6 +125,29 @@ The file-backed endpoint has these durable and asynchronous parts:
    matching `RemoteDeliverySettlementStore` sidecar before integration. A failed
    required write returns typed `review-settlement-repair-required` instead of
    acknowledging incomplete work.
+   Journal hashes are versioned (AGT-3467). Format 1 hashed the compact
+   serialization of each member, so a release that added a record member
+   (AGT-3430 `outputTail`) could no longer recompute them from the typed record
+   and every earlier entry read as repair. The reader therefore verifies every
+   hash against the JSON members as stored, with the rules of the entry's
+   format: format 1 compact, formats 2 and 3 canonical (members holding null, false
+   or zero omitted, so an added optional member keeps every hash). Format 3
+   keeps embedded artifacts only while each is at most 16 KiB and their total
+   at most 128 KiB, keeps at most 64 KiB of output tails
+   per failed step, and caps the complete journal at 512 KiB. It binds the accepted
+   full-report hash into `ReportSha256`, which hashes the bounded stored report;
+   replay uses the accepted hash. A rewritten earlier entry upgrades to format
+   3; the legacy submitted hash is dropped because the submitted payload is
+   unavailable. Large output is discarded after admission and is not retained
+   in the workspace journal or grade projection. A changed stored member still reads as repair, with
+   the first failing check in the reason (for example
+   `corrupt-review-settlement-journal:report-sha256-mismatch`).
+   At startup the workspace maintenance service stages index-only removal of
+   tracked journals larger than 5 MiB. Its normal tracked sweep commits those
+   removals; the files remain on disk for existing readers. The workspace
+   commit service refuses new journal files above 5 MiB. This normal commit
+   keeps old blobs reachable in Git history, so a repack alone does not reclaim
+   their historical size.
 2. **Project evidence (asynchronous, durable pending work).** The endpoint
    enqueues a `RemoteReviewEvidenceProjectionRequest` onto
    `IRemoteReviewEvidenceProjectionQueue` (`backend/Features/Runner/RemoteReviewEvidenceProjectionQueue.cs`).
@@ -269,7 +312,8 @@ A plan sealed with `PrivateRepository = true` requires the executor
 registration key `review:repository-read:<host>/<owner>/<repo>` derived from
 the subject's repository URL by `ReviewRepositoryAccessPolicy`. An attempt
 without a sealed plan or URL (a lease-expiry successor, a settled-run recovery
-attempt) is judged from its project's visibility and repository URL, the same
+attempt) is judged from its project's effective visibility (the setting
+combined with the GitHub App's report, AGT-3408) and repository URL, the same
 facts the hand-out builds its subject from. The registered key counts only
 while the executor's current capability advertisement reports a fresh `ready`
 read proof for it. Both Task Server implementations apply this in the claim

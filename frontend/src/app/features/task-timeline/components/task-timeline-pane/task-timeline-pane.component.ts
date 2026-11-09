@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import {
   AspectFindingsListComponent,
@@ -12,6 +12,7 @@ import {
   type SteeringInfo,
 } from '../../../../components/steering-detail';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
+import type { TaskInfo } from '../../../../models/task.model';
 import { RunTimelinePollService } from '../../../polling/services/run-timeline-poll.service';
 import type { RunRecord } from '../../../run-timeline';
 import {
@@ -56,6 +57,19 @@ import {
 export class TaskTimelinePaneComponent {
   private readonly poll = inject(TaskTimelinePollService);
   private readonly runPoll = inject(RunTimelinePollService, { optional: true });
+  readonly job = input<TaskInfo | null>(null);
+  readonly loadState = this.poll.loadState;
+  private readonly loadWhenVisible = effect(() => this.poll.syncTo(this.job()));
+
+  retry(): void { this.poll.refresh(); }
+
+  selectionViewHref(event: TaskTimelineEvent): string {
+    const params = new URLSearchParams();
+    const card = event.details?.['taskKey'] ?? new URLSearchParams(window.location.search).get('job');
+    if (card) params.set('msCard', card);
+    params.set('msEvent', event.details?.['selectionEventId'] ?? '');
+    return `${window.location.pathname}?${params.toString()}#/workspace/settings/caps`;
+  }
 
   /** Raw ledger rows, oldest first (the story reads forward). */
   readonly events = this.poll.events;

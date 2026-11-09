@@ -189,11 +189,11 @@ describe('CodeReviewPanelComponent', () => {
       runAt: '2026-07-23T10:00:00Z',
       councilReaction: {
         createdAt: '2026-07-23T10:00:01Z', reviewFileName: 'code-review-grade-2026-07-23.md',
-        grade: 'B', disposition: 'Reissue', summary: 'Fix 2 review finding(s) in the next round.',
+        grade: 'B', disposition: 'reissue', summary: 'Fix 2 review finding(s) in the next round.',
         startsNewRound: true, targetJobId: 'demo-job', targetRunAttempt: 2,
         assessments: [
-          { finding: 'Dark-theme colors are incorrect; provide both-theme screenshots.', action: 'FixNextRound', reason: 'Concrete review deficiency.' },
-          { finding: 'Upload rejection lacks focused test evidence.', action: 'FixNextRound', reason: 'Concrete review deficiency.' },
+          { finding: 'Dark-theme colors are incorrect; provide both-theme screenshots.', action: 'fixNextRound', reason: 'Concrete review deficiency.' },
+          { finding: 'Upload rejection lacks focused test evidence.', action: 'fixNextRound', reason: 'Concrete review deficiency.' },
         ],
       },
     }] });

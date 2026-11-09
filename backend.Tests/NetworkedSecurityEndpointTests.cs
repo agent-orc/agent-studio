@@ -199,7 +199,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         var owner = store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
         var enrolled = store.EnrollRunner(store.CreateEnrollment(
-            new RunnerEnrollmentRequest("existing-board-name", null, null, null)).Code);
+            new RunnerEnrollmentRequest("existing-board-name", null, null, null, [project])).Code);
         var logsOnly = store.EnrollRunner(store.CreateEnrollment(
             new RunnerEnrollmentRequest("logs-only", [RunnerScopes.Logs], null, null)).Code);
         factory.Services.GetRequiredService<ClientIdentityStore>()
@@ -214,7 +214,9 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
                      $"/api/v1/projects/{project}/tasks/{taskKey}",
                  })
         {
-            Assert.Equal(HttpStatusCode.OK, await ReadStatusAsync(path, bearer: enrolled.Secret));
+            // A card read needs a live lease; the project listing remains available.
+            Assert.Equal(path == "/api/v1/projects" ? HttpStatusCode.OK : HttpStatusCode.Forbidden,
+                await ReadStatusAsync(path, bearer: enrolled.Secret));
             Assert.Equal(HttpStatusCode.OK, await ReadStatusAsync(path, session: owner.SessionToken));
             Assert.Equal(HttpStatusCode.Forbidden, await ReadStatusAsync(path, bearer: logsOnly.Secret));
             Assert.Equal(HttpStatusCode.Unauthorized, await ReadStatusAsync(path));
@@ -236,6 +238,8 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         var lease = await runner.AcquireLeaseAsync(
             new RAcquire(taskKey, enrolled.Runner.Id, enrolled.Runner.Name, "smoke-host", 42, "codex"), CancellationToken.None);
         Assert.True(lease.Granted);
+        Assert.Equal(HttpStatusCode.OK, await ReadStatusAsync(
+            $"/api/v1/projects/{project}/tasks/{taskKey}", bearer: enrolled.Secret));
         var completion = await runner.CompleteRunAsync(new RComplete(
             taskKey, lease.Lease!.LeaseId, lease.Lease.FencingToken,
             enrolled.Runner.Id, "Blocked", Reason: "networked fixture completed",
@@ -248,7 +252,8 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     [Fact]
     public async Task Real_endpoints_bootstrap_session_csrf_and_runner_enrollment_fail_closed()
     {
-        using var factory = BuildFactory();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero));
+        using var factory = BuildFactory(clock: clock);
         using var anonymous = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
 
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/tasks")).StatusCode);
@@ -277,6 +282,23 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
             value.Contains("HttpOnly", StringComparison.OrdinalIgnoreCase)
             && value.Contains("Secure", StringComparison.OrdinalIgnoreCase)
             && value.Contains("SameSite=Strict", StringComparison.OrdinalIgnoreCase));
+        using (var start = new HttpRequestMessage(HttpMethod.Post, "/api/auth/totp/start")
+        {
+            Content = JsonContent.Create(new { })
+        })
+        {
+            start.Headers.Add("X-CSRF-Token", auth!.CsrfToken);
+            var startResponse = await browser.SendAsync(start);
+            startResponse.EnsureSuccessStatusCode();
+            var secret = (await startResponse.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>())
+                .GetProperty("secret").GetString()!;
+            using var confirm = new HttpRequestMessage(HttpMethod.Post, "/api/auth/totp/confirm")
+            {
+                Content = JsonContent.Create(new { code = SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime) })
+            };
+            confirm.Headers.Add("X-CSRF-Token", auth.CsrfToken);
+            (await browser.SendAsync(confirm)).EnsureSuccessStatusCode();
+        }
         (await browser.GetAsync("/api/v1/management/status")).EnsureSuccessStatusCode();
 
         var missingCsrf = await browser.PostAsJsonAsync("/api/auth/runner-enrollments", new { name = "runner-01" });
@@ -520,11 +542,14 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     }
 
     private WebApplicationFactory<Program> BuildFactory(string? remoteIp = null, string? projectPath = null,
-        bool publicCloudflareEdge = false) => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        bool publicCloudflareEdge = false, TimeProvider? clock = null) => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment("Test");
         if (remoteIp is not null)
             builder.ConfigureServices(services => services.AddSingleton<IStartupFilter>(new RemoteIpStartupFilter(IPAddress.Parse(remoteIp))));
+        if (clock is not null)
+            builder.ConfigureServices(services => services.AddSingleton(provider => new AccessSecurityStore(
+                provider.GetRequiredService<IConfiguration>(), NullLogger<AccessSecurityStore>.Instance, clock)));
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _workspace,

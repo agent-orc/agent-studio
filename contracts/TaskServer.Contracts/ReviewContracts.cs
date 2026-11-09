@@ -61,6 +61,11 @@ public sealed record ReviewDependencyScopeDto(
     string WorkingSubdir,
     IReadOnlyList<string> Lockfiles);
 
+/// <param name="CoveredByDependencyScopes">
+/// True only when the scopes' lockfiles cover everything the command prepares,
+/// so a dependency-cache hit on every scope may skip it. A plan without the
+/// field runs the command (<see cref="DependencyPreparationSkipPolicy"/>).
+/// </param>
 public sealed record ReviewPreparationCommandDto(
     string StepId,
     string FileName,
@@ -68,7 +73,8 @@ public sealed record ReviewPreparationCommandDto(
     string WorkingSubdir = "",
     int TimeoutSeconds = 1800,
     IReadOnlyList<ReviewDependencyScopeDto>? DependencyScopes = null,
-    ReviewLibraryStepDto? LibraryStep = null);
+    ReviewLibraryStepDto? LibraryStep = null,
+    bool CoveredByDependencyScopes = false);
 
 public sealed record ScopedReviewPlanDto(
     bool Enabled,
@@ -128,7 +134,13 @@ public sealed record ReviewPlanDto(
     // repository is claimable only by an executor that registered the
     // repository-read capability for exactly this repository.
     bool PrivateRepository = false,
-    DeepReviewDecisionDto? DeepReviewDecision = null);
+    DeepReviewDecisionDto? DeepReviewDecision = null,
+    // AGT-3428: set when the repository defines no verify commands and nothing
+    // is derivable. Carries the message naming the missing file with a minimal
+    // example. The delivery is not integrated while it is set.
+    string? VerifyDefinitionMissing = null,
+    /// <summary>Rule that required a per-card verify gate instead of batch deferral.</summary>
+    string? BuildTestDeferralDisabledReason = null);
 
 /// <summary>Frozen engine decision visible with the review subject before any review command runs.</summary>
 public sealed record DeepReviewDecisionDto(string ReceiptId, string Mode, bool Selected,
@@ -235,6 +247,8 @@ public static class ReviewClaimEmptyReasons
     public const string UnclaimablePlanRequirements = "unclaimable-plan-requirements";
     public const string DifferentHostRequired = "different-review-host-required";
     public const string DifferentHostPreferred = "different-review-host-preferred";
+    /// <summary>SM-11: every queued subject was coded by the claiming principal.</summary>
+    public const string CodingPrincipalExcluded = "coding-principal-excluded";
 }
 
 public enum ReviewHostPlacementDecision
@@ -403,7 +417,28 @@ public sealed record ReviewCommandEvidenceDto(
     /// ran in this attempt.
     /// </summary>
     string? VerifyReusedFromAttemptId = null,
-    long VerifyReusedAgeSeconds = 0);
+    long VerifyReusedAgeSeconds = 0,
+    /// <summary>
+    /// Bounded, secret-scrubbed end of both streams of a failed command
+    /// (AGT-3430). The full logs are deleted with the attempt; this tail is
+    /// what survives in the settled report. Null for a passed command.
+    /// </summary>
+    ReviewCommandOutputTailDto? OutputTail = null);
+
+/// <summary>
+/// The last <see cref="MaximumCharacters"/> characters of one failed
+/// command's stdout and stderr, with secret-shaped values redacted. A
+/// truncated stream says so, so a reader knows the tail is not the whole log.
+/// </summary>
+public sealed record ReviewCommandOutputTailDto(
+    string Stdout,
+    string Stderr,
+    bool StdoutTruncated,
+    bool StderrTruncated)
+{
+    /// <summary>Upper bound per stream, in characters.</summary>
+    public const int MaximumCharacters = 4096;
+}
 
 /// <summary>
 /// The one word every surface uses for a test failure that a targeted re-run
@@ -693,7 +728,9 @@ public sealed record ReviewReportRequest(
     IReadOnlyList<ReviewVerdictDto> Verdicts,
     long AuthorityEpoch = 0,
     string? BriefSha256 = null,
-    IReadOnlyList<ReviewSkippedAspectDto>? SkippedAspects = null);
+    IReadOnlyList<ReviewSkippedAspectDto>? SkippedAspects = null,
+    bool ArtifactsReduced = false,
+    string? QualityStudioCodeQualityMode = null);
 
 /// <summary>
 /// State of the task-folder evidence write (grade markdown, aspect files,

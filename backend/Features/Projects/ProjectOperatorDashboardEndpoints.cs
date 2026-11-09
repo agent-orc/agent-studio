@@ -2,6 +2,12 @@ using AgentStudio.Deploy;
 using AgentStudio.Security;
 using AgentStudio.Secrets;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Management;
+using AgentStudio.Registry;
+using AgentStudio.Git;
+using AgentStudio.Host;
+using AgentStudio.Diagnostics;
+using System.Net.Http.Json;
 
 namespace AgentStudio.Projects;
 
@@ -9,6 +15,72 @@ public static class ProjectOperatorDashboardEndpoints
 {
     public static void MapProjectOperatorDashboardEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/v1/operations/structure", async Task<IResult> (HttpContext context, string? scope, string? environment,
+            IConfiguration configuration, ProjectRegistry projects, WorkspaceRegistry workspaces, ProjectEnvironmentService environments,
+            GitService git, AgentStudio.Runner.V1ReviewExecutorRegistry hosts,
+            LinkSupervisor links, EnvironmentHealthService health,
+            AgentStudio.Runner.HostReleaseDriftWatchdog releases,
+            AgentStudio.Runner.OrchestrationEngineReadiness engine,
+            AgentStudio.Pipeline.PullGateStore gates, TimeProvider clock,
+            IHttpClientFactory clients, CancellationToken cancellationToken) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (scope is not null && scope != "workspace" && !scope.StartsWith("project:", StringComparison.Ordinal))
+                return Results.BadRequest(new { error = "scope must be workspace or project:{id}." });
+            var projectId = scope?.StartsWith("project:", StringComparison.Ordinal) == true ? scope[8..] : null;
+            if (projectId is not null)
+            {
+                var project = projects.FindByIdOrDisplayName(projectId);
+                if (project is null) return Results.NotFound();
+                projectId = project.Id;
+            }
+            InstallationConnectivityManifest? manifest = null;
+            var path = configuration[ConnectivityManifestLoader.ManifestPathKey];
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                try { manifest = InstallationConnectivityManifest.Parse(File.ReadAllText(Path.GetFullPath(path))); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+                { return Results.Problem("Connectivity manifest is unavailable.", statusCode: 503); }
+            }
+            var selected = projects.List().Where(p => !p.Archived).ToArray();
+            var declared = StructureProjection.Build(manifest, selected,
+                environments.DeclarationFiles, projectId, environment,
+                project => git.ResolveRepoRootForProject(project.DisplayName),
+                workspaces.List().Where(workspace => projectId is null ||
+                    projects.FindById(projectId)?.WorkspaceId == workspace.Id)
+                    .SelectMany(workspace => workspace.Systems).ToArray(),
+                ManagedServiceProbes(health));
+            var deploymentFacts = selected.SelectMany(project =>
+                environments.Read(project.DisplayName)?.Environments.Select(view =>
+                    new StructureDeploymentFact(project.Id, view)) ?? []).ToArray();
+            var healthFacts = health.Overview().Environments.Join(selected,
+                view => view.Project, project => project.DisplayName,
+                (view, project) => new StructureHealthFact(project.Id, view)).ToArray();
+            IReadOnlyList<RunnerCapabilitySnapshotDto> hostFacts = hosts.ListCapabilitySnapshots();
+            if (TaskServerPlaneProxy.IsConfigured(configuration))
+            {
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                deadline.CancelAfter(TimeSpan.FromSeconds(5));
+                try
+                {
+                    hostFacts = await clients.CreateClient(TaskServerPlaneProxy.ClientName)
+                        .GetFromJsonAsync<RunnerCapabilitySnapshotDto[]>("/api/v1/management/remote-hosts",
+                            deadline.Token) ?? [];
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
+                { SilentCatch.Warn(ex, "StructureProjection: remote host reports unavailable"); }
+            }
+            return Results.Ok(ObservedStructureProjection.Apply(declared, hostFacts,
+                links.Snapshot(), deploymentFacts, healthFacts, releases.Current,
+                engine.State, clock.GetUtcNow().UtcDateTime, gates.Hosts()));
+        });
+
+        app.MapGet("/api/v1/operations/structure/library", async (StructureLibraryService library,
+            CancellationToken ct) => Results.Ok(await library.ReadAsync(false, ct)));
+        app.MapPost("/api/v1/operations/structure/library/refresh", async (StructureLibraryService library,
+            CancellationToken ct) => Results.Ok(await library.ReadAsync(true, ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+
         app.MapGet("/api/environment/flow", (EnvironmentFlowService flow) =>
             Results.Ok(flow.Build()));
 
@@ -348,6 +420,24 @@ public static class ProjectOperatorDashboardEndpoints
             { Kind: DeployOutcomeKind.Forbidden } refused => Results.Json(new { error = refused.Error },
                 statusCode: StatusCodes.Status403Forbidden),
             var refused => Results.Conflict(new { error = refused.Error }),
+        };
+    }
+
+    /// <summary>
+    /// A managed service is observed through the environment health check it
+    /// names; the control-plane worker already probes those checks. One health
+    /// read per project and request.
+    /// </summary>
+    private static Func<ProjectRecord, string, string, StructureProbe?> ManagedServiceProbes(EnvironmentHealthService health)
+    {
+        var read = new Dictionary<string, ProjectEnvironmentHealthResponse?>(StringComparer.OrdinalIgnoreCase);
+        return (project, environment, checkId) =>
+        {
+            if (!read.TryGetValue(project.DisplayName, out var response))
+                read[project.DisplayName] = response = health.Read(project.DisplayName);
+            var check = response?.Environments.FirstOrDefault(item => item.EnvironmentId == environment)?
+                .Checks.FirstOrDefault(item => item.Id == checkId);
+            return check is null ? null : new StructureProbe(check.Kind, check.Status);
         };
     }
 
