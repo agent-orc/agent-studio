@@ -189,6 +189,11 @@ public sealed partial class BatchGatePilotServiceTests
         var finding = Assert.Single(await Findings(client));
         Assert.Equal("orphaned-formed-batch", finding.GetProperty("kind").GetString());
         Assert.Equal("initialize-formed", finding.GetProperty("repair").GetString());
+        // The state snapshot reads the manifest without a phase record as formed.
+        using (var orphaned = JsonDocument.Parse(await client.GetStringAsync(
+                   $"/api/projects/{ProjectName}/batch-gate/state")))
+            Assert.Equal("formed", Assert.Single(orphaned.RootElement.GetProperty("batches")
+                .EnumerateArray()).GetProperty("phase").GetString());
 
         await restarted.Services.GetRequiredService<BatchGatePilotService>().TickAsync(CancellationToken.None);
 
