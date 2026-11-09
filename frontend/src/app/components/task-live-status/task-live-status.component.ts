@@ -4,6 +4,7 @@ import { TaskState } from '../../models/task.model';
 import { NowTickService } from '../../services/now-tick.service';
 import { deriveActiveTaskRun, isTaskRunActive, resolveRunActivityKind } from '../../services/run-activity.util';
 import { PickupHoldComponent } from '../pickup-hold/pickup-hold.component';
+import { runnerWaitCode, runnerWaitHeadline } from '../../models/ready-wait-reason';
 
 export type TaskLiveStatusVariant = 'card' | 'detail';
 type LiveTone = 'active' | 'waiting' | 'idle' | 'stalled';
@@ -14,6 +15,8 @@ interface LiveStatusView {
   detail: string | null;
   next: string[];
   attempt: number;
+  /** AGT-3579: runner reason code when the runner is not picking this card. */
+  waitReason?: string;
 }
 
 const STALE_AFTER_MS = 10 * 60 * 1000;
@@ -129,6 +132,21 @@ export class TaskLiveStatusComponent {
         detail: status.queue.reason || activityDetail(task, status.latestEventAt, this.now()),
         next,
         attempt: status.attempt,
+      };
+    }
+
+    // AGT-3579: the runner recorded why it is not picking this card (mode,
+    // slots, quota defer, load throttle, provider limit). The sentence is the
+    // runner's own; the headline names the reason the lane header counts.
+    const runnerReason = runnerWaitCode(status.queue);
+    if (status.queue && runnerReason) {
+      return {
+        tone: 'waiting',
+        headline: runnerWaitHeadline(runnerReason, status.queue.position),
+        detail: status.queue.reason || activityDetail(task, status.latestEventAt, this.now()),
+        next,
+        attempt: status.attempt,
+        waitReason: runnerReason,
       };
     }
 

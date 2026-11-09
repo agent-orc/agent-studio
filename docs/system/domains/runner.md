@@ -284,6 +284,13 @@ New networked projects without a remote runner start paused. Only the Owner
 may explicitly select local placement in the networked profile, including
 through the project registry update route; local placement remains unrunnable.
 
+Besides `lastPickReason`, the status carries the runner's own wait reasons as
+typed facts: `pickupGate` for the mode, role, build-profile, or slot gate that
+ended the last tick, and `pickupSkips` for candidates skipped by quota, load,
+provider limit, or parallel conflict. The board names them on the Ready lane
+header and on each card; see
+[pickup holds](../../concepts/pickup-hold-visibility.md#runner-wait-reasons-agt-3579).
+
 Prelaunch infrastructure faults use the per-card fingerprint budget described
 in the [Execution hosts runbook](../../operations/remote-hosts.md#prelaunch-infrastructure-failures).
 
