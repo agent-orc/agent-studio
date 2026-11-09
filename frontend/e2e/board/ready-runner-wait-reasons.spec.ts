@@ -268,7 +268,7 @@ test.describe('Ready cards name the runner reason they wait for', () => {
     await expect(deferred.getByTestId('task-live-current')).toContainText('Skipped · quota defer · position 2');
     await expect(deferred.getByTestId('task-live-status')).toContainText(QUOTA);
     await expect(cardFor(page, 'Next codex card in line').getByTestId('task-live-current'))
-      .toContainText('Waiting for runner slot · position 3');
+      .toContainText('Queued for runner · position 3');
 
     await captureLane(page, lane, QUOTA_DEFER.name);
   });

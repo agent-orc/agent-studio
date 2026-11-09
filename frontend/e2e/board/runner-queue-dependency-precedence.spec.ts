@@ -94,6 +94,7 @@ async function installRoutes(page: Page, state: QueueFixtureState): Promise<void
   await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
+  await page.route('**/api/usage/cockpit**', route => json(route, { clis: [], cost: null }));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0 }));
   await page.route(/\/api\/tasks(\?|$)/, route => json(route, tasks(state)));
   await page.route('**/api/v1/studio/board**', route => json(route, {
@@ -174,6 +175,7 @@ async function openBoard(page: Page, state: QueueFixtureState): Promise<void> {
   });
   await installRoutes(page, state);
   await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded' });
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
   await expect(page.getByTestId('studio-board')).toBeVisible({ timeout: 15_000 });
   await hideDevOverlays(page);
 }
@@ -206,10 +208,11 @@ test.describe('runner queue dependency precedence', () => {
     state.gateFulfilled = true;
     await page.reload({ waitUntil: 'domcontentloaded' });
     await hideDevOverlays(page);
+    await page.getByRole('tab', { name: 'All projects · Board' }).click();
     gatedCard = page.getByTestId('task-card').filter({ hasText: 'Dependency-gated card' });
 
     await expect(gatedCard.getByTestId('task-live-current'))
-      .toContainText('Waiting for runner slot · position 3');
+      .toContainText('Queued for runner · position 3');
     await expect(gatedCard.getByTestId('task-live-current')).not.toContainText('waits for completion');
     await expect(gatedCard.getByTestId('task-card-waiting-on')).toHaveCount(0);
     await expect(gatedCard.getByTestId('task-live-next')).toContainText('Agent execution → Requirement fit');
