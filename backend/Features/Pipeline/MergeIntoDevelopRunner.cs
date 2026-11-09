@@ -51,6 +51,7 @@ public sealed partial class MergeIntoDevelopRunner
     private readonly IIntegrationLaneStallAlarm? _laneStallAlarm;
     private readonly PostMergeModeService? _postMergeMode;
     private readonly AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness? _hostCredentials;
+    private readonly ProjectRegistry? _projectRegistry;
 
     /// <summary>How long one merge waits for the host's first App tokens before it fetches anyway.</summary>
     internal TimeSpan HostCredentialWaitLimit { get; set; } = TimeSpan.FromMinutes(5);
@@ -118,9 +119,11 @@ public sealed partial class MergeIntoDevelopRunner
         TimeProvider? timeProvider = null,
         IIntegrationLaneStallAlarm? laneStallAlarm = null,
         PostMergeModeService? postMergeMode = null,
-        AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness? hostCredentials = null)
+        AgentStudio.GitHubApp.GitHubAppHostCredentialReadiness? hostCredentials = null,
+        ProjectRegistry? projectRegistry = null)
     {
         _hostCredentials = hostCredentials;
+        _projectRegistry = projectRegistry;
         _gateTime = timeProvider ?? TimeProvider.System;
         _git = git;
         _pipelineLog = pipelineLog;
@@ -1317,6 +1320,46 @@ public sealed partial class MergeIntoDevelopRunner
                     AcceptedIntegrationFailureCodes.IntegrationRefUnresolved,
                     $"The build gate could not resolve the exact {integrationBranch} SHA."),
                 null);
+        }
+
+        // Include keys in the exact merge result that the gate will test. The
+        // merge is still under its publication lock and has not been journaled.
+        if (_projectRegistry?.FindByIdOrDisplayName(project) is { } keyProject)
+        {
+            var keyBase = _git.GetFirstParent(repoRoot, gatedSha);
+            if (keyBase is null)
+            {
+                IntegrationGateJournal.Clear(jobFolderPath);
+                return (MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.IntegrationRefUnresolved,
+                    "The integration merge has no first parent for document key assignment."), null);
+            }
+            var keyed = _git.IncludeDocumentKeysInIntegrationMerge(repoRoot, keyBase,
+                gatedSha, keyProject, _projectRegistry);
+            if (!keyed.Success || keyed.Sha is null)
+            {
+                var rollback = _git.ResetIntegrationBranch(repoRoot, integrationBranch, keyBase);
+                IntegrationGateJournal.Clear(jobFolderPath);
+                return (MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.IntegrationRefUnresolved,
+                    $"Document key assignment failed before the gate: {keyed.Error}. "
+                    + (rollback.Success ? "The merge was rolled back." : $"Rollback failed: {rollback.Error}")), null);
+            }
+            if (!string.Equals(keyed.Sha, gatedSha, StringComparison.OrdinalIgnoreCase))
+            {
+                var originalSha = gatedSha;
+                gatedSha = keyed.Sha;
+                result = result with
+                {
+                    MergedSha = gatedSha,
+                    RebasedCommits = result.RebasedCommits.Select(item =>
+                        string.Equals(item.RebasedSha, originalSha, StringComparison.OrdinalIgnoreCase)
+                            ? item with { RebasedSha = gatedSha } : item).ToArray(),
+                    EvidenceShas = result.EvidenceShas.Select(sha =>
+                        string.Equals(sha, originalSha, StringComparison.OrdinalIgnoreCase)
+                            ? gatedSha : sha).ToArray(),
+                };
+            }
         }
 
         // Reuse the previous candidate only after normal synchronization and
