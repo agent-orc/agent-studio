@@ -74,7 +74,7 @@ public sealed class BoardSourceIntegrationTests : IDisposable
         using var client = backend.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var worker = backend.Services.GetRequiredService<BoardShadowWorker>();
-        var scanner = backend.Services.GetRequiredService<TaskScannerService>();
+        var index = backend.Services.GetRequiredService<TaskIndexCache>();
         var ledger = backend.Services.GetRequiredService<BoardShadowLedger>();
         var shadow = BoardSourceSetting.Resolve(BoardSourceSetting.TaskServerShadow);
 
@@ -87,19 +87,24 @@ public sealed class BoardSourceIntegrationTests : IDisposable
         Assert.Equal(TaskStates.Backlog, (await TaskServerCardAsync(store)).State);
         var baseline = ledger.Snapshot(shadow);
         Assert.Equal((1L, 0), (baseline.Comparisons, baseline.UnexplainedDifferences));
+        var baselineGeneration = index.TryGetPublished()!.Generation;
 
         var move = await client.PostAsJsonAsync(
             $"/api/tasks/{Slug}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
             new { targetState = TaskStates.Ready });
         move.EnsureSuccessStatusCode();
 
-        // The first workspace generation that holds the move is the one the
-        // Task Server is given: no later generation is needed to see it there.
-        var publication = (await scanner.AcquireBoardReadAsync("local-default", default))!;
+        // Board reads may return the previous snapshot while the move's
+        // mutation generation is being published. Wait for that generation.
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var publication = await index.WaitForCurrentMutationPublicationAsync(deadline.Token);
+        Assert.True(publication.Generation > baselineGeneration);
         Assert.Contains(publication.Live, task => task.Key == Key && task.State == TaskStates.Ready);
         var read = await client.GetAsync("/api/tasks/grouped");
         read.EnsureSuccessStatusCode();
         await worker.RunCycleAsync(default);
+        // A watcher may publish a newer workspace generation before the
+        // mirror cycle; the imported model must name the generation it used.
         Assert.True(worker.SyncedGeneration >= publication.Generation);
         var model = await store.GetBoardReadModelAsync(ProjectName, default);
         Assert.Contains(model.Lanes.Single(lane => lane.State == TaskStates.Ready).Cards, card => card.TaskKey == Key);
@@ -107,7 +112,9 @@ public sealed class BoardSourceIntegrationTests : IDisposable
         var afterMove = ledger.Snapshot(shadow);
         Assert.Equal(0, afterMove.UnexplainedDifferences);
         Assert.True(afterMove.Comparisons >= 2);
-        Assert.Equal(worker.SyncedGeneration, afterMove.LastComparedGeneration);
+        // A later watcher publication can advance the mirror without another
+        // grouped read requesting a comparison.
+        Assert.True(afterMove.LastComparedGeneration >= publication.Generation);
 
         // A change the workspace never made is recorded by card id and field.
         var card = await TaskServerCardAsync(store);
@@ -139,7 +146,9 @@ public sealed class BoardSourceIntegrationTests : IDisposable
         using var client = backend.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
 
-        await backend.Services.GetRequiredService<BoardShadowWorker>().RunCycleAsync(default);
+        var worker = backend.Services.GetRequiredService<BoardShadowWorker>();
+        var index = backend.Services.GetRequiredService<TaskIndexCache>();
+        await worker.RunCycleAsync(default);
 
         var first = await ReadBoardAsync(client);
         Assert.Equal(BoardSourceSetting.TaskServer, first.Source);
@@ -149,6 +158,10 @@ public sealed class BoardSourceIntegrationTests : IDisposable
             $"/api/tasks/{Slug}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
             new { targetState = TaskStates.Ready });
         move.EnsureSuccessStatusCode();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var publication = await index.WaitForCurrentMutationPublicationAsync(deadline.Token);
+        Assert.Contains(publication.Live, task => task.Key == Key && task.State == TaskStates.Ready);
+        Assert.True(await worker.EnsureSyncedAsync(publication.Generation, TimeSpan.FromSeconds(30), deadline.Token));
         var moved = await ReadBoardAsync(client);
         Assert.Contains(moved.Lanes.GetProperty("ready").EnumerateArray(), item => item.GetProperty("key").GetString() == Key);
         Assert.Equal(TaskStates.Ready, (await TaskServerCardAsync(store)).State);

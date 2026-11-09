@@ -389,6 +389,38 @@ public sealed class TaskIndexCache
     }
 
     /// <summary>
+    /// Waits for the mutation requirements present at entry to be published.
+    /// Unlike a board read, this observes the write's generation. Later
+    /// mutations do not move the target while the caller is waiting.
+    /// </summary>
+    internal async Task<TaskIndexPublication> WaitForCurrentMutationPublicationAsync(
+        CancellationToken cancellationToken)
+    {
+        long targetMutationGen;
+        long targetMutationScanGen;
+        lock (_lock)
+        {
+            targetMutationGen = _requiredMutationGen;
+            targetMutationScanGen = _requiredMutationScanGen;
+        }
+
+        while (true)
+        {
+            Task refresh;
+            lock (_lock)
+            {
+                if (_hasSnapshot
+                    && _publishedMutationGen >= targetMutationGen
+                    && _publishedInvalidationGen >= targetMutationScanGen)
+                    return _publication;
+                StartBackgroundRefreshLocked();
+                refresh = _refreshCompletion!.Task;
+            }
+            await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
     /// Lets startup workers wait for the first publication without occupying a
     /// thread-pool worker. A failed scan is retried by the dedicated refresh
     /// worker; recovery passes must not mistake an empty index for an empty board.
