@@ -266,11 +266,11 @@ const SLUG = /^[a-z0-9]+(?:[-_][a-z0-9]+)+$/;
  * dropped: the cause already names it, and a slug is not a sentence. A reason
  * that is only slugs (the `cause: detail` fallback) reads as unrecorded.
  *
- * The acceptance audit used to write `<category>: <instruction>` with one
- * fixed instruction ("rerun the gate") that named no button the lane offers
- * and carried no failure detail. Only that exact legacy shape is replaced by
- * the fact the category stands for; any other text after the prefix is the
- * recorded failure and is kept.
+ * The acceptance audit used to write `<category>: <instruction>` with one of
+ * two fixed instructions ("rerun the gate", "repeat review") that named no
+ * button the lane offers and carried no failure detail. Only those exact
+ * legacy shapes are replaced by the fact the category stands for; any other
+ * text after the prefix is the recorded failure and is kept.
  */
 export function parkReasonSentence(reason: string | null | undefined, cause: ParkCauseView): string {
   const audit = cause.origin === 'acceptance-audit';
@@ -294,12 +294,16 @@ export function parkReasonSentence(reason: string | null | undefined, cause: Par
   return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
-/** The one instruction the acceptance audit wrote before AGT-3586; it held no failure detail. */
-const LEGACY_AUDIT_INSTRUCTION = /^Recover the delivery, resolve the integration failure and rerun the gate\.?$/i;
+/** The instructions the acceptance audit wrote before AGT-3586 (fatal, stale verdict); neither held a failure detail. */
+const LEGACY_AUDIT_INSTRUCTION =
+  /^(?:Recover the delivery, resolve the integration failure and rerun the gate|Integrate the current delivery and repeat review)\.?$/i;
 
 function acceptanceAuditFact(category: string | null): string {
   if (category === 'missing-delivery') {
     return 'No delivery branch was found for this card, so its work cannot be integrated.';
+  }
+  if (category === 'delivery-verdict-stale') {
+    return 'The review verdict no longer matches the current delivery, so it cannot be accepted.';
   }
   return 'The delivery could not be integrated.';
 }

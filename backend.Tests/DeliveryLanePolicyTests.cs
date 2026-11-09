@@ -241,4 +241,18 @@ public sealed class DeliveryLanePolicyTests
         Assert.Equal("The delivery could not be integrated: Branch agent/AGT-1 was deleted on origin.",
             DeliveryChainReconciler.IntegrationParkReason("merge-conflict", status));
     }
+
+    // AGT-3586 review: a nonfatal (stale verdict) park states its fact too,
+    // not the old "Integrate the current delivery and repeat review." order.
+    [Fact]
+    public void StaleVerdictParkReason_IsAFactNotTheOldInstruction()
+    {
+        var stale = DeliveryChainReconciler.IntegrationParkReason("delivery-verdict-stale", new TaskIntegrationStatus
+        {
+            Failure = new TaskIntegrationFailure { Reason = "Merge conflict in an older delivery." },
+        });
+        Assert.Equal("The review verdict no longer matches the current delivery, so it cannot be accepted.", stale);
+        Assert.DoesNotContain("repeat review", stale);
+        Assert.DoesNotContain("delivery-verdict-stale", stale);
+    }
 }

@@ -268,6 +268,15 @@ describe('park copy from the recorded cause', () => {
     expect(parkReasonSentence('', failed)).toBe('The delivery could not be integrated.');
   });
 
+  it('replaces the legacy stale-verdict instruction of a nonfatal acceptance park with its fact', () => {
+    const stale = parkCauseView('acceptance-integration-failed', 'delivery-verdict-stale');
+    const fact = 'The review verdict no longer matches the current delivery, so it cannot be accepted.';
+    expect(parkReasonSentence('delivery-verdict-stale: Integrate the current delivery and repeat review.', stale))
+      .toBe(fact);
+    expect(parkReasonSentence(fact, stale)).toBe(fact);
+    expect(parkReasonSentence('', stale)).toBe(fact);
+  });
+
   it('states a reason once, as a sentence, never as a bare slug', () => {
     const unknown = parkCauseView(null, null);
     expect(parkReasonSentence('[agent-blocked] the agent stopped', unknown)).toBe('The agent stopped.');
