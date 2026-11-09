@@ -793,9 +793,15 @@ public sealed class TaskIndexCache
     /// </summary>
     public void PublishRoutingFromFolder(string folder, Func<TaskInfo?> read)
     {
+        long observedVersion;
+        lock (_lock) observedVersion = _coreFolderVersions.GetValueOrDefault(folder);
+        var info = read();
         lock (_corePublicationLock)
         {
-            var info = read();
+            // A later publication may have completed while this folder was
+            // being read. Do not replace it with the older result.
+            lock (_lock)
+                if (_coreFolderVersions.GetValueOrDefault(folder) != observedVersion) return;
             if (info is null)
             {
                 Invalidate(InvalidationSource.Mutation, changedPath: Path.Combine(folder, "task.json"));
