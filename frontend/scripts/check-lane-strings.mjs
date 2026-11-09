@@ -101,6 +101,22 @@ function isAllowed(file, literal) {
  */
 const RAW_LANE_BINDING = /\{\{\s*((?:[\w$]+\s*[?!]?\.\s*)*lane)\s*\}\}/g;
 
+// Guard against a vacuous pass: the rule must still flag the raw badge that
+// shipped in global-search (AGT-3591) and must leave the laneName() form
+// alone. The fuller fixture run lives in check-lane-strings.test.mjs.
+for (const [sample, flagged] of [
+  ['{{ item.lane }}', true],
+  ['{{ lane }}', true],
+  ['{{ row?.lane }}', true],
+  ['{{ laneName(item.lane) }}', false],
+  ['{{ lane.label }}', false],
+]) {
+  if ([...sample.matchAll(RAW_LANE_BINDING)].length > 0 !== flagged) {
+    console.error(`Raw lane binding rule misjudges ${sample}; update RAW_LANE_BINDING.`);
+    process.exit(1);
+  }
+}
+
 const violations = [];
 
 for (const file of files) {

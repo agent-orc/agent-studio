@@ -2,7 +2,8 @@
 // key interpolation (AGT-3591, the global-search result badge) instead of
 // passing vacuously, and that the laneName() form passes.
 //
-// Run: node --test scripts/check-lane-strings.test.mjs
+// Run: node --test scripts/check-lane-strings.test.mjs (check-lane-strings.mjs
+// itself re-checks the rule on every lint:structure run)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
