@@ -1383,7 +1383,7 @@ public static class LeaseEndpoints
                     ? $"claim:{taskKey}:{req.RunnerId.Trim()}:{Guid.NewGuid():N}"
                     : req.IdempotencyKey.Trim();
                 var briefVersion = BriefVersionStore.ReadOrCreate(candidate.FolderPath);
-                runSpec = runSpec with { BriefVersion = briefVersion };
+                runSpec = runSpec with { BriefVersion = briefVersion, TaskTitle = candidate.Title };
                 var acquire = leases.TryAcquire(new RunLeaseAcquireRequest(
                     taskKey, req.RunnerId.Trim(), req.RunnerName.Trim(), req.Hostname,
                     req.Pid, req.BackendName, req.RequestedTtlSeconds,

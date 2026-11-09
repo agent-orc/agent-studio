@@ -1629,7 +1629,7 @@ public sealed class TaskIntegrationStatusService
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
             .FirstOrDefault()
             ?.Trim() ?? "";
-        return subject.StartsWith("wip(runner): salvage before teardown", StringComparison.OrdinalIgnoreCase)
+        return RunnerSalvageCommit.IsTeardown(commit.Message)
                || subject.StartsWith("chore: snapshot for review", StringComparison.OrdinalIgnoreCase);
     }
 

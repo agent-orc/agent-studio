@@ -184,7 +184,7 @@ public sealed class RemoteCommitAttributionGuardTests
             var first = RunGit(repo, "rev-parse HEAD");
             File.WriteAllText(Path.Combine(repo, "second.txt"), "second");
             RunGit(repo, "add -A");
-            RunGit(repo, "commit -q -m \"test(AGT-2389): second\"");
+            RunGit(repo, "commit -q -m \"AGT-2389: second delivery\" -m \"Runner committed changes the agent left uncommitted (outcome Done).\" -m \"Agent-Studio-Salvage: teardown\"");
             var tip = RunGit(repo, "rev-parse HEAD");
             RunGit(repo, "push -q origin runner/agent-runner-01/AGT-2389");
 
@@ -216,6 +216,11 @@ public sealed class RemoteCommitAttributionGuardTests
             Assert.Equal(baseSha, range.MergeBaseSha);
             Assert.Equal(tip, range.TipSha);
             Assert.Equal([first, tip], range.Commits.Select(commit => commit.Sha));
+            Assert.Contains("Agent-Studio-Salvage: teardown", range.Commits[1].Body);
+            var attributed = RemoteCommitAttributionGuard.Attribute(
+                "AGT-2389", "runner/agent-runner-01/AGT-2389", range.Commits);
+            Assert.True(attributed.Accepted, attributed.Warning);
+            Assert.Contains("Agent-Studio-Salvage: teardown", attributed.Commits[1].Message);
 
             // TE/CAC release tasks can fast-forward main themselves before the
             // remote completion reaches Agent Studio. A live merge-base then is
