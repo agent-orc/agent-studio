@@ -138,9 +138,11 @@
                 (click)="collapseToggle.emit()">‹</button>
       </div>
       <app-batch-lane-indicator [laneState]="state()" [projectScope]="projectScope()" [jobs]="allBoardJobs()" />
+      @if (state() === '2-ready') { <app-ready-wait-split [jobs]="jobs()" /> }
       @if (state() === '5-human-review') {
         <app-decision-backlog-hint [tasks]="jobs()" [allTasks]="allBoardJobs()" (taskClick)="jobClick.emit($event)" />
       }
+      @if (perProjectNote(); as note) { <p class="column__order-note" data-testid="lane-per-project-note">{{ note }}</p> }
       <div class="column__body" #laneBody role="region" tabindex="0" [attr.aria-label]="title() + ' cards'"
            [class.column__body--windowed]="windowed()"
            (scroll)="cardWindowState.onScroll($event)" (keydown)="cardWindowState.onKeyDown($event)"

@@ -1,21 +1,13 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
-import { TaskState, type PickupHoldResolution, type PickupHoldStatus, type TaskInfo } from '../../models/task.model';
+import type { PickupHoldResolution, PickupHoldStatus, TaskInfo } from '../../models/task.model';
+import { pickupHoldMechanismLabel, titleCaseToken } from '../../models/ready-wait-reason';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
 import { NowTickService } from '../../services/now-tick.service';
 import { PickupHoldResolutionComponent } from '../pickup-hold-resolution/pickup-hold-resolution.component';
-import { RemoteHostsService, claimLoadGateLabel } from '../../features/remote-hosts';
+import { RemoteHostsService } from '../../features/remote-hosts';
+import { effectivePickupHold } from './effective-pickup-hold';
 
 export type PickupHoldVariant = 'card' | 'detail';
-
-/** Mechanism keys as the backend `PickupHoldMechanisms` spells them. */
-const MECHANISM_LABELS: Record<string, string> = {
-  'dependency-gate': 'Dependency gate',
-  'dispatch-rejection': 'Dispatch refused',
-  'crash-backoff': 'Crash cooldown',
-  'pickup-policy': 'Pickup policy',
-  'execution-placement': 'Execution placement',
-  'claim-load-gate': 'Host load',
-};
 
 /**
  * AGT-2818 - the sentence a card in a pickup lane was missing.
@@ -46,25 +38,8 @@ export class PickupHoldComponent {
   readonly task = input.required<TaskInfo>();
   readonly variant = input<PickupHoldVariant>('card');
 
-  readonly hold = computed<PickupHoldStatus | null>(() => {
-    const task = this.task();
-    if (task.pickupHold) return task.pickupHold;
-    if (task.state !== TaskState.Ready) return null;
-    const runnerId = task.executionLocation?.configuredRunnerId;
-    if (!runnerId) return null;
-    const host = this.remoteHosts?.hosts().find(item =>
-      item.clientId === runnerId || item.id === runnerId || item.capacityHostId === runnerId);
-    const gate = host?.claimLoadGate;
-    if (!gate || gate.state !== 'closed' || !gate.since) return null;
-    return {
-      classification: 'satisfiable-soon',
-      mechanism: 'claim-load-gate',
-      reason: `${host.name} is ${claimLoadGateLabel(gate).toLowerCase()}. Running work continues; new claims resume when load falls.`,
-      sinceUtc: gate.since,
-      unsatisfiable: false,
-      resolutions: [],
-    };
-  });
+  readonly hold = computed<PickupHoldStatus | null>(() =>
+    effectivePickupHold(this.task(), this.remoteHosts?.hosts() ?? []));
 
   /** `open` for an honest wait, `blocked` for a gate that can never open. */
   readonly tone = computed(() => ((this.hold()?.classification === 'unsatisfiable' || this.hold()?.unsatisfiable) ? 'blocked'
@@ -73,12 +48,11 @@ export class PickupHoldComponent {
   readonly classificationLabel = computed(() => {
     const classification = this.hold()?.classification
       ?? (this.hold()?.unsatisfiable ? 'unsatisfiable' : 'satisfiable-soon');
-    return titleCase(classification);
+    return titleCaseToken(classification);
   });
 
   readonly mechanismLabel = computed(() => {
-    const mechanism = this.hold()?.mechanism ?? '';
-    return MECHANISM_LABELS[mechanism] ?? titleCase(mechanism);
+    return pickupHoldMechanismLabel(this.hold()?.mechanism ?? '');
   });
 
   /**
@@ -127,13 +101,6 @@ export class PickupHoldComponent {
 
   readonly resolutionIdentity = (_: number, resolution: PickupHoldResolution): string =>
     `${resolution.kind}:${resolution.sourceKey ?? ''}:${resolution.targetKey ?? ''}`;
-}
-
-function titleCase(value: string): string {
-  const words = value.split(/[-_\s]+/).filter(Boolean);
-  if (words.length === 0) return 'Held';
-  return words.map((word, index) =>
-    index === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word).join(' ');
 }
 
 /** Age at `nowMs`, from the hold start the board card carries. */

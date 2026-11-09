@@ -277,6 +277,6 @@ test.describe('Info button on lane headers (selective placement)', () => {
     const modal = page.getByTestId('info-button-modal-lane-2-ready');
     await expect(modal).toBeVisible();
     await expect(modal.locator('.dialog__title')).toHaveText('Ready');
-    await expect(page.getByTestId('info-button-body-lane-2-ready')).toContainText(/oldest-first/i);
+    await expect(page.getByTestId('info-button-body-lane-2-ready')).toContainText(/runs its own Ready queue from the top/i);
   });
 });

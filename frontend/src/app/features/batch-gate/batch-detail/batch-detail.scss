@@ -16,3 +16,14 @@
 .batch-detail__summary { font-variant-numeric: tabular-nums; }
 .batch-detail code { overflow-wrap: anywhere; }
 .batch-detail .studio-button { margin: 0; }
+.batch-detail__proven-red {
+  display: grid;
+  gap: var(--studio-spacing-2);
+  justify-items: start;
+  padding: var(--studio-spacing-2);
+  border: 1px solid color-mix(in srgb, var(--studio-status-danger) 40%, var(--studio-border));
+  border-radius: var(--studio-action-radius-sm);
+  background: color-mix(in srgb, var(--studio-status-danger) 5%, var(--studio-bg-surface));
+}
+.batch-detail__proven-red app-batch-proven-red { justify-self: stretch; }
+.batch-detail__tests { display: grid; gap: var(--studio-spacing-1); margin: 0; padding-left: var(--studio-spacing-5); }

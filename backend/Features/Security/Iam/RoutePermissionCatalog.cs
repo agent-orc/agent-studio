@@ -454,6 +454,7 @@ public static class RoutePermissionCatalog
         Add("POST", IamPermissions.WorkspaceOperate, "/api/projects/{}/operator-candidate-verifications");
         Add("POST", IamPermissions.ProjectRunsOperate, "/api/projects/{}/batch-gate/queue-stalls/release");
         Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/failed-tests");
+        Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/isolation-evidence");
 
         // --- Documents -----------------------------------------------------
         Under("W", IamPermissions.ProjectDocsWrite, "/api/projects/{}",

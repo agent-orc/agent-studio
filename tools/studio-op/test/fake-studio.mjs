@@ -107,6 +107,15 @@ export async function startFakeStudio({ cards = {}, preflightBlockers = [] } = {
         redMembers: [], isolatingMembers: [], pendingPushes: [] }] });
     if (method === 'GET' && path === '/api/operator/capacity')
       return send(200, { quota: [], activeFallbacks: [], waitingCards: [], modelRoutingPins: [] });
+    if (method === 'GET' && path === '/api/security/posture')
+      return send(200, { generatedAt: '2026-11-09T12:00:00Z',
+        summary: { total: 2, critical: 1, high: 0, medium: 1, low: 0, info: 0, actionSoon: 1 },
+        findings: [
+          { id: 'second-factor:u1', rank: 1, score: 95, severity: 'critical', area: 'second-factor', title: 'Owner has no second factor',
+            detail: 'Enroll TOTP or a passkey.', actionSoon: true, dueAt: null, subject: 'owner' },
+          { id: 'credentials:token:t1:no-expiry', rank: 2, score: 50, severity: 'medium', area: 'credentials', title: 'API token ci never expires',
+            detail: 'Replace it with one that expires.', actionSoon: false, dueAt: null, subject: 'ci' },
+        ] });
     if (method === 'GET' && path === '/api/model-selection/policy')
       return send(200, { consumers: { review: { primary: { cli: 'codex', model: 'demo-model' } } } });
     if (method === 'PUT' && /^\/api\/projects\/[^/]+\/pipeline-step$/.test(path))
