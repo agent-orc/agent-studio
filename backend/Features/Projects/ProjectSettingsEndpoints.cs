@@ -1695,6 +1695,8 @@ public static class ProjectSettingsEndpoints
             value.Overlap,
             value.ReviewTestLevel,
             value.GateTimeoutMinutes,
+            value.MaximumWaitMinutes,
+            value.FlightLeaseDeadlineMinutes,
             preCheckEnabled = value.PreCheckFor(project),
             advisor = value.Advisor ?? new BatchGateAdvisorOptions(),
         },
