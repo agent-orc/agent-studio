@@ -68,7 +68,9 @@ describe('CouncilReviewReactionComponent', () => {
     fixture.detectChanges();
 
     const root = fixture.nativeElement as HTMLElement;
-    expect(root.querySelector('.council-reaction__action')?.textContent?.trim()).toBe('Escalate');
+    const action = root.querySelector('[data-testid="code-review-council-action"]');
+    expect(action?.textContent?.trim()).toBe('Escalate');
+    expect(action?.getAttribute('data-tone')).toBe('danger');
     expect(root.querySelector<HTMLElement>('section')?.dataset['disposition']).toBe('escalate');
   });
 });

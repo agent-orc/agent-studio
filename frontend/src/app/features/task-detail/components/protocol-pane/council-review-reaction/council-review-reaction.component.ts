@@ -6,15 +6,13 @@ import type { CouncilReviewReaction } from '../../../../../services/task.service
 import { taskNavigationHref } from '../../../state/task-url';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../../components/status-indicator/status-indicator.component';
 
-const COUNCIL_ACTION_TONES: Readonly<Record<string, StatusTone>> = {
-  Accept: 'success',
-  FixNextRound: 'warning',
-  Escalate: 'danger',
-};
-
 /** Tone of a per-finding orchestrator action; unknown actions read as Accept, like the label. */
 export function councilActionTone(action: string): StatusTone {
-  return Object.hasOwn(COUNCIL_ACTION_TONES, action) ? COUNCIL_ACTION_TONES[action] : 'success';
+  switch (councilFindingAction(action)) {
+    case 'fixNextRound': return 'warning';
+    case 'escalate': return 'danger';
+    default: return 'success';
+  }
 }
 
 @Component({
