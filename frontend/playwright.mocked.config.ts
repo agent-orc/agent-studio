@@ -18,6 +18,7 @@ export default defineConfig({
       '**/board/large-board-window.spec.ts',
       '**/board/failed-pickup-lane.spec.ts',
       '**/board/stalled-progress-card.spec.ts',
+      '**/board/ready-runner-wait-reasons.spec.ts',
       '**/task-detail/pipeline-column-headers.spec.ts',
       '**/system/semantic-contrast.spec.ts',
       '**/project/project-deploy-area.spec.ts',
