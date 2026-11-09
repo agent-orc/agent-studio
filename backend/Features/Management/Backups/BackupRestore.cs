@@ -1,0 +1,166 @@
+namespace AgentStudio.Management;
+
+/// <param name="Destinations">Archive source name to target directory; a source without one is skipped.</param>
+/// <param name="CloneCheckouts">Clone project checkouts from their recorded origin and fetch the Studio refs from their bundles.</param>
+/// <param name="EverySourceUnder">When set, a source without a destination goes to <c>&lt;this&gt;/&lt;source name&gt;</c> (restore drill).</param>
+public sealed record BackupRestorePlan(
+    IReadOnlyDictionary<string, string> Destinations, bool CloneCheckouts, string? EverySourceUnder = null);
+
+public sealed record BackupRestoreResult(
+    BackupManifest Manifest,
+    BackupContents Contents,
+    int FilesRestored,
+    int DirectoriesRestored,
+    int CheckoutsCloned,
+    IReadOnlyList<string> SkippedSources);
+
+/// <summary>
+/// Puts a backup back onto an empty host. Every destination must be empty or
+/// missing. The manifest comes first, so checkouts are cloned before any file
+/// is written; a failed clone stops the restore with nothing restored. Every
+/// file is checked against the hash list at the end of the archive; on any
+/// failure the destinations are emptied again, so a restore never leaves a
+/// half-restored installation behind.
+/// </summary>
+public static class BackupRestore
+{
+    public static BackupRestoreResult Restore(string archivePath, BackupKey key, BackupRestorePlan plan, Action<string>? log = null)
+    {
+        var destinations = plan.Destinations.ToDictionary(
+            pair => pair.Key, pair => Path.GetFullPath(pair.Value), StringComparer.Ordinal);
+        var candidates = destinations.ToList();
+        if (plan.EverySourceUnder is { } stagingRoot) candidates.Add(new("staging", Path.GetFullPath(stagingRoot)));
+        foreach (var (name, directory) in candidates)
+            if (HoldsFiles(directory))
+                throw new BackupException("restore-target-not-empty",
+                    $"The restore target for {name} ({directory}) is not empty; restore only into an empty installation.");
+
+        var skipped = new List<string>();
+        var checkouts = new Dictionary<string, BackupCheckout>(StringComparer.Ordinal);
+        string? projectsSource = null;
+        var files = 0;
+        var directories = 0;
+        var cloned = 0;
+        var bundleScratch = Path.Combine(Path.GetTempPath(), "studio-restore-bundles-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var archive = File.OpenRead(archivePath);
+            var (manifest, contents) = BackupArchive.Read(archive, key,
+                onManifest: manifest =>
+                {
+                    foreach (var source in manifest.Sources.Where(source => source.Present))
+                        if (!destinations.ContainsKey(source.Name) && plan.EverySourceUnder is { } under)
+                            destinations[source.Name] = Path.GetFullPath(Path.Combine(under, source.Name));
+                        else if (!destinations.ContainsKey(source.Name))
+                        {
+                            skipped.Add(source.Name);
+                            log?.Invoke($"skipping source {source.Name}: no restore target");
+                        }
+                    var projects = manifest.Sources.FirstOrDefault(source => source.Projects);
+                    if (projects is null || !destinations.TryGetValue(projects.Name, out var projectsRoot)) return;
+                    projectsSource = projects.Name;
+                    foreach (var checkout in manifest.Checkouts)
+                    {
+                        checkouts[checkout.Bundle ?? "\0" + checkout.Path] = checkout;
+                        if (!plan.CloneCheckouts) continue;
+                        var target = Resolve(projectsRoot, checkout.Path);
+                        if (checkout.Origin is not null)
+                        {
+                            log?.Invoke($"cloning {checkout.Origin} into {checkout.Path}");
+                            BackupCheckouts.Clone(checkout.Origin, target, checkout.Branch);
+                        }
+                        else
+                        {
+                            BackupCheckouts.Init(target);
+                        }
+                        cloned++;
+                    }
+                },
+                onFile: (member, data, mode) =>
+                {
+                    if (member.StartsWith(BackupArchive.BundlePrefix, StringComparison.Ordinal))
+                    {
+                        if (!plan.CloneCheckouts || projectsSource is null
+                            || !checkouts.TryGetValue(member, out var checkout)) return;
+                        Directory.CreateDirectory(bundleScratch);
+                        var bundle = Path.Combine(bundleScratch, Path.GetFileName(member));
+                        using (var output = File.Create(bundle)) data.CopyTo(output);
+                        var repository = Resolve(destinations[projectsSource], checkout.Path);
+                        BackupCheckouts.FetchBundle(repository, bundle, allRefs: checkout.Origin is null, checkout.Branch);
+                        return;
+                    }
+                    var (source, relative) = Split(member);
+                    if (!destinations.TryGetValue(source, out var root)) return;
+                    var path = Resolve(root, relative);
+                    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                    var temporary = path + ".restore-tmp";
+                    using (var output = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+                        data.CopyTo(output);
+                    // Restores the recorded mode: SSH keys stay 0600, hooks stay executable.
+                    if (!OperatingSystem.IsWindows() && mode != 0) File.SetUnixFileMode(temporary, mode);
+                    // A file of a cloned checkout (task storage inside it) gives way to the archived copy.
+                    File.Move(temporary, path, overwrite: true);
+                    files++;
+                },
+                onDirectory: member =>
+                {
+                    var (source, relative) = Split(member + "/");
+                    if (!destinations.TryGetValue(source, out var root)) return;
+                    Directory.CreateDirectory(relative.Length == 0 ? root : Resolve(root, relative));
+                    directories++;
+                });
+            return new BackupRestoreResult(manifest, contents, files, directories, cloned, skipped);
+        }
+        catch
+        {
+            foreach (var directory in destinations.Values) Empty(directory);
+            throw;
+        }
+        finally
+        {
+            if (Directory.Exists(bundleScratch)) Directory.Delete(bundleScratch, recursive: true);
+        }
+    }
+
+    internal static (string Source, string Relative) Split(string member)
+    {
+        var slash = member.IndexOf('/');
+        return slash < 0 ? (member, "") : (member[..slash], member[(slash + 1)..].TrimEnd('/'));
+    }
+
+    internal static string Resolve(string root, string relative)
+    {
+        var full = Path.GetFullPath(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
+        var prefix = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
+        if (!full.StartsWith(prefix, StringComparison.Ordinal) && full != root)
+            throw new BackupException("backup-corrupt", $"Archive path {relative} leaves its restore target.");
+        return full;
+    }
+
+    /// <summary>
+    /// A target counts as empty while it holds no file: <c>setup.sh</c> lays
+    /// out empty directories (<c>home/.local/share</c>) before a restore.
+    /// </summary>
+    private static bool HoldsFiles(string directory)
+        => Directory.Exists(directory)
+           && Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.AllDirectories)
+               .Any(entry => !Directory.Exists(entry) || (File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0);
+
+    private static void Empty(string directory)
+    {
+        if (!Directory.Exists(directory)) return;
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+        {
+            try
+            {
+                if (Directory.Exists(entry)) Directory.Delete(entry, recursive: true);
+                else File.Delete(entry);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Best effort: the original failure is what the caller reports.
+                SilentCatch.Note(ex, "Restore cleanup after a failed restore");
+            }
+        }
+    }
+}

@@ -343,7 +343,7 @@ public static class RoutePermissionCatalog
         // operate runs in at least one project.
         Add("R", IamPermissions.ProjectRead,
             "/api/operator/decisions", "/api/operator/decisions/stream", "/api/operator/watcher/lease",
-            "/api/operator/capacity");
+            "/api/operator/capacity", "/api/operator/backups");
         AddProjectChecked("W", IamPermissions.ProjectRunsOperate,
             "/api/operator/watcher/lease", "/api/operator/watcher/lease/{}", "/api/operator/watcher/lease/{}/heartbeat");
         Add("R", IamPermissions.ProjectRead, "/api/operator/log");

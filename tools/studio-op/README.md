@@ -1,7 +1,7 @@
 # studio-op
 
 The operator CLI of Agent Studio: `watch`, `triage`, `continue`, `move`,
-`accept`, `create`, `title`, `capacity`, `routing`, `preflight`, `deploy plan`
+`accept`, `create`, `title`, `capacity`, `backups`, `routing`, `preflight`, `deploy plan`
 and `log` over the documented operator REST routes. Node 22, no dependencies.
 
 ```sh

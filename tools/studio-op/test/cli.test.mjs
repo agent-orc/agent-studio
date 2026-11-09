@@ -105,6 +105,7 @@ test('every working-set command answers with JSON and exit 0', async () => {
     ['create', '--ready', '--project', 'Demo App', '--title', 'Follow-up from triage', '--prompt-file', promptFile],
     ['title', 'DEMO-4', 'Repaired title'],
     ['capacity'],
+    ['backups'],
     ['routing'],
     ['routing', 'set-step', '--step', 'remote-review', '--cli', 'codex', '--model', 'demo-model', '--all'],
     ['preflight', 'restart'],
@@ -135,11 +136,22 @@ test('every working-set command answers with JSON and exit 0', async () => {
 
 test('the human-readable output is redacted as well', async () => {
   const home = makeHome();
-  for (const command of [['auth', 'status'], ['triage'], ['capacity'], ['log', '--project', 'Demo App']]) {
+  for (const command of [['auth', 'status'], ['triage'], ['capacity'], ['backups'], ['log', '--project', 'Demo App']]) {
     const result = await run(command, { home });
     assert.equal(result.code, 0, result.stderr);
     assert.ok(result.stdout.length > 0);
   }
+});
+
+test('backups prints the backup state and its warnings from the operator route (AGT-3574)', async () => {
+  const home = makeHome();
+  const result = await run(['backups'], { home });
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /backups failing/);
+  assert.match(result.stdout, /restore verification verified/);
+  assert.match(result.stdout, /off-host sftp: current/);
+  assert.match(result.stdout, /warning backup-stale: The newest good backup is 13 hours old\./);
+  assert.ok(studio.requests.some(request => request.method === 'GET' && request.path === '/api/operator/backups'));
 });
 
 test('accept refuses red and missing evidence and accepts a green card', async () => {

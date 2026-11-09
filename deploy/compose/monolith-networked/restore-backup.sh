@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Restores a scheduled backup (AGT-3574) into a fresh, not yet started stack.
+#
+#   restore-backup.sh --key <backup-key-copy> --secret-key <secret-key-copy> <archive>
+#
+# Run setup.sh for the new stack first and do not start it. Fetch the
+# archive and its .sha256 file from the off-host target, and bring the
+# escrowed backup key and secret store key copies to the host only for the
+# restore. The API image of this stack does the work in a one-shot container:
+# it checks the checksum and both key fingerprints, clones every project
+# checkout from its recorded origin (through this account's SSH agent when
+# SSH_AUTH_SOCK is set), and only then writes the workspace, home, task
+# storage, Studio refs, host certificates and Caddy data. The archived stack
+# configuration lands in restored-stack/ for comparison; the new .env stays.
+set -euo pipefail
+
+stack_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$stack_dir"
+
+usage() {
+  echo 'Usage: restore-backup.sh --key <backup-key-copy> --secret-key <secret-key-copy> <archive>' >&2
+  exit 2
+}
+fail() { echo "Restore failed: $*" >&2; exit 1; }
+
+key=''
+secret_key=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --key) [ "$#" -ge 2 ] || usage; key="$2"; shift 2 ;;
+    --secret-key) [ "$#" -ge 2 ] || usage; secret_key="$2"; shift 2 ;;
+    --) shift; break ;;
+    -*) usage ;;
+    *) break ;;
+  esac
+done
+[ "$#" -eq 1 ] && [ -n "$key" ] && [ -n "$secret_key" ] || usage
+archive="$(realpath "$1")"
+key="$(realpath "$key")"
+secret_key="$(realpath "$secret_key")"
+
+env_value() { sed -n "s/^$1=//p" .env | tail -n 1; }
+[ -f .env ] || fail 'no .env in the stack directory; run setup.sh for the new stack first'
+data_dir="$(env_value STUDIO_DATA_DIR)"
+digest="$(env_value STUDIO_API_DIGEST)"
+[ -n "$data_dir" ] && [ -n "$digest" ] || fail 'STUDIO_DATA_DIR and STUDIO_API_DIGEST must be set in .env'
+[ -r "$archive" ] || fail "cannot read the archive $archive"
+[ -r "$key" ] || fail "cannot read the backup key copy $key"
+[ -r "$secret_key" ] || fail "cannot read the secret store key copy $secret_key"
+if [ -n "$(docker compose ps --status running -q 2>/dev/null)" ]; then
+  fail 'the stack is running; restore needs a fresh stack from setup.sh that has not been started'
+fi
+
+restored_stack="$stack_dir/restored-stack"
+[ ! -e "$restored_stack" ] || fail "$restored_stack already exists"
+mkdir -p "$restored_stack"
+image="ghcr.io/agent-orc/agent-studio-api@sha256:$digest"
+volume="studio-restore-$$"
+docker volume create "$volume" > /dev/null
+trap 'docker volume rm -f "$volume" > /dev/null' EXIT
+
+# The API runs as UID 10001 and reads only owner-only key files: a root
+# one-shot hands the inputs and the empty targets to that account.
+docker run --rm --user 0 --network none \
+  -v "$archive:/inputs/archive:ro" -v "$key:/inputs/backup.key:ro" -v "$secret_key:/inputs/secrets.kek:ro" \
+  -v "$volume:/work" -v "$restored_stack:/restored-stack" -v "$data_dir/origin-pull:/origin-pull" \
+  --entrypoint /bin/sh "$image" -c '
+    set -e
+    umask 077
+    cp /inputs/archive /inputs/backup.key /inputs/secrets.kek /work/
+    chown -R 10001:10001 /work /restored-stack /origin-pull'
+if [ -f "$archive.sha256" ]; then
+  (cd "$(dirname "$archive")" && sha256sum --check --quiet "$(basename "$archive").sha256") \
+    || fail 'the archive does not match its .sha256 file'
+fi
+
+agent=()
+if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then
+  agent=(-v "$SSH_AUTH_SOCK:/run/ssh-agent" -e SSH_AUTH_SOCK=/run/ssh-agent)
+fi
+docker run --rm --user 10001:10001 "${agent[@]}" \
+  -e GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=accept-new' \
+  -v "$volume:/work" \
+  -v "$data_dir/workspace:/data/workspace" -v "$data_dir/home:/data/home" -v "$data_dir/projects:/data/projects" \
+  -v "$data_dir/host-certificates:/data/host-certificates" -v "$data_dir/caddy-data:/data/caddy-data" \
+  -v "$data_dir/origin-pull:/data/origin-pull" -v "$restored_stack:/data/restored-stack" \
+  "$image" --studio-backup restore --key /work/backup.key --archive /work/archive --secret-key /work/secrets.kek \
+    --target workspace=/data/workspace --target home=/data/home --target projects=/data/projects \
+    --target host-certificates=/data/host-certificates --target caddy-data=/data/caddy-data \
+    --target origin-pull=/data/origin-pull --target stack=/data/restored-stack \
+  || fail 'the restore did not complete; see the message above. Recreate the data directory with setup.sh before retrying.'
+
+bash "$stack_dir/secret-key.sh" install "$data_dir" "$secret_key"
+bash "$stack_dir/backup-key.sh" install "$key"
+echo 'Restore complete. Compare restored-stack/.env with the new .env (domain, edge mode, backup target),'
+echo 'then start the stack with docker compose up -d and sign in with an existing account.'

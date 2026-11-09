@@ -75,6 +75,7 @@ public static class EndpointMapping
         app.MapWatcherEndpoints();
         app.MapOperatorEndpoints();
         app.MapOperatorCapacityEndpoints();
+        app.MapOperatorBackupEndpoints();
         app.MapOperatorLogEndpoints();
         app.MapDeployPreflightEndpoints();
         app.MapOrchestratorSessionEndpoints();

@@ -215,6 +215,11 @@ A gated merge waits to reach origin, and nothing else integrates meanwhile.
   under isolation.
 - Title repair: `studio-op title <card> "<new title>"`.
 - Capacity: `studio-op capacity` (quota per CLI, fallbacks, waits, pins).
+- Backups: `studio-op backups` (last good backup, age, restore verification,
+  off-host copy, warnings). A `backup-stale`, `backup-failed`,
+  `verification-failed` or `offhost-failed` warning goes to the Owner with the
+  message; the backup target and keys stay with the Owner
+  ([runbook](../../../docs/operations/setup/studio-backup-restore.md)).
 - Review step models: `studio-op routing` shows the central model selection
   policy and pins; `studio-op routing set-step --step <step id> --cli <cli> --model <model> --all`
   changes one step for every readable project through its model selection step

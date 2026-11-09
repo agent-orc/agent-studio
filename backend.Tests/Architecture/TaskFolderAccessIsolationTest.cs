@@ -181,6 +181,16 @@ public class TaskFolderAccessIsolationTest
                 "Temporary legacy/OneShot npm staging cleanup under the user npm directory, not the job-folder tree; removed in AGT-2373.",
             ["backend/Features/Projects/HostedData/HostedVolumeBackupEngine.cs"] =
                 "AGT-3248 stages, swaps and prunes hosted-app volume backup and restore directories under the hosted data root, never a lane or task folder.",
+            ["backend/Features/Management/Backups/BackupCatalog.cs"] =
+                "AGT-3574 clears the owner-only staging folder of the backup directory, which lies outside every backup source.",
+            ["backend/Features/Management/Backups/BackupCollector.cs"] =
+                "AGT-3574 removes the per-run spool staging folder of the backup directory, never a lane or task folder.",
+            ["backend/Features/Management/Backups/BackupCheckouts.cs"] =
+                "AGT-3574 restore removes a failed clone it just created on an empty restore target, before retrying the default branch.",
+            ["backend/Features/Management/Backups/BackupRestore.cs"] =
+                "AGT-3574 restore empties only targets it verified empty at start after a failed restore, and its bundle scratch folder.",
+            ["backend/Features/Management/Backups/StudioBackupService.cs"] =
+                "AGT-3574 removes the restore-verification staging host below the backup directory.",
             ["backend/Features/Secrets/BuiltIn/BuiltInSecretStore.cs"] =
                 "AGT-3222 removes a revoked or replaced secret item directory under the secret store root (tombstone move, then delete), never a lane or task folder.",
             ["backend/Features/Cli/Execution/RunLogStore.cs"] =

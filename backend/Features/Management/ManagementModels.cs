@@ -44,7 +44,7 @@ public sealed record SecurityManagementStatus(
 
 public sealed record BackupStatus(
     string Directory, int RetentionCount, IReadOnlyList<BackupSummary> Items,
-    string? LastFailure);
+    string? LastFailure, BackupOverview? Overview = null);
 
 public sealed record BackupSummary(
     string Id, string FileName, long SizeBytes, string CreatedAt,
