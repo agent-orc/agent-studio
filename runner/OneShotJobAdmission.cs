@@ -5,18 +5,28 @@ using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
-internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClient client, Action<string> log)
+internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClient client, Action<string> log,
+    Func<TimeSpan, CancellationToken, Task>? delay = null)
 {
+    private Task WaitAsync(TimeSpan interval, CancellationToken cancellationToken)
+        => delay is null ? Task.Delay(interval, cancellationToken) : delay(interval, cancellationToken);
+
     public async Task PollAsync(CancellationToken shutdown)
     {
+        var missingRouteLogged = false;
         while (!shutdown.IsCancellationRequested)
         {
             try
             {
                 var work = await client.ClaimOneShotJobAsync(options.RunnerId, shutdown);
+                if (missingRouteLogged)
+                {
+                    log("one-shot-job-poll-restored");
+                    missingRouteLogged = false;
+                }
                 if (work is null)
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(3), shutdown);
+                    await WaitAsync(TimeSpan.FromSeconds(3), shutdown);
                     continue;
                 }
                 await ExecuteAsync(work, shutdown);
@@ -24,8 +34,11 @@ internal sealed class OneShotJobAdmission(RunnerOptions options, TaskServerClien
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
             catch (Exception ex)
             {
-                log($"one-shot-job-poll-failed error={ex.GetType().Name}: {ex.Message}");
-                try { await Task.Delay(TimeSpan.FromSeconds(3), shutdown); }
+                var missingRoute = ex is TaskServerException { StatusCode: 404 };
+                if (!missingRoute || !missingRouteLogged)
+                    log($"one-shot-job-poll-failed error={ex.GetType().Name}: {ex.Message}");
+                if (missingRoute) missingRouteLogged = true;
+                try { await WaitAsync(missingRoute ? TimeSpan.FromMinutes(5) : TimeSpan.FromSeconds(3), shutdown); }
                 catch (OperationCanceledException) { break; }
             }
         }

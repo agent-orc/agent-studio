@@ -140,7 +140,10 @@ public sealed class VisualReviewScreenshotTests
 
             Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
             Assert.StartsWith($"- \"{after.Name}\"", evidence);
-            Assert.Contains("omitted by the 100-image review limit", evidence);
+            Assert.Contains("omitted by the 12-image review limit", evidence);
+            Assert.Contains("bars/before-079.png", evidence);
+            Assert.Contains("further names omitted", evidence);
+            Assert.Equal(12, Directory.GetFiles(Path.Combine(root, "visual-evidence")).Length);
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
@@ -166,6 +169,28 @@ public sealed class VisualReviewScreenshotTests
             Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
             Assert.Contains($"\"{valid.Name}\":", evidence);
             Assert.Single(Directory.GetFiles(Path.Combine(root, "visual-evidence")));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task Oversized_screenshot_is_named_without_reading_its_content()
+    {
+        var bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory,
+            "Fixtures", "visual-review", "clean-footer.png"));
+        var oversized = Artifact("large", "bars/after-large.png", bytes) with
+        {
+            SizeBytes = 3L * 1024 * 1024,
+        };
+        var root = Path.Combine(Path.GetTempPath(), $"visual-review-{Guid.NewGuid():N}");
+        try
+        {
+            var evidence = await VisualReviewScreenshotBundle.CaptureAsync([oversized],
+                (_, _) => throw new InvalidOperationException("Oversized image must not be read."), root, default);
+
+            Assert.Contains("bars/after-large.png", evidence);
+            Assert.Contains("2 MiB per-image", evidence);
+            Assert.Empty(Directory.GetFiles(Path.Combine(root, "visual-evidence")));
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
@@ -228,7 +253,7 @@ public sealed class VisualReviewScreenshotTests
             Assert.Contains("92 more failed screenshots omitted from this list", evidence);
             Assert.StartsWith($"- \"{valid.Name}\"", evidence);
             Assert.Contains($"\"{valid.Name}\":", evidence);
-            Assert.DoesNotContain("omitted by the 100-image review limit", evidence);
+            Assert.DoesNotContain("omitted by the 12-image review limit", evidence);
             Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
             Assert.Single(Directory.GetFiles(Path.Combine(root, "visual-evidence")));
         }

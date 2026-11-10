@@ -64,6 +64,8 @@ export interface BatchGateState {
     phase: string;
     phaseAtUtc?: string | null;
     phaseReason?: string | null;
+    /** AGT-3710: one-based place of a formed batch in its project's flight queue. */
+    queuePosition?: number | null;
     formationReason?: string | null;
     exclusions?: { taskKey: string; reason: string; detail?: string | null }[];
     baseSha: string;
@@ -73,6 +75,8 @@ export interface BatchGateState {
     publication?: BatchPublication | null;
   }[];
   members: Record<string, BatchMemberState>;
+  /** AGT-3710: formed batches waiting for the project's flight, first in, first out. */
+  flightQueue?: BatchFlightQueueEntry[];
   /** AGT-3577: per member of a red batch, what the bisection proved. */
   isolationFindings?: BatchIsolationFinding[];
 }
@@ -92,6 +96,15 @@ export function batchWaitingCards(state: BatchGateState | null): BatchGateState[
 /** A run without a finish event is live only while its batch is running. */
 export function batchRunIsRunning(batch: BatchGateBatch, run: BatchGateBatch['runs'][number]): boolean {
   return batch.phase === 'running' && !!run.startedAtUtc && !run.finishedAtUtc;
+}
+
+/** One formed batch in the flight queue; position 1 starts next. */
+export interface BatchFlightQueueEntry {
+  batchId: string;
+  position: number;
+  queuedSinceUtc: string;
+  size: number;
+  taskKeys: string[];
 }
 
 /**

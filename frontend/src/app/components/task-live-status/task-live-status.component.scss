@@ -142,6 +142,38 @@
   font-size: 12px;
 }
 
+// AGT-3617: the hold names its cause in one sentence; it wraps instead of
+// cutting the cause off on a narrow card.
+.task-live__headline--hold {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+// AGT-3617: the cause card a held card waits behind, inline in the headline.
+// It reads as a link, not as a button: text colour and underline only.
+.task-live__link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--studio-accent);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--studio-accent-strong);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--studio-accent);
+    outline-offset: 1px;
+    border-radius: 2px;
+  }
+}
+
 .task-live--detail .task-live__signal {
   align-self: center;
 }
