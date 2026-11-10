@@ -3,7 +3,8 @@ import { signal } from '@angular/core';
 import { HttpClient, HttpErrorResponse, provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { offlineGuardInterceptor, __resetOfflineGuardThrottle } from './offline-guard.interceptor';
+import { AUTH_GATE_POST_URLS, offlineGuardInterceptor, __resetOfflineGuardThrottle } from './offline-guard.interceptor';
+import { AuthService } from './auth.service';
 import { ConnectionStatusService } from './connection-status.service';
 import { NotificationService } from './notification.service';
 
@@ -65,16 +66,54 @@ describe('offlineGuardInterceptor', () => {
     expect(ok).toBe(true);
   });
 
-  it.each(['bootstrap', 'login', 'change-password', 'logout'])(
-    'lets %s through while the live-update socket is offline', (action) => {
+  it.each([...AUTH_GATE_POST_URLS])(
+    'lets %s through while the live-update socket is offline', (url) => {
       const { http, httpMock } = configure(true);
-      const url = `/api/v1/studio/auth/${action}`;
       let ok = false;
       http.post(url, {}).subscribe({ next: () => (ok = true) });
       httpMock.expectOne(url).flush({});
       expect(ok).toBe(true);
     },
   );
+
+  // AGT-3614: the hub is not connected while the sign-in gate is shown, so the
+  // guard declares offline after its grace window. Every call the gate makes
+  // must still reach the server, in both sign-in stacks.
+  it.each([
+    ['networked', '/api/auth'],
+    ['local', '/api/v1/studio/auth'],
+  ])('lets every sign-in gate call of the %s profile through while offline', (profile, root) => {
+    const { httpMock } = configure(true);
+    const auth = TestBed.inject(AuthService);
+    auth.initialize();
+    httpMock.expectOne('/api/auth/status').flush({ profile, bootstrapRequired: false, authenticated: false });
+    if (profile === 'local')
+      httpMock.expectOne('/api/v1/studio/auth/status').flush({ bootstrapRequired: false, authenticated: false });
+    const passkey = {} as never;
+    const calls: [string, () => void][] = [
+      [`${root}/bootstrap`, () => auth.bootstrap('owner', 'password', 'Owner').subscribe()],
+      [`${root}/login`, () => auth.login('owner', 'password', '123456').subscribe()],
+      [`${root}/passkeys/assertion-options`, () => auth.passkeyLoginOptions('owner').subscribe()],
+      [`${root}/login`, () => auth.loginWithPasskey('owner', 'password', passkey).subscribe()],
+      [`${root}/change-password`, () => auth.changePassword('old', 'new').subscribe()],
+      [`${root}/totp/start`, () => auth.beginTotp().subscribe()],
+      [`${root}/totp/confirm`, () => auth.confirmTotp('123456').subscribe()],
+      [`${root}/passkeys/register-options`, () => auth.passkeyRegistrationOptions().subscribe()],
+      [`${root}/passkeys/register`, () => auth.registerPasskey(passkey).subscribe()],
+      ['/api/v1/studio/auth/invite/accept', () => auth.acceptInvitation('token', 'new').subscribe()],
+      [`${root}/logout`, () => auth.logout().subscribe()],
+    ];
+    for (const [url, call] of calls) {
+      call();
+      httpMock.expectOne(url).flush({});
+    }
+  });
+
+  it('keeps blocking account administration under the auth root while offline', () => {
+    const { http, httpMock } = configure(true);
+    http.post('/api/auth/invitations', {}).subscribe({ error: () => undefined });
+    httpMock.expectNone('/api/auth/invitations');
+  });
 
   it('lets the read-only TokenEconomy price lookup through while offline', () => {
     const { http, httpMock } = configure(true);

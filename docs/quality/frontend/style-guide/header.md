@@ -42,8 +42,9 @@ workspace, and the project picker and Needs you are always available. Search
 and the account/settings controls are buttons. Theme is an icon button.
 Needs you (`app-attention-control`, AGT-3576) owns the one "what needs me"
 count: it opens the attention list read from `GET /api/operator/attention`,
-the open facts of the operator decision stream grouped by class, and its count
-is the number of rows that list renders (R3). Open stalls outside those classes
+with open operator facts and Dossier gates, plus backup and credential warnings
+from their installation reads. Rows show title, project, age, and reason, and
+its count is the number of rows that list renders (R3). Open stalls outside those classes
 stay in the Activity feed, which the list links to. Below 720 px the label
 hides and the bell icon and count stay. The workspace quota banner follows the top row and renders only
 when the workspace cap has an actionable finding (`a98537a193`). Usage totals
@@ -57,6 +58,9 @@ owns these controls (`ccc0039eb`, AGT-2819). The primary action can be Run now
 or the current lane's decision; its label comes from triage policy. The host
 chip is a factual badge, the pager is a compact action group, and the lane
 select is a navigation control. The menu owns secondary task actions.
+In Human Review, the primary action uses the fresh task-detail integration
+verdict. An integrated or not-applicable delivery offers Accept without waiting
+for optional Git provenance; a held action names its delivery reason on hover.
 
 The task lane itself has one canonical name and tone from
 `lane-presentation.ts`. The toolbar lane select names the **paging lane**;

@@ -1,6 +1,13 @@
 name: Documentation truth
 
 on:
+  pull_request:
+    paths:
+      - 'README.md'
+      - 'docs/operations/setup/install.md'
+      - 'scripts/check-public-docs.mjs'
+      - 'scripts/check-public-docs.test.mjs'
+      - '.github/workflows/documentation-truth.yml'
   push:
     branches:
       - main
@@ -10,6 +17,7 @@ on:
       - 'README.md'
       - 'docs/**'
       - 'scripts/check-public-docs.mjs'
+      - 'scripts/check-public-docs.test.mjs'
       - '.github/workflows/documentation-truth.yml'
   workflow_dispatch:
 
@@ -35,7 +43,11 @@ jobs:
           node-version: '22'
 
       - name: Check public documentation
-        run: node scripts/check-public-docs.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node --test scripts/check-public-docs.test.mjs
+          node scripts/check-public-docs.mjs --verify-install-urls
 
       - name: Verify recorded release claims against the registries
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
