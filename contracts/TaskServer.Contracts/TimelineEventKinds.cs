@@ -429,6 +429,14 @@ public static class TimelineEventKinds
     /// </summary>
     public const string ReviewInfrastructureRetryScheduled = "review_infrastructure_retry_scheduled";
     /// <summary>
+    /// AGT-3691: the retry scheduler abandoned a scheduled
+    /// <see cref="ReviewInfrastructureRetryScheduled"/> retry without minting a
+    /// successor. <see cref="TimelineEvent.Details"/> carries the attempt, the
+    /// retry number, the due time, and the reason code (the card left Auto
+    /// Review, or an open cause breaker holds it).
+    /// </summary>
+    public const string ReviewInfrastructureRetryDropped = "review_infrastructure_retry_dropped";
+    /// <summary>
     /// AGT-W57: the fleet-wide cause breaker parked this card behind a cause
     /// card instead of retrying or escalating it. Details carry the cause key,
     /// the fingerprint and its parts, and the threshold numbers.

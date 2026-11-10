@@ -393,9 +393,13 @@ authority and is never treated as missing.
 
 The per-card Auto Review stranding watchdog runs every 30 seconds. After
 `AutoReviewStranding:ThresholdMinutes` (30 by default), it checks for a running
-pipeline step, a pending or leased ReviewAttempt, a pending or active formed
-batch, a queued round, and a queued post-processing step. A card with none gets
-a durable intervention receipt in the existing stall-intervention feed and
+pipeline step, a pending or leased ReviewAttempt, a scheduled ReviewInfra
+retry of the current review, a cause breaker wait or probe marker, a pending or
+active formed batch, a queued round, and a queued post-processing step. A
+scheduled retry owns the card while its backoff runs and for one threshold
+after it came due, so a review host restart never escalates a card inside its
+backoff, while a retry that no scheduler tick fires still does (AGT-3691). A
+card with none gets a durable intervention receipt in the existing stall-intervention feed and
 its timeline. Report-only cards restart post-processing; coding cards with a
 completed run request a fresh ReviewAttempt; a passed review resumes delivery
 integration or re-enters the batch gate only when its source RunAttempt and
@@ -930,6 +934,13 @@ plan kept calling a withdrawn review model for 59 attempts, so a corrected
 setting now costs exactly one attempt. This closes the
 AGT-2841 gap where a `ReviewInfra` verdict left a card sitting in Auto Review
 with no automatic next attempt until an operator issued `POST /move`.
+
+When the scheduler abandons a due retry without a successor, it logs
+`review-infrastructure-retry-dropped` and writes a
+`review_infrastructure_retry_dropped` timeline entry whose `reason` names why:
+`card-left-auto-review` (with the `lane` the card is in) or
+`cause-breaker-wait` (with the cause key and fingerprint). A card that is gone
+gets only the log line (AGT-3691).
 
 One class is never retried: `ReviewInfra/DiagnosisContractUnsupported`
 (AGT-3089). `ReviewReportDiagnosisPolicy.Normalize` sets it only when the worker

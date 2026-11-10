@@ -3156,6 +3156,13 @@
           <td>The control plane had no provider login by design. Its short completion paths still used local process execution instead of the accepted coding or review host.</td>
           <td>The observed terminal was a degraded Result summary; other short completions failed. Networked one-shots now travel as bounded Task Server jobs. A host claims only with fresh <code>model-acceptance:&lt;cli&gt;:&lt;model&gt;</code> evidence. With no host, the Result reports <code>waiting for a host with &lt;capability&gt;</code> and defers without spending the summary retry budget. A later accepted host lets the retry complete.</td>
         </tr>
+        <tr id="case-review-retry-stranded-by-watchdog">
+          <td>2026-11-10</td>
+          <td><code>AGT-3648 / AGT-3691</code><br><span class="small">review-retry-stranded-by-watchdog (S6-F15)</span></td>
+          <td>No CLI crashed. The review host restarted; its report <code>ReviewInfra / ExecutorRestarted</code> was accepted at 01:27:17 and retry 1/3 was scheduled for 01:28:16. Nine seconds after the report the Auto Review stranding watchdog escalated the card (<code>Auto Review had no active owner for 4 minutes</code>). At the due time the retry scheduler found the card outside Auto Review and cleared the retry without a log line. No review ran again.</td>
+          <td>The stranding facts counted a review as an owner only while it was Pending or Leased. The persisted retry due time and a cause breaker wait were not facts of <code>AutoReviewStrandingPolicy</code>, so with the default 30 minute threshold every card older than that in Auto Review was escalated when its review host restarted.</td>
+          <td>The observed terminal was <span class="lane">5e-escalated</span> with a silently lost retry. A scheduled ReviewInfra retry of the current review now owns the card while its backoff runs and for one threshold after it came due, and a cause breaker wait or probe marker owns the parked card; the rule lives in <code>AutoReviewStrandingPolicy</code>. A retry that no scheduler tick fires still leaves the card ownerless. Every dropped retry is logged as <code>review-infrastructure-retry-dropped</code> and recorded as a <code>review_infrastructure_retry_dropped</code> timeline entry naming the reason and the lane.</td>
+        </tr>
       </tbody>
     </table>
 
