@@ -139,6 +139,11 @@ public sealed class TaskTransitionService
     /// the <c>lane_changed</c> ledger row (see <see cref="TaskStateMachine.MoveJob"/>).
     /// </param>
     /// <param name="transitionDetail">Short qualifier for <paramref name="transitionCause"/>.</param>
+    /// <param name="batchWithdrawalId">
+    /// The active batch an operator explicitly withdraws this card from. The
+    /// caller has already requested the eject; any other operator move of an
+    /// active batch member out of Auto Review is refused (AGT-3719).
+    /// </param>
     public async Task<MoveJobOutcome> MoveAsync(
         string jobId,
         string targetState,
@@ -159,10 +164,14 @@ public sealed class TaskTransitionService
         bool acceptOlderBriefDelivery = false,
         bool engineDecisionRequeue = false,
         AgentStudio.Runner.ContinuationBaseRecord? engineContinuationBase = null,
-        bool operatorDecisionPark = false)
+        bool operatorDecisionPark = false,
+        string? automaticAcceptanceBy = null,
+        string? batchWithdrawalId = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return new MoveJobOutcome(MoveJobStatus.NotFound);
+        if (ActiveBatchMemberRefusal(info, targetState, cause, batchWithdrawalId) is { } batchRefusal)
+            return batchRefusal;
         if (TaskKinds.IsDecision(info.Kind)
             && DecisionLaneGuard.Refusal(info, targetState, _scanner.GetReferenceIndex(), decisionReopenPermit) is { } refusal)
             return new MoveJobOutcome(MoveJobStatus.Failure, refusal);
@@ -547,7 +556,14 @@ public sealed class TaskTransitionService
         // it landed. A refused move restores the claim the card had before.
         var stampedCompletionClaim = boundCompletionClaim is null
             ? null
-            : boundCompletionClaim with { RecordedAtUtc = _time.GetUtcNow().UtcDateTime };
+            : boundCompletionClaim with
+            {
+                RecordedAtUtc = _time.GetUtcNow().UtcDateTime,
+                // AGT-3621: only a system actor accepts automatically.
+                AcceptedAutomaticallyBy = TimelineActors.IsHuman(cause) || string.IsNullOrWhiteSpace(automaticAcceptanceBy)
+                    ? null
+                    : automaticAcceptanceBy.Trim(),
+            };
         var completionClaimStaged = stampedCompletionClaim is not null
             && _mutations.SetCompletionClaimOnFolder(info.FolderPath, stampedCompletionClaim);
         var acceptanceWrite = operatorAcceptance is null
@@ -1104,7 +1120,8 @@ public sealed class TaskTransitionService
 
     /// <summary>
     /// One-time, idempotent operator repair for legacy accepted cards whose
-    /// Result tab is empty. Existing non-empty status documents are preserved.
+    /// Result tab is empty or still shows a scaffold over a real prior result.
+    /// Existing non-scaffold status documents are preserved.
     /// The startup caller invokes this once per process; subsequent boots are
     /// no-ops because every repaired card now owns a marked status.md.
     /// </summary>
@@ -1113,6 +1130,7 @@ public sealed class TaskTransitionService
         var repaired = 0;
         var failures = new List<string>();
         var missing = new List<TaskInfo>();
+        var staleScaffolds = new List<TaskInfo>();
         var candidates = _scanner.ScanAllAutomationJobsWithArchive()
             .Where(task => task.State is
                 TaskStates.HumanReview or TaskStates.Completed or TaskStates.Archive)
@@ -1126,8 +1144,19 @@ public sealed class TaskTransitionService
             var path = Path.Combine(task.FolderPath, "status.md");
             try
             {
-                if (File.Exists(path) && !string.IsNullOrWhiteSpace(File.ReadAllText(path)))
-                    continue;
+                if (File.Exists(path))
+                {
+                    var existing = File.ReadAllText(path);
+                    if (!string.IsNullOrWhiteSpace(existing))
+                    {
+                        if (task.State == TaskStates.Completed && _resultVersions is not null
+                            && existing.TrimStart().StartsWith(ResultScaffoldMarker, StringComparison.Ordinal)
+                            && _resultVersions.ReadLocalVersions(task.FolderPath).Any(version =>
+                                !version.Markdown.TrimStart().StartsWith(ResultScaffoldMarker, StringComparison.Ordinal)))
+                            staleScaffolds.Add(task);
+                        continue;
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -1174,6 +1203,16 @@ public sealed class TaskTransitionService
             {
                 failures.Add($"{task.TaskKey}: {error}");
             }
+        }
+
+        foreach (var task in staleScaffolds)
+        {
+            if (TryEnsureResultDocument(task, task.State,
+                    operatorBackfill: false, refreshOwnedScaffold: true,
+                    at, integrationReferenceOverride: null, out var error))
+                repaired++;
+            else
+                failures.Add($"{task.TaskKey}: {error}");
         }
 
         if (repaired > 0)
@@ -1402,6 +1441,24 @@ public sealed class TaskTransitionService
                 {
                     error = null;
                     return true;
+                }
+                // On acceptance, an earlier generated Result is more useful
+                // than another scaffold describing only the new lane. The
+                // scaffold stays in version history when we restore it.
+                if (targetState == TaskStates.Completed && _resultVersions is not null
+                    && existing.TrimStart().StartsWith(ResultScaffoldMarker, StringComparison.Ordinal))
+                {
+                    var lastReal = _resultVersions.ReadLocalVersions(task.FolderPath)
+                        .FirstOrDefault(version => !version.Markdown.TrimStart()
+                            .StartsWith(ResultScaffoldMarker, StringComparison.Ordinal));
+                    if (lastReal.Markdown is not null)
+                    {
+                        _resultVersions.Replace(task.FolderPath, lastReal.Markdown,
+                            lastReal.Version.Producer,
+                            targetState, lastReal.Version.ProducedAtUtc, TimelineActors.System);
+                        error = null;
+                        return true;
+                    }
                 }
                 refreshingOwnedScaffold = !string.IsNullOrWhiteSpace(existing)
                     && existing.Contains(ResultScaffoldMarker, StringComparison.Ordinal);
@@ -1768,6 +1825,29 @@ public sealed class TaskTransitionService
             $"Acceptance does not integrate deliveries. The task remains in Human Review because its current delivery is "
             + $"'{status?.Status ?? IntegrationStatuses.Pending}' on '{integrationBranch}'. {detail}",
             reviewed.FolderPath);
+    }
+
+    /// <summary>
+    /// The shared active-batch membership guard (AGT-3719). It runs before any
+    /// side effect of the move, for every operator cause, so the single move,
+    /// the batch move and every other operator route refuse the same move.
+    /// </summary>
+    private MoveJobOutcome? ActiveBatchMemberRefusal(TaskInfo info, string targetState,
+        string? cause, string? batchWithdrawalId)
+    {
+        if (_batchGateStore is null
+            || !AgentStudio.Pipeline.ActiveBatchMemberGuardPolicy.IsOperatorCause(cause)
+            || !AgentStudio.Pipeline.ActiveBatchMemberGuardPolicy.LeavesAutoReview(info.State, targetState))
+            return null;
+        var membership = new AgentStudio.Pipeline.ActiveBatchMemberGuard(_batchGateStore).Find(info, targetState);
+        if (membership is null
+            || string.Equals(membership.BatchId, batchWithdrawalId, StringComparison.Ordinal))
+            return null;
+        return new MoveJobOutcome(MoveJobStatus.ActiveBatchMember,
+            AgentStudio.Pipeline.ActiveBatchMemberGuardPolicy.Message(membership), info.FolderPath)
+        {
+            ActiveBatch = membership,
+        };
     }
 
     private string? BatchGateReleaseFailure(TaskInfo task, CancellationToken ct,
@@ -2379,7 +2459,7 @@ public sealed class TaskTransitionService
     /// <see cref="MoveAsync"/>, so a failure on one item never rolls back
     /// items that already moved. The result list mirrors the input order
     /// one-for-one with a typed per-item status (<c>moved</c> / <c>not-found</c>
-    /// / <c>conflict</c> / <c>rejected</c> / <c>failed</c>). This is the
+    /// / <c>conflict</c> / <c>rejected</c> / <c>refused</c> / <c>failed</c>). This is the
     /// endpoint backing <c>POST /api/tasks/batch-move</c> and exists so the
     /// LLM never has to fall back to shell <c>mv</c> for a multi-job
     /// restore - the 2026-05-08 incident that motivated this method.
@@ -2467,6 +2547,13 @@ public sealed class TaskTransitionService
                 new BatchMoveItemResult { JobId = item.JobId, Status = "locked", Message = outcome.Message },
             MoveJobStatus.IntegrationFailed =>
                 new BatchMoveItemResult { JobId = item.JobId, Status = "integration-failed", Message = outcome.Message },
+            MoveJobStatus.ActiveBatchMember =>
+                new BatchMoveItemResult
+                {
+                    JobId = item.JobId,
+                    Status = "refused",
+                    Message = $"{AgentStudio.Pipeline.ActiveBatchMemberGuardPolicy.Code}: {outcome.Message}",
+                },
             _ =>
                 new BatchMoveItemResult { JobId = item.JobId, Status = "failed", Message = outcome.Message }
         };

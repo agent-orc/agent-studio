@@ -58,11 +58,10 @@ Every archive is encrypted with AES-256-GCM in 1 MiB authenticated chunks under 
 bash backup-key.sh create
 ```
 
-Escrow it once, apart from the backups and apart from the secret store key copy, for example as its own password manager entry:
+Escrow it once, apart from the backups and apart from the secret store key copy, for example as its own password manager entry. Run the escrow commands as a host account with Docker access: the key belongs to UID 10001, and `print` reads it through a one-shot container of the edge image pinned by `STUDIO_EDGE_DIGEST`. The shell creates the output file before `print` runs, so a failed `print` (no Docker access, or a file that is not base64 of 32 bytes) says so and exits 1; the `|| rm -f` removes the empty file it leaves behind.
 
 ```sh
-bash backup-key.sh print > studio-backup.key   # move this file off the host, then delete it here
-bash backup-key.sh id studio-backup.key         # 16-character fingerprint, shown as the key id on the Operations page
+bash backup-key.sh print > studio-backup.key || rm -f studio-backup.key
 ```
 
 Without the key file the Operations page shows `backup-key-missing` and no backup runs.
@@ -71,16 +70,26 @@ Without the key file the Operations page shows `backup-key-missing` and no backu
 
 The API seals secrets with the key-encryption key at `STUDIO_SECRETS_KEY_FILE`, mounted read-only and named by `Secrets__KeyFile`. `setup.sh` creates it outside the data directory, by default at `keys/secrets.kek` in the stack directory. No backup contains it in any form: a stolen archive together with the backup key still does not open the sealed secrets.
 
-Escrow its own copy apart from the backups and apart from the backup key copy, for example as a second password manager entry:
+Escrow its own copy apart from the backups and apart from the backup key copy, for example as a second password manager entry, with the same Docker access as above:
 
 ```sh
-bash secret-key.sh print "$STUDIO_DATA_DIR" > studio-secrets.kek   # move this file off the host, then delete it here
-bash secret-key.sh id studio-secrets.kek                            # 16-character fingerprint
+bash secret-key.sh print "$STUDIO_DATA_DIR" > studio-secrets.kek || rm -f studio-secrets.kek
 ```
 
 Every backup manifest records the fingerprint of the key that was in place (shown as the secret key id), and `restore-backup.sh` refuses a key copy with a different fingerprint. Sealed secrets carried over from another installation open only with that installation's key; the restore installs the copy at the path in `.env` before the first start. For an existing installation without `STUDIO_SECRETS_KEY_FILE`, follow the key setup instructions in [Studio website](./studio-website.md#update-and-stop) first.
 
 Keep the two escrowed keys in separate places: whoever holds the backup key and an archive can read everything except the sealed secrets; only together with the secret store key do the sealed secrets open.
+
+### Check the escrowed copies
+
+This check is required, not optional: a copy counts as escrowed only when its id matches the Operations page. Before you move the two files off the host, and again on each copy in its safe place, run:
+
+```sh
+bash backup-key.sh id studio-backup.key    # must equal "Backup key id" on the Operations page
+bash secret-key.sh id studio-secrets.kek   # must equal "Secret store key id" on the Operations page
+```
+
+Each command prints a 16-character fingerprint, or fails on a file that is not base64 of 32 bytes, such as an empty one. If an id is missing or differs, the copy is no escrow: delete it and repeat `print`. When both match, move the files off the host and delete them here.
 
 ## Off-host target
 
@@ -110,7 +119,11 @@ The **Operations** page of every project shows an **Installation backups** panel
 | `verification-failed`, `verification-overdue` | The last restore verification failed, or none ran within two verification intervals. |
 | `offhost-not-configured`, `offhost-invalid`, `offhost-pending`, `offhost-failed` | The newest backup is not, or not yet, off the host. |
 
-Owners and operators read the same state from `GET /api/v1/management/backups` (`no-store`). Operator agents, whose credentials never reach `/api/v1`, read it from `GET /api/operator/backups` or `studio-op backups`; a caller without installation-wide operate permission does not see the target. The management commands of `POST /api/v1/management/commands` run the same engine: `backup-create`, `restore-verify` (optional `backupId`), `backup-retention` (optional `retentionCount`) and `backup-upload`. Each needs `dryRun: false` and `confirmation` equal to the kind for a real run; `backup-create` no longer needs maintenance mode.
+Owners and operators read the same state from `GET /api/v1/management/backups` (`no-store`). Operator agents, whose credentials never reach `/api/v1`, read it from `GET /api/operator/backups` or `studio-op backups`; a caller without installation-wide operate permission does not see the target or the key fingerprints, and host paths in its error text read `<path>`. The management commands of `POST /api/v1/management/commands` run the same engine: `backup-create`, `restore-verify` (optional `backupId`), `backup-retention` (optional `retentionCount`) and `backup-upload`. Each needs `dryRun: false` and `confirmation` equal to the kind for a real run; `backup-create` no longer needs maintenance mode. A `backup-retention` run that keeps fewer archives than `Backup__RetentionCount` needs the Owner role; operators may preview it and may apply the configured count.
+
+### Backup audit
+
+Every backup create, off-host copy, restore verification and retention, scheduled or manual, writes a record to the control plane audit chain (stream `backup`, operations `backup.create`, `backup.upload`, `backup.verify`, `backup.retention`) with the actor and the outcome `succeeded`, `failed` or `denied`. Scheduled runs show the actor `schedule`; manual commands the principal, and an operator session the session with the Owner who delegated it. The offline `decrypt` and `restore` tools record `backup.decrypt` and `backup.restore` with the actor `offline:<account>` (`restore-backup.sh` passes `offline:<user>@<host>`). The Owner reads the records under **Settings > Access > Backup activity** or from `GET /api/auth/audit/backups`. The management command ledger `workspace/.audit/management.jsonl` stays the idempotency record of the commands.
 
 ## Restore onto a new host
 
@@ -138,6 +151,8 @@ dotnet OrchestratorApi.dll --studio-backup restore --key backup.key --archive <a
 dotnet OrchestratorApi.dll --studio-backup key-create <file> | key-id <file>
 ```
 
+`decrypt` and `restore` take `--actor <name>` and `--audit-workspace <dir>`. A successful restore records into the restored `workspace` target, otherwise the record goes to `--audit-workspace` or to the configured `TaskRepository` when that exists. A failed restore never writes into one of its targets, which must stay empty for the next attempt; it then only prints that the run was not recorded.
+
 A decrypted `tar.gz` holds credential material; delete it when done.
 
 ### Tested restore
@@ -152,6 +167,7 @@ AGT-3574 implemented these options:
 - **Consistency:** a bounded hold of HTTP mutations during the read, the SQLite online backup API, per-file stable reads and journal prefixes, instead of pausing the container, which only the host can do.
 - **Encryption:** a symmetric backup key file outside the data directory, escrowed by the owner, with AES-256-GCM chunks. A key the API can read lets the product verify every day by a real restore; a public-key recipient would have made the daily restore verification impossible on the host.
 - **Targets:** SFTP through the OpenSSH client in the image, S3-compatible storage through a signed PUT without a new package, and a mounted directory. All need only write access.
+- **Backup audit (AGT-3737):** backup operations write to the existing hash-chained control plane audit trail instead of a second, unread ledger, and the Owner reads them in the Access area next to operator activity. Retention below the configured count needs the Owner; a preview stays open to operators, because it deletes nothing.
 - **Coverage:** the data home, host certificates, stack configuration and Caddy data join the workspace and task storage; checkouts still come back from their remotes; the secret store key, the backup key and the host CA key stay with the owner.
 
 ## Host-level backup with the systemd timer

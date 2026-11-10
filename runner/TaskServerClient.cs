@@ -2421,6 +2421,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         ".html" or ".htm" => "text/html",
         ".png" => "image/png",
         ".jpg" or ".jpeg" => "image/jpeg",
+        ".webp" => "image/webp",
         ".svg" => "image/svg+xml",
         ".md" or ".txt" or ".log" => "text/plain",
         _ => "application/octet-stream",

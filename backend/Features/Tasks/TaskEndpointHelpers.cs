@@ -97,6 +97,9 @@ internal static class TaskEndpointHelpers
                     AcceptanceAttemptLineagePolicy.MissingRunAttemptRefusal, StringComparison.Ordinal) == true
                     ? "run-attempt-missing" : "integration-dead-end",
         }),
+        MoveJobStatus.ActiveBatchMember when outcome.ActiveBatch is { } batch => Results.Json(
+            AgentStudio.Pipeline.ActiveBatchMemberGuardPolicy.Body(batch),
+            statusCode: StatusCodes.Status409Conflict),
         MoveJobStatus.PendingIntentSupersedeFailed => Results.Json(
             new
             {
@@ -373,6 +376,25 @@ internal static class TaskEndpointHelpers
             integrationByJobKey.TryGetValue(job.TaskKey, out var status)
                 ? job with { Integration = status }
                 : job);
+
+    /// <summary>
+    /// AGT-3621: a card whose delivery contract expects no repository change is
+    /// <c>not-applicable</c> without any Git fact. While the Git projection is
+    /// still warming for a new card, the detail read says so instead of leaving
+    /// the field empty, which held Human Review Accept as "Await integration".
+    /// </summary>
+    internal static TaskInfo WithContractIntegration(TaskInfo job, string? integrationBranch)
+        => job.Integration is not null || AcceptanceIntegrationPolicy.IsIntegrationRequired(job)
+            ? job
+            : job with
+            {
+                Integration = new TaskIntegrationStatus
+                {
+                    Status = IntegrationStatuses.NotApplicable,
+                    IntegrationBranch = integrationBranch,
+                    Detail = "The delivery contract expects no repository change.",
+                },
+            };
 
     /// <summary>
     /// PUB-1: folds the batched per-task publish signal onto each accepted card.

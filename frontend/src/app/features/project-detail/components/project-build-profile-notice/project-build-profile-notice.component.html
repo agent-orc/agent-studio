@@ -16,6 +16,15 @@
       </span>
       <pre class="verify-notice__example" data-testid="project-settings-verify-example">{{ summary().verifyDefinition?.exampleDefinition }}</pre>
       <span>
+        Create the script named by <code>commands.test</code> and make it run real checks.
+        A successful exit is accepted as review evidence. Parsed test summaries also let review
+        compare failure names with the baseline.
+        <a class="verify-notice__link"
+           href="https://github.com/agent-orc/agent-studio/blob/main/docs/operations/setup/onboard-a-project.md#test-command-output-in-review"
+           target="_blank"
+           rel="noreferrer">Accepted test output and stack examples</a>
+      </span>
+      <span>
         A repository without checks on purpose declares that with empty <code>build</code>,
         <code>test</code> and <code>lint</code> lists.
       </span>

@@ -1832,6 +1832,11 @@ describe('buildPhaseBadge — no lane-mirroring "Ready"', () => {
     expect(buildPhaseBadge('post-processing-blocked', null, undefined, '5-human-review')).toBeNull();
   });
 
+  it('suppresses every stale phase after acceptance', () => {
+    expect(buildPhaseBadge('post-processing-blocked', null, undefined, '6-completed')).toBeNull();
+    expect(buildPhaseBadge('integrating', null, undefined, '6-completed')).toBeNull();
+  });
+
   it('shows transactional integration while the task remains in Review', () => {
     const badge = buildPhaseBadge('integrating', null, undefined, '5-human-review');
     expect(badge?.label).toBe('Integrating');
@@ -1916,6 +1921,10 @@ describe('formatSteerWait', () => {
 });
 
 describe('buildPipelineDots', () => {
+  it('shows a settled pipeline for Accepted despite a stale blocked phase', () => {
+    const dots = buildPipelineDots(makeJob({ state: '6-completed', phase: 'post-processing-blocked' }));
+    expect(dots.dots.every(dot => dot.status === 'done')).toBe(true);
+  });
   it('marks the core run dot as active for a live progress card', () => {
     const dots = buildPipelineDots(makeJob({
       state: '3-progress',

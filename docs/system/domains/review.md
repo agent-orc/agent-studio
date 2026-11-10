@@ -409,6 +409,12 @@ its own receipt. After a successful intervention, the watchdog waits another
 threshold interval before intervening again. It can advance from review recovery
 to batch recovery in the same visit. If the same recovery leaves the card
 ownerless again, it escalates the card with the reason.
+The threshold starts at the latest ownership change, including a review terminal,
+a batch state event, or a recovery intervention, rather than at lane entry. A
+current-delivery infrastructure failure with no scheduled retry gets one through
+the existing authority scheduler while its two-retry budget remains. A scheduled
+retry counts as an owner. Once the budget is spent, escalation names the review
+classification and summary.
 
 When the delivery-chain reconciler finds a stale acceptance or integration
 verdict, it returns the card to Auto Review and requests a fresh review at
@@ -517,7 +523,16 @@ valid screenshot path in the review context.
 An artifact must have a PNG, JPEG, or WebP header matching its extension before
 it uses an image slot; matching size and digest alone do not prove the header is
 valid. The server does not decode pixels, so later image viewing can still
-reject damaged payloads.
+reject damaged payloads. Candidates are selected by extension, not by the
+uploaded media type, so a `.webp` that an older runner sent as
+`application/octet-stream` still counts once its header is proven.
+The review daemon captures the screenshots while it prepares the attempt, but
+the detached review worker runs the plan in a separate process. The daemon
+therefore writes `visual-evidence/index.json` beside the copies (artifact name,
+file name, header-proven media type, and the `light` or `dark` theme read from
+the name), and the worker reloads that index when it adopts the prepared
+workspace (AGT-3718). A copy missing at reload is named as unavailable in the
+prompt.
 Name delivered screenshots under `results/` by surface, stage, viewport width,
 and theme, for example `bars/before-1920-light.png` and
 `bars/after-1920-light.png`. Use the same suffix for matching before and after
@@ -914,11 +929,11 @@ attempt rises, bounded by the cap.
 A `ReviewInfra` outcome (`AspectTimeout`, `ToolUnavailable`, `BaselineUnavailable`,
 a workspace failure, ...) does not mint its linked retry attempt in the same
 instant as the failure report. `AttemptAuthorityService.ScheduleReviewInfrastructureRetry`
-records a due time instead: bounded backoff of 1, 3, then 9 minutes, indexed by
+records a due time instead: bounded backoff of 1 then 3 minutes, indexed by
 how many linked retries the chain has already spent
 (`AttemptAuthorityService.ReviewInfrastructureRetryBackoff`). The card timeline
 gets a `review_infrastructure_retry_scheduled` entry naming the retry number,
-the budget of three, the delay, and the failure reason at schedule time; the
+the budget of two, the delay, and the failure reason at schedule time; the
 card stays in `4-auto-review` with no successor to claim until the delay
 elapses. `ReviewInfrastructureRetryScheduler`, a background service, polls
 `AttemptAuthorityService.DueReviewInfrastructureRetries` and mints the
@@ -1003,14 +1018,28 @@ or two distinct cards within 24 hours, all three adjustable per project via
 `FailureInterventionService.RaiseCause` (ledger
 `.orchestrator/failure-interventions.json`, fleet store
 `.metadata/cause-breakers.json`). Every affected card stays in `4-auto-review`
-with a `cause-wait.json` marker, renders "Waiting for <key>", gets no scheduled
-retry, and is skipped by the review claim. A pending review whose plan calls
+with a `cause-wait.json` marker, gets no scheduled retry, and is skipped by the
+review claim. Its CURRENT line names the hold instead of a review queue
+position: "Held behind <key>: <cause>", where the cause is
+`CauseBreakerWording.Summary` of the failure class (for example "review cannot
+read the test report") and `<key>` links the cause card (AGT-3617). A pending review whose plan calls
 an open breaker's model route (any project), or whose project already saw an
 open tool-level cause, is held before it is claimed. The breaker closes when
 the cause card reaches `6-completed` (`CauseBreakerHostedService`) or a review
 of the exact successor attempt released by
 `POST /api/cause-breakers/{fingerprint}/probe` passes (probe green); a passing
-older review on the same waiting card does not close it. A card whose existing review is still
+older review on the same waiting card does not close it. The probe is the
+newest waiting delivery (the run behind the card's current review finished
+last), not the card that waited longest: that card's delivery is usually the
+one that broke the review. An optional body `{ "taskKey": "..." }` names the
+card to re-check instead; 409 means no card could be released. The cause
+card's detail view reads `GET /api/cause-breakers/by-cause/{causeKey}` (held
+cards in probe order, probe state) and offers one primary action, "Re-check
+now", that requests the probe. An operator moving a code-free intervention card
+to Accepted without an override is the owner's decision that the cause is
+resolved: the move endpoint records it as a `deliverable-without-code` claim
+(`InterventionOwnerDecisionPolicy`), and the sweep closes the breaker. A card
+with commits or a run attempt keeps the ordinary acceptance checks. A card whose existing review is still
 pending resumes that attempt; a terminal review gets one freshly planned successor.
 The report acknowledgement, evidence projection, and delivery resume each
 observe the durable passed verdict, so any of those paths can close the exact
@@ -1047,7 +1076,7 @@ phase. After exhaustion the post-processing queue stops re-enqueuing it and
 shows the specific stop reason; the integration reconciler still watches it.
 An unreadable retry file loses its backoff rather than exhausting a delivery.
 
-Once `AttemptAuthorityService.ReviewInfrastructureRetryBudget` (three) linked
+Once `AttemptAuthorityService.ReviewInfrastructureRetryBudget` (two) linked
 retries have all failed, no further retry is scheduled and the card is parked
 in `5e-escalated` with a named reason exactly as before this change - the
 budget-exhaustion and repeat-diagnosis behavior in
@@ -1080,13 +1109,14 @@ Three rules keep a hit honest:
 - **Entries expire.** A result older than 24 hours is dropped and re-executed,
   and every baseline SHA the freshly fetched integration ref no longer contains
   is pruned before the first lookup of an attempt.
-- **Only a measured baseline is stored.** A `test-failures` baseline must
-  report at least one test result. A nonzero exit also needs a parsed failure
-  name for comparison. A run with no test result, such as an unbuilt
-  `--no-build` invocation or a green exit that ran no tests, ends as
-  `ReviewInfra/BaselineUnavailable` and is not cached. Reuse checks the same
-  evidence, including for entries written by older workers. `exit-status`
-  entries carry their result in the exit code and remain reusable.
+- **Only a measured baseline is stored.** A successful `test-failures` command
+  with no parsed summary carries exit-status evidence for this attempt, and is
+  re-executed rather than reused from the baseline result cache. A nonzero exit
+  still needs a parsed failure name for failure-name comparison. An incomplete known
+  runner or an unbuilt `--no-build` invocation that fails before tests run
+  ends as `ReviewInfra/BaselineUnavailable` and is not cached. Reuse checks
+  the same evidence, including for entries written by older workers.
+  `exit-status` entries carry their result in the exit code and remain reusable.
 - **Reuse is visible.** The verdict summary, the Markdown grade
   (`baselineReused`/`baselineReuse` frontmatter plus a `Baseline` column in the
   command evidence table), and `ReviewProjectionView.Attempts[].BaselineReused`
@@ -1179,13 +1209,12 @@ that verdict.
 | Clean repeat green, baseline red on cached state, clean baseline repeat green | `DependencyCacheDefect` or `BaselineResultCacheDefect` | no |
 | Reviewer block without evidence against a changed path | `concern` | no |
 
-**Missing test reports.** A test-failures baseline must report at least one
-completed test, even when it exits zero. The review host retries a baseline
-with no parseable result once, before saving the dependency cache, and records
-both attempts. If it still has no result, it settles as
+**Missing test reports.** A successful test command without a recognized
+summary supplies exit-status evidence. A failed test command with no parseable
+result is retried once, before saving the dependency cache, and both attempts
+are recorded. If it still has no result, it settles as
 `ReviewInfra/BaselineUnavailable` and names the expected report path (or the
-captured stdout artifact for console-only reporters). A delivery run that exits
-zero without a test result is also retried once. An explicit missing-file
+captured stdout artifact for console-only reporters). An explicit missing-file
 diagnostic from the frontend wrapper follows the same path even when the wrapper
 exits nonzero. If its retry still has no result, it settles as
 `ReviewInfra/TestReportUnavailable`, unless the delivery changed test
@@ -1616,7 +1645,7 @@ usually exists only under `refs/remotes/origin` in the Studio checkout.
   `Schedule_review_infrastructure_retry_uses_widening_backoff_and_stops_at_the_cap`)
   and `backend.Tests/RemoteRunnerEndToEndTests.cs`
   (`Monolith_v1_review_plane_schedules_a_named_retry_for_a_fake_aspect_timeout_without_an_operator_move`):
-  the backoff schedule, the three-retry cap, and the
+  the backoff schedule, the two-retry cap, and the
   `review_infrastructure_retry_scheduled` timeline entry.
 - `backend/Features/Runner/ReviewVerifyReusePolicy.cs`,
   `runner/ReviewVerifyResultCache.cs`, `backend.Tests/ReviewVerifyReusePolicyTests.cs`

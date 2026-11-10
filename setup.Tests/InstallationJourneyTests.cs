@@ -287,7 +287,7 @@ public sealed class InstallationJourneyTests
     public void Missing_prerequisites_report_specific_recovery_actions()
     {
         var findings = PreflightPolicy.Evaluate(InstallationJourney.OneBox, "docker", new HostFacts(
-            Windows: true, X64: true, Virtualization: false, DockerEngine: false, DockerCompose: false,
+            Windows: true, X64: true, Virtualization: false, DockerEngine: DockerEngineState.NotInstalled, DockerCompose: false,
             Wsl2: false, FreeDiskBytes: 1L << 30, DnsResolves: false, WireGuardInterface: false,
             TlsTrusted: false, BackupMountWritable: false, ProviderCli: false, ProtectedSecretFile: false));
 
@@ -343,7 +343,7 @@ public sealed class InstallationJourneyTests
     public void Native_one_box_does_not_require_docker_or_hypervisor()
     {
         var findings = PreflightPolicy.Evaluate(InstallationJourney.OneBox, "native", new HostFacts(
-            false, true, null, false, false, null, 40L << 30, null, null, null, null, null, null));
+            false, true, null, DockerEngineState.NotRunning, false, null, 40L << 30, null, null, null, null, null, null));
         Assert.DoesNotContain(findings, finding => finding.Check == "Docker");
         Assert.Equal(PreflightStatus.NotApplicable, findings.Single(f => f.Check == "VM / virtualization").Status);
         Assert.DoesNotContain(findings, finding => finding.Status == PreflightStatus.Fail);
@@ -353,7 +353,7 @@ public sealed class InstallationJourneyTests
     public void Windows_connector_does_not_require_hypervisor_or_twenty_gib()
     {
         var findings = PreflightPolicy.Evaluate(InstallationJourney.AttachStudio, "native", new HostFacts(
-            true, true, false, false, false, false, 1L << 30, null, null, null, null, null, null));
+            true, true, false, DockerEngineState.NotRunning, false, false, 1L << 30, null, null, null, null, null, null));
         Assert.Equal(PreflightStatus.NotApplicable, findings.Single(f => f.Check == "VM / virtualization").Status);
         Assert.Equal(PreflightStatus.NotApplicable, findings.Single(f => f.Check == "Storage").Status);
         Assert.DoesNotContain(findings, finding => finding.Status == PreflightStatus.Fail);
