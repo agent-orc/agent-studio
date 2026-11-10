@@ -720,6 +720,36 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('crash-recovery-prompt')).toBeVisible();
   });
 
+  test('local one shot claim route is shown once in installation status', async ({ page }) => {
+    await stubGroupedHostApis(page);
+    await page.route('**/api/system/execution-infrastructure', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({
+        gate: { host: null, busy: 0, total: 0, reachability: 'not-configured', workers: [],
+          capacity: { slots: 1, processorsPerGate: 1, hostCores: null, allowOversubscription: false },
+          capacitySource: 'configuration' },
+        taskServer: 'local monolith', workstation: 'local',
+        engine: { state: 'not-required', required: false, lastContact: null, lastEngineId: null },
+      }),
+    }));
+    await page.goto('/#/workspace/settings/execution-hosts');
+    await page.getByTestId('remote-hosts-panel').getByTestId('environment-installation-toggle').click();
+    const status = page.getByTestId('one-shot-route-status');
+    await expect(status).toHaveCount(1);
+    await expect(status).toContainText('Claim route unavailable on the local monolith');
+    const directory = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
+    mkdirSync(directory, { recursive: true });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await expect(status).toBeVisible();
+        await status.scrollIntoViewIfNeeded();
+        await page.screenshot({ path: join(directory, `one-shot-route-${width}-${theme}.png`),
+          animations: 'disabled' });
+      }
+    }
+  });
+
   test('pinned installation checkpoints show observed facts and honest recovery limits in both themes', async ({ page }) => {
     const json = (body: unknown) => (route: Route) => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify(body),
