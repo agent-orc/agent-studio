@@ -332,6 +332,8 @@ test.describe('Human Review acceptance readiness', () => {
         await page.getByRole('combobox', { name: 'Board lane' }).selectOption({ label: 'Human review' });
         await expect(page.getByTestId('lane-5-human-review')).toBeVisible();
         await expect(page.getByTestId('acceptance-accept-ready')).toBeInViewport();
+        await expect(page.getByTestId('lane-5-human-review').getByTestId('acceptance-readiness-reason').first())
+          .toContainText('Every completion check passes');
       }
       for (const theme of ['light', 'dark'] as const) {
         await setTheme(page, theme);
@@ -341,6 +343,12 @@ test.describe('Human Review acceptance readiness', () => {
         await expect(page.getByTestId('acceptance-readiness-bar')).toBeVisible();
         await lane.screenshot({ path: path.join(RESULTS_DIR, `human-review-readiness--lane--${theme}--${width}.png`) });
         await page.screenshot({ path: path.join(RESULTS_DIR, `human-review-readiness--board--${theme}--${width}.png`) });
+        if (width === 390) {
+          const note = lane.getByTestId('acceptance-readiness-note').first();
+          await note.scrollIntoViewIfNeeded();
+          await expect(note).toBeInViewport();
+          await page.screenshot({ path: path.join(RESULTS_DIR, `human-review-readiness--reason--${theme}--390.png`) });
+        }
       }
     }
   });
