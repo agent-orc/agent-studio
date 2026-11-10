@@ -240,6 +240,9 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   active and no isolation finding released it. Eject
   (`POST /api/projects/{project}/batch-gate/members/{taskKey}/eject`) stays
   allowed (AGT-3483, `BatchIsolationGuard`).
+- An Escalated to Ready operator move can include `reissueInstructions` with up
+  to twelve selected findings and an optional owner note. The move persists
+  that handoff for the next run after rotating the old review artifacts.
 
 ## Entry Points
 

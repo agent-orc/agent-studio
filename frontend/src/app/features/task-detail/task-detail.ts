@@ -174,7 +174,7 @@ export class TaskDetailComponent implements OnDestroy {
   readonly navigateLaneRequested = output<string>();
   /** Lane-move requested via the triage panel. Parent runs the API call so
    *  it can advance to the next peer on success. */
-  readonly triageMoveRequested = output<{ targetState: string; actionId: string }>();
+  readonly triageMoveRequested = output<{ targetState: string; actionId: string; reissueInstructions?: { findings: string[]; note: string }; operatorOverride?: boolean; reason?: string }>();
   /** "Move to top" via the triage panel. */
   readonly triageMoveToTopRequested = output<{ actionId: string }>();
   /** "Delete" via the triage panel (already destructive-confirmed inside). */
@@ -364,6 +364,7 @@ export class TaskDetailComponent implements OnDestroy {
   readonly laneSize = computed(() => this.lanePeers().length);
 
   @ViewChild('detailHeader') private detailHeaderRef?: DetailHeaderComponent;
+  @ViewChild(EscalationSummaryComponent) private escalationSummaryRef?: EscalationSummaryComponent;
 
   // Wall-clock tick used by relative-time formatters (e.g. formatResetIn).
   // Sourced from NowTickService — keeps the formatter stable within one
@@ -1118,19 +1119,18 @@ export class TaskDetailComponent implements OnDestroy {
     return this.detail().info.state === TaskState.Progress;
   }
 
-  /**
-   * Triage panel: route a typed lane action to the right handler. Move /
-   * delete / move-to-top go to the parent (it owns the optimistic-paint and
-   * auto-advance to the next peer); start / stop / editPrompt / showActivity
-   * are local operations against the open job.
-   */
+  /** Route lane decisions to the parent and local controls to this detail view. */
   onTriageAction(payload: TriageActionPayload): void {
     if (this.mutationsBlocked() || this.triageActingId() !== null) return;
     const { id, intent } = payload;
+    if ((id === 'reissue-escalated' || id === 'accept-escalated') && !payload.reissueInstructions && !payload.operatorOverride) {
+      this.escalationSummaryRef?.openDecision(id);
+      return;
+    }
     switch (intent.kind) {
       case 'move':
         this.triageActingId.set(id);
-        this.triageMoveRequested.emit({ targetState: intent.targetState, actionId: id });
+        this.triageMoveRequested.emit({ targetState: intent.targetState, actionId: id, reissueInstructions: payload.reissueInstructions, operatorOverride: payload.operatorOverride, reason: payload.reason });
         return;
       case 'moveToTop':
         this.triageActingId.set(id);

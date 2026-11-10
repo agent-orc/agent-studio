@@ -87,7 +87,7 @@ export class TriageController {
    * declaration, a confirm dialog surfaces the AGT-1915 trap and the operator
    * must explicitly accept anyway. Every other move goes straight through.
    */
-  move(info: TaskInfo, ev: { targetState: string; actionId: string }): void {
+  move(info: TaskInfo, ev: { targetState: string; actionId: string; reissueInstructions?: { findings: string[]; note: string }; operatorOverride?: boolean; reason?: string }): void {
     if (isDeliveredArchiveMove(info, ev.targetState)) {
       void this.archiveDelivered(info, ev);
       return;
@@ -111,7 +111,7 @@ export class TriageController {
    */
   private async archiveDelivered(
     info: TaskInfo,
-    ev: { targetState: string; actionId: string },
+    ev: { targetState: string; actionId: string; reissueInstructions?: { findings: string[]; note: string }; operatorOverride?: boolean; reason?: string },
   ): Promise<void> {
     let verdict = archiveIntegrationVerdict(info);
     let deliveryRef = info.integration?.deliveryRef ?? null;
@@ -182,7 +182,7 @@ export class TriageController {
 
   private performMove(
     info: TaskInfo,
-    ev: { targetState: string; actionId: string },
+    ev: { targetState: string; actionId: string; reissueInstructions?: { findings: string[]; note: string }; operatorOverride?: boolean; reason?: string },
     reason?: string,
   ): void {
     const keepTaskOpen = ev.actionId === 'reissue-escalated';
@@ -237,7 +237,8 @@ export class TriageController {
       persisted,
     });
 
-    this.jobService.moveJob(info.id, ev.targetState, info.watchPath, undefined, reason).subscribe({
+    this.jobService.moveJob(info.id, ev.targetState, info.watchPath, undefined, ev.reason ?? reason,
+      ev.operatorOverride ?? false, 'revoke', false, ev.reissueInstructions).subscribe({
       next: () => {
         this.jobService.endOptimisticPersist();
         persistResolve();

@@ -31,6 +31,9 @@ export interface TriageActionPayload {
   /** Display label, used by the parent for confirmation toasts. */
   label: string;
   intent: TriageActionIntent;
+  reissueInstructions?: { findings: string[]; note: string };
+  operatorOverride?: boolean;
+  reason?: string;
 }
 
 export type TriageButtonVariant = 'primary' | 'secondary' | 'danger';
@@ -111,7 +114,7 @@ export const LANE_ACTIONS: Record<string, TriageButton[]> = {
   ],
   [TaskState.Escalated]: [
     { id: 'reissue-escalated',        label: 'Continue (reissue)',      variant: 'primary',   intent: { kind: 'move', targetState: TaskState.Ready } },
-    { id: 'accept-escalated',         label: 'Accept as-is',            variant: 'secondary', intent: { kind: 'move', targetState: TaskState.Completed } },
+    { id: 'accept-escalated',         label: 'Accept with reason',      variant: 'secondary', intent: { kind: 'move', targetState: TaskState.Completed } },
     { id: 'manual-resolve-escalated', label: 'Resolve manually',        variant: 'secondary', intent: { kind: 'move', targetState: TaskState.HumanReview } },
     { id: 'discard-escalated',        label: 'Abort',                   variant: 'danger',    intent: { kind: 'move', targetState: TaskState.Archive } },
   ],

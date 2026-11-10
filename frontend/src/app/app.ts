@@ -1365,6 +1365,7 @@ export class App implements OnInit, OnDestroy {
 
   private dispatchStudioTriage(info: TaskInfo, button: TriageButton): void {
     const id = button.id;
+    if (id === 'reissue-escalated' || id === 'accept-escalated') return this.jobDetailRef?.onTriageAction({ id, label: button.label, intent: button.intent });
     switch (button.intent.kind) {
       case 'move':
         this.onTriageMove(info, { targetState: button.intent.targetState, actionId: id });

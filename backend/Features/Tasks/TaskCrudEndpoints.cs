@@ -1650,7 +1650,8 @@ public static class TaskCrudEndpoints
                 jobId, request.TargetState, watchPath, ct, request.TargetIndex,
                 cause: OperatorActor(context), reason: request.Reason,
                 operatorOverride: request.OperatorOverride,
-                archiveOverride: request.ArchiveOverride);
+                archiveOverride: request.ArchiveOverride,
+                reissueInstructions: request.ReissueInstructions);
             if (activeBatch is not null)
             {
                 if (moved.Status == MoveJobStatus.Success)

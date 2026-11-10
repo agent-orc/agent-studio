@@ -1959,6 +1959,11 @@ unreported claim expires with its lease and is queued again.
   and does not shift the positions of eligible cards.
 - A re-open starts a new run. It must rerun pre steps, core, post steps, and
   append run history instead of flattening earlier evidence.
+- An operator's Escalated to Ready reissue carries the confirmed findings and
+  owner note in `operator-reissue.json`, written after the old review artifacts
+  rotate into history. The first pickup in that review epoch reads this handoff
+  even without the automatic reissue tag or an active prior pipeline record.
+  A later automatic reissue reads its new follow-up and review findings instead.
 - Before any automatic auto-review follow-up is persisted,
   `ReviewDecisionOrchestrator` compares its whitespace- and case-normalized
   base text with every prompt under `orchestrator-follow-up-history/`. A match

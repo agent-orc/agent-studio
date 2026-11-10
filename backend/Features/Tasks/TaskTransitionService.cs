@@ -159,10 +159,17 @@ public sealed class TaskTransitionService
         bool acceptOlderBriefDelivery = false,
         bool engineDecisionRequeue = false,
         AgentStudio.Runner.ContinuationBaseRecord? engineContinuationBase = null,
-        bool operatorDecisionPark = false)
+        bool operatorDecisionPark = false,
+        OperatorReissueInstructions? reissueInstructions = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return new MoveJobOutcome(MoveJobStatus.NotFound);
+        if (reissueInstructions is not null
+            && (info.State != TaskStates.Escalated || targetState != TaskStates.Ready
+                || !TimelineActors.IsHuman(cause)
+                || !OperatorReviewRequeueService.ValidInstructions(reissueInstructions)))
+            return new MoveJobOutcome(MoveJobStatus.Failure,
+                "Reissue instructions require an Escalated to Ready operator move, with up to 12 findings of 500 characters and an optional note of 2000 characters.");
         if (TaskKinds.IsDecision(info.Kind)
             && DecisionLaneGuard.Refusal(info, targetState, _scanner.GetReferenceIndex(), decisionReopenPermit) is { } refusal)
             return new MoveJobOutcome(MoveJobStatus.Failure, refusal);
@@ -622,7 +629,8 @@ public sealed class TaskTransitionService
                 fromState,
                 targetState,
                 reason,
-                cause!);
+                cause!,
+                reissueInstructions);
             _scanner.InvalidateCache();
             _scanner.PublishCoreFromKnownFolder(movedFolder);
         }
