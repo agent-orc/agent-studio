@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Restores a scheduled backup (AGT-3574) into a fresh, not yet started stack.
 #
-#   restore-backup.sh --key <backup-key-copy> --secret-key <secret-key-copy> <archive>
+#   restore-backup.sh --key <backup-key-copy> --secret-key <secret-key-copy> --host-ca <escrowed-ca-private-key> <archive>
 #
 # Run setup.sh for the new stack first and do not start it. Fetch the
 # archive and its .sha256 file from the off-host target, and bring the
-# escrowed backup key and secret store key copies to the host only for the
-# restore. The API image of this stack does the work in a one-shot container:
+# escrowed backup key, secret store key and host CA copies to the host only for
+# the restore. The API image of this stack does the work in a one-shot container:
 # it checks the checksum and both key fingerprints, clones every project
 # checkout from its recorded origin (through this account's SSH agent when
 # SSH_AUTH_SOCK is set), and only then writes the workspace, home, task
@@ -18,17 +18,19 @@ stack_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$stack_dir"
 
 usage() {
-  echo 'Usage: restore-backup.sh --key <backup-key-copy> --secret-key <secret-key-copy> <archive>' >&2
+  echo 'Usage: restore-backup.sh --key <backup-key-copy> --secret-key <secret-key-copy> [--host-ca <escrowed-ca-private-key>] <archive>' >&2
   exit 2
 }
 fail() { echo "Restore failed: $*" >&2; exit 1; }
 
 key=''
 secret_key=''
+host_ca=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --key) [ "$#" -ge 2 ] || usage; key="$2"; shift 2 ;;
     --secret-key) [ "$#" -ge 2 ] || usage; secret_key="$2"; shift 2 ;;
+    --host-ca) [ "$#" -ge 2 ] || usage; host_ca="$2"; shift 2 ;;
     --) shift; break ;;
     -*) usage ;;
     *) break ;;
@@ -38,6 +40,7 @@ done
 archive="$(realpath "$1")"
 key="$(realpath "$key")"
 secret_key="$(realpath "$secret_key")"
+if [ -n "$host_ca" ]; then host_ca="$(realpath "$host_ca")"; fi
 
 env_value() { sed -n "s/^$1=//p" .env | tail -n 1; }
 [ -f .env ] || fail 'no .env in the stack directory; run setup.sh for the new stack first'
@@ -47,6 +50,15 @@ digest="$(env_value STUDIO_API_DIGEST)"
 [ -r "$archive" ] || fail "cannot read the archive $archive"
 [ -r "$key" ] || fail "cannot read the backup key copy $key"
 [ -r "$secret_key" ] || fail "cannot read the secret store key copy $secret_key"
+if [ -n "$host_ca" ]; then
+  [ -r "$host_ca" ] || fail "cannot read the host CA copy $host_ca"
+  [ -r "$host_ca.pub" ] || fail "cannot read the host CA public key copy $host_ca.pub"
+  host_ca_dir="$(env_value STUDIO_HOST_CA_DIR)"
+  [ -n "$host_ca_dir" ] && [ -f "$host_ca_dir/ca" ] || fail 'STUDIO_HOST_CA_DIR must contain the CA created by setup.sh'
+  derived_public="$(ssh-keygen -y -f "$host_ca" 2>/dev/null)" || fail 'the host CA private key is invalid'
+  [ "$(printf '%s\n' "$derived_public" | awk '{print $1, $2}')" = "$(awk '{print $1, $2}' "$host_ca.pub")" ] \
+    || fail 'the host CA private and public keys do not match'
+fi
 if [ -n "$(docker compose ps --status running -q 2>/dev/null)" ]; then
   fail 'the stack is running; restore needs a fresh stack from setup.sh that has not been started'
 fi
@@ -93,5 +105,18 @@ docker run --rm --user 10001:10001 "${agent[@]}" \
 
 bash "$stack_dir/secret-key.sh" install "$data_dir" "$secret_key"
 bash "$stack_dir/backup-key.sh" install "$key"
+if [ -n "$host_ca" ]; then
+  if [ -f "$data_dir/host-certificates/ca-fingerprint" ]; then
+    expected_ca="$(cat "$data_dir/host-certificates/ca-fingerprint")"
+    supplied_ca="$(ssh-keygen -lf "$host_ca.pub" -E sha256 | awk '{print $2}')"
+    [ "$expected_ca" = "$supplied_ca" ] || fail 'the escrowed host CA does not match the restored host certificate state'
+  fi
+  ca_owner="$(stat -c '%u:%g' "$host_ca_dir/ca")"
+  install -m 600 "$host_ca" "$host_ca_dir/ca"
+  install -m 644 "$host_ca.pub" "$host_ca_dir/ca.pub"
+  chown "$ca_owner" "$host_ca_dir/ca" "$host_ca_dir/ca.pub"
+else
+  echo 'No escrowed host CA supplied. The Operations page will warn if the restored host certificate state does not match this CA.' >&2
+fi
 echo 'Restore complete. Compare restored-stack/.env with the new .env (domain, edge mode, backup target),'
 echo 'then start the stack with docker compose up -d and sign in with an existing account.'

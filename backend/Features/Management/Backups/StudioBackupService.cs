@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using AgentStudio.Registry;
 using AgentStudio.Secrets;
+using AgentStudio.Security;
 
 namespace AgentStudio.Management;
 
@@ -205,6 +206,8 @@ public sealed class StudioBackupService
             targetProblem ?? newestGood?.Upload?.Error);
 
         var warnings = new List<BackupWarning>();
+        if (HostCertificateAuthority.FingerprintWarning(_configuration) is { } caWarning)
+            warnings.Add(new("host-ca-mismatch", "danger", caWarning));
         if (!options.Enabled)
             warnings.Add(new("backup-disabled", "warning", "Scheduled backups are switched off (Backup:Enabled is false)."));
         else if (!options.Configured)
