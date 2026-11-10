@@ -712,6 +712,7 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
             RunnerId, ProjectName, "host", 1, "remote-runner"));
 
         Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        Assert.Equal("Remote follow-up", claim.RunSpec?.TaskTitle);
         Assert.Equal(prompt, claim.RunSpec!.FollowUp!.Prompt);
         Assert.Equal(claim.Lease!.AttemptId, claim.RunSpec.FollowUp.ClaimId);
         var progressFolder = Path.Combine(_watchPath, TaskStates.Progress, TaskKey);
@@ -2957,6 +2958,7 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
 
         Assert.Equal(RClaimStatus.Claimed, claim.Status);
         Assert.False(string.IsNullOrWhiteSpace(claim.TaskKey));
+        Assert.Equal("Daemon pickup", claim.RunSpec?.TaskTitle);
         Assert.Equal(TaskKey, claim.JobId);
         Assert.Equal(ProjectName, claim.ProjectName);
         Assert.NotNull(claim.Lease);
@@ -3006,6 +3008,7 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(claim.Lease.LeaseId, replay.Lease!.LeaseId);
         Assert.Equal(claim.Lease.AttemptId, replay.Lease.AttemptId);
         Assert.Equal(claim.Lease.FencingToken, replay.Lease.FencingToken);
+        Assert.Equal("Daemon pickup", replay.RunSpec?.TaskTitle);
 
         var telemetry = await http.GetFromJsonAsync<HostTelemetryResponse>(
             $"/api/clients/{Uri.EscapeDataString(client.ClientId)}/telemetry?window=1h");

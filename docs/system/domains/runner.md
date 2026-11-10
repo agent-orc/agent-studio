@@ -2542,6 +2542,12 @@ card), promotes the card to the top of `2-ready` with transition detail
 A manual start carries no prompt, so nothing is persisted; the promotion alone
 carries the intent.
 
+For remote execution, Run now queues the Ready card, but the assigned runner
+claims only while project pickup is Auto. The Ready card's CURRENT line uses the
+runner-level `manual-mode` reason and offers Switch to Auto inline. A reasonless
+runner queue says "Queued for runner"; only the `slots-full` reason says it is
+waiting for a runner slot.
+
 When a follow-up is queued during a live remote run, the card enters Ready but
 the earlier attempt keeps its lease and continues working. Remote dispatch
 records `earlier-run-still-leased` and skips that card until the lease is no
