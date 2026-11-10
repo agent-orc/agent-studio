@@ -34,6 +34,7 @@ export default defineConfig({
       '**/task-detail/triage-merge-status.spec.ts',
       '**/perf/board-bundle-lazy.spec.ts',
       '**/perf/board-window-benchmark.spec.ts',
+      '**/batch-gate/batch-flight-queue.spec.ts',
     ],
     use: { ...devices['Desktop Chrome'], channel: undefined, serviceWorkers: 'block' },
   }],

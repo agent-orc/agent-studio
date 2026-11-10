@@ -795,8 +795,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     public async Task Stranding_watchdog_starts_missing_review_in_both_transition_modes(bool engineMode)
     {
         var deliverySha = PublishDelivery("stranded-review.txt", "delivered work\n");
+        var clock = VerificationFixtureAtUtc;
         var deps = Build(deliverySha, initialState: TaskStates.AutoReview,
-            seedContent: false, engineMode: engineMode);
+            seedContent: false, engineMode: engineMode, authorityClock: () => clock);
         var card = deps.Scanner.FindJob(Slug, _watchPath)!;
         Assert.True(TaskJsonFile.UpdateField(card.FolderPath, "enteredLaneAt",
             VerificationFixtureAtUtc, NullLogger.Instance));
@@ -822,10 +823,66 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     }
 
     [Fact]
+    public async Task Stranding_watchdog_schedules_unscheduled_current_delivery_infrastructure_retry_once()
+    {
+        var clock = VerificationFixtureAtUtc;
+        var deliverySha = PublishDelivery("stranded-infra-review.txt", "delivered work\n");
+        var deps = Build(deliverySha, initialState: TaskStates.AutoReview,
+            seedContent: false, authorityClock: () => clock);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.True(TaskJsonFile.UpdateField(card.FolderPath, "enteredLaneAt",
+            clock.AddMinutes(-90), NullLogger.Instance));
+        deps.Scanner.InvalidateCache();
+        var run = deps.Authority.GetTaskProjection(TaskKey).CurrentRunAttempt!;
+        var created = deps.Authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            TaskKey, run.RepositoryId, deliverySha, run.AttemptId,
+            AttemptAuthorityService.Hash("requirements"), AttemptAuthorityService.Hash("policy"),
+            run.EvidenceDigests, "initial-infra-review"));
+        Assert.True(created.Accepted);
+        var claimed = deps.Authority.ClaimReview(created.AttemptId, "reviewer", "host", 60,
+            "claim-infra-review").ReviewAttempt!;
+        var settled = deps.Authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(claimed.AttemptId, claimed.LastFence,
+                claimed.AuthorityEpoch, "settle-infra-review"),
+            deliverySha, ReviewTerminalOutcome.InfrastructureFailure,
+            "ToolUnavailable", "Review host lost its toolchain."));
+        Assert.True(settled.Accepted);
+        clock = VerificationFixtureAtUtc.AddMinutes(45);
+
+        var lifecycle = new ReviewAttemptTaskLifecycleService(deps.Authority,
+            deps.Scanner, deps.Timeline, NullLogger<ReviewAttemptTaskLifecycleService>.Instance);
+        var records = new StallInterventionStore(() => _tempDir);
+        var log = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
+        var projector = new WatcherActivityProjector(log, deps.Scanner, deps.Configuration,
+            NullLogger<WatcherActivityProjector>.Instance);
+        var receipts = new StallInterventionReceipts(log, projector, deps.Scanner, deps.Timeline,
+            NullLogger<StallInterventionReceipts>.Instance);
+        var watchdog = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
+            lifecycle, new BatchGateStore(_tempDir), null!, deps.Settings,
+            deps.Pipeline, new AutoReviewPostProcessingQueue(), deps.Transitions,
+            null!, null!, records, receipts, deps.Configuration,
+            NullLogger<AutoReviewStrandingWatchdog>.Instance);
+
+        Assert.Equal(1, await watchdog.RunOnceAsync());
+        Assert.Equal(0, await watchdog.RunOnceAsync());
+        Assert.True(deps.Authority.HasScheduledReviewInfrastructureRetry(claimed.AttemptId));
+        Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        var intervention = Assert.Single(records.All());
+        Assert.Equal(AutoReviewStrandingAction.StartStep.ToString(), intervention.Action);
+        Assert.Contains("ReviewInfra/ToolUnavailable", intervention.Done);
+        Assert.Contains("Review host lost its toolchain", intervention.Done);
+        Assert.Contains(deps.Timeline.ReadAll(card.FolderPath), entry =>
+            entry.Kind == TimelineEventKinds.StallInterventionRecorded
+            && entry.Summary.Contains("ReviewInfra/ToolUnavailable"));
+    }
+
+    [Fact]
     public async Task Stranding_watchdog_requests_new_review_when_passed_review_covers_older_run()
     {
         var deliverySha = PublishDelivery("stranded-new-run.txt", "delivered work\n");
-        var deps = Build(deliverySha, initialState: TaskStates.AutoReview);
+        var clock = VerificationFixtureAtUtc;
+        var deps = Build(deliverySha, initialState: TaskStates.AutoReview,
+            authorityClock: () => clock);
         var olderReview = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt!;
         Assert.Equal(ReviewTerminalOutcome.Pass, olderReview.Outcome);
         var acquired = deps.Authority.AcquireRun(TaskKey, "PROJ-FIXTURE", null,
@@ -4324,6 +4381,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         bool authorityRebuilt = false,
         bool guarded = false,
         bool engineMode = false,
+        Func<DateTime>? authorityClock = null,
         BatchGateStore? batchGates = null)
     {
         var config = new ConfigurationBuilder()
@@ -4363,7 +4421,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var authority = new AttemptAuthorityService(
             config,
-            NullLogger<AttemptAuthorityService>.Instance);
+            NullLogger<AttemptAuthorityService>.Instance,
+            authorityClock);
         var deliveryBriefVersion = briefVersion ?? RunDispositionPolicy.BriefVersion("Fixture brief");
         var sourceRun = authority.AcquireRun(
             TaskKey,

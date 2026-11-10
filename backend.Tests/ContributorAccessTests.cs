@@ -1,7 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using AgentStudio.Shared;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -84,6 +86,48 @@ public sealed class ContributorAccessTests : IDisposable
     [MemberData(nameof(RouteMatrix))]
     public void Contributor_route_matrix(string method, string path, string? state, bool productionApproval, bool allowed)
         => Assert.Equal(allowed, ContributorAccessPolicy.Allows(method, path, state, productionApproval));
+
+    /// <summary>
+    /// AGT-3669: a Product card open skips the task sections listed in the
+    /// frontend <c>PRODUCT_DENIED_TASK_SECTIONS</c>. Each listed section must
+    /// really be refused here, and every refused <c>/details/{resource}</c>
+    /// read the selection knows must be listed, or a normal card open sends a
+    /// request that is answered 403.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Guard")]
+    public void Frontend_product_task_sections_match_the_refused_task_reads()
+    {
+        var app = Path.Combine(RepoRoot(), "frontend", "src", "app");
+        var access = File.ReadAllText(Path.Combine(app, "services", "task-section-access.service.ts"));
+        var sections = QuotedItems(access, @"PRODUCT_DENIED_TASK_SECTIONS = \[(?<items>[^\]]*)\]");
+        var resources = QuotedItems(File.ReadAllText(Path.Combine(app, "models", "task-core.model.ts")),
+            @"export type ResourceName = (?<items>[^;]*);");
+        Assert.NotEmpty(sections);
+        Assert.NotEmpty(resources);
+
+        foreach (var section in sections)
+        {
+            Assert.False(ContributorAccessPolicy.Allows("GET", $"/api/tasks/card/{section}", null, false), section);
+            Assert.False(ContributorAccessPolicy.Allows("GET", $"/api/tasks/card/details/{section}", null, false), section);
+        }
+        foreach (var resource in resources.Where(resource =>
+            !ContributorAccessPolicy.Allows("GET", $"/api/tasks/card/details/{resource}", null, false)))
+            Assert.Contains(resource, sections);
+    }
+
+    private static HashSet<string> QuotedItems(string source, string pattern)
+    {
+        var items = Regex.Match(source, pattern).Groups["items"].Value;
+        return Regex.Matches(items, "'(?<item>[^']+)'").Select(match => match.Groups["item"].Value).ToHashSet();
+    }
+
+    private static string RepoRoot([CallerFilePath] string sourceFile = "")
+    {
+        for (var current = Path.GetDirectoryName(sourceFile); !string.IsNullOrEmpty(current); current = Path.GetDirectoryName(current))
+            if (File.Exists(Path.Combine(current, "agent-taskboard.sln"))) return current;
+        throw new DirectoryNotFoundException("Repository root with agent-taskboard.sln not found.");
+    }
 
     [Theory]
     [InlineData(TaskStates.Backlog, TaskStates.Ready, false, false, true)]

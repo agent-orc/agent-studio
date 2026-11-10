@@ -6905,7 +6905,7 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
                 System.Globalization.CultureInfo.InvariantCulture),
             scheduled.GetProperty("details").GetProperty("retryBudget").GetString());
         var summary = scheduled.GetProperty("summary").GetString()!;
-        Assert.Contains("review infrastructure retry 1/3 scheduled in 1m", summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("review infrastructure retry 1/2 scheduled in 1m", summary, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(classification, summary, StringComparison.Ordinal);
         Assert.Contains("killed on its timeout", summary, StringComparison.Ordinal);
 
@@ -8236,7 +8236,9 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
         Assert.Contains(
             $"ReviewInfra/SnapshotUnavailable: {AttemptAuthorityService.ReviewInfrastructureRetryBudget} attempts, ",
             status);
-        Assert.Contains("- Divergent attempts: 3 of 4 attempts are classified differently", status);
+        Assert.Contains(
+            $"- Divergent attempts: {AttemptAuthorityService.ReviewInfrastructureRetryBudget} of {last} attempts are classified differently",
+            status);
         // 3. The options match the youngest cause, not the majority one.
         Assert.Contains("- Operator options for the newest cause ReviewInfra/ShaMismatch:", status);
         Assert.Contains("Re-run the source coding attempt", status);
