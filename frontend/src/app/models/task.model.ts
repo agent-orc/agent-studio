@@ -162,6 +162,11 @@ export interface TaskCompletionClaim {
   reason?: string | null;
   /** Who moved the card into the delivered lane. */
   actor?: string | null;
+  /**
+   * AGT-3621: set when the system gave the Human Review verdict in a person's
+   * place; completes "Accepted automatically by …". Null for a person's acceptance.
+   */
+  acceptedAutomaticallyBy?: string | null;
   currentBriefVersion?: string | null;
   deliveryBriefVersion?: string | null;
   reviewBriefVersion?: string | null;

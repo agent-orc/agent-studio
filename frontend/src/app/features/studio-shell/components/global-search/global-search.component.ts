@@ -7,6 +7,7 @@ import { DossierReferenceChipComponent } from '../../../../components/dossier-re
 import { DossierCatalogueService } from '../../../../services/dossier-catalogue.service';
 import { resolveDossierReference, type DossierReference } from '../../../../services/dossier-reference.util';
 import { ModalStackService } from '../../../../services/modal-stack.service';
+import { laneName, laneTone } from '../../../../models/lane-presentation';
 import { GlobalSearchItem, GlobalSearchService, SEARCH_DOMAINS, SearchDomain } from './global-search.service';
 
 /** Debounce before a keystroke turns into a request. */
@@ -44,6 +45,9 @@ export class GlobalSearchComponent {
   private readonly dossiers = inject(DossierCatalogueService);
   private readonly tabs = inject(StudioTabStateService);
   private readonly boardFilters = inject(BoardFiltersService);
+  /** A result's lane badge reads its one name and tone from lane-presentation (R9). */
+  protected readonly laneName = laneName;
+  protected readonly laneTone = laneTone;
   readonly tasks = input<readonly TaskInfo[]>([]);
   readonly open = model(false);
   readonly query = signal('');

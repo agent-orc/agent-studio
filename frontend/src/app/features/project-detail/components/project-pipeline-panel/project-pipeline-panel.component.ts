@@ -438,7 +438,8 @@ export class ProjectPipelinePanelComponent {
         if (this.pipelineType() !== pipelineType) return;
         this.overrides.set(res.pipelineSteps ?? {});
         this.clearConditionDraft(stepId);
-        if (patch.cliType !== undefined || patch.model !== undefined || patch.pinMode !== undefined) this.refreshEffective();
+        if (patch.cliType !== undefined || patch.model !== undefined || patch.pinMode !== undefined
+          || patch.economyModel !== undefined) this.refreshEffective();
       },
       error: () => {
         this.stepBusy[stepId] = false;

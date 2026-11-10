@@ -43,7 +43,8 @@ provide host, credential, merge, or promotion access.
    credentials (`scripts/compose-secret-bootstrap.sh`, mode 600) and the Task
    Server reads it through `OWNER_BOOTSTRAP_CODE_FILE`.
    The native Linux installer creates the same code at
-   `<orchestrator-config-root>/owner_bootstrap_code` with owner and service
+   `<orchestrator-config-root>/owner_bootstrap_code` (by default,
+   `/etc/agent-orchestrator/owner_bootstrap_code`) with owner and service
    read access, and keeps it across reinstallations.
    Native Windows stores `owner-bootstrap.code` in
    `%ProgramData%\AgentOrchestrator` with restricted host permissions.

@@ -344,7 +344,8 @@ public record GitCommitInfo(
     string Subject,
     int FilesChanged,
     int Added,
-    int Removed);
+    int Removed,
+    string? Body = null);
 
 public sealed record RemoteDeliveryCommitRange(
     bool Success,
@@ -4976,7 +4977,8 @@ public partial class GitService
             var integrationBranch = TaskIntegrationBranch.NormalizeRef(recordedIntegrationBranch);
             if (integrationBranch is null)
                 integrationBranch = TaskIntegrationBranch.NormalizeRef("main");
-            var exactCommits = GetCommitsInRangeAtRoot(repoRoot, baseSha, deliveryRef);
+            var exactCommits = WithMessagesAtRoot(repoRoot,
+                GetCommitsInRangeAtRoot(repoRoot, baseSha, deliveryRef));
             exactCommits.Reverse();
             return new RemoteDeliveryCommitRange(
                 true,
@@ -5015,7 +5017,8 @@ public partial class GitService
         if (string.IsNullOrWhiteSpace(selected.Branch))
             return Failed("No recorded main/develop base line shares history with the remote delivery.");
 
-        var commits = GetCommitsInRangeAtRoot(repoRoot, selected.Base, deliveryRef);
+        var commits = WithMessagesAtRoot(repoRoot,
+            GetCommitsInRangeAtRoot(repoRoot, selected.Base, deliveryRef));
         commits.Reverse();
         return new RemoteDeliveryCommitRange(
             true,
@@ -5030,6 +5033,29 @@ public partial class GitService
             string warning,
             DeliveryVerificationStatus verification = DeliveryVerificationStatus.NotVerifiable) =>
             new(false, null, null, null, [], warning, verification);
+    }
+
+    private List<GitCommitInfo> WithMessagesAtRoot(string repoRoot, List<GitCommitInfo> commits)
+    {
+        if (commits.Count == 0) return commits;
+        const char us = '\x1f';
+        const char rs = '\x1e';
+        var args = "show -s --no-patch --pretty=format:\"%H%x1f%B%x1e\" "
+            + string.Join(' ', commits.Select(commit => commit.Sha));
+        var (output, _, code) = RunGit(repoRoot, args);
+        if (code != 0) return commits;
+
+        var messages = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var record in output.Split(rs, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = record.Trim('\r', '\n', ' ');
+            var separator = trimmed.IndexOf(us);
+            if (separator > 0)
+                messages[trimmed[..separator]] = trimmed[(separator + 1)..].TrimEnd('\r', '\n');
+        }
+        return commits.Select(commit => messages.TryGetValue(commit.Sha, out var body)
+            ? commit with { Body = body }
+            : commit).ToList();
     }
 
     /// <summary>

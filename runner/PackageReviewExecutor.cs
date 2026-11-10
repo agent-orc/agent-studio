@@ -6,7 +6,8 @@ namespace AgentRunner;
 
 /// <summary>Output and usage of one package aspect call.</summary>
 internal sealed record PackageAgentRun(
-    string Output, int? ExitCode, string? Signal, DateTime StartedAt, DateTime FinishedAt, RemoteAgentUsage? Usage);
+    string Output, int? ExitCode, string? Signal, DateTime StartedAt, DateTime FinishedAt,
+    RemoteAgentUsage? Usage, string Error = "");
 
 /// <summary>
 /// Runs one claimed shadow package attempt (AGT-3400 S4): materialize, stack,
@@ -93,17 +94,34 @@ internal sealed class PackageReviewExecutor
         var verdicts = new List<ReviewPackageMemberVerdictDto>();
         var findings = new List<ReviewPackageFindingDto>();
         var evidence = new List<ReviewPackageCommandEvidenceDto>();
+        var inputOmissions = new List<string>();
         string? dossier = null;
         foreach (var command in subject.Plan.Commands)
         {
-            var appended = material.Text;
+            var appended = string.Empty;
             if (command.Aspect == ReviewPackageAspects.CrossCardConsistency)
                 appended += "\n" + (dossier ??= await workspace.DossierAsync(stack.CandidateSha!, ct));
-            var prompt = command.Prompt + "\n\n" + appended;
+            var input = ReviewAspectInputBudget.Compose(command.Prompt ?? string.Empty, material.Text, appended);
+            var prompt = input.Prompt;
+            if (input.Report != "No review input omitted.")
+                inputOmissions.Add($"{command.Aspect}: {input.Report}");
             var budget = ReviewAspectBudgetPolicy.Derive(command.CliType, command.Model, command.ThinkingLevel,
                 ReviewAspectBudgetPolicy.MaterialCharacters(prompt));
             var run = await _agent(workspace, lease,
                 command with { Prompt = prompt, TimeoutSeconds = Math.Max(command.TimeoutSeconds, budget.Seconds) }, ct);
+            var refusal = ReviewCliRefusalPolicy.Classify(command,
+                new ProcessResult(run.ExitCode ?? 1, run.Output, run.Error));
+            if (refusal is not null)
+            {
+                evidence.Add(new ReviewPackageCommandEvidenceDto(command.StepId, command.Aspect, command.CliType,
+                    run.Usage?.Model ?? command.Model, command.ThinkingLevel, run.StartedAt, run.FinishedAt,
+                    run.ExitCode, refusal, run.Usage?.InputTokens ?? 0, run.Usage?.OutputTokens ?? 0,
+                    run.Usage?.CacheReadTokens ?? 0, run.Usage?.CacheCreationTokens ?? 0, Sha256(run.Output)));
+                return Report(lease, ReviewPackageOutcomes.Infrastructure,
+                    $"Package aspect '{command.StepId}' was refused before a model verdict: {refusal}. "
+                    + (input.Report == "No review input omitted." ? string.Empty : "Input omissions: " + input.Report),
+                    tip, stack.CandidateSha, stack.Steps, verdicts, findings, evidence, material.Files, material.Lines);
+            }
             var parsed = ReviewPackageOutputParser.Parse(run.Output, command.Aspect, members);
             verdicts.AddRange(parsed.Verdicts);
             findings.AddRange(parsed.Findings.Select(finding =>
@@ -117,7 +135,9 @@ internal sealed class PackageReviewExecutor
         }
         return Report(lease, ReviewPackageOutcomes.Completed,
             $"{evidence.Count} package aspects over {members.Length} member(s); {findings.Count} cited finding(s), "
-            + $"{findings.Count(finding => finding.CrossCard)} cross-card.",
+            + $"{findings.Count(finding => finding.CrossCard)} cross-card."
+            + (inputOmissions.Count == 0 ? string.Empty
+                : " Input omissions: " + string.Join("; ", inputOmissions)),
             tip, stack.CandidateSha, stack.Steps, verdicts, findings, evidence, material.Files, material.Lines);
     }
 
@@ -207,7 +227,7 @@ internal sealed class PackageReviewExecutor
             workspace.RepositoryPath, workspace.ArtifactPath, workspace.HomePath, _log);
         var execution = await commands.RunAsync(command, ct);
         return new PackageAgentRun(execution.Process.StdOut, execution.Process.ExitCode, execution.Signal,
-            execution.StartedAt, execution.FinishedAt, execution.AgentUsage);
+            execution.StartedAt, execution.FinishedAt, execution.AgentUsage, execution.Process.StdErr);
     }
 
     private static string Sha256(string? text)

@@ -156,13 +156,16 @@ test('lane indicator and batch panel name the proven-red member, its failing tes
   await installRoutes(page);
   await page.goto('/?includeFixtures=true');
   await settle(page);
-  const indicator = page.locator('[data-testid="batch-lane-indicator"][data-batch-alert="red"]').first();
+  const indicator = page.locator('[data-testid="batch-lane-indicator"][data-batch-alert="red"]')
+    .filter({ visible: true }).first();
   await expect(indicator).toHaveAttribute('data-batch-id', 'batch-14');
   await expect(indicator.getByTestId('batch-lane-alert')).toHaveText('Batch batch-14 red');
   await expect(indicator.getByTestId('batch-lane-alert')).toHaveAttribute('data-tone', 'danger');
   await expect(indicator).toContainText('AGT-2 proven red');
   for (const width of WIDTHS) {
     await page.setViewportSize({ width, height: 900 });
+    // AGT-3590: below tablet width the board shows one lane group; Human Review sits in Done & Decide.
+    if (width < 768) await page.getByTestId('board-group-switch-decide').click();
     await indicator.scrollIntoViewIfNeeded();
     for (const theme of THEMES) {
       await setTheme(page, theme);

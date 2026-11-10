@@ -51,6 +51,23 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task IntegratedCard_StaysWithAPersonWhenTheProjectAutonomyIsManual()
+    {
+        // AGT-3621: a newcomer saw the system accept a Human Review card with no
+        // word of who decided. At Manual autonomy the verdict stays with a person.
+        var stack = Build(autonomyLevel: 0);
+        var integratedSha = Git(_repo, "rev-parse", "develop");
+        SeedTask(stack, "autonomy", integratedSha);
+
+        var snapshot = await stack.Rail.RunOnceAsync();
+
+        Assert.Equal(0, snapshot.Accepted);
+        var card = stack.Scanner.FindJob("autonomy", _watchPath)!;
+        Assert.Equal(TaskStates.HumanReview, card.State);
+        Assert.Null(card.CompletionClaim);
+    }
+
+    [Fact]
     public async Task ReconciledGeneration_IsAutoAcceptedAndRetainsCommitDecisions()
     {
         var stack = Build();
@@ -854,7 +871,8 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         bool bounceEnabled = true,
         bool projectBounceEnabled = true,
         TaskChangeNotifier? notifier = null,
-        bool guardedDeliveryChain = false)
+        bool guardedDeliveryChain = false,
+        int? autonomyLevel = null)
     {
         var logs = new List<string>();
         var values = new Dictionary<string, string?>
@@ -898,6 +916,7 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
             configuration);
         settings.SetIntegrationBranch(Project, "develop");
         settings.SetAutoPushStrategy(Project, AutoPushStrategies.Never);
+        settings.SetAutonomyLevel(Project, autonomyLevel);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, configuration);
         var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var integration = new TaskIntegrationStatusService(
@@ -936,7 +955,10 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
             timeline,
             configuration,
             new CollectingLogger<AcceptanceRailHostedService>(logs),
-            new IntegrationGenerationReconcileSweep(mutations));
+            new IntegrationGenerationReconcileSweep(mutations),
+            orchestratorDefaults: new OrchestratorDefaultsProvider(settings,
+                new WorkspaceSettingsService(NullLogger<WorkspaceSettingsService>.Instance, configuration),
+                new ProjectRegistry(configuration, NullLogger<ProjectRegistry>.Instance)));
         return new Stack(scanner, timeline, pipeline, integration, recovery, rail, logs, states);
     }
 
