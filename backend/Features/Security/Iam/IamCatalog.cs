@@ -38,6 +38,7 @@ public static class IamPermissions
 
     public const string ProjectRead = "project.read";
     public const string ProjectCardsWrite = "project.cards.write";
+    public const string ProjectCardsReview = "project.cards.review";
     public const string ProjectRunsOperate = "project.runs.operate";
     public const string ProjectChatWrite = "project.chat.write";
     public const string ProjectDocsWrite = "project.docs.write";
@@ -67,6 +68,8 @@ public static class IamPermissions
             "Read the installation security view: exposure, credential metadata, second factor coverage, versions, audit anomalies, and security cards. Never secret values."),
         new(ProjectRead, PermissionLevel.Project, "Read cards, runs, chats, documents, and project reports."),
         new(ProjectCardsWrite, PermissionLevel.Project, "Create, edit, order, and move cards."),
+        new(ProjectCardsReview, PermissionLevel.Project,
+            "Accept a card in Human Review, or send it back to Ready with a note for the next run."),
         new(ProjectRunsOperate, PermissionLevel.Project, "Start, stop, and continue runs, pipeline steps, merges, and integrations."),
         new(ProjectChatWrite, PermissionLevel.Project, "Send project, card, and Dossier chat turns."),
         new(ProjectDocsWrite, PermissionLevel.Project, "Edit the wiki, Dossiers, steering, and security documents."),
@@ -121,7 +124,13 @@ public static class IamRoles
     public const string Contributor = "contributor";
     public const string Viewer = "viewer";
     public const string Approver = "approver";
+    public const string Reviewer = "reviewer";
     public const string OperatorAgent = "operator-agent";
+
+    /// <summary>The invite form shows this sentence beside the role (AGT-3670).</summary>
+    public const string ReviewerDescription =
+        "Reviews and accepts cards in Human Review. For people who check deliveries: they read the card and its review, "
+        + "accept it, or send it back with a note for the next run. Cannot create cards or control runs.";
 
     private static readonly string[] ReadSet =
         [IamPermissions.WorkspaceRead, IamPermissions.ProjectRead, IamPermissions.SecretsRead];
@@ -129,8 +138,9 @@ public static class IamRoles
     private static readonly string[] DeveloperSet =
     [
         .. ReadSet,
-        IamPermissions.ProjectCardsWrite, IamPermissions.ProjectRunsOperate, IamPermissions.ProjectChatWrite,
-        IamPermissions.ProjectDocsWrite, IamPermissions.EnvironmentDeploy, IamPermissions.SecretsResolve,
+        IamPermissions.ProjectCardsWrite, IamPermissions.ProjectCardsReview, IamPermissions.ProjectRunsOperate,
+        IamPermissions.ProjectChatWrite, IamPermissions.ProjectDocsWrite, IamPermissions.EnvironmentDeploy,
+        IamPermissions.SecretsResolve,
     ];
 
     private static readonly string[] AdminSet =
@@ -173,6 +183,12 @@ public static class IamRoles
         Role(Contributor, StudioRoles.ContributorDisplayName, 20, "Product role: writes and accepts cards in assigned projects.",
             [IamPermissions.WorkspaceRead, IamPermissions.ProjectRead, IamPermissions.ProjectCardsWrite, IamPermissions.ProjectChatWrite],
             [IamScopeKind.Project], serviceAccounts: false),
+        // AGT-3670: the person who reviews deliveries. It reads what a Viewer
+        // reads, secret metadata excluded, and holds only the review decision:
+        // no card creation or editing, no lane moves, and no run controls.
+        Role(Reviewer, "Reviewer", 18, ReviewerDescription,
+            [IamPermissions.WorkspaceRead, IamPermissions.ProjectRead, IamPermissions.ProjectCardsReview],
+            [IamScopeKind.Workspace, IamScopeKind.Project], serviceAccounts: false),
         Role(Viewer, "Viewer", 10, "Reads everything in its scope, secret values excluded.",
             ReadSet, [IamScopeKind.Workspace, IamScopeKind.Project, IamScopeKind.Environment], serviceAccounts: true),
         Role(Approver, "Approver", 15, "Approves or rejects production releases in its scope.",
@@ -187,7 +203,9 @@ public static class IamRoles
 
     /// <summary>
     /// The legacy role a handler check reads for a role of this model: Admin,
-    /// Developer, and Operator agent act as operator, Approver as viewer. Used only for the
+    /// Developer, and Operator agent act as operator, Approver and Reviewer as
+    /// viewer. The middleware lets a viewer projection through only for the
+    /// production approval and the Human Review decision. Used only for the
     /// per-request projection, never persisted (see <see cref="LegacyRoleMapping.Summarize"/>).
     /// </summary>
     public static string LegacyRole(string? id) => id switch

@@ -273,7 +273,8 @@ public sealed record RunnerPrincipal(string RunnerId, string RunnerName, string 
 }
 
 public sealed record AuthStatusResponse(string Profile, bool BootstrapRequired, bool Authenticated, AuthUserResponse? User = null, string? CsrfToken = null, bool BootstrapCodeRequired = false, bool SecondFactorEnrollmentRequired = false);
-public sealed record AuthUserResponse(string Id, string Username, string DisplayName, string Role, IReadOnlyList<string> Projects, bool Disabled, bool MustChangePassword, IReadOnlyList<string>? ProductionApprovalProjects = null);
+/// <param name="ReviewerProjects">Only on the caller's own session: see <see cref="AccessSecurityStore.ReviewerProjects"/>.</param>
+public sealed record AuthUserResponse(string Id, string Username, string DisplayName, string Role, IReadOnlyList<string> Projects, bool Disabled, bool MustChangePassword, IReadOnlyList<string>? ProductionApprovalProjects = null, IReadOnlyList<string>? ReviewerProjects = null);
 public sealed record BootstrapRequest(string Username, string Password, string? DisplayName, string? BootstrapCode = null);
 public sealed record LoginRequest(string Username, string Password, string? SecondFactorCode = null,
     PasskeyAssertionProof? Passkey = null);

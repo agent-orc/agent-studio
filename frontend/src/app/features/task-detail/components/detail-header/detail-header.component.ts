@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, ElementRef, ViewChild, computed, effect, inject, input, output, signal } from '@angular/core';
+import { ReviewerSession } from '../../../../services/reviewer-session.service';
 import { TaskInfo, TaskState } from '../../../../models/task.model';
 import { laneName, laneTone as laneToneFor } from '../../../../models/lane-presentation';
 import {
@@ -214,14 +215,15 @@ export class DetailHeaderComponent {
   }
 
   // --- triage cluster (primary + overflow) --------------------------------
+  // AGT-3670: a Reviewer gets no cluster; the overview's review panel decides.
+  private readonly reviewer = inject(ReviewerSession);
+  readonly reviewsOnly = computed(() => this.reviewer.reviewsOnly(this.info().projectName));
 
   /** Lane label for tooltips / aria-text on the overflow trigger. */
   readonly triageLaneLabel = computed(() => laneLabelFor(this.info().state));
 
   /** Index 0 of the lane's action list when it carries a primary variant. */
-  readonly triagePrimary = computed<TriageButton | null>(() =>
-    primaryActionFor(this.info().state),
-  );
+  readonly triagePrimary = computed<TriageButton | null>(() => this.reviewsOnly() ? null : primaryActionFor(this.info().state));
 
   /**
    * State-dependent presentation for the Human Review acceptance primary. Null
@@ -265,9 +267,7 @@ export class DetailHeaderComponent {
   readonly primaryDecisionRefusal = computed(() => triageDecisionRefusal(this.info(), this.triagePrimary()));
 
   /** Remaining lane actions + always-on Edit/Delete fallbacks. */
-  readonly triageOverflow = computed<TriageButton[]>(() =>
-    overflowActionsFor(this.info().state),
-  );
+  readonly triageOverflow = computed<TriageButton[]>(() => this.reviewsOnly() ? [] : overflowActionsFor(this.info().state));
 
   /** True when a primary or any overflow action is available. */
   readonly hasTriageActions = computed(

@@ -381,6 +381,14 @@ function invalidOrchestratorContextKey<T>(): Observable<T> {
   }));
 }
 
+/** Answer of the Human Review decision routes (AGT-3670). */
+export interface HumanReviewDecisionResponse {
+  decision: 'accept' | 'send-back';
+  state: string;
+  /** For a send back: whether the follow-up is queued or only saved. */
+  followUp?: string | null;
+}
+
 @Injectable({ providedIn: 'root' })
 export class TaskService {
   private http = inject(HttpClient);
@@ -2113,6 +2121,28 @@ export class TaskService {
     return this.http.post<ContinueTaskResponse>(
       `${this.taskV1Url(jobId)}/continue`,
       body,
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /**
+   * AGT-3670: the Human Review decision. Accept moves the card to Accepted;
+   * send back moves it to Ready and queues the note as the next run's
+   * follow-up. Both routes need `project.cards.review`, which the Reviewer
+   * role holds without any card write or run control.
+   */
+  acceptHumanReview(jobId: string, watchPath?: string, note?: string) {
+    return this.http.post<HumanReviewDecisionResponse>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/human-review/accept`,
+      note ? { note } : {},
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  sendBackHumanReview(jobId: string, note: string, watchPath?: string) {
+    return this.http.post<HumanReviewDecisionResponse>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/human-review/send-back`,
+      { note },
       this.withWatchPath(watchPath),
     );
   }

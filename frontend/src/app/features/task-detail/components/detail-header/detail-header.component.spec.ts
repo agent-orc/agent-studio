@@ -5,6 +5,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { DetailHeaderComponent } from './detail-header.component';
+import { AuthSessionState } from '../../../../services/auth.service';
 import type { TaskInfo } from '../../../../models/task.model';
 
 const taskInfo: TaskInfo = {
@@ -167,6 +168,21 @@ describe('DetailHeaderComponent (smoke)', () => {
     });
     return fixture;
   }
+
+  it('offers a Reviewer no triage cluster: the review panel decides (AGT-3670)', async () => {
+    const fixture = await mountHeader();
+    TestBed.inject(AuthSessionState).status.set({
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr_rui', username: 'rui', displayName: 'Rui', role: 'viewer', projects: ['agent-taskboard'],
+        disabled: false, mustChangePassword: false, reviewerProjects: ['Agent-Taskboard'] },
+    });
+    fixture.detectChanges();
+
+    const cmp = fixture.componentInstance;
+    expect(cmp.triagePrimary()).toBeNull();
+    expect(cmp.triageOverflow()).toEqual([]);
+    expect(fixture.nativeElement.querySelector('[data-testid="triage-action-mark-done"]')).toBeNull();
+  });
 
   it('holds the git-dependent acceptance primary while git status is loading', async () => {
     const fixture = await mountHeader();

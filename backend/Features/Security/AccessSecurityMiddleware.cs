@@ -489,8 +489,11 @@ public sealed class AccessSecurityMiddleware
             await RejectPermission(context, decision, required.Permission);
             return;
         }
+        // Approver and Reviewer project as viewer; each keeps its one decision
+        // route, which declares the permission only that role adds.
         if (!safeMethod && projected.LegacyRole == StudioRoles.Viewer
-            && required.Permission != IamPermissions.EnvironmentProductionDeployApprove)
+            && required.Permission is not (IamPermissions.EnvironmentProductionDeployApprove
+                or IamPermissions.ProjectCardsReview))
         {
             await Reject(context, 403, "role-denied", "Viewer role is read-only.");
             return;

@@ -57,6 +57,20 @@ The spec covers the desktop project picker and the narrow-screen **More →
 Switch project** path at 1280 and 390 px in both themes. With
 `JOB_RESULTS_DIR` set, it writes four screenshots there for review.
 
+### Networked HTTPS profile
+
+`npm --prefix frontend run e2e -- e2e/security/reviewer-role.networked-https.spec.ts`
+selects the `networked-https` profile: a fresh networked monolith (as in
+`networked-monolith`) behind the same temporary localhost HTTPS proxy as
+`public-demo`. The proxy keeps the browser's Host and forwards the secure
+scheme, so the browser keeps the Secure `__Host-` session cookies and the
+backend's same-origin check sees the page's own origin. Specs run real
+sign-in, invitation, and second-factor flows in the browser with no cookie
+injection. Playwright ignores certificate errors only for this profile and
+`public-demo`. The Reviewer role spec (AGT-3670) writes its light, dark, and
+390 px screenshots and the review audit entries to
+`$JOB_RESULTS_DIR/reviewer-role/`.
+
 ## Suite layout
 
 Specs are grouped by domain under `e2e/<folder>/`, mirroring the feature

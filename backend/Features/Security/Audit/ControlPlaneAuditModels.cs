@@ -16,6 +16,8 @@ public static class ControlPlaneAuditStreams
     /// <summary>Operator surface records, such as the watcher lease (operator agent level OP-2).</summary>
     public const string Operator = "operator";
     public const string BreakGlass = "break-glass";
+    /// <summary>Human Review decisions: accept and send back (AGT-3670).</summary>
+    public const string Review = "review";
 }
 
 /// <summary>
