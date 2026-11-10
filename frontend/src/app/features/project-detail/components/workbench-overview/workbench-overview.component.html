@@ -70,15 +70,8 @@
                 <app-workbench-overview-card mode="decision" [item]="item"
                   [references]="referenceStatuses(item)" [referencesLoading]="referenceStatusesLoading()"
                   [excerptExpanded]="excerptExpanded(item)" [excerptCanExpand]="excerptCanExpand(item)"
-                  [reviewExpanded]="inlineDecisionExpanded(item)" (openRequested)="open(item)"
-                  (excerptToggleRequested)="toggleExcerpt(item)" (reviewToggleRequested)="toggleInlineDecision(item)">
-                  @if (inlineDecisionExpanded(item)) {
-                    <div class="workbench-overview__inline-viewer"
-                         [attr.data-testid]="'workbench-overview-inline-' + item.projectName + '-' + item.workbench.id">
-                      <app-workbench-viewer [projectName]="item.projectName" [workbenchId]="item.workbench.id" />
-                    </div>
-                  }
-                </app-workbench-overview-card>
+                  (openRequested)="open(item)"
+                  (excerptToggleRequested)="toggleExcerpt(item)" />
               }
             </div>
             }

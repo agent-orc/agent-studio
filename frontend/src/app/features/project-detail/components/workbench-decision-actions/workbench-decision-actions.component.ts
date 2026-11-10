@@ -96,7 +96,7 @@ export class WorkbenchDecisionActionsComponent {
   readonly canPrepareFeature = computed(() =>
     !this.settled() && !this.pending() && this.answersComplete());
   readonly canCreateFeature = computed(() =>
-    this.canPrepareFeature() && this.mode() === 'feature-spawn'
+    !this.settled() && this.answersComplete() && this.mode() === 'feature-spawn'
     && this.title().trim().length > 0 && this.goal().trim().length > 0);
   readonly canRequestRework = computed(() =>
     !this.settled() && !this.pending() && this.reworkAvailable() && this.hasReworkComment());
@@ -342,6 +342,9 @@ export class WorkbenchDecisionActionsComponent {
 
   private fail(error: unknown): Observable<never> {
     this.actionError.set(actionErrorMessage(error));
+    requestAnimationFrame(() => this.host.nativeElement
+      .querySelector<HTMLElement>('.decision-actions__error')
+      ?.scrollIntoView({ block: 'nearest' }));
     return EMPTY;
   }
 

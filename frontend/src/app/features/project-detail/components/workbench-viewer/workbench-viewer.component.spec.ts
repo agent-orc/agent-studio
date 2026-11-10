@@ -7,7 +7,6 @@ import { EMPTY, of } from 'rxjs';
 import type { WorkbenchDocument } from '../../../../models/project-docs.model';
 import {
   ISOLATED_HTML_LINK_MESSAGE,
-  WORKBENCH_DECISION_ANCHOR_MESSAGE,
   WORKBENCH_DECISION_CHANGE_MESSAGE,
   WORKBENCH_DECISION_FOCUS_ACTION_MESSAGE,
 } from '../../../../services/sandboxed-html.util';
@@ -192,7 +191,6 @@ describe('WorkbenchViewerComponent', () => {
     expect(frame.srcdoc).toBe(srcdoc);
     expect(srcdoc).toContain(ISOLATED_HTML_LINK_MESSAGE);
     expect(srcdoc).toContain(WORKBENCH_DECISION_CHANGE_MESSAGE);
-    expect(srcdoc).toContain(WORKBENCH_DECISION_ANCHOR_MESSAGE);
     expect(srcdoc).toContain(WORKBENCH_DECISION_FOCUS_ACTION_MESSAGE);
     expect(fixture.componentInstance.decisionMarkup().points[0].id).toBe('route');
     expect(document.querySelector('[data-testid="workbench-viewer-working-tree"]')).toBeNull();
@@ -225,21 +223,12 @@ describe('WorkbenchViewerComponent', () => {
       },
     ]);
 
-    fixture.componentInstance.onFrameMessage({
-      source: frame.contentWindow,
-      data: {
-        type: WORKBENCH_DECISION_ANCHOR_MESSAGE,
-        rect: { top: 320, left: 48, width: 640, height: 72 },
-        visible: true,
-      },
-    } as MessageEvent);
-    fixture.detectChanges();
     await fixture.whenStable();
     fixture.detectChanges();
     const inlineAction = fixture.nativeElement.querySelector(
       '[data-testid="workbench-inline-decision-action"]') as HTMLElement;
     expect(inlineAction).not.toBeNull();
-    expect(inlineAction.style.top).toBe('320px');
+    expect(inlineAction.style.top).toBe('');
     expect(inlineAction.querySelector('[data-testid="workbench-decision-start"]')).not.toBeNull();
 
     const inlineStart = inlineAction.querySelector(

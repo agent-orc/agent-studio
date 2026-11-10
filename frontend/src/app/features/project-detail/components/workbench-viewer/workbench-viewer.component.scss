@@ -54,6 +54,8 @@
 
 .workbench-viewer__frame-shell {
   position: relative;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -94,24 +96,23 @@
 
 .workbench-viewer__frame {
   display: block;
+  flex: 1 1 auto;
   width: 100%;
-  height: 100%;
+  height: 0;
   min-height: 0;
   border: 0;
   background: var(--studio-bg-elevated);
 }
 
 .workbench-viewer__decision-action {
-  position: absolute;
-  z-index: 3;
+  flex: 0 1 auto;
   box-sizing: border-box;
-  padding-top: var(--studio-spacing-2);
-  transition: opacity 120ms ease;
-}
-
-.workbench-viewer__decision-action--hidden {
-  pointer-events: none;
-  opacity: 0;
+  width: 100%;
+  max-height: 60%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--studio-border);
+  background: var(--studio-bg);
 }
 
 .workbench-viewer__state { padding: var(--studio-spacing-5); color: var(--studio-fg-muted); }

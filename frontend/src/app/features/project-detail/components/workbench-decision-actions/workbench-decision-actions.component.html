@@ -53,7 +53,7 @@
     <div class="decision-actions__buttons">
       <button type="button" [disabled]="pending()" (click)="closeConfirmation()">Cancel</button>
       <button type="submit" data-testid="workbench-decision-confirm-rework"
-              [disabled]="!canRequestRework() || !model().trim()" [appPendingButton]="pending()"
+              [disabled]="(!canRequestRework() || !model().trim()) && !pending()" [appPendingButton]="pending()"
               pendingLabel="Requesting…">Confirm rework request</button>
     </div>
   </form>

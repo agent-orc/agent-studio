@@ -42,13 +42,14 @@ function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 }
 
-async function installMocks(page: Page): Promise<CapturedCalls> {
+async function installMocks(page: Page, failFirstConfirm = false): Promise<CapturedCalls> {
   const captured: CapturedCalls = { taskBodies: [], decisionBodies: [], steerBodies: [] };
   let taskCreated = false;
   let decision: Record<string, unknown> | null = null;
   let decisionStage: string | null = null;
   let revision = '0123456789abcdef';
   let fingerprint = 'a'.repeat(64);
+  let confirmFailed = false;
 
   await page.route('**/api/**', route => json(route, []));
   await page.route('**/api/v1/studio/auth/status', route => json(route, {
@@ -65,6 +66,14 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
       sortOrder: 0, archived: false, urls: [],
     }],
   }]));
+  await page.route('**/api/workspaces/workspace-evidence/quota/admission', route => json(route, {
+    workspaceId: 'workspace-evidence',
+    workspace: {
+      projectId: null, project: null, status: 'ok', message: null,
+      overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false,
+    },
+    projects: [],
+  }));
   await page.route('**/api/environment**', route => json(route, {
     isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false },
   }));
@@ -74,6 +83,9 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
   }));
   await page.route('**/api/cli/usage**', route => json(route, {
     at: '2026-08-11T10:00:00Z', sessions: [],
+  }));
+  await page.route('**/api/usage/cockpit**', route => route.fulfill({
+    status: 503, contentType: 'text/plain', body: 'Unavailable',
   }));
   await page.route(/\/api\/cli\/[^/]+\/models(?:\?.*)?$/, route => {
     const cli = new URL(route.request().url()).pathname.split('/')[3];
@@ -96,6 +108,7 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
     economyDowngraded: false, policyVersion: 'e2e',
     policyWikiPath: 'docs/system/domains/model-routing-policy.md',
   }));
+  await page.route('**/api/token-pricing/calculate', route => json(route, { items: [] }));
   await page.route('**/api/crash-recovery/pending**', route => json(route, { pending: [] }));
   await page.route('**/api/workbenches**', route => json(route, {
     includesHistory: true,
@@ -105,7 +118,7 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
       workbench: {
         id: WORKBENCH_ID, key: WORKBENCH_KEY, title: 'Naming Dossier',
         summary: 'Choose the stable naming contract used by public references.',
-        status: 'active', phase: 'decision-ready',
+        status: 'decision-pending', phase: 'decision-ready',
         updatedAtUtc: '2026-08-11T10:00:00Z',
         entryPath: 'docs/operations/naming-dossier/index.html',
         valid: true, error: null, sourceTaskKeys: ['AGT-2600'],
@@ -121,7 +134,7 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
       items: [{
         id: WORKBENCH_ID, key: WORKBENCH_KEY, title: 'Naming Dossier',
         summary: 'Choose the stable naming contract used by public references.',
-        status: 'active', phase: 'decision-ready',
+        status: 'decision-pending', phase: 'decision-ready',
         updatedAtUtc: '2026-08-11T10:00:00Z',
         entryPath: 'docs/operations/naming-dossier/index.html',
         valid: true, error: null, sourceTaskKeys: ['AGT-2600'],
@@ -189,6 +202,10 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
     route => {
       const body = JSON.parse(route.request().postData() ?? '{}') as Record<string, unknown>;
       captured.decisionBodies.push(body);
+      if (failFirstConfirm && !confirmFailed) {
+        confirmFailed = true;
+        return json(route, { error: 'Decision confirmation failed. Try again.' }, 500);
+      }
       revision = '2345678901abcdef';
       fingerprint = 'c'.repeat(64);
       const outcome = body['outcome'] as string;
@@ -226,7 +243,7 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
       workbench: {
         id: WORKBENCH_ID, key: WORKBENCH_KEY, title: 'Naming Dossier',
         summary: 'Choose the stable naming contract used by public references.',
-        status: decisionStage === 'succeeded' ? 'decided' : 'active',
+        status: decisionStage === 'succeeded' ? 'decided' : 'decision-pending',
         phase: 'decision-ready', updatedAtUtc: '2026-08-11T10:00:00Z',
         entryPath: 'docs/operations/naming-dossier/index.html', valid: true, error: null,
         sourceTaskKeys: ['AGT-2600'], relatedTaskKeys: taskCreated ? ['AGT-2611'] : [],
@@ -241,8 +258,8 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
   return captured;
 }
 
-async function seedWorkbench(page: Page) {
-  await page.addInitScript(({ project, workbenchId }) => {
+async function seedWorkbench(page: Page, theme: 'light' | 'dark' = 'light') {
+  await page.addInitScript(({ project, workbenchId, theme }) => {
     if (!sessionStorage.getItem('agt2610-workbench-seeded')) {
       sessionStorage.clear();
       sessionStorage.setItem('agt2610-workbench-seeded', '1');
@@ -252,10 +269,67 @@ async function seedWorkbench(page: Page) {
       tabs: [{ kind: 'workbench', projectName: project, workbenchId, title: 'Naming Dossier' }],
       activeKey: `workbench:${project}:${workbenchId}`,
     }));
-    localStorage.setItem('atp.studio.theme', 'light');
+    localStorage.setItem('atp.studio.theme', theme);
     localStorage.setItem('defaultCliType', 'claude');
     localStorage.setItem('defaultModel:claude', 'claude-opus-4-6');
-  }, { project: PROJECT, workbenchId: WORKBENCH_ID });
+  }, { project: PROJECT, workbenchId: WORKBENCH_ID, theme });
+}
+
+for (const scenario of [
+  { name: 'light', theme: 'light', width: 1600, height: 1000 },
+  { name: 'dark', theme: 'dark', width: 1600, height: 1000 },
+  { name: '390px', theme: 'light', width: 390, height: 844 },
+] as const) {
+  test(`failed Dossier confirmation remains reachable by mouse in ${scenario.name}`, async ({ page, devBackend }) => {
+    expect(devBackend.port).toBeGreaterThan(0);
+    mkdirSync(RESULTS, { recursive: true });
+    await page.setViewportSize({ width: scenario.width, height: scenario.height });
+    const captured = await installMocks(page, true);
+    await seedWorkbench(page, scenario.theme);
+    await page.goto('/');
+
+    const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
+    await frame.locator('[data-option-id="option-a"] input').check();
+    const inline = page.getByTestId('workbench-inline-decision-action');
+    await inline.getByTestId('workbench-decision-start').click();
+    await inline.getByTestId('workbench-decision-title').fill('Implement the stable naming contract');
+    await inline.getByTestId('workbench-decision-goal').fill('Use the selected public name.');
+    await inline.getByTestId('workbench-decision-confirm').click();
+    await expect(inline.getByRole('alert').first()).toContainText('Decision confirmation failed');
+    await expect(inline.getByRole('alert').first()).toBeInViewport();
+    await expect(inline.getByTestId('workbench-decision-confirm')).toBeEnabled();
+    await page.screenshot({
+      path: resolve(RESULTS, `dossier-confirm-failed-${scenario.name}.png`),
+    });
+
+    await page.reload();
+    const restored = page.getByTestId('workbench-inline-decision-action');
+    await expect(restored.getByTestId('workbench-decision-title'))
+      .toHaveValue('Implement the stable naming contract');
+    await expect(restored.getByTestId('workbench-decision-confirm')).toBeEnabled();
+    await page.screenshot({
+      path: resolve(RESULTS, `dossier-confirm-restored-${scenario.name}.png`),
+    });
+
+    if (scenario.name === 'light') {
+      await page.getByTestId(`studio-tab-close-workbench:${PROJECT}:${WORKBENCH_ID}`).click();
+      await page.getByTestId('studio-ab-workbenches').click();
+      await page.getByTestId(`workbench-overview-open-${PROJECT}-${WORKBENCH_ID}`).click();
+      await expect(page.getByTestId('workbench-viewer')).toBeVisible();
+      await expect(page.getByTestId('workbench-inline-decision-action')
+        .getByTestId('workbench-decision-confirm')).toBeEnabled();
+    }
+
+    await page.getByTestId('workbench-inline-decision-action')
+      .getByTestId('workbench-decision-confirm').click();
+    await expect(page.getByTestId('workbench-inline-decision-action')
+      .getByTestId('workbench-decision-created-tasks')).toContainText('AGT-2611');
+    expect(captured.taskBodies).toHaveLength(1);
+    expect(captured.decisionBodies).toHaveLength(4);
+    await page.screenshot({
+      path: resolve(RESULTS, `dossier-confirm-retried-${scenario.name}.png`),
+    });
+  });
 }
 
 test('inline Dossier decision starts a Ready task with the selected agent', async ({ page, devBackend }) => {

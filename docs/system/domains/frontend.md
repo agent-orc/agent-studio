@@ -755,8 +755,9 @@ occur. It is not a claim about tunnel transfer time.
   Filter and sort state use one encoded route-local `dossier` query value and
   separate session entries for the global and each project scope; explicit URL
   state wins when a link is opened.
-  Pending overview cards expand the existing isolated viewer and inline decision
-  controls in place, while retaining a direct link to the full viewer.
+  Review here on a pending overview card opens the full isolated viewer. The
+  decision panel is docked below the document with its own bounded scroll area,
+  so confirmation errors and restored drafts remain reachable without clipping.
   Every overview card reads top-down through title, a copyable Dossier-key-first
   metadata row, a labelled linked-card row, a wide summary preview, and a
   right-aligned footer action row. Summary previews use the shared wide prose

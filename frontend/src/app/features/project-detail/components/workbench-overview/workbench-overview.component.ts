@@ -24,7 +24,6 @@ import {
 } from '../../../../services/dossier-section-state.service';
 import { WorkbenchOverviewCardComponent } from '../workbench-overview-card/workbench-overview-card.component';
 import { WorkbenchOverviewControlsComponent } from '../workbench-overview-controls/workbench-overview-controls.component';
-import { WorkbenchViewerComponent } from '../workbench-viewer/workbench-viewer.component';
 import { WorkbenchOverviewViewStateService } from './workbench-overview-view-state.service';
 import { BoardFiltersService } from '../../../board/state/board-filters.service';
 import { TagFiltersComponent } from '../../../../components/tag-filters/tag-filters.component';
@@ -38,7 +37,6 @@ import type { WorkbenchOverview, WorkbenchOverviewItem } from '../../../../model
     DisclosureMarkerComponent,
     WorkbenchOverviewCardComponent,
     WorkbenchOverviewControlsComponent,
-    WorkbenchViewerComponent,
     TagFiltersComponent,
   ],
   providers: [WorkbenchOverviewViewStateService],
@@ -64,7 +62,6 @@ export class WorkbenchOverviewComponent {
   readonly overview = signal<WorkbenchOverview | null>(null);
   readonly loading = signal(false);
   readonly error = signal(false);
-  readonly expandedDecisionKey = signal<string | null>(null);
   readonly expandedExcerptKeys = signal<ReadonlySet<string>>(new Set());
   readonly referenceStatusesByItem = signal<ReadonlyMap<string, readonly TaskReferenceStatus[]>>(new Map());
   readonly referenceStatusesLoading = signal(false);
@@ -94,7 +91,6 @@ export class WorkbenchOverviewComponent {
       const projectName = this.projectName();
       untracked(() => {
         this.viewState.setScope(projectName);
-        this.expandedDecisionKey.set(null);
         this.expandedExcerptKeys.set(new Set());
         this.load(projectName, true);
       });
@@ -133,13 +129,6 @@ export class WorkbenchOverviewComponent {
   resetView(): void {
     this.viewState.reset();
     this.tagFilters.setTagSelection(new Set());
-  }
-  toggleInlineDecision(item: WorkbenchOverviewItem): void {
-    const key = this.itemKey(item);
-    this.expandedDecisionKey.update(current => current === key ? null : key);
-  }
-  inlineDecisionExpanded(item: WorkbenchOverviewItem): boolean {
-    return this.expandedDecisionKey() === this.itemKey(item);
   }
   excerptExpanded(item: WorkbenchOverviewItem): boolean {
     return this.expandedExcerptKeys().has(this.itemKey(item));

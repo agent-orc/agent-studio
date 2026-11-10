@@ -220,19 +220,8 @@ describe('WorkbenchOverviewComponent', () => {
 
     (fixture.nativeElement.querySelector('[data-testid="workbench-overview-open-Demo-pending"]') as HTMLButtonElement).click();
     fixture.detectChanges();
-    expect(fixture.nativeElement.querySelector('[data-testid="workbench-overview-inline-Demo-pending"]'))
-      .not.toBeNull();
-    http.expectOne('/api/projects/Demo/workbenches/pending').flush({
-      workbench: pending.workbench,
-      html: '<section data-decision-id="route" data-decision-kind="single"><strong>Choose route</strong><span data-option-id="direct">Direct</span></section>',
-      branch: 'develop',
-      revision: 'abc123',
-      workingTreeModified: false,
-      fingerprint: 'fingerprint',
-    });
-    fixture.detectChanges();
-    expect(fixture.nativeElement.querySelector('[data-testid="workbench-viewer"]')).not.toBeNull();
-    expect(fixture.nativeElement.querySelector('[data-testid="workbench-viewer-open-wiki"]')).toBeNull();
+    expect(opened).toEqual(pending);
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-viewer"]')).toBeNull();
     http.verify();
   });
 

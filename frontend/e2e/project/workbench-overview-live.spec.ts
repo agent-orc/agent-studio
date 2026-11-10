@@ -353,10 +353,10 @@ test('project and central overviews receive a newly created item without reloadi
     const overviewUrl = page.url();
     await page.getByTestId(`workbench-overview-open-${projectName}-${id}`).click();
     await expect(page).toHaveURL(overviewUrl);
-    const inlineViewer = page.getByTestId(`workbench-overview-inline-${projectName}-${id}`);
-    await expect(inlineViewer).toBeVisible();
-    await expect(inlineViewer.frameLocator('[data-testid="workbench-viewer-frame"]')
+    await expect(page.getByTestId('workbench-viewer')).toBeVisible();
+    await expect(page.frameLocator('[data-testid="workbench-viewer-frame"]')
       .locator('[data-studio-decision-control]')).toHaveCount(2);
+    await page.getByTestId('studio-ab-workbenches').click();
 
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);

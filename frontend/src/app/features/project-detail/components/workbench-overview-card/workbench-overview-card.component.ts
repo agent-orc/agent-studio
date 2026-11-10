@@ -31,7 +31,6 @@ type OverviewCardMode = 'decision' | 'current' | 'invalid' | 'history';
   host: {
     'class': 'workbench-overview__row',
     'role': 'article',
-    '[class.workbench-overview__row--expanded]': 'reviewExpanded()',
     '[class.workbench-overview__row--invalid]': "mode() === 'invalid'",
     '[class.workbench-overview__row--history]': "mode() === 'history'",
     '[attr.data-testid]': 'itemTestId()',
@@ -44,9 +43,7 @@ export class WorkbenchOverviewCardComponent {
   readonly referencesLoading = input(false);
   readonly excerptExpanded = input(false);
   readonly excerptCanExpand = input(false);
-  readonly reviewExpanded = input(false);
   readonly openRequested = output<void>();
-  readonly reviewToggleRequested = output<void>();
   readonly excerptToggleRequested = output<void>();
 
   private readonly projects = inject(ProjectLookupService);
