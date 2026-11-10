@@ -203,11 +203,34 @@ reports `codeState: awaiting`. The Owner signs in, pastes the code into the
 first-run checklist, and the browser posts it once with its session key
 (`POST /api/v1/management/device-logins/{handle}/code`). The server keeps it
 only in memory and hands it once to the claiming runner
-(`POST /api/v1/runners/{runnerId}/device-login/{handle}/code`), which writes it
-to the CLI's stdin and then closes stdin. The code is never logged, audited,
+(`POST /api/v1/runners/{runnerId}/device-login/{handle}/code`), which types it
+once into the CLI's pseudo-terminal and presses Enter. The code is never logged, audited,
 echoed in a response or written to disk; cancel, timeout and completion drop a
 code no runner took. A code the CLI refuses ends the session with
-"Claude did not accept the authorization code." While the CLI runs, the runner reads the session state
+"Claude did not accept the authorization code."
+
+`claude setup-token` reads that code only from a terminal: it renders its
+prompt with Ink, which switches stdin to raw mode and fails with "Raw mode is
+not supported" on a pipe (checked in the Claude Code 2.1 bundle; the `auth login`
+fallback that reads a piped stdin does not print a setup token). The runner
+therefore starts the Claude sign-in in a pseudo-terminal through Porta.Pty, the
+library its host quota probe already uses, never with plain stdin. Limits:
+
+- The terminal is 4000 columns wide so the authorize URL and the token each stay
+  on one line; output is parsed after stripping CSI and OSC (hyperlink) escapes.
+  Stdout and stderr arrive merged.
+- The CLI answers a wrong code with a retry prompt instead of exiting. A CLI
+  that is still running two minutes after the code (`CodeAcceptanceTimeout`)
+  counts as a refused code, is stopped with its process tree and reports the
+  message above. A slower provider exchange fails the same way; start again.
+- The runner types only one code per session and never presses a key for the
+  retry prompt. A code that is not one `code#state` value of URL-safe
+  characters is never typed.
+- The host needs a working pseudo-terminal device (`/dev/ptmx` on Linux). The
+  pseudo-terminal path is covered on Linux only; Windows ConPTY is untested.
+- Codex keeps its closed stdin pipe; it takes no code.
+
+While the CLI runs, the runner reads the session state
 every 2 seconds (`GET /api/v1/runners/{runnerId}/device-login/{handle}`, state
 only). A Studio cancel, a Task Server timeout or a failed instruction publish
 stops the process tree, accepts no credential and reports `failed`; on runner

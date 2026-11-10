@@ -4,6 +4,7 @@ export const TASK_HEADER_SLOTS = [
   'app-detail-header',
   'app-archived-task-notice',
   'app-task-live-status',
+  'app-cause-breaker-recheck',
   'app-card-environment-badges',
   'app-task-preview',
   'app-batch-detail',
