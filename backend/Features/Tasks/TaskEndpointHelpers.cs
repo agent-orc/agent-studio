@@ -97,6 +97,9 @@ internal static class TaskEndpointHelpers
                     AcceptanceAttemptLineagePolicy.MissingRunAttemptRefusal, StringComparison.Ordinal) == true
                     ? "run-attempt-missing" : "integration-dead-end",
         }),
+        MoveJobStatus.ActiveBatchMember when outcome.ActiveBatch is { } batch => Results.Json(
+            AgentStudio.Pipeline.ActiveBatchMemberGuardPolicy.Body(batch),
+            statusCode: StatusCodes.Status409Conflict),
         MoveJobStatus.PendingIntentSupersedeFailed => Results.Json(
             new
             {
