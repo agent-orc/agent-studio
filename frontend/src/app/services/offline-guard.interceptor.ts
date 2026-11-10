@@ -26,18 +26,29 @@ const READ_ONLY_POST_URLS = new Set([
   '/api/tasks/reference-status',
   '/api/token-pricing/calculate',
 ]);
-// Authentication must remain available even when the live-update socket has
-// not connected yet (or a signed-out browser cannot open it).
-const AUTH_POST_URLS = new Set([
-  '/api/v1/studio/auth/bootstrap',
-  '/api/v1/studio/auth/login',
-  '/api/v1/studio/auth/change-password',
-  '/api/v1/studio/auth/logout',
-  '/api/auth/bootstrap',
-  '/api/auth/login',
-  '/api/auth/change-password',
-  '/api/auth/logout',
-]);
+// Every request the sign-in gate can issue must pass: the live-update socket
+// is not connected while the gate is shown, so the offline signal turns true
+// after its grace window and would otherwise refuse owner setup, second-factor
+// enrollment, invitation acceptance and recovery (AGT-3614). Both sign-in
+// stacks expose the same actions under their own root.
+const AUTH_ROOTS = ['/api/v1/studio/auth', '/api/auth'];
+const AUTH_GATE_ACTIONS = [
+  'bootstrap',
+  'login',
+  'change-password',
+  'logout',
+  'totp/start',
+  'totp/confirm',
+  'passkeys/assertion-options',
+  'passkeys/register-options',
+  'passkeys/register',
+  'invite/accept',
+  'recover',
+  'recovery-code',
+];
+export const AUTH_GATE_POST_URLS: ReadonlySet<string> = new Set(
+  AUTH_ROOTS.flatMap(root => AUTH_GATE_ACTIONS.map(action => `${root}/${action}`)),
+);
 
 // One toast per burst: a single user action can fan out several writes, and a
 // stack of identical "backend offline" toasts is noise, not signal.
@@ -55,7 +66,7 @@ export const offlineGuardInterceptor: HttpInterceptorFn = (req, next) => {
 
   const isOwnApi = req.url.startsWith('/api');
   const method = req.method.toUpperCase();
-  const isReadOnlyPost = method === 'POST' && (READ_ONLY_POST_URLS.has(req.url) || AUTH_POST_URLS.has(req.url));
+  const isReadOnlyPost = method === 'POST' && (READ_ONLY_POST_URLS.has(req.url) || AUTH_GATE_POST_URLS.has(req.url));
   const isMutating = MUTATING_METHODS.has(method) && !isReadOnlyPost;
 
   if (conn.offline() && isOwnApi && isMutating) {

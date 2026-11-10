@@ -96,6 +96,14 @@ public sealed record ReviewAttempt
     /// an adopted worker is never killed for a release mismatch.
     /// </summary>
     public string? WorkerReleaseSuperseded { get; init; }
+
+    /// <summary>
+    /// <c>graded by release &lt;id&gt; (commit &lt;sha&gt;), which differs from
+    /// Stable &lt;version&gt; (&lt;sha&gt;)</c> when the grading host did not run
+    /// the Stable build at the time the report arrived (AGT-3689); null when it
+    /// did or nothing comparable was recorded. Reporting only.
+    /// </summary>
+    public string? WorkerReleaseStable { get; init; }
 }
 
 /// <summary>A blocking aspect on the latest review attempt, with its quoted reason.</summary>
@@ -238,6 +246,7 @@ public static class ReviewProjectionReader
         DaemonReleaseId = fact.DaemonReleaseId,
         WorkerReleaseSuperseded = AgentStudio.TaskServer.Contracts.ReviewWorkerProvenancePolicy
             .SupersededNotice(fact.WorkerReleaseId, fact.DaemonReleaseId),
+        WorkerReleaseStable = fact.WorkerReleaseStable,
     };
 
     private static ReviewAttempt ToAttempt(LocalReviewAttemptFacts fact) => new()
