@@ -211,6 +211,9 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   The initial `Formed` state is durable before its manifest becomes visible.
   A manifest found without state rows is `Unknown`; recovery skips it and logs
   the missing state once per manifest per store instance.
+  A missing manifest and missing state also reads as `Unknown`. The auto-review
+  watchdog keeps ownership with a visible manifest whose state is `Unknown`,
+  avoiding a second review pass while state visibility is unresolved.
   A queued code push keeps its project batch reservation pending until origin
   verifies the merged SHA. The pending marker is a durable recovery job, so a
   startup sweep re-drives it even if the card remains in Auto Review and the
