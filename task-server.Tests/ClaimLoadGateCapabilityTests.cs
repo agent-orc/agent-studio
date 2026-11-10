@@ -51,5 +51,21 @@ public sealed class ClaimLoadGateCapabilityTests
             .Where(item => item.Action.StartsWith("runner.claim-load-gate.", StringComparison.Ordinal))
             .ToArray();
         Assert.Equal(2, audit.Length);
+
+        var history = await store.ListClaimGateEventsAsync(14, default);
+        Assert.Equal(["claim-resumed", "claim-stopped"], history.Select(item => item.Event));
+        Assert.Equal(60, history[0].DurationSeconds);
+        Assert.Equal(2.1, history[0].LoadPerCore);
+        Assert.Equal(702, history[1].DurationSeconds);
+        Assert.Equal(5.51, history[1].LoadPerCore);
+        Assert.Equal(4, history[1].Threshold);
+        Assert.Equal(7, history[1].ActiveSlots);
+        Assert.All(history, item =>
+        {
+            Assert.Equal("runner-a", item.RunnerId);
+            Assert.Equal("host-a", item.HostId);
+        });
+        clock.Advance(TimeSpan.FromDays(15));
+        Assert.Empty(await store.ListClaimGateEventsAsync(14, default));
     }
 }

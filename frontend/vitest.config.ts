@@ -4,6 +4,11 @@ import { defineConfig } from 'vitest/config';
 // well over Vitest's 5 s default without being wrong. A timeout here is not a finding.
 export default defineConfig({
   test: {
+    // The CI wrapper gives every run its own file. Keep the console reporter for
+    // local feedback and write a result that can be checked after Angular exits.
+    reporters: process.env['AGENT_STUDIO_VITEST_REPORT']
+      ? ['default', ['json', { outputFile: process.env['AGENT_STUDIO_VITEST_REPORT'] }]]
+      : ['default'],
     testTimeout: 30_000,
     hookTimeout: 30_000,
     pool: 'threads',

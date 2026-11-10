@@ -20,6 +20,21 @@ public sealed class ReviewTestReportPolicyTests
                 0, "Application bundle generation complete.", string.Empty)));
     }
 
+    [Fact]
+    public void Missing_vitest_file_report_path_is_named_in_diagnostic()
+    {
+        var result = new ProcessResult(2, string.Empty,
+            "Vitest completed without a readable report at /tmp/review-vite/report.json: ENOENT");
+        Assert.Equal("/tmp/review-vite/report.json",
+            ReviewTestReportPolicy.MissingReportPath(result, "/review/artifacts/verify.stdout.log"));
+        Assert.True(ReviewTestReportPolicy.HasExplicitMissingReport(result));
+        Assert.Equal("/review/artifacts/verify.stdout.log",
+            ReviewTestReportPolicy.MissingReportPath(new ProcessResult(0, "bundle complete", ""),
+                "/review/artifacts/verify.stdout.log"));
+        Assert.False(ReviewTestReportPolicy.HasExplicitMissingReport(
+            new ProcessResult(1, "", "ordinary test crash")));
+    }
+
     [Theory]
     [InlineData("M\tfrontend/vitest.config.ts", true)]
     [InlineData("A\tfrontend/src/new.spec.ts", true)]
