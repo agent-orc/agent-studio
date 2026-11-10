@@ -12,7 +12,17 @@
     <span aria-hidden="true">{{ scope.code }}</span>
   </button>
 
-  @if (supported()) {
+  @if (reviewResults()) {
+    <button type="button"
+            class="post-step-controls__run"
+            data-testid="overview-post-step-review-results"
+            [appPendingButton]="busy()"
+            pendingLabel="Reviewing…"
+            cacTooltip="Run only the missing requirement-fit review of the delivered results. The research is not repeated."
+            (click)="run()">
+      <span>Review results</span>
+    </button>
+  } @else if (supported()) {
     <button type="button"
             class="post-step-controls__run"
             data-testid="overview-post-step-run"

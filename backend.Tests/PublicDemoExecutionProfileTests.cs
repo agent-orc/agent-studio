@@ -215,7 +215,9 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3247 added three Runbooks routes (one Start, two Continue).
         // AGT-3313 added the release suite verdict record on PostStep.
         // AGT-3394 adds the structure library refresh on Preview.
-        Assert.Equal(151, routes.Count);
+        // AGT-3565 adds Review results on PostStep: it runs the missing
+        // requirement-fit review of a report card, a model call public demo denies.
+        Assert.Equal(152, routes.Count);
         Assert.DoesNotContain(allRoutes, route => route.RoutePattern.RawText == "/api/cli/_probe/{cliType}");
         foreach (var (method, suffix) in new[]
         {
@@ -258,6 +260,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/intervention", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/pipeline-definition/migration", ExecutionAdmissionPath.PostStep),
             ("/api/tasks/{jobId}/older-brief-delivery/decision", ExecutionAdmissionPath.Continue),
+            ("/api/tasks/{jobId}/review-results", ExecutionAdmissionPath.PostStep),
             ("/api/orchestration/decision-receipts/{receiptId}/operator-intent", ExecutionAdmissionPath.Continue),
             ("/api/tasks/{jobId}/preview-feedback", ExecutionAdmissionPath.Continue),
             ("/api/workspaces/{workspaceId}/decision-rules/versions", ExecutionAdmissionPath.Continue),
@@ -315,7 +318,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 32,
-                [ExecutionAdmissionPath.PostStep] = 22,
+                [ExecutionAdmissionPath.PostStep] = 23,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));
