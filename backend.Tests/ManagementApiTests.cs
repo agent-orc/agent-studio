@@ -1194,6 +1194,7 @@ public sealed class ManagementApiOwnHostTests : IDisposable
         Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(1, body.GetProperty("affected").GetInt32());
+        Assert.Contains("No off-host target is configured", body.GetProperty("summary").GetString());
         var backups = Directory.GetFiles(_backups, "studio-backup-*" + BackupCatalog.ArchiveSuffix);
         Assert.Single(backups);
         Assert.True(File.Exists(backups[0] + ".sha256"));

@@ -261,14 +261,27 @@ public sealed class StudioBackupTests : IDisposable
     }
 
     [Fact]
+    public async Task Create_waits_for_archive_and_checksum_to_reach_configured_target()
+    {
+        var target = new FakeTarget();
+        var service = _fixture.Service(_clock, target);
+
+        var record = await service.CreateAsync("manual:operator", CancellationToken.None);
+
+        Assert.Equal("uploaded", record.Upload?.State);
+        Assert.Equal("uploaded", service.List().Single().Upload?.State);
+        Assert.Equal([record.FileName, record.FileName + ".sha256"], target.Uploads.Select(upload => upload.Name).ToArray());
+        Assert.Equal(File.ReadAllBytes(_fixture.Catalog.ArchivePath(record.Id)), target.Uploads[0].Bytes);
+        Assert.Equal(File.ReadAllBytes(_fixture.Catalog.ChecksumPath(record.Id)), target.Uploads[1].Bytes);
+    }
+
+    [Fact]
     public async Task Upload_failure_is_recorded_retried_with_backoff_and_then_succeeds()
     {
         var target = new FakeTarget { Failures = 1 };
         var service = _fixture.Service(_clock, target);
         var record = await service.CreateAsync("test", CancellationToken.None);
-        Assert.Equal("pending", Assert.Single(service.List()).Upload?.State);
-
-        Assert.Equal(0, await service.UploadPendingAsync(force: false, "test", CancellationToken.None));
+        Assert.Equal("failed", record.Upload?.State);
         var failed = Assert.Single(service.List()).Upload!;
         Assert.Equal(("failed", 1), (failed.State, failed.Attempts));
         Assert.Contains("target offline", failed.Error);
