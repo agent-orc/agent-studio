@@ -376,6 +376,46 @@ public sealed class RemoteReviewReportEvidenceTests : IDisposable
         Assert.Null(attempt.WorkerReleaseSuperseded);
     }
 
+    /// <summary>
+    /// AGT-3648 S4-F12: a review host on an older develop build graded a card
+    /// while the server ran 3d61e8b. The grade records that at arrival and the
+    /// card's review projection carries it; a host on the Stable commit adds
+    /// nothing.
+    /// </summary>
+    [Theory]
+    [InlineData("20261105T090000Z-review-f947f2b1c3d4",
+        "graded by release 20261105T090000Z-review-f947f2b1c3d4 (commit f947f2b), which differs from Stable 0.9.5 (3d61e8b)")]
+    [InlineData("0.9.5+sha.unknown",
+        "graded by release 0.9.5+sha.unknown, whose commit is unknown; Stable 0.9.5 (3d61e8b) cannot be confirmed")]
+    [InlineData("20261109T101203Z-review-3d61e8b0c4ab", null)]
+    public async Task Grade_records_when_the_grading_release_is_not_the_stable_build(
+        string workerRelease, string? expected)
+    {
+        Directory.CreateDirectory(_root);
+        var head = new string('a', 40);
+        var request = Request(head, [Command("verify-2", "candidate", head, null)]) with
+        {
+            Environment = new ReviewEnvironmentDto(
+                "host", "reviewer", "instance", "linux", "x64", "10.0",
+                new Dictionary<string, string>(),
+                new Dictionary<string, string>(),
+                new ReviewWorkerProvenanceDto(workerRelease, "/opt/agent-host/agent-host", workerRelease)),
+        };
+
+        var reportFile = await RemoteReviewReportEvidence.WriteAsync(
+            _root, "review_now", "subject-1", request, new string('c', 64),
+            new DateTime(2026, 11, 9, 18, 13, 0, DateTimeKind.Utc), default,
+            new StableReleaseIdentity("0.9.5", "3d61e8b0c4ab", null));
+
+        var report = await File.ReadAllTextAsync(Path.Combine(_root, reportFile));
+        var attempt = Assert.Single(
+            AgentStudio.Review.ReviewProjectionReader.Read(Job(_root), [], null).Attempts);
+        Assert.Equal(expected, attempt.WorkerReleaseStable);
+        Assert.Null(attempt.WorkerReleaseSuperseded);
+        if (expected is null)
+            Assert.DoesNotContain("workerReleaseStable:", report, StringComparison.Ordinal);
+    }
+
     private static ReviewCommandEvidenceDto Command(
         string stepId,
         string workspaceRole,

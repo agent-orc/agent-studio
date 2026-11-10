@@ -14,4 +14,6 @@ export interface ErrorDialogOptions {
   canOpenCliConfig?: boolean;
   output?: unknown;
   stackTrace?: string | null;
+  /** Action to refocus after the dialog closes, including when Escape closes it. */
+  returnFocusSelector?: string;
 }

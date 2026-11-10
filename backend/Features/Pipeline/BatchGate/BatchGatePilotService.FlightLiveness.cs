@@ -7,7 +7,8 @@ namespace AgentStudio.Pipeline;
 
 /// <summary>
 /// AGT-3562: liveness of the one batch flight per project. Formed batches
-/// start in <see cref="BatchGateStartPolicy"/> order, a flight that does not
+/// start in <see cref="BatchGateStartPolicy"/> order, first in, first out
+/// (AGT-3710), a flight that does not
 /// reach its coordinator lease in time gives up its project slot, and a
 /// finished flight starts the next formed batch at once.
 /// </summary>
@@ -70,44 +71,14 @@ public sealed partial class BatchGatePilotService
     private readonly object _startPass = new();
 
     private IReadOnlyList<BatchGateManifest> OrderForStart(IReadOnlyList<BatchGateManifest> formed)
+        => BatchGateFlightQueue.Order(_store, formed, LeaseDeadlineDeferred());
+
+    private Func<string, string?> LeaseDeadlineDeferred()
     {
         Dictionary<string, string> deferred;
         lock (_runningBatches)
             deferred = new Dictionary<string, string>(_leaseDeadlineDeferred, StringComparer.OrdinalIgnoreCase);
-        var byId = formed.DistinctBy(manifest => manifest.BatchId, StringComparer.Ordinal)
-            .ToDictionary(manifest => manifest.BatchId, StringComparer.Ordinal);
-        var order = MonolithTransitionAdapter.BatchStartOrder(byId.Values.Select(manifest =>
-            new BatchGateStartCandidate(manifest.BatchId, manifest.Members.Count,
-                WaitingSince(manifest), manifest.StackedOnBatchId is not null,
-                deferred.TryGetValue(manifest.Scope.Project, out var batchId)
-                    && batchId == manifest.BatchId,
-                _settings.Get(manifest.Scope.Project).BatchGate.MaximumWaitMinutes)),
-            _time.GetUtcNow());
-        return order.Select(id => byId[id]).ToArray();
-    }
-
-    /// <summary>
-    /// The close time of the first batch of a re-form chain: a batch re-formed
-    /// on a moved base keeps the wait of the batch it replaced.
-    /// </summary>
-    private DateTimeOffset WaitingSince(BatchGateManifest manifest)
-    {
-        var since = manifest.ClosedAtUtc;
-        var previous = manifest.ReformedFromBatchId;
-        for (var hops = 0; previous is not null && hops < 32; hops++)
-        {
-            BatchGateManifest predecessor;
-            try { predecessor = _store.ReadManifest(previous); }
-            catch (Exception ex) when (ex is IOException or InvalidDataException
-                or System.Text.Json.JsonException or UnauthorizedAccessException)
-            {
-                AgentStudio.Diagnostics.SilentCatch.Note(ex, "Re-formed batch predecessor unreadable");
-                break;
-            }
-            if (predecessor.ClosedAtUtc < since) since = predecessor.ClosedAtUtc;
-            previous = predecessor.ReformedFromBatchId;
-        }
-        return since;
+        return project => deferred.GetValueOrDefault(project);
     }
 
     /// <summary>

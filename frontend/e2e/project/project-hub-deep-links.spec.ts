@@ -26,9 +26,11 @@ async function json(route: Route, body: unknown): Promise<void> {
   await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 }
 
-async function installRoutes(page: Page): Promise<void> {
+async function installRoutes(page: Page, fallbackStatus = 200): Promise<void> {
   // Register the broad fallback first; Playwright gives later routes priority.
-  await page.route('**/api/**', route => json(route, []));
+  await page.route('**/api/**', route => route.fulfill({
+    status: fallbackStatus, contentType: 'application/json', body: '[]',
+  }));
   await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
@@ -83,6 +85,26 @@ async function installRoutes(page: Page): Promise<void> {
     plannedDryRun: null,
     gateApplicable: false,
     verifyPlan: { source: 'none', commands: [] },
+  }));
+  await page.route(/\/api\/projects\/Durable%20Links\/execution(?:\?|$)/, route => json(route, {
+    repositoryDefinition: null,
+    definitionSha256: null,
+    valid: false,
+    issues: [],
+    preparationWarnings: [],
+    lastManifest: null,
+    override: null,
+    source: 'repository',
+  }));
+  await page.route('**/api/projects/settings', route => json(route, {
+    [PROJECT_NAME]: {
+      autoCommit: true,
+      crashRecoveryEnabled: true,
+      autoPushStrategy: 'never',
+      pickupMode: 'manual',
+      executionLocation: 'local',
+      integrationBranch: 'develop',
+    },
   }));
   await page.route('**/api/cli/quota**', route => json(route, {
     at: '2026-07-22T12:00:00Z', ttlSeconds: 600, snapshots: [],
@@ -208,6 +230,61 @@ test('an id-based Project Hub URL survives reload and rail history', async ({ pa
     path: path.join(RESULTS_DIR, 'project-hub-stable-deep-link.png'),
     fullPage: false,
   });
+});
+
+test('missing verify definition explains accepted test output in both themes and narrow layout', async ({ page }) => {
+  await page.unrouteAll();
+  await installRoutes(page, 503);
+  const runtimeErrors: string[] = [];
+  const failedRequests: string[] = [];
+  page.on('response', response => {
+    const pathname = new URL(response.url()).pathname;
+    if (response.status() >= 400 && (pathname === '/api/projects/settings'
+      || pathname.endsWith('/build-profile') || pathname.endsWith('/execution'))) {
+      failedRequests.push(`${response.status()} ${pathname}`);
+    }
+  });
+  page.on('pageerror', error => runtimeErrors.push(error.message));
+  page.on('console', message => {
+    if (message.type() === 'error' && message.text().includes('Cannot read properties of undefined')) {
+      runtimeErrors.push(message.text());
+    }
+  });
+  await page.route(/\/api\/projects\/Durable%20Links\/build-profile(?:\?|$)/, route => json(route, {
+    profile: null,
+    status: null,
+    pickupAllowed: true,
+    gateApplicable: false,
+    verifyPlan: { source: 'none', commands: [] },
+    verifyDefinition: {
+      state: 'missing',
+      path: '.agent-studio/project.yml',
+      message: 'Verify definition missing',
+      exampleStack: 'custom',
+      exampleDefinition: 'schemaVersion: 1\nstack: [custom]\ncommands:\n  prepare: .agent-studio/prepare\n  test:\n    - ./scripts/test.sh\n',
+      examplePrepareScript: '#!/bin/sh\nset -eu\n',
+    },
+  }));
+  await page.goto(`/#/projects/${PROJECT_ID}/settings`);
+  const notice = page.getByTestId('project-settings-no-verify-commands');
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText('A successful exit is accepted as review evidence');
+  await expect(notice.getByRole('link', { name: 'Accepted test output and stack examples' }))
+    .toHaveAttribute('href', /onboard-a-project\.md#test-command-output-in-review/);
+  await setTheme(page, 'light');
+  await notice.screenshot({ path: path.join(RESULTS_DIR, 'agt-3616--verify-definition--light--mocked.png') });
+  await setTheme(page, 'dark');
+  await notice.screenshot({ path: path.join(RESULTS_DIR, 'agt-3616--verify-definition--dark--mocked.png') });
+  await page.setViewportSize({ width: 390, height: 1200 });
+  if (await page.getByTestId('studio-sidebar').count() > 0) {
+    await page.getByTestId('studio-ab-explorer').click();
+  }
+  await expect(page.getByTestId('studio-sidebar')).toHaveCount(0);
+  await expect(notice).toBeVisible();
+  await notice.scrollIntoViewIfNeeded();
+  await notice.screenshot({ path: path.join(RESULTS_DIR, 'agt-3616--verify-definition--390--mocked.png') });
+  expect(runtimeErrors).toEqual([]);
+  expect(failedRequests).toEqual([]);
 });
 
 test('a legacy Wiki page route redirects to the id and restores the exact page', async ({ page }) => {
