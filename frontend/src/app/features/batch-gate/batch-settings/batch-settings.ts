@@ -1,12 +1,13 @@
-import { ChangeDetectionStrategy, Component, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import type { BatchGateAdvisorEffective, BatchGateSettings } from '../../../models/batch-gate.model';
 import { BatchGateService } from '../../../services/batch-gate.service';
+import { BatchPhaseMetricsComponent } from '../batch-phase-metrics/batch-phase-metrics';
 
 @Component({
   selector: 'app-batch-settings',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, BatchPhaseMetricsComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './batch-settings.html',
   styleUrl: './batch-settings.scss',
@@ -14,6 +15,7 @@ import { BatchGateService } from '../../../services/batch-gate.service';
 export class BatchSettingsComponent {
   readonly project = input.required<string>();
   private readonly gate = inject(BatchGateService);
+  readonly state = computed(() => this.gate.state(this.project())());
   readonly settings = signal<BatchGateSettings | null>(null);
   readonly advisorEffective = signal<BatchGateAdvisorEffective | null>(null);
   readonly tagsDraft = signal('');
@@ -28,6 +30,7 @@ export class BatchSettingsComponent {
 
   constructor() {
     effect(() => this.load(this.project()));
+    effect(onCleanup => onCleanup(this.gate.watch(this.project())));
   }
   load(project: string): void {
     if (!project) return;
