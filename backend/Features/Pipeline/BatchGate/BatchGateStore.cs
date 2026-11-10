@@ -15,7 +15,11 @@ public sealed record BatchGateState(
     long? RefMutationFence = null,
     string? BaseMoveToSha = null, string? BaseMoveOutcome = null,
     string? SuccessorBatchId = null,
-    IReadOnlyDictionary<string, string>? BaseMoveMemberReasons = null);
+    IReadOnlyDictionary<string, string>? BaseMoveMemberReasons = null,
+    string? CausedByTaskKey = null);
+
+public sealed record BatchGateWithdrawal(string BatchId, string TaskKey,
+    string Actor, string Reason, DateTimeOffset AtUtc);
 
 public sealed record BatchGateRunRecord(
     string BatchRunId, string BatchId, string MembershipDigest, string BaseSha,
@@ -345,6 +349,24 @@ public sealed partial class BatchGateStore
         var folder = Path.Combine(_root, "requests", "eject", SafeName(project));
         Directory.CreateDirectory(folder);
         File.WriteAllText(Path.Combine(folder, SafeName(taskKey)), DateTimeOffset.UtcNow.ToString("O"));
+    }
+
+    public void RecordWithdrawal(BatchGateWithdrawal withdrawal)
+    {
+        var manifest = ReadManifest(withdrawal.BatchId);
+        if (!manifest.Members.Any(member => member.TaskKey == withdrawal.TaskKey))
+            throw new InvalidDataException("The withdrawn card is not a batch member.");
+        var folder = Path.Combine(BatchDirectory(withdrawal.BatchId), "withdrawals");
+        Directory.CreateDirectory(folder);
+        WriteOnce(Path.Combine(folder, Guid.NewGuid().ToString("N") + ".json"), withdrawal);
+    }
+
+    public IReadOnlyList<BatchGateWithdrawal> ListWithdrawals(string batchId)
+    {
+        var folder = Path.Combine(BatchDirectory(batchId), "withdrawals");
+        return Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json").Select(Read<BatchGateWithdrawal>).ToArray()
+            : [];
     }
 
     public bool HasEject(string project, string taskKey)

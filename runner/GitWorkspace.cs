@@ -14,6 +14,8 @@ public sealed class GitWorkspace
     private readonly RunnerOptions _options;
     private readonly Action<string> _log;
     private readonly string _safeTaskKey;
+    private readonly string _taskKey;
+    private readonly string? _taskTitle;
     private readonly string? _gitRemote;
     private readonly string? _gitPushRemote;
     private readonly string _baseBranch;
@@ -51,12 +53,15 @@ public sealed class GitWorkspace
         long? fencingToken = null,
         string? continuationBaseRef = null,
         string? continuationBaseSha = null,
-        string? continuationBaseReason = null)
+        string? continuationBaseReason = null,
+        string? taskTitle = null)
     {
         _options = options;
         _log = log;
         _restoredBaseSha = string.IsNullOrWhiteSpace(restoredBaseSha) ? null : restoredBaseSha.Trim();
+        _taskKey = taskKey.Trim();
         _safeTaskKey = SafeSegment(taskKey);
+        _taskTitle = taskTitle;
         _projectId = string.IsNullOrWhiteSpace(projectId) ? null : projectId.Trim();
         _isProjectClone = isProjectClone || _projectId is not null;
         var claimedRemote = string.IsNullOrWhiteSpace(gitRemote) ? null : gitRemote.Trim();
@@ -1038,7 +1043,7 @@ public sealed class GitWorkspace
             await Git([
                 "-c", "user.name=Agent Studio Runner",
                 "-c", "user.email=runner@agent-studio.invalid",
-                "commit", "-m", $"wip(runner): salvage before teardown - outcome {outcome}"
+                "commit", "-m", SalvageCommitMessage(outcome, sourceRunAttemptId)
             ], RepoPath, ct);
             _log($"worktree-salvage-commit-created path={RepoPath} outcome={outcome}");
         }
@@ -1162,6 +1167,28 @@ public sealed class GitWorkspace
                 ImmutableResultRef: immutableResultRef,
                 DeliveryProof: deliveryProof,
                 ResultRefFailure: immutableResultFailure);
+    }
+
+    internal string SalvageCommitMessage(string outcome, string? sourceRunAttemptId)
+    {
+        var title = string.IsNullOrWhiteSpace(_taskTitle)
+            ? $"salvaged work (outcome {outcome})"
+            : string.Join(' ', _taskTitle.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        var subject = $"{_taskKey}: {title}";
+        if (subject.Length > 72)
+        {
+            var boundary = subject.LastIndexOf(' ', 72);
+            if (boundary <= _taskKey.Length + 1)
+                boundary = subject.IndexOf(' ', 73);
+            if (boundary > _taskKey.Length + 1)
+                subject = subject[..boundary];
+        }
+        var runId = sourceRunAttemptId ?? _sourceRunAttemptId ?? "unknown";
+        return $"{subject}\n\nRunner committed changes the agent left uncommitted (outcome {outcome}).\n\n" +
+            $"Agent-Studio-Task: {_taskKey}\n" +
+            $"Agent-Studio-Run: {runId}\n" +
+            "Agent-Studio-Salvage: teardown\n" +
+            $"Agent-Studio-Outcome: {outcome}";
     }
 
     private async Task<SalvageReconciliationResult> PublishImmutableSalvageAsync(

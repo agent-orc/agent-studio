@@ -23,7 +23,8 @@ public sealed record DurableRunContextPayload(
     string RepositoryId,
     string? RepositoryUrl,
     string? DefaultBranch,
-    string BaseSha);
+    string BaseSha,
+    string? TaskTitle = null);
 
 public sealed record DurableGitFactsPayload(
     string RepositoryId,
