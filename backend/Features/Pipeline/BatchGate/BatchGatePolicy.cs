@@ -131,7 +131,8 @@ public sealed record BatchGateManifest(
     IReadOnlyList<BatchPlanCard>? PlanningCards = null,
     bool Diagnostic = false,
     string? ReformedFromBatchId = null,
-    string? StackedOnBatchId = null);
+    string? StackedOnBatchId = null,
+    DateTimeOffset? QueuedSinceUtc = null);
 
 public sealed record BatchGateFormation(
     BatchGateManifest? Manifest, IReadOnlyList<BatchGateExclusion> Exclusions,
@@ -371,4 +372,4 @@ public static class BatchGatePolicy
         => value is { Length: 40 or 64 } && value.All(Uri.IsHexDigit);
 }
 
-public enum BatchPhase { Formed, Assembling, Assembled, Running, Green, Publishing, Published, Red, Paused, Abandoned }
+public enum BatchPhase { Formed, Assembling, Assembled, Running, Green, Publishing, Published, Red, Paused, Abandoned, Unknown }

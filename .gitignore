@@ -2,7 +2,7 @@ frontend/build_log.txt
 .api.pid
 .api.log*
 .api.*.pid
-.api.*.log
+.api.*.log*
 .frontend.*.pid
 .frontend.*.log
 # ASS-1715: isolated per-worktree test stack state (ports env, frontend pid/log,
@@ -114,6 +114,8 @@ frontend/mockup-chat.*.log
 # UpdateService launcher artefacts (update-service.sh detached pid + log).
 .update-service.pid
 .update-service.log
+# Generated UpdateService trigger token (owner-only secret, never commit).
+.update-token
 
 # runtime frontend dev-server logs (not source)
 frontend-ngserve.*.log

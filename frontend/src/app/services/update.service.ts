@@ -1,5 +1,5 @@
 import { computed, effect, inject, Injectable, signal } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { RollbackRequest, RollbackResponse, TriggerRequest, TriggerResponse, UpdateHistoryEntry, UpdateStatus } from '../models/update-service.model';
 import { PublicDemoModeService } from './public-demo-mode.service';
@@ -8,6 +8,10 @@ export function resolveUpdateServiceUrl(href: string, configured?: string): stri
   void href;
   return configured || null;
 }
+
+/** Studio backend route that reads the Update Service trigger token file. */
+export const UPDATE_TOKEN_ROUTE = '/api/update-service/token';
+export const UPDATE_TOKEN_HEADER = 'X-Update-Token';
 
 /**
  * Talks to the optional standalone UpdateService when its URL is configured. The endpoint
@@ -20,6 +24,11 @@ export function resolveUpdateServiceUrl(href: string, configured?: string): stri
  * flight. The faster cadence kicks in automatically the moment a status
  * read reports `isRunning=true` and the moment a trigger response says
  * the orchestrator is on a non-idle phase.
+ *
+ * Trigger and rollback carry the service's trigger token. The Studio backend
+ * reads it from the owner-only token file; it is fetched after the first
+ * successful status read and kept in memory, so a rollback still works while
+ * the backend is down after a failed update.
  */
 @Injectable({ providedIn: 'root' })
 export class UpdateClientService {
@@ -69,6 +78,7 @@ export class UpdateClientService {
   closeCenter(): void { this.centerOpen.set(false); }
 
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  private token: string | null = null;
 
   constructor() {
     // Start polling immediately; refresh cadence whenever phase changes.
@@ -83,9 +93,7 @@ export class UpdateClientService {
   async trigger(reason: string | null = null, force = false): Promise<TriggerResponse> {
     if (!this.baseUrl) throw new Error('Update Service is not configured.');
     const body: TriggerRequest = { reason: reason ?? undefined, force };
-    const resp = await firstValueFrom(
-      this.http.post<TriggerResponse>(`${this.baseUrl}/update/trigger`, body)
-    );
+    const resp = await this.postWithToken<TriggerResponse>(`${this.baseUrl}/update/trigger`, body);
     // Bump cadence and refresh now so the banner reflects the new phase
     // before the next normal poll fires.
     this.refreshNow();
@@ -114,14 +122,33 @@ export class UpdateClientService {
   async rollback(runId: string): Promise<RollbackResponse> {
     if (!this.baseUrl) throw new Error('Update Service is not configured.');
     const body: RollbackRequest = { runId };
-    const resp = await firstValueFrom(
-      this.http.post<RollbackResponse>(`${this.baseUrl}/update/rollback`, body)
-    );
+    const resp = await this.postWithToken<RollbackResponse>(`${this.baseUrl}/update/rollback`, body);
     this.refreshNow();
     return resp;
   }
 
   // ─── internals ──────────────────────────────────────────────────────────
+
+  /** Posts with the trigger token; a 401 refetches the token once, in case the service generated a new one. */
+  private async postWithToken<T>(url: string, body: object): Promise<T> {
+    const send = async () => firstValueFrom(this.http.post<T>(url, body, {
+      headers: { [UPDATE_TOKEN_HEADER]: await this.ensureToken() },
+    }));
+    try {
+      return await send();
+    } catch (error) {
+      if (!(error instanceof HttpErrorResponse) || error.status !== 401) throw error;
+      this.token = null;
+      return await send();
+    }
+  }
+
+  private async ensureToken(): Promise<string> {
+    if (this.token) return this.token;
+    const { token } = await firstValueFrom(this.http.get<{ token: string }>(UPDATE_TOKEN_ROUTE));
+    this.token = token;
+    return token;
+  }
 
   private scheduleNextPoll(delayMs: number): void {
     if (this.pollTimer !== null) clearTimeout(this.pollTimer);
@@ -138,6 +165,7 @@ export class UpdateClientService {
       const next = await firstValueFrom(this.http.get<UpdateStatus>(`${this.baseUrl}/update/status`));
       this.status.set(next);
       this.serviceUnreachable.set(false);
+      if (!this.token) this.ensureToken().catch(() => { /* fetched again on the next mutation */ });
     } catch {
       // Don't blank out the last-known status; a transient failure is more
       // useful as "stale snapshot + unreachable flag" than as a null UI.

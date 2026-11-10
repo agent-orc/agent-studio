@@ -63,6 +63,55 @@ path and CLI working directory on the project. A generated deploy key is
 configured in that checkout's Git settings, so later task fetches and pushes
 use the same key after restart.
 
+## Test command output in Review
+
+Put `.agent-studio/project.yml` in the repository root when discovery cannot
+find the checks you intend to run. This is a minimal valid definition for a
+custom shell test script:
+
+```yaml
+schemaVersion: 1
+stack: [custom]
+commands:
+  prepare: .agent-studio/prepare
+  test:
+    - ./scripts/test.sh
+```
+
+Create `.agent-studio/prepare` as an executable shell script containing
+`#!/bin/sh` and `set -eu`, then add the dependency installation your stack
+needs. Create `scripts/test.sh` as an executable script that runs real checks
+and returns their exit status. Review accepts a successful exit even when it
+cannot parse a test summary; the exit code is recorded as command evidence.
+A parsed test summary lets Review compare failure names as well as exit
+status. A failed command without a parsed result cannot supply that
+comparison and receives a report retry.
+
+Use the same YAML shape with the following `stack`, `commands.test`, and
+prepare script body for other stacks. Replace paths with your repository's
+actual paths. A Node example needs a `package-lock.json` and a `test` script
+in `package.json`.
+
+| Stack | `stack` | `commands.test` | Add to `.agent-studio/prepare` |
+|---|---|---|---|
+| .NET | `[dotnet]` | `dotnet test App.sln --no-build` | `dotnet restore App.sln` |
+| Node built-in runner | `[node]` | `node --test` | `npm ci` |
+| Jest or Vitest | `[node]` | `npm test` | `npm ci` |
+| Python | `[python]` | `python -m pytest` | `python -m pip install -e .` |
+| Go | `[go]` | `go test ./...` | `go mod download` |
+| Make | `[make]` | `make test` | Add the setup required by the Makefile, if any. |
+
+For `.NET`, add `commands.build: [dotnet build App.sln]` before the test step
+when `--no-build` is used. Each row above is the `test` list entry in the YAML
+example; the prepare script starts with the two shell lines shown above.
+Review recognizes completed summaries from `dotnet test`, `node --test` TAP,
+Jest, and Vitest for named-test comparison. Successful `pytest`, `go test`,
+`make test`, and other scripts use exit-status evidence. A failed baseline
+without parsed failure names cannot support a named-test comparison. A runner
+that explicitly reports a missing test report, or an Angular bundle that
+finishes without a Vitest result, still gets a report retry and an
+infrastructure finding.
+
 ## API workflow
 
 Send `POST /api/projects`. `X-Client-Id` must identify a registered operator or automation client and is included in mutation telemetry. The bootstrap identity is `local-default`.

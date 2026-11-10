@@ -2,6 +2,9 @@
 
 [![License](https://img.shields.io/github/license/agent-orc/agent-studio)](LICENSE)
 
+No GitHub Release is published yet. To install now, use the source checkout and
+the one-box Compose commands in [Install](#install).
+
 **Management layers on top of coding work.** Agents (Claude Code, Codex, GitHub Copilot, Gemini) write the code; this repository is the Studio: a task board, agent pipelines, and project wikis that assign, gate, review, and account for it.
 
 <picture>
@@ -37,18 +40,19 @@
 
 ## Install
 
+No GitHub Release is published yet, so the release installer is unavailable.
+The working source path is a one-box Compose stack. From a source checkout,
+bootstrap once and start the dev profile:
+
 ```bash
-curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh | sh
+git clone https://github.com/agent-orc/agent-studio.git
+cd agent-studio
+scripts/compose-distributed-bootstrap.sh
+docker compose --profile dev up --build --wait task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev web-dev agent-host-distributed-dev agent-host-review-distributed-dev
 ```
 
-The Linux script checks the distribution and architecture, verifies the setup
-executable against `SHA256SUMS`, then offers a one-box Docker or native systemd
-install, or an agent host that joins an existing Studio. Native setup serves
-the UI locally and guides provider login and GitHub access for the execution
-user. Windows users download `agent-studio-setup.exe` and verify it against
-`SHA256SUMS`; its native package includes the browser UI and local runner.
-See the [install guide](./docs/operations/setup/install.md) for Windows commands,
-the native and connector profiles, unattended answers, update, rollback, uninstall, and remote topologies.
+See the [install guide](./docs/operations/setup/install.md) for prerequisites
+and the release installer profiles that will become available after publication.
 
 The one-box stack starts the Task Server, Engine, Studio BFF, compatibility
 API, web UI, and coding and review hosts. It creates restricted principal
@@ -56,14 +60,6 @@ credentials in a named volume on first start and reuses them on later starts.
 Coding tasks additionally need provider and Git credentials mounted into the
 agent host. The default UI listens only on loopback; LAN exposure uses the
 optional HTTPS edge and an exact origin allowlist.
-
-To run the same one-box stack from a source checkout (interim source-built
-path), bootstrap once and start the dev profile:
-
-```bash
-scripts/compose-distributed-bootstrap.sh
-docker compose --profile dev up --build --wait task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev web-dev agent-host-distributed-dev agent-host-review-distributed-dev
-```
 
 See the [Docker operations guide](./docs/operations/setup/docker.md) for
 updates, backups, product-managed credential rotation, credential mounts, and

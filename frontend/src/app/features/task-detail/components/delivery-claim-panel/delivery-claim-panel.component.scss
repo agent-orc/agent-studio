@@ -24,6 +24,15 @@
   @include section.surface(var(--studio-warn));
 }
 
+/* Acceptance settles earlier delivery warnings without erasing the facts. */
+.claim[data-settled='true'] {
+  @include section.surface(var(--studio-fg-muted));
+}
+
+.claim[data-settled='true'] .claim__state .claim__dot {
+  color: var(--studio-fg-muted);
+}
+
 .claim__label {
   @include section.heading;
 }
@@ -98,6 +107,11 @@
 .claim__supersession[data-state='replaced'] {
   background: color-mix(in srgb, var(--studio-warn) 14%, var(--studio-bg-elevated));
   color: var(--studio-warn);
+}
+
+.claim[data-settled='true'] .claim__supersession[data-state='replaced'] {
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg-muted);
 }
 
 .claim__reason {

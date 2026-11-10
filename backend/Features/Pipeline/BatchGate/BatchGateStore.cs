@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Diagnostics;
+using Serilog;
 using AgentStudio.TaskServer.Contracts.BatchGate;
 using AgentStudio.TaskServer.Contracts;
 
@@ -14,7 +15,11 @@ public sealed record BatchGateState(
     long? RefMutationFence = null,
     string? BaseMoveToSha = null, string? BaseMoveOutcome = null,
     string? SuccessorBatchId = null,
-    IReadOnlyDictionary<string, string>? BaseMoveMemberReasons = null);
+    IReadOnlyDictionary<string, string>? BaseMoveMemberReasons = null,
+    string? CausedByTaskKey = null);
+
+public sealed record BatchGateWithdrawal(string BatchId, string TaskKey,
+    string Actor, string Reason, DateTimeOffset AtUtc);
 
 public sealed record BatchGateRunRecord(
     string BatchRunId, string BatchId, string MembershipDigest, string BaseSha,
@@ -150,6 +155,7 @@ public sealed partial class BatchGateStore
         WriteIndented = true,
     };
     private readonly string _root;
+    private readonly HashSet<string> _missingStateWarnings = new(StringComparer.Ordinal);
     private readonly object _failureRankingLock = new();
     private sealed class FailureRankingProjection
     {
@@ -262,6 +268,18 @@ public sealed partial class BatchGateStore
         return File.Exists(path) ? Read<BatchGateBaseVerdict>(path) : null;
     }
 
+    public IReadOnlyList<BatchGateBaseVerdict> ListBaseVerdicts(string project)
+    {
+        var folder = Path.Combine(_root, "base-verdicts", SafeName(project));
+        if (!Directory.Exists(folder)) return [];
+        return Directory.EnumerateFiles(folder, "*.json")
+            .Select(path => Read<BatchGateBaseVerdict>(path))
+            .Where(verdict => verdict is not null
+                && string.Equals(verdict.Project, project, StringComparison.Ordinal))
+            .Select(verdict => verdict!)
+            .ToArray();
+    }
+
     public void RecordBaseVerdict(BatchGateBaseVerdict verdict)
     {
         var path = BaseVerdictPath(verdict.Project, verdict.BaseSha, verdict.GateProfileDigest);
@@ -345,6 +363,24 @@ public sealed partial class BatchGateStore
         File.WriteAllText(Path.Combine(folder, SafeName(taskKey)), DateTimeOffset.UtcNow.ToString("O"));
     }
 
+    public void RecordWithdrawal(BatchGateWithdrawal withdrawal)
+    {
+        var manifest = ReadManifest(withdrawal.BatchId);
+        if (!manifest.Members.Any(member => member.TaskKey == withdrawal.TaskKey))
+            throw new InvalidDataException("The withdrawn card is not a batch member.");
+        var folder = Path.Combine(BatchDirectory(withdrawal.BatchId), "withdrawals");
+        Directory.CreateDirectory(folder);
+        WriteOnce(Path.Combine(folder, Guid.NewGuid().ToString("N") + ".json"), withdrawal);
+    }
+
+    public IReadOnlyList<BatchGateWithdrawal> ListWithdrawals(string batchId)
+    {
+        var folder = Path.Combine(BatchDirectory(batchId), "withdrawals");
+        return Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json").Select(Read<BatchGateWithdrawal>).ToArray()
+            : [];
+    }
+
     public bool HasEject(string project, string taskKey)
         => File.Exists(Path.Combine(_root, "requests", "eject", SafeName(project), SafeName(taskKey)));
 
@@ -425,12 +461,20 @@ public sealed partial class BatchGateStore
             : [];
     }
 
+    /// <summary>
+    /// Closed manifests in formation order: close time, then batch id. Batch
+    /// folders are named by hash, so their enumeration order carries no meaning
+    /// and no caller may depend on it (AGT-3710).
+    /// </summary>
     public IReadOnlyList<BatchGateManifest> ListManifests()
         => !Directory.Exists(_root) ? []
-            : Directory.EnumerateDirectories(_root)
+            : InFormationOrder(Directory.EnumerateDirectories(_root)
                 .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
-                .Select(dir => Read<BatchGateManifest>(Path.Combine(dir, "manifest.json")))
-                .ToArray();
+                .Select(dir => Read<BatchGateManifest>(Path.Combine(dir, "manifest.json"))));
+
+    private static BatchGateManifest[] InFormationOrder(IEnumerable<BatchGateManifest> manifests)
+        => manifests.OrderBy(manifest => manifest.ClosedAtUtc)
+            .ThenBy(manifest => manifest.BatchId, StringComparer.Ordinal).ToArray();
 
     /// <summary>
     /// Folders that hold a closed manifest. A manifest is written once, so a
@@ -439,7 +483,8 @@ public sealed partial class BatchGateStore
     public IReadOnlyList<string> ListManifestFolders()
         => !Directory.Exists(_root) ? []
             : Directory.EnumerateDirectories(_root)
-                .Where(dir => File.Exists(Path.Combine(dir, "manifest.json"))).ToArray();
+                .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
+                .Order(StringComparer.Ordinal).ToArray();
 
     public BatchGateManifest ReadManifestIn(string folder)
         => Read<BatchGateManifest>(Path.Combine(folder, "manifest.json"));
@@ -644,25 +689,37 @@ public sealed partial class BatchGateStore
             : [];
     }
 
+    /// <summary>Formed or in-flight manifests in formation order, as <see cref="ListManifests"/>.</summary>
     public IReadOnlyList<BatchGateManifest> ListRecoverableManifests()
     {
         if (!Directory.Exists(_root)) return [];
-        return Directory.EnumerateDirectories(_root)
+        return InFormationOrder(Directory.EnumerateDirectories(_root)
             .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
             .Select(dir => Read<BatchGateManifest>(Path.Combine(dir, "manifest.json")))
-            .Where(manifest => !Directory.Exists(Path.Combine(BatchDirectory(manifest.BatchId), "state"))
-                || LatestState(manifest.BatchId).Phase is
-                    BatchPhase.Formed or BatchPhase.Assembling
-                    or BatchPhase.Assembled or BatchPhase.Running)
-            .ToArray();
+            .Where(manifest => IsRecoverable(manifest)));
+    }
+
+    private bool IsRecoverable(BatchGateManifest manifest)
+    {
+        var phase = LatestState(manifest.BatchId).Phase;
+        if (phase == BatchPhase.Unknown)
+        {
+            lock (_missingStateWarnings)
+            {
+                if (_missingStateWarnings.Add(manifest.BatchId))
+                    Log.Warning("Batch gate manifest {BatchId} has no state rows; recovery will skip it", manifest.BatchId);
+            }
+            return false;
+        }
+        return phase is BatchPhase.Formed or BatchPhase.Assembling
+            or BatchPhase.Assembled or BatchPhase.Running;
     }
 
     // A pause stays in the append-only history, but an unpublished paused batch
     // must hand its members back; the pilot resolves each one on its next tick.
     public IReadOnlyList<BatchGateManifest> ListPausedManifests()
         => ListManifests()
-            .Where(manifest => Directory.Exists(Path.Combine(BatchDirectory(manifest.BatchId), "state"))
-                && LatestState(manifest.BatchId).Phase == BatchPhase.Paused
+            .Where(manifest => LatestState(manifest.BatchId).Phase == BatchPhase.Paused
                 && ReadPublication(manifest.BatchId) is null)
             .ToArray();
 
@@ -682,14 +739,26 @@ public sealed partial class BatchGateStore
             throw new InvalidDataException("The closed batch manifest has an invalid membership digest.");
         var dir = BatchDirectory(manifest.BatchId);
         Directory.CreateDirectory(dir);
+        var stateFolder = Path.Combine(dir, "state");
+        Directory.CreateDirectory(stateFolder);
+        var firstStatePath = Path.Combine(stateFolder, "00000001.json");
+        if (!File.Exists(firstStatePath))
+            WriteOnce(firstStatePath, new BatchGateState(
+                manifest.BatchId, manifest.MembershipDigest, BatchPhase.Formed,
+                null, 0, DateTimeOffset.UtcNow));
+        else if (!File.Exists(Path.Combine(dir, "manifest.json")))
+        {
+            var existing = Read<BatchGateState>(firstStatePath);
+            if (existing.BatchId != manifest.BatchId
+                || existing.MembershipDigest != manifest.MembershipDigest
+                || existing.Phase != BatchPhase.Formed)
+                throw new InvalidDataException("The initial batch state does not match its manifest.");
+        }
         WriteOnce(Path.Combine(dir, "manifest.json"), manifest);
         lock (_deliveryIndexLock)
         {
             if (_deliveryIndex is not null) AddToDeliveryIndex(manifest);
         }
-        AppendState(new BatchGateState(
-            manifest.BatchId, manifest.MembershipDigest, BatchPhase.Formed,
-            null, 0, DateTimeOffset.UtcNow));
     }
 
     public BatchGateManifest ReadManifest(string batchId)
@@ -710,9 +779,14 @@ public sealed partial class BatchGateStore
     public BatchGateState LatestState(string batchId)
     {
         var folder = Path.Combine(BatchDirectory(batchId), "state");
-        var path = Directory.EnumerateFiles(folder, "*.json")
-            .OrderBy(x => x, StringComparer.Ordinal).Last();
-        return Read<BatchGateState>(path);
+        var path = Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json")
+                .OrderBy(x => x, StringComparer.Ordinal).LastOrDefault()
+            : null;
+        if (path is not null) return Read<BatchGateState>(path);
+        var manifest = ReadManifest(batchId);
+        return new BatchGateState(batchId, manifest.MembershipDigest,
+            BatchPhase.Unknown, null, 0, manifest.ClosedAtUtc);
     }
 
     public void RecordRun(BatchGateRunRecord run)
