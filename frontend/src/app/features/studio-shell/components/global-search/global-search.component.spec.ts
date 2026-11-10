@@ -1,6 +1,7 @@
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { laneName } from '../../../../models/lane-presentation';
 import type { TaskInfo } from '../../../../models/task.model';
 import { StudioTabStateService } from '../../services/studio-tab-state.service';
 import { GlobalSearchComponent } from './global-search.component';
@@ -100,6 +101,25 @@ describe('GlobalSearchComponent', () => {
     expect(chips[0].textContent).toContain('Decision pending');
     // Presentation only: the row itself is the button that opens the Dossier.
     expect(chips[0].querySelector('a')).toBeNull();
+  });
+
+  // AGT-3591: a task result names its lane through lane-presentation, not as
+  // the raw `5-human-review` slug, and carries the lane's own tone.
+  it('renders a task lane badge with the lane name and tone', async () => {
+    vi.useFakeTimers();
+    fixture.componentRef.setInput('tasks', [
+      { taskKey: 'r', key: 'AGT-77', title: 'Review me', projectName: 'P', state: '5-human-review', id: 'r' },
+    ] as TaskInfo[]);
+    component.open.set(true);
+    component.onQuery('AGT-77');
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    fixture.detectChanges();
+
+    const badge = (fixture.nativeElement as HTMLElement)
+      .querySelector<HTMLElement>('[data-testid="global-search-lane-badge"]');
+    expect(badge?.textContent?.trim()).toBe(laneName('5-human-review'));
+    expect(badge?.textContent).not.toContain('5-human-review');
+    expect(badge?.dataset['laneTone']).toBe('human-review');
   });
 
   it('opens with Ctrl+K and closes with Escape', async () => {

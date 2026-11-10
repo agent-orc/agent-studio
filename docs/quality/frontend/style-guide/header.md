@@ -15,7 +15,7 @@ actions; the global alert is projected from `app.html` before `app-task-detail`.
 | App 2 | Workspace breadcrumb and project picker | Active workspace, project, auto mode, open task count | Workspace/project known; picker always | Breadcrumb text and one picker pill; `d6b11df5d`. |
 | App 3 | Search | Global search action | Studio shell open | Header button; `5962926653`. |
 | App 4 | Task defaults, Environment, Project Chat | Defaults and workspace tools | Capabilities available | Shared header buttons; defaults `7fb0177069`, Environment `958fbf2411`, chat `8e1228f292`. |
-| App 5 | Theme, stalls, Settings, account | User actions and acute stall count | Stalls only when count is nonzero | Icon or text buttons plus account control; theme `d6b11df5d`, stalls/settings/account `7fb0177069`, AGT-3356 moved usage to footer. |
+| App 5 | Theme, Needs you, Settings, account | User actions and the operator attention count | Needs you always; its count takes the warning tint only when nonzero | Icon or text buttons plus account control; theme `d6b11df5d`, settings/account `7fb0177069`, AGT-3356 moved usage to footer, AGT-3576 replaced the stall bell with `app-attention-control`. |
 | Task 1 | Tab strip | Open tabs and active task identity | Editor open | One row; `d6b11df5d`, AGT-2963 responsive fix. |
 | Task 2 | Task toolbar | Run activity, execution host, pane toggles, lane pager, paging lane, primary action, menu | Task tab active; individual controls follow their capability | One action row; `ccc0039eb` (AGT-2819 extraction). Host belongs here and nowhere in the Overview title. |
 | Task 3 | Global alert banner | Cross-task integration alert | Alert threshold reached | Single alert banner in `app-workspace-banner`; `5d496e73e`. |
@@ -36,11 +36,16 @@ actions; the global alert is projected from `app.html` before `app-task-detail`.
 | Task 18 | `app-pane-toggle-bar` | Pane visibility | Task detail open; hidden in Studio where toolbar owns toggles | Toolbar; `170164f07`. |
 
 The global top row's child order is navigation, breadcrumb, project picker,
-search, defaults, Environment, Project Chat, theme, stall bell, Settings, and
+search, defaults, Environment, Project Chat, theme, Needs you, Settings, and
 account. Navigation is always available; the breadcrumb needs an active
-workspace, the project picker is always available, and the stall bell needs an
-open stall. Search and the account/settings controls are buttons. Theme is an
-icon button. The workspace quota banner follows the top row and renders only
+workspace, and the project picker and Needs you are always available. Search
+and the account/settings controls are buttons. Theme is an icon button.
+Needs you (`app-attention-control`, AGT-3576) owns the one "what needs me"
+count: it opens the attention list read from `GET /api/operator/attention`,
+the open facts of the operator decision stream grouped by class, and its count
+is the number of rows that list renders (R3). Open stalls outside those classes
+stay in the Activity feed, which the list links to. Below 720 px the label
+hides and the bell icon and count stay. The workspace quota banner follows the top row and renders only
 when the workspace cap has an actionable finding (`a98537a193`). Usage totals
 belong in the footer (AGT-3356), not this row.
 

@@ -28,6 +28,75 @@ public sealed class WorkbenchCatalogueTests : IDisposable
     }
 
     [Fact]
+    public void IntegrationCandidate_AssignsDocumentKeyBeforeGateWithoutChangingDelivery()
+    {
+        RunGit("init", "-b", "develop");
+        RunGit("config", "user.email", "tests@example.invalid");
+        RunGit("config", "user.name", "Workbench Tests");
+        File.WriteAllText(Path.Combine(_root, "base.txt"), "base\n");
+        var legacyPath = Path.Combine(_root, "docs", "workbenches", "legacy-dossier", "workbench.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(legacyPath)!);
+        File.WriteAllText(legacyPath,
+            "{\"schemaVersion\":1,\"id\":\"legacy-dossier\",\"title\":\"Legacy\"}\n");
+        RunGit("add", ".");
+        RunGit("commit", "-m", "base");
+        var baseSha = RunGit("rev-parse", "HEAD").Trim();
+        var descriptorPath = Path.Combine(_root, "docs", "workbenches", "new-dossier", "workbench.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(descriptorPath)!);
+        File.WriteAllText(descriptorPath,
+            "{\"schemaVersion\":1,\"id\":\"new-dossier\",\"title\":\"New\"}\n");
+        RunGit("add", ".");
+        RunGit("commit", "-m", "delivery");
+        var deliverySha = RunGit("rev-parse", "HEAD").Trim();
+        var (_, registry) = ServiceWithRegistry();
+        var project = registry.FindByIdOrDisplayName("Project")!;
+        var git = IntegrationGit();
+
+        var keyed = git.IncludeDocumentKeysInCandidate(_root, baseSha, deliverySha, project, registry);
+
+        Assert.True(keyed.Success, keyed.Error);
+        Assert.NotEqual(deliverySha, keyed.Sha);
+        Assert.Equal(deliverySha, RunGit("rev-parse", $"{keyed.Sha}^1").Trim());
+        Assert.DoesNotContain("\"key\"", RunGit("show", $"{deliverySha}:docs/workbenches/new-dossier/workbench.json"));
+        Assert.Contains($"\"key\": \"{project.ShortCode}-W1\"",
+            RunGit("show", $"{keyed.Sha}:docs/workbenches/new-dossier/workbench.json"));
+        Assert.DoesNotContain("\"key\"",
+            RunGit("show", $"{keyed.Sha}:docs/workbenches/legacy-dossier/workbench.json"));
+    }
+
+    [Fact]
+    public void IntegrationMerge_AmendsKeyIntoTheGatedCommit()
+    {
+        RunGit("init", "-b", "develop");
+        RunGit("config", "user.email", "tests@example.invalid");
+        RunGit("config", "user.name", "Workbench Tests");
+        File.WriteAllText(Path.Combine(_root, "base.txt"), "base\n");
+        RunGit("add", ".");
+        RunGit("commit", "-m", "base");
+        var baseSha = RunGit("rev-parse", "HEAD").Trim();
+        var descriptorPath = Path.Combine(_root, "docs", "workbenches", "new-dossier", "workbench.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(descriptorPath)!);
+        File.WriteAllText(descriptorPath,
+            "{\"schemaVersion\":1,\"id\":\"new-dossier\",\"title\":\"New\"}\n");
+        RunGit("add", ".");
+        RunGit("commit", "-m", "delivery");
+        var mergedSha = RunGit("rev-parse", "HEAD").Trim();
+        var (_, registry) = ServiceWithRegistry();
+        var project = registry.FindByIdOrDisplayName("Project")!;
+        var git = IntegrationGit();
+
+        var keyed = git.IncludeDocumentKeysInIntegrationMerge(_root, baseSha, mergedSha,
+            project, registry);
+
+        Assert.True(keyed.Success, keyed.Error);
+        Assert.NotEqual(mergedSha, keyed.Sha);
+        Assert.Equal(keyed.Sha, RunGit("rev-parse", "HEAD").Trim());
+        Assert.Equal(baseSha, RunGit("rev-parse", "HEAD^1").Trim());
+        Assert.Contains($"\"key\": \"{project.ShortCode}-W1\"",
+            File.ReadAllText(descriptorPath));
+    }
+
+    [Fact]
     public void List_KeepsLegacyImplementationTaskKeysAsDossierSlices()
     {
         WriteWorkbench("legacy-slices", "Legacy slices", "active", "2026-07-10T10:00:00Z");
@@ -808,6 +877,14 @@ public sealed class WorkbenchCatalogueTests : IDisposable
 
     private WorkbenchCatalogueService Service(WorkspaceArtifactPushQueue? pushQueue = null)
         => ServiceWithRegistry(pushQueue).Service;
+
+    private static GitService IntegrationGit()
+    {
+        var config = new ConfigurationBuilder().Build();
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        return new GitService(NullLogger<GitService>.Instance, scanner, config);
+    }
 
     private (WorkbenchCatalogueService Service, ProjectRegistry Registry) ServiceWithRegistry(
         WorkspaceArtifactPushQueue? pushQueue = null)
