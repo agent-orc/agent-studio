@@ -439,6 +439,8 @@ public static class TaskCrudEndpoints
                     TestEvidence = gitFacts.TestEvidence,
                     ReviewProjection = gitFacts.ReviewProjection,
                 } };
+            withRuntime = withRuntime with { Info = WithContractIntegration(withRuntime.Info,
+                projectSettings.Get(withRuntime.Info.ProjectName).IntegrationBranch) };
             if (AcceptanceAttemptLineagePolicy.ReadGap(withRuntime.Info, attemptAuthority) is { } attemptGap)
                 withRuntime = withRuntime with { Info = withRuntime.Info with { AcceptanceAttemptGap = attemptGap } };
             context.Response.Headers.ETag = AgentStudio.Operator.OperatorCoordinationStore.Revision(withRuntime.Info.FolderPath);

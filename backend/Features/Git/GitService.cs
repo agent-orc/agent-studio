@@ -8923,9 +8923,24 @@ public partial class GitService
     private static GitCommitResult CommitPathspecs(string root, string message, IReadOnlyCollection<string> pathspecs)
     {
         if (string.IsNullOrWhiteSpace(message)) return new GitCommitResult(false, null, "Commit message is required.");
-        var commitArgs = new List<string> { "commit", "-F", "-", "--" };
+        // These are Studio-owned document commits. Supply both identities for
+        // this invocation so native services do not need a global git config.
+        const string name = "Agent Studio";
+        const string email = "studio@agent-studio.invalid";
+        var commitArgs = new List<string>
+        {
+            "-c", $"user.name={name}", "-c", $"user.email={email}",
+            "commit", "-F", "-", "--"
+        };
         commitArgs.AddRange(pathspecs);
-        var (_, commitErr, commitCode) = RunGitArgs(root, commitArgs.ToArray(), stdin: message);
+        var (_, commitErr, commitCode) = RunGitArgs(root, commitArgs.ToArray(), message,
+            new Dictionary<string, string?>
+            {
+                ["GIT_AUTHOR_NAME"] = name,
+                ["GIT_AUTHOR_EMAIL"] = email,
+                ["GIT_COMMITTER_NAME"] = name,
+                ["GIT_COMMITTER_EMAIL"] = email,
+            });
         if (commitCode != 0)
         {
             if (commitErr.Contains("nothing to commit", StringComparison.OrdinalIgnoreCase))

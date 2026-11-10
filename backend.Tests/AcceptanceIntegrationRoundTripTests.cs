@@ -672,6 +672,78 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             entry => entry.Kind == TimelineEventKinds.DeliveryReviewRequested);
     }
 
+    /// <summary>
+    /// AGT-3621 - newcomer playthrough H5: the delivery chain promoted an
+    /// integrated card with a stale-verdict park and its Auto Review phase
+    /// `integrating` still set. Nobody accepted it, yet the backstop read the
+    /// phase as an interrupted acceptance and moved it to Accepted.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Promotion_waits_for_a_person_and_is_not_accepted_by_the_backstop()
+    {
+        var deliverySha = PublishDelivery("promotion.txt", "integrated delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var deps = Build(deliverySha, guarded: true, initialState: TaskStates.AutoReview);
+        var integrating = deps.Scanner.FindJob(Slug, _watchPath)!;
+        deps.Mutations.SetJobPhase(integrating.FolderPath, LifecyclePhases.Integrating);
+        var reconciler = new DeliveryChainReconciler(deps.Scanner, deps.Integration,
+            deps.Transitions, deps.Configuration, NullLogger<DeliveryChainReconciler>.Instance,
+            timeline: deps.Timeline);
+
+        Assert.Equal(1, await reconciler.RunOnceAsync());
+
+        var promoted = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.HumanReview, promoted.State);
+        Assert.Null(promoted.Phase);
+        Assert.NotNull(promoted.ParkedBlocker);
+        Assert.Equal(LaneChangeCauses.Promoted, promoted.ParkedBlocker!.Cause);
+        Assert.Equal(DeliveryChainReasons.Integrated, promoted.ParkedBlocker.CauseDetail);
+        Assert.Equal(DeliveryChainReconciler.PromotionReason, promoted.ParkedBlocker.Reason);
+        Assert.DoesNotContain(deps.Timeline.ReadAll(promoted.FolderPath), entry =>
+            entry.Kind == TimelineEventKinds.LaneChanged
+            && entry.Details?.GetValueOrDefault(LaneChangeCauses.DetailQualifierKey) == DeliveryChainReasons.VerdictStale);
+
+        var backstop = new AcceptedIntegrationBackstopHostedService(
+            deps.Scanner, deps.Settings, deps.Merge, deps.Integration, deps.Mutations, deps.Configuration,
+            NullLogger<AcceptedIntegrationBackstopHostedService>.Instance, deps.Transitions, deps.Timeline);
+        backstop.RunOnce();
+
+        Assert.Equal(TaskStates.HumanReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+    }
+
+    /// <summary>
+    /// AGT-3621 - a card promoted before the fix still carries the phase and the
+    /// stale-verdict park. The backstop clears the phase and leaves the verdict
+    /// to a person instead of accepting the card.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void Backstop_clears_a_promotion_phase_instead_of_accepting_the_card()
+    {
+        var deliverySha = PublishDelivery("leaked-phase.txt", "integrated delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var deps = Build(deliverySha, guarded: true, initialState: TaskStates.AutoReview);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(MoveJobStatus.Success, deps.States.MoveJob(Slug, TaskStates.HumanReview, _watchPath,
+            cause: TimelineActors.System, reason: "delivery-verdict-stale: Integrate the current delivery and repeat review.",
+            transitionCause: LaneChangeCauses.AcceptanceIntegrationFailed,
+            transitionDetail: DeliveryChainReasons.VerdictStale).Status);
+        card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        // The pre-fix promotion left this phase behind.
+        deps.Mutations.SetJobPhase(card.FolderPath, LifecyclePhases.Integrating);
+        Assert.True(AcceptedIntegrationBackstopPolicy.CarriesPromotionPhase(deps.Scanner.FindJob(Slug, _watchPath)!));
+
+        var backstop = new AcceptedIntegrationBackstopHostedService(
+            deps.Scanner, deps.Settings, deps.Merge, deps.Integration, deps.Mutations, deps.Configuration,
+            NullLogger<AcceptedIntegrationBackstopHostedService>.Instance, deps.Transitions, deps.Timeline);
+
+        Assert.Equal(0, backstop.RunOnce());
+        var waiting = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.HumanReview, waiting.State);
+        Assert.Null(waiting.Phase);
+    }
+
     [Fact]
     [Trait("Category", "MachineBound")]
     public async Task Stale_delivery_verdict_queues_a_merge_round_when_current_delivery_conflicts()

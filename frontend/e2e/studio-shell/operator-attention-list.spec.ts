@@ -43,15 +43,17 @@ async function gotoStudio(page: Page): Promise<void> {
 
 /** Opens the list and checks the header count against the visible rows and group counts. */
 async function openAndReconcile(page: Page): Promise<number> {
-  const count = Number((await page.getByTestId('studio-attention-count').textContent())?.trim());
   await page.getByTestId('studio-attention-trigger').click();
   const list = page.getByTestId('studio-attention-list');
   await expect(list).toBeVisible();
-  await expect(list.getByTestId('attention-row')).toHaveCount(count);
-  const groupCounts = await list.getByTestId('attention-count-in-group').allTextContents();
-  expect(groupCounts.reduce((sum, value) => sum + Number(value.trim()), 0)).toBe(count);
-  await expect(page.getByTestId('studio-attention-count')).toHaveText(String(count));
-  return count;
+  await expect.poll(async () => {
+    const count = Number((await page.getByTestId('studio-attention-count').textContent())?.trim());
+    const rows = await list.getByTestId('attention-row').count();
+    const groups = (await list.getByTestId('attention-count-in-group').allTextContents())
+      .reduce((sum, value) => sum + Number(value.trim()), 0);
+    return count > 0 && count === rows && count === groups;
+  }).toBe(true);
+  return Number((await page.getByTestId('studio-attention-count').textContent())?.trim());
 }
 
 async function screenshot(page: Page, name: string): Promise<void> {
@@ -61,6 +63,7 @@ async function screenshot(page: Page, name: string): Promise<void> {
 
 test.describe('Operator attention list', () => {
   test('lists real escalated and human review cards and opens the review card', async ({ page }) => {
+    test.setTimeout(180_000);
     const [watch] = await api<WatchPath[]>('/api/watch-paths');
     expect(watch, 'the isolated stack has a project').toBeTruthy();
     const suffix = Date.now().toString(36);
@@ -113,6 +116,17 @@ test.describe('Operator attention list', () => {
   });
 
   test('groups every decision-event class and counts exactly the visible rows', async ({ page }) => {
+    await page.route('**/api/workbenches', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }),
+    }));
+    await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ generatedAt: new Date().toISOString(), items: [] }),
+    }));
+    await page.route('**/api/operator/backups', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ state: 'ok', warnings: [], backups: [], offHost: {} }),
+    }));
     const observedAt = new Date(Date.now() - 42 * 60_000).toISOString();
     const row = (id: string, type: string, cardKey: string | null, reason: string, project: string | null = 'alpha') =>
       ({ id, type, project, cardKey, cards: cardKey ? [cardKey] : [], reason, observedAt, suggestedOperations: [] });
@@ -160,5 +174,58 @@ test.describe('Operator attention list', () => {
     await page.getByTestId('attention-group-host').getByTestId('attention-row-action').click();
     // The hosts section lives in the Environment settings surface.
     await expect(page).toHaveURL(/workspace\/settings\/environment/);
+  });
+
+  test('owner day shows titles, decisions, installation warnings and reconciled counts', async ({ page }) => {
+    const observedAt = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
+    const row = (id: string, type: string, cardKey: string | null, title: string, reason: string) => ({
+      id, type, project: 'Owner day', cardKey, cards: cardKey ? [cardKey] : [], title, reason,
+      observedAt, suggestedOperations: [],
+    });
+    const items = [
+      row('e9', 'escalation.opened', 'DEMO-9', 'Blocked deployment', 'Gate failed twice.'),
+      ...Array.from({ length: 8 }, (_, i) => row(`r${i}`, 'human-review.ready', `DEMO-${i + 1}`,
+        `Review card ${i + 1}`, i === 5 ? 'Cannot be accepted: brief changed.' :
+          `Grade ${i === 4 ? 'B' : i === 7 ? 'C' : 'A'} · ${i === 4 ? 2 : 0} concerns.`)),
+      row('batch', 'batch.red', null, 'Batch gate', 'Three tests failed.'),
+    ];
+    await page.route('**/api/workbenches', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{
+        projectName: 'Owner day', workbench: { id: 'concept', key: 'DOC-17',
+          title: 'Concept Dossier', status: 'decision-pending', openDecisionCount: 2,
+          updatedAtUtc: observedAt },
+      }] }),
+    }));
+    await page.route('**/api/operator/attention', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ items, count: items.length }),
+    }));
+    await page.route('**/api/operator/backups', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ state: 'disabled', stale: false, generatedAt: observedAt,
+        warnings: [], backups: [], offHost: {} }),
+    }));
+    await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ generatedAt: observedAt, items: [{ id: 'cred-1', label: 'Provider token',
+        state: 'expiring', detail: 'Expires soon.' }] }),
+    }));
+    await gotoStudio(page);
+    await expect(page.getByTestId('studio-attention-count')).toHaveText(/1[23]/);
+    for (const viewport of VIEWPORTS) {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await openAndReconcile(page);
+        const list = page.getByTestId('studio-attention-list');
+        await expect(list.getByTestId('attention-group-dossier')).toContainText('2 open decisions');
+        await expect(list.getByTestId('attention-group-installation')).toContainText('Backups off');
+        await expect(list.getByTestId('attention-row-title').filter({ hasText: 'Blocked deployment' })).toBeVisible();
+        await expect(list.getByTestId('attention-row-reason').filter({ hasText: 'brief changed' })).toBeVisible();
+        await screenshot(page, `owner-day-${viewport.width}-${theme}`);
+        await list.getByTestId('attention-group-installation').scrollIntoViewIfNeeded();
+        await screenshot(page, `owner-day-installation-${viewport.width}-${theme}`);
+        await page.keyboard.press('Escape');
+      }
+    }
   });
 });

@@ -8,6 +8,7 @@ import {
   parkCauseFromTimeline,
   parkCauseView,
   parkNextStepSentence,
+  parkPreconditionMet,
   parkReasonSentence,
   parkedBlockerLabel,
   parkedForLabel,
@@ -275,6 +276,24 @@ describe('park copy from the recorded cause', () => {
       .toBe(fact);
     expect(parkReasonSentence(fact, stale)).toBe(fact);
     expect(parkReasonSentence('', stale)).toBe(fact);
+  });
+
+  it('hides a stale-verdict park once the delivery is integrated (AGT-3621)', () => {
+    const stalePark: ParkedBlockerStatus = {
+      ...auditPark,
+      lane: '5-human-review',
+      reason: 'delivery-verdict-stale: Integrate the current delivery and repeat review.',
+      causeDetail: 'delivery-verdict-stale',
+    };
+    const integrated = { status: 'integrated' } as NonNullable<TaskInfo['integration']>;
+    const pending = { status: 'pending' } as NonNullable<TaskInfo['integration']>;
+    expect(parkPreconditionMet({ parkedBlocker: stalePark, integration: integrated })).toBe(true);
+    expect(buildParkedBlockerView({ parkedBlocker: stalePark, integration: integrated }, NOW)).toBeNull();
+    expect(buildParkedBadge({ parkedBlocker: stalePark, integration: integrated }, NOW)).toBeNull();
+    // Not integrated yet: the park still describes the card.
+    expect(buildParkedBlockerView({ parkedBlocker: stalePark, integration: pending }, NOW)).not.toBeNull();
+    // A fatal integration park is not a stale verdict and stays.
+    expect(buildParkedBlockerView({ parkedBlocker: auditPark, integration: integrated }, NOW)).not.toBeNull();
   });
 
   it('states a reason once, as a sentence, never as a bare slug', () => {

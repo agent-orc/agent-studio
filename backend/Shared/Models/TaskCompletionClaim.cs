@@ -92,6 +92,14 @@ public sealed record TaskCompletionClaim
     /// <summary>Who moved the card into the delivered lane.</summary>
     public string? Actor { get; init; }
 
+    /// <summary>
+    /// AGT-3621: set when the system gave the Human Review verdict in a
+    /// person's place. Completes the sentence "Accepted automatically by …",
+    /// for example <c>the acceptance rail (project autonomy Balanced)</c>.
+    /// Null for every acceptance a person gave.
+    /// </summary>
+    public string? AcceptedAutomaticallyBy { get; init; }
+
     /// <summary>Brief and content review that were checked at the completion boundary.</summary>
     public string? CurrentBriefVersion { get; init; }
     public string? DeliveryBriefVersion { get; init; }

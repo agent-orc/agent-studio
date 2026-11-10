@@ -19,7 +19,11 @@ const EMPTY_GROUPED = {
   escalated: [], review: [], completed: [], archive: [],
 };
 
-const DOSSIER_HTML = `<main>
+const DOSSIER_HTML = `<style>
+  :root { color-scheme: light dark; }
+  body { background: Canvas; color: CanvasText; }
+  textarea { background: Field; color: FieldText; }
+</style><main>
   <h1>Naming Dossier</h1>
   <p>Select the stable public naming contract.</p>
   <section data-decision-id="public-name" data-decision-kind="single">
@@ -36,6 +40,7 @@ interface CapturedCalls {
   taskBodies: Record<string, unknown>[];
   decisionBodies: Record<string, unknown>[];
   steerBodies: Record<string, unknown>[];
+  deletedTaskIds: string[];
 }
 
 function json(route: Route, body: unknown, status = 200) {
@@ -43,7 +48,7 @@ function json(route: Route, body: unknown, status = 200) {
 }
 
 async function installMocks(page: Page): Promise<CapturedCalls> {
-  const captured: CapturedCalls = { taskBodies: [], decisionBodies: [], steerBodies: [] };
+  const captured: CapturedCalls = { taskBodies: [], decisionBodies: [], steerBodies: [], deletedTaskIds: [] };
   let taskCreated = false;
   let decision: Record<string, unknown> | null = null;
   let decisionStage: string | null = null;
@@ -57,6 +62,14 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
   await page.route('**/api/watch-paths', route => json(route, [{
     name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH,
   }]));
+  await page.route('**/api/workspaces/*/quota/admission', route => json(route, {
+    workspaceId: 'workspace-evidence',
+    workspace: {
+      projectId: null, project: null, status: 'ok', message: null,
+      overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false,
+    },
+    projects: [],
+  }));
   await page.route('**/api/v1/workspaces**', route => json(route, [{
     id: 'workspace-evidence', displayName: 'Evidence', sortOrder: 0, isDefault: true,
     projects: [{
@@ -75,6 +88,10 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
   await page.route('**/api/cli/usage**', route => json(route, {
     at: '2026-08-11T10:00:00Z', sessions: [],
   }));
+  await page.route('**/api/usage/cockpit**', route => json(route, {
+    workspaceId: 'workspace-evidence', clis: [], cost: null,
+  }));
+  await page.route('**/api/token-pricing/calculate', route => json(route, { items: [] }));
   await page.route(/\/api\/cli\/[^/]+\/models(?:\?.*)?$/, route => {
     const cli = new URL(route.request().url()).pathname.split('/')[3];
     return json(route, {
@@ -154,13 +171,22 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
     taskCreated = true;
     return json(route, { id: 'naming-feature-1' });
   });
-  await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/naming-feature-1(?:\?.*)?$/, route => json(route, {
-    info: {
-      id: 'naming-feature-1', key: 'AGT-2611', displayKey: 'AGT-2611',
-      taskKey: `${PROJECT}::AGT-2611`, title: 'Implement the stable naming contract',
-      state: '2-ready', projectName: PROJECT, watchPath: WATCH_PATH,
-    },
-  }));
+  await page.route(/\/api\/v1\/projects\/-\/tasks\/naming-feature-1(?:\?.*)?$/, route => {
+    if (route.request().method() !== 'DELETE') return json(route, {});
+    captured.deletedTaskIds.push('naming-feature-1');
+    taskCreated = false;
+    return json(route, {});
+  });
+  await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/naming-feature-1(?:\?.*)?$/, route => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    return json(route, {
+      info: {
+        id: 'naming-feature-1', key: 'AGT-2611', displayKey: 'AGT-2611',
+        taskKey: `${PROJECT}::AGT-2611`, title: 'Implement the stable naming contract',
+        state: '2-ready', projectName: PROJECT, watchPath: WATCH_PATH,
+      },
+    });
+  });
   await page.route(
     `**/api/projects/${encodeURIComponent(PROJECT)}/workbenches/${WORKBENCH_KEY}/references`,
     route => json(route, {
@@ -309,8 +335,26 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
   await expect(created).toContainText('AGT-2611');
   await expect(created).toContainText('Implement the stable naming contract');
   await expect(created).toContainText('Ready');
+  await expect(inline.getByTestId('workbench-decision-receipt')).toContainText('AGT-2611');
+  await expect(page.getByTestId('workbench-viewer-status')).toHaveAttribute('data-status', 'decided');
   await page.screenshot({
     path: resolve(RESULTS, 'dossier-inline-decision-created-receipt--mocked.png'),
+    fullPage: true,
+  });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.evaluate(() => { document.documentElement.dataset['studioTheme'] = 'dark'; });
+  await page.screenshot({
+    path: resolve(RESULTS, 'dossier-inline-decision-created-receipt-dark--mocked.png'),
+    fullPage: true,
+  });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.evaluate(() => { document.documentElement.dataset['studioTheme'] = 'light'; });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const cardLink = await created.locator('a').first().boundingBox();
+  expect(cardLink).not.toBeNull();
+  expect(cardLink!.x + cardLink!.width).toBeLessThanOrEqual(390);
+  await page.screenshot({
+    path: resolve(RESULTS, 'dossier-inline-decision-created-receipt-mobile--mocked.png'),
     fullPage: true,
   });
 
@@ -346,6 +390,31 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
     model: 'gpt-5.6-sol',
     thinkingLevel: 'high',
   }));
+});
+
+test('failed Dossier confirmation removes its new task and explains the outcome', async ({ page, devBackend }) => {
+  expect(devBackend.port).toBeGreaterThan(0);
+  const captured = await installMocks(page);
+  await page.route(
+    `**/api/projects/${encodeURIComponent(PROJECT)}/workbenches/${WORKBENCH_ID}/decisions/confirm`,
+    route => json(route, {
+      success: false, errorCode: 'write-failed',
+      error: 'Managed repository commit failed: Author identity unknown. Run git config --global user.email',
+    }, 500),
+  );
+  await seedWorkbench(page);
+  await page.goto('/');
+  const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
+  await frame.locator('[data-option-id="option-a"] input').check();
+  const inline = page.getByTestId('workbench-inline-decision-action');
+  await inline.getByTestId('workbench-decision-start').click();
+  await inline.getByTestId('workbench-decision-confirm').click();
+  await expect.poll(() => captured.deletedTaskIds).toEqual(['naming-feature-1']);
+  await expect(inline.getByRole('alert')).toContainText('The new task was removed');
+  await expect(inline.getByRole('alert')).not.toContainText('git config');
+  const board = await page.evaluate(async () =>
+    (await fetch('/api/v1/studio/board')).json() as Promise<{ ready: unknown[] }>);
+  expect(board.ready).toHaveLength(0);
 });
 
 test('inline Dossier decision requests rework through its orchestrator session', async ({ page, devBackend }) => {

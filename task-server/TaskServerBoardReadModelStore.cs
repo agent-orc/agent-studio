@@ -134,12 +134,19 @@ public sealed partial class TaskServerStore
             cards);
     }
 
-    /// <summary>The project's current board generation, for a conditional read without the card rows.</summary>
-    public async Task<long> GetBoardGenerationAsync(string projectIdentity, CancellationToken ct)
+    /// <summary>The board and workspace source generations for a conditional read without card rows.</summary>
+    public async Task<(long Board, long? WorkspaceSource)> GetBoardVersionsAsync(
+        string projectIdentity, CancellationToken ct)
     {
         await using var connection = await OpenReadyAsync(ct);
-        var (projectId, _) = await RequireBoardProjectAsync(connection, null, projectIdentity, ct);
-        return await ReadBoardGenerationAsync(connection, null, projectId, ct);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct);
+        var (projectId, _) = await RequireBoardProjectAsync(connection, transaction, projectIdentity, ct);
+        var board = await ReadBoardGenerationAsync(connection, transaction, projectId, ct);
+        var source = await ScalarAsync(connection,
+            "SELECT source_generation FROM board_workspace_imports WHERE project_id = $project;",
+            ct, transaction, ("$project", projectId));
+        await transaction.CommitAsync(ct);
+        return (board, source is null or DBNull ? null : Convert.ToInt64(source, CultureInfo.InvariantCulture));
     }
 
     public async Task<BoardChangeFeedResponse> GetBoardChangesAsync(

@@ -278,7 +278,7 @@ export class TaskDetailComponent implements OnDestroy {
    * fire (or show a guessed "Merge into Develop" label) before the branch/merge
    * truth is known (AGT-2006). Flips to `false` atomically with `landedState`
    * resolving, so the button switches straight to its true label without a
-   * wrong -> right flicker.
+   * wrong -> right flicker. AGT-3621: the wait is bounded (`PROVENANCE_WAIT_MS`).
    */
   readonly gitInfoLoading = computed(() => !this.git.provenanceLoaded());
   readonly commitActionsAvailable = computed(() => {
