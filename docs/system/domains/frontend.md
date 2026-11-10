@@ -7,6 +7,15 @@ Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
 
+## Phone navigation and theme
+
+At 390 px the Studio board shows one lane at a time. The Board lane picker
+selects a workflow lane or delivery column; the chosen group supplies the
+single visible board track. Workspace settings replace their section rail with
+a picker below 760 px, keeping the checklist at the top of the content area.
+The root app initializes `ThemeService` before authentication so the auth gate
+uses the same saved or system-resolved light and dark tokens as Studio.
+
 ## Manual task creation
 
 The create dialog resolves the selected project's `cliDefault` and
@@ -387,6 +396,11 @@ history. Each entry carries its lane-pager snapshot, so Back and Forward
 restore both the task and its captured lane position even when the task has
 since moved to a terminal lane. Pipeline-driven changes replace the current
 route instead and do not add review-history entries.
+
+A refused optimistic triage move restores the original task, lane-pager
+snapshot, route, and active task tab together. The detail shows the refusal
+beside the action with the next step. If an error dialog opens, closing it
+returns focus to the failed action.
 
 Each Wiki/Dossier tab owns a history stack containing its current target and up
 to 49 earlier or forward targets. Normal link navigation truncates that tab's

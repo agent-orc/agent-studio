@@ -220,5 +220,6 @@ export function isBatchGateState(value: unknown): value is BatchGateState {
     ['pending', 'in-batch', 'published', 'fallback', 'pre-check-red', 'review-fix'].includes(String(member['status'])) &&
     optionalString(member['batchId']) && optionalString(member['phase']) &&
     optionalNumber(member['position']) && optionalNumber(member['size']) &&
-    optionalString(member['reason']) && optionalString(member['reasonDetail']));
+    optionalString(member['reason']) && optionalString(member['reasonDetail']) &&
+    optionalString(member['waitKind']) && optionalString(member['waitingFor']));
 }

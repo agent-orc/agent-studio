@@ -47,7 +47,19 @@ function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 }
 
-async function installMocks(page: Page, failFirstConfirm = false): Promise<CapturedCalls> {
+interface DescriptorState {
+  status: string;
+  phase: string;
+  lifecycleState: string;
+}
+
+const DECISION_READY: DescriptorState = {
+  status: 'active', phase: 'decision-ready', lifecycleState: 'review-requested',
+};
+
+async function installMocks(
+  page: Page, descriptor: DescriptorState = DECISION_READY, failFirstConfirm = false,
+): Promise<CapturedCalls> {
   const captured: CapturedCalls = { taskBodies: [], decisionBodies: [], steerBodies: [], deletedTaskIds: [] };
   let taskCreated = false;
   let decision: Record<string, unknown> | null = null;
@@ -123,7 +135,7 @@ async function installMocks(page: Page, failFirstConfirm = false): Promise<Captu
       workbench: {
         id: WORKBENCH_ID, key: WORKBENCH_KEY, title: 'Naming Dossier',
         summary: 'Choose the stable naming contract used by public references.',
-        status: 'decision-pending', phase: 'decision-ready',
+        status: descriptor.status, phase: descriptor.phase,
         updatedAtUtc: '2026-08-11T10:00:00Z',
         entryPath: 'docs/operations/naming-dossier/index.html',
         valid: true, error: null, sourceTaskKeys: ['AGT-2600'],
@@ -139,7 +151,7 @@ async function installMocks(page: Page, failFirstConfirm = false): Promise<Captu
       items: [{
         id: WORKBENCH_ID, key: WORKBENCH_KEY, title: 'Naming Dossier',
         summary: 'Choose the stable naming contract used by public references.',
-        status: 'decision-pending', phase: 'decision-ready',
+        status: descriptor.status, phase: descriptor.phase,
         updatedAtUtc: '2026-08-11T10:00:00Z',
         entryPath: 'docs/operations/naming-dossier/index.html',
         valid: true, error: null, sourceTaskKeys: ['AGT-2600'],
@@ -257,11 +269,11 @@ async function installMocks(page: Page, failFirstConfirm = false): Promise<Captu
       workbench: {
         id: WORKBENCH_ID, key: WORKBENCH_KEY, title: 'Naming Dossier',
         summary: 'Choose the stable naming contract used by public references.',
-        status: decisionStage === 'succeeded' ? 'decided' : 'decision-pending',
-        phase: 'decision-ready', updatedAtUtc: '2026-08-11T10:00:00Z',
+        status: decisionStage === 'succeeded' ? 'decided' : descriptor.status,
+        phase: descriptor.phase, updatedAtUtc: '2026-08-11T10:00:00Z',
         entryPath: 'docs/operations/naming-dossier/index.html', valid: true, error: null,
         sourceTaskKeys: ['AGT-2600'], relatedTaskKeys: taskCreated ? ['AGT-2611'] : [],
-        lifecycleState: decisionStage === 'succeeded' ? 'decided' : 'review-requested',
+        lifecycleState: decisionStage === 'succeeded' ? 'decided' : descriptor.lifecycleState,
         decision, decisionStage,
       },
       html: DOSSIER_HTML, branch: 'develop', revision,
@@ -298,7 +310,7 @@ for (const scenario of [
     expect(devBackend.port).toBeGreaterThan(0);
     mkdirSync(RESULTS, { recursive: true });
     await page.setViewportSize({ width: scenario.width, height: scenario.height });
-    const captured = await installMocks(page, true);
+    const captured = await installMocks(page, DECISION_READY, true);
     await seedWorkbench(page, scenario.theme);
     await page.goto('/');
 
@@ -516,5 +528,53 @@ test('inline Dossier decision requests rework through its orchestrator session',
   await page.screenshot({
     path: resolve(RESULTS, 'dossier-inline-decision-rework--mocked.png'),
     fullPage: true,
+  });
+});
+
+// AGT-3697: a concept delivery publishes status decision-pending and leaves
+// phase at shaping. The Studio must accept that descriptor without a manual
+// phase edit.
+for (const variant of [
+  { name: 'light', theme: 'light' as const, width: 1600, height: 1000 },
+  { name: 'dark', theme: 'dark' as const, width: 1600, height: 1000 },
+  { name: '390', theme: 'light' as const, width: 390, height: 844 },
+]) {
+  test(`decision-pending concept Dossier in shaping is decidable (${variant.name})`, async ({ page, devBackend }) => {
+    expect(devBackend.port).toBeGreaterThan(0);
+    mkdirSync(RESULTS, { recursive: true });
+    await page.setViewportSize({ width: variant.width, height: variant.height });
+    await installMocks(page, {
+      status: 'decision-pending', phase: 'shaping', lifecycleState: 'review-requested',
+    });
+    await seedWorkbench(page, variant.theme);
+    await page.goto('/');
+    await expect(page.getByTestId('workbench-viewer')).toBeVisible({ timeout: 30_000 });
+
+    const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
+    await frame.locator('[data-option-id="option-a"] input').check();
+    const inline = page.getByTestId('workbench-inline-decision-action');
+    await expect(inline.getByTestId('workbench-decision-start')).toBeEnabled();
+    await expect(page.getByTestId('workbench-decision-gate')).toHaveCount(0);
+    await page.screenshot({
+      path: resolve(RESULTS, `agt-3697-decision-pending-shaping-decidable--${variant.name}.png`),
+    });
+  });
+}
+
+test('active shaping Dossier names the descriptor states that open decisions', async ({ page, devBackend }) => {
+  expect(devBackend.port).toBeGreaterThan(0);
+  mkdirSync(RESULTS, { recursive: true });
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await installMocks(page, { status: 'active', phase: 'shaping', lifecycleState: 'in-progress' });
+  await seedWorkbench(page);
+  await page.goto('/');
+  await expect(page.getByTestId('workbench-viewer')).toBeVisible({ timeout: 30_000 });
+
+  const gate = page.getByTestId('workbench-decision-gate').first();
+  await expect(gate).toContainText('status decision-pending or phase decision-ready');
+  await expect(page.getByTestId('workbench-decision-start')).toHaveCount(0);
+  await gate.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: resolve(RESULTS, 'agt-3697-active-shaping-gate-notice--light.png'),
   });
 });
