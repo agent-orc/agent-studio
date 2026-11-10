@@ -166,6 +166,32 @@ public static class OperatorDecisionFacts
         }).ToArray();
 
     /// <summary>
+    /// AGT-3695: a Post Processing card whose latest integration merged locally
+    /// but whose publication to origin was refused. The card waits on its
+    /// integration owner and holds no push reservation, so neither the lane nor
+    /// the pending-push facts name it.
+    /// </summary>
+    public static IReadOnlyList<OperatorDecisionFact> FromBlockedPublications(
+        IEnumerable<TaskInfo> tasks, Func<TaskInfo, PipelineStepExecution?> latestMergeOf)
+    {
+        var facts = new List<OperatorDecisionFact>();
+        foreach (var task in tasks)
+        {
+            if (task.State != TaskStates.AutoReview || latestMergeOf(task) is not { } merge) continue;
+            var failure = AcceptedIntegrationFailurePolicy.Classify(merge.Status, merge.Verdict,
+                merge.Reason, merge.VerdictSummary, merge.FailureCode);
+            if (failure?.Code != AcceptedIntegrationFailureCodes.IntegrationPushBlocked) continue;
+            var card = CardKey(task);
+            var since = merge.CompletedAt ?? merge.StartedAt ?? task.EnteredLaneAt;
+            facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.PushBlocked,
+                Key(OperatorDecisionTypes.PushBlocked, task.ProjectName, card, Stamp(since)),
+                task.ProjectName, card, $"Push of {card} is blocked: {failure.Reason}", Utc(since),
+                [new OperatorEvidenceLink("card", TaskHref(task))]));
+        }
+        return facts;
+    }
+
+    /// <summary>
     /// Provider limits the runner recorded for a CLI; they apply to the whole
     /// installation. The registry replaces an entry when a later limit is
     /// observed, so the occurrence is the CLI until its limit clears.

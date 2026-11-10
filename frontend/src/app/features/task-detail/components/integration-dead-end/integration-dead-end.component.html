@@ -15,17 +15,19 @@
     <div class="dead-end__actions">
       @if (deadEnd.recheck) {
         <button type="button" class="dead-end__primary" (click)="recheck()">Re-check integration</button>
+      } @else if (deadEnd.replay) {
+        <button type="button" class="dead-end__primary" data-testid="dead-end-retry" (click)="retry()">Retry integration</button>
       } @else if (continueAvailable()) {
         <button type="button" data-testid="dead-end-continue" [class.dead-end__primary]="!escalated()" [disabled]="busy()" (click)="continueTask()">Continue with delivery context</button>
       }
-      @if (deadEnd.retry) {
+      @if (deadEnd.retry && !deadEnd.replay) {
         <button type="button" (click)="retry()">Retry integration</button>
       }
       @if (deadEnd.rebase) {
         <button type="button" (click)="rebase()">Rebase and retry</button>
       }
     </div>
-    @if (continueCheck()?.reason; as unavailable) {
+    @if (!deadEnd.replay && continueCheck()?.reason; as unavailable) {
       <p class="dead-end__note" data-testid="dead-end-continue-unavailable">{{ unavailable }}</p>
     }
     @if (savedReason(); as reason) {

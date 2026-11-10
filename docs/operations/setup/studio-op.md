@@ -221,7 +221,7 @@ one result per project; exit 6 means some projects refused, exit 1 all.
 | 22 | Watch woke on `decision-card.opened`. |
 | 23 | Watch woke on `backend.stalled` or `progress.idle-with-ready`. |
 | 24 | Watch woke on `batch.red` or `batch.isolating`. |
-| 25 | Watch woke on `push.pending-overdue`. |
+| 25 | Watch woke on `push.pending-overdue` or `push.blocked`. |
 | 26 | Watch woke on `quota.exhausted` or `quota.fallback-active`. |
 | 27 | Watch woke on `stream.gap`: events were lost; read triage and capacity. |
 | 28 | The watcher lease was lost (taken over). |

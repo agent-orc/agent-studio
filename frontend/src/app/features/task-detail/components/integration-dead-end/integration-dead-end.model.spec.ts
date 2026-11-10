@@ -50,6 +50,13 @@ describe('integrationDeadEnd', () => {
       reason: 'The gate reported a failure.' });
   });
 
+  it('offers Retry integration as the one action when only the publication is missing (AGT-3695)', () => {
+    const blocked = status('integration-push-blocked', 'Publication stopped: the approved merge result c58e247 is not on the local develop integration line.');
+    expect(integrationDeadEnd({ ...blocked, failure: { ...blocked.failure!, replayAvailable: true } }))
+      .toMatchObject({ title: 'Push blocked', retry: true, replay: true, rebase: false });
+    expect(integrationDeadEnd(status('integration-push-blocked'))).toMatchObject({ retry: false, replay: false });
+  });
+
   it('offers continuation for a pending delivery', () => {
     expect(integrationDeadEnd({ ...status('merge-conflict'), status: 'pending', failure: null }))
       .toMatchObject({ kind: 'delivery-pending', stage: 'integration reach', recheck: false });

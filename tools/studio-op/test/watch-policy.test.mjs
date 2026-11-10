@@ -16,6 +16,7 @@ const DECISION_TYPES = {
   'batch.red': EXIT.EVENT_BATCH,
   'batch.isolating': EXIT.EVENT_BATCH,
   'push.pending-overdue': EXIT.EVENT_PUSH,
+  'push.blocked': EXIT.EVENT_PUSH,
   'quota.exhausted': EXIT.EVENT_QUOTA,
   'quota.fallback-active': EXIT.EVENT_QUOTA,
   'stream.gap': EXIT.EVENT_STREAM_GAP,

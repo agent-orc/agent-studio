@@ -420,6 +420,12 @@ public sealed record TaskIntegrationFailure
     public bool RebaseRecoveryAvailable { get; init; }
 
     /// <summary>
+    /// AGT-3695: only the publication is missing; Retry integration replays the
+    /// unchanged delivery SHA without a new review round.
+    /// </summary>
+    public bool ReplayAvailable { get; init; }
+
+    /// <summary>
     /// AGT-2749: whether the shared taxonomy attributes this failure to the
     /// reviewed change, the host, or the provider account. The acceptance rail
     /// requeues Infrastructure and Quota instead of parking them.

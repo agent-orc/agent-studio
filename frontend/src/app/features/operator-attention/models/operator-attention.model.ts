@@ -21,7 +21,7 @@ export interface OperatorAttentionResponse {
 
 /** The decision-event classes of the operator stream, in the order the list shows them. */
 export type AttentionClass =
-  | 'decision' | 'escalation' | 'human-review' | 'batch' | 'push' | 'quota' | 'host' | 'other';
+  | 'decision' | 'escalation' | 'human-review' | 'push-blocked' | 'batch' | 'push' | 'quota' | 'host' | 'other';
 
 /** Where a row's primary action leads. */
 export type AttentionTarget = 'card' | 'batch-gate' | 'cli-usage' | 'hosts' | 'activity';
@@ -37,6 +37,7 @@ const CLASSES: readonly AttentionClassSpec[] = [
   { key: 'decision', label: 'Decision cards', action: 'Decide', target: 'card' },
   { key: 'escalation', label: laneName(TaskState.Escalated), action: 'Open card', target: 'card' },
   { key: 'human-review', label: laneName(TaskState.HumanReview), action: 'Review', target: 'card' },
+  { key: 'push-blocked', label: 'Push blocked', action: 'Open card', target: 'card' },
   { key: 'batch', label: 'Batch red or isolating', action: 'Open batch gate', target: 'batch-gate' },
   { key: 'push', label: 'Overdue pending push', action: 'Open batch gate', target: 'batch-gate' },
   { key: 'quota', label: 'Quota exhausted or fallback active', action: 'Open CLI usage', target: 'cli-usage' },
@@ -51,6 +52,7 @@ const CLASS_OF_TYPE: Readonly<Record<string, AttentionClass>> = {
   'batch.red': 'batch',
   'batch.isolating': 'batch',
   'push.pending-overdue': 'push',
+  'push.blocked': 'push-blocked',
   'quota.exhausted': 'quota',
   'quota.fallback-active': 'quota',
   'backend.stalled': 'host',

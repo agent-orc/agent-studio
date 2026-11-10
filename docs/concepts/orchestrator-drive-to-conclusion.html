@@ -385,6 +385,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-document-key-amend-push-blocked">
+          <td>2026-11-10</td>
+          <td><code>AGT-3649</code> playthrough<br><span class="small">document-key-amend-push-blocked (fix <code>AGT-3695</code>)</span></td>
+          <td>No CLI crashed. The first delivery of a concept card added a keyless <code>docs/&lt;slug&gt;/workbench.json</code>, passed review, merged in the integration worktree and failed publication with <code>sha-not-on-branch</code>. The card sat in Post Processing for 36 minutes ("waiting for integration recovery", "Push blocked"); the resume service waited with tries=0 next=null, a restart did not help, and Needs you did not list the card. Terminal at discovery: Auto Review without a decision.</td>
+          <td><code>MergeIntoDevelopRunner</code> amended the integration merge with the document keys (<code>git commit --amend</code>, AGT-3610). The amend moved only the detached integration HEAD; the integration lane stayed on the pre-amend merge, so the gate-approved SHA was not on the lane and the push failed closed. The failure code was not on the replay ladder and no fact source named the card.</td>
+          <td>The key amend now compare-and-swaps the lane onto the keyed merge. A lane already left on the pre-amend merge follows the approved document-key amend on the next push or replay. The refusal reads in plain words, the bounded gate-environment ladder and the card's single Retry integration action replay it without a new review round, and Needs you lists it as <code>push.blocked</code>.</td>
+        </tr>
         <tr id="case-report-summary-stalled-review">
           <td>2026-11-05</td>
           <td><code>AGT-3496</code>, <code>AGT-3506</code>, <code>AGT-3511</code>, <code>AGT-3512</code>, <code>AGT-3515</code><br><span class="small">report-summary-stalled-review (fix <code>AGT-3547</code>)</span></td>

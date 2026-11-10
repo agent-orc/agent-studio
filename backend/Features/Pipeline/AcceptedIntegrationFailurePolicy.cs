@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
@@ -143,6 +144,13 @@ public sealed record AcceptedIntegrationFailure(
     string FailureSignature = RunFailureSignatures.Unclassified)
 {
     public IntegrationConflictReport? ConflictReport { get; init; }
+
+    /// <summary>
+    /// AGT-3695: the failure left the reviewed delivery untouched and only its
+    /// publication is missing, so replaying the integration of the same
+    /// delivery SHA (Retry integration) can finish it without a new review.
+    /// </summary>
+    public bool ReplayAvailable { get; init; }
 }
 
 /// <summary>
@@ -246,6 +254,12 @@ public static class AcceptedIntegrationFailurePolicy
                     verdictSummary,
                     "The accepted coding card had no delivery branch to integrate."),
                 RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.IntegrationPushBlocked
+                when (DescribeApprovedMergeOffLane(reason) ?? DescribeApprovedMergeOffLane(verdictSummary))
+                    is { } offLane => new(code, "Integration push blocked", offLane, RebaseRecoveryAvailable: false)
+                {
+                    ReplayAvailable = true,
+                },
             AcceptedIntegrationFailureCodes.IntegrationPushBlocked => new(
                 code,
                 "Integration push blocked",
@@ -456,6 +470,32 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.ReleaseLineMoving => AcceptedIntegrationFailureCodes.ReleaseLineMoving,
             _ => null,
         };
+    }
+
+    /// <summary>Start of the plain reason for an approved merge the integration line does not carry.</summary>
+    public const string ApprovedMergeOffLanePrefix = "Publication stopped: the approved merge result";
+
+    private static readonly Regex ApprovedMergeOffLanePattern = new(
+        @"The approved merge result (?<sha>[0-9a-fA-F]{7,64}) is not contained in local (?<branch>[^\s;]+); refusing to push it",
+        RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// AGT-3695: the plain-words reason for a <c>sha-not-on-branch</c> push
+    /// refusal, read from the git refusal itself or from a reason already in
+    /// this form. Null when <paramref name="text"/> describes another failure.
+    /// </summary>
+    public static string? DescribeApprovedMergeOffLane(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var trimmed = text.Trim();
+        if (trimmed.StartsWith(ApprovedMergeOffLanePrefix, StringComparison.Ordinal)) return trimmed;
+        var match = ApprovedMergeOffLanePattern.Match(trimmed);
+        if (!match.Success) return null;
+        var sha = match.Groups["sha"].Value;
+        var branch = match.Groups["branch"].Value;
+        return $"{ApprovedMergeOffLanePrefix} {sha[..Math.Min(9, sha.Length)]} is not on the local {branch} "
+               + $"integration line, so nothing was pushed to origin/{branch}. The reviewed delivery is unchanged; "
+               + "Retry integration replays it without a new review round.";
     }
 
     private static bool HasPrefix(string? text)

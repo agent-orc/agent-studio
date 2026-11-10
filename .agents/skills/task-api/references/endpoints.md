@@ -377,6 +377,7 @@ Event types, the fact each one publishes, and the suggested operations:
 | `batch.red` | A batch gate flight turned red | `batch.triage`, `batch.eject` |
 | `batch.isolating` | A red flight has diagnostic child batches still running | `batch.triage`, `batch.eject` |
 | `push.pending-overdue` | A pending integration push passed `BatchGate:PendingPushAlertMinutes` | `push.inspect`, `batch.triage` |
+| `push.blocked` | A Post Processing card merged locally but its publication to origin was refused | `card.inspect`, `push.inspect` |
 | `quota.exhausted` | A card waits for a quota reset, or a CLI hit its provider limit (installation-wide) | `capacity.read`, `routing.change` |
 | `quota.fallback-active` | A running card uses a quota fallback | `capacity.read`, `routing.change` |
 | `watcher.heartbeat` | The watcher lease was granted, taken over, renewed, or released | `watcher.status` |

@@ -877,6 +877,9 @@ public sealed partial class MergeIntoDevelopRunner
                             ? "Publication was rejected after origin moved; the lane was restored for replay on origin."
                             : repair is { Success: true }
                             ? "Publication was rejected after origin moved; the lane was restored and the card returned to the batch queue."
+                            : inlinePush.Status == "sha-not-on-branch"
+                                && AcceptedIntegrationFailurePolicy.DescribeApprovedMergeOffLane(inlinePush.Error) is { } offLane
+                            ? offLane
                             : $"Publication failed ({inlinePush.Status}); {repair?.Error ?? inlinePush.Error}");
                     approvedPushSha = null;
                 }
@@ -1278,6 +1281,13 @@ public sealed partial class MergeIntoDevelopRunner
         Func<MergeIntoIntegrationResult> merge)
     {
         var profile = BuildProfileFor(project);
+        // AGT-3695: a lane left on the merge that this card's own green-gated
+        // key amend replaced is moved onto that amend, so a replay publishes the
+        // approved keyed result instead of the ungated merge before it.
+        if (IntegrationGateReceipts.ReadNewest(jobFolderPath,
+                [IntegrationGateJournal.PreDevelopBuildGateStep], _ => true)
+            is { Verdict: BuildTestGateVerdict.Ok, TestedSha: { } approvedKeyed })
+            _git.AdoptDocumentKeyAmend(repoRoot, integrationBranch, approvedKeyed);
         // AGT-2849: from here until a verdict is recorded, this process owns an
         // integration branch that may carry a merge nobody has judged. The
         // journal is the only durable trace of that ownership, so it is opened
@@ -1334,8 +1344,8 @@ public sealed partial class MergeIntoDevelopRunner
                     AcceptedIntegrationFailureCodes.IntegrationRefUnresolved,
                     "The integration merge has no first parent for document key assignment."), null);
             }
-            var keyed = _git.IncludeDocumentKeysInIntegrationMerge(repoRoot, keyBase,
-                gatedSha, keyProject, _projectRegistry);
+            var keyed = _git.IncludeDocumentKeysInIntegrationMerge(repoRoot, integrationBranch,
+                keyBase, gatedSha, keyProject, _projectRegistry);
             if (!keyed.Success || keyed.Sha is null)
             {
                 var rollback = _git.ResetIntegrationBranch(repoRoot, integrationBranch, keyBase);
@@ -2595,6 +2605,10 @@ public sealed partial class MergeIntoDevelopRunner
                 $"Push of the integration branch to origin failed{retried} ({result.Status}); flagged environmental (AGT-1944).",
                 result.Error);
         }
+
+        if (result.Status == "sha-not-on-branch"
+            && AcceptedIntegrationFailurePolicy.DescribeApprovedMergeOffLane(result.Error) is { } offLane)
+            return (PipelineStepStatus.Failed, "error", offLane, result.Error);
 
         return (PipelineStepStatus.Failed, "error", $"Push of the integration branch to origin failed ({result.Status}).", result.Error);
     }

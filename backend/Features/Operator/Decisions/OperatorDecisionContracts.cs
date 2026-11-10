@@ -15,6 +15,7 @@ public static class OperatorDecisionTypes
     public const string BatchRed = "batch.red";
     public const string BatchIsolating = "batch.isolating";
     public const string PushPendingOverdue = "push.pending-overdue";
+    public const string PushBlocked = "push.blocked";
     public const string QuotaExhausted = "quota.exhausted";
     public const string QuotaFallbackActive = "quota.fallback-active";
     public const string WatcherHeartbeat = "watcher.heartbeat";
@@ -22,7 +23,8 @@ public static class OperatorDecisionTypes
     public static readonly IReadOnlyList<string> All =
     [
         EscalationOpened, HumanReviewReady, DecisionCardOpened, BackendStalled, ProgressIdleWithReady,
-        BatchRed, BatchIsolating, PushPendingOverdue, QuotaExhausted, QuotaFallbackActive, WatcherHeartbeat,
+        BatchRed, BatchIsolating, PushPendingOverdue, PushBlocked, QuotaExhausted, QuotaFallbackActive,
+        WatcherHeartbeat,
     ];
 
     /// <summary>The type a fact key names: every key starts with its type and a <c>|</c>.</summary>
@@ -65,6 +67,8 @@ public static class OperatorOperations
         // Eject is the only member action while a batch isolates (Guardrails).
         OperatorDecisionTypes.BatchIsolating => [BatchTriage, BatchEject],
         OperatorDecisionTypes.PushPendingOverdue => [PushInspect, BatchTriage],
+        // The card's Retry integration replays the publication (AGT-3695).
+        OperatorDecisionTypes.PushBlocked => [CardInspect, PushInspect],
         OperatorDecisionTypes.QuotaExhausted => [CapacityRead, RoutingChange],
         OperatorDecisionTypes.QuotaFallbackActive => [CapacityRead, RoutingChange],
         OperatorDecisionTypes.WatcherHeartbeat => [WatcherStatus],

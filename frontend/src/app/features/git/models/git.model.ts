@@ -739,6 +739,8 @@ export interface TaskIntegrationFailure {
   evidenceExcerpt?: string | null;
   /** Whether the focused rebase recovery action can resolve this class. */
   rebaseRecoveryAvailable: boolean;
+  /** AGT-3695: only the publication is missing; Retry integration replays it without a new review. */
+  replayAvailable?: boolean;
   /**
    * AGT-2749: whether the shared taxonomy attributes this failure to the
    * reviewed change, the host, or the provider account. `infrastructure` and
