@@ -922,7 +922,7 @@ public sealed partial class BatchGatePilotService
 
     private void RecoverInterrupted(BatchGateManifest manifest)
     {
-        if (_store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
+        if (_store.LatestState(manifest.BatchId).Phase is BatchPhase.Formed or BatchPhase.Unknown)
             return;
         BatchCoordinatorLease? recovery;
         try { recovery = _leases.TryAcquire(LeaseScope(manifest), "batch-recovery"); }
@@ -930,6 +930,8 @@ public sealed partial class BatchGatePilotService
         if (recovery is null) return;
         try
         {
+            if (_store.LatestState(manifest.BatchId).Phase is BatchPhase.Formed or BatchPhase.Unknown)
+                return;
             if (manifest.ParentBatchId is { } parentId)
                 DeriveIsolationFindings(_store.ReadManifest(parentId));
             State(manifest, BatchPhase.Abandoned, null, recovery.Fence,
@@ -1243,6 +1245,7 @@ public sealed partial class BatchGatePilotService
             try
             {
                 var paused = _store.LatestState(manifest.BatchId);
+                if (paused.Phase != BatchPhase.Paused) continue;
                 var options = _settings.Get(manifest.Scope.Project).BatchGate;
                 if (paused.Reason == "integration-branch-red" && BatchEnabled(manifest.Scope.Project)
                     && (options.EffectiveScope == "code"
@@ -1925,7 +1928,8 @@ public sealed partial class BatchGatePilotService
             // lease is gone, so the batch may not publish. A verified remote
             // publication keeps its phase for the next tick's recovery.
             if (_store.ReadPublication(manifest.BatchId) is null
-                && _store.LatestState(manifest.BatchId).Phase != BatchPhase.Publishing)
+                && _store.LatestState(manifest.BatchId).Phase is not
+                    (BatchPhase.Publishing or BatchPhase.Unknown))
             {
                 State(manifest, BatchPhase.Abandoned, null, lease.Fence,
                     "coordinator lease lost during the gate");
@@ -1938,7 +1942,8 @@ public sealed partial class BatchGatePilotService
             // A verified remote publication is durable. Keep its phase so the
             // next tick can finish local attribution and lane release.
             if (_store.ReadPublication(manifest.BatchId) is null
-                && _store.LatestState(manifest.BatchId).Phase != BatchPhase.Publishing)
+                && _store.LatestState(manifest.BatchId).Phase is not
+                    (BatchPhase.Publishing or BatchPhase.Unknown))
                 State(manifest, BatchPhase.Paused, null, lease.Fence, ex.GetType().Name);
         }
         finally

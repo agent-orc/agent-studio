@@ -239,7 +239,8 @@ public static class BatchGateStateSnapshotReader
                 {
                     status = replay is { Outcome: "cascade-deferred" } || requeued ? "pending"
                         : released ? "published"
-                        : left ? "fallback" : "in-batch",
+                        : left ? "fallback"
+                        : phase == BatchPhase.Unknown ? "unknown" : "in-batch",
                     batchId = manifest.BatchId,
                     phase = phase.ToString().ToLowerInvariant(),
                     position = (int?)(index + 1),
