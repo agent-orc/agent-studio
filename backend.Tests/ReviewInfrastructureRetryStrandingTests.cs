@@ -142,7 +142,8 @@ public sealed class ReviewInfrastructureRetryStrandingTests : IDisposable
         Assert.Equal(failed, details.GetProperty("attemptId").GetString());
         Assert.Equal("card-left-auto-review", details.GetProperty("reason").GetString());
         Assert.Equal(TaskStates.Escalated, details.GetProperty("lane").GetString());
-        Assert.Contains("1/3 dropped", dropped.GetProperty("summary").GetString(), StringComparison.Ordinal);
+        Assert.Contains($"1/{AttemptAuthorityService.ReviewInfrastructureRetryBudget} dropped",
+            dropped.GetProperty("summary").GetString(), StringComparison.Ordinal);
     }
 
     /// <summary>Claims the seeded review and reports the review host's restart loss.</summary>
