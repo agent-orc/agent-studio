@@ -29,6 +29,14 @@ pipeline view.
 
 ## Gate economics and integration lane
 
+The batch gate state read reports `phaseStartedAtUtc` for each batch and
+`startedAtUtc` for each run. A `Running` phase also reports whether this
+process owns a live flight and, when it does not, the recovery delay and next
+retry. The operator attention feed raises `batch.running-without-gate` once a
+persisted Running phase without a live flight exceeds the configured gate
+timeout plus the two-minute coordinator lease TTL. Recovery contention is
+logged once per batch and reason; the pilot retries on its 30-second tick.
+
 The batch gate state read reports `phaseReason` for a stopped batch and
 `causedByTaskKey` when a member eject or lost review generation caused
 abandonment. Explicit operator withdrawals are retained as batch withdrawal

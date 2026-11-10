@@ -57,7 +57,8 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
 
         var factTime = _clock.GetUtcNow().UtcDateTime;
         var expected = new Dictionary<string, DateTime>(StringComparer.Ordinal);
-        foreach (var type in OperatorDecisionTypes.All) expected[type] = factTime;
+        var seededTypes = OperatorDecisionTypes.All.Where(type => type != OperatorDecisionTypes.BatchRunningWithoutGate).ToArray();
+        foreach (var type in seededTypes) expected[type] = factTime;
         expected[OperatorDecisionTypes.PushPendingOverdue] = factTime.AddSeconds(2);
         _tasks =
         [
@@ -83,10 +84,10 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
         Assert.Equal(WatcherLeaseOutcome.Granted, leases.Acquire("service-account:watcher", new WatcherLeaseRequest("laptop")).Outcome);
 
         _clock.Advance(TimeSpan.FromSeconds(5));
-        await WaitUntil(() => Types(log).IsSupersetOf(OperatorDecisionTypes.All));
+        await WaitUntil(() => Types(log).IsSupersetOf(seededTypes));
 
         var events = log.Read(0, 1000, _ => true).Events;
-        foreach (var type in OperatorDecisionTypes.All)
+        foreach (var type in seededTypes)
         {
             var published = events.Where(item => item.Type == type).ToArray();
             Assert.NotEmpty(published);

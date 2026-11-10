@@ -19,7 +19,25 @@ public sealed class BatchGateLeaseService
 {
     private readonly string _root;
     private readonly Func<DateTimeOffset> _now;
-    private static readonly TimeSpan Ttl = TimeSpan.FromMinutes(2);
+    public static readonly TimeSpan Ttl = TimeSpan.FromMinutes(2);
+
+    public string RecoveryBlocker(BatchGateScope scope)
+    {
+        FileStream guard;
+        try { guard = Guard(scope); }
+        catch (IOException) { return "lock busy"; }
+        using (guard)
+        {
+            try
+            {
+                var holder = Read(scope);
+                return holder is { } lease && lease.ExpiresAtUtc > _now()
+                    ? $"lease held by {lease.Owner}" : "lease record changed before retry";
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException
+                or JsonException) { return "lease record unreadable"; }
+        }
+    }
 
     public BatchGateLeaseService(string? root = null, Func<DateTimeOffset>? now = null)
     {

@@ -21,7 +21,9 @@ public static class BatchGateStateSnapshotReader
         GateRunLedger? ledger = null,
         IReadOnlyList<BatchGateReviewFixWait>? reviewFixWaits = null,
         GateCapacity? gateCapacity = null,
-        IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null)
+        IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null,
+        Func<string, bool>? liveFlight = null,
+        Func<string, BatchGatePilotService.RecoveryDelay>? recoveryStatus = null)
     {
         var at = now ?? DateTimeOffset.UtcNow;
         var dailySummary = ledger?.Summary(store, project, DateOnly.FromDateTime(at.UtcDateTime));
@@ -114,6 +116,7 @@ public static class BatchGateStateSnapshotReader
         var batches = manifests.Select(manifest =>
         {
             var phase = store.LatestState(manifest.BatchId);
+            var hasLiveFlight = liveFlight?.Invoke(manifest.BatchId) ?? false;
             return new
             {
                 manifest.BatchId,
@@ -121,6 +124,10 @@ public static class BatchGateStateSnapshotReader
                 manifest.ReformedFromBatchId,
                 manifest.StackedOnBatchId,
                 phase = phase.Phase.ToString().ToLowerInvariant(),
+                phaseStartedAtUtc = phase.RecordedAtUtc,
+                liveFlight = hasLiveFlight,
+                recoveryStatus = phase.Phase == BatchPhase.Running && !hasLiveFlight
+                    ? recoveryStatus?.Invoke(manifest.BatchId) : null,
                 phaseReason = phase.Reason,
                 causedByTaskKey = phase.CausedByTaskKey,
                 baseMoveToSha = phase.BaseMoveToSha,

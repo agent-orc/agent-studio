@@ -38,6 +38,17 @@ public sealed class BatchGateIsolationStateTests : IDisposable
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); }
 
     [Fact]
+    public void State_exposes_the_latest_phase_start_and_live_flight_status()
+    {
+        var manifest = CloseParent();
+        var state = State();
+        var batch = state.GetProperty("batches").EnumerateArray()
+            .Single(item => item.GetProperty("batchId").GetString() == manifest.BatchId);
+        Assert.Equal(Now, batch.GetProperty("phaseStartedAtUtc").GetDateTimeOffset());
+        Assert.False(batch.GetProperty("liveFlight").GetBoolean());
+    }
+
+    [Fact]
     public void Proven_red_finding_carries_the_proving_run_and_its_failed_tests()
     {
         var parent = CloseParent();

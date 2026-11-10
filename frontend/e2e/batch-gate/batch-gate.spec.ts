@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as nodePath from 'node:path';
+import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
 import { auditModal } from '../helpers/audit-modal';
 
 test.use({ serviceWorkers: 'block' });
@@ -46,16 +48,18 @@ async function captureThemes(page: import('@playwright/test').Page, evidence: st
 }
 
 async function routeBoard(page: import('@playwright/test').Page, batchState: unknown,
-  onSave: () => void = () => undefined, board: unknown = grouped): Promise<void> {
+  onSave: () => void = () => undefined, board: unknown = grouped, realBatch = false,
+  displayProject = project): Promise<void> {
   await page.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({ v: 1, tabs: [{ kind: 'board', projectName: '__all__' }], activeKey: 'board:__all__' })));
-  await page.route('**/api/**', route => json(route, []));
+  await page.route('**/api/**', route => realBatch && (/\/batch-gate\/state|\/api\/operator\/attention/.test(route.request().url()))
+    ? route.continue() : json(route, []));
   await page.route('**/api/v1/studio/auth/status', route => json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
   await page.route('**/api/v1/management/credential-inventory', route => json(route, { items: [] }));
   await page.route('**/api/v1/studio/board**', route => json(route, board));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0 }));
-  await page.route('**/api/watch-paths**', route => json(route, [{ name: project, path, rootPath: path, repositoryPath: path }]));
+  await page.route('**/api/watch-paths**', route => json(route, [{ name: displayProject, path, rootPath: path, repositoryPath: path }]));
   await page.route('**/api/v1/workspaces**', route => json(route, [{ id: 'workspace-1', displayName: 'Fixture', projects: [{
-    id: project, displayName: project, shortCode: 'BAT', color: '#587a9b', sourceType: 'local-folder',
+    id: displayProject, displayName: displayProject, shortCode: 'BAT', color: '#587a9b', sourceType: 'local-folder',
     workspaceId: 'workspace-1', storageLocation: path, rootPath: path, repositoryPath: path,
     repositoryUrl: null, urls: [], archived: false, sortOrder: 0,
   }] }]));
@@ -63,7 +67,7 @@ async function routeBoard(page: import('@playwright/test').Page, batchState: unk
     codingAllowed: true, hostingAllowed: true, limited: false };
   await page.route('**/api/workspaces/*/quota/admission', route => json(route, {
     workspaceId: 'workspace-1', workspace: { ...admission, projectId: null, project: null },
-    projects: [{ ...admission, projectId: project, project }],
+    projects: [{ ...admission, projectId: displayProject, project: displayProject }],
   }));
   // The deferred workspace quota card on Project settings reads this snapshot.
   const meter = { modelTokens: 0, modelCostUsd: 0, computeCoreHours: 0, hostingSlots: 0 };
@@ -84,8 +88,8 @@ async function routeBoard(page: import('@playwright/test').Page, batchState: unk
   await page.route('**/api/v1/management/retention/policy/**', route => json(route, { rules: [], revision: 1 }));
   await page.route('**/api/v1/management/retention/policy', route => json(route, { rules: [], revision: 1 }));
   await page.route('**/api/v1/management/credential-inventory', route => json(route, { items: [] }));
-  await page.route('**/api/v1/studio/runner/status**', route => json(route, { projects: { [project]: { projectName: project, mode: 'manual', activeJobId: null, queuedJobIds: [] } } }));
-  await page.route('**/api/projects/*/batch-gate/state?history=10', route => json(route, batchState));
+  await page.route('**/api/v1/studio/runner/status**', route => json(route, { projects: { [displayProject]: { projectName: displayProject, mode: 'manual', activeJobId: null, queuedJobIds: [] } } }));
+  if (!realBatch) await page.route('**/api/projects/*/batch-gate/state?history=10', route => json(route, batchState));
   await page.route('**/api/projects/*/batch-gate/failed-tests?windowDays=7', route => json(route, {
     project, windowDays: 7, tests: [{ testName: 'Product.Tests.Unstable', batches: 4, runs: 5,
       distinctMemberSets: 4, firstFailureUtc: '2026-10-09T12:00:00Z', lastFailureUtc: '2026-10-11T13:00:00Z',
@@ -107,6 +111,113 @@ async function routeBoard(page: import('@playwright/test').Page, batchState: unk
     return json(route, { settings, limits: { hardMaximumSize: 8 } });
   });
 }
+
+function seedStaleRunningBatch(seedProject: string): () => void {
+  const workspace = process.env.PW_E2E_WORKSPACE;
+  if (!workspace || process.env.PW_PREBUILT !== '1')
+    throw new Error('The real backend seed requires the isolated Playwright stack.');
+  const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+  // api.sh starts the published process with this worktree's backend/ as its content root.
+  const contentRoot = nodePath.resolve(process.cwd(), '..', 'backend');
+  const instance = hash(`${contentRoot}\n${nodePath.resolve(workspace)}`).slice(0, 20);
+  const dataRoot = process.env.XDG_DATA_HOME ?? nodePath.join(homedir(), '.local', 'share');
+  const root = nodePath.join(dataRoot, 'agentstudio', 'instances', instance);
+  const batchId = `e2e-stale-${Date.now()}`;
+  const scope = { project: seedProject, repository: path, integrationBranch: 'develop', gateProfile: 'full',
+    gateProfileDigest: 'digest', platformVersion: 'v1' };
+  const leaseKey = hash(JSON.stringify([seedProject, path, 'develop', 'full', 'digest', 'v1']));
+  const leaseFolder = nodePath.join(root, 'batch-gate-leases', leaseKey);
+  const batchFolder = nodePath.join(root, 'batch-gates', hash(batchId));
+  const started = new Date(Date.now() - 210 * 60_000).toISOString();
+  const expires = new Date(Date.now() + 60 * 60_000).toISOString();
+  const write = (file: string, value: unknown) => {
+    fs.mkdirSync(nodePath.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(value));
+  };
+  write(nodePath.join(leaseFolder, 'lease.json'), { LeaseId: batchId, Scope: {
+    Project: seedProject, Repository: path, IntegrationBranch: 'develop', GateProfile: 'full',
+    GateProfileDigest: 'digest', PlatformVersion: 'v1',
+  }, Owner: 'gate-host-01', Fence: 7, ExpiresAtUtc: expires, AcquiredAtUtc: started });
+  const subject = { taskKey: 'AGT-2', project: seedProject, repository: path, integrationBranch: 'develop',
+    gateProfile: 'full', gateProfileDigest: 'digest', platformVersion: 'v1', resultRef: 'refs/heads/result',
+    resultSha: 'a'.repeat(40), runAttempt: 'run-1', deliveryEpoch: 1, fencingToken: 1,
+    reviewSubjectSha: 'a'.repeat(40), settledEnvelope: true, modelReviewPassed: true,
+    buildTestDeferredToBatch: true, currentGeneration: true, activePerTaskGate: false,
+    owningBatchId: batchId, documentationOnly: false, reviewCompletedAtUtc: started, enqueueSequence: 1 };
+  write(nodePath.join(batchFolder, 'manifest.json'), { batchId, scope, baseSha: 'a'.repeat(40),
+    membershipDigest: 'membership', closedAtUtc: started, members: [subject], exclusions: [], eligibleKeys: ['AGT-2'] });
+  write(nodePath.join(batchFolder, 'state', '00000001.json'), { batchId, membershipDigest: 'membership',
+    phase: 3, candidateSha: 'b'.repeat(40), coordinatorFence: 7, recordedAtUtc: started });
+  write(nodePath.join(batchFolder, 'runs', 'gate.json'), { batchRunId: 'gate', batchId, membershipDigest: 'membership',
+    baseSha: 'a'.repeat(40), candidateSha: 'b'.repeat(40), gateProfile: 'full', gateProfileDigest: 'digest',
+    host: 'gate-host-01', coordinatorFence: 7, commands: ['build'], startedAtUtc: started, evidencePath: 'gate.log' });
+  return () => { fs.rmSync(batchFolder, { recursive: true, force: true }); fs.rmSync(leaseFolder, { recursive: true, force: true }); };
+}
+
+test('stale running batch from the real backend shows timing and attention', async ({ page, request }) => {
+  test.setTimeout(180_000);
+  test.skip(process.env.PW_PREBUILT !== '1', 'Requires the isolated real backend.');
+  const realProject = 'Agent Studio Worktree';
+  const cleanup = seedStaleRunningBatch(realProject);
+  try {
+    if (process.env.JOB_RESULTS_DIR) fs.mkdirSync(process.env.JOB_RESULTS_DIR, { recursive: true });
+    const registration = await request.post('/api/clients/register', {
+      data: { displayName: `playwright-stale-batch-${Date.now().toString(36)}` },
+    });
+    expect(registration.ok(), await registration.text()).toBe(true);
+    const client = await registration.json() as { id: string };
+    const update = await request.put(`/api/projects/${encodeURIComponent(realProject)}/batch-gate`, {
+      headers: { 'X-Client-Id': client.id }, data: { enabled: true, scope: 'code' },
+    });
+    expect(update.ok(), await update.text()).toBe(true);
+    await expect.poll(async () => {
+      const response = await request.get(`/api/projects/${encodeURIComponent(realProject)}/batch-gate/state`);
+      return response.ok() ? (await response.json()).batches?.[0]?.phase : null;
+    }).toBe('running');
+    await expect.poll(async () => {
+      const response = await request.get(`/api/projects/${encodeURIComponent(realProject)}/batch-gate/state`);
+      return response.ok() ? (await response.json()).batches?.[0]?.recoveryStatus?.reason : null;
+    }, { timeout: 45_000 }).toContain('lease held by gate-host-01');
+    await expect.poll(async () => {
+      const response = await request.get('/api/operator/attention');
+      return response.ok() ? (await response.json()).items?.some((item: { type: string; reason: string }) =>
+        item.type === 'batch.running-without-gate' && item.reason.includes('lease held by gate-host-01')) : false;
+    }, { timeout: 20_000 }).toBe(true);
+    const triageResponse = await request.get('/api/operator/batch-triage');
+    expect(triageResponse.ok()).toBe(true);
+    const triage = await triageResponse.json();
+    const projectTriage = triage.projects.find((item: { project: string }) => item.project === realProject);
+    expect(projectTriage.members.find((item: { taskKey: string }) => item.taskKey === 'AGT-2')
+      .nextOperation.reason).toBe('stale-running-state');
+    if (process.env.JOB_RESULTS_DIR) {
+      const evidence = nodePath.join(process.env.JOB_RESULTS_DIR, 'evidence');
+      fs.mkdirSync(evidence, { recursive: true });
+      fs.writeFileSync(nodePath.join(evidence, 's1-batch-triage.json'), JSON.stringify(projectTriage, null, 2));
+    }
+    const realBoard = { ...grouped, autoReview: [{ ...task, projectName: realProject }] };
+    await routeBoard(page, state, () => undefined, realBoard, true, realProject);
+    for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390]] as const) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto('/?includeFixtures=true');
+      await page.evaluate(value => { localStorage.setItem('atp.studio.theme', value); }, theme);
+      await page.reload();
+      await expect(page.locator('html')).toHaveAttribute('data-studio-theme', theme);
+      await page.getByRole('tab', { name: 'All projects · Board' }).click();
+      if (width === 390)
+        await page.getByTestId('board-group-switcher').getByRole('button', { name: /^Active/ }).click();
+      await page.getByTestId('batch-lane-indicator').filter({ visible: true }).first().click();
+      const panel = page.getByTestId('batch-panel');
+      await expect(panel.getByTestId('batch-phase-time').first()).toContainText(/running since \d{2}:\d{2} UTC, 3 h \d+ min/);
+      await expect(panel).toContainText('gate-host-01 · running · since');
+      await panel.getByTestId('batch-panel-body').evaluate(element => { element.scrollTop = element.scrollHeight; });
+      if (process.env.JOB_RESULTS_DIR) await panel.screenshot({ path: nodePath.join(process.env.JOB_RESULTS_DIR, `stale-batch-panel-${theme}-${width}.png`) });
+      await panel.getByRole('button', { name: 'Close batch panel' }).click();
+      await page.getByTestId('studio-attention-trigger').click();
+      await expect(page.getByTestId('attention-row').filter({ hasText: 'Batch running without a live gate' })).toContainText('lease held by gate-host-01');
+      if (process.env.JOB_RESULTS_DIR) await page.screenshot({ path: nodePath.join(process.env.JOB_RESULTS_DIR, `stale-batch-attention-${theme}-${width}.png`) });
+    }
+  } finally { cleanup(); }
+});
 
 for (const width of [1280, 390]) {
   test(`batch panel contains keyboard focus and restores it on Escape at ${width}px`, async ({ page }) => {

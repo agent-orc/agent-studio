@@ -392,7 +392,8 @@ public sealed partial class BatchGatePilotService
             slotUsage,
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
             _time.GetUtcNow(), _services?.GetService<GateRunLedger>(), reviewFixWaits,
-            _services?.GetService<GateCapacitySettings>()?.Current(), DetachedFlights(project));
+            _services?.GetService<GateCapacitySettings>()?.Current(), DetachedFlights(project),
+            HasLiveFlight, RecoveryStatus);
     }
 
     private static BatchGateReviewFixWait[] ReviewFixWaits(IEnumerable<TaskInfo> tasks, string project)
@@ -889,10 +890,20 @@ public sealed partial class BatchGatePilotService
                 continue;
             BatchCoordinatorLease? recovery;
             try { recovery = _leases.TryAcquire(LeaseScope(manifest), "batch-recovery"); }
-            catch (IOException) { continue; }
-            if (recovery is null) continue;
+            catch (Exception ex) when (ex is IOException or InvalidDataException
+                or System.Text.Json.JsonException)
+            {
+                RecordRecoveryDelay(manifest, _leases.RecoveryBlocker(LeaseScope(manifest)));
+                continue;
+            }
+            if (recovery is null)
+            {
+                RecordRecoveryDelay(manifest, _leases.RecoveryBlocker(LeaseScope(manifest)));
+                continue;
+            }
             try
             {
+                _recoveryDelays.TryRemove(manifest.BatchId, out _);
                 if (manifest.ParentBatchId is { } parentId)
                     DeriveIsolationFindings(_store.ReadManifest(parentId));
                 State(manifest, BatchPhase.Abandoned, null, recovery.Fence,

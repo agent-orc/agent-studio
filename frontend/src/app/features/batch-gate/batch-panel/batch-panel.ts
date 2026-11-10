@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, O
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { ModalStackService } from '../../../services/modal-stack.service';
-import { batchIsolationRows, batchPublishedSha, batchReplayLabel, batchRiskLabel } from '../../../models/batch-gate.model';
+import { batchIsolationRows, batchPublishedSha, batchReplayLabel, batchRiskLabel, batchTimeLine } from '../../../models/batch-gate.model';
 import type { BatchGateBatch, BatchTestFailureRank, BatchTestFailureReport, BatchGateState } from '../../../models/batch-gate.model';
 import { CreateTaskFormService } from '../../board';
 import { TaskService } from '../../../services/task.service';
@@ -39,6 +39,7 @@ export class BatchPanelComponent implements OnDestroy {
   readonly riskLabel = batchRiskLabel;
   readonly replayLabel = batchReplayLabel;
   readonly publishedSha = batchPublishedSha;
+  readonly timeLine = batchTimeLine;
   readonly phases = ['formed', 'assembling', 'assembled', 'running', 'green', 'publishing', 'published', 'red', 'paused', 'abandoned'];
   private readonly body = viewChild<ElementRef<HTMLDivElement>>('body');
   private readonly closeButton = viewChild<ElementRef<HTMLButtonElement>>('closeButton');
@@ -88,13 +89,8 @@ export class BatchPanelComponent implements OnDestroy {
     if (!Number.isFinite(stamp)) return 'Unknown';
     return new Date(stamp).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
   }
-  duration(start?: string | null, end?: string | null): string {
-    if (!start) return 'Waiting';
-    if (!end) return 'Running';
-    const elapsed = Date.parse(end) - Date.parse(start);
-    if (!Number.isFinite(elapsed)) return 'Unknown';
-    const minutes = Math.max(0, Math.round(elapsed / 60_000));
-    return `${minutes} min`;
+  retryTime(value: string): string {
+    return `${new Date(value).toLocaleTimeString('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit' })} UTC`;
   }
   phaseLabel(phase: string): string { return phase; }
   isolationRows(batch: BatchGateBatch) { return batchIsolationRows(this.state(), batch); }

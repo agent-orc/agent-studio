@@ -4,7 +4,7 @@
     <div><h2 id="batch-panel-title">Batch verification</h2><p>{{ project() }}</p></div>
     <button #closeButton type="button" aria-label="Close batch panel" (click)="close()">Close</button>
   </header>
-  <div #body class="batch-panel__body" tabindex="0" (keydown)="onBodyKeydown($event)">
+  <div #body class="batch-panel__body" data-testid="batch-panel-body" tabindex="0" (keydown)="onBodyKeydown($event)">
     @if (error(); as message) { <p class="batch-panel__error" role="alert">{{ message }} <button type="button" (click)="gate.refresh(project())">Retry</button></p> }
     @if (state(); as data) {
       @if (data.gateSlots; as slots) {
@@ -120,6 +120,10 @@
               }</p>
               @if (!phases.includes(batch.phase)) { <p>Phase: {{ batch.phase }}</p> }
               <p><strong>{{ batch.phase }}</strong>@if (batch.phaseReason) { · {{ batch.phaseReason }} }</p>
+              <p class="batch-panel__time" data-testid="batch-phase-time">{{ batch.phase }} {{ timeLine(batch.phaseStartedAtUtc) }}</p>
+              @if (batch.phase === 'running' && batch.liveFlight === false && batch.recoveryStatus) {
+                <p role="status">Recovery pending: {{ batch.recoveryStatus.reason }}. Next retry {{ retryTime(batch.recoveryStatus.nextRetryAtUtc) }}.</p>
+              }
               @if (batch.formationReason) { <p>{{ batch.formationReason }}</p> }
               @if (batch.exclusions?.length) {
                 <ul aria-label="Cards placed in another batch">
@@ -136,7 +140,7 @@
               @if (batch.runs.length) {
                 <ul>@for (run of batch.runs; track run.batchRunId) {
                   <li>{{ run.host }} · {{ run.outcome ?? 'running' }} @if (run.classification) { · {{ run.classification }} }
-                    · {{ duration(run.startedAtUtc, run.finishedAtUtc) }}</li>
+                    · {{ timeLine(run.startedAtUtc, run.finishedAtUtc) }}</li>
                 }</ul>
               }
             </article>

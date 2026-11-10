@@ -15,6 +15,7 @@ const DECISION_TYPES = {
   'progress.idle-with-ready': EXIT.EVENT_STALL,
   'batch.red': EXIT.EVENT_BATCH,
   'batch.isolating': EXIT.EVENT_BATCH,
+  'batch.running-without-gate': EXIT.EVENT_BATCH,
   'push.pending-overdue': EXIT.EVENT_PUSH,
   'quota.exhausted': EXIT.EVENT_QUOTA,
   'quota.fallback-active': EXIT.EVENT_QUOTA,

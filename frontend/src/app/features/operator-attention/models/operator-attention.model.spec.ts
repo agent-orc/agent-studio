@@ -21,6 +21,7 @@ describe('operator attention model', () => {
     expect(attentionClassOf('escalation.opened')).toBe('escalation');
     expect(attentionClassOf('human-review.ready')).toBe('human-review');
     expect(attentionClassOf('batch.red')).toBe('batch');
+    expect(attentionClassOf('batch.running-without-gate')).toBe('batch');
     expect(attentionClassOf('batch.isolating')).toBe('batch');
     expect(attentionClassOf('push.pending-overdue')).toBe('push');
     expect(attentionClassOf('quota.exhausted')).toBe('quota');

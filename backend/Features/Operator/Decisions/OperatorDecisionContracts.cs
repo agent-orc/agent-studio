@@ -14,6 +14,7 @@ public static class OperatorDecisionTypes
     public const string ProgressIdleWithReady = "progress.idle-with-ready";
     public const string BatchRed = "batch.red";
     public const string BatchIsolating = "batch.isolating";
+    public const string BatchRunningWithoutGate = "batch.running-without-gate";
     public const string PushPendingOverdue = "push.pending-overdue";
     public const string QuotaExhausted = "quota.exhausted";
     public const string QuotaFallbackActive = "quota.fallback-active";
@@ -22,7 +23,7 @@ public static class OperatorDecisionTypes
     public static readonly IReadOnlyList<string> All =
     [
         EscalationOpened, HumanReviewReady, DecisionCardOpened, BackendStalled, ProgressIdleWithReady,
-        BatchRed, BatchIsolating, PushPendingOverdue, QuotaExhausted, QuotaFallbackActive, WatcherHeartbeat,
+        BatchRed, BatchIsolating, BatchRunningWithoutGate, PushPendingOverdue, QuotaExhausted, QuotaFallbackActive, WatcherHeartbeat,
     ];
 
     /// <summary>The type a fact key names: every key starts with its type and a <c>|</c>.</summary>
@@ -64,6 +65,7 @@ public static class OperatorOperations
         OperatorDecisionTypes.BatchRed => [BatchTriage, BatchEject],
         // Eject is the only member action while a batch isolates (Guardrails).
         OperatorDecisionTypes.BatchIsolating => [BatchTriage, BatchEject],
+        OperatorDecisionTypes.BatchRunningWithoutGate => [BatchTriage],
         OperatorDecisionTypes.PushPendingOverdue => [PushInspect, BatchTriage],
         OperatorDecisionTypes.QuotaExhausted => [CapacityRead, RoutingChange],
         OperatorDecisionTypes.QuotaFallbackActive => [CapacityRead, RoutingChange],
