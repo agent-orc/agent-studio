@@ -2177,6 +2177,35 @@ public sealed partial class AttemptAuthorityService
         }
     }
 
+    /// <summary>
+    /// AGT-3647: the run and review attempts one executor still holds under an
+    /// unexpired lease. A deploy drain is complete when this is empty.
+    /// </summary>
+    public IReadOnlyList<ExecutorActiveAttempt> ListActiveAttemptsOfExecutor(string executorId)
+    {
+        lock (_gate)
+        {
+            var now = _utcNow();
+            bool Holds(AttemptLeaseDto? lease)
+                => lease is not null && lease.ExpiresAt > now
+                   && string.Equals(lease.ExecutorId, executorId, StringComparison.OrdinalIgnoreCase);
+            return _state.RunAttempts
+                .Where(run => run.State == AttemptLifecycleState.Leased)
+                .Select(ToDto)
+                .Where(run => Holds(run.Lease))
+                .Select(run => new ExecutorActiveAttempt("coding", run.AttemptId, run.TaskKey, run.Lease!.AcquiredAt))
+                // A superseded review still runs on the host until it reports.
+                .Concat(_state.ReviewAttempts
+                    .Where(review => review.State == AttemptLifecycleState.Leased)
+                    .Select(ToDto)
+                    .Where(review => Holds(review.Lease))
+                    .Select(review => new ExecutorActiveAttempt(
+                        "review", review.AttemptId, review.TaskKey, review.Lease!.AcquiredAt)))
+                .OrderBy(attempt => attempt.AcquiredAt)
+                .ToList();
+        }
+    }
+
     internal IReadOnlyList<ReviewAttemptDto> ListReviewAttemptsOwnedByExecutorHost(
         string executorId,
         string hostId)

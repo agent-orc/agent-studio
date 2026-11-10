@@ -72,6 +72,36 @@ public sealed class RemoteReviewExecutor
         return await RunPersistedAsync(slot, workspace, shutdown, reattach: false);
     }
 
+    /// <summary>
+    /// AGT-3647: the Task Server handed back an attempt whose earlier lease
+    /// expired while its worker was gone. The new fence names a new workspace,
+    /// so the attempt runs again from scratch, still counted against the same
+    /// relaunch budget.
+    /// </summary>
+    public async Task<int> RunReclaimedAsync(
+        PersistedReviewSlot stale,
+        ReviewClaimResponse claim,
+        string reason,
+        CancellationToken shutdown)
+    {
+        ValidateClaim(claim);
+        _log(
+            $"review worker relaunch attempt={stale.AttemptId} fence={claim.Lease!.Fence} " +
+            $"relaunch={stale.WorkerRelaunches + 1}/{DurableReviewProcess.MaximumWorkerRelaunches} " +
+            $"reclaimed=true: {reason}");
+        WorkerCgroup.ReleaseFor(stale.WorkerDirectory, _log);
+        if (stale.Claim.Subject is not null && stale.Claim.Lease is not null)
+            await new RemoteReviewWorkspace(_options, stale.Claim.Subject, stale.Claim.Lease, _log)
+                .CleanupAsync(stale.AttemptId);
+        DurableReviewProcess.ClearWorkerFiles(stale.WorkerDirectory);
+        var workspace = new RemoteReviewWorkspace(
+            _options, claim.Subject!, claim.Lease!, _log, sourceFacts: _client);
+        var slot = _state.Create(claim, workspace.RepositoryPath);
+        slot = _state.Save(slot with { WorkerRelaunches = stale.WorkerRelaunches + 1 });
+        BindAuthority(slot);
+        return await RunPersistedAsync(slot, workspace, shutdown, reattach: false);
+    }
+
     public async Task<int> ReattachAsync(PersistedReviewSlot slot, CancellationToken shutdown)
     {
         ValidateClaim(slot.Claim);
@@ -270,59 +300,10 @@ public sealed class RemoteReviewExecutor
 
             if (!reattach)
             {
-                try
-                {
-                    _log(
-                        $"materializing review attempt={attempt.AttemptId} " +
-                        $"subject={subject.SubjectId} expected={subject.ExpectedResultSha}");
-                    await workspace.PrepareAsync(_client, shutdown);
-                }
-                catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
-                {
-                    return await FinalizeInfrastructureAsync(
-                        slot,
-                        workspace,
-                        "ExecutorRestarted",
-                        LostWorkSummary(slot, "daemon stopped during workspace preparation"),
-                        shutdown);
-                }
-                catch (ReviewInfrastructureException exception)
-                {
-                    return await FinalizeInfrastructureAsync(
-                        slot,
-                        workspace,
-                        exception.Classification,
-                        exception.Message,
-                        shutdown);
-                }
-
-                slot = SaveSlot(slot with { Phase = "launching" });
-                DurableReviewProcess process;
-                try
-                {
-                    process = DurableReviewProcess.Start(_options, slot, _log);
-                }
-                catch (Exception exception)
-                {
-                    return await FinalizeInfrastructureAsync(
-                        slot,
-                        workspace,
-                        "ReviewWorkerStartFailed",
-                        $"Detached review worker could not start: {exception.Message}",
-                        shutdown);
-                }
-                slot = SaveSlot(slot with
-                {
-                    ProcessId = process.ProcessId,
-                    ProcessStartedAtUtc = process.ProcessStartedAtUtc,
-                    WorkerReleaseId = process.ReleaseId,
-                    WorkerBinaryPath = process.BinaryPath,
-                    Phase = "running",
-                });
-                workerStarted = true;
-                _log(
-                    $"detached review worker started attempt={attempt.AttemptId} " +
-                    $"fence={lease.Fence} pid={process.ProcessId}");
+                var settled = await PrepareOrSettleAsync();
+                if (settled is not null) return settled.Value;
+                settled = await LaunchOrSettleAsync();
+                if (settled is not null) return settled.Value;
             }
 
             var attached = DurableReviewProcess.Attach(slot);
@@ -352,6 +333,16 @@ public sealed class RemoteReviewExecutor
                             continue;
                         }
                     }
+                    // A worker that wrote its result and exited between the two
+                    // reads above finished its review.
+                    if (attached.ReadResult() is not null) continue;
+                    if (DurableReviewProcess.CanRelaunch(slot))
+                    {
+                        var settled = await RelaunchOrSettleAsync(processProof);
+                        if (settled is not null) return settled.Value;
+                        attached = DurableReviewProcess.Attach(slot);
+                        continue;
+                    }
                     return await FinalizeInfrastructureAsync(
                         slot,
                         workspace,
@@ -360,6 +351,115 @@ public sealed class RemoteReviewExecutor
                         shutdown);
                 }
                 await Task.Delay(TimeSpan.FromMilliseconds(200), shutdown);
+            }
+
+            // Each helper returns null when the slot may continue, or the exit
+            // code of the terminal report it settled instead.
+            async Task<int?> PrepareOrSettleAsync()
+            {
+                try
+                {
+                    _log(
+                        $"materializing review attempt={attempt.AttemptId} " +
+                        $"subject={subject.SubjectId} expected={subject.ExpectedResultSha}");
+                    await workspace.PrepareAsync(_client, shutdown);
+                    return null;
+                }
+                catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
+                {
+                    // AGT-3647: a daemon stop during preparation is not a lost
+                    // review. The replacement prepares again under this lease.
+                    await HandOffAsync(attempt);
+                    return 0;
+                }
+                catch (ReviewInfrastructureException exception)
+                {
+                    return await FinalizeInfrastructureAsync(
+                        slot,
+                        workspace,
+                        exception.Classification,
+                        exception.Message,
+                        shutdown);
+                }
+            }
+
+            async Task<int?> LaunchOrSettleAsync()
+            {
+                slot = SaveSlot(slot with { Phase = "launching" });
+                DurableReviewProcess process;
+                try
+                {
+                    process = DurableReviewProcess.Start(_options, slot, _log);
+                }
+                catch (Exception exception)
+                {
+                    return await FinalizeInfrastructureAsync(
+                        slot,
+                        workspace,
+                        "ReviewWorkerStartFailed",
+                        $"Detached review worker could not start: {exception.Message}",
+                        shutdown);
+                }
+                slot = SaveSlot(slot with
+                {
+                    ProcessId = process.ProcessId,
+                    ProcessStartedAtUtc = process.ProcessStartedAtUtc,
+                    WorkerReleaseId = process.ReleaseId,
+                    WorkerBinaryPath = process.BinaryPath,
+                    Phase = "running",
+                });
+                workerStarted = true;
+                _log(
+                    $"detached review worker started attempt={attempt.AttemptId} " +
+                    $"fence={lease.Fence} pid={process.ProcessId}");
+                return null;
+            }
+
+            // AGT-3647: the worker is gone without a result while this host
+            // still holds the lease, for example after a daemon or container
+            // replacement. Start it again; it resumes from its checkpoint.
+            async Task<int?> RelaunchOrSettleAsync(string reason)
+            {
+                var launched = DurableReviewProcess.MayHaveLaunched(slot);
+                // A recreated container can keep its state volume but lose the
+                // workspace; the checkpoint then names results that are gone.
+                var prepareAgain = !launched || !Directory.Exists(workspace.RepositoryPath);
+                if (prepareAgain && launched) DurableReviewProcess.ClearWorkerFiles(slot.WorkerDirectory);
+                var relaunches = slot.WorkerRelaunches + 1;
+                slot = SaveSlot(slot with
+                {
+                    WorkerRelaunches = relaunches,
+                    ProcessId = null,
+                    ProcessStartedAtUtc = null,
+                    AdoptionFailure = null,
+                    Phase = prepareAgain ? "preparing" : "launching",
+                });
+                var progress = DurableReviewProcess.Attach(slot).ReadProgress();
+                _log(
+                    $"review worker relaunch attempt={attempt.AttemptId} fence={lease.Fence} " +
+                    $"relaunch={relaunches}/{DurableReviewProcess.MaximumWorkerRelaunches} " +
+                    $"prepareAgain={prepareAgain} " +
+                    $"resumeCompleted={progress?.CompletedStepIds.Count ?? 0}: {reason}");
+                WorkerCgroup.ReleaseFor(slot.WorkerDirectory, _log);
+                if (prepareAgain)
+                {
+                    if (!await workspace.CleanupAsync(attempt.AttemptId))
+                        return await FinalizeInfrastructureAsync(
+                            slot,
+                            workspace,
+                            "DirtyBefore",
+                            $"Interrupted review preparation could not be removed before preparing again: {workspace.AttemptRoot}",
+                            shutdown);
+                    var prepared = await PrepareOrSettleAsync();
+                    if (prepared is not null) return prepared;
+                }
+                else
+                {
+                    // Commands of the dead worker may outlive it where no cgroup
+                    // envelope applies; they must not run beside their replacement.
+                    await workspace.ReapResidentProcessesAsync(attempt.AttemptId);
+                }
+                return await LaunchOrSettleAsync();
             }
         }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested && workerStarted)
@@ -1318,7 +1418,7 @@ public sealed class RemoteReviewExecutor
             ? "none"
             : string.Join(", ", progress!.CompletedStepIds);
         return
-            $"The replacement daemon could not adopt the persisted review process: {reason}. " +
+            $"The replacement daemon could not adopt or relaunch the persisted review process: {reason}. " +
             $"Lost work extent: {completed} of {planned} review commands completed " +
             $"({seconds:0.###} command-seconds; steps: {steps}). " +
             "The immutable subject must be retried because no unproven process may retain review authority.";

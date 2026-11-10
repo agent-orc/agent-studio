@@ -466,6 +466,43 @@ export const COMMANDS = {
     },
   },
 
+  // AGT-3647: the deploy drain of one runner identity (host.drain / host.resume).
+  'host drain': {
+    summary: 'Stop one runner identity from claiming new runs and reviews; running work finishes.',
+    spec: {},
+    async run(ctx, positionals) {
+      const client = positionals[0];
+      if (!client) throw usage('missing-argument', 'Name the runner identity: studio-op host drain <client-id>.');
+      const answer = await ctx.client.request('POST', `/api/clients/${enc(client)}/drain`);
+      return { data: { clientId: client, draining: true, identity: answer },
+        text: `${client} drains: no new claims; running work finishes. Poll studio-op host status ${client}.` };
+    },
+  },
+
+  'host status': {
+    summary: 'Drain state of one runner identity and the leased attempts it still runs.',
+    spec: {},
+    async run(ctx, positionals) {
+      const client = positionals[0];
+      if (!client) throw usage('missing-argument', 'Name the runner identity: studio-op host status <client-id>.');
+      const status = await ctx.client.request('GET', `/api/clients/${enc(client)}/drain-status`);
+      return { data: status, text: lines(
+        `${client}: ${status.drained ? 'drained' : status.draining ? 'draining' : 'admitting'}`,
+        (status.running ?? []).map(item => `  running ${item.kind} ${item.taskKey} ${item.attemptId} since ${item.acquiredAt}`)) };
+    },
+  },
+
+  'host resume': {
+    summary: 'Lift the drain of one runner identity so it claims again.',
+    spec: {},
+    async run(ctx, positionals) {
+      const client = positionals[0];
+      if (!client) throw usage('missing-argument', 'Name the runner identity: studio-op host resume <client-id>.');
+      const answer = await ctx.client.request('POST', `/api/clients/${enc(client)}/resume`);
+      return { data: { clientId: client, admitting: true, identity: answer }, text: `${client} admits new claims again.` };
+    },
+  },
+
   log: {
     summary: 'Read the operator log of a project.',
     spec: { project: 'string', after: 'string' },

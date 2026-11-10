@@ -59,6 +59,14 @@ scripts:
   an output marker. Every command must succeed and emit its marker before
   admission resumes. Execute the probes under the account that owns that
   model's credential.
+- Coding and review hosts list `drainClients`: every runner identity the host
+  runs, as shown on the Execution Hosts page (for example the coding runner and
+  each review container). The deploy drains them first and resumes each one
+  after its host is updated
+  ([deploy drain procedure](../deploy-drain-procedure.md)).
+- `quietPoint` sets the wait for a quiet point: `deadlineSeconds` (default
+  2700), `pollSeconds` (20), `batchFirstMinutes` (5), `batchLastMinutes` (5) and
+  an optional `batchExpectedMinutes`.
 - Review `reviewDrainCommand` closes new review admission before recreation.
   `reviewIdleCommand` returns `{"idle":true}` only when every listed review
   service has no active work. The adapter runs it once before recreation and
@@ -96,8 +104,13 @@ creates the first snapshot in that new journal from the containers already
 running under the configured Compose project labels. No earlier deploy journal
 or gate setting is needed. Missing or empty gate values in the old API are
 recorded as null for rollback.
-The live run checks OP-6 preflight, formed batches, and running gates before
-the plan, after draining, and immediately before the server switch. The server
+The live run first drains every `drainClients` identity through
+`studio-op host drain`, then waits for a quiet point: OP-6 preflight clear, no
+review running on a drained host, no batch in its first or last minutes, and no
+pending push. A missed deadline resumes the drained identities and stops before
+the plan. The same quiet rule is checked again after server admission closes
+and immediately before the server switch. Each host is resumed with
+`studio-op host resume` once its own update is verified. The server
 health check observes the running image revision before the engine and hosts
 change. The plan must
 stay within its expiry. Every step writes start/end UTC times, duration,
@@ -111,7 +124,7 @@ bash deploy/networked/deploy.sh rollback "$commit" --manifest "$manifest" --jour
 
 Rollback rechecks preflight and work state, drains admission, and restores only
 hosts whose release-changing step was reached, in review, coding, engine,
-server, gate order. It restores the captured API/web image digests, engine image ref,
+server, gate order. It resumes every drained runner identity at the end. It restores the captured API/web image digests, engine image ref,
 gate SSH host, worker path, and agent-host release. Review replacement again requires an idle
 observation. The host adapter verifies the resulting health before reporting a
 restore. For a server container started from a tag, the snapshot resolves the

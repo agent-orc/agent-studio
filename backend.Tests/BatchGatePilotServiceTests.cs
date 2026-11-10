@@ -2832,6 +2832,76 @@ public sealed class BatchGatePilotRecoveryTests : BatchGatePilotServiceTests
     }
 
     [Fact]
+    public async Task Per_task_fallback_cut_by_two_api_restarts_runs_again_without_escalating_the_card()
+    {
+        // AGT-3584 / AGT-3647: each API restart of Deploy 36 cut the per-task
+        // gate. A process killed under its gate leaves the active marker with
+        // the start it charged, which the next instance must refund.
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-RESTART", "docs/restart.md");
+        factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetBatchGate(ProjectName, new BatchGateFormationOptions(Enabled: false));
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var cuts = 0;
+        _gate.Fallback = request => ++cuts <= 2
+            ? throw new IOException("API process ended under the gate")
+            : Green(request.ExpectedSha);
+
+        // Each instance stands for one API process with its own instance id.
+        BatchGatePilotService ApiProcess()
+        {
+            var pilot = ActivatorUtilities.CreateInstance<BatchGatePilotService>(factory.Services);
+            pilot.WaitForFlightsInTick = true;
+            return pilot;
+        }
+
+        var first = ApiProcess();
+        await first.TickAsync(CancellationToken.None);
+        var afterFirst = Assert.IsType<BatchGateOwnership>(Ownership(member.Key));
+        Assert.Equal(1, afterFirst.FallbackGateStarts);
+        Assert.Equal(first.ServiceInstanceId, afterFirst.FallbackGateRunBy);
+        EnableBatchGate(factory, closeSize: 4);
+
+        var second = ApiProcess();
+        await second.TickAsync(CancellationToken.None);
+        var afterSecond = Assert.IsType<BatchGateOwnership>(Ownership(member.Key));
+        Assert.Equal(1, afterSecond.FallbackGateStarts);
+        Assert.Equal(second.ServiceInstanceId, afterSecond.FallbackGateRunBy);
+
+        var third = ApiProcess();
+        await third.TickAsync(CancellationToken.None);
+
+        Assert.Equal(3, _gate.FallbackRuns);
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, member.Key)));
+        Assert.Empty(store.ListPending());
+    }
+
+    [Fact]
+    public async Task Per_task_fallback_that_throws_twice_in_one_instance_still_spends_its_budget()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-REPEAT", "docs/repeat.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = Assert.Single(store.ListPending());
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        BatchGateOwnershipStore.Write(Path.Combine(_watchPath, TaskStates.AutoReview, member.Key),
+            new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
+                FallbackGateActive: true,
+                FallbackGateStarts: BatchGatePilotService.FallbackGateStartBudget,
+                FallbackGateRunBy: pilot.ServiceInstanceId));
+        _gate.Fallback = request => Green(request.ExpectedSha);
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Equal(0, _gate.FallbackRuns);
+        AssertLane(member.Key, TaskStates.Escalated);
+    }
+
+    [Fact]
     public async Task Per_task_fallback_interrupted_past_its_start_budget_escalates_as_gate_infra()
     {
         using var factory = BuildFactory();

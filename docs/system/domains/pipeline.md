@@ -2312,9 +2312,11 @@ move-error dialog.
 - Remote Review command execution survives a planned Review daemon restart.
   Recovered attempts retain their original fence and containment namespace and
   resume before load-aware admission evaluates any fresh slot. Completed
-  commands are not relaunched. If process adoption cannot be proven, the
-  attempt ends visibly as `ReviewInfra / ExecutorRestarted` with the failed
-  proof, completed-command count and duration, and retry reason. Replaying the
+  commands are not relaunched. If process adoption cannot be proven while the
+  lease is valid, the worker is started again for the same attempt and
+  resumes from its checkpoint (AGT-3647). Only a worker that dies again after
+  two relaunches ends the attempt visibly as `ReviewInfra / ExecutorRestarted`
+  with the failed proof, completed-command count and duration, and retry reason. Replaying the
   fixed report key with another terminal payload is rejected.
 - Any operation that can advance `main` must call `PreMainTestGate` first and
   proceed only on an `Ok` result with `FullSuiteRequired` and `FullSuiteRan` set.

@@ -12,20 +12,87 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 
 ARTIFACTS = ("api", "web", "engine", "agent_host", "gate_worker")
 ROLES = ("server", "gate", "engine", "coding", "review")
 ORDER = ("drain", "task-server", "readiness", "engine", "hosts")
 STEPS = (
-    "build", "snapshot", "preflight", "work_state", "plan", "drain", "gate_publish", "gate_verify",
+    "build", "snapshot", "preflight", "work_state", "host_drain", "host_status", "host_resume",
+    "plan", "drain", "gate_publish", "gate_verify",
     "server_switch", "server_health", "engine_switch", "engine_health",
     "coding_install", "coding_health", "model_probe", "review_copy",
     "review_build", "review_idle", "review_recreate", "review_verify", "resume",
 )
 
 
+WORK_ROLES = ("coding", "review")
+CLIENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+# AGT-3647: wait for a quiet point before the window opens. A batch is cut only
+# in its middle: early it would only be re-formed, late it is about to publish.
+QUIET_DEFAULTS = {"deadlineSeconds": 2700, "pollSeconds": 20,
+                  "batchFirstMinutes": 5, "batchLastMinutes": 5, "batchExpectedMinutes": None}
+BATCH_STARTING = ("formed", "assembling", "assembled")
+BATCH_FINISHING = ("green", "publishing")
+
+
 class DeployError(Exception):
     pass
+
+
+def parse_utc(value):
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def quiet_policy(manifest):
+    policy = dict(QUIET_DEFAULTS)
+    policy.update(manifest.get("quietPoint") or {})
+    for key in ("deadlineSeconds", "pollSeconds", "batchFirstMinutes", "batchLastMinutes"):
+        if not isinstance(policy[key], (int, float)) or policy[key] < 0:
+            raise DeployError(f"quietPoint.{key} must be a non-negative number")
+    expected = policy["batchExpectedMinutes"]
+    if expected is not None and (not isinstance(expected, (int, float)) or expected <= 0):
+        raise DeployError("quietPoint.batchExpectedMinutes must be a positive number")
+    return policy
+
+
+def quiet_blockers(work, host_statuses, now, policy):
+    """What keeps the deploy from its quiet point: a running review on a host,
+    a batch in its first or last minutes, or a pending push."""
+    blockers = []
+    for host_id, statuses in host_statuses.items():
+        for status in statuses:
+            for item in status.get("running") or []:
+                if isinstance(item, dict) and item.get("kind") == "review":
+                    blockers.append(f"review-running {host_id}/{item.get('taskKey') or item.get('attemptId')}")
+    flights = work.get("flights")
+    if flights is None:
+        # An adapter without flight facts keeps the strict rule: any batch blocks.
+        if work.get("formedBatches") or work.get("runningGates"):
+            blockers.append("formed batches or running gates block deployment: " + ", ".join(
+                [*work.get("formedBatches", []), *work.get("runningGates", [])]))
+    else:
+        first = dt.timedelta(minutes=policy["batchFirstMinutes"])
+        last = dt.timedelta(minutes=policy["batchLastMinutes"])
+        expected = policy["batchExpectedMinutes"]
+        for flight in flights:
+            name = flight.get("id", "batch")
+            phase = str(flight.get("phase") or "").lower()
+            started = parse_utc(flight.get("startedAtUtc"))
+            if phase in BATCH_STARTING or (phase == "running" and (started is None or now - started < first)):
+                blockers.append(f"batch-starting {name}")
+            elif phase in BATCH_FINISHING or (phase == "running" and expected is not None
+                                               and now - started > dt.timedelta(minutes=expected) - last):
+                blockers.append(f"batch-finishing {name}")
+    for push in work.get("pendingPushes") or []:
+        blockers.append(f"pending-push {push.get('jobId', '') if isinstance(push, dict) else push}".strip())
+    return blockers
 
 
 def utc():
@@ -85,6 +152,14 @@ def validate(manifest):
         raise DeployError("exactly one server, gate and engine host are required")
     if not any(h["role"] == "coding" for h in hosts) or not any(h["role"] == "review" for h in hosts):
         raise DeployError("coding and review hosts are required")
+    for host in hosts:
+        if host["role"] not in WORK_ROLES:
+            continue
+        clients = host.get("drainClients")
+        if not isinstance(clients, list) or not clients \
+                or not all(isinstance(item, str) and CLIENT_ID.fullmatch(item) for item in clients):
+            raise DeployError(f"{host['id']} needs drainClients: the runner identities it hosts")
+    quiet_policy(manifest)
     for artifact in ARTIFACTS:
         build_command = command(manifest, "build", artifact)
         if not any("{commit}" in part for part in build_command):
@@ -306,22 +381,102 @@ def deploy(args, manifest):
 
     run_step(state, journal, "snapshot", snapshot)
 
+    policy = quiet_policy(manifest)
+    work_hosts = [host for host in manifest["hosts"] if host["role"] in WORK_ROLES]
+
     def preflight():
         result = execute(manifest, "preflight", state)
         if not isinstance(result, dict) or result.get("allowed") is not True or result.get("blockers"):
             raise DeployError("OP-6 deploy preflight refused: " + ", ".join(
                 str(item.get("code", item)) for item in result.get("blockers", [])))
 
-    def work_state():
+    def read_work_state():
         result = execute(manifest, "work_state", state)
         if not isinstance(result, dict) or not isinstance(result.get("formedBatches"), list) \
                 or not isinstance(result.get("runningGates"), list):
             raise DeployError("work state needs formedBatches and runningGates arrays")
-        if result["formedBatches"] or result["runningGates"]:
-            raise DeployError("formed batches or running gates block deployment")
+        if result.get("flights") is not None and not isinstance(result["flights"], list):
+            raise DeployError("work state flights must be an array")
+        return result
 
-    run_step(state, journal, "preflight", preflight)
-    run_step(state, journal, "work_state", work_state)
+    def host_statuses():
+        statuses = {}
+        for host in work_hosts:
+            statuses[host["id"]] = []
+            for client in host["drainClients"]:
+                status = execute(manifest, "host_status", state, host, client_id=client)
+                if not isinstance(status, dict) or not isinstance(status.get("running", []), list):
+                    raise DeployError(f"host status of {client} needs a running array")
+                statuses[host["id"]].append(status)
+        return statuses
+
+    def blockers_now():
+        found = []
+        try:
+            preflight()
+        except DeployError as error:
+            found.append(str(error))
+        found.extend(quiet_blockers(read_work_state(), host_statuses(), utc(), policy))
+        return found
+
+    def work_state():
+        found = quiet_blockers(read_work_state(), host_statuses(), utc(), policy)
+        if found:
+            raise DeployError("no quiet point: " + "; ".join(found))
+
+    drained = []
+
+    def resume_drained(prefix):
+        for host, client in list(drained):
+            try:
+                run_step(state, journal, f"{prefix}:{host['id']}:{client}", lambda h=host, c=client: require(
+                    execute(manifest, "host_resume", state, h, client_id=c), "admitting", True))
+                drained.remove((host, client))
+            except Exception as error:  # every drained host gets its own resume attempt
+                print(f"{prefix}: {client}: {error}", file=sys.stderr, flush=True)
+
+    def wait_for_quiet_point():
+        deadline = utc() + dt.timedelta(seconds=policy["deadlineSeconds"])
+        if "planExpiresAtUtc" in state:
+            deadline = min(deadline, parse_utc(state["planExpiresAtUtc"]))
+        polls = 0
+        while True:
+            polls += 1
+            found = blockers_now()
+            state["quietPoint"] = {"polls": polls, "checkedAtUtc": timestamp(), "blockers": found}
+            save_json(journal, state)
+            if not found:
+                return
+            if utc() >= deadline:
+                raise DeployError(f"no quiet point before the deadline after {polls} checks: " + "; ".join(found))
+            print(f"quiet_point: waiting on {'; '.join(found)}", flush=True)
+            time.sleep(min(policy["pollSeconds"], max(0.0, (deadline - utc()).total_seconds())))
+
+    try:
+        for host in work_hosts:
+            for client in host["drainClients"]:
+                run_step(state, journal, f"host_drain:{host['id']}:{client}", lambda h=host, c=client: require(
+                    execute(manifest, "host_drain", state, h, client_id=c), "draining", True))
+                drained.append((host, client))
+        run_step(state, journal, "quiet_point", wait_for_quiet_point)
+        deploy_window(args, manifest, state, journal, preflight, work_state, drained, resume_drained)
+    except Exception:
+        # Before the server switch nothing changed: give every drained host back.
+        if not any(step["step"] == "server_switch" for step in state["steps"]):
+            resume_drained("host_resume_after_abort")
+        raise
+    state["status"] = "passed"
+    state["endedAtUtc"] = timestamp()
+    save_json(journal, state)
+
+
+def deploy_window(args, manifest, state, journal, preflight, work_state, drained, resume_drained):
+    def resume_host(host):
+        for drained_host, client in list(drained):
+            if drained_host is host:
+                run_step(state, journal, f"host_resume:{host['id']}:{client}", lambda c=client: require(
+                    execute(manifest, "host_resume", state, host, client_id=c), "admitting", True))
+                drained.remove((drained_host, client))
 
     def plan():
         result = execute(manifest, "plan", state)
@@ -366,6 +521,7 @@ def deploy(args, manifest):
         run_step(state, journal, f"coding_install:{host['id']}", lambda h=host: checked("coding_install", h))
         run_step(state, journal, f"coding_health:{host['id']}", lambda h=host: health("coding_health", h))
         run_step(state, journal, f"model_probe:{host['id']}", lambda h=host: require(checked("model_probe", h), "accepted", True))
+        resume_host(host)
     for host in host_of(manifest, "review"):
         run_step(state, journal, f"review_copy:{host['id']}", lambda h=host: require(
             checked("review_copy", h), "sha256", state["artifacts"]["agent_host"]["sha256"]))
@@ -396,10 +552,8 @@ def deploy(args, manifest):
             require(result, "commit", args.commit)
         run_step(state, journal, f"review_verify:{host['id']}",
                  lambda h=host, d=digest, i=image_ref: verify_review(h, d, i))
+        resume_host(host)
     run_step(state, journal, "resume", lambda: require(checked("resume", server), "admitting", True))
-    state["status"] = "passed"
-    state["endedAtUtc"] = timestamp()
-    save_json(journal, state)
 
 
 def rollback(args, manifest):
@@ -443,8 +597,11 @@ def rollback(args, manifest):
     run_step(state, journal, "rollback_preflight", rollback_preflight)
     def rollback_work_state():
         work = execute(manifest, "work_state", state)
-        if not isinstance(work, dict) or work.get("formedBatches") != [] or work.get("runningGates") != []:
+        if not isinstance(work, dict):
             raise DeployError("formed batches or running gates block rollback")
+        found = quiet_blockers(work, {}, utc(), quiet_policy(manifest))
+        if found:
+            raise DeployError("formed batches or running gates block rollback: " + "; ".join(found))
     run_step(state, journal, "rollback_work_state", rollback_work_state)
     server = host_of(manifest, "server")[0]
     run_step(state, journal, "rollback_drain", lambda: require(
@@ -461,6 +618,10 @@ def rollback(args, manifest):
                          invoke(command(manifest, "rollback", h["role"]), values(state, h)), "restored", True))
     run_step(state, journal, "rollback_resume", lambda: require(
         execute(manifest, "resume", state, server), "admitting", True))
+    for host in manifest["hosts"]:
+        for client in host.get("drainClients", []) if host["role"] in WORK_ROLES else []:
+            run_step(state, journal, f"rollback_host_resume:{host['id']}:{client}", lambda h=host, c=client: require(
+                execute(manifest, "host_resume", state, h, client_id=c), "admitting", True))
     state["status"] = "rolled-back"
     state["endedAtUtc"] = timestamp()
     save_json(journal, state)
@@ -472,16 +633,21 @@ def print_dry_run(commit, manifest):
         print(f"  build {artifact_name} (parallel)")
     for host in manifest["hosts"]:
         print(f"  snapshot {host['role']} {host['id']}")
-    for name in ("preflight", "work_state", "plan", "drain", "preflight_after_drain",
+    for host in manifest["hosts"]:
+        for client in host.get("drainClients", []) if host["role"] in WORK_ROLES else []:
+            print(f"  host_drain {host['id']} {client}")
+    policy = quiet_policy(manifest)
+    print(f"  quiet_point (preflight, work_state, host_status; deadline {policy['deadlineSeconds']} s)")
+    for name in ("plan", "drain", "preflight_after_drain",
                  "work_state_after_drain", "gate_publish", "gate_verify",
                  "preflight_before_switch", "work_state_before_switch", "server_switch", "server_health",
                  "engine_switch", "engine_health"):
         print(f"  {name}")
     for host in host_of(manifest, "coding"):
-        for name in ("coding_install", "coding_health", "model_probe"):
+        for name in ("coding_install", "coding_health", "model_probe", "host_resume"):
             print(f"  {name} {host['id']}")
     for host in host_of(manifest, "review"):
-        for name in ("review_copy", "review_build", "review_idle", "review_recreate", "review_verify"):
+        for name in ("review_copy", "review_build", "review_idle", "review_recreate", "review_verify", "host_resume"):
             print(f"  {name} {host['id']}")
     print("  resume")
     print("  rollback uses the captured journal")

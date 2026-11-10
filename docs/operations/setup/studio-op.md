@@ -127,6 +127,9 @@ to stderr) and `--url`.
 | `routing set-step --step <id> --cli <cli> [--model] [--thinking] [--pin-mode] [--pipeline-type] (--project <p>... \| --all)` | `GET /api/projects/settings`, `PUT /api/projects/{p}/pipeline-step` | See [Routing](#routing). |
 | `preflight restart\|deploy` | `GET /api/operator/preflight/{operation}` | Exit 8 with the named blockers. |
 | `deploy plan --target-version <v> [--window <minutes>]` | `POST /api/operator/deploy/plan` | Ordered, expiring plan: drain, Task Server, readiness, Engine, hosts. |
+| `host drain <client-id>` | `POST /api/clients/{id}/drain` | `host.drain` (T1): the runner identity claims no new run or review; running work finishes. |
+| `host status <client-id>` | `GET /api/clients/{id}/drain-status` | `draining`, `drained` and the leased attempts it still runs. |
+| `host resume <client-id>` | `POST /api/clients/{id}/resume` | `host.resume` (T1): lifts the drain. A drain that ends in retirement stays. |
 | `log [--project <p>] [--after <cursor>]` | `GET /api/operator/log` | |
 | `log append --project <p> --kind observed\|decided\|did\|handoff (--text <t> \| --text-file <f>) [--card <key>]... [--audit <id>]...` | `POST /api/operator/log` | |
 

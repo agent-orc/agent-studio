@@ -112,6 +112,9 @@ test('every working-set command answers with JSON and exit 0', async () => {
     ['preflight', 'restart'],
     ['preflight', 'deploy'],
     ['deploy', 'plan', '--target-version', '1.2.3'],
+    ['host', 'drain', 'agent-runner-01-review'],
+    ['host', 'status', 'agent-runner-01-review'],
+    ['host', 'resume', 'agent-runner-01-review'],
     ['log', 'append', '--project', 'Demo App', '--kind', 'did', '--text', 'Moved DEMO-4.', '--card', 'DEMO-4'],
     ['log', '--project', 'Demo App'],
   ];

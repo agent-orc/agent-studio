@@ -2343,11 +2343,15 @@ before the daemon evaluates host load for a fresh claim, so load admission can
 close without discarding in-flight test time.
 
 If the Review worker is missing, its PID was reused, or its cwd differs, the
-replacement does not adopt or execute it. It submits a fenced
-`ReviewInfra / ExecutorRestarted` report containing the failed proof, completed
-step ids, completed-command duration, and retry reason. If the old lease already
-expired, the daemon reclaims that attempt under a fresh fence solely to deliver
-this loss report; it never runs from the unproven process. The deterministic
+replacement does not adopt it. While the lease is still valid it kills what is
+left of the old worker's cgroup and starts a new worker for the same attempt,
+which resumes from `review-progress.json`; a slot cut during workspace
+preparation is prepared again (AGT-3647). If the old lease already expired and
+the Task Server hands the attempt back, the daemon runs it again from a fresh
+workspace under the new fence. After two relaunches a worker that dies again is
+settled with a fenced `ReviewInfra / ExecutorRestarted` report containing the
+failed proof, completed step ids, completed-command duration, and retry reason.
+It never runs from the unproven process. The deterministic
 `review-report:<attempt>:<fence>` key can replay the same terminal payload, but
 the authority rejects a conflicting payload.
 

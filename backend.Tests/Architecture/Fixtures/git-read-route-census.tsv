@@ -63,6 +63,7 @@
 /api/clients/	free	-	-	-
 /api/clients/{id}	free	-	-	-
 /api/clients/{id}/defaults	free	-	-	-
+/api/clients/{id}/drain-status	free	-	-	-
 /api/clients/{id}/runner-capacity	free	-	-	-
 /api/clients/{id}/telemetry	free	-	-	-
 /api/concept-docs/{topic}	free	-	-	-
