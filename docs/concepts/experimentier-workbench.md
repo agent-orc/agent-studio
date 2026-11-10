@@ -202,6 +202,13 @@ so unrelated commits do not invalidate an unchanged Dossier.
 | Build settled | `decided / feature-spawn` | The card exists and the Dossier records its task receipt. |
 | Stop | `archived / archive` | Explicit confirmation records why no feature follows. |
 
+The feature action creates the Ready card and confirms the Dossier receipt in
+one owner action. If confirmation fails, Studio removes the newly created card
+and keeps the Dossier available for retry. If removal also fails, the owner sees
+the card key and is directed to an operator for cleanup before retrying. Studio
+uses its own author and committer identity for the Dossier commit; the service
+user does not need a global Git identity for this write.
+
 The closing invariant mirrors the intent of the
 [planning-task spawn contract](planning-task-lifecycle.md) without pretending a
 Dossier is a planning task:

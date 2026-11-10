@@ -12,6 +12,7 @@ export {
   primaryActionFor,
   laneLabelFor,
   mergeAcceptViewFor,
+  acceptanceHoldReason,
   LANE_LABELS,
   triageDecisionRefusal,
   triageDecisionRowState,

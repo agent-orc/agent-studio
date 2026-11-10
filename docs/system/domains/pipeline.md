@@ -1683,6 +1683,16 @@ comparison before Quality Studio's verdict contract can decide a review.
   target-Completed-only exception; no-branch task metadata is exempt without an
   override.
 
+  A current delivery can inherit its card's verified merge record when the
+  commit memberships used for the integration detail place its effective
+  commits in that verified tree, even if an earlier delivery SHA list omitted
+  the current review result. For a contained delivery without a card-local
+  verification record, acceptance can use the newest passing, final
+  `published-batch` base verdict whose tree contains the delivery and remains
+  on the branch. Red or provisional verdicts, rewritten branches, and newer
+  deliveries outside the verified tree never qualify. The completion claim
+  names the batch and verified tree.
+
   `DeliveryRefResolver` chooses the immutable result ref first, then an
   attributed commit branch, then `runner/<runner>/<task-key>`, with
   `task/<slug>` only as the legacy local fallback. Remote delivery is fetched
@@ -2795,11 +2805,30 @@ operator changes cause the step to fail before its writer runs.
   `PostAbortReviewDecider` owns the binding action and rerun budget.
 - The lightweight report pipeline is selected from canonical task mode
   `planning` or `research`. It retains deterministic preflight, one core report
-  run, primary-report validation, and human-review handoff. It excludes git,
-  build, automated tests, Stylelint, code-review aspects, code-quality grading,
-  regression radar, Wiki automation, and drift checks. Research additionally
-  requires `results/report.html`; the full deliverable and prompt contract is
-  the [Research task delivery convention](../../operations/research-deliverables/index.html).
+  run, primary-report validation, a requirement-fit review of the delivered
+  report, and human-review handoff. It excludes git, build, automated tests,
+  Stylelint, the code aspects, code-quality grading, regression radar, Wiki
+  automation, and drift checks. Research additionally requires
+  `results/report.html`; the full deliverable and prompt contract is the
+  [Research task delivery convention](../../operations/research-deliverables/index.html).
+- Report cards get no Remote Review, so the `aspect-requirement-fit` step of
+  the lightweight pipeline is their content verdict (AGT-3565).
+  `ReportContentReviewService` runs it on this server after the summary step,
+  also when that step failed or degraded, with the `results/` inventory and the
+  visible text of `results/report.html` as evidence. The verdict is bound to
+  the run attempt and brief it reviewed (`content-review-context.json`), so a
+  verdict for an older run never counts. Human review receives the report
+  whatever the verdict; completion refuses anything but `pass` unless the
+  operator overrides with a written reason. A research card completes only
+  while `results/report.html` is a complete HTML document (`ReportDeliverable`):
+  without it the review does not run, Review results is refused, and completion
+  is refused even with an override or an earlier `pass`. A card whose run finished without
+  the verdict lists the step in `onDemand.runnableStepIds` of
+  `GET /api/tasks/{id}/pipeline`; the Review results action
+  (`POST /api/tasks/{id}/review-results`) runs only that step for a card in
+  `5-human-review` or `5e-escalated`, without repeating the research or moving
+  the card. A present verdict, also `concerns`, is not reviewed again for the
+  same delivery and brief.
 - The concept pipeline is distinct from the report-only pipeline. It runs in an
   isolated worktree, permits a diff only inside one
   `docs/<slug>/` directory, and never merges that task branch.

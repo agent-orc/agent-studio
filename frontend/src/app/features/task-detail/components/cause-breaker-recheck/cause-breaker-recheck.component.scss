@@ -1,0 +1,95 @@
+:host { display: block; min-width: 0; }
+
+// AGT-3617: an open cause holds other cards, a current and actionable state,
+// so it reads as a warn tint with a status dot (R1: no accent bar).
+.cause-recheck {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--studio-spacing-2);
+  margin: var(--studio-spacing-2) var(--studio-spacing-3);
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 42%, var(--studio-border));
+  border-radius: var(--studio-radius-md);
+  background: color-mix(in srgb, var(--studio-accent-warn) 8%, var(--studio-bg-elevated));
+  color: var(--studio-fg);
+  font-size: 0.78rem;
+}
+
+.cause-recheck__dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-top: var(--studio-spacing-1);
+  border-radius: 50%;
+  background: var(--studio-accent-warn);
+}
+
+.cause-recheck__body { display: grid; gap: var(--studio-spacing-1); min-width: 0; flex: 1 1 auto; }
+.cause-recheck__line,
+.cause-recheck__hint,
+.cause-recheck__error { margin: 0; overflow-wrap: anywhere; }
+.cause-recheck__line { color: var(--studio-fg-strong); font-weight: 600; }
+.cause-recheck__hint { color: var(--studio-fg-muted); font-size: 0.72rem; }
+.cause-recheck__error { color: var(--studio-error); font-size: 0.72rem; }
+
+.cause-recheck__list {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cause-recheck__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--studio-spacing-1) var(--studio-spacing-2);
+  min-width: 0;
+}
+
+.cause-recheck__title { min-width: 0; overflow-wrap: anywhere; }
+.cause-recheck__meta { color: var(--studio-fg-muted); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+
+.cause-recheck__link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--studio-wiki-link);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+
+  &:focus-visible { outline: 2px solid var(--studio-accent-3); outline-offset: 2px; }
+}
+
+.cause-recheck__actions { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); margin-top: var(--studio-spacing-1); }
+
+.cause-recheck__primary,
+.cause-recheck__ghost {
+  min-height: 24px;
+  padding: var(--studio-spacing-1) var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-spacing-1);
+  font: inherit;
+  cursor: pointer;
+
+  &:disabled { cursor: not-allowed; opacity: 0.6; }
+  &:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+}
+
+.cause-recheck__primary {
+  border-color: var(--studio-accent);
+  background: var(--studio-accent);
+  color: var(--studio-on-accent);
+}
+
+// Tertiary: transparent chrome, still a recognisable native button.
+.cause-recheck__ghost {
+  margin-left: auto;
+  border-color: transparent;
+  background: transparent;
+  color: var(--studio-fg);
+
+  &:hover:not(:disabled) { background: var(--studio-bg-hover); }
+}
