@@ -199,8 +199,15 @@
 .decision-panel__created {
   display: flex;
   flex: 1 1 100%;
+  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--studio-spacing-2);
+}
+
+.decision-panel__created app-task-reference-microcard {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .decision-panel__created-fallback {

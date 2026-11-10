@@ -7347,6 +7347,75 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
         Assert.Empty(breaker.List(openOnly: true));
     }
 
+    /// <summary>
+    /// AGT-3617: the cause card's detail view reads its breaker by key, and
+    /// "Re-check now" posts the probe without a body.
+    /// </summary>
+    [Fact]
+    public async Task Cause_breaker_cause_view_and_bodiless_recheck_are_reachable_over_http()
+    {
+        SeedTask(TaskStates.AutoReview, TaskKey, "Repeated test report failure", "Build and verify.");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var fingerprint = OpenPreparationBreaker(breaker, scanner.FindJob(TaskKey, _watchPath)!);
+        var causeKey = Assert.Single(breaker.List(openOnly: true)).CauseKey!;
+
+        var none = await http.GetFromJsonAsync<CauseBreakerForCauseResponse>("/api/cause-breakers/by-cause/NOPE-1");
+        Assert.Null(none!.Breaker);
+        var view = (await http.GetFromJsonAsync<CauseBreakerForCauseResponse>(
+            $"/api/cause-breakers/by-cause/{Uri.EscapeDataString(causeKey)}"))!.Breaker!;
+        Assert.Equal(fingerprint.Value, view.Fingerprint);
+        Assert.Equal("review preparation fails", view.Summary);
+        var held = Assert.Single(view.Held);
+        Assert.Equal(TaskKey, held.TaskKey);
+        Assert.True(held.RecheckFirst);
+
+        var probe = await http.PostAsync($"/api/cause-breakers/{fingerprint.Value}/probe", content: null);
+        Assert.True(probe.IsSuccessStatusCode, await probe.Content.ReadAsStringAsync());
+        Assert.Equal(TaskKey, Assert.Single(breaker.List(openOnly: true)).ProbeTaskKey);
+        Assert.Equal("running", (await http.GetFromJsonAsync<CauseBreakerForCauseResponse>(
+            $"/api/cause-breakers/by-cause/{Uri.EscapeDataString(causeKey)}"))!.Breaker!.ProbeState);
+    }
+
+    /// <summary>
+    /// AGT-3617: "Move to Accepted" on the intervention card was refused for a
+    /// missing delivery brief and content verdict. The owner's plain move now
+    /// completes it as a recorded decision, and the sweep releases the cards.
+    /// </summary>
+    [Fact]
+    public async Task Owner_moving_the_intervention_card_to_accepted_records_the_decision_and_releases_the_hold()
+    {
+        SeedTask(TaskStates.AutoReview, TaskKey, "Repeated test report failure", "Build and verify.");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var task = scanner.FindJob(TaskKey, _watchPath)!;
+        OpenPreparationBreaker(breaker, task);
+        var opened = Assert.Single(breaker.List(openOnly: true));
+        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+
+        var moved = await http.PostAsJsonAsync(
+            $"/api/tasks/{Uri.EscapeDataString(opened.CauseTaskId!)}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
+            new MoveJobRequest { TargetState = TaskStates.Completed });
+
+        Assert.True(moved.IsSuccessStatusCode, await moved.Content.ReadAsStringAsync());
+        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        var cause = scanner.FindJob(opened.CauseTaskId!, opened.CauseWatchPath)!;
+        Assert.Equal(TaskStates.Completed, cause.State);
+        Assert.Equal(CompletionClaimBases.DeliverableWithoutCode, cause.CompletionClaim!.Basis);
+        Assert.Equal(InterventionOwnerDecisionPolicy.RecordedReason, cause.CompletionClaim.Reason);
+        Assert.Equal(1, breaker.Sweep());
+        Assert.Equal("cause-integrated", Assert.Single(breaker.List()).CloseReason);
+        Assert.Null(CauseWaitMarker.TryRead(task.FolderPath));
+    }
+
     [Fact]
     public async Task Cause_breaker_evidence_projection_closes_a_passing_probe()
     {

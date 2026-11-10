@@ -39,7 +39,7 @@ import {
 } from '../../models/remote-host.model';
 import { freshHostTelemetry, latestHostTelemetry } from '../../models/running-truth';
 import { claimLoadGateLabel } from '../../models/claim-load-gate';
-import type { StableReleaseIdentity } from '../../models/host-release-drift';
+import { reviewImageComparison, shortImageDigest, type ReviewImageComparison, type StableReleaseIdentity } from '../../models/host-release-drift';
 import {
   claudeSignInTarget,
   providerAuthBadgesForHost,
@@ -119,6 +119,25 @@ export class RemoteHostCardComponent {
     const key = (role: RemoteHost) => role.release?.releaseId ?? role.releaseId ?? role.release?.version ?? null;
     return roles.length <= 1 || roles.every(role => key(role) === key(roles[0]));
   });
+  /**
+   * The review role's running image next to the image the server expects for
+   * this host (AGT-3689). Null for a machine without a review image report.
+   */
+  readonly reviewImage = computed(() => {
+    const host = this.host();
+    const role = this.roles().find(candidate => candidate.serviceRole === 'review')
+      ?? (host.serviceRole === 'review' ? host : null);
+    return role ? reviewImageComparison(role.release, role.releaseDrift) : null;
+  });
+  readonly shortImageDigest = shortImageDigest;
+  reviewImageTone(image: ReviewImageComparison): StatusTone {
+    return image.state === 'matches' ? 'success' : image.state === 'differs' ? 'warning' : 'neutral';
+  }
+  reviewImageLabel(image: ReviewImageComparison): string {
+    return image.state === 'matches' ? 'Matches expected'
+      : image.state === 'differs' ? 'Differs from expected'
+        : image.state === 'unpinned' ? 'No expected image on this server' : 'Running image not reported';
+  }
   /** Board-local process runs or remote leased runs attributed to this host. */
   readonly boardActiveSlots = input(0);
   /**

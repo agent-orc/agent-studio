@@ -19,6 +19,13 @@
               data-testid="task-live-host-link" [href]="'#' + route"
               (click)="openHost($event, route)">{{ loss.host }}</a>{{ loss.after }}} @else {{{ loss.text }}}
           </span>
+        } @else if (live.hold; as hold) {
+          <span class="task-live__headline task-live__headline--hold" data-testid="task-live-hold" [attr.title]="live.headline">Held behind
+            <button type="button"
+                    class="task-live__link"
+                    data-testid="task-live-hold-link"
+                    [attr.aria-label]="'Open ' + hold.causeKey"
+                    (click)="openCause($event, hold.causeKey)">{{ hold.causeKey }}</button>: {{ hold.summary }}</span>
         } @else {
           <span class="task-live__headline">{{ live.headline }}</span>
         }
@@ -33,7 +40,7 @@
                 data-testid="task-live-detail-inline">· {{ live.detail }}</span>
         }
       </span>
-      @if (variant() === 'detail') {
+      @if (variant() === 'detail' && live.attempt !== null) {
         <span class="task-live__attempt">Attempt {{ live.attempt }}</span>
       }
     </div>
