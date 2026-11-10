@@ -567,6 +567,7 @@ public static class TaskCrudEndpoints
                 });
                 pipelineLog.Complete(info.FolderPath, now);
                 SteerPendingMarker.Clear(info.FolderPath);
+                scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(info.FolderPath));
 
                 var move = await transitions.MoveAsync(
                     jobId,
