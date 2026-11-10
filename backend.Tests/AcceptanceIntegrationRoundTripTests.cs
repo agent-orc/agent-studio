@@ -1440,6 +1440,58 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(MoveJobStatus.IntegrationFailed, outcome.Status);
         Assert.Contains("delivered against brief", outcome.Message);
         Assert.Equal(TaskStates.HumanReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        Assert.Contains(deps.Timeline.ReadAll(deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.CompletionContentRefused
+                && entry.Details?.GetValueOrDefault("code") == "completion-content-gap"
+                && entry.Details?.GetValueOrDefault("text") == outcome.Message);
+    }
+
+    [Fact]
+    public async Task ChangedBrief_RequestsOnlyContentReviewForTheSameDeliveryRun()
+    {
+        var deliverySha = PublishDelivery("content-review.txt", "delivered result\n");
+        var deps = Build(deliverySha, backgroundIntegration: true, briefVersion: "brief-v1");
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        BriefVersionStore.Record(card.FolderPath, "brief v2");
+        var run = deps.Authority.GetTaskProjection(TaskKey).CurrentRunAttempt!;
+
+        using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _tempDir,
+                    ["WatchPaths:0:Name"] = Project,
+                    ["WatchPaths:0:Path"] = _watchPath,
+                    ["WatchPaths:0:RootPath"] = _repo,
+                    ["WatchPaths:0:RepositoryPath"] = _repo,
+                    ["DeliveryChain:Guarded"] = "false",
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IHostedService>();
+                services.RemoveAll<ProjectSettingsService>();
+                services.AddSingleton(deps.Settings);
+                services.RemoveAll<AttemptAuthorityService>();
+                services.AddSingleton(deps.Authority);
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var response = await client.PostAsJsonAsync(
+            $"/api/tasks/{Slug}/content-review?watchPath={Uri.EscapeDataString(_watchPath)}", new { });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var review = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt;
+        Assert.NotNull(review);
+        Assert.Equal(run.AttemptId, review.SourceRunAttemptId);
+        Assert.Equal(new[] { "requirement-fit" }, review.Subject.Plan!.RequiredAspects);
+        Assert.All(review.Subject.Plan.Commands, command => Assert.Equal("requirement-fit", command.Aspect));
+        Assert.Equal(TaskStates.AutoReview, factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(Slug, _watchPath)!.State);
+        Assert.Contains(factory.Services.GetRequiredService<TimelineLog>().ReadAll(
+                factory.Services.GetRequiredService<TaskScannerService>().FindJob(Slug, _watchPath)!.FolderPath),
+            row => row.Kind == TimelineEventKinds.ContentReviewRequested);
     }
 
     /// <summary>

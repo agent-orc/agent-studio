@@ -8,6 +8,19 @@ import { GitPaneService } from './git-pane.service';
 import type { TaskInfo } from '../../../models/task.model';
 
 describe('GitPaneService hidden pane loading', () => {
+  it('resolves provenance for a Human Review action while Overview is visible', async () => {
+    await TestBed.configureTestingModule({ providers: [GitPaneService,
+      provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+      provideRouter([])] }).compileComponents();
+    const service = TestBed.inject(GitPaneService);
+    const http = TestBed.inject(HttpTestingController);
+    service.setJob({ id: 'job-review', watchPath: '/wp', state: '5-human-review' } as TaskInfo, false);
+    expect(service.provenanceLoaded()).toBe(false);
+    http.expectOne(request => request.url.endsWith('/api/tasks/job-review/provenance')).flush(null);
+    expect(service.provenanceLoaded()).toBe(true);
+    http.expectNone(request => request.url.endsWith('/api/tasks/job-review/code-review/list'));
+    http.verify();
+  });
   it('waits for the pane to open and reuses the same task snapshot', async () => {
     await TestBed.configureTestingModule({ providers: [GitPaneService,
       provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),

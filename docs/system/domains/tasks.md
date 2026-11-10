@@ -1453,6 +1453,19 @@ claim and a `completion_content_overridden` timeline entry. The Human Review
 delivery panel displays these grounds, the content citations, and ran/skipped
 aspects before acceptance.
 
+When the delivery or verdict brief version differs from the current brief,
+Human Review announces the acceptance block before the owner acts. Prompt edits
+record `brief_changed` and retain the immediately preceding text for a brief
+difference view. A refused acceptance records `completion_content_refused` with
+the refusal code, text, actor, and all three brief versions. The owner can
+request a content-only remote ReviewAttempt for the same completed RunAttempt;
+its plan contains only `requirement-fit` or `concept-fit` and uses the current
+brief. This does not create a coding RunAttempt. The owner can instead accept
+with an override reason of at least eight characters, which the completion
+claim and timeline retain with the actor and brief versions. A new content
+verdict alone does not make an older delivery current; accepting that delivery
+still needs the written override.
+
 Human Review acceptance also matches the card's review subject against the
 attempt authority store (`AcceptanceAttemptLineagePolicy`, pure, matrix-tested;
 AGT-3076). A lineage mismatch is a refusal (HTTP 409), never a server error. When

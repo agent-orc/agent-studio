@@ -303,7 +303,19 @@ public sealed class TaskTransitionService
             if (contentEvidence.Settlement is { } settlement)
                 ReportUnusableSettlement(info, settlement, contentDecision);
             if (!contentDecision.Accepted)
+            {
+                _timeline?.Append(info.FolderPath, TimelineEventKinds.CompletionContentRefused,
+                    cause ?? TimelineActors.System, contentDecision.Message,
+                    details: new Dictionary<string, string>
+                    {
+                        ["code"] = "completion-content-gap",
+                        ["text"] = contentDecision.Message,
+                        ["currentBriefVersion"] = contentEvidence.CurrentBriefVersion,
+                        ["deliveryBriefVersion"] = contentEvidence.DeliveryBriefVersion ?? "unknown",
+                        ["reviewBriefVersion"] = contentEvidence.ReviewBriefVersion ?? "unknown",
+                    });
                 return new MoveJobOutcome(MoveJobStatus.IntegrationFailed, contentDecision.Message, info.FolderPath);
+            }
         }
         var recordedContainment = false;
         if ((targetState == TaskStates.HumanReview && fromState == TaskStates.AutoReview

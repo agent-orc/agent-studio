@@ -441,7 +441,7 @@ public static class RoutePermissionCatalog
             "pipeline/**", "integration/**", "integration-records", "commits/integration", "git/**", "code-review",
             "external-completion", "summary/**", "context-usage/refresh", "conversation/invalidate",
             "older-brief-delivery/decision", "open-in-vscode", "review-evidence/**", "preview-feedback",
-            "merge", "merge/**");
+            "merge", "merge/**", "content-review");
         Under("W", IamPermissions.ProjectRunsOperate, "/api/runner/{}",
             "start", "stop", "mode", "orchestrator-log/override");
         Add("W", IamPermissions.ProjectRunsOperate,

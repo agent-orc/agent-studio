@@ -359,6 +359,7 @@
 /api/tasks/{jobId}/agent-work-summary	free	-	-	-
 /api/tasks/{jobId}/artifacts	free	-	-	-
 /api/tasks/{jobId}/attachments/{fileName}	free	-	-	-
+/api/tasks/{jobId}/brief-difference	free	-	-	-
 /api/tasks/{jobId}/checkout/{**path}	free	-	-	-
 /api/tasks/{jobId}/claude/session-info	free	-	-	-
 /api/tasks/{jobId}/code-review/list	free	-	-	-

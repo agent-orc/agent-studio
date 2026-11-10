@@ -128,3 +128,57 @@
 
 .claim__comparison span { display: grid; gap: var(--studio-spacing-1); }
 .claim__contradiction { color: var(--studio-warn); font-weight: 600; }
+
+.claim__brief-gap {
+  display: grid;
+  flex: 1 1 100%;
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-md);
+  background: color-mix(in srgb, var(--studio-warn) 9%, var(--studio-bg-elevated));
+  color: var(--studio-fg-strong);
+}
+.claim__brief-gap p { margin: 0; }
+.claim__brief-actions { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }
+.claim__brief-actions button,
+.claim__difference > button {
+  padding: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-bg-surface);
+  color: var(--studio-fg-strong);
+  font: inherit;
+  cursor: pointer;
+}
+.claim__brief-actions button:disabled { opacity: .6; cursor: not-allowed; }
+.claim__brief-actions .claim__brief-primary {
+  background: var(--studio-accent);
+  border-color: var(--studio-accent);
+  color: var(--studio-on-accent);
+}
+.claim__brief-actions button:focus-visible,
+.claim__difference > button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+.claim__difference,
+.claim__override-form { display: grid; gap: var(--studio-spacing-2); min-width: 0; }
+.claim__difference-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: var(--studio-spacing-2); }
+.claim__difference-columns > div { min-width: 0; }
+.claim__difference pre {
+  overflow: auto;
+  max-height: 20rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: var(--studio-spacing-2);
+  background: var(--studio-bg-surface);
+}
+.claim__override-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-bg-surface);
+  color: var(--studio-fg);
+  font: inherit;
+}
+.claim__brief-error { color: var(--studio-error); }

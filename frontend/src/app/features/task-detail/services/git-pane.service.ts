@@ -1,5 +1,5 @@
 import { Injectable, OnDestroy, computed, signal, inject, untracked } from '@angular/core';
-import type { TaskInfo } from '../../../models/task.model';
+import { TaskState, type TaskInfo } from '../../../models/task.model';
 import type {
   GitFileChange,
   GitStatus,
@@ -262,7 +262,10 @@ export class GitPaneService implements OnDestroy {
       // new commit lands on the chain (continue-mode follow-up, recovery
       // commit, operator-driven steer).
       const chainChanged = oldChainSignature !== commitChainSignature(chain);
-      if (chainChanged && !visible) this.resourcesPending = true;
+      if (chainChanged && !visible) {
+        this.resourcesPending = true;
+        if (info.state === TaskState.HumanReview) this.loadProvenance();
+      }
       if (visible && this.resourcesPending) {
         this.resourcesPending = false;
         this.applyCommitDefault(chain);
@@ -302,6 +305,9 @@ export class GitPaneService implements OnDestroy {
       this.applyCommitDefault(chain);
       this.loadProvenance();
       this.loadCodeReviews();
+    } else if (info?.state === TaskState.HumanReview) {
+      // Acceptance depends on landed-state provenance even while Overview is open.
+      this.loadProvenance();
     }
   }
 
