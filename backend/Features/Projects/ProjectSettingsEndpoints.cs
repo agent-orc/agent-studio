@@ -1375,7 +1375,7 @@ public static class ProjectSettingsEndpoints
             pilot.RequestCloseNow(projectName);
             return Results.Accepted(value: new { accepted = true });
         });
-        app.MapPost("/api/projects/{projectName}/batch-gate/members/{taskKey}/eject", (
+        app.MapPost("/api/projects/{projectName}/batch-gate/members/{taskKey}/eject", async (
             string projectName, string taskKey, HttpContext context,
             BatchGatePilotService pilot, TaskScannerService scanner) =>
         {
@@ -1383,8 +1383,28 @@ public static class ProjectSettingsEndpoints
                 return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
             if (string.IsNullOrWhiteSpace(context.Request.Headers["X-Client-Id"]))
                 return Results.BadRequest(new { error = "X-Client-Id is required.", field = "X-Client-Id" });
-            if (!pilot.RequestEject(projectName, taskKey))
-                return Results.NotFound(new { error = $"Batch member '{taskKey}' was not found." });
+            string? reason = null;
+            if (context.Request.ContentLength != 0
+                && context.Request.ContentType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                try
+                {
+                    var body = await context.Request.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+                    if (body.ValueKind == System.Text.Json.JsonValueKind.Object
+                        && body.TryGetProperty("reason", out var value)
+                        && value.ValueKind == System.Text.Json.JsonValueKind.String)
+                        reason = value.GetString()?.Trim();
+                }
+                catch (System.Text.Json.JsonException)
+                {
+                    return Results.BadRequest(new { error = "Eject reason must be sent as JSON." });
+                }
+            }
+            reason = string.IsNullOrWhiteSpace(reason) ? "Operator requested eject" : reason;
+            var refusal = pilot.TryRequestEject(projectName, taskKey,
+                AgentStudio.Tasks.TaskCrudEndpoints.OperatorActor(context), reason);
+            if (refusal is not null)
+                return Results.Conflict(new { error = refusal });
             return Results.Accepted(value: new { accepted = true });
         });
         // AGT-3219: cards escalated for a machine gate queue overrun, and their one-step release.

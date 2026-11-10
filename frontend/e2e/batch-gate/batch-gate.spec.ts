@@ -270,6 +270,56 @@ test('ejected batch member badge names why it went to the per-task gate', async 
   }
 });
 
+test('batch panel shows pending eject and its released outcome', async ({ page }) => {
+  let phase: 'waiting' | 'pending' | 'released' = 'waiting';
+  await routeBoard(page, state);
+  await page.route('**/api/projects/*/batch-gate/state?history=10', route => json(route, {
+    ...state,
+    pending: phase === 'released' ? [] : state.pending,
+    ejectRequests: phase === 'waiting' ? [] : [{ project, taskKey: key,
+      actor: 'Operator', reason: 'Inspect this card alone', requestedAtUtc: '2026-11-10T10:00:00Z',
+      status: phase === 'pending' ? 'pending' : 'released',
+      releasedAtUtc: phase === 'released' ? '2026-11-10T10:01:00Z' : null }],
+  }));
+  await page.route('**/api/projects/*/batch-gate/members/*/eject', route => {
+    expect(route.request().postDataJSON()).toEqual({ reason: 'Inspect this card alone' });
+    phase = 'pending';
+    return json(route, { accepted: true }, 202);
+  });
+  await page.goto('/?includeFixtures=true');
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
+  await page.getByTestId('batch-lane-indicator').first().click();
+  await page.getByRole('button', { name: `Eject ${key}` }).click();
+  await page.getByTestId('batch-eject-reason').fill('Inspect this card alone');
+  await page.getByTestId('batch-confirm').getByRole('button', { name: 'Confirm' }).click();
+  const outcome = page.getByTestId(`batch-eject-${key}`);
+  await expect(outcome).toContainText('Pending eject');
+  await expect(page.getByRole('button', { name: `Eject ${key}` })).toBeDisabled();
+  const evidence = process.env.JOB_RESULTS_DIR;
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const theme of ['light', 'dark'] as const) {
+      await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+      if (evidence) await page.screenshot({ path: nodePath.join(evidence, `batch-eject-pending-${width}-${theme}.png`) });
+    }
+  }
+  phase = 'released';
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.reload();
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
+  await page.getByTestId('batch-lane-indicator').first().click();
+  await expect(page.getByTestId(`batch-eject-${key}`)).toContainText('Released from batch');
+  await expect(page.getByTestId(`batch-eject-${key}`)).toContainText('Operator: Inspect this card alone');
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.getByTestId(`batch-eject-${key}`).scrollIntoViewIfNeeded();
+    for (const theme of ['light', 'dark'] as const) {
+      await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+      if (evidence) await page.screenshot({ path: nodePath.join(evidence, `batch-eject-released-${width}-${theme}.png`) });
+    }
+  }
+});
+
 test('review concern fix wait is visible on the card and batch gate', async ({ page }) => {
   const evidence = process.env.JOB_RESULTS_DIR;
   if (evidence) fs.mkdirSync(evidence, { recursive: true });

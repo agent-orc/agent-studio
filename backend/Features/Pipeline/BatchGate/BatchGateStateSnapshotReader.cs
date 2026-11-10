@@ -267,6 +267,7 @@ public static class BatchGateStateSnapshotReader
             baseMoveTotals = new { kept = moved.Count(state => state.BaseMoveOutcome == "kept"),
                 abandoned = moved.Count(state => state.BaseMoveOutcome == "abandoned") },
             members,
+            ejectRequests = store.ListEjects(project),
             reviewFixWaits = reviewFixWaits ?? [],
             detachedFlights = detachedFlights ?? [],
             isolationFindings = store.ListIsolationFindings(project)

@@ -96,11 +96,24 @@
             <li class="batch-panel__row"><span><strong>{{ item.taskKey }}</strong> · {{ item.waitMinutes }} min · {{ riskLabel(item.risk) }} risk
               @if (item.preCheck; as check) { · pre-check {{ check.outcome }} }
               @if (item.exclusion) { · {{ item.exclusion }} }</span>
-              <button type="button" [attr.aria-label]="'Eject ' + item.taskKey" (click)="showConfirm(item.taskKey)">Eject</button>
+              <button type="button" [attr.aria-label]="'Eject ' + item.taskKey"
+                [disabled]="ejectRequests().some(request => request.taskKey === item.taskKey && request.status === 'pending')"
+                (click)="showConfirm(item.taskKey)">Eject</button>
             </li>
           }</ul>
         } @else { <p>No cards are waiting for a batch.</p> }
       </section>
+      @if (ejectRequests().length) {
+        <section aria-label="Eject requests" data-testid="batch-eject-requests">
+          <h3>Eject requests</h3>
+          <ul>@for (request of ejectRequests(); track request.taskKey) {
+            <li [attr.data-testid]="'batch-eject-' + request.taskKey" role="status">
+              <strong>{{ request.taskKey }}</strong> · {{ request.status === 'pending' ? 'Pending eject' : 'Released from batch' }}
+              · {{ request.actor }}: {{ request.reason }}
+            </li>
+          }</ul>
+        </section>
+      }
       @if (data.reviewFixWaits?.length) {
         <section aria-labelledby="batch-review-fix-title" data-testid="batch-review-fix-waits">
           <h3 id="batch-review-fix-title">Waiting for review fixes</h3>
@@ -148,8 +161,13 @@
   @if (confirm(); as target) {
     <div class="batch-panel__confirm" role="group" aria-label="Confirm batch action" data-testid="batch-confirm">
       <p>{{ target === 'close' ? 'Close the current batch now?' : 'Eject ' + target + ' from the batch?' }}</p>
+      @if (target !== 'close') {
+        <label for="batch-eject-reason">Reason</label>
+        <textarea #ejectReasonInput id="batch-eject-reason" data-testid="batch-eject-reason" [value]="ejectReason()"
+          (input)="ejectReason.set($any($event.target).value)"></textarea>
+      }
       @if (actionError()) { <p role="alert">{{ actionError() }}</p> }
-      <button #confirmButton type="button" [disabled]="busy()" (click)="act()">Confirm</button>
+      <button #confirmButton type="button" [disabled]="busy() || (target !== 'close' && !ejectReason().trim())" (click)="act()">Confirm</button>
       <button type="button" [disabled]="busy()" (click)="confirm.set(null)">Cancel</button>
     </div>
   }

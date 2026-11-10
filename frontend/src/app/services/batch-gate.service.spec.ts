@@ -43,9 +43,10 @@ describe('BatchGateService', () => {
     const close = http.expectOne(`${base}/close-now`);
     expect(close.request.headers.get('X-Client-Id')).toBe('local-default');
     close.flush({}, { status: 202, statusText: 'Accepted' });
-    service.eject('Demo Project', 'AGT/4').subscribe();
+    service.eject('Demo Project', 'AGT/4', 'Inspect separately').subscribe();
     const eject = http.expectOne(`${base}/members/AGT%2F4/eject`);
     expect(eject.request.headers.get('X-Client-Id')).toBe('local-default');
+    expect(eject.request.body).toEqual({ reason: 'Inspect separately' });
     eject.flush({}, { status: 202, statusText: 'Accepted' });
   });
 

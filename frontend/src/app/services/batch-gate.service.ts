@@ -125,8 +125,8 @@ export class BatchGateService {
   closeNow(project: string): Observable<unknown> {
     return this.http.post(this.url(project) + '/close-now', {});
   }
-  eject(project: string, taskKey: string): Observable<unknown> {
-    return this.http.post(`${this.url(project)}/members/${encodeURIComponent(taskKey)}/eject`, {});
+  eject(project: string, taskKey: string, reason: string): Observable<unknown> {
+    return this.http.post(`${this.url(project)}/members/${encodeURIComponent(taskKey)}/eject`, { reason });
   }
   /** Lifetime pilot figures; read-only and served from the batch store without Git. */
   report(project: string): Observable<BatchGateReport> {

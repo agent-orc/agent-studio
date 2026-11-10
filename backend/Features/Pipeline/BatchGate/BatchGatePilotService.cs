@@ -321,13 +321,34 @@ public sealed partial class BatchGatePilotService
     }
 
     public bool RequestEject(string project, string taskKey)
+        => TryRequestEject(project, taskKey, "operator", "Operator requested eject") is null;
+
+    /// <summary>Returns a refusal sentence, or null when the request is durable.</summary>
+    public string? TryRequestEject(string project, string taskKey, string actor, string reason)
     {
-        var found = _store.ListPending().Any(item => item.Subject.Project == project
-            && item.Subject.TaskKey == taskKey
-            && (BatchGateOwnershipStore.Read(item.JobFolderPath)?.BatchId is not { } batchId
-                || _store.ReadPublication(batchId) is null));
-        if (found) _store.RequestEject(project, taskKey);
-        return found;
+        var item = _store.ListPending().FirstOrDefault(item => item.Subject.Project == project
+            && item.Subject.TaskKey == taskKey);
+        if (item is null) return $"Batch member '{taskKey}' is no longer pending. Refresh the panel to see its outcome.";
+        if (BatchGateOwnershipStore.Read(item.JobFolderPath)?.BatchId is { } batchId)
+        {
+            if (_store.ReadPublication(batchId) is not null)
+                return $"Batch {batchId} has already published. Wait for member release, then use the card's next action.";
+            var phase = _store.LatestState(batchId).Phase;
+            if (phase is BatchPhase.Green or BatchPhase.Publishing)
+                return $"Batch {batchId} is {phase.ToString().ToLowerInvariant()}. Publication will release the member; resolve a stalled publication before trying eject again.";
+            if (phase == BatchPhase.Red)
+            {
+                lock (_runningBatches)
+                    if (_runningBatches.TryGetValue(project, out var flight) && !flight.IsCompleted)
+                        return $"Batch {batchId} is still running red isolation. Wait for isolation to finish, then eject the member.";
+            }
+            if (phase == BatchPhase.Red && _store.ListManifests().Any(batch =>
+                    batch.ParentBatchId == batchId && _store.LatestState(batch.BatchId).Phase
+                        is not BatchPhase.Abandoned and not BatchPhase.Published and not BatchPhase.Red))
+                return $"Batch {batchId} is isolating its red result. Wait for isolation to finish, then eject the member.";
+        }
+        _store.RequestEject(project, taskKey, actor, reason);
+        return null;
     }
 
     public void RequestCloseNow(string project) => _store.RequestCloseNow(project);
@@ -473,6 +494,7 @@ public sealed partial class BatchGatePilotService
                 }
             ReconcileFormedBatches();
             CancelOrphanedStacks();
+            ReleaseEjectedTerminalBatches(ct);
             foreach (var item in _store.ListPending().Where(item =>
                          _store.HasEject(item.Subject.Project, item.Subject.TaskKey)
                          && string.IsNullOrWhiteSpace(
@@ -1283,12 +1305,44 @@ public sealed partial class BatchGatePilotService
         Dictionary<(string Repo, string Branch), string?> fetchedBases,
         CancellationToken ct)
     {
+        var request = _store.ReadEject(pending.Subject.Project, pending.Subject.TaskKey);
         var containedInSha = PublishedIn(Refresh(pending), fetchedBases, ct,
             gateInterrupted: !FallbackInFlight(pending.ReviewAttemptId));
         var handoff = ScheduleFallback(pending, ct, new PerTaskFallbackCause(PerTaskFallbackRules.OperatorEject,
-                "an operator ejected the card from the batch queue"), clearEject: true,
+                request is null ? "an operator ejected the card from the batch queue"
+                    : $"{request.Actor} ejected the card: {request.Reason}"), clearEject: true,
             containedInSha: containedInSha);
+        if (request is not null) _store.MarkEjectReleased(request);
         if (containedInSha is not null) await handoff.ConfigureAwait(false);
+    }
+
+    private void ReleaseEjectedTerminalBatches(CancellationToken ct)
+    {
+        foreach (var manifest in _store.ListManifests().Where(manifest =>
+                     (_store.LatestState(manifest.BatchId).Phase is BatchPhase.Red or BatchPhase.Abandoned)
+                     && manifest.Members.Any(member =>
+                         _store.HasEject(manifest.Scope.Project, member.TaskKey))))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (_store.ListManifests().Any(child => child.ParentBatchId == manifest.BatchId
+                && _store.LatestState(child.BatchId).Phase
+                    is not BatchPhase.Abandoned and not BatchPhase.Published and not BatchPhase.Red))
+                continue;
+            BatchCoordinatorLease? lease;
+            try { lease = _leases.TryAcquire(LeaseScope(manifest), "operator-eject-red-batch"); }
+            catch (IOException) { continue; }
+            if (lease is null) continue;
+            try
+            {
+                var phase = _store.LatestState(manifest.BatchId).Phase;
+                if (phase is not BatchPhase.Red and not BatchPhase.Abandoned) continue;
+                ReturnToPending(manifest);
+                if (phase == BatchPhase.Red)
+                    State(manifest, BatchPhase.Abandoned, null, lease.Fence,
+                        "operator eject from red batch");
+            }
+            finally { _leases.Release(lease); }
+        }
     }
 
     private void HandOffPublishedEject(BatchGateManifest manifest, BatchGatePendingRecord pending,

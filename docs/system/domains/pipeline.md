@@ -36,6 +36,13 @@ records with the actor, card, reason, and time. The existing eject path returns
 the remaining members to planning; the operator move requests a close on the
 next planner tick.
 
+The batch panel eject request stores its operator and reason. State reads expose
+`ejectRequests` with `pending` until the member leaves batch ownership and
+`released` afterwards. A red parent with no active isolation is abandoned on
+the next pilot tick, its ownership markers are cleared, and the requested
+member enters the per-task fallback path. Eject is refused while red isolation
+owns the batch; the response tells the operator to wait for isolation to finish.
+
 ### Gate run ledger (AGT-3500)
 
 The instance-local gate run ledger lives under `gate-run-ledger` beside the
