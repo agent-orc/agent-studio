@@ -436,6 +436,40 @@ manifest. A visible manifest with no state rows, for example after external
 file loss, has phase `Unknown` and is skipped by recovery until a state exists.
 The recovery scan logs this condition once per manifest and store instance.
 
+### Flight queue order (AGT-3710)
+
+Each project runs one ordinary batch flight at a time, so formed batches wait
+in a flight queue. `BatchGateStartPolicy.Order` (orchestration decisions) fixes
+the queue, and `BatchGateFlightQueue` applies it in the start pass, in recovery,
+and in the state read:
+
+1. A stacked successor (`stackedOnBatchId`) starts first: it already gated
+   against the candidate of a predecessor whose publication is in progress.
+2. A child batch (`parentBatchId`: an isolation, bisection, or documentation
+   successor child) continues its parent's flight and starts next.
+3. A batch whose last flight was cancelled at its lease deadline goes last.
+4. Every other formed batch starts first in, first out: the oldest durable
+   formation time first, then the lowest member `enqueueSequence`, then the
+   batch ID. The formation time is the close time of the first batch of its
+   re-form chain (`reformedFromBatchId`), or the recorded `queuedSinceUtc` of a
+   repacked replacement, which keeps the place of the oldest batch it
+   replaced. Size does not reorder the queue; `maximumWaitMinutes` no longer
+   affects the order.
+
+Only the head ordinary batch of a project may stack on the running flight, so
+a younger batch on the running base cannot overtake an older one. Batch
+folders are named by hash: `BatchGateStore.ListManifests` and
+`ListRecoverableManifests` return manifests by close time and batch ID, and no
+start, recovery, or reconciliation choice depends on folder enumeration. On
+10 November 2026 batches formed from 03:47 to 04:40 UTC waited while batches
+formed at 04:50 and 05:11 UTC started within seconds.
+
+The batch gate state lists the queue as `flightQueue` (`batchId`, `position`,
+`queuedSinceUtc`, `size`, `taskKeys`; position 1 starts next), gives each
+formed batch its `queuePosition`, and the overdue plan reason names it as
+`flight queue position <n> of <m>`. The batch panel shows the queue and the
+position of each formed batch.
+
 The batch panel reads `GET /api/projects/{projectName}/batch-gate/failed-tests`
 to rank failed test names over a seven-day sliding window (`windowDays` may be
 1 through 90). The store reads historical execution evidence once per project
