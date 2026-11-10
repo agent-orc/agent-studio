@@ -2554,6 +2554,12 @@ export interface ReviewAttempt {
    * produced this verdict; null otherwise. Reporting only - the verdict stands.
    */
   workerReleaseSuperseded?: string | null;
+  /**
+   * `graded by release <id> (commit <sha>), which differs from Stable <version>
+   * (<sha>)` when the grading host did not run the Stable build when the report
+   * arrived (AGT-3689); null otherwise. Reporting only - the verdict stands.
+   */
+  workerReleaseStable?: string | null;
 }
 
 /** A blocking aspect on the latest review attempt, with its quoted reason. */
