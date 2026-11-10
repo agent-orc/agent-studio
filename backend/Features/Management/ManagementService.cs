@@ -155,6 +155,7 @@ public sealed class ManagementService
         var kind = (request.Kind ?? "").Trim().ToLowerInvariant();
         if (OwnerCommands.Contains(kind) && role != StudioRoles.Owner)
             throw new ManagementException(403, "owner-required");
+        if (kind == "backup-retention" && role != StudioRoles.Owner) RequireRetentionWithinConfiguration(request, actor);
         var bodyKey = request.IdempotencyKey?.Trim();
         headerKey = headerKey.Trim();
         if (!string.IsNullOrWhiteSpace(bodyKey) && !string.IsNullOrWhiteSpace(headerKey)
@@ -421,7 +422,7 @@ public sealed class ManagementService
                 actor, key);
         try
         {
-            var record = Backups.CreateAsync("manual:" + actor, CancellationToken.None).GetAwaiter().GetResult();
+            var record = Backups.CreateAsync(BackupAudit.ManualPrefix + actor, CancellationToken.None).GetAwaiter().GetResult();
             return Result("backup-create", false, 1, 1,
                 $"Created encrypted backup {record.Id} ({record.FileCount} files).", actor, key, record);
         }
@@ -438,7 +439,7 @@ public sealed class ManagementService
         if (dry) return Result("restore-verify", true, 1, 0, $"Backup {summary.Id} would be restored into an isolated staging host and verified.", actor, key);
         try
         {
-            var verification = Backups.VerifyAsync(summary.Id, "manual:" + actor, CancellationToken.None).GetAwaiter().GetResult();
+            var verification = Backups.VerifyAsync(summary.Id, BackupAudit.ManualPrefix + actor, CancellationToken.None).GetAwaiter().GetResult();
             var verified = verification.Outcome == "verified";
             return Result("restore-verify", false, 1, verified ? 1 : 0,
                 verified
@@ -449,10 +450,28 @@ public sealed class ManagementService
         catch (BackupException ex) { throw new ManagementException(409, ex.Code + ": " + ex.Message); }
     }
 
+    /// <summary>
+    /// Keeping fewer archives than configured deletes local history the
+    /// configuration promises, so only the Owner may apply it (AGT-3737). A
+    /// preview deletes nothing and stays open to operators. The refusal is
+    /// audited in the control plane chain.
+    /// </summary>
+    private void RequireRetentionWithinConfiguration(ManagementCommandRequest request, string actor)
+    {
+        if (request.DryRun || request.RetentionCount is not { } requested || _backups is null) return;
+        var keep = Math.Clamp(requested, 1, 500);
+        var configured = _backups.Options.RetentionCount;
+        if (keep >= configured) return;
+        _backups.Audit(BackupAudit.Record(BackupAudit.ManualPrefix + actor, BackupAudit.Retention, BackupAudit.Denied, null,
+            $"Retention down to {keep} {(keep == 1 ? "archive" : "archives")} refused: below the configured {configured} needs the Owner role.",
+            new { keep, configured }));
+        throw new ManagementException(403, "owner-required");
+    }
+
     private ManagementCommandResult ApplyRetention(bool dry, string actor, string key, int? requested)
     {
         var keep = Math.Clamp(requested ?? Backups.Options.RetentionCount, 1, 500);
-        var (matched, affected) = Backups.ApplyRetention(keep, dry);
+        var (matched, affected) = Backups.ApplyRetention(keep, dry, BackupAudit.ManualPrefix + actor);
         return Result("backup-retention", dry, matched, affected,
             dry ? $"{matched} backups would be removed; newest {keep} retained." : $"Removed {affected} backups; newest {keep} retained.", actor, key);
     }
@@ -464,7 +483,7 @@ public sealed class ManagementService
         if (overview.OffHost.State is "not-configured" or "invalid")
             throw new ManagementException(409, "backup-target-not-configured");
         if (dry) return Result("backup-upload", true, pending, 0, $"{pending} backups would be copied to {overview.OffHost.Target}.", actor, key);
-        var uploaded = Backups.UploadPendingAsync(force: true, CancellationToken.None).GetAwaiter().GetResult();
+        var uploaded = Backups.UploadPendingAsync(force: true, BackupAudit.ManualPrefix + actor, CancellationToken.None).GetAwaiter().GetResult();
         return Result("backup-upload", false, pending, uploaded, $"Copied {uploaded} of {pending} backups to {overview.OffHost.Target}.", actor, key);
     }
 

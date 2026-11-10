@@ -69,11 +69,13 @@ public static class BatchGateStateSnapshotReader
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
             .ToArray();
         // AGT-3710: formed batches wait for the project's one flight first in, first out.
-        var flightQueue = BatchGateFlightQueue.Order(store, recoverable.Where(manifest =>
-                store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed),
+        // AGT-3712: the positions come from the flight queue the pilot starts from.
+        var formedBatches = recoverable.Where(manifest =>
+                store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
+            .DistinctBy(manifest => manifest.BatchId, StringComparer.Ordinal).ToArray();
+        var queuePositions = BatchGateFlightQueue.Positions(store, formedBatches,
             _ => leaseDeadlineDeferredBatchId);
-        var queuePositions = flightQueue.Select((manifest, index) => (manifest.BatchId, Position: index + 1))
-            .ToDictionary(item => item.BatchId, item => item.Position, StringComparer.Ordinal);
+        var flightQueue = formedBatches.OrderBy(manifest => queuePositions[manifest.BatchId]).ToArray();
         var fallbackCauses = store.ListFallbackCauses(project);
         var planDeadlinePassed = plan.CloseAtUtc is { } closeAt && closeAt <= at;
         var overduePending = pending.Where(item => (item.Subject.ReviewCompletedAtUtc
@@ -91,7 +93,7 @@ public static class BatchGateStateSnapshotReader
                 var reason = formed is not null
                     ? $"batch {formed.BatchId} is {store.LatestState(formed.BatchId).Phase.ToString().ToLowerInvariant()}"
                         + (queuePositions.TryGetValue(formed.BatchId, out var queued)
-                            ? $", flight queue position {queued} of {flightQueue.Count}" : "")
+                            ? $", flight queue position {queued} of {flightQueue.Length}" : "")
                     : item.Subject.ActivePerTaskGate ? "per-task gate is in progress"
                     : cause is not null ? $"per-task fallback: {cause.Rule}"
                     : "pending member awaits the next planner tick";
@@ -319,10 +321,10 @@ public static class BatchGateStateSnapshotReader
                 };
             }).ToArray(),
             batches,
-            flightQueue = flightQueue.Select((manifest, index) => new
+            flightQueue = flightQueue.Select(manifest => new
             {
                 manifest.BatchId,
-                position = index + 1,
+                position = queuePositions[manifest.BatchId],
                 queuedSinceUtc = BatchGateFlightQueue.QueuedSince(store, manifest),
                 size = manifest.Members.Count,
                 taskKeys = manifest.Members.Select(member => member.TaskKey).ToArray(),
