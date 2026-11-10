@@ -168,6 +168,7 @@ public sealed partial class BatchGatePilotService
     {
         var batchId = flight.Manifest.BatchId;
         var state = _store.LatestState(batchId);
+        if (state.Phase == BatchPhase.Unknown) return false;
         return MonolithTransitionAdapter.BatchFlightStartsNext(cancelledAtLeaseDeadline,
             state.Phase == BatchPhase.Formed, state.Phase == BatchPhase.Abandoned,
             _store.ListRuns(batchId).Count > 0, state.SuccessorBatchId is not null,
