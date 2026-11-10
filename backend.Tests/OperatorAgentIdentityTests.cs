@@ -180,6 +180,7 @@ public sealed class OperatorAgentIdentityTests : IDisposable
                 $"/api/auth/iam/operator-agents/{agent.Id}/sessions/x/renew", token),
             await Run("POST", "/api/auth/audit/verify", "/api/auth/audit/verify", token),
             await Run("GET", "/api/auth/audit/operator-activity", "/api/auth/audit/operator-activity", token),
+            await Run("GET", "/api/auth/audit/backups", "/api/auth/audit/backups", token),
             await Run("POST", "/api/auth/invitations", "/api/auth/invitations", token),
             await Run("POST", "/api/projects/path-import", "/api/projects/path-import", token),
             await Run("GET", "/api/v1/{**path}", "/api/v1/runners", token),
@@ -188,7 +189,7 @@ public sealed class OperatorAgentIdentityTests : IDisposable
         // SM-4: access changes are T2 and the path import is not catalogued, so the
         // policy step refuses both before the access floor; reads still meet the floor.
         Assert.Equal(OperatorPolicyReasons.ApprovalRequired, refused[1].Error);
-        Assert.Equal(OperatorPolicyReasons.NotCatalogued, refused[6].Error);
+        Assert.Equal(OperatorPolicyReasons.NotCatalogued, refused[7].Error);
         Assert.Equal("token-route-denied", refused[0].Error);
         Assert.True((await Run("GET", "/api/tags", "/api/tags", token)).Called);
     }

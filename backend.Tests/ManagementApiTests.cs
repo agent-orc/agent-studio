@@ -374,6 +374,50 @@ public sealed class ManagementApiTests : IClassFixture<ManagementApiTests.Host>
     }
 
     [Fact]
+    public async Task BackupRetention_BelowTheConfiguredCount_NeedsTheOwner_AndEveryRunIsAudited()
+    {
+        using var client = _host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var audit = _host.Services.GetRequiredService<AgentStudio.Security.ControlPlaneAuditLog>();
+        AgentStudio.Security.ControlPlaneAuditEntry Newest()
+            => audit.ReadNewest(entry => entry.Stream == AgentStudio.Security.ControlPlaneAuditStreams.Backup, 1).Single();
+
+        var refused = await client.PostAsJsonAsync("/api/v1/management/commands", new
+        {
+            kind = "backup-retention", dryRun = false, confirmation = "backup-retention",
+            idempotencyKey = "retention-below-configured", retentionCount = 1,
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        Assert.Equal("owner-required", (await refused.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+        var denied = Newest();
+        Assert.Equal((BackupAudit.Retention, BackupAudit.Denied, DefaultClientIdentity.Id),
+            (denied.Operation, denied.Outcome, denied.Actor));
+        Assert.Equal(1, denied.Details!.Value.GetProperty("facts").GetProperty("keep").GetInt32());
+
+        // A preview deletes nothing, and the configured count stays open to operators.
+        (await client.PostAsJsonAsync("/api/v1/management/commands", new
+        {
+            kind = "backup-retention", dryRun = true, idempotencyKey = "retention-preview-below", retentionCount = 1,
+        })).EnsureSuccessStatusCode();
+        var configured = _host.Services.GetRequiredService<StudioBackupService>().Options.RetentionCount;
+        (await client.PostAsJsonAsync("/api/v1/management/commands", new
+        {
+            kind = "backup-retention", dryRun = false, confirmation = "backup-retention",
+            idempotencyKey = "retention-at-configured", retentionCount = configured,
+        })).EnsureSuccessStatusCode();
+        Assert.Equal((BackupAudit.Retention, BackupAudit.Succeeded, DefaultClientIdentity.Id),
+            (Newest().Operation, Newest().Outcome, Newest().Actor));
+
+        var owner = _host.Services.GetRequiredService<ManagementService>().Execute(
+            new ManagementCommandRequest("backup-retention", DryRun: false, Confirmation: "backup-retention",
+                IdempotencyKey: "owner-retention-below", RetentionCount: 1),
+            "usr_owner", AgentStudio.Security.StudioRoles.Owner, "");
+        Assert.Equal("completed", owner.State);
+        Assert.Equal((BackupAudit.Retention, BackupAudit.Succeeded, "usr_owner"),
+            (Newest().Operation, Newest().Outcome, Newest().Actor));
+    }
+
+    [Fact]
     public async Task ReusedIdempotencyKey_WithDifferentPayload_IsRejected()
     {
         using var client = _host.CreateClient();
