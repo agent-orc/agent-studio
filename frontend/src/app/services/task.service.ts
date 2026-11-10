@@ -871,6 +871,17 @@ export class TaskService {
       : [response.body!]));
   }
 
+  /** Fresh task facts, including the integration verdict used by Human Review. */
+  getFreshDetail(jobId: string, project: string, attempt = 0): Observable<TaskDetail> {
+    const params = new HttpParams().set('project', project);
+    return this.http.get<TaskDetail>(`${this.baseUrl}/tasks/${encodeURIComponent(jobId)}`,
+      { params, observe: 'response' }).pipe(switchMap(response => response.status === 202
+        ? attempt < 20
+          ? timer(100 + 50 * attempt).pipe(switchMap(() => this.getFreshDetail(jobId, project, attempt + 1)))
+          : throwError(() => new Error('Task still warming'))
+        : [response.body!]));
+  }
+
   /**
    * Additive enrichment resource of one core generation (AGT-2955). A reply
    * for another generation answers 409; see `docs/system/domains/tasks.md`.

@@ -426,9 +426,10 @@ Task navigation reads the board it already holds. `TaskService` stays the
 single owner of the grouped board store; `TaskDetailPrefetchService` owns the
 bounded task core cache for `GET /api/tasks/{id}/core` (see
 [Bounded task core read](tasks.md#bounded-task-core-read-agt-2953)). The
-core-first selection of AGT-2955 reads every core through this cache; there
-is no full-detail lookahead any more, because a task switch no longer reads
-the legacy full detail.
+core-first selection of AGT-2955 reads every core through this cache. Human
+Review selection also reads `GET /api/tasks/{id}` for a fresh integration verdict;
+the board and Git resource carry cache-only integration projections and cannot
+decide whether Accept is available. There is no full-detail lookahead.
 
 - **Selection never reads the grouped board.** Board click, Explorer, pager,
   triage advance, deep link, Back/Forward and editor-tab switches do not call
@@ -494,10 +495,13 @@ Coverage: `task-core-cache.spec.ts` (cache invariants),
 `task-detail-prefetch.service.spec.ts` (superseded-read abort, conditional
 revalidation) and `task-selection-core.spec.ts` (board -> A -> B -> board,
 pager reuse, A -> D -> A abort, identical slugs, reconnect, push, delete,
-denial, registry removal) assert zero grouped and zero legacy full-detail
+denial, registry removal, fresh Human Review integration) assert zero grouped
 requests on selection and zero duplicate core requests;
-`task-detail-load-sections.component.spec.ts` covers the core rendering. The
-browser proof is `e2e/task-detail/task-core-board-reuse.spec.ts` (fully mocked
+`task-detail-load-sections.component.spec.ts` covers the core rendering.
+The Human Review queue regression is in `e2e/studio-shell/operator-attention-list.spec.ts`:
+three Accept actions through Needs you and auto-advance with a stale board
+integration projection. The core navigation browser proof is
+`e2e/task-detail/task-core-board-reuse.spec.ts` (fully mocked
 API; `PW_BASE_URL` may point at a served production bundle). It times each
 selection from the click event to the first animation frame after the
 selected task's core facts are in the DOM, and asserts resident p95 <= 50 ms

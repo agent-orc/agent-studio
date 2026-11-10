@@ -57,6 +57,9 @@ owns these controls (`ccc0039eb`, AGT-2819). The primary action can be Run now
 or the current lane's decision; its label comes from triage policy. The host
 chip is a factual badge, the pager is a compact action group, and the lane
 select is a navigation control. The menu owns secondary task actions.
+In Human Review, the primary action uses the fresh task-detail integration
+verdict. An integrated or not-applicable delivery offers Accept without waiting
+for optional Git provenance; a held action names its delivery reason on hover.
 
 The task lane itself has one canonical name and tone from
 `lane-presentation.ts`. The toolbar lane select names the **paging lane**;
