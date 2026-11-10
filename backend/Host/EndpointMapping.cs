@@ -157,6 +157,7 @@ public static class EndpointMapping
         AgentStudio.Readiness.ServerReadinessEndpoints.MapServerReadinessEndpoints(app);
         app.MapCliEndpoints();
         if (SecurityProfiles.IsLocal(app.Configuration)) app.MapDevToolsEndpoints();
+        if (SecurityProfiles.IsLocal(app.Configuration)) app.MapUpdateServiceTokenEndpoints();
         app.MapAdminConfigEndpoints();
         app.MapGitTelemetryAdminEndpoints();
         app.MapBoardSourceEndpoints();

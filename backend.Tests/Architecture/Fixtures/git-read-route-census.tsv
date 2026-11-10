@@ -417,6 +417,7 @@
 /api/tasks/{jobId}/timeline	free	-	-	-
 /api/tasks/{primaryId}/merge/candidates	free	-	-	-
 /api/token-pricing/unpriced-models	free	-	-	-
+/api/update-service/token	free	-	-	-
 /api/usage/cockpit	free	-	-	-
 /api/v1/gates/subjects/{subjectId}	free	-	-	-
 /api/v1/management/backups	free	-	-	-
