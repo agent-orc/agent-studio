@@ -23,8 +23,13 @@ public static class BatchGateStateSnapshotReader
         GateCapacity? gateCapacity = null,
         IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null,
         string? leaseDeadlineDeferredBatchId = null,
+        IReadOnlyList<BatchGateFallbackWait>? fallbackWaits = null,
         BatchGateInvariantReport? invariants = null)
     {
+        // AGT-3694: what each per-task fallback waits for, so an overdue member
+        // never shows only its rule.
+        var waits = (fallbackWaits ?? []).GroupBy(wait => wait.ReviewAttemptId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
         var at = now ?? DateTimeOffset.UtcNow;
         var dailySummary = ledger?.Summary(store, project, DateOnly.FromDateTime(at.UtcDateTime));
         var pending = store.ListPending().Where(item =>
@@ -72,6 +77,8 @@ public static class BatchGateStateSnapshotReader
                     : item.Subject.ActivePerTaskGate ? "per-task gate is in progress"
                     : cause is not null ? $"per-task fallback: {cause.Rule}"
                     : "pending member awaits the next planner tick";
+                if (formed is null && waits.TryGetValue(item.ReviewAttemptId, out var wait))
+                    reason += $", waits for {wait.Detail}";
                 return $"{item.Subject.TaskKey}: {reason}";
             }).ToArray();
         if (overdue.Length > 0)
@@ -187,11 +194,14 @@ public static class BatchGateStateSnapshotReader
         foreach (var item in pending)
         {
             var cause = causes.LastOrDefault(entry => entry.ReviewAttemptId == item.ReviewAttemptId);
-            members[item.Subject.TaskKey] = new { status = cause is null ? "pending" : "fallback",
+            var wait = waits.GetValueOrDefault(item.ReviewAttemptId);
+            members[item.Subject.TaskKey] = new { status = cause is null && wait is null ? "pending" : "fallback",
                 batchId = cause?.BatchId,
                 phase = (string?)null, position = (int?)null, size = (int?)null,
                 reason = cause?.Rule, reasonDetail = cause?.Event,
                 fallbackRule = cause?.Rule, fallbackEvent = cause?.Event,
+                waitKind = wait?.Kind, waitingFor = wait?.Detail, waitSinceUtc = wait?.SinceUtc,
+                engineRunId = wait?.EngineRunId, engineStatus = wait?.EngineStatus,
                 preCheck = preChecks.FirstOrDefault(check => check.ResultSha == item.Subject.ResultSha
                     && check.GateProfileDigest == item.Subject.GateProfileDigest) };
         }
@@ -224,6 +234,8 @@ public static class BatchGateStateSnapshotReader
                 // again waits for the next batch; it is no per-task fallback.
                 var requeued = left && cause is null && !ejected && pending.Any(item =>
                     item.Subject.TaskKey == member.TaskKey && item.Subject.RunAttempt == member.RunAttempt);
+                var wait = left ? (fallbackWaits ?? []).LastOrDefault(item =>
+                    item.TaskKey == member.TaskKey && cause?.ReviewAttemptId == item.ReviewAttemptId) : null;
                 members[member.TaskKey] = new
                 {
                     status = replay is { Outcome: "cascade-deferred" } || requeued ? "pending"
@@ -239,6 +251,8 @@ public static class BatchGateStateSnapshotReader
                         : requeued ? StateOf(store, manifest).Reason : cause?.Event,
                     fallbackRule = cause?.Rule,
                     fallbackEvent = cause?.Event,
+                    waitKind = wait?.Kind, waitingFor = wait?.Detail, waitSinceUtc = wait?.SinceUtc,
+                    engineRunId = wait?.EngineRunId, engineStatus = wait?.EngineStatus,
                     preCheck = preChecks.FirstOrDefault(check => check.ResultSha == member.ResultSha
                         && check.BaseSha == manifest.BaseSha
                         && check.GateProfileDigest == member.GateProfileDigest),
@@ -289,6 +303,8 @@ public static class BatchGateStateSnapshotReader
             members,
             reviewFixWaits = reviewFixWaits ?? [],
             detachedFlights = detachedFlights ?? [],
+            fallbackWaits = fallbackWaits ?? [],
+            fallbackStalls = store.ListFallbackStalls(project, 20),
             isolationFindings = store.ListIsolationFindings(project)
                 .Select(finding => IsolationFinding(store, projectManifests, finding)).ToArray(),
             // AGT-3563: the last invariant check of the pilot tick; null before the first tick.

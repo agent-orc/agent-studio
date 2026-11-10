@@ -300,7 +300,8 @@
       "review-build",
       "{host_id}",
       "{commit}",
-      "{agent_host_sha256}"
+      "{agent_host_sha256}",
+      "{built_at}"
     ],
     "review_idle": [
       "python3",
