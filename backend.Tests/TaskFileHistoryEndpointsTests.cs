@@ -1038,7 +1038,8 @@ public abstract class TaskFileHistoryTestBase
         File.WriteAllText(Path.Combine(job, "prompt.md"), "Do the thing.\n", Encoding.UTF8);
         var status = Path.Combine(job, "status.md");
         File.WriteAllText(status, "# Status\n\n- Result: Partial\n- Case: blocked\n", Encoding.UTF8);
-        RunGit(_workspaceRoot, "add", "-A");
+        var gitPath = Path.GetRelativePath(_workspaceRoot, job).Replace('\\', '/');
+        RunGit(_workspaceRoot, "add", "--", $"{gitPath}/task.json", $"{gitPath}/prompt.md", $"{gitPath}/status.md");
         RunGit(_workspaceRoot, "commit", "-q", "-m", "chore(workspace): record run result",
             "-m", "Run-Index: 1\nVerdict: accept\nSteps: review=pass");
         var previousSha = RunGitCapture(_workspaceRoot, "rev-parse", "HEAD").Trim();
@@ -1057,7 +1058,9 @@ public abstract class TaskFileHistoryTestBase
             createdAt = DateTime.UtcNow,
         }), Encoding.UTF8);
         File.WriteAllText(status, "# Status\n\n- Result: Success\n- Case: feature\n", Encoding.UTF8);
-        RunGit(_workspaceRoot, "add", "-A");
+        RunGit(_workspaceRoot, "add", "-u", "--", gitPath);
+        gitPath = Path.GetRelativePath(_workspaceRoot, job).Replace('\\', '/');
+        RunGit(_workspaceRoot, "add", "--", $"{gitPath}/task.json", $"{gitPath}/prompt.md", $"{gitPath}/status.md");
         RunGit(_workspaceRoot, "commit", "-q", "-m", "chore(workspace): record current result");
         return (id, job, previousSha);
     }
@@ -1183,7 +1186,7 @@ public abstract class TaskFileHistoryTestBase
 
     // Built once per test process; each test starts from a copy (AGT-3419).
     private static void InitRepo(string root)
-        => GitRepositoryTemplate.CopyTo("task-file-history:seed:v1", root, SeedRepo);
+        => GitRepositoryTemplate.CopyTo("task-file-history:seed:v2", root, SeedRepo);
 
     private static void SeedRepo(string root)
     {
@@ -1192,22 +1195,29 @@ public abstract class TaskFileHistoryTestBase
         RunGit(root, "config", "user.name", "test");
         RunGit(root, "config", "commit.gpgsign", "false");
         File.WriteAllText(Path.Combine(root, "README.md"), "seed\n", Encoding.UTF8);
-        RunGit(root, "add", "README.md");
+        // The host writes atomic task files and SQLite sidecars. Broad git add -A
+        // can stat one of those names just as its writer removes it.
+        File.WriteAllText(Path.Combine(root, ".gitignore"), "*.tmp\n/.metadata/\n", Encoding.UTF8);
+        RunGit(root, "add", "README.md", ".gitignore");
         RunGit(root, "commit", "-q", "-m", "seed");
     }
 
     protected static void RunGit(string cwd, params string[] args)
     {
         var result = RunGitResult(cwd, args);
-        Assert.Equal(0, result.Code);
+        AssertGitSucceeded(cwd, args, result);
     }
 
     protected static string RunGitCapture(string cwd, params string[] args)
     {
         var result = RunGitResult(cwd, args);
-        Assert.Equal(0, result.Code);
+        AssertGitSucceeded(cwd, args, result);
         return result.Out;
     }
+
+    private static void AssertGitSucceeded(string cwd, string[] args, (string Out, string Err, int Code) result)
+        => Assert.True(result.Code == 0,
+            $"git {string.Join(' ', args)} in {cwd} exited {result.Code}. stderr: {result.Err}");
 
     private static (string Out, string Err, int Code) RunGitResult(string cwd, params string[] args)
     {

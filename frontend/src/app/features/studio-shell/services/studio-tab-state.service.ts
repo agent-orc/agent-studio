@@ -463,6 +463,7 @@ export class StudioTabStateService {
             ? { wikiTarget: this.normalizeWikiTarget(tab.wikiTarget) }
             : {}),
           ...(tab.pipelineStepId ? { pipelineStepId: tab.pipelineStepId } : {}),
+          ...(tab.settingKey ? { settingKey: tab.settingKey } : {}),
           ...(tab.documentHistory ? { documentHistory: this.normalizeDocumentHistory(tab.documentHistory) } : {}),
           ...(tab.documentId ? { documentId: tab.documentId } : {}),
         };

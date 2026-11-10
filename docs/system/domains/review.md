@@ -7,11 +7,24 @@ by adding `key`. New managed commits carry an operation trailer; legacy
 commits require the Agent Studio author and committer identity. Acceptance
 records the inspected commit SHA in the card's
 completion evidence. Every other later commit still needs a passed gate.
+Batch candidates and direct integration merges assign keys to descriptors
+changed by the delivery before the gate tests the resulting tree. Catalogue
+discovery keeps its managed key mutation for descriptors outside a gated
+delivery.
 
-Version: 2026-11-05
+Version: 2026-11-09
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 ## Aspect prompt cache
+
+The review worker bounds every per-card and package agent aspect's final prompt to 800,000
+characters after it adds the authoritative delivery diff. It keeps changed
+template and style files first, limits each diff file to 40,000 characters,
+and limits the total diff to 580,000 characters. Visual review includes at
+most 12 screenshots of at most 2 MiB each. The prompt names omissions, and
+the command's review evidence carries a `review-input-budget-<step>.txt`
+artifact when material was omitted. A CLI refusal before a model verdict,
+including `input_too_large`, is `ReviewInfra` with a named cause.
 
 The four stock Claude aspects freeze a common review-context prefix containing
 the brief, delivery acceptance scope, project and card context, diff summary,
@@ -1170,9 +1183,11 @@ that verdict.
 completed test, even when it exits zero. The review host retries a baseline
 with no parseable result once, before saving the dependency cache, and records
 both attempts. If it still has no result, it settles as
-`ReviewInfra/BaselineUnavailable` and names the captured
-stdout artifact path. A delivery run that exits zero without a test result is
-also retried once. If its retry still has no result, it settles as
+`ReviewInfra/BaselineUnavailable` and names the expected report path (or the
+captured stdout artifact for console-only reporters). A delivery run that exits
+zero without a test result is also retried once. An explicit missing-file
+diagnostic from the frontend wrapper follows the same path even when the wrapper
+exits nonzero. If its retry still has no result, it settles as
 `ReviewInfra/TestReportUnavailable`, unless the delivery changed test
 configuration, the runner or reporter, or added, removed, or renamed a spec. In
 that case the missing report is a product finding that cites the changed setup
@@ -1182,7 +1197,14 @@ it does not charge the card. The result parser accepts Vitest's
 `Test Files N passed` summary as well
 as its `Tests N passed` summary. If Angular finished bundling but Vitest did not
 report a run, the infrastructure summary says so and points to the captured
-stdout artifact.
+stdout artifact. The frontend `test:ci` command writes a JSON report to a
+unique temporary file for each run. Its wrapper waits for Angular to exit,
+checks that the file contains completed tests, and prints a parseable summary.
+If Angular exits without the file, the wrapper names its path and exits nonzero;
+review still applies the missing-report retry and classification rule. The
+generated spec basename is below the filesystem filename limit; the former
+frontend command configured only a console reporter, so it had no independent
+report to inspect when that console summary was absent.
 
 **Red baseline on cached state (AGT-3430).** A baseline that ran on a
 dependency-cache hit, or a baseline result reused from the baseline result
@@ -1535,6 +1557,10 @@ usually exists only under `refs/remotes/origin` in the Studio checkout.
 - `runner/RemoteReviewWorkspace.cs`: exact checkout, integration-ref fetch,
   merge-base, bounded review material, aspect parsing, executor-side citation
   downgrade, and the per-attempt process environment.
+- `runner/ReviewAspectInputBudget.cs` and `runner/ReviewCliRefusalPolicy.cs`:
+  final aspect input limits and pre-model CLI refusal attribution, covered by
+  `runner.Tests/ReviewAspectInputBudgetTests.cs` and
+  `runner.Tests/RemoteReviewAspectParallelismTests.cs`.
 - `runner/RemoteReviewExecutor.cs` (`Write`, `ReapSlot`): the single durable
   slot write and the terminal reap that a late heartbeat renewal cannot undo,
   covered by

@@ -1,6 +1,7 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
+import { HttpClient } from '@angular/common/http';
 import { DialogComponent } from '../../../../components/dialog/dialog.component';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { ProjectBasicsFormComponent } from '../../../../components/project-basics-form';
@@ -15,7 +16,7 @@ import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
 import { CliCatalogStore } from '../../../cli';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
-import { RemoteHostsService } from '../../../remote-hosts';
+import { RemoteHostsService, hostExecutorRole, type RemoteHost } from '../../../remote-hosts';
 
 @Component({
   selector: 'app-onboard-project-dialog',
@@ -28,6 +29,7 @@ import { RemoteHostsService } from '../../../remote-hosts';
 export class OnboardProjectDialogComponent {
   readonly manager = inject(WorkspaceManagerService);
   private readonly tasks = inject(TaskService);
+  private readonly http = inject(HttpClient);
   private readonly notifications = inject(NotificationService);
   private readonly catalog = inject(CliCatalogStore);
   readonly hostRegistry = inject(RemoteHostsService);
@@ -41,7 +43,17 @@ export class OnboardProjectDialogComponent {
   readonly repositoryPath = signal('');
   readonly rootPath = signal('');
   readonly repositoryUrl = signal('');
-  readonly executionRunner = signal('local');
+  readonly executionRunner = signal('');
+  readonly localCodingAdmitted = signal(false);
+  readonly executionCapabilityLoaded = signal(false);
+  readonly availableRunners = computed(() => this.hostRegistry.hosts().filter(
+    host => this.codingRunner(host) && host.status !== 'retired' && !this.runnerUnavailable(host)));
+
+  codingRunner(host: RemoteHost): boolean {
+    return host.id !== 'local' && hostExecutorRole(host) === 'coding';
+  }
+  readonly codingNeedsRunner = computed(() => !this.localCodingAdmitted()
+    && (this.repositoryMode() === 'create' || !!this.repositoryPath().trim() || !!this.rootPath().trim()));
   readonly repositoryMode = signal<'existing' | 'create'>('existing');
   readonly repositoryOwner = signal('');
   readonly repositoryName = signal('');
@@ -74,6 +86,9 @@ export class OnboardProjectDialogComponent {
   }));
   readonly canSubmit = computed(() =>
     !this.submitting()
+    && this.executionCapabilityLoaded()
+    && !!this.executionRunner()
+    && !(this.codingNeedsRunner() && this.executionRunner() === 'local')
     && (this.repositoryMode() === 'existing'
       || (/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(this.repositoryOwner().trim())
         && /^[A-Za-z0-9_.-]{1,100}$/.test(this.repositoryName().trim())))
@@ -86,17 +101,15 @@ export class OnboardProjectDialogComponent {
   constructor() {
     effect(() => {
       if (!this.manager.onboardProjectOpen()) return;
-      this.reset(this.manager.onboardWorkspaceId() ?? '');
-      this.tasks.getRegistryWorkspaces({ includeArchived: true }).subscribe({
-        next: (list) => {
-          this.registryWorkspaces.set(list ?? []);
-          if (!this.workspaceId() && list?.length) this.workspaceId.set(list[0].id);
-        },
-        error: () => this.registryWorkspaces.set([]),
-      });
-      this.catalog.ensure('claude').subscribe({ error: () => void 0 });
-      this.hostRegistry.ensureLoaded();
-      queueMicrotask(() => this.form()?.focusDisplayName());
+      const workspaceId = this.manager.onboardWorkspaceId() ?? '';
+      untracked(() => this.initialize(workspaceId));
+    });
+    effect(() => {
+      if (this.manager.onboardProjectOpen() && this.executionCapabilityLoaded()
+          && !this.localCodingAdmitted() && !this.executionRunner()) {
+        const first = this.availableRunners()[0];
+        if (first) this.executionRunner.set(first.id);
+      }
     });
     effect(() => {
       const cli = this.cliDefault();
@@ -104,6 +117,31 @@ export class OnboardProjectDialogComponent {
       const first = this.catalog.modelsFor(cli)[0]?.id ?? '';
       if (!this.modelDefault()) this.modelDefault.set(first);
     });
+  }
+
+  private initialize(workspaceId: string): void {
+    this.reset(workspaceId);
+    this.tasks.getRegistryWorkspaces({ includeArchived: true }).subscribe({
+      next: (list) => {
+        this.registryWorkspaces.set(list ?? []);
+        if (!this.workspaceId() && list?.length) this.workspaceId.set(list[0].id);
+      },
+      error: () => this.registryWorkspaces.set([]),
+    });
+    this.catalog.ensure('claude').subscribe({ error: () => void 0 });
+    this.hostRegistry.ensureLoaded();
+    this.http.get<{ localCodingAdmitted: boolean }>('/api/projects/execution-capability').subscribe({
+      next: capability => {
+        this.localCodingAdmitted.set(capability.localCodingAdmitted);
+        this.executionCapabilityLoaded.set(true);
+        if (capability.localCodingAdmitted && !this.executionRunner()) this.executionRunner.set('local');
+      },
+      error: () => {
+        this.errorMsg.set('Execution capability could not be loaded. Try opening this dialog again.');
+        this.executionCapabilityLoaded.set(false);
+      },
+    });
+    queueMicrotask(() => this.form()?.focusDisplayName());
   }
 
   onCancel(): void {
@@ -174,7 +212,9 @@ export class OnboardProjectDialogComponent {
     this.repositoryPath.set('');
     this.rootPath.set('');
     this.repositoryUrl.set('');
-    this.executionRunner.set('local');
+    this.executionRunner.set('');
+    this.localCodingAdmitted.set(false);
+    this.executionCapabilityLoaded.set(false);
     this.repositoryMode.set('existing');
     this.repositoryOwner.set('');
     this.repositoryName.set('');

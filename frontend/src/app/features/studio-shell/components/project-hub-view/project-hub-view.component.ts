@@ -7,6 +7,7 @@ import {
   ProjectOverviewDashboardComponent,
   ProjectEnvironmentOverviewComponent,
   ProjectSettingsPanelComponent,
+  SettingFocusDirective,
   SecurityPanelComponent,
   UxuiPanelComponent,
   ProjectObservabilityPanelComponent,
@@ -98,6 +99,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
     ProjectOverviewDashboardComponent,
     ProjectDeployAreaComponent,
     ProjectSettingsPanelComponent,
+    SettingFocusDirective,
     SecurityPanelComponent,
     UxuiPanelComponent,
     ProjectTokenUsagePanelComponent,
@@ -140,6 +142,8 @@ export class ProjectHubViewComponent {
   readonly wikiTarget = input<WikiTabTarget | undefined>();
   /** Exact Project Pipeline row requested by a task-detail activation link. */
   readonly pipelineStepId = input<string | undefined>();
+  /** AGT-3580: setting field a remedy link focuses on the Settings rail. */
+  readonly settingKey = input<string | undefined>();
 
   /** Bubbles to the parent so it can navigate when a row link is clicked. */
   readonly openTask = output<{ jobId: string; watchPath: string }>();

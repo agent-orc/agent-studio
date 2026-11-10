@@ -1,0 +1,17 @@
+@if (group(); as group) {
+  <div class="lane-group-head" [class.lane-group-head--burst]="!!group.burst" data-testid="lane-group-head"
+       [attr.data-group-kind]="group.kind" [attr.data-cause]="group.burst?.cause ?? null">
+    <h3 class="lane-group-head__title">
+      @if (group.icon) { <span class="lane-group-head__icon" aria-hidden="true">{{ group.icon }}</span> }
+      <span class="lane-group-head__label" data-testid="lane-group-label">{{ group.label }}</span>
+      <span class="lane-group-head__count" data-testid="lane-group-count">{{ group.jobs.length }}</span>
+    </h3>
+    @if (group.burst; as burst) {
+      <p class="lane-group-head__since">
+        {{ group.jobs.length }} cards escalated for this cause since
+        <time [attr.datetime]="burst.since" data-testid="lane-group-since">{{ since(burst.since) }}</time>
+      </p>
+      <app-bulk-lane-actions [tasks]="group.jobs" [mutationsBlocked]="mutationsBlocked()" />
+    }
+  </div>
+}
