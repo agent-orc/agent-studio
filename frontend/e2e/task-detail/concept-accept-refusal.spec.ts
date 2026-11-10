@@ -178,6 +178,10 @@ async function mockApplication(page: Page, f: Fixture, move: (route: Route) => P
     ladder: null, commits: [],
   }));
   await page.route(new RegExp(`/api/tasks/(?:${f.ref}|${f.id})/core(\\?|$)`), route => json(route, core(f)));
+  // Human Review also reads full detail for the authoritative integration verdict.
+  await page.route(new RegExp(`/api/tasks/${f.id}(\\?|$)`), route => json(route, {
+    info: { ...task(f), integration: f.gitIntegration },
+  }));
   await page.route(`**/api/tasks/${f.id}/details/documents**`, route => {
     const name = new URL(route.request().url()).searchParams.get('name');
     return json(route, resource(f, 'documents', { name,

@@ -441,12 +441,15 @@ Before triggering, confirm all of the following:
   `degraded` after a verified backend and has to be finished by hand.
 
 Start or leave the Update Service running, inspect the non-mutating preflight,
-then trigger the update. Include `X-Update-Token` when the service is configured
-with `ATP_UPDATE_TOKEN`.
+then trigger the update. The trigger needs `X-Update-Token`; the token is in
+`update-service/.update-token` unless `ATP_UPDATE_TOKEN` is set (see
+[Update Service operations](./setup/update-service.md)).
 
 ```powershell
+$Token = (Get-Content .\update-service\.update-token -Raw).Trim()
 Invoke-RestMethod http://127.0.0.1:5039/update/preflight
 Invoke-RestMethod -Method Post -ContentType 'application/json' `
+  -Headers @{ 'X-Update-Token' = $Token } `
   -Body '{"reason":"manual","force":false}' `
   http://127.0.0.1:5039/update/trigger
 Invoke-RestMethod http://127.0.0.1:5039/update/status

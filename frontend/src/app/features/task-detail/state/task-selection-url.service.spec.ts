@@ -175,6 +175,13 @@ describe('TaskSelectionService · stable task URLs', () => {
       // "reads the Git verdict upfront only for a Human Review card" is.
       for (const request of http.match(req => req.url.endsWith('/details/git')))
         if (!request.cancelled) request.flush({}, { status: 503, statusText: 'Unavailable' });
+      // Human Review core opens read the full detail acceptance authority.
+      // Tests outside that contract may leave this independent read pending.
+      for (const request of http.match(req => req.url.startsWith('/api/v1/projects/')
+        && req.url.includes('/tasks/')))
+        if (!request.cancelled) request.flush(null, { status: 503, statusText: 'Unavailable' });
+      for (const request of http.match(req => /^\/api\/tasks\/[^/]+$/.test(req.url)))
+        if (!request.cancelled) request.flush(null, { status: 503, statusText: 'Unavailable' });
       http.verify();
     } finally {
       history.replaceState(null, '', '/');
@@ -559,6 +566,8 @@ describe('TaskSelectionService · stable task URLs', () => {
     selection.openDetail(info);
     http.expectOne(req => req.url.endsWith('/human-readable-slug/core')).flush(coreFor(info, 'Agent Studio'));
     await paintRich(info);
+    const authority = http.expectOne(req => req.url.endsWith(`/api/tasks/${info.id}`));
+    authority.flush(null, { status: 503, statusText: 'Unavailable' });
     http.verify();
   });
 
@@ -1166,7 +1175,11 @@ describe('TaskSelectionService · stable task URLs', () => {
 
     expect(selection.selectedCore()).toBeNull();
     expect(selection.detailPreview()).toBeNull();
-    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug')).flush(detail);
+    const detailReads = http.match(req => req.url.startsWith('/api/v1/projects/')
+      && req.url.endsWith('/tasks/human-readable-slug'));
+    const activeDetailReads = detailReads.filter(request => !request.cancelled);
+    expect(activeDetailReads).toHaveLength(1);
+    activeDetailReads[0].flush(detail);
     expect(selection.selected()?.info.id).toBe(info.id);
     expect(selection.detailLoadError()).toBeNull();
   });
