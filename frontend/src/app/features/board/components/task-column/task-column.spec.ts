@@ -780,6 +780,9 @@ describe('TaskColumnComponent acceptance readiness (AGT-3564)', () => {
     fixture.detectChanges();
     const host = fixture.nativeElement as HTMLElement;
     expect(host.querySelector('[data-testid="review-subsection-ready"]')).toBeNull();
+    // The readiness bar is a deferred chunk; it starts the check once it renders.
+    await fixture.whenStable();
+    fixture.detectChanges();
 
     TestBed.inject(HttpTestingController).expectOne('/api/tasks/acceptance-readiness').flush({
       checkedAtUtc: '2026-11-09T10:00:00Z', counts: {},

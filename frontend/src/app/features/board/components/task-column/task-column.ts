@@ -43,7 +43,8 @@ import { BatchLaneIndicatorComponent } from '../../../batch-gate/batch-lane-indi
 import { OrchestratorFeedStore } from '../../../orchestrator';
 import { LaneCardWindow } from './lane-card-window';
 import { LaneCardWindowComponent } from '../lane-card-window/lane-card-window.component';
-import { AcceptanceReadinessBarComponent, AcceptanceReadinessStore } from '../../../acceptance-readiness';
+import { AcceptanceReadinessStore } from '../../../acceptance-readiness';
+import { AcceptanceReadinessBarComponent } from '../../../acceptance-readiness/lazy';
 /** ASS-1727: Archive pagination and typed-filter debounce. */
 const ARCHIVE_PAGE_SIZE = 50;
 const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;

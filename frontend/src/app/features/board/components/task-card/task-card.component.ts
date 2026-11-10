@@ -88,7 +88,7 @@ import { ReviewQueuePillComponent } from '../review-queue-pill/review-queue-pill
 import { CardEnvironmentBadgesComponent } from '../../../deployments/components/card-environment-badges/card-environment-badges';
 import { handleReviewPriorityAction } from './review-priority-action';
 import { TaskCardQuotaNoticeComponent } from '../../../quota';
-import { AcceptanceReadinessNoteComponent } from '../../../acceptance-readiness';
+import { AcceptanceReadinessNoteComponent } from '../../../acceptance-readiness/lazy';
 // Shared clock keeps relative timestamps in lockstep without NG0100 changes.
 const nowTick = signal(Date.now());
 if (typeof window !== 'undefined') {
