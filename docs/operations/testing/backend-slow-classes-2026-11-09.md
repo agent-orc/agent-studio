@@ -150,7 +150,16 @@ tests:
 | Fixture: `AcceptanceIntegrationRoundTripTests.PublishDelivery` | The delivery commit is written with the same `git fast-import` stream into the local repository and into origin, which yields the same commit in both: three processes (parent lookup and two imports) instead of nine, no push. The end state is the same: origin's delivery ref holds one commit on `origin/develop` that adds the file, the local repository holds the commit without a ref and stays on its clean `main`. The commit carries its parent's commit time, so the fixture reads no wall clock. |
 | Fixture: merge and acceptance templates | Their repositories set `maintenance.auto=false`, and their bare origins `receive.autoGc=false`, so `commit`, `merge`, `fetch` and push start no automatic maintenance child. The product's commands in these repositories read the same configuration. Template keys moved to `v2`. |
 
-No assertion changed. New tests: `GitRefFilesTests` (36 cases; every answer
+One assertion changed, and it got stricter. Its expected value now follows
+from these product changes. `WikiFolderViewTests.GetWikiFolder_FreshCheckoutUsesCachedGitAuthorDates_AndMarksUntrackedMtime`
+counted three Git processes for a cold wiki folder read: the repo-root lookup
+(`--show-toplevel`), the HEAD probe (`rev-parse HEAD`) and one batched log.
+`GitRefFiles` now answers the first two from the repository's files, so a
+plain test repository on Linux spawns only the log (the batch gate saw `Expected:
+3 Actual: 1` on 10 November 2026). The test now expects one process, plus one
+for each of the two reads that `GitRefFiles` leaves to Git on that platform
+(Windows, a symlinked temporary path). The dates, sources and the zero-spawn
+warm read are unchanged. New tests: `GitRefFilesTests` (36 cases; every answer
 is compared with `git rev-parse`, `git remote` or `git worktree` output, and
 every case the files cannot settle must be left to Git) and
 `GitPipeDrainThreadsTests` (results, failures, reuse, 24 drains blocked at
