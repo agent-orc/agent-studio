@@ -83,6 +83,20 @@ public static class CredentialRedactor
         }
     }
 
+    /// <summary>
+    /// True when the text holds a credential value itself: a registered
+    /// literal, a private key block, a Studio-issued token, or a provider
+    /// token. Unlike <see cref="Redact"/> it ignores <c>password: ...</c>
+    /// style prose, so a store can refuse a value instead of masking text.
+    /// </summary>
+    public static bool ContainsToken(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return false;
+        foreach (var literal in Volatile.Read(ref _literals))
+            if (value.Contains(literal, StringComparison.Ordinal)) return true;
+        return PrivateKeyBlock.IsMatch(value) || ProductSecret.IsMatch(value) || ProviderToken.IsMatch(value);
+    }
+
     public static string Redact(string? value)
     {
         if (string.IsNullOrEmpty(value)) return value ?? string.Empty;

@@ -15,8 +15,8 @@
     <div class="dead-end__actions">
       @if (deadEnd.recheck) {
         <button type="button" class="dead-end__primary" (click)="recheck()">Re-check integration</button>
-      } @else if (continueAvailable()) {
-        <button type="button" data-testid="dead-end-continue" [class.dead-end__primary]="!escalated()" [disabled]="busy()" (click)="continueTask()">Continue with delivery context</button>
+      } @else if (continueAvailable() || isolationActive()) {
+        <button type="button" data-testid="dead-end-continue" [class.dead-end__primary]="!escalated()" [disabled]="busy() || isolationActive()" [attr.title]="isolationActive() ? continueCheck()?.reason : null" (click)="continueTask()">Continue with delivery context</button>
       }
       @if (deadEnd.retry) {
         <button type="button" (click)="retry()">Retry integration</button>

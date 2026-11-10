@@ -58,6 +58,20 @@ compares ledger durations with existing execution facts for the same day; a
 missing host total is Unknown. Historical days before the ledger was enabled
 cannot be reconstructed from card receipts.
 
+The state route reconstructs each member's UTC timeline from the saved review
+subject, pre-check ledger and verdict, closed manifest, batch run and verdict,
+publication, replay, and fallback cause. Released member receipts retain that
+timeline; older receipts are projected from the same facts after a restart.
+The daily summary reports p50 and nearest-rank p90 minutes for review pass to
+pre-check finish, pre-check finish to batch start, batch run, and verdict to
+publication. Each phase has its own sample count; cards without both boundaries
+are omitted from that phase. Only published batch members enter these
+percentiles. Diagnostic rerun share uses the same member set, while per-task
+fallback stays separately labelled. Pre-check yield counts red checks that
+actually resolved a pending member as `pre-check-red`, plus that day's pre-check
+host minutes. It is evidence of avoided admission, not a counterfactual proof
+that the combined batch would certainly have failed.
+
 Each gate-economics row also carries the grouping figures of its window
 (AGT-3399): `batchesClosed` (distinct batches whose gate ran), `meanBatchSize`
 (largest membership per batch, averaged), and `soloGatedMerges` (merges
@@ -644,7 +658,7 @@ The routes use the project's configured name in place of `{projectName}`.
 
 | Route | Result | Errors |
 |---|---|---|
-| `GET /api/projects/{projectName}/batch-gate/queue-stalls` | HTTP 200 with `project`, `releasable`, `openEpisode`, and `recentEvents`. `releasable` is an array of task keys eligible for release. `openEpisode` is the current stall event or `null`; `recentEvents` is the latest ten events, oldest first. | HTTP 404 for an unknown project. |
+| `GET /api/projects/{projectName}/batch-gate/queue-stalls` | HTTP 200 with `project`, `releasable`, `openEpisode`, and `recentEvents`. `releasable` is an array of task keys eligible for release. `openEpisode` is the current stall event or `null`; `recentEvents` is the latest ten events, oldest first. `fallbackStalls` lists the latest ten per-task fallback waits that passed their bound (AGT-3694): `kind`, `sinceUtc`, `raisedAtUtc`, `reason`, `outcome` (`escalated`, `cancelled`, `detached` or `reported`), and for an engine decision `engineRunId`, `engineStatus` and `occurrenceKey`. | HTTP 404 for an unknown project. |
 | `POST /api/projects/{projectName}/batch-gate/queue-stalls/release` | HTTP 200 with `released` (task keys) and `refused` (objects with `taskKey` and `reason`). The request has no body. A partial release is still HTTP 200; inspect both arrays. | HTTP 400 when `X-Client-Id` is missing or blank; HTTP 404 for an unknown project. |
 
 The POST requires `X-Client-Id`, as do the other batch gate mutations. Each
@@ -762,7 +776,26 @@ review report or a tick that meets a running fallback waits for it instead of
 starting a second gate. The card marker records that per-card gate as active
 with a start count; a marker still active with no gate running in the process
 (restart, or a gate that threw) is resumed on the next tick, and after two
-interrupted starts the card escalates as `GateInfra`. Across all review
+interrupted starts the card escalates as `GateInfra`; the reason names the
+starts, the base and the merged candidate they ran on. Every wait of a
+per-task fallback is bounded by `PerTaskFallbackWaitPolicy` (AGT-3694). An
+engine-owned GateResult decision on the gate outcome (release or red) that
+stays `pending`, `leased` or `applying` for 30 minutes, or whose lease expired
+two minutes ago, is superseded under the card gate (`batch-fallback-engine-stall`)
+and the card escalates as `GateInfra` with the run id; the monolith never
+takes the engine's release. A flight stage the fallback owns (preparing the
+subject, the running gate) that outlives the gate timeout by 15 minutes is
+cancelled with its start charged, and a flight that has not stopped two
+minutes later is detached, so its resume escalates instead of starting a
+second gate. Queue stages (per-task slot, batch slot, machine gate slot) wait
+for work with its own bound; past four gate timeouts they are reported only.
+Each bound raises one `batch-fallback-stalled` event into the batch store,
+the card timeline and the operator feed; `GET .../batch-gate/queue-stalls`
+lists them as `fallbackStalls`. The batch state names what each fallback
+waits for (`fallbackWaits`, and `waitKind`, `waitingFor`, `engineRunId` and
+`engineStatus` on the member), the overdue plan reason appends it, and the
+card badge reads, for example, "Per-task fallback · batch-ejected · waits
+for engine decision". Across all review
 generations of the process, at most one gate slot fewer than the gate host has
 runs a per-task fallback gate at once (AGT-3466). The other fallbacks wait for a
 slot before they choose their merged candidate, so the batch slot stays free. A
@@ -1682,6 +1715,16 @@ comparison before Quality Studio's verdict contract can decide a review.
   pipeline history. `operatorOverride: true` is the explicit,
   target-Completed-only exception; no-branch task metadata is exempt without an
   override.
+
+  A current delivery can inherit its card's verified merge record when the
+  commit memberships used for the integration detail place its effective
+  commits in that verified tree, even if an earlier delivery SHA list omitted
+  the current review result. For a contained delivery without a card-local
+  verification record, acceptance can use the newest passing, final
+  `published-batch` base verdict whose tree contains the delivery and remains
+  on the branch. Red or provisional verdicts, rewritten branches, and newer
+  deliveries outside the verified tree never qualify. The completion claim
+  names the batch and verified tree.
 
   `DeliveryRefResolver` chooses the immutable result ref first, then an
   attributed commit branch, then `runner/<runner>/<task-key>`, with

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  acceptanceHoldReason,
   archiveIntegrationVerdict,
   deliveryClaimVerdict,
   isDeliveredArchiveMove,
@@ -269,6 +270,12 @@ describe('overflowActionsFor — Move to Completed / Move to Archive', () => {
 });
 
 describe('mergeAcceptViewFor — state-dependent Human Review acceptance primary', () => {
+  it('explains a held action in owner words', () => {
+    expect(acceptanceHoldReason(reviewJob())).toBe('Checking whether this delivery needs integration.');
+    expect(acceptanceHoldReason(reviewJob(null, { integration: integrated({ status: 'pending' }) })))
+      .toBe('Waiting for the delivery to reach develop.');
+  });
+
   it('waits for integration when nothing has landed yet', () => {
     const view = mergeAcceptViewFor(reviewJob(mergedProvenance(null)));
     expect(view.landed).toBe(false);
@@ -286,6 +293,13 @@ describe('mergeAcceptViewFor — state-dependent Human Review acceptance primary
   it('allows a code-free delivery with a not-applicable verdict', () => {
     const view = mergeAcceptViewFor(reviewJob(mergedProvenance(null), {
       commit: null, commits: [], integration: integrated({ status: 'not-applicable' }),
+    }));
+    expect(view.acceptLabel).toBe('Accept');
+  });
+
+  it('trusts a not-applicable verdict even when the detail lists a task commit', () => {
+    const view = mergeAcceptViewFor(reviewJob(mergedProvenance(null), {
+      integration: integrated({ status: 'not-applicable' }),
     }));
     expect(view.acceptLabel).toBe('Accept');
   });
