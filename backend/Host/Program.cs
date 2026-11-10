@@ -1407,6 +1407,8 @@ if (!publicDemoExecutionProfile)
 // orchestration-decisions.
 builder.Services.AddSingleton(sp => OperatorDecisionOptions.FromConfiguration(sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddSingleton<OperatorCoordinationStore>();
+// MAG-1: magazine articles and their revisions under <TaskRepository>/.magazine.
+builder.Services.AddSingleton<AgentStudio.Magazine.MagazineStore>();
 builder.Services.AddSingleton(sp => new OperatorDecisionLog(
     OperatorDecisionOptions.Folder(sp.GetRequiredService<IConfiguration>()),
     sp.GetRequiredService<OperatorDecisionOptions>().Retention, sp.GetRequiredService<TimeProvider>(),

@@ -296,11 +296,16 @@ through its groups. Code: `backend/Features/Security/Iam/`.
 |---|---|---|
 | Owner | workspace | every permission; break-glass role, the only one with `access.read`, `access.manage`, and `workspace.administer` |
 | Admin | workspace, project | settings, operation, production deploy and approval, `secrets.write` |
-| Developer | workspace, project, environment | cards, runs, chats, documents, non-production deploys |
-| Operator agent (`operator-agent`) | workspace, project; service accounts only | the operator surface: reads, cards, runs, batch gate, review step models (`project.pipeline.write`), installation operation reads, stage deploys, the security view (`security.posture.read`) |
+| Developer | workspace, project, environment | cards, runs, chats, documents, magazine articles, non-production deploys |
+| Operator agent (`operator-agent`) | workspace, project; service accounts only | the operator surface: reads, cards, runs, batch gate, review step models (`project.pipeline.write`), installation operation reads, stage deploys, the security view (`security.posture.read`), magazine publishing (`magazine.write`) |
 | Product (`contributor`) | project | cards and chat, narrowed further by the Product allowlist |
 | Viewer | workspace, project, environment | reads, secret metadata included |
 | Approver | workspace, project, environment | `environment.production.deploy.approve` and reads |
+
+Every role reads the magazines it can see (`magazine.read`); Owner, Admin,
+Developer and Operator agent also publish (`magazine.write`). The
+installation and workspace magazines take writes only through a workspace
+binding ([magazine domain](../../system/domains/magazine.md#access)).
 
 - Every route declares one named permission, such as `project.cards.write`,
   `environment.production.deploy.approve`, `secrets.write`, or
