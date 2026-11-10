@@ -6,9 +6,10 @@ import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 
 /**
  * AGT-3669: a Product session opens cards on the networked profile behind
- * the HTTPS-forwarding frontend hop (`networked-https`). The card shows its
- * title, prompt, delivery and review summary; no detail request is answered
- * 403, and the refusal message, when one shows, names access.
+ * the HTTPS-forwarding frontend hop, seeded with the demo workspace
+ * (`networked-https-demo`). The card shows its title, prompt, delivery and
+ * review summary; no detail request is answered 403, and the refusal
+ * message, when one shows, names access.
  */
 const resultDir = join(process.env.JOB_RESULTS_DIR ?? 'test-results', 'product-card-detail');
 

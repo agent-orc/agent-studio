@@ -57,15 +57,28 @@ The spec covers the desktop project picker and the narrow-screen **More →
 Switch project** path at 1280 and 390 px in both themes. With
 `JOB_RESULTS_DIR` set, it writes four screenshots there for review.
 
+### Networked owner setup over HTTPS
+
+Run `npm --prefix frontend run e2e -- e2e/security/owner-second-factor-human-pace.spec.ts`
+from the task worktree. The spec selects the `networked-https` profile: a fresh
+networked monolith with an installer owner code, behind the same temporary
+localhost HTTPS proxy as the public demo, so the browser itself holds the
+Secure session cookie. The spec creates the owner in the sign-in gate, waits
+30 seconds on the second-factor screen (past the four-second offline grace of
+the disconnected live-update hub), then enrolls an authenticator with a code it
+computes from the shown secret (AGT-3614). With `JOB_RESULTS_DIR` set, it
+writes light, dark and 390 px screenshots to `owner-second-factor/`.
+
 ### Product card detail check
 
 Run `npm --prefix frontend run e2e -- e2e/security/product-card-detail.spec.ts`.
-The spec selects the `networked-https` profile: the networked security profile
-behind the frontend hop that forwards the HTTPS scheme, seeded with the demo
-workspace. It bootstraps an Owner with a second factor, invites a Product user
-into Demo App, opens a Ready and a Human Review card as that user, and fails on
-any API read answered 403. With `JOB_RESULTS_DIR` set, it writes light, dark
-and 390 px screenshots to `product-card-detail/`.
+The spec selects the `networked-https-demo` profile: the `networked-https`
+stack above, seeded with the demo workspace. It bootstraps an Owner with a
+second factor, invites a Product user into Demo App, opens a Ready and a Human
+Review card as that user, and fails on any task read answered 403. With
+`JOB_RESULTS_DIR` set, it writes light, dark and 390 px screenshots to
+`product-card-detail/`. Both specs bootstrap the first Owner, so each profile
+runs on its own fresh stack.
 
 ## Suite layout
 

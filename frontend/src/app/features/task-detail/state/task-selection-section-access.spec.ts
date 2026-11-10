@@ -47,6 +47,8 @@ describe('TaskSelectionService · section access', () => {
   const forbidden = { status: 403, statusText: 'Forbidden' };
   const coreRead = (req: HttpRequest<unknown>) => req.url.endsWith(`/${info.id}/core`);
   const section = (name: string) => (req: HttpRequest<unknown>) => req.url.endsWith(`/${info.id}/details/${name}`);
+  // A Human Review core also reads fresh detail for the acceptance action.
+  const freshDetail = (req: HttpRequest<unknown>) => req.url === `/api/tasks/${info.id}`;
   const loading = (name: ResourceName) => vi.waitFor(
     () => expect(selection.resourceStates()[name].phase).toBe('loading'), { timeout: 5000 });
 
@@ -79,6 +81,9 @@ describe('TaskSelectionService · section access', () => {
 
   afterEach(() => {
     try {
+      // The acceptance read is covered by task-selection-core.spec.ts.
+      http.match(freshDetail).filter(request => !request.cancelled)
+        .forEach(request => request.flush(null, { status: 503, statusText: 'Unavailable' }));
       http.verify();
     } finally {
       history.replaceState(null, '', '/');

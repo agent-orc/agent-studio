@@ -38,6 +38,7 @@
   @for (column of group().columns; track column.id) {
     @let isCollapsed = collapsed(column);
     <section class="delivery-column" [class.delivery-column--collapsed]="isCollapsed"
+             [class.delivery-column--mobile-hidden]="mobileColumnId() !== null && mobileColumnId() !== 'delivery:' + column.id"
              [attr.data-testid]="'delivery-column-' + column.id"
              [attr.data-delivery-tone]="column.approvalPending ? 'attention' : null"
              [attr.aria-label]="column.title">

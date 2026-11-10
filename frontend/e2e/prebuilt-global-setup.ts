@@ -19,11 +19,12 @@ export default async function globalSetup(): Promise<void> {
   }
   const response = await fetch(`${process.env.PW_BACKEND_URL}/healthz`);
   if (!response.ok) throw new Error(`Prebuilt backend health returned ${response.status}`);
-  if (['networked-monolith', 'networked-https', 'operator-cli'].includes(process.env.PW_E2E_PROFILE ?? '')) {
-    const client = await request.newContext({ ignoreHTTPSErrors: process.env.PW_E2E_PROFILE === 'networked-https' });
-    const auth = await client.get(`${process.env.PW_BASE_URL}/api/auth/status`);
+  if (['networked-monolith', 'operator-cli', 'networked-https', 'networked-https-demo'].includes(process.env.PW_E2E_PROFILE ?? '')) {
+    // networked-https and networked-https-demo sit behind the self-signed HTTPS test proxy.
+    const authRequest = await request.newContext({ ignoreHTTPSErrors: true });
+    const auth = await authRequest.get(`${process.env.PW_BASE_URL}/api/auth/status`);
     const status = await auth.json() as { profile?: string; bootstrapRequired?: boolean };
-    await client.dispose();
+    await authRequest.dispose();
     if (!auth.ok() || status.profile !== 'networked' || status.bootstrapRequired !== true)
       throw new Error('Prebuilt backend is not a fresh networked monolith.');
   } else {
