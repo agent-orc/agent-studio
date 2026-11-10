@@ -18,6 +18,8 @@ public sealed class ReviewTestReportPolicyTests
         Assert.Equal("Angular bundle completed but Vitest did not report a run",
             ReviewTestReportPolicy.MissingPhase(new ProcessResult(
                 0, "Application bundle generation complete.", string.Empty)));
+        Assert.False(ReviewTestReportPolicy.Missing(command,
+            new ProcessResult(0, "custom check passed", string.Empty)));
     }
 
     [Fact]

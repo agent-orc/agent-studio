@@ -21,7 +21,8 @@ public static class BatchGateStateSnapshotReader
         GateRunLedger? ledger = null,
         IReadOnlyList<BatchGateReviewFixWait>? reviewFixWaits = null,
         GateCapacity? gateCapacity = null,
-        IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null)
+        IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null,
+        string? leaseDeadlineDeferredBatchId = null)
     {
         var at = now ?? DateTimeOffset.UtcNow;
         var dailySummary = ledger?.Summary(store, project, DateOnly.FromDateTime(at.UtcDateTime));
@@ -46,6 +47,12 @@ public static class BatchGateStateSnapshotReader
         var recoverable = store.ListRecoverableManifests()
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
             .ToArray();
+        // AGT-3710: formed batches wait for the project's one flight first in, first out.
+        var flightQueue = BatchGateFlightQueue.Order(store, recoverable.Where(manifest =>
+                store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed),
+            _ => leaseDeadlineDeferredBatchId);
+        var queuePositions = flightQueue.Select((manifest, index) => (manifest.BatchId, Position: index + 1))
+            .ToDictionary(item => item.BatchId, item => item.Position, StringComparer.Ordinal);
         var fallbackCauses = store.ListFallbackCauses(project);
         var planDeadlinePassed = plan.CloseAtUtc is { } closeAt && closeAt <= at;
         var overduePending = pending.Where(item => (item.Subject.ReviewCompletedAtUtc
@@ -62,6 +69,8 @@ public static class BatchGateStateSnapshotReader
                     entry.ReviewAttemptId == item.ReviewAttemptId);
                 var reason = formed is not null
                     ? $"batch {formed.BatchId} is {store.LatestState(formed.BatchId).Phase.ToString().ToLowerInvariant()}"
+                        + (queuePositions.TryGetValue(formed.BatchId, out var queued)
+                            ? $", flight queue position {queued} of {flightQueue.Count}" : "")
                     : item.Subject.ActivePerTaskGate ? "per-task gate is in progress"
                     : cause is not null ? $"per-task fallback: {cause.Rule}"
                     : "pending member awaits the next planner tick";
@@ -125,6 +134,8 @@ public static class BatchGateStateSnapshotReader
                 manifest.StackedOnBatchId,
                 phase = phase.Phase.ToString().ToLowerInvariant(),
                 phaseReason = phase.Reason,
+                queuePosition = queuePositions.TryGetValue(manifest.BatchId, out var position)
+                    ? position : (int?)null,
                 causedByTaskKey = phase.CausedByTaskKey,
                 baseMoveToSha = phase.BaseMoveToSha,
                 baseMoveOutcome = phase.BaseMoveOutcome,
@@ -259,6 +270,14 @@ public static class BatchGateStateSnapshotReader
                 };
             }).ToArray(),
             batches,
+            flightQueue = flightQueue.Select((manifest, index) => new
+            {
+                manifest.BatchId,
+                position = index + 1,
+                queuedSinceUtc = BatchGateFlightQueue.QueuedSince(store, manifest),
+                size = manifest.Members.Count,
+                taskKeys = manifest.Members.Select(member => member.TaskKey).ToArray(),
+            }).ToArray(),
             stacking = new
             {
                 started = stacked.Count(item => store.ListRuns(item.BatchId).Count > 0),

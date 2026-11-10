@@ -203,7 +203,12 @@ public sealed partial class BatchGatePilotService
                     : exclusion with { Reason = BatchExclusionReason.OverlapSeparate,
                         Detail = "overlap separate: " + string.Join(", ", conflicts) };
             }).ToArray();
-            var replacement = close.Manifest with { Exclusions = exclusions };
+            // AGT-3710: the replacement keeps the queue place of the oldest batch it replaces.
+            var replacement = close.Manifest with
+            {
+                Exclusions = exclusions,
+                QueuedSinceUtc = moving.Min(manifest => BatchGateFlightQueue.QueuedSince(_store, manifest)),
+            };
             lock (_runningBatches)
             {
                 if (moving.Any(old => _assemblingBatchIds.Contains(old.BatchId)

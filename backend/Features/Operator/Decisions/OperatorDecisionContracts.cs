@@ -91,7 +91,8 @@ public sealed record OperatorDecisionFact(
     string Reason,
     DateTime ObservedAtUtc,
     IReadOnlyList<OperatorEvidenceLink> Evidence,
-    IReadOnlyList<string>? Cards = null);
+    IReadOnlyList<string>? Cards = null,
+    string? Title = null);
 
 /// <summary>
 /// One published event. <see cref="Cursor"/> is the decimal sequence of the
