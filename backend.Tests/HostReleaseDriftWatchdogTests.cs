@@ -102,6 +102,64 @@ public sealed class HostReleaseDriftWatchdogTests : IDisposable
     }
 
     /// <summary>
+    /// AGT-3689: a review host on the Stable version but an older develop
+    /// commit, against a Stable without a build instant. It is counted as
+    /// differing, never as current, and alarms once it outlives the grace window.
+    /// </summary>
+    [Fact]
+    public async Task A_host_on_the_stable_version_but_another_commit_differs_and_alarms_after_grace()
+    {
+        var differing = new Contract.RunnerReleaseIdentityDto("0.9.5+sha.f947f2b", "0.9.5", "f947f2b");
+        Advertise("runner-review", release: differing);
+        var watchdog = NewWatchdog(LegacyStable("0.9.5", "3d61e8b0c4"));
+
+        var first = await watchdog.RefreshAsync();
+        var entry = Assert.Single(first.Hosts);
+        Assert.Equal(HostReleaseDriftStates.Differs, entry.State);
+        Assert.False(entry.AlarmDue);
+        Assert.Equal(1, first.DiffersCount);
+        Assert.Equal(0, first.BehindCount);
+        Assert.Equal("3d61e8b0c4", first.Stable.Commit);
+
+        _time.Advance(TimeSpan.FromHours(25));
+        Advertise("runner-review", release: differing);
+        var later = await watchdog.RefreshAsync();
+
+        Assert.True(Assert.Single(later.Hosts).AlarmDue);
+        var alarm = Assert.Single(_store.Recent(_workspace, null, 20), m => m.Topic == "host_release_drift");
+        Assert.Contains("different build than Stable 0.9.5", alarm.Summary);
+    }
+
+    /// <summary>
+    /// AGT-3689: a review row carries the image the deploy plan pinned for its
+    /// host, so Execution Hosts can put it next to the image the role runs.
+    /// </summary>
+    [Fact]
+    public async Task A_review_role_carries_the_expected_image_of_its_host()
+    {
+        var running = "registry.example/review@sha256:" + new string('a', 64);
+        var expected = "registry.example/review@sha256:" + new string('b', 64);
+        Advertise("runner-review", release: CurrentRelease with { ImageRef = running }, review: true);
+        Advertise("runner-coding", release: CurrentRelease);
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Release:ReviewImages:host-runner-review"] = expected,
+                ["Release:ReviewImages:host-runner-coding"] = expected,
+            })
+            .Build();
+        var watchdog = NewWatchdog(StableBuild, configuration: configuration);
+
+        var snapshot = await watchdog.RefreshAsync();
+
+        var review = Assert.Single(snapshot.Hosts, entry => entry.RunnerId == "runner-review");
+        Assert.Equal("review", review.Role);
+        Assert.Equal(expected, review.ExpectedImageRef);
+        Assert.Equal(running, review.Release!.ImageRef);
+        Assert.Null(Assert.Single(snapshot.Hosts, entry => entry.RunnerId == "runner-coding").ExpectedImageRef);
+    }
+
+    /// <summary>
     /// An upgraded host is a different release, so a later regression must be
     /// able to alarm again rather than being suppressed by the earlier alarm.
     /// </summary>
@@ -240,18 +298,28 @@ public sealed class HostReleaseDriftWatchdogTests : IDisposable
         new ReleaseArtifactIdentity("CodingAgentRunner", "0.3.0", "v0.3.0", "aaaaaaa1111", "sha256-a"),
         new ReleaseArtifactIdentity("coding-agent-chat", "0.3.0", "v0.3.0", "aaaaaaa1111", "sha256-b"));
 
-    private HostReleaseDriftWatchdog NewWatchdog(BuildIdentity build, ILogger<HostReleaseDriftWatchdog>? logger = null) => new(
+    private static BuildIdentity LegacyStable(string version, string commit) => new(
+        1, "Agent Studio", "untagged", version, commit, true, null, "unverified",
+        new ReleaseArtifactIdentity("CodingAgentRunner", "unknown", "untagged", "unknown", "unverified"),
+        new ReleaseArtifactIdentity("coding-agent-chat", "unknown", "untagged", "unknown", "unverified"),
+        Legacy: true);
+
+    private HostReleaseDriftWatchdog NewWatchdog(
+        BuildIdentity build,
+        ILogger<HostReleaseDriftWatchdog>? logger = null,
+        IConfiguration? configuration = null) => new(
         _registry,
         StableReleaseIdentity.FromBuildIdentity(build),
         _bridge,
-        new ConfigurationBuilder().Build(),
+        configuration ?? new ConfigurationBuilder().Build(),
         logger ?? NullLogger<HostReleaseDriftWatchdog>.Instance,
         _time);
 
     private void Advertise(
         string runnerId,
         Contract.RunnerReleaseIdentityDto release,
-        long generation = 1)
+        long generation = 1,
+        bool review = false)
     {
         _registry.Register(runnerId, new Contract.RegisterRunnerRequest(
             runnerId,
@@ -259,7 +327,7 @@ public sealed class HostReleaseDriftWatchdogTests : IDisposable
             $"instance-{generation}",
             release.ReleaseId,
             Contract.TaskServerProtocol.Current,
-            [Contract.ReviewCapabilities.CodingExecutor],
+            [review ? Contract.ReviewCapabilities.ReviewExecutor : Contract.ReviewCapabilities.CodingExecutor],
             Release: release));
         _registry.AdvertiseCapabilities(runnerId, new Contract.CapabilityAdvertisementRequest(
             runnerId,
@@ -268,7 +336,9 @@ public sealed class HostReleaseDriftWatchdogTests : IDisposable
             Now.UtcDateTime,
             180,
             generation,
-            [new Contract.AdvertisedCapabilityDto(Contract.CapabilityProtocol.CodingExecutor, "executor")],
+            [new Contract.AdvertisedCapabilityDto(
+                review ? Contract.CapabilityProtocol.ReviewExecutor : Contract.CapabilityProtocol.CodingExecutor,
+                "executor")],
             Release: release));
     }
 }
