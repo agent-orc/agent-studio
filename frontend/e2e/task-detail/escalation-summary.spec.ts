@@ -485,7 +485,8 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     await expect(page.locator('[data-testid="escalation-gate-items"] li')).toHaveCount(4);
     await expect(page.getByTestId('escalation-gate-source')).toContainText('Council reaction');
     // AGT-3578: the camelCase wire action `escalate` renders as an open danger chip, not "accepted".
-    const chips = page.locator('[data-testid="escalation-gate-items"] .escalation-details__verdict');
+    // AGT-3403: the verdict is the shared status indicator; its inner element carries the tone.
+    const chips = page.locator('[data-testid="escalation-gate-items"] [data-testid="escalation-finding-verdict"]');
     await expect(chips).toHaveText(['escalate', 'escalate', 'escalate', 'escalate']);
     await expect(chips.first()).toHaveAttribute('data-tone', 'danger');
     await expect(page.getByTestId('escalation-gate-count')).toHaveText('4 open');
