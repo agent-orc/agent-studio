@@ -86,6 +86,7 @@ export interface BatchMoveJobResponse {
 // live under their own `features/X/models/` and are accessed via the
 // feature barrel. The two `import type` lines below let TaskInfo's
 // own field types reference feature-owned shapes without copying them.
+import type { RemedyAction } from './remedy-action.model';
 import type { TaskCommitInfo, TaskProvenanceRecord, TaskMergeSignal, TaskIntegrationStatus } from '../features/git';
 import type { TaskTokenSummary } from '../features/tokens';
 import type { OrchestratorLogEntry, OrchestratorSession } from '../features/orchestrator';
@@ -161,6 +162,11 @@ export interface TaskCompletionClaim {
   reason?: string | null;
   /** Who moved the card into the delivered lane. */
   actor?: string | null;
+  /**
+   * AGT-3621: set when the system gave the Human Review verdict in a person's
+   * place; completes "Accepted automatically by …". Null for a person's acceptance.
+   */
+  acceptedAutomaticallyBy?: string | null;
   currentBriefVersion?: string | null;
   deliveryBriefVersion?: string | null;
   reviewBriefVersion?: string | null;
@@ -458,8 +464,8 @@ export interface WaitsOnStatus {
 
 /**
  * AGT-2818: one way an operator can clear a pickup hold. Mirrors backend
- * `PickupHoldResolution`. The UI renders a control only for kinds with an
- * implemented handler; all other kinds remain explanatory text.
+ * `PickupHoldResolution`. AGT-3580: every kind carries a typed `action` that
+ * the detail view renders as a button or a link; `detail` stays prose.
  */
 export interface PickupHoldResolution {
   /** Machine-readable kind, e.g. `release-target` / `drop-release-gate`. */
@@ -472,6 +478,8 @@ export interface PickupHoldResolution {
   targetKey?: string | null;
   /** The stable source key for an edge decision; null means the waiting card. */
   sourceKey?: string | null;
+  /** AGT-3580: route, owning project setting, or API action behind this way out. */
+  action?: RemedyAction | null;
 }
 
 /**

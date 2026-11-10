@@ -1226,6 +1226,12 @@ stream that API tokens may read. SignalR stays closed to tokens.
   for example a provider limit) need an Owner, an all-projects grant, or the
   local profile. `watcher.heartbeat` names no project data and every reader
   receives it, because the lease is per installation.
+- `GET /api/operator/attention` (AGT-3576) returns the facts the stream
+  currently sees as one list, `{ items, count }`, where `count` is the number
+  of items. It declares `project.read`, applies the same project scope as
+  the stream, omits `watcher.heartbeat`, and publishes nothing. The Studio
+  header's Needs you entry reads it. The fact read is reused for up to one
+  sweep interval.
 - `GET /api/operator/watcher/lease` reads the lease. `POST` takes it, `POST
   .../lease/{leaseId}/heartbeat` renews it, and `DELETE .../lease/{leaseId}`
   releases it. The writes declare `project.runs.operate` with project

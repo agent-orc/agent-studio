@@ -26,15 +26,7 @@
   pointer-events: none;
 }
 .column__drop-zone--active::before { opacity: 1; }
-.column__subsection-title {
-  display: flex;
-  align-items: center;
-  gap: var(--studio-spacing-2);
-  margin: 0;
-  color: var(--studio-fg-dim);
-  font-size: var(--studio-lane-header-secondary-size);
-}
-.column__subsection-count { margin-left: auto; font-variant-numeric: tabular-nums; }
+.column__window-group { margin-bottom: var(--studio-card-list-gap); }
 @media (prefers-reduced-motion: reduce) {
   .column__drop-zone::before { transition: none; }
 }

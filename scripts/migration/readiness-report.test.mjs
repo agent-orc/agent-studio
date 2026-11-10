@@ -12,10 +12,12 @@ const report = {
     { id: 'git-identity', title: 'Git identity of the service user', scope: 'server', subject: null, state: 'pass',
       meaning: 'Commits are made as Agent Studio <studio@agent-studio.invalid>.', remedy: null },
     { id: 'repository-visibility', title: 'Repository visibility known', scope: 'project', subject: 'Demo', state: 'warn',
-      meaning: 'Not recorded.', remedy: 'Record it: PUT /api/projects/Demo/repository-visibility with {"visibility":"private"}.' },
+      meaning: 'Not recorded.', remedy: "Record it as private or public in the project's repository visibility setting.",
+      action: { kind: 'setting', target: 'repository-visibility', project: 'Demo' } },
     { id: 'committer-identity', title: 'Committer identity (git commit-tree probe)', scope: 'server', subject: null, state: 'fail',
       meaning: 'git commit-tree failed in a scratch repository (Committer identity unknown).',
-      remedy: 'In the stack directory run: docker compose exec api git config --global user.name "Agent Studio"' },
+      remedy: 'Set the Git identity of the service user in the API container, from the stack directory.',
+      command: 'docker compose exec api git config --global user.name "Agent Studio"' },
     { id: 'gate-worker', title: 'Gate worker reachable', scope: 'server', subject: 'kori-gate', state: 'unknown',
       meaning: 'No gate reached SSH gate host kori-gate in the last 5 minutes.', remedy: 'The next gate proves it.' },
   ],
@@ -29,10 +31,26 @@ test('failing lines come first with their meaning and remedy; passing lines are 
   assert.equal(lines[0], 'readiness: 1 failing, 2 need attention, 4 checks (computed 2026-11-01T12:04:00+00:00)');
   assert.equal(lines[1], '  FAIL committer-identity: Committer identity (git commit-tree probe)');
   assert.equal(lines[2], '       git commit-tree failed in a scratch repository (Committer identity unknown).');
-  assert.equal(lines[3], '       remedy: In the stack directory run: docker compose exec api git config --global user.name "Agent Studio"');
-  assert.equal(lines[4], '  WARN repository-visibility [Demo]: Repository visibility known');
-  assert.equal(lines[7], '  UNKNOWN gate-worker [kori-gate]: Gate worker reachable');
+  assert.equal(lines[3], '       remedy: Set the Git identity of the service user in the API container, from the stack directory.');
+  assert.equal(lines[4], '         $ docker compose exec api git config --global user.name "Agent Studio"');
+  assert.equal(lines[5], '  WARN repository-visibility [Demo]: Repository visibility known');
+  assert.equal(lines[8], '  UNKNOWN gate-worker [kori-gate]: Gate worker reachable');
   assert.ok(!text.includes('git-identity'));
+});
+
+test('a compose volume line prints as an entry for its file, not as a command', () => {
+  const volume = { id: 'data-volume', title: 'Data folder on the data volume', scope: 'server', subject: 'home', state: 'fail',
+    meaning: '/data/home is inside the container layer.',
+    remedy: 'Mount it from the data directory: add the volume line below under services.api.volumes in compose.override.yaml and recreate the stack.',
+    command: 'docker compose up -d',
+    configEntry: { file: 'compose.override.yaml', section: 'services.api.volumes', text: '- ${STUDIO_DATA_DIR}/home:/data/home' } };
+  const lines = formatReadiness({ ...report, checks: [volume] }).text.split('\n');
+
+  assert.deepEqual(lines.slice(4), [
+    '       add to compose.override.yaml under services.api.volumes:',
+    '           - ${STUDIO_DATA_DIR}/home:/data/home',
+    '         $ docker compose up -d',
+  ]);
 });
 
 test('a ready server prints one line', () => {

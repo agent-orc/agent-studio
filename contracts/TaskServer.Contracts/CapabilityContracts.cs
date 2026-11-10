@@ -182,6 +182,23 @@ public sealed record ClaimLoadGateDto(
     DateTime? Since,
     int ActiveSlots);
 
+/// <summary>
+/// One recorded claim gate transition for the Execution Hosts history.
+/// <c>Event</c> is <c>claim-stopped</c> or <c>claim-resumed</c>. The duration is
+/// how long load stayed above the threshold before claims stopped, or how
+/// long claims stayed stopped before they resumed.
+/// </summary>
+public sealed record ClaimGateEventDto(
+    long Sequence,
+    DateTime OccurredAt,
+    string RunnerId,
+    string? HostId,
+    string Event,
+    double LoadPerCore,
+    double Threshold,
+    long DurationSeconds,
+    int ActiveSlots);
+
 public sealed record HostContainerSummaryDto(string Name, string? ImageDigest, string State);
 
 /// <summary>

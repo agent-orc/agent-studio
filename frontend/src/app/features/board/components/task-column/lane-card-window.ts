@@ -1,8 +1,6 @@
 import { afterEveryRender, computed, effect, signal } from '@angular/core';
 import type { TaskInfo } from '../../../../models/task.model';
-import type { groupReviewJobs } from '../review-grouping.util';
-
-type ReviewGroup = ReturnType<typeof groupReviewJobs>[number];
+import type { LaneCardGroup } from '../review-grouping.util';
 
 /** Measured card window in the lane's existing scroll viewport. */
 export class LaneCardWindow {
@@ -19,7 +17,7 @@ export class LaneCardWindow {
 
   readonly enabled = computed(() => this.state() !== '7-archive' && this.state() !== '6-archive'
     && this.jobs().length > 40);
-  private readonly orderedJobs = computed(() => this.isReview()
+  private readonly orderedJobs = computed(() => this.isGrouped()
     ? this.groups().flatMap(group => group.jobs)
     : this.jobs());
   readonly window = computed(() => {
@@ -51,7 +49,7 @@ export class LaneCardWindow {
       rows: jobs.slice(start, end).map((job, offset) => ({
         job,
         index: start + offset,
-        group: this.isReview()
+        group: this.isGrouped()
           ? this.groups().find(group => group.jobs[0]?.taskKey === job.taskKey) ?? null
           : null,
       })),
@@ -67,8 +65,8 @@ export class LaneCardWindow {
     private readonly jobs: () => TaskInfo[],
     private readonly compact: () => boolean,
     private readonly state: () => string,
-    private readonly isReview: () => boolean,
-    private readonly groups: () => readonly ReviewGroup[],
+    private readonly isGrouped: () => boolean,
+    private readonly groups: () => readonly LaneCardGroup[],
     private readonly body: () => HTMLElement | null,
     private readonly highlight: () => string | null,
   ) {

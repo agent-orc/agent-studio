@@ -69,4 +69,21 @@ describe('ProjectPipelinePanelComponent effective routes', () => {
     expect(Object.keys(fixture.componentInstance.overrides())).toEqual(['aspect-code-quality', 'aspect-security']);
     expect(http.match(r => r.url === '/api/model-selection/effective').length).toBeGreaterThanOrEqual(2);
   });
+
+  it('refreshes the effective routes after an economy model write', async () => {
+    const { fixture, http, host } = await setup();
+    http.expectOne(r => r.url === '/api/model-selection/effective').flush({ routes: [] });
+    fixture.componentInstance.writeStep('aspect-code-quality', { economyModel: true });
+    http.expectOne('/api/projects/demo/pipeline-step')
+      .flush({ pipelineSteps: { 'aspect-code-quality': { economyModel: true } } });
+    http.expectOne(r => r.url === '/api/model-selection/effective').flush({ routes: [
+      { consumer: 'review-aspect', stepId: 'aspect-code-quality',
+        configured: { cliType: 'claude', model: 'claude-opus-5', thinkingLevel: 'high' },
+        effective: { cliType: 'codex', model: 'gpt-6-spark', thinkingLevel: 'high' }, rule: 'economy', reason: 'Spark auto' },
+    ] });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(host.querySelector('[data-testid="pipeline-step-effective-aspect-code-quality"]')?.textContent)
+      .toContain('Runs codex · gpt-6-spark');
+  });
 });

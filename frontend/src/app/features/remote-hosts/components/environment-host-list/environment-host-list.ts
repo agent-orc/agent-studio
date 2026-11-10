@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, ElementRef, input, output, viewChil
 import type { PhysicalHostGroup } from '../../models/physical-host-group';
 import type { RemoteHost } from '../../models/remote-host.model';
 import { roleSlotTotal } from '../../models/role-slots';
+import { groupNotEnrolled } from '../../models/host-summary';
 import { hostStatusIndicatorTone, hostStatusLabel } from '../../models/remote-host.model';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 
@@ -18,9 +19,14 @@ export class EnvironmentHostListComponent {
   readonly gates = input<readonly { id: string; name: string; busy: number; slots: number; lastHeartbeat: string }[]>([]);
   readonly selected = input<string | null>(null);
   readonly slots = input.required<(host: RemoteHost) => number>();
+  readonly now = input<number>(Date.now());
   readonly selectedChange = output<string>();
   private readonly list = viewChild<ElementRef<HTMLElement>>('list');
   hasGroup(name: string): boolean { return this.groups().some(group => group.name === name); }
+  notEnrolled(group: PhysicalHostGroup): boolean { return groupNotEnrolled(group, this.now()); }
+  notClaiming(group: PhysicalHostGroup): boolean {
+    return group.roles.some(role => role.status !== 'retired' && role.claimLoadGate?.state === 'closed');
+  }
   capacity(host: RemoteHost): number | null {
     return roleSlotTotal(host);
   }

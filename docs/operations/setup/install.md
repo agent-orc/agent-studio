@@ -428,7 +428,7 @@ On Linux, `sudo ./agent-studio-setup --target native` runs the systemd
 single-machine profile. It installs the Task Server, Engine, an agent host, and
 the Studio API, BFF, and UI service. The local UI is
 `http://127.0.0.1:4011/`. The first-owner code is kept in
-`/etc/agent-orchestrator/owner-bootstrap.code`. Setup also writes an owner-only
+`/etc/agent-orchestrator/owner_bootstrap_code`. Setup also writes an owner-only
 `/etc/agent-orchestrator/join.token` for adding agent hosts later. Use a newer verified setup
 executable with `sudo agent-studio-setup update`, or run
 `sudo agent-studio-setup rollback` for the retained previous release; see
