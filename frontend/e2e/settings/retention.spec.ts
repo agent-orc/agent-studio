@@ -25,6 +25,7 @@ test('operator edits, previews, runs, inspects, and restores retention data', as
     title: 'Retention archived task',
     watchPath,
     targetState: '7-archive',
+    requiresIntegration: false,
     fixture: false,
     promptMarkdown: '# Archived task\n\nHot task summary.',
   });

@@ -58,19 +58,15 @@
                  (blur)="commitRename()" />
         </div>
       } @else {
-        <!-- F-studio-sidebar: a single workspace is a tree node, NOT a
-             panel header. It renders as a tree-row (folder glyph + name +
-             count) under the "Workspaces" panel header. Click/​chevron
-             toggle collapse, double-click opens inline rename, right-click
-             opens the rename menu. The `studio-explorer-ws-group-<id>`
-             testid + aria-expanded contract is preserved for the F46
-             specs. -->
+        <!-- Workspace tree row: click or chevron toggles collapse; double-click
+             and right-click rename. Keep the F46 testid and aria-expanded contract. -->
         <div class="studio-explorer-tree__ws-head">
           @let wsAgg = wsAutoPickupAggregate(g);
           <app-tree-row
             level="root"
             glyph="folder"
             [chevron]="isCollapsed('ws:' + g.id) ? 'collapsed' : 'expanded'"
+            [chevronTestid]="'studio-explorer-ws-chevron-' + g.id"
             [label]="g.displayName"
             [count]="g.projects.length"
             [testid]="'studio-explorer-ws-group-' + g.id"
@@ -131,6 +127,7 @@
               <app-tree-row class="studio-project-row" level="root"
                             [hasActions]="true"
                             [chevron]="isExpanded(p.name) ? 'expanded' : 'collapsed'"
+                            [chevronTestid]="'studio-explorer-project-chevron-' + p.name"
                             [glyphChar]="p.initial"
                             [glyphColor]="p.color"
                             [label]="p.displayLabel"

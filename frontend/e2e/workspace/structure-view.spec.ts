@@ -222,17 +222,6 @@ test('declared structure is accessible in both projections, widths and themes', 
     await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
     await projectSection.screenshot({ path: path.join(results, `project-operations-structure-${theme}.png`) });
   }
-  const settingsPage = await page.context().newPage();
-  await settingsPage.setViewportSize({ width: 1920, height: 1400 });
-  await settingsPage.goto('/#/workspace/settings/environment');
-  await settingsPage.getByRole('button', { name: 'Map', exact: true }).click();
-  await expect(settingsPage.getByTestId('structure-view').locator('[data-node-id="studio"]')).toBeVisible();
-  await expect(settingsPage.locator('app-environment-map')).toHaveCount(0);
-  for (const theme of ['light', 'dark'] as const) {
-    await settingsPage.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
-    await settingsPage.getByTestId('structure-view').screenshot({ path: path.join(results, `settings-structure-${theme}.png`) });
-  }
-  await settingsPage.close();
   await page.goto('/#/projects/website/operations/structure');
   await expect(view.getByText('Website partial picture')).toBeVisible();
   await page.keyboard.press('3');

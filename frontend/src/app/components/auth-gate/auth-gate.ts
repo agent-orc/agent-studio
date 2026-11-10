@@ -84,7 +84,12 @@ export class AuthGateComponent {
     this.error.set('');
     this.auth.confirmTotp(this.secondFactorCode).subscribe({
       next: result => { this.recoveryCodes.set(result.recoveryCodes); this.secondFactorCode = ''; this.submitting.set(false); },
-      error: (error: unknown) => { this.error.set(authGateFailure(error, 'The authenticator code is invalid.')); this.submitting.set(false); },
+      error: (error: unknown) => {
+        this.error.set(error instanceof HttpErrorResponse && error.status === 400
+          ? 'The authenticator code is invalid.'
+          : authGateFailure(error, 'Authenticator verification failed.'));
+        this.submitting.set(false);
+      },
     });
   }
 

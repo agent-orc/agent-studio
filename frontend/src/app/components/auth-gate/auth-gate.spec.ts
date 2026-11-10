@@ -61,7 +61,7 @@ describe('AuthGateComponent second-factor enrollment', () => {
     const gate = mount(() => { const attempt = new Subject<{ recoveryCodes: string[] }>(); attempts.push(attempt); return attempt; });
     gate.secondFactorCode = '000000';
     gate.submit();
-    attempts[0].error(new HttpErrorResponse({ status: 400, error: { message: 'The authenticator code is invalid.' } }));
+    attempts[0].error(new HttpErrorResponse({ status: 400, error: { message: 'Different server wording' } }));
     expect(gate.error()).toBe('The authenticator code is invalid.');
 
     gate.secondFactorCode = '123456';

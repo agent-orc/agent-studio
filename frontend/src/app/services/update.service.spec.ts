@@ -23,10 +23,12 @@ describe('resolveUpdateServiceUrl', () => {
 describe('UpdateClientService trigger token', () => {
   let http: HttpTestingController;
   let client: UpdateClientService;
+  const serviceWindow = window as Window & { __AGENT_STUDIO_UPDATE_SERVICE_URL__?: string };
 
   beforeEach(() => {
     // Keep the status poll from firing; these cases drive the mutations only.
     vi.useFakeTimers();
+    serviceWindow.__AGENT_STUDIO_UPDATE_SERVICE_URL__ = 'http://localhost:5039';
     TestBed.configureTestingModule({
       providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
     });
@@ -35,6 +37,7 @@ describe('UpdateClientService trigger token', () => {
   });
 
   afterEach(() => {
+    delete serviceWindow.__AGENT_STUDIO_UPDATE_SERVICE_URL__;
     vi.useRealTimers();
     TestBed.resetTestingModule();
   });

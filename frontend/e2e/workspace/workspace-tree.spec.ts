@@ -163,8 +163,8 @@ test.describe('F46: Explorer two-level workspace -> project tree', () => {
 
     // Visual result: the project row's chevron sits to the right of the
     // workspace header's chevron, so the hierarchy reads at a glance.
-    const wsChev = groups.first().locator('.tree-row__chev').first();
-    const projChev = page.locator(ROW).first().locator('.tree-row__chev').first();
+    const wsChev = page.locator('[data-testid^="studio-explorer-ws-chevron-"]').first();
+    const projChev = page.locator('[data-testid^="studio-explorer-project-chevron-"]').first();
     const wsBox = await wsChev.boundingBox();
     const projBox = await projChev.boundingBox();
     expect(wsBox).toBeTruthy();
