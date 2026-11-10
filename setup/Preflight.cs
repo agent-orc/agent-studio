@@ -16,12 +16,20 @@ internal enum PreflightStatus
 
 internal sealed record PreflightFinding(string Check, PreflightStatus Status, string Observed, string? Recovery);
 
+internal enum DockerEngineState
+{
+    Running,
+    NotInstalled,
+    NotRunning,
+    PermissionDenied,
+}
+
 /// <summary>Observed host facts. Null means the probe did not apply to the journey.</summary>
 internal sealed record HostFacts(
     bool Windows,
     bool X64,
     bool? Virtualization,
-    bool? DockerEngine,
+    DockerEngineState? DockerEngine,
     bool? DockerCompose,
     bool? Wsl2,
     long? FreeDiskBytes,
@@ -77,10 +85,7 @@ internal static class PreflightPolicy
         }
         if (docker)
         {
-            findings.Add(Check("Docker", facts.DockerEngine, "Docker engine running",
-                facts.Windows
-                    ? "Install Docker Desktop (https://docs.docker.com/desktop/setup/install/windows-install/) and start it."
-                    : "Install Docker Engine (https://docs.docker.com/engine/install/), then 'sudo systemctl enable --now docker' and add your user to the docker group."));
+            findings.Add(DockerFinding(facts.DockerEngine, facts.Windows));
             findings.Add(Check("Docker Compose", facts.DockerCompose, "Compose v2 available",
                 "Install the docker-compose-plugin package (Linux) or update Docker Desktop; 'docker compose version' must succeed."));
         }
@@ -131,6 +136,26 @@ internal static class PreflightPolicy
             true => new(name, PreflightStatus.Pass, expectation, null),
             false => new(name, PreflightStatus.Fail, $"missing: {expectation}", recovery),
         };
+
+    private static PreflightFinding DockerFinding(DockerEngineState? state, bool windows)
+        => state switch
+        {
+            null => new("Docker", PreflightStatus.NotApplicable, "not probed", null),
+            DockerEngineState.Running => new("Docker", PreflightStatus.Pass, "Docker engine running", null),
+            DockerEngineState.NotInstalled => new("Docker", PreflightStatus.Fail, "Docker not installed",
+                windows
+                    ? "Install Docker Desktop (https://docs.docker.com/desktop/setup/install/windows-install/) and start it."
+                    : "Install Docker Engine (https://docs.docker.com/engine/install/) and the Compose plugin, then start Docker."),
+            DockerEngineState.NotRunning => new("Docker", PreflightStatus.Fail, "Docker engine not running",
+                windows
+                    ? "Start Docker Desktop, then retry."
+                    : "Start Docker Engine with 'sudo systemctl enable --now docker', then retry."),
+            DockerEngineState.PermissionDenied => new("Docker", PreflightStatus.Fail, "Docker access denied",
+                windows
+                    ? "Grant this user access to Docker Desktop and restart the session, then retry."
+                    : "Add your user to the docker group with 'sudo usermod -aG docker $USER', log out and log in again, then retry."),
+            _ => throw new ArgumentOutOfRangeException(nameof(state)),
+        };
 }
 
 /// <summary>Side-effecting probes; each returns null when the journey does not need it.</summary>
@@ -164,7 +189,7 @@ internal static class PreflightProbe
             windows,
             RuntimeInformation.OSArchitecture == Architecture.X64,
             windows && docker ? await VirtualizationAsync(windows, processes) : null,
-            docker ? await SucceedsAsync(processes, "docker", ["info", "--format", "{{.ServerVersion}}"]) : null,
+            docker ? await DockerAsync(processes) : null,
             docker ? await SucceedsAsync(processes, "docker", ["compose", "version"]) : null,
             windows && docker ? await SucceedsAsync(processes, "wsl", ["--status"]) : null,
             journey is InstallationJourney.OneBox or InstallationJourney.JoinHost or InstallationJourney.RelocateAuthority
@@ -219,6 +244,29 @@ internal static class PreflightProbe
             return false;
         }
     }
+
+    private static async Task<DockerEngineState> DockerAsync(ProcessRunner processes)
+    {
+        try
+        {
+            return ClassifyDocker(await processes.RunAsync("docker", ["info", "--format", "{{.ServerVersion}}"],
+                printOutput: false));
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            return ClassifyDocker(null);
+        }
+    }
+
+    internal static DockerEngineState ClassifyDocker(ProcessResult? result)
+        => result is null
+            ? DockerEngineState.NotInstalled
+            : result.ExitCode == 0
+            ? DockerEngineState.Running
+            : result.Error.Contains("permission denied", StringComparison.OrdinalIgnoreCase)
+              || result.Error.Contains("access is denied", StringComparison.OrdinalIgnoreCase)
+                ? DockerEngineState.PermissionDenied
+                : DockerEngineState.NotRunning;
 
     private static long? FreeBytes(string path)
     {

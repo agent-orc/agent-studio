@@ -796,14 +796,19 @@ public sealed partial class BatchGateStore
                 return state;
             // The newest row decides the phase; an older readable row could
             // name a phase the batch already left, so the batch reads Unknown.
-            var digest = TryReadRecord<BatchGateManifest>(Path.Combine(BatchDirectory(batchId), "manifest.json"),
-                BatchGateRecordKinds.Manifest, batchId, out var owner) ? owner.MembershipDigest : "";
+            var manifestPath = Path.Combine(BatchDirectory(batchId), "manifest.json");
+            var digest = File.Exists(manifestPath)
+                && TryReadRecord<BatchGateManifest>(manifestPath, BatchGateRecordKinds.Manifest, batchId, out var owner)
+                ? owner.MembershipDigest : string.Empty;
             return new BatchGateState(batchId, digest, BatchPhase.Unknown, null, 0,
                 new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero), StateUnreadableReason);
         }
-        var manifest = ReadManifest(batchId);
-        return new BatchGateState(batchId, manifest.MembershipDigest,
-            BatchPhase.Unknown, null, 0, manifest.ClosedAtUtc);
+        var manifestPath = Path.Combine(BatchDirectory(batchId), "manifest.json");
+        var manifest = File.Exists(manifestPath)
+            && TryReadRecord<BatchGateManifest>(manifestPath, BatchGateRecordKinds.Manifest, batchId, out var owner)
+            ? owner : null;
+        return new BatchGateState(batchId, manifest?.MembershipDigest ?? string.Empty,
+            BatchPhase.Unknown, null, 0, manifest?.ClosedAtUtc ?? DateTimeOffset.MinValue);
     }
 
     public void RecordRun(BatchGateRunRecord run)

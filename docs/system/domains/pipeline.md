@@ -657,7 +657,7 @@ The routes use the project's configured name in place of `{projectName}`.
 
 | Route | Result | Errors |
 |---|---|---|
-| `GET /api/projects/{projectName}/batch-gate/queue-stalls` | HTTP 200 with `project`, `releasable`, `openEpisode`, and `recentEvents`. `releasable` is an array of task keys eligible for release. `openEpisode` is the current stall event or `null`; `recentEvents` is the latest ten events, oldest first. | HTTP 404 for an unknown project. |
+| `GET /api/projects/{projectName}/batch-gate/queue-stalls` | HTTP 200 with `project`, `releasable`, `openEpisode`, and `recentEvents`. `releasable` is an array of task keys eligible for release. `openEpisode` is the current stall event or `null`; `recentEvents` is the latest ten events, oldest first. `fallbackStalls` lists the latest ten per-task fallback waits that passed their bound (AGT-3694): `kind`, `sinceUtc`, `raisedAtUtc`, `reason`, `outcome` (`escalated`, `cancelled`, `detached` or `reported`), and for an engine decision `engineRunId`, `engineStatus` and `occurrenceKey`. | HTTP 404 for an unknown project. |
 | `POST /api/projects/{projectName}/batch-gate/queue-stalls/release` | HTTP 200 with `released` (task keys) and `refused` (objects with `taskKey` and `reason`). The request has no body. A partial release is still HTTP 200; inspect both arrays. | HTTP 400 when `X-Client-Id` is missing or blank; HTTP 404 for an unknown project. |
 
 The POST requires `X-Client-Id`, as do the other batch gate mutations. Each
@@ -775,7 +775,26 @@ review report or a tick that meets a running fallback waits for it instead of
 starting a second gate. The card marker records that per-card gate as active
 with a start count; a marker still active with no gate running in the process
 (restart, or a gate that threw) is resumed on the next tick, and after two
-interrupted starts the card escalates as `GateInfra`. Across all review
+interrupted starts the card escalates as `GateInfra`; the reason names the
+starts, the base and the merged candidate they ran on. Every wait of a
+per-task fallback is bounded by `PerTaskFallbackWaitPolicy` (AGT-3694). An
+engine-owned GateResult decision on the gate outcome (release or red) that
+stays `pending`, `leased` or `applying` for 30 minutes, or whose lease expired
+two minutes ago, is superseded under the card gate (`batch-fallback-engine-stall`)
+and the card escalates as `GateInfra` with the run id; the monolith never
+takes the engine's release. A flight stage the fallback owns (preparing the
+subject, the running gate) that outlives the gate timeout by 15 minutes is
+cancelled with its start charged, and a flight that has not stopped two
+minutes later is detached, so its resume escalates instead of starting a
+second gate. Queue stages (per-task slot, batch slot, machine gate slot) wait
+for work with its own bound; past four gate timeouts they are reported only.
+Each bound raises one `batch-fallback-stalled` event into the batch store,
+the card timeline and the operator feed; `GET .../batch-gate/queue-stalls`
+lists them as `fallbackStalls`. The batch state names what each fallback
+waits for (`fallbackWaits`, and `waitKind`, `waitingFor`, `engineRunId` and
+`engineStatus` on the member), the overdue plan reason appends it, and the
+card badge reads, for example, "Per-task fallback · batch-ejected · waits
+for engine decision". Across all review
 generations of the process, at most one gate slot fewer than the gate host has
 runs a per-task fallback gate at once (AGT-3466). The other fallbacks wait for a
 slot before they choose their merged candidate, so the batch slot stays free. A

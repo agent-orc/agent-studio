@@ -155,6 +155,12 @@ export interface BatchMemberState {
   size?: number | null;
   reason?: string | null;
   reasonDetail?: string | null;
+  /** What a per-task fallback waits for (AGT-3694); the detail names the engine run or the stage. */
+  waitKind?: string | null;
+  waitingFor?: string | null;
+  waitSinceUtc?: string | null;
+  engineRunId?: string | null;
+  engineStatus?: string | null;
   preCheck?: BatchPreCheck | null;
 }
 
@@ -197,6 +203,21 @@ export function batchEjectionLabel(reason: string | null | undefined): string | 
     case 'conflict': return 'replay conflict';
     case 'unattributable': return 'unattributable history';
     default: return reason || null;
+  }
+}
+
+/** Short card label of what a per-task fallback waits for. */
+export function batchFallbackWaitLabel(kind: string | null | undefined): string | null {
+  switch (kind) {
+    case 'engine-decision': return 'waits for engine decision';
+    case 'per-task-slot': return 'waits for per-task slot';
+    case 'batch-slot': return 'waits for batch slot';
+    case 'machine-gate-slot': return 'waits for machine gate slot';
+    case 'preparing': return 'preparing gate';
+    case 'gate-running': return 'gate running';
+    case 'integration': return 'integrating';
+    case 'resume-pending': return 'resumes next tick';
+    default: return kind || null;
   }
 }
 
