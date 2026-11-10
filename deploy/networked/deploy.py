@@ -291,6 +291,7 @@ def values(state, host=None, **extra):
     if hashlib.sha256(Path(state["manifest"]).read_bytes()).hexdigest() != state["manifestSha256"]:
         raise DeployError("manifest changed during the release window")
     data = {"commit": state["commit"], "target_version": state["commit"],
+            "built_at": state.get("builtAtUtc", ""),
             "manifest": state["manifest"],
             "adapter": str(Path(__file__).resolve().parent / "host_adapter.py")}
     for name, item in state.get("artifacts", {}).items():
@@ -344,6 +345,9 @@ def deploy(args, manifest):
                     state["artifacts"][name] = item
                 if first_error is None and error is not None:
                     first_error = error
+            if first_error is None:
+                # The review image stamps this as RUNNER_RELEASE_BUILT_AT (AGT-3689).
+                state["builtAtUtc"] = timestamp()
             save_json(journal, state)
             if first_error is not None:
                 raise first_error

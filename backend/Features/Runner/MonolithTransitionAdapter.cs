@@ -90,6 +90,18 @@ public static class MonolithTransitionAdapter
     public static int GateStartsAfterServiceRestart(int chargedStarts, string? runByInstance, string currentInstance)
         => GateCancellationPolicy.ChargedStartsAfterServiceRestart(chargedStarts, runByInstance, currentInstance);
 
+    public static PerTaskFallbackWaitDecision PerTaskFallbackEngineWait(EngineDecisionWaitFacts facts)
+        => PerTaskFallbackWaitPolicy.EngineDecision(facts);
+
+    public static PerTaskFallbackWaitDecision PerTaskFallbackFlight(FallbackFlightFacts facts)
+        => PerTaskFallbackWaitPolicy.Flight(facts);
+
+    public static bool PerTaskFallbackCancelsStalledStage(string stage)
+        => PerTaskFallbackWaitPolicy.CancelsStalledStage(stage);
+
+    public static bool PerTaskFallbackDetachesCancelledFlight(DateTimeOffset cancelledAtUtc, DateTimeOffset nowUtc)
+        => PerTaskFallbackWaitPolicy.DetachesCancelledFlight(cancelledAtUtc, nowUtc);
+
     public static bool GateCancellationOwnsResult(string? expectedSha, string? currentSha,
         string? expectedAttempt, string? currentAttempt,
         string? expectedLane, string? currentLane, bool continuePending)
@@ -122,9 +134,8 @@ public static class MonolithTransitionAdapter
     public static bool PerTaskGateSlotFree(int perTaskGates, int slotsTotal)
         => BatchGateLookAheadPlanner.PerTaskGateSlotFree(perTaskGates, slotsTotal);
 
-    public static IReadOnlyList<string> BatchStartOrder(IEnumerable<BatchGateStartCandidate> formed,
-        DateTimeOffset nowUtc)
-        => BatchGateStartPolicy.Order(formed, nowUtc);
+    public static IReadOnlyList<string> BatchStartOrder(IEnumerable<BatchGateStartCandidate> formed)
+        => BatchGateStartPolicy.Order(formed);
 
     public static bool BatchFlightLeaseDeadlinePassed(DateTimeOffset startedAtUtc, bool leaseClaimed,
         DateTimeOffset nowUtc, int deadlineMinutes)

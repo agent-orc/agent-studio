@@ -75,7 +75,7 @@ case "$action" in
   resume) printf '{"admitting":true}\n' ;;
   server_health|engine_health|coding_health) printf '{"healthy":true,"commit":"%s"}\n' "$1" ;;
   model_probe) printf '{"accepted":true}\n' ;;
-  review_build) printf '{"commit":"%s","agentHostSha256":"%s","planDigest":"plan-123","imageRef":"example/review@sha256:%s"}\n' "$1" "$digest" "$digest" ;;
+  review_build) [[ "$3" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z$ ]]; printf '{"commit":"%s","agentHostSha256":"%s","planDigest":"plan-123","imageRef":"example/review@sha256:%s"}\n' "$1" "$digest" "$digest" ;;
   review_idle)
     if [[ "$FAKE_BUSY_REVIEW" == 1 ]]; then printf '{"idle":false}\n'; else printf '{"idle":true}\n'; fi ;;
   review_verify) printf '{"commit":"%s","planDigest":"plan-123","imageRef":"example/review@sha256:%s"}\n' "$1" "$digest" ;;
@@ -107,6 +107,7 @@ for action in ('preflight', 'work_state', 'plan', 'drain', 'gate_publish', 'gate
                'model_probe', 'review_copy', 'review_build', 'review_idle', 'review_recreate', 'review_verify', 'resume'):
     commands[action] = cmd(action, '{commit}', '{host}' if action not in ('preflight', 'work_state', 'plan') else '{commit}')
 commands['server_switch'].append('{gate_worker_path}')
+commands['review_build'].append('{built_at}')
 for action in ('host_drain', 'host_status', 'host_resume'):
     commands[action] = cmd(action, '{commit}', '{host}', '{client_id}')
 hosts = [{'id': role, 'role': role, 'target': role} for role in ('server', 'gate', 'engine', 'coding', 'review')]

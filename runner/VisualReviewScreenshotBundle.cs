@@ -10,9 +10,9 @@ namespace AgentRunner;
 /// <summary>Places the source run's screenshot artifacts beside the disposable review checkout.</summary>
 internal static class VisualReviewScreenshotBundle
 {
-    private const int MaximumImages = 100;
+    private const int MaximumImages = 12;
     private const int MaximumFailureDetails = 8;
-    private const long MaximumImageBytes = 8L * 1024 * 1024;
+    private const long MaximumImageBytes = 2L * 1024 * 1024;
     private const long MaximumTotalBytes = 100L * 1024 * 1024;
     private const long MaximumImagePixels = 80_000_000;
 
@@ -46,6 +46,7 @@ internal static class VisualReviewScreenshotBundle
         Directory.CreateDirectory(directory);
         var copiedImages = new List<string>();
         var failures = new List<string>();
+        var omittedBySize = new List<string>();
         var failedCount = 0;
         void AddFailure(string detail)
         {
@@ -54,17 +55,17 @@ internal static class VisualReviewScreenshotBundle
         }
         long total = 0;
         var copied = 0;
-        var omittedByCount = 0;
+        var omittedByCount = new List<string>();
         foreach (var artifact in artifacts)
         {
             if (copied == MaximumImages)
             {
-                omittedByCount++;
+                omittedByCount.Add(artifact.Name);
                 continue;
             }
             if (artifact.SizeBytes > MaximumImageBytes || total + artifact.SizeBytes > MaximumTotalBytes)
             {
-                AddFailure($"- {JsonSerializer.Serialize(artifact.Name)}: omitted because of image evidence size limit");
+                omittedBySize.Add(artifact.Name);
                 continue;
             }
             string? temporaryPath = null;
@@ -116,8 +117,15 @@ internal static class VisualReviewScreenshotBundle
         }
         if (failedCount > failures.Count)
             failures.Add($"- {failedCount - failures.Count} more failed screenshots omitted from this list.");
-        if (omittedByCount > 0)
-            failures.Add($"- {omittedByCount} more screenshots omitted by the 100-image review limit.");
+        if (omittedBySize.Count > 0)
+            failures.Add($"- Screenshots omitted by the {MaximumImageBytes / (1024 * 1024)} MiB per-image or " +
+                $"{MaximumTotalBytes / (1024 * 1024)} MiB total size limit ({omittedBySize.Count}): " +
+                $"{string.Join(", ", omittedBySize.Take(80).Select(name => JsonSerializer.Serialize(name)))}" +
+                (omittedBySize.Count > 80 ? $"; {omittedBySize.Count - 80} further names omitted" : string.Empty) + ".");
+        if (omittedByCount.Count > 0)
+            failures.Add($"- Screenshots omitted by the {MaximumImages}-image review limit " +
+                $"({omittedByCount.Count}): {string.Join(", ", omittedByCount.Take(80).Select(name => JsonSerializer.Serialize(name)))}" +
+                (omittedByCount.Count > 80 ? $"; {omittedByCount.Count - 80} further names omitted" : string.Empty) + ".");
         return string.Join('\n', copiedImages.Concat(failures));
     }
 

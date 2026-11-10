@@ -132,6 +132,7 @@ to stderr) and `--url`.
 | `host resume <client-id>` | `POST /api/clients/{id}/resume` | `host.resume` (T1): lifts the drain. A drain that ends in retirement stays. |
 | `log [--project <p>] [--after <cursor>]` | `GET /api/operator/log` | |
 | `log append --project <p> --kind observed\|decided\|did\|handoff (--text <t> \| --text-file <f>) [--card <key>]... [--audit <id>]...` | `POST /api/operator/log` | |
+| `magazine publish <file.md> [--scope <scope>] [--slug <slug>] [--persona <name>]` | `GET` and `PUT /api/magazine/{scope}/{slug}` | See [Magazine](#magazine). Needs `magazine.write`, which the `operator-agent` role holds. |
 
 For a networked installation, `studio-op deploy plan` supplies the OP-6 plan;
 the [networked deploy runbook](networked-deploy.md) drives the complete host
@@ -188,6 +189,47 @@ When the evidence is green it moves the card to `6-completed` (Studio still
 requires integration proof for that move) and appends a `did` entry to the
 operator log that records the acceptance as the operator agent's verdict.
 The card timeline names the token's own actor, not the Owner.
+
+### Magazine
+
+`magazine publish` publishes or refreshes one magazine article
+([magazine domain](../../system/domains/magazine.md)) from a Markdown file
+with front matter:
+
+```markdown
+---
+scope: project:PROJ-002
+slug: decision-notes
+title: "Decision notes: 10 November"
+summary: 29 cards wait for you; 24 can be accepted, 4 need your decision, 1 gets rework.
+kind: decision-brief
+persona: Editor
+sources:
+  - card:AGT-3714
+  - dossier:docs/dossiers/magazine.md
+  - batch:batch-17
+---
+
+## Waiting for you
+...
+```
+
+- Front matter keys: `scope` (`installation`, `workspace:<id>` or `project:<id>`),
+  `slug`, `title`, `summary` (one paragraph; `summary: >` folds indented
+  lines), `kind` (`digest`, `decision-brief`, `report`, `note`), `sources`
+  (`card:`, `dossier:` or `batch:` entries, as a `-` list or `[a, b]`) and
+  the optional `persona`.
+- `--scope`, `--slug` and `--persona` override the front matter. An unknown
+  key is a usage error (`front-matter-invalid`).
+- The rest of the file is the Markdown body, at most 256 KiB
+  (`magazine-body-too-large` before any request).
+- The command reads the article first and then sends `PUT` with that revision
+  as `If-Match`: one call creates the article or refreshes it.
+- A writer that lands between the read and the write makes Studio answer
+  409 `revision-conflict` (exit 6). Run the command again to publish on top
+  of the newer revision.
+- Studio sets the author from the token. The text output names the scope,
+  slug and new revision; `--json` adds `created` and `previousRevision`.
 
 ### Routing
 

@@ -3348,13 +3348,13 @@ public sealed partial class AttemptAuthorityService
             journal.Write(BitConverter.GetBytes(payload.Length));
             journal.Write(SHA256.HashData(payload));
             journal.Write(payload);
-            journal.Flush(flushToDisk: true);
+            journal.Flush(flushToDisk: AtomicJsonFileWriter.FlushesToDisk);
             if (firstJournalWrite) AtomicJsonFileWriter.FlushDirectory(JournalPath);
         }
         catch
         {
             journal.SetLength(start);
-            journal.Flush(flushToDisk: true);
+            journal.Flush(flushToDisk: AtomicJsonFileWriter.FlushesToDisk);
             throw;
         }
         _state.JournalSequence = delta.Sequence;

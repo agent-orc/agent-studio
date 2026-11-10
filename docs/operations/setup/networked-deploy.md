@@ -85,8 +85,20 @@ pinned `ORCHESTRATOR_ENGINE_IMAGE_REF`. The review Compose file must read
 `REVIEW_IMAGE_REF` for every service named in `reviewServices`. Its pinned
 `reviewBaseImage` must contain the coding CLIs and runner runtime. The adapter
 copies the checked agent-host publish output into the review image, records a
-plan digest from the base image, release SHA, and commit, and verifies that
-digest on the running containers.
+plan digest from the base image, release SHA, commit, and release identity, and
+verifies that digest on the running containers. The image sets
+`RUNNER_RELEASE_ID` (`<build instant>-review-<commit>`), `RUNNER_RELEASE_COMMIT`,
+and `RUNNER_RELEASE_BUILT_AT` from the deploy: the commit is the deployed commit
+and the build instant is the end of the deploy's build step, passed to
+`review_build` as `{built_at}`. Without them the copied agent host reported only
+`0.9.5+sha.unknown` and Execution Hosts could not tell an old review build from
+the Stable one (AGT-3689). A manifest whose `review_build` command omits
+`{built_at}` falls back to the image build instant. Pass the pinned image into
+each review service as well, for example
+`environment: { RUNNER_REVIEW_IMAGE_REF: "${REVIEW_IMAGE_REF}" }`, so the review
+role reports the image it runs; set `Release__ReviewImages__<hostId>` on the
+server to the expected `imageRef` from the deploy journal to show it next to the
+running one.
 
 ## Run
 
