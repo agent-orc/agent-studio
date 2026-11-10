@@ -44,15 +44,18 @@ public sealed record BoardMirrorProjectDelta(
     IReadOnlyList<string> Removals);
 
 /// <summary>
-/// Pure delta between the card core last accepted by the Task Server and the
+/// Delta between the card core last accepted by the Task Server and the
 /// current workspace publication. A project never synced is sent whole; a
 /// project that vanished from the workspace sends removals for its cards.
+/// A mirror cycle also includes unchanged projects so their source generation
+/// advances with the workspace publication.
 /// </summary>
 public static class BoardMirrorPlan
 {
     public static IReadOnlyList<BoardMirrorProjectDelta> Create(
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, BoardCardCore>> synced,
-        IReadOnlyDictionary<string, IReadOnlyDictionary<string, BoardCardCore>> current)
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, BoardCardCore>> current,
+        bool includeUnchanged = false)
     {
         var deltas = new List<BoardMirrorProjectDelta>();
         foreach (var project in current.Keys.Union(synced.Keys, StringComparer.OrdinalIgnoreCase)
@@ -67,7 +70,7 @@ public static class BoardMirrorPlan
             var removals = before is null
                 ? []
                 : before.Keys.Where(key => !now.ContainsKey(key)).Order(StringComparer.Ordinal).ToList();
-            if (before is null || upserts.Count > 0 || removals.Count > 0)
+            if (includeUnchanged || before is null || upserts.Count > 0 || removals.Count > 0)
                 deltas.Add(new BoardMirrorProjectDelta(project, upserts, removals));
         }
         return deltas;

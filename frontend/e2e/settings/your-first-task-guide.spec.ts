@@ -161,7 +161,7 @@ test.describe('your first task guide', () => {
     const notice = page.getByTestId('project-settings-no-verify-commands').first();
     await expect(notice).toContainText('No verify commands defined');
     await expect(notice).toContainText('.agent-studio/project.yml');
-    await expect(page.getByTestId('project-settings-verify-example').first()).toContainText('schemaVersion: 1');
+    await expect(page.getByTestId('project-settings-verify-example').first()).toContainText('schemaVersion: 2');
     await notice.scrollIntoViewIfNeeded();
     await capture(page, 'project-yml-missing', notice);
     await reviewCaptures(page, 'project-settings', () => expect(page.getByTestId('project-execution-card')).toBeVisible({ timeout: 30_000 }));

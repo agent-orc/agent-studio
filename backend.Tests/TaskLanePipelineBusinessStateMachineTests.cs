@@ -54,6 +54,57 @@ public sealed class TaskLanePipelineBusinessStateMachineTests : IDisposable
     }
 
     [Fact]
+    public async Task Backlog_OperatorCompletion_RestoresLastRealResultBeforeRefreshingScaffold()
+    {
+        var sha = _fixture.InitializeRepositoryWithIntegratedCommit();
+        _fixture.Settings.SetIntegrationBranch(TaskLanePipelineFixture.Project, "develop");
+        const string id = "accepted-prior-result";
+        _fixture.SeedTask(TaskStates.Backlog, id,
+            commits: [TaskLanePipelineFixture.Commit(sha, "contained delivery", 1)],
+            integrationBranch: "refs/heads/develop");
+        var folder = _fixture.Scanner.FindJob(id, _fixture.WatchPath)!.FolderPath;
+        const string real = "# Status\n- Result: Success\n\n## Overview\nThe delivered work is explained here.\n";
+        var versions = new ResultVersionStore(NullLogger<ResultVersionStore>.Instance);
+        versions.Replace(folder, real, ResultProducer.RunAttempt("1"), TaskStates.Backlog);
+        versions.Replace(folder, "<!-- agent-studio:result-scaffold -->\n# Status\n- Result: Partial\n",
+            ResultProducer.Scaffold(), TaskStates.Backlog);
+        CompletionContentFixture.RecordPassedReview(folder);
+        var transitions = _fixture.CreateTransitions(
+            integrationStatus: _fixture.CreateIntegrationStatus(), enforceGuard: true,
+            resultVersions: versions);
+
+        var outcome = await transitions.MoveAsync(id, TaskStates.Completed, _fixture.WatchPath,
+            cause: "human:operator", operatorOverride: true,
+            reason: "The delivery is already contained in develop.");
+
+        Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        Assert.Equal(real, File.ReadAllText(Path.Combine(outcome.NewFolderPath!, "status.md")));
+        Assert.Contains(versions.ReadLocalVersions(outcome.NewFolderPath!),
+            version => version.Markdown.Contains("agent-studio:result-scaffold", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AcceptedCards_StartupRepair_RestoresLastRealResultBehindScaffold()
+    {
+        const string id = "accepted-stale-scaffold";
+        _fixture.SeedTask(TaskStates.Completed, id);
+        var folder = _fixture.Scanner.FindJob(id, _fixture.WatchPath)!.FolderPath;
+        const string real = "# Status\n- Result: Success\n\n## Overview\nThe real summary survives.\n";
+        var versions = new ResultVersionStore(NullLogger<ResultVersionStore>.Instance);
+        versions.Replace(folder, real, ResultProducer.RunAttempt("1"), TaskStates.Completed);
+        versions.Replace(folder, "<!-- agent-studio:result-scaffold -->\n# Status\n- Result: Partial\n",
+            ResultProducer.Scaffold(), TaskStates.Completed);
+        var transitions = _fixture.CreateTransitions(resultVersions: versions);
+
+        var first = transitions.BackfillMissingResultDocuments();
+        var second = transitions.BackfillMissingResultDocuments();
+
+        Assert.Equal(1, first.Repaired);
+        Assert.Equal(0, second.Repaired);
+        Assert.Equal(real, File.ReadAllText(Path.Combine(folder, "status.md")));
+    }
+
+    [Fact]
     public async Task Ready_CompletionWithUncontainedDelivery_ReportsNotContained()
     {
         _fixture.InitializeRepositoryWithIntegratedCommit();
@@ -1234,7 +1285,8 @@ internal sealed class TaskLanePipelineFixture : IDisposable
         IAutoReviewPostProcessingQueue? autoReviewQueue = null,
         TaskIntegrationStatusService? integrationStatus = null,
         ReviewAttemptTaskLifecycleService? reviewAttemptLifecycle = null,
-        bool enforceGuard = false)
+        bool enforceGuard = false,
+        ResultVersionStore? resultVersions = null)
     {
         var selectedScanner = scanner ?? Scanner;
         var selectedStates = ReferenceEquals(selectedScanner, Scanner) && !enforceGuard
@@ -1266,6 +1318,7 @@ internal sealed class TaskLanePipelineFixture : IDisposable
             integrationStatus: integrationStatus,
             timeline: Timeline,
             reviewAttemptLifecycle: reviewAttemptLifecycle,
+            resultVersions: resultVersions,
             timeProvider: Clock);
     }
 

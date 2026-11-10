@@ -33,10 +33,15 @@ fresh host probes; **Refresh** reads them again.
 
 ![First-run checklist with its six steps: Owner account, Provider login on an execution host, GitHub read and write access, First project, Execution host, and Proof run](./images/your-first-task/first-run-checklist.png)
 
-1. **Owner account**: verified after step 1 above.
-2. **Provider login on an execution host**: each CLI needs a live
-   authentication probe on the host that runs it. Choose **Sign in** next to
-   the host's Codex or Claude badge and finish the device sign-in.
+1. **Owner account**: verified after step 1 above. In the local profile, no
+   owner sign-in is needed; the step reads **Not applicable** and does not
+   block the proof run.
+2. **Provider login on an execution host**: each listed Codex and Claude CLI
+   needs a fresh `ok` authentication probe on a host with a fresh heartbeat.
+   A degraded host, for example one above its CPU target, still meets this
+   check. An `ok` badge whose host or probe is stale shows why it does not
+   count. Choose **Sign in** next to the host's Codex or Claude badge and
+   finish the device sign-in.
 3. **GitHub read and write access**: recommended is **connect the GitHub App**
    ([github-app.md](./github-app.md)). Otherwise choose the **Access method**
    (**Generated deploy key** or **GitHub token**), then **Configure access on
@@ -93,8 +98,8 @@ Studio merges a delivery only when a check verified it, or when the repository
 declares on purpose that it has none. Until the repository has
 `.agent-studio/project.yml`, or a root `.sln`/`.csproj` or `package.json`
 scripts from which commands can be derived, Project Settings shows **No verify
-commands defined** with the badge **Merges refused** and a generated example
-for the repository's stack.
+commands defined** with the badge **Merges refused** and a generated schema 2
+example for the repository's stack.
 
 ![Project Settings notice No verify commands defined, Merges refused, with a generated project.yml example](./images/your-first-task/project-yml-missing.png)
 
@@ -102,7 +107,9 @@ Commit the file and an executable prepare script to the integration branch of
 the product repository, for example for a Node repository:
 
 ```yaml
-schemaVersion: 1
+schemaVersion: 2
+project:
+  id: my-project
 stack: [node]
 commands:
   prepare: .agent-studio/prepare
@@ -125,8 +132,9 @@ git update-index --chmod=+x .agent-studio/prepare
 git commit -m "chore: add Agent Studio project definition"
 ```
 
-A repository without checks declares that with empty `build`, `test` and
-`lint` lists; the gate then records **No build/test defined** and merges.
+Schema 2 needs the `project.id` block; an existing schema 1 file without it
+stays valid. A repository without checks declares that with empty `build`,
+`test` and `lint` lists; the gate then records **No build/test defined** and merges.
 The authoring rules and the smallest valid file are in
 [pipeline.md](../../system/domains/pipeline.md#minimal-repository-execution-definition-aow-15).
 
