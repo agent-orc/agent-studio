@@ -131,9 +131,8 @@ public static class MonolithTransitionAdapter
     public static bool PerTaskGateSlotFree(int perTaskGates, int slotsTotal)
         => BatchGateLookAheadPlanner.PerTaskGateSlotFree(perTaskGates, slotsTotal);
 
-    public static IReadOnlyList<string> BatchStartOrder(IEnumerable<BatchGateStartCandidate> formed,
-        DateTimeOffset nowUtc)
-        => BatchGateStartPolicy.Order(formed, nowUtc);
+    public static IReadOnlyList<string> BatchStartOrder(IEnumerable<BatchGateStartCandidate> formed)
+        => BatchGateStartPolicy.Order(formed);
 
     public static bool BatchFlightLeaseDeadlinePassed(DateTimeOffset startedAtUtc, bool leaseClaimed,
         DateTimeOffset nowUtc, int deadlineMinutes)
