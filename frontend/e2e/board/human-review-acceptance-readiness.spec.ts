@@ -328,9 +328,11 @@ test.describe('Human Review acceptance readiness', () => {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
       if (width === 1280) await openBoard(page);
       if (width === 390) {
-        // On a phone the owner focuses the Done & Decide group (board shortcut 3).
-        await page.locator('body').press('3');
-        await expect(page.getByTestId('lane-group-decide')).toHaveClass(/lane-group--focused/);
+        // On a phone the group switcher selects the one visible container.
+        const decide = page.getByTestId('board-group-switch-decide');
+        await decide.click();
+        await expect(decide).toHaveAttribute('aria-pressed', 'true');
+        await expect(page.getByTestId('lane-group-decide')).toBeVisible();
         await expect(page.getByTestId('acceptance-accept-ready')).toBeInViewport();
       }
       for (const theme of ['light', 'dark'] as const) {
