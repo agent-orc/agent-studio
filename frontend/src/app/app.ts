@@ -797,6 +797,9 @@ export class App implements OnInit, OnDestroy {
     });
     effect(() => {
       if (this.projectHubUrls.appliedRevision() === 0) return;
+      // A Hub resolution may release its route gate. A task URL still owns
+      // that gate until its detail has opened the matching task tab.
+      if (parseStudioRoute(window.location.hash)?.kind !== 'hub') return;
       untracked(() => this.studioRouteReady.set(true));
     });
 

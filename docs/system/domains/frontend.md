@@ -81,6 +81,10 @@ renderers outside the board startup graph.
 
 ## Environment flow
 
+Environment > Installation shows a single one shot claim route status for the
+local monolith, where that Task Server route is unavailable. The runner retries
+the route every five minutes without filling its log with repeated 404 entries.
+
 DP-S6 renders canary attempt rows beneath their physical host using
 `GET /api/v1/management/attempt-visibility`. Active occupancy follows the
 Task Server lease and host executor receipt; a verified cleanup releases
