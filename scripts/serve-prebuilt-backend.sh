@@ -54,6 +54,20 @@ case "${PW_E2E_PROFILE:-standard}" in
     export Security__TrustedProxyAddresses=127.0.0.1
     export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
     ;;
+  # networked-https: a networked monolith with a second project, so a Product
+  # session bound to the first one proves it never sees the other (AGT-3668).
+  networked-https)
+    export Security__Profile=networked
+    export Security__TrustedProxyAddresses=127.0.0.1
+    export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
+    restricted_repo="${PW_E2E_WORKSPACE}/projects/restricted-fixture"
+    mkdir -p "${restricted_repo}"
+    git -C "${restricted_repo}" init -q
+    export WatchPaths__1__Name='Restricted Fixture'
+    export WatchPaths__1__Path="${restricted_repo}"
+    export WatchPaths__1__RootPath="${restricted_repo}"
+    export WatchPaths__1__RepositoryPath="${restricted_repo}"
+    ;;
   recovery)
     recovery_repo="${PW_E2E_WORKSPACE}/recovery-repository"
     mkdir -p "${recovery_repo}"

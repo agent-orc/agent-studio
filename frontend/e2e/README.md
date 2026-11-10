@@ -57,6 +57,22 @@ The spec covers the desktop project picker and the narrow-screen **More →
 Switch project** path at 1280 and 390 px in both themes. With
 `JOB_RESULTS_DIR` set, it writes four screenshots there for review.
 
+### Product session over HTTPS
+
+Run `npm --prefix frontend run e2e -- e2e/security/product-session-networked-https.spec.ts`
+from the task worktree. The spec selects the `networked-https` Playwright
+profile: a fresh networked monolith with a second watched project
+(`Restricted Fixture`) behind a frontend proxy that serves a temporary
+localhost HTTPS certificate, forwards the secure scheme and keeps the browser's
+Host header, so the real sign-in form stores the Secure `__Host-` session
+cookie. Nothing about auth, the registry or the watch paths is mocked. The
+Owner is bootstrapped through the API, invites a Product user on the first
+project, and that user signs in through the form, checks the Explorer, project
+picker, Project Chat and Add task dialog, and files a card. A second Product
+user whose only binding is removed sees the no-project sentence. With
+`JOB_RESULTS_DIR` set, it writes light, dark and 390 px screenshots to
+`product-session/` there.
+
 ## Suite layout
 
 Specs are grouped by domain under `e2e/<folder>/`, mirroring the feature

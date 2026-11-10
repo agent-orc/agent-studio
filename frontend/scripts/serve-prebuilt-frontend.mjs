@@ -15,8 +15,8 @@ const proxyOptions = (backend, request) => ({
   hostname: backend.hostname.replace(/^\[|\]$/g, ''), port: backend.port || 80,
   path: request.url, method: request.method,
   headers: { ...request.headers,
-    host: process.env.PW_E2E_PROFILE === 'public-demo' ? request.headers.host : backend.host,
-    ...(['networked-monolith', 'operator-cli', 'public-demo'].includes(process.env.PW_E2E_PROFILE ?? '') ? { 'x-forwarded-proto': 'https' } : {}) },
+    host: ['public-demo', 'networked-https'].includes(process.env.PW_E2E_PROFILE ?? '') ? request.headers.host : backend.host,
+    ...(['networked-monolith', 'networked-https', 'operator-cli', 'public-demo'].includes(process.env.PW_E2E_PROFILE ?? '') ? { 'x-forwarded-proto': 'https' } : {}) },
 });
 
 async function createFrontendHandlers(directory, backendUrl) {
@@ -121,7 +121,7 @@ const ipv6Unavailable = new Set(['EADDRNOTAVAIL', 'EAFNOSUPPORT']);
 // stays IPv4-only on purpose: the connector owns [::1]:5031.
 export async function startFrontendServer(directory, port, backendUrl, { listen = listenOn } = {}) {
   const { handleRequest, handleUpgrade } = await createFrontendHandlers(directory, backendUrl);
-  const tls = process.env.PW_E2E_PROFILE === 'public-demo';
+  const tls = ['public-demo', 'networked-https'].includes(process.env.PW_E2E_PROFILE ?? '');
   const create = () => (tls
     ? https.createServer({ key: readFileSync(process.env.PW_E2E_TLS_KEY), cert: readFileSync(process.env.PW_E2E_TLS_CERT) }, handleRequest)
     : http.createServer(handleRequest)).on('upgrade', handleUpgrade);

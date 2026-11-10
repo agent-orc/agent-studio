@@ -5,6 +5,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TaskService, orchestratorContextChatSegment } from './task.service';
 import { ErrorDialogService } from './error-dialog.service';
+import { AuthSessionState } from './auth.service';
 import { JobsHubClient, type JobsHubHandlers } from './jobs-hub-client.service';
 import type { TaskDetail, TaskInfo } from '../models/task.model';
 
@@ -237,6 +238,18 @@ describe('TaskService', () => {
     expect(service.grouped().autoReview).toEqual([task]);
     expect(service.jobs()).toEqual([task]);
     expect(service.loading()).toBe(false);
+  });
+
+  it('never asks for installation-wide runner status from a Product session (AGT-3668)', () => {
+    TestBed.inject(AuthSessionState).status.set({
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr-1', username: 'carla', displayName: 'Carla', role: 'contributor', projects: ['PROJ-1'],
+        disabled: false, mustChangePassword: false },
+    });
+
+    service.refreshRunnerStatus();
+
+    http.expectNone('/api/v1/studio/runner/status');
   });
 
   it('restores the task key a board card leaves out as watchPath::id', () => {
