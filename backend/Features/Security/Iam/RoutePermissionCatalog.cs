@@ -438,7 +438,7 @@ public static class RoutePermissionCatalog
         // --- Runs, pipeline, integration, and project actions --------------
         Under("W", IamPermissions.ProjectRunsOperate, "/api/tasks/{}",
             "start", "stop", "continue", "failure/continue", "re-evaluate", "restore-from-failed-pickup", "dispatch-rejection",
-            "pipeline/**", "integration/**", "integration-records", "commits/integration", "git/**", "code-review",
+            "pipeline/**", "review-results", "integration/**", "integration-records", "commits/integration", "git/**", "code-review",
             "external-completion", "summary/**", "context-usage/refresh", "conversation/invalidate",
             "older-brief-delivery/decision", "open-in-vscode", "review-evidence/**", "preview-feedback",
             "merge", "merge/**", "content-review");
@@ -456,6 +456,7 @@ public static class RoutePermissionCatalog
         Add("POST", IamPermissions.ProjectRunsOperate, "/api/projects/{}/batch-gate/queue-stalls/release");
         Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/failed-tests");
         Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/isolation-evidence");
+        Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/execution/proposal-preview");
 
         // --- Documents -----------------------------------------------------
         Under("W", IamPermissions.ProjectDocsWrite, "/api/projects/{}",

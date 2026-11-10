@@ -208,6 +208,35 @@ public sealed class AcceptedIntegrationBackstopPolicyTests
         Assert.Equal(expected, AcceptedIntegrationBackstopPolicy.IsRecoveryCandidate(task));
     }
 
+    [Theory]
+    [InlineData(LaneChangeCauses.AcceptanceIntegrationFailed, DeliveryChainReasons.VerdictStale, false)]
+    [InlineData(LaneChangeCauses.Promoted, DeliveryChainReasons.Integrated, false)]
+    [InlineData(LaneChangeCauses.ReviewVerdict, null, true)]
+    [InlineData(null, null, true)]
+    public void RecoveryCandidate_IgnoresAnIntegrationPhaseCarriedInByAPromotion(
+        string? cause,
+        string? causeDetail,
+        bool expected)
+    {
+        // AGT-3621: the delivery chain promoted an integrated card with its Auto
+        // Review phase still set. That is no operator acceptance to finish.
+        var task = Candidate("AGT-3621", 10, lastOutcome: null).Task with
+        {
+            State = TaskStates.HumanReview,
+            Phase = LifecyclePhases.Integrating,
+            ParkedBlocker = new ParkedBlockerStatus("operator-decision", "manual", "Only a person can clear this park.",
+                Now.AddMinutes(-10), 600, "Integrate the current delivery and repeat review.", "blocked", null, "")
+            {
+                Lane = TaskStates.HumanReview,
+                Cause = cause,
+                CauseDetail = causeDetail,
+            },
+        };
+
+        Assert.Equal(!expected, AcceptedIntegrationBackstopPolicy.CarriesPromotionPhase(task));
+        Assert.Equal(expected, AcceptedIntegrationBackstopPolicy.IsRecoveryCandidate(task));
+    }
+
     [Fact]
     public void Alert_AcceptedEpicWithoutCommitsAndWithoutBranch_IsNotInAlert()
     {

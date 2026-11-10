@@ -33,6 +33,7 @@ export class ProjectHubUrlService {
   private readonly started = signal(false);
   readonly appliedRevision = signal(0);
   private routeInitialized = false;
+  private deferredTab: StudioTab | null = null;
 
   constructor() {
     effect(() => {
@@ -46,7 +47,15 @@ export class ProjectHubUrlService {
         if (!this.routeInitialized) {
           this.routeInitialized = true;
           if (this.applyHash(false)) return;
+          // A cold task (or other Studio) URL takes precedence over the tab
+          // restored from localStorage. The route owner will activate its tab.
+          if (window.location.hash && !isProjectHubRoute(window.location.hash)) {
+            this.deferredTab = tab;
+            return;
+          }
         }
+        if (this.deferredTab === tab) return;
+        this.deferredTab = null;
         this.publish(tab);
       });
     });
@@ -66,6 +75,7 @@ export class ProjectHubUrlService {
   stop(): void {
     this.started.set(false);
     this.routeInitialized = false;
+    this.deferredTab = null;
   }
 
   projectIdForName(projectName: string): string | null {

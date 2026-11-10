@@ -76,7 +76,7 @@ cmd_start() {
 
 cmd_stop() {
   require_dev_checkout
-  if ! is_healthy && ! [[ -f "${DEV_CHECKOUT}/.api.pid" ]]; then
+  if ! is_healthy && ! [[ -f "${DEV_CHECKOUT}/.api.${DEV_PORT}.pid" ]]; then
     log "dev backend already stopped (no-op)"
     exit 0
   fi

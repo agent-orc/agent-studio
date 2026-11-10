@@ -21,6 +21,14 @@ import { isGitFactsWarming } from '../../../utils/git-facts-warming';
 export const DIFF_WARMING_TEXT = '(The diff is still being prepared. Select the file again in a moment.)';
 
 /**
+ * Longest time the git-dependent acceptance primary waits for the provenance
+ * reply (AGT-3621). The computed integration field already decides whether
+ * Accept may act; provenance only refines the status wording, so a slow or
+ * stuck graph read must not hold the button past the 10 s pending contract.
+ */
+export const PROVENANCE_WAIT_MS = 8000;
+
+/**
  * Owns the Git pane state and API calls for a single job-detail
  * instance: working-tree status, the currently-selected diff path and
  * its body, the commit-message draft, and the generate/commit progress
@@ -154,6 +162,9 @@ export class GitPaneService implements OnDestroy {
    * acceptance primary does not flicker back into a skeleton on every poll.
    */
   readonly provenanceLoaded = signal(false);
+  /** Job and chain signature of the last provenance request, so a repeated ask does not refetch. */
+  private provenanceRequestKey: string | null = null;
+  private provenanceWaitTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * Ordered chain of commits attributed to this task (oldest -&gt; newest).
@@ -230,6 +241,7 @@ export class GitPaneService implements OnDestroy {
 
   ngOnDestroy(): void {
     this.stopAutoRefresh();
+    this.clearProvenanceWait();
   }
 
   /**
@@ -242,7 +254,12 @@ export class GitPaneService implements OnDestroy {
    * chain, which would otherwise re-run that effect forever (AGT-3096).
    */
   setJob(info: TaskInfo | null | undefined, visible = true): void {
-    untracked(() => this.applyJob(info, visible));
+    untracked(() => {
+      this.applyJob(info, visible);
+      // AGT-3621: the Human Review Accept waits for provenance, so it loads
+      // even while the Git pane stays closed (closed is the default layout).
+      if (info?.state === TaskState.HumanReview) this.ensureProvenance();
+    });
   }
 
   private applyJob(info: TaskInfo | null | undefined, visible: boolean): void {
@@ -269,7 +286,7 @@ export class GitPaneService implements OnDestroy {
       if (visible && this.resourcesPending) {
         this.resourcesPending = false;
         this.applyCommitDefault(chain);
-        this.loadProvenance();
+        this.ensureProvenance();
         this.loadCodeReviews();
       } else if (chainChanged && visible) {
         this.applyCommitDefault(chain);
@@ -295,6 +312,8 @@ export class GitPaneService implements OnDestroy {
     this.generatingMsg.set(false);
     this.provenance.set(null);
     this.provenanceLoaded.set(false);
+    this.provenanceRequestKey = null;
+    this.clearProvenanceWait();
     this.codeReviews.set([]);
     this.clearDiffCache();
     this.previewCache.clear();
@@ -341,13 +360,48 @@ export class GitPaneService implements OnDestroy {
   loadProvenance(): void {
     const info = this.currentJob;
     if (!info) return;
+    this.provenanceRequestKey = provenanceRequestKey(info, this.commitChain());
+    // AGT-3621: bound the wait. A reply that has not settled in time releases
+    // the acceptance primary; a late reply still refines the status wording.
+    if (!this.provenanceLoaded() && this.provenanceWaitTimer === null) {
+      this.provenanceWaitTimer = setTimeout(() => {
+        this.provenanceWaitTimer = null;
+        if (sameJobIdentity(this.currentJob, info)) this.provenanceLoaded.set(true);
+      }, PROVENANCE_WAIT_MS);
+    }
     this.jobService.getTaskProvenance(info.id, info.watchPath).subscribe({
       // Flip the resolved flag on both settle paths: a failed load still means
       // "we are no longer waiting". Acceptance still reads target membership
       // only from the task's computed integration field.
-      next: (view) => { this.provenance.set(view); this.provenanceLoaded.set(true); },
-      error: () => { this.provenance.set(null); this.provenanceLoaded.set(true); },
+      next: (view) => this.settleProvenance(info, view),
+      error: () => this.settleProvenance(info, null),
     });
+  }
+
+  /**
+   * Load provenance once for the current job and commit chain, also while the
+   * Git pane is hidden. The detail header calls this for a card whose primary
+   * depends on it (the Human Review Accept), because the pane may never open
+   * and the button must not wait for it (AGT-3621).
+   */
+  ensureProvenance(): void {
+    const info = this.currentJob;
+    if (!info || this.provenanceRequestKey === provenanceRequestKey(info, this.commitChain())) return;
+    this.loadProvenance();
+  }
+
+  private settleProvenance(info: TaskInfo, view: TaskProvenanceView | null): void {
+    // A reply for a job the view has already left must not overwrite the new job.
+    if (!sameJobIdentity(this.currentJob, info)) return;
+    this.provenance.set(view);
+    this.provenanceLoaded.set(true);
+    this.clearProvenanceWait();
+  }
+
+  private clearProvenanceWait(): void {
+    if (this.provenanceWaitTimer === null) return;
+    clearTimeout(this.provenanceWaitTimer);
+    this.provenanceWaitTimer = null;
   }
 
   /**
@@ -708,6 +762,14 @@ export class GitPaneService implements OnDestroy {
         this.errorDialog.show(err, { title: 'Open in VS Code failed', source: `Task ${info.id}` }),
     });
   }
+}
+
+function sameJobIdentity(a: TaskInfo | null, b: TaskInfo | null): boolean {
+  return !!a && !!b && a.id === b.id && a.watchPath === b.watchPath;
+}
+
+function provenanceRequestKey(info: TaskInfo, chain: TaskCommitInfo[]): string {
+  return `${info.watchPath}\u0000${info.id}\u0000${commitChainSignature(chain)}`;
 }
 
 function commitChainSignature(chain: TaskCommitInfo[]): string {

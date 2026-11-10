@@ -194,6 +194,27 @@ describe('DeliveryClaimPanelComponent', () => {
       .toContain('By human:operator · Delivery brief aaaaaaaaaaaa · Current brief bbbbbbbbbbbb');
     expect(host.querySelector('[data-testid="delivery-claim-panel"]')?.getAttribute('data-integration'))
       .toBe('not-integrated');
+    expect(host.querySelector('[data-testid="delivery-claim-panel"]')?.getAttribute('data-settled'))
+      .toBe('true');
+  });
+
+  it('says who accepted the card when the system accepted it automatically (AGT-3621)', async () => {
+    const claim = {
+      basis: 'integrated-delivery' as const,
+      evidence: 'Contained in develop.',
+      actor: 'system',
+      recordedAt: '2026-11-09T10:00:00Z',
+    };
+    const automatic = await mount(job(), vi.fn(() => of(answer({ completionClaim: {
+      ...claim, acceptedAutomaticallyBy: 'the acceptance rail (project autonomy Balanced)',
+    } }))));
+    expect((automatic.nativeElement as HTMLElement)
+      .querySelector('[data-testid="delivery-claim-automatic-acceptance"]')?.textContent)
+      .toContain('Accepted automatically by the acceptance rail (project autonomy Balanced).');
+
+    const person = await mount(job(), vi.fn(() => of(answer({ completionClaim: { ...claim, actor: 'human:operator' } }))));
+    expect((person.nativeElement as HTMLElement)
+      .querySelector('[data-testid="delivery-claim-automatic-acceptance"]')).toBeNull();
   });
 
   it('falls back to the board projection when the lookup fails', async () => {
