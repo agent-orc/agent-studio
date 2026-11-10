@@ -3697,6 +3697,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
         new(StringComparer.Ordinal);
     private readonly Dictionary<string, ReviewRestartStatus> _reviewRestarts =
         new(StringComparer.Ordinal);
+    private readonly List<Contract.ClaimGateEventDto> _claimGateEvents = [];
+    private long _claimGateSequence;
     private readonly object _gate = new();
     private readonly TimeProvider _time;
     private readonly AgentStudio.Watcher.ProviderRouteExclusions? _routeExclusions;
@@ -4063,6 +4065,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     Detail = "The provider refused this model for the host login.",
                 };
             }).ToArray();
+            RecordClaimGateTransitionLocked(runnerId, registration.HostId,
+                existing?.Telemetry, request.Telemetry);
             _capabilityStates[runnerId] = new CapabilityState(
                 request.InstanceId,
                 request.Generation,
@@ -4107,6 +4111,37 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
         }
         CapabilitySnapshotAdvertised?.Invoke(runnerId, advertisedAt);
         return result;
+    }
+
+    /// <summary>
+    /// Claim gate transitions seen in this process, newest first. The
+    /// standalone Task Server keeps the durable copy in its audit log.
+    /// </summary>
+    public IReadOnlyList<Contract.ClaimGateEventDto> ListClaimGateEvents(int days)
+    {
+        var cutoff = _time.GetUtcNow().UtcDateTime.AddDays(-Math.Clamp(days, 1, 90));
+        lock (_gate)
+            return _claimGateEvents.Where(item => item.OccurredAt >= cutoff).Reverse().ToArray();
+    }
+
+    private void RecordClaimGateTransitionLocked(
+        string runnerId,
+        string? hostId,
+        Contract.HostTelemetrySnapshotDto? previous,
+        Contract.HostTelemetrySnapshotDto? current)
+    {
+        var before = previous?.ClaimLoadGate;
+        if (current?.ClaimLoadGate is not { } gate || gate.State == before?.State
+            || (gate.State != "closed" && before?.State != "closed"))
+            return;
+        var stopped = gate.State == "closed";
+        var duration = stopped ? gate.SustainedSeconds
+            : before?.Since is { } since ? Math.Max(0, (long)(current.ObservedAt - since).TotalSeconds) : 0;
+        _claimGateEvents.Add(new Contract.ClaimGateEventDto(
+            ++_claimGateSequence, current.ObservedAt.ToUniversalTime(), runnerId, hostId,
+            stopped ? "claim-stopped" : "claim-resumed",
+            gate.LoadPerCore, gate.Threshold, duration, gate.ActiveSlots));
+        if (_claimGateEvents.Count > 200) _claimGateEvents.RemoveAt(0);
     }
 
     public void RecordReAdoptedSlots(string runnerId, string instanceId, int activeSlots)

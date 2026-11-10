@@ -1,5 +1,6 @@
 import type { RemoteHost } from './remote-host.model';
 import { hostReadiness } from './host-readiness';
+import { claimLoadGateLabel, hostsNotClaiming, notClaimingLabel } from './claim-load-gate';
 import type { OperationalStallCase } from '../../orchestrator/models/orchestrator.model';
 import type { RunnerInfrastructureFailure } from '../services/remote-hosts.service';
 import type { ReviewQueueSnapshot } from '../services/review-queue.service';
@@ -48,6 +49,16 @@ export function buildEnvironmentAttention(input: EnvironmentAttentionInput): Env
       add(`link:${host.id}`, `${host.name}: ${host.runnerLink.lastError || 'Runner link is down.'}`,
         host.runnerLink.since, host.id, 'reconnect');
     }
+  }
+  // A closed claim gate is one cause: free slots on these hosts take no new work.
+  const notClaiming = hostsNotClaiming(input.hosts);
+  if (notClaiming.length) {
+    const first = notClaiming[0];
+    const statement = notClaiming.length === 1
+      ? `${first.name}: ${claimLoadGateLabel(first.claimLoadGate!)}. Running work continues.`
+      : `${notClaimingLabel(notClaiming.length)}: load per core is above the claim threshold. Running work continues.`;
+    causes.set('claim-load-gate:closed', { id: 'claim-load-gate:closed', statement,
+      count: notClaiming.length, since: first.claimLoadGate?.since ?? null, hostId: first.id, action: null });
   }
   for (const stall of input.stalls) {
     if (!stall.subject.startsWith('host:') && !stall.subject.startsWith('container:')) continue;

@@ -198,7 +198,7 @@ async function stubGroupedHostApis(page: Page, claimGate = false) {
           cpuStealPercent: 0,
           ioWaitPercent: 0,
           cpuCores: 8,
-          activeSlots: 0,
+          activeSlots: claimGate && !review ? 7 : 0,
         }],
       }),
     });
@@ -589,7 +589,7 @@ test.describe('Execution Hosts settings section', () => {
     expect(errors).toEqual([]);
   });
 
-  test('shows open operational stalls in the Studio header and Execution Hosts', async ({ page }) => {
+  test('shows open operational stalls in Execution Hosts', async ({ page }) => {
     await page.route('**/api/watcher/stalls', route => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify({ count: 2, cases: [
         { id: 'WCH-1', project: '_workspace', subject: 'host:agent-runner-01', severity: 'critical', affectedCards: ['AGT-1'], blockedCount: 1,
@@ -613,7 +613,6 @@ test.describe('Execution Hosts settings section', () => {
     }));
     await page.reload();
     await page.goto('/#/workspace/settings/execution-hosts');
-    await expect(page.getByTestId('studio-open-stalls')).toContainText('2');
     const attention = page.getByTestId('environment-attention');
     await expect(attention).toBeVisible();
     await attention.getByRole('button').first().click();
@@ -848,7 +847,7 @@ test.describe('Execution Hosts settings section', () => {
     await page.screenshot({ path: join(SHOT_DIR, `execution-hosts-${EVIDENCE_PHASE}-dark--mocked.png`), fullPage: false });
   });
 
-  test('shows claim load gate beside slots at desktop and mobile widths', async ({ page, devBackend: _devBackend }) => {
+  test('surfaces a closed claim gate in the footer, attention list, slots and History at desktop and mobile widths', async ({ page, devBackend: _devBackend }) => {
     void _devBackend;
     await stubGroupedHostApis(page, true);
     const progress = Array.from({ length: 7 }, (_, index) => ({
@@ -866,16 +865,45 @@ test.describe('Execution Hosts settings section', () => {
       failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [],
       escalated: [], review: [], completed: [], archive: [], gitStateAt: null, stale: false,
     } }));
+    const now = Date.now();
+    await page.route('**/api/v1/management/claim-gate-events?days=14', route => route.fulfill({ json: [
+      { sequence: 3, occurredAt: new Date(now - 702_000).toISOString(), runnerId: 'agent-runner-01',
+        hostId: 'agent-runner-01', event: 'claim-stopped', loadPerCore: 5.51, threshold: 4,
+        durationSeconds: 702, activeSlots: 7 },
+      { sequence: 2, occurredAt: new Date(now - 3_600_000).toISOString(), runnerId: 'agent-runner-01',
+        hostId: 'agent-runner-01', event: 'claim-resumed', loadPerCore: 3.2, threshold: 4,
+        durationSeconds: 1380, activeSlots: 4 },
+    ] }));
     mkdirSync(SHOT_DIR, { recursive: true });
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 900 });
-      await page.goto('/#/workspace/settings/execution-hosts');
-      const row = page.getByTestId('remote-host-primary-row').filter({ hasText: 'agent-runner-01' }).first();
-      if (await row.isVisible()) await row.click();
-      else await expect(page.getByTestId('remote-host-detail-row')).toBeVisible();
-      const gate = page.getByTestId('remote-host-claim-load-gate');
-      await expect(page.getByTestId('remote-host-detail-row').getByTestId('remote-host-machine-slots'))
-        .toContainText('7 / 12');
+      await page.goto('/#/board');
+      // A hash change keeps the app instance; reload so the footer reads the stubbed hosts now.
+      await page.reload();
+      const footer = page.getByTestId('status-bar-running');
+      if (await footer.isVisible()) {
+        await expect(footer).toContainText('1 host not claiming');
+        await footer.click();
+        await expect.poll(() => new URL(page.url()).hash).toContain('/workspace/settings/environment?host=agent-runner-01');
+      } else {
+        await page.goto('/#/workspace/settings/environment?host=agent-runner-01');
+      }
+      const panel = page.getByTestId('remote-hosts-panel');
+      const attention = panel.getByTestId('environment-attention');
+      await expect(attention).toContainText('agent-runner-01: Not claiming: load 5.5 per core above 4.0 for 12 min');
+      const rows = panel.getByTestId('remote-host-primary-row');
+      await expect(panel.getByTestId('remote-hosts-summary-machines')).toHaveText(`${await rows.count()} machines`);
+      if (width === 1280) {
+        // At narrow widths the selected detail replaces the list.
+        const row = panel.locator('[data-testid="remote-host-primary-row"][data-host-row="agent-runner-01"]');
+        await expect(row.getByTestId('remote-host-not-claiming')).toBeVisible();
+        await expect(row.getByTestId('remote-host-machine-slots')).toHaveText('7 / 12');
+      }
+      const detail = panel.getByTestId('remote-host-detail-row');
+      await expect(detail).toContainText('agent-runner-01');
+      const gate = detail.getByTestId('remote-host-claim-load-gate');
+      await expect(detail.getByTestId('remote-host-machine-slots')).toContainText('7 / 12');
+      await expect(detail.getByTestId('remote-host-detail-toggle-work')).toContainText('7 active');
       await expect(gate).toContainText('Not claiming: load 5.5 per core above 4.0 for 12 min');
       await gate.scrollIntoViewIfNeeded();
       for (const theme of ['light', 'dark'] as const) {
@@ -883,6 +911,30 @@ test.describe('Execution Hosts settings section', () => {
         await page.screenshot({ path: join(SHOT_DIR, `claim-load-gate-hosts-${width}-${theme}.png`),
           animations: 'disabled' });
       }
+      await page.getByTestId('environment-history-toggle').click();
+      const history = page.getByTestId('claim-gate-history');
+      await expect(history.getByTestId('claim-gate-event')).toHaveCount(2);
+      await expect(history.getByTestId('claim-gate-event').first()).toContainText('Claim stopped');
+      await expect(history.getByTestId('claim-gate-event').first()).toContainText('Load 5.5 per core above 4.0 for 12 min');
+      await expect(history.getByTestId('claim-gate-event').nth(1)).toContainText('Not claiming for 23 min');
+      await history.scrollIntoViewIfNeeded();
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await page.screenshot({ path: join(SHOT_DIR, `claim-gate-history-${width}-${theme}.png`),
+          animations: 'disabled' });
+      }
+      await page.getByTestId('environment-list-toggle').click();
+    }
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto('/#/board');
+    await page.reload();
+    const footer = page.getByTestId('status-bar-running');
+    await expect(footer).toContainText('1 host not claiming');
+    await footer.scrollIntoViewIfNeeded();
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.getByTestId('status-bar').screenshot({ path: join(SHOT_DIR, `claim-load-gate-footer-${theme}.png`),
+        animations: 'disabled' });
     }
   });
 

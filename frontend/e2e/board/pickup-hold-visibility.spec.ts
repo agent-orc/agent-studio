@@ -242,10 +242,49 @@ function detail(card: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-async function installRoutes(page: Page): Promise<void> {
+async function installRoutes(page: Page, cards: readonly Record<string, unknown>[] = CARDS): Promise<void> {
   await page.route('**/api/**', route => json(route, []));
-  for (const card of CARDS) {
-    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${card.id}(\\?|$)`), route => json(route, detail(card)));
+  await page.route('**/api/v1/projects', route => json(route, [{
+    id: 'PROJ-001', displayName: PROJECT, shortCode: 'PH', workspaceId: 'ws-default', archived: false,
+  }]));
+  await page.route('**/api/v1/workspaces**', route => json(route, [{
+    id: 'ws-default', displayName: 'Default', sortOrder: 0, isDefault: true,
+    projects: [{ id: 'PROJ-001', displayName: PROJECT, shortCode: 'PH',
+      workspaceId: 'ws-default', archived: false }],
+  }]));
+  for (const card of cards) {
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${card['id']}(\\?|$)`), route => json(route, detail(card)));
+    await page.route(`**/api/tasks/${card['id']}/core**`, route => json(route, {
+      state: 'ready', projectId: 'PROJ-001', projectName: PROJECT,
+      id: card['id'], taskKey: card['taskKey'], watchPath: WATCH_PATH,
+      folderPath: card['folderPath'], key: card['key'], title: card['title'],
+      kind: 'task', taskType: 'chore', lane: '2-ready',
+      enteredLaneAt: card['createdAt'], order: card['order'], mode: 'coding',
+      released: false, pendingIntent: false,
+      pins: { modelExplicit: false, thinkingLevelExplicit: false,
+        allowWebAccess: false, noBranchExpected: false },
+      actions: { canEdit: true, canMove: true, canDelete: true, canContinue: true },
+      blocking: { dependencyBlocked: false, dependencyState: 'ready',
+        dependencies: [], dependsOn: [], blockedBy: [] },
+      runtime: { location: 'none', leaseState: 'none' }, runtimeVersion: 'r0',
+      statusSummary: { state: 'missing', originalBytes: 0 },
+      prompt: { state: 'ready', text: 'A coding task.', originalBytes: 14 },
+      timeline: { state: 'missing', events: [], originalBytes: 0 }, coreVersion: '1',
+    }));
+    await page.route(`**/api/tasks/${card['id']}/details/*`, route => {
+      const url = new URL(route.request().url());
+      const resource = url.pathname.split('/').at(-1);
+      const data = resource === 'documents'
+        ? { name: url.searchParams.get('name'), markdown: 'A coding task.', summaryState: null }
+        : resource === 'usage'
+          ? { tokenSummary: null, lastUsage: null, contextUsage: null }
+          : resource === 'overview' ? {} : { evidence: [], reviewProjection: null };
+      return json(route, {
+        id: card['id'], taskKey: card['taskKey'], projectId: url.searchParams.get('project'),
+        attemptId: null, coreVersion: '1', resource, version: '1',
+        computedAt: null, state: 'ready', data, reason: null,
+      });
+    });
   }
   // A registered project keeps FirstRunLaunchService from opening the first-run checklist over the board.
   const registered = {
@@ -265,9 +304,9 @@ async function installRoutes(page: Page): Promise<void> {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0 }));
-  await page.route(/\/api\/tasks(\?|$)/, route => json(route, CARDS));
+  await page.route(/\/api\/tasks(\?|$)/, route => json(route, cards));
   await page.route('**/api/v1/studio/board**', route => json(route, {
-    backlog: [], preparation: [], orchestratorPrep: [], ready: CARDS,
+    backlog: [], preparation: [], orchestratorPrep: [], ready: cards,
     progress: [], failedPickup: [], codeNotComplete: [], autoReview: [],
     review: [], humanReview: [], escalated: [], completed: [], archive: [],
   }));
@@ -290,7 +329,7 @@ async function installRoutes(page: Page): Promise<void> {
   }));
 }
 
-async function openBoard(page: Page): Promise<void> {
+async function openBoard(page: Page, cards: readonly Record<string, unknown>[] = CARDS): Promise<void> {
   await page.setViewportSize({ width: 1600, height: 960 });
   await page.clock.setFixedTime(new Date(NOW));
   await page.addInitScript(() => {
@@ -301,7 +340,7 @@ async function openBoard(page: Page): Promise<void> {
       activeKey: 'board:__all__',
     }));
   });
-  await installRoutes(page);
+  await installRoutes(page, cards);
   await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded' });
   await expect(page.getByTestId('studio-board')).toBeVisible({ timeout: 15_000 });
   await dismissDevErrorDialog(page);
@@ -387,6 +426,48 @@ test.describe('pickup holds are visible where the card claims to be queued', () 
     const body = (await editRequest).postDataJSON() as { remove: string[]; reason: string };
     expect(body.remove).toEqual(['AGT-2372']);
     expect(body.reason).toContain('Operator dropped unsatisfiable dependency AGT-2372');
+  });
+
+  test('a local coding hold opens the execution location in Project Settings', async ({ page }) => {
+    mkdirSync(RESULTS, { recursive: true });
+    const held = {
+      ...PICKABLE_CARD,
+      id: 'agt-local-placement', key: 'AGT-9002', displayKey: 'AGT-9002',
+      taskKey: `${WATCH_PATH}::agt-local-placement`,
+      title: 'First coding card on a local checkout',
+      folderPath: `${WATCH_PATH}/2-ready/agt-local-placement`,
+      pickupHold: {
+        classification: 'unsatisfiable', mechanism: 'execution-placement',
+        reason: 'Local agent execution is disabled on this orchestrator.',
+        sinceUtc: '2026-09-14T08:00:00Z', unsatisfiable: true,
+        resolutions: [{ kind: 'route-to-remote-runner', label: 'Choose an execution runner',
+          detail: 'Open Project Settings and choose an available runner under Execution location.',
+          action: { kind: 'setting', target: 'execution-runner', project: PROJECT } }],
+      },
+    };
+    await openBoard(page, [held]);
+    await page.getByTestId('task-card').filter({ hasText: held.title }).click();
+    const button = page.getByTestId('pickup-hold-link-route-to-remote-runner');
+    await expect(button).toBeVisible();
+    await expect(button).toContainText('Open Project Settings');
+    await expect(page.getByTestId('pickup-hold-ways-out')).not.toContainText('PUT /api/');
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.getByTestId('pickup-hold').first().screenshot({
+        path: join(RESULTS, `pickup-hold-execution-placement--${theme}--mocked.png`),
+      });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByTestId('pickup-hold').first().screenshot({
+      path: join(RESULTS, 'pickup-hold-execution-placement--390px--mocked.png'),
+    });
+    await page.setViewportSize({ width: 1600, height: 960 });
+    await button.click();
+    await expect(page).toHaveURL(/#\/projects\/PICKUP%20HOLD%20FIXTURE\/settings/);
+    await expect(page.getByTestId('project-settings-panel')).toBeVisible();
+    await expect(page.getByTestId('project-execution-card')).toBeVisible();
+    await expect(page.locator('[data-setting-key="execution-runner"]')).toHaveAttribute('aria-current', 'location');
+    await expect(page.getByTestId('project-execution-host-select')).toBeFocused();
   });
 
   test('a genuinely queued card carries no hold', async ({ page }) => {
