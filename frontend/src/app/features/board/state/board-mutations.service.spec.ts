@@ -124,6 +124,77 @@ describe('BoardMutationsService archive job', () => {
   });
 });
 
+describe('BoardMutationsService bulk move (AGT-3585)', () => {
+  const tasks = [
+    { id: 'alpha', taskKey: 'w::alpha', key: 'DEMO-1', title: 'Alpha', state: '5e-escalated', watchPath: '/workspace' },
+    { id: 'beta', taskKey: 'w::beta', displayKey: 'DEMO-2', title: 'Beta', state: '5e-escalated', watchPath: '/workspace' },
+  ] as TaskInfo[];
+
+  function setup(confirmed: boolean) {
+    const done = { ...batch('completed', [
+      { index: 0, jobId: 'alpha', status: 'moved', message: null, durationMs: 1 },
+      { index: 1, jobId: 'beta', status: 'moved', message: null, durationMs: 1 },
+    ]), total: 2 };
+    const taskService = {
+      startBatchMove: vi.fn(() => of(done)),
+      getBatchMove: vi.fn(() => of(done)),
+      applyOptimisticMove: vi.fn(),
+      refresh: vi.fn(),
+    };
+    const confirm = vi.fn(async () => confirmed);
+    TestBed.configureTestingModule({
+      providers: [
+        provideZonelessChangeDetection(),
+        BoardMutationsService,
+        NotificationService,
+        { provide: TaskService, useValue: taskService },
+        { provide: ErrorDialogService, useValue: { show: vi.fn() } },
+        { provide: ConfirmDialogService, useValue: { confirm } },
+        { provide: TaskSelectionService, useValue: { selected: signal(null) } },
+        { provide: UndoController, useValue: { offerLaneRevert: vi.fn(), cancelActive: vi.fn() } },
+      ],
+    });
+    return {
+      service: TestBed.inject(BoardMutationsService),
+      notifications: TestBed.inject(NotificationService),
+      taskService,
+      confirm,
+    };
+  }
+
+  it('lists every card in the confirmation and leaves them in place on cancel', async () => {
+    const { service, taskService, confirm } = setup(false);
+    expect(await service.bulkMove(tasks, '2-ready', 'Continue (reissue)')).toBe(false);
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Continue (reissue) for 2 cards?',
+      items: ['DEMO-1 · Alpha', 'DEMO-2 · Beta'],
+      confirmLabel: 'Continue (reissue) (2 cards)',
+      cancelLabel: 'Leave as is',
+      kind: 'primary',
+    }));
+    expect(taskService.startBatchMove).not.toHaveBeenCalled();
+  });
+
+  it('moves every card through one batch after confirmation', async () => {
+    vi.useFakeTimers();
+    try {
+      const { service, notifications, taskService } = setup(true);
+      expect(await service.bulkMove(tasks, '2-ready', 'Continue (reissue)')).toBe(true);
+      expect(taskService.startBatchMove).toHaveBeenCalledWith([
+        { jobId: 'alpha', watchPath: '/workspace', targetState: '2-ready' },
+        { jobId: 'beta', watchPath: '/workspace', targetState: '2-ready' },
+      ]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(taskService.applyOptimisticMove).toHaveBeenCalledWith('beta', '/workspace', '2-ready');
+      expect(service.bulkMoving()).toBe(false);
+      expect(service.archiving()).toBe(false);
+      expect(notifications.notifications()[0].message).toBe('Moved 2 cards to Ready.');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('BoardMutationsService Ready queue edge (AGT-3588)', () => {
   const card = (id: string, watchPath = '/p/a') => ({ id, watchPath, title: id, state: '2-ready' }) as TaskInfo;
   const lane = [card('a1'), card('b1', '/p/b'), card('a2')];
@@ -187,5 +258,44 @@ describe('BoardMutationsService Ready queue edge (AGT-3588)', () => {
     const service = setup(vi.fn(() => of(null)));
     service.moveToQueueEdge(card('a1'), 'top');
     expect(taskService['reorderJobs']).not.toHaveBeenCalled();
+  });
+});
+
+describe('BoardMutationsService active batch move', () => {
+  it('shows the refusal and retries only after explicit withdrawal confirmation', async () => {
+    const job = { id: 'AGT-3609', taskKey: 'AGT-3609', title: 'Batch member',
+      watchPath: '/project', state: '4-auto-review' } as TaskInfo;
+    const refusal = { status: 409, error: { error: 'active-batch-member',
+      message: 'AGT-3609 belongs to batch b06a726b (running). Other members: AGT-3574.' } };
+    const moveJob = vi.fn()
+      .mockReturnValueOnce(throwError(() => refusal))
+      .mockReturnValueOnce(of({}));
+    let accept!: (value: boolean) => void;
+    const confirm = vi.fn(() => new Promise<boolean>(resolve => { accept = resolve; }));
+    const errorDialog = { show: vi.fn() };
+    const tasks = { jobs: signal([job]), moveJob, error: signal(''),
+      applyOptimisticMove: vi.fn(() => ({ fromLane: [], toLane: [] })),
+      revertOptimisticMove: vi.fn(), beginOptimisticPersist: vi.fn(),
+      endOptimisticPersist: vi.fn() };
+    TestBed.configureTestingModule({ providers: [
+      provideZonelessChangeDetection(), BoardMutationsService, NotificationService,
+      { provide: TaskService, useValue: tasks },
+      { provide: ErrorDialogService, useValue: errorDialog },
+      { provide: ConfirmDialogService, useValue: { confirm } },
+      { provide: TaskSelectionService, useValue: { selected: signal(null) } },
+      { provide: UndoController, useValue: { offerLaneRevert: vi.fn(), cancelActive: vi.fn() } },
+    ] });
+    TestBed.inject(BoardMutationsService).moveJob({ jobId: job.id,
+      watchPath: job.watchPath, targetState: '0-backlog' });
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
+      message: refusal.error.message, eyebrow: 'Confirm withdrawal', confirmLabel: 'Withdraw and move',
+    }));
+    expect(moveJob).toHaveBeenCalledTimes(1);
+    expect(errorDialog.show).not.toHaveBeenCalled();
+    accept(true);
+    await Promise.resolve();
+    expect(moveJob).toHaveBeenCalledTimes(2);
+    expect(moveJob).toHaveBeenLastCalledWith(job.id, '0-backlog', job.watchPath, undefined,
+      expect.stringContaining('withdrew'), false, 'revoke', true);
   });
 });

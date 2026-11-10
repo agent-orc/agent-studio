@@ -634,6 +634,20 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+.app-dialog__items {
+  margin: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border-radius: 10px;
+  background: var(--studio-bg-hover);
+  border: 1px solid var(--studio-border);
+  color: var(--studio-fg-dim);
+  font-size: 13px;
+  line-height: 1.6;
+  list-style: none;
+}
+.app-dialog__items li { overflow-wrap: anywhere; }
 .app-dialog__typed {
   display: flex;
   flex-direction: column;

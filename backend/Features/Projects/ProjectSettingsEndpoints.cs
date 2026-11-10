@@ -241,6 +241,23 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(new { cleared = true });
         });
 
+        app.MapGet("/api/projects/{projectName}/execution/proposal-preview", (
+            string projectName,
+            ProjectDefinitionProposalService proposals) =>
+        {
+            var preview = proposals.Preview(projectName);
+            return preview is null
+                ? Results.NotFound(new { error = "A repository checkout is required to preview the definition." })
+                : Results.Ok(new
+                {
+                    preview.Definition,
+                    preview.PrepareScript,
+                    preview.DetectedStacks,
+                    preview.Reasoning,
+                    reviewCommands = ProjectDefinitionReader.Parse(preview.Definition).Definition?.Commands,
+                });
+        });
+
         app.MapPost("/api/projects/{projectName}/execution/proposal", (
             string projectName,
             ProjectDefinitionProposalService proposals) =>
@@ -254,6 +271,11 @@ public static class ProjectSettingsEndpoints
         // Per-project preferences (auto-commit on/off today). Read-all returns a
         // flat map keyed by project name so the header can render every toggle
         // in one shot without N round-trips.
+        // Onboarding needs this before a first project exists, so it cannot
+        // infer local admission from a row in the per-project settings map.
+        app.MapGet("/api/projects/execution-capability", (TaskRunnerService runner) =>
+            Results.Ok(new { localCodingAdmitted = runner.AllowsLocalCoding }));
+
         app.MapGet("/api/projects/settings", (
             HttpContext context,
             ProjectSettingsService settings,

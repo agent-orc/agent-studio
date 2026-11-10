@@ -4,7 +4,7 @@ import { By } from '@angular/platform-browser';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   ExplorerWorkspaceTreeComponent,
   type ExplorerProjectRow,
@@ -70,6 +70,10 @@ function mount() {
 const noop = (): void => { return; };
 
 describe('ExplorerWorkspaceTreeComponent', () => {
+  // ExplorerSectionsService persists collapsed branches across tests. Start
+  // every test expanded so the result does not depend on test order.
+  beforeEach(() => localStorage.removeItem('atp.studio.explorerSections'));
+
   it('constructs and wires its injected services', () => {
     const fixture = mount();
     expect(fixture.componentInstance).toBeTruthy();

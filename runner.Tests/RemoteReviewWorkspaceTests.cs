@@ -1,4 +1,5 @@
 using AgentRunner;
+using AgentStudio.Pipeline;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
 using Xunit;
@@ -7,6 +8,37 @@ namespace AgentRunner.Tests;
 
 public sealed class RemoteReviewWorkspaceTests : IDisposable
 {
+    [Fact]
+    public async Task Verify_definition_message_example_reaches_review_verdict_without_parsed_summary()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var example = VerifyDefinitionPolicy.ExampleFor(null);
+        var message = VerifyDefinitionPolicy.Message(example);
+        var definition = message.Split("```yaml\n", 2)[1].Split("```", 2)[0];
+        Assert.Contains("./scripts/test.sh", definition, StringComparison.Ordinal);
+        await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            [".agent-studio/project.yml"] = definition,
+            [".agent-studio/prepare"] = example.PrepareScript,
+            ["scripts/test.sh"] = "#!/bin/sh\nset -eu\nprintf 'custom checks passed\\n'\n",
+        });
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var planned = Assert.Single(VerifyCommandPlanner.Plan(Path.Combine(_root, "seed"), null).Commands);
+        var command = new ReviewCommandDto("verify-1", "build-tests", PosixShell.RequirePath(),
+            ["-lc", planned.Command], CompareToBaseline: true,
+            BaselineMode: ReviewBaselineModes.TestFailures);
+        Assert.Equal("./scripts/test.sh", planned.Command);
+        var (workspace, _) = Workspace("message-example", subjectSha, [command], 26231,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Equal("pass", Assert.Single(evidence.Verdicts).Status);
+        var run = Assert.Single(evidence.Commands, item => item.StepId == command.StepId);
+        Assert.Equal(0, run.ExitCode);
+    }
     [Trait("Category", "ReviewFlaky")]
     private sealed class ReviewFlakyClassTraitFixture
     {
@@ -1956,12 +1988,13 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
-    public async Task Green_exit_without_a_test_result_is_unavailable_and_never_cached()
+    public async Task Green_incomplete_runner_is_unavailable_and_never_cached()
     {
         var (_, subjectSha) = await SeedSubjectBranchAsync();
         var command = BaselineCommand(
             "if grep -q subject product.txt; then " +
-            "printf '  Failed Product.NewFailure [1 ms]\\n'; exit 1; fi; exit 0",
+            "printf '  Failed Product.NewFailure [1 ms]\\n'; exit 1; fi; " +
+            "printf 'Application bundle generation complete.\\n'",
             reportPassingTest: false);
         var (workspace, _) = Workspace(
             "attempt-unrun-green-baseline", subjectSha, [command], 26220,
@@ -1989,7 +2022,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             "printf '  Failed Product.NewFailure [1 ms]\\n'; exit 1; " +
             "else n=$(cat ../baseline-report-runs 2>/dev/null || echo 0); n=$((n+1)); " +
             "printf '%s' \"$n\" > ../baseline-report-runs; " +
-            "if [ \"$n\" -eq 2 ]; then printf 'Total tests: 1\\n'; fi; fi",
+            "if [ \"$n\" -eq 2 ]; then printf 'Total tests: 1\\n'; " +
+            "else printf 'Application bundle generation complete.\\n'; fi; fi",
             reportPassingTest: false);
         var (workspace, _) = Workspace("attempt-baseline-report-retry", subjectSha, [command], 26221,
             resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
@@ -2015,7 +2049,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             "printf '  Failed Product.NewFailure [1 ms]\\n'; exit 1; " +
             "else n=$(cat ../baseline-report-runs 2>/dev/null || echo 0); n=$((n+1)); " +
             "printf '%s' \"$n\" > ../baseline-report-runs; " +
-            "if [ \"$n\" -eq 2 ]; then printf 'Total tests: 1\\n'; fi; fi",
+            "if [ \"$n\" -eq 2 ]; then printf 'Total tests: 1\\n'; " +
+            "else printf 'Application bundle generation complete.\\n'; fi; fi",
             reportPassingTest: false);
         var (workspace, _) = Workspace("attempt-baseline-report-dependencies", subjectSha,
             [command], 26225, resultRef: "refs/heads/task/new-failure",
@@ -2034,11 +2069,15 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Contains("report-retry", baselineRuns[1].WorkspaceRole, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task Candidate_missing_report_without_setup_change_is_review_infrastructure()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    public async Task Candidate_missing_report_without_setup_change_is_review_infrastructure(int exitCode)
     {
         var (_, subjectSha) = await SeedSubjectBranchAsync();
-        var command = BaselineCommand("exit 0", reportPassingTest: false);
+        var command = BaselineCommand(exitCode == 0 ? "printf 'Application bundle generation complete.\\n'" :
+            "printf 'Vitest completed without a readable report at /tmp/review-vite/report.json: ENOENT\\n' >&2; exit 2",
+            reportPassingTest: false);
         var (workspace, _) = Workspace("attempt-candidate-report-missing", subjectSha, [command], 26222,
             resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
         await workspace.PrepareAsync(null!, default);
@@ -2046,6 +2085,9 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             () => workspace.ExecutePlanAsync(default));
         Assert.Equal(ReviewTestReportPolicy.MissingReportClassification, exception.Classification);
         Assert.Contains("report path:", exception.Message, StringComparison.Ordinal);
+        if (exitCode == 2)
+            Assert.Contains("report path: /tmp/review-vite/report.json", exception.Message,
+                StringComparison.Ordinal);
         Assert.Equal(2, exception.Evidence!.Commands.Count(item =>
             item.WorkspaceRole.StartsWith("candidate", StringComparison.Ordinal)));
     }
@@ -2064,7 +2106,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             ["-c", "mkdir -p node_modules && touch node_modules/ready"],
             DependencyScopes: [new ReviewDependencyScopeDto("", ["package-lock.json"])],
             CoveredByDependencyScopes: true);
-        var command = BaselineCommand("rm -rf node_modules; exit 0", reportPassingTest: false);
+        var command = BaselineCommand("rm -rf node_modules; printf 'Application bundle generation complete.\\n'",
+            reportPassingTest: false);
         var (workspace, _) = Workspace("attempt-candidate-report-lost-dependencies", sha,
             [command], 26226, preparation: [preparation], preserveGlobs: ["node_modules"]);
         await workspace.PrepareAsync(null!, default);
@@ -2083,7 +2126,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     {
         var (_, subjectSha) = await SeedSubjectBranchWithFileAsync(
             "task/new-spec", "frontend/src/new.spec.ts", "test('new', () => {})");
-        var command = BaselineCommand("exit 0", reportPassingTest: false);
+        var command = BaselineCommand("printf 'Application bundle generation complete.\\n'", reportPassingTest: false);
         var (workspace, subject) = Workspace("attempt-candidate-new-spec-no-report", subjectSha, [command], 26223,
             resultRef: "refs/heads/task/new-spec", integrationRef: "refs/heads/main");
         await workspace.PrepareAsync(null!, default);
@@ -2108,7 +2151,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             "commit", "-m", "rename spec to helper");
         await GitAsync(seed, "push", "origin", "task/removed-spec");
         var subjectSha = (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
-        var command = BaselineCommand("exit 0", reportPassingTest: false);
+        var command = BaselineCommand("printf 'Application bundle generation complete.\\n'", reportPassingTest: false);
         var (workspace, subject) = Workspace("attempt-candidate-removed-spec-no-report", subjectSha,
             [command], 26225, resultRef: "refs/heads/task/removed-spec", integrationRef: "refs/heads/main");
         await workspace.PrepareAsync(null!, default);
@@ -3500,7 +3543,9 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             await File.WriteAllTextAsync(path, content);
             if (!OperatingSystem.IsWindows()
-                && relativePath.Equals("frontend/fixture-cli/index.js", StringComparison.Ordinal))
+                && (relativePath.Equals("frontend/fixture-cli/index.js", StringComparison.Ordinal)
+                    || relativePath.Equals("scripts/test.sh", StringComparison.Ordinal)
+                    || relativePath.Equals(".agent-studio/prepare", StringComparison.Ordinal)))
             {
                 File.SetUnixFileMode(
                     path,

@@ -24,6 +24,11 @@
   @include section.surface(var(--studio-warn));
 }
 
+/* Acceptance settles earlier delivery warnings without erasing the facts. */
+.claim[data-settled='true'] {
+  @include section.surface(var(--studio-fg-muted));
+}
+
 .claim__label {
   @include section.heading;
 }

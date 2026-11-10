@@ -2,7 +2,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { beforeEach, vi } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
 import type { WorkbenchCatalogue, WorkbenchListItem } from '../../../../models/project-docs.model';
 import { DossierSectionStateService } from '../../../../services/dossier-section-state.service';
 import { ExplorerWorkbenchStateService } from '../../services/explorer-workbench-state.service';
@@ -58,6 +58,7 @@ async function mount(activeWorkbenchId: string | null = null) {
 
 describe('ExplorerWorkbenchListComponent', () => {
   const scrollIntoView = vi.fn();
+  let originalScrollIntoView: PropertyDescriptor | undefined;
 
   beforeEach(() => {
     sessionStorage.removeItem(STORAGE_KEY);
@@ -65,10 +66,20 @@ describe('ExplorerWorkbenchListComponent', () => {
       if (key.startsWith('dossier-overview:')) localStorage.removeItem(key);
     }
     scrollIntoView.mockClear();
+    originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
       configurable: true,
+      writable: true,
       value: scrollIntoView,
     });
+  });
+
+  afterEach(() => {
+    if (originalScrollIntoView === undefined) {
+      delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+    } else {
+      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', originalScrollIntoView);
+    }
   });
 
   it('groups the full catalogue into one-line tree rows with quiet trailing status', async () => {

@@ -2,6 +2,7 @@
   <section class="task-live"
            [class]="'task-live--' + live.tone"
            [class.task-live--detail]="variant() === 'detail'"
+           [class.task-live--manual-remote]="live.waitReason === 'manual-mode' && !!task().executionLocation?.configuredRunnerId"
            [class.task-live--dense]="dense()"
            data-testid="task-live-status"
            [attr.data-live-tone]="live.tone"
@@ -16,6 +17,12 @@
                               [label]="live.headline"
                               [compact]="true"
                               testId="task-live-headline" />
+        @if (live.waitReason === 'manual-mode' && task().executionLocation?.configuredRunnerId) {
+          <button type="button" class="task-live__auto-action" data-testid="task-live-switch-auto"
+                  [disabled]="switchingToAuto()" (click)="switchToAuto($event)">
+            {{ switchingToAuto() ? 'Switching…' : 'Switch to Auto' }}
+          </button>
+        }
         @if (variant() === 'detail' && live.detail) {
           <span class="task-live__detail task-live__detail--inline"
                 data-testid="task-live-detail-inline">· {{ live.detail }}</span>

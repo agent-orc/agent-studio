@@ -47,7 +47,7 @@
     <div class="create-dialog__grid">
       <label class="field">
         <span class="field__label">Project</span>
-        <select class="field__input" data-testid="create-project-select" [(ngModel)]="newWatchPath">
+        <select class="field__input" data-testid="create-project-select" [(ngModel)]="newWatchPath" (ngModelChange)="watchPathChange.emit($event)">
           @for (wp of watchPaths(); track wp.path) {
             <option [value]="wp.path">{{ wp.name }}</option>
           }
@@ -199,7 +199,8 @@
       <button class="btn" data-testid="create-cancel" (click)="cancelRequest.emit()">Cancel</button>
       <button class="btn btn--primary" data-testid="create-submit"
               (click)="submitRequest.emit()"
-              [disabled]="!newTitle().trim() || routingPending() || routing()?.requiresQuestion">Create</button>
+              [appPendingButton]="submitting()" pendingLabel="Creating…"
+              [disabled]="!newTitle().trim() || routingPending() || routing()?.requiresQuestion || defaultsPending() || submitting()">Create</button>
     </div>
     <input #fileInput
            type="file"

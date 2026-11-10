@@ -79,6 +79,14 @@ export function executorCacheTone(state: string): StatusTone {
   return CACHE_TONES[state] ?? 'neutral';
 }
 
+interface DefinitionPreview {
+  definition: string;
+  prepareScript: string;
+  detectedStacks: string[];
+  reasoning: string;
+  reviewCommands: { build: string[]; test: string[]; lint: string[] };
+}
+
 @Component({
   selector: 'app-project-execution-definition',
   standalone: true,
@@ -94,6 +102,8 @@ export class ProjectExecutionDefinitionComponent implements OnInit {
   readonly loading = signal(true);
   readonly saving = signal(false);
   readonly proposing = signal(false);
+  readonly previewing = signal(false);
+  readonly preview = signal<DefinitionPreview | null>(null);
   readonly data = signal<ExecutionDefinitionResponse | null>(null);
   readonly overrideDefinition = signal('');
   readonly justification = signal('');
@@ -180,6 +190,21 @@ export class ProjectExecutionDefinitionComponent implements OnInit {
   readonly definitionValidity = executionDefinitionValidity;
   readonly manifestOutcome = preparationManifestOutcome;
   readonly cacheTone = executorCacheTone;
+
+  previewDefinition(): void {
+    this.previewing.set(true);
+    this.error.set(null);
+    this.http.get<DefinitionPreview>(`${this.url()}/proposal-preview`).subscribe({
+      next: preview => {
+        this.preview.set(preview);
+        this.previewing.set(false);
+      },
+      error: response => {
+        this.error.set(response?.error?.error ?? 'Build profile preview could not be loaded.');
+        this.previewing.set(false);
+      },
+    });
+  }
 
   cacheIdentity(cache: CacheManifest): string {
     return `${cache.block}:${cache.key}`;

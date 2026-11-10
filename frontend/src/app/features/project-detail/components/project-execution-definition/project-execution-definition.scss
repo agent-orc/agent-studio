@@ -52,6 +52,32 @@ h3 {
   border-top: 1px solid var(--studio-border);
 }
 
+.execution__preview {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-spacing-3);
+  background: var(--studio-card-muted-bg);
+}
+
+.execution__preview h4,
+.execution__preview ul {
+  margin: 0;
+}
+
+.execution__preview ul {
+  padding-inline-start: var(--studio-spacing-4);
+}
+
+.execution__preview li strong {
+  margin-inline-end: var(--studio-spacing-1);
+}
+
+.execution__preview .execution__details {
+  width: 100%;
+}
+
 .execution__details summary {
   cursor: pointer;
   color: var(--studio-fg-strong);

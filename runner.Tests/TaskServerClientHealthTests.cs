@@ -668,7 +668,7 @@ public class TaskServerClientHealthTests
                 "fencingToken":7,"acquiredAt":"{{now:o}}","expiresAt":"{{now.AddMinutes(2):o}}",
                 "attemptId":"run-v1"
               },
-              "runSpec":{"cliType":"codex","model":"gpt-5.6-sol","thinkingLevel":"high","contextMode":"clean"},
+              "runSpec":{"cliType":"codex","model":"gpt-5.6-sol","thinkingLevel":"high","contextMode":"clean","taskTitle":"Continue refused run"},
               "continuationBaseRef":"{{salvageRef}}",
               "continuationBaseSha":"{{salvageSha}}"
             }
@@ -704,6 +704,8 @@ public class TaskServerClientHealthTests
 
         Assert.Equal(legacyClaim.TaskKey, durableClaim.TaskKey);
         Assert.Equal(legacyClaim.RunSpec, durableClaim.RunSpec);
+        Assert.Equal("Continue refused run", legacyClaim.RunSpec?.TaskTitle);
+        Assert.Equal("Continue refused run", durableClaim.RunSpec?.TaskTitle);
         Assert.Equal(legacyClaim.ContinuationBaseRef, durableClaim.ContinuationBaseRef);
         Assert.Equal(legacyClaim.ContinuationBaseSha, durableClaim.ContinuationBaseSha);
         Assert.Equal(salvageRef, durableClaim.ContinuationBaseRef);

@@ -1097,6 +1097,9 @@ function pipelineView(
  * per-step results.
  */
 export function buildPipelineDots(job: TaskInfo): PipelineDotsView {
+  if (job.state === TaskState.Completed || job.state === TaskState.Archive) {
+    return pipelineView(null, null, 'review');
+  }
   switch (job.phase ?? null) {
     case 'intake-running':
       return pipelineView('pre', null, null);
@@ -1124,10 +1127,6 @@ export function buildPipelineDots(job: TaskInfo): PipelineDotsView {
   }
 
   if (job.state === TaskState.HumanReview || job.state === TaskState.Escalated) {
-    return pipelineView(null, null, 'review');
-  }
-
-  if (job.state === TaskState.Completed || job.state === TaskState.Archive) {
     return pipelineView(null, null, 'review');
   }
 
@@ -1239,6 +1238,7 @@ export function buildPhaseBadge(
   nowMs?: number,
   state?: string,
 ): PhaseBadge | null {
+  if (state === TaskState.Completed || state === TaskState.Archive) return null;
   if (state && HISTORY_PRESENTATION_LANES.has(state) && phase !== 'integrating') return null;
   if (!phase) return null;
   const pill = PHASE_PILL[phase];
@@ -1761,6 +1761,7 @@ export function buildDependencyChip(waitsOn: TaskInfo['waitsOn']): DependencyChi
  * dependency chip only as a fallback for older payloads without liveStatus.
  */
 export function buildVisibleDependencyChip(job: TaskInfo): DependencyChip | null {
+  if (job.state === TaskState.Completed || job.state === TaskState.Archive) return null;
   if (job.liveStatus) return null;
   // AGT-2795: an edge to a pending decision card already renders as its own
   // "blocked by" link; do not repeat it as a generic waits-on chip.

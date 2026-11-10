@@ -35,6 +35,7 @@ import type {
   WikiSearchResponse,
   WikiTree,
 } from '../../../../models/project-docs.model';
+import { preserveOwnProperty } from '../../../../../testing/preserve-own-property';
 
 const TREE: WikiTree = {
   projectName: 'Demo',
@@ -381,6 +382,7 @@ const HISTORY: WikiFileHistory = {
 };
 
 describe('ProjectWikiSectionComponent', () => {
+  preserveOwnProperty(navigator, 'clipboard');
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
@@ -1160,6 +1162,10 @@ describe('ProjectWikiSectionComponent', () => {
       content: '# Overview\n\n[Docs index](../README.md)\n[AGT-2050](task:AGT-2050)',
     });
     http.expectOne('/api/projects/Demo/wiki/history/concepts/overview.md').flush(HISTORY);
+    fixture.detectChanges();
+    // Linked elements render in an @defer block; wait for it instead of relying
+    // on an earlier test in the worker having loaded the deferred chunk.
+    await fixture.whenStable();
     fixture.detectChanges();
 
     const root = el(fixture);

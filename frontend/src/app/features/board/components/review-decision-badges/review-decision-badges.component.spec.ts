@@ -44,4 +44,19 @@ describe('ReviewDecisionBadgesComponent', () => {
     expect(fixture.nativeElement.querySelector('[data-testid="task-card-human-review"]')?.textContent)
       .toContain('Escalated');
   });
+
+  it('hides a resolved parked blocker on an Accepted card', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ReviewDecisionBadgesComponent],
+      providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ReviewDecisionBadgesComponent);
+    fixture.componentRef.setInput('job', {
+      state: '6-completed', parkedBlocker: { blockerType: 'decision' },
+    } as TaskInfo);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="task-card-parked"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="task-card-human-review"]')).toBeNull();
+  });
 });

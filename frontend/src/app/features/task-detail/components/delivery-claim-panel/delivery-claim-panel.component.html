@@ -2,6 +2,7 @@
   <section class="claim"
            data-testid="delivery-claim-panel"
            [attr.data-integration]="integration()"
+           [attr.data-settled]="settled()"
            aria-label="Delivery claim">
     <span class="claim__label">Delivery</span>
 
@@ -54,6 +55,10 @@
                             [detail]="claim()?.evidence"
                             [compact]="true"
                             testId="delivery-claim-basis" />
+    }
+
+    @if (automaticAcceptance(); as accepted) {
+      <p class="claim__reason" data-testid="delivery-claim-automatic-acceptance">{{ accepted }}</p>
     }
 
     @if (overrideReason(); as reason) {

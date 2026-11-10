@@ -7,7 +7,7 @@ import { TaskCommitRoundsComponent } from './task-commit-rounds.component';
 const superseded: TaskCommitInfo = {
   sha: '1'.repeat(40),
   shortSha: '1111111',
-  message: 'wip(runner): salvage before teardown - outcome Done',
+  message: 'AGT-2533: Deliver work\n\nRunner committed changes the agent left uncommitted (outcome Done).\n\nAgent-Studio-Task: AGT-2533\nAgent-Studio-Run: run-round-1\nAgent-Studio-Salvage: teardown\nAgent-Studio-Outcome: Done',
   filesChanged: 2,
   files: ['backend/a.cs', 'frontend/a.ts'],
   at: '2026-08-09T10:00:00Z',
@@ -50,6 +50,8 @@ describe('TaskCommitRoundsComponent', () => {
       .toContain('Round 1, replaced by round 2');
     expect(root.querySelector('[data-testid="git-superseded-commit"]')?.getAttribute('data-sha'))
       .toBe(superseded.sha);
+    expect(fixture.componentInstance.tooltip(superseded, 0, 1))
+      .toContain('Agent-Studio-Salvage: teardown');
   });
 
   it('keeps a mechanically rewritten SHA out of the current aggregate', async () => {

@@ -103,6 +103,8 @@ export class DeliveryClaimPanelComponent {
 
   readonly job = input.required<TaskInfo>();
   readonly escalated = computed(() => this.job().state === TaskState.Escalated);
+  readonly settled = computed(() =>
+    this.job().state === TaskState.Completed || this.job().state === TaskState.Archive);
 
   readonly answer = signal<TaskDeliveryClaimAnswer | null>(null);
 
@@ -167,7 +169,9 @@ export class DeliveryClaimPanelComponent {
     }
   });
 
-  readonly integrationTone = computed(() => DELIVERY_INTEGRATION_TONES[this.integration()] ?? 'neutral');
+  /** Acceptance settles earlier delivery warnings without erasing the facts. */
+  readonly integrationTone = computed<StatusTone>(() =>
+    this.settled() ? 'neutral' : DELIVERY_INTEGRATION_TONES[this.integration()] ?? 'neutral');
 
   readonly integrationTooltip = computed(() => {
     const detail = this.answer()?.detail ?? this.job().integration?.detail ?? null;
@@ -248,7 +252,8 @@ export class DeliveryClaimPanelComponent {
 
   readonly supersessionTone = computed<StatusTone>(() => {
     const state = this.supersession();
-    return state ? DELIVERY_SUPERSESSION_TONES[state] ?? 'neutral' : 'neutral';
+    if (!state || this.settled()) return 'neutral';
+    return DELIVERY_SUPERSESSION_TONES[state] ?? 'neutral';
   });
 
   readonly supersessionTooltip = computed(() => {
@@ -295,6 +300,12 @@ export class DeliveryClaimPanelComponent {
   });
 
   readonly contradictionTone = contentContradictionTone;
+
+  /** AGT-3621: who accepted the card in a person's place, when the system did. */
+  readonly automaticAcceptance = computed(() => {
+    const by = this.claim()?.acceptedAutomaticallyBy?.trim();
+    return by ? `Accepted automatically by ${by}.` : null;
+  });
 
   /** An override's written reason is shown wherever the card claims completion. */
   readonly overrideReason = computed(() =>

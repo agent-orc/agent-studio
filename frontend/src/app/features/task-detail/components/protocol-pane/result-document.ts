@@ -17,7 +17,7 @@
  * Keeping the parse here (pure, unit-tested) rather than in the component keeps
  * the view thin and lets the case + metric logic be hammered branch by branch.
  */
-import type { TaskDetail, ReviewProjectionView } from '../../../../models/task.model';
+import { TaskState, type TaskDetail, type ReviewProjectionView } from '../../../../models/task.model';
 import { integrationRecordTooltip, latestIntegratedRecord } from '../../../../models/task.model';
 import { formatTokens } from '../../../../services/format.util';
 import { buildTokenCostTooltip } from '../../../tokens';
@@ -353,7 +353,8 @@ export function buildResultDocument(detail: TaskDetail, verdict: ProtocolVerdict
     ? { problem: null, solution: null, synthesized: true }
     : parseOverviewSection(markdown) ?? synthesizeOverview(detail, markdown);
   const detailMarkdown = stripHeaderAndOverview(markdown);
-  const caseResult = classifyResultCase({
+  const settled = detail.info.state === TaskState.Completed || detail.info.state === TaskState.Archive;
+  const classifiedCase = classifyResultCase({
     hint: parseCaseHint(markdown),
     taskType: detail.info.taskType,
     mode: detail.info.mode,
@@ -361,11 +362,17 @@ export function buildResultDocument(detail: TaskDetail, verdict: ProtocolVerdict
     verdictLabel: verdict.label,
     body: markdown,
   });
+  const caseResult = settled && verdict.status === 'succeeded' && classifiedCase.case === 'blocked'
+    ? { case: 'generic' as const }
+    : classifiedCase;
 
   return {
     case: caseResult,
     overview,
-    metrics: buildMetrics(detail, verdict, markdown),
+    metrics: buildMetrics(detail, verdict, markdown).map(metric =>
+      settled && (metric.tone === 'warn' || metric.tone === 'problem')
+        ? { ...metric, tone: 'neutral' as const }
+        : metric),
     detailMarkdown,
   };
 }

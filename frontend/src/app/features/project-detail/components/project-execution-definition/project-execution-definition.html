@@ -6,11 +6,34 @@
     </div>
     <button type="button"
             class="execution__button execution__button--quiet"
-            data-testid="execution-create-proposal"
-            [appPendingButton]="proposing()"
-            pendingLabel="Creating proposal"
-            (click)="createProposal()">Create proposal card</button>
+            data-testid="execution-preview-definition"
+            [appPendingButton]="previewing()"
+            pendingLabel="Detecting stack"
+            (click)="previewDefinition()">{{ data()?.repositoryDefinition ? 'Preview build profile' : 'Set a build profile' }}</button>
   </header>
+
+  @if (preview(); as proposal) {
+    <section class="execution__preview" aria-label="Build profile preview" data-testid="execution-definition-preview">
+      <h4>Build profile for {{ proposal.detectedStacks.join(', ') }}</h4>
+      <p>{{ proposal.reasoning }}</p>
+      <p>Review commands from the proposed repository definition:</p>
+      <ul>
+        @for (command of proposal.reviewCommands.build; track command) { <li><strong>Build</strong> <code>{{ command }}</code></li> }
+        @for (command of proposal.reviewCommands.test; track command) { <li><strong>Test</strong> <code>{{ command }}</code></li> }
+        @for (command of proposal.reviewCommands.lint; track command) { <li><strong>Lint</strong> <code>{{ command }}</code></li> }
+      </ul>
+      <details class="execution__details">
+        <summary>Proposed files</summary>
+        <p><code>.agent-studio/project.yml</code></p>
+        <pre><code>{{ proposal.definition }}</code></pre>
+        <p><code>.agent-studio/prepare</code></p>
+        <pre><code>{{ proposal.prepareScript }}</code></pre>
+      </details>
+      <button type="button" class="execution__button" data-testid="execution-create-proposal"
+              [appPendingButton]="proposing()" pendingLabel="Creating proposal"
+              (click)="createProposal()">Create proposal card</button>
+    </section>
+  }
 
   @if (loading()) {
     <p class="execution__muted">Loading execution definition…</p>

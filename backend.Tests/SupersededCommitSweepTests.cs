@@ -13,6 +13,16 @@ namespace AgentStudio.Tests;
 
 public sealed class SupersededCommitSweepTests
 {
+    [Theory]
+    [InlineData("AGT-2533: Deliver work\n\nAgent-Studio-Salvage: teardown", true)]
+    [InlineData("wip(runner): salvage before teardown - outcome Done", true)]
+    [InlineData("AGT-2533: explain salvage recovery", false)]
+    public void IsRunnerFence_RecognizesTrailerAndLegacySubjectOnly(string message, bool expected)
+    {
+        Assert.Equal(expected, SupersededCommitSweepPolicy.IsRunnerFence(
+            Commit("1111111", message, "round-1", ["backend/a.cs"])));
+    }
+
     [Fact]
     public void Evaluate_MissingFenceCoveredByLaterIntegratedGeneration_IsSuperseded()
     {

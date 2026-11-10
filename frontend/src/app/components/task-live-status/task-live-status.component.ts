@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import type { TaskInfo } from '../../models/task.model';
 import { TaskState } from '../../models/task.model';
 import { NowTickService } from '../../services/now-tick.service';
@@ -6,6 +6,8 @@ import { deriveActiveTaskRun, isTaskRunActive, resolveRunActivityKind } from '..
 import { PickupHoldComponent } from '../pickup-hold/pickup-hold.component';
 import { StatusIndicatorComponent, type StatusTone } from '../status-indicator/status-indicator.component';
 import { runnerWaitCode, runnerWaitHeadline } from '../../models/ready-wait-reason';
+import { TaskService } from '../../services/task.service';
+import { ErrorDialogService } from '../../services/error-dialog.service';
 
 export type TaskLiveStatusVariant = 'card' | 'detail';
 export type LiveTone = 'active' | 'waiting' | 'idle' | 'stalled';
@@ -53,6 +55,30 @@ export class TaskLiveStatusComponent {
   readonly dense = input(false);
   private readonly now = inject(NowTickService).now;
   readonly liveIndicatorTone = liveIndicatorTone;
+  private readonly tasks = inject(TaskService);
+  private readonly errors = inject(ErrorDialogService);
+  readonly switchingToAuto = signal(false);
+
+  switchToAuto(event: MouseEvent): void {
+    event.stopPropagation();
+    if (this.switchingToAuto()) return;
+    const project = this.task().projectName;
+    this.switchingToAuto.set(true);
+    this.tasks.setRunnerMode(project, 'auto-continuous').subscribe({
+      next: () => {
+        this.switchingToAuto.set(false);
+        this.tasks.refresh(true);
+      },
+      error: error => {
+        this.switchingToAuto.set(false);
+        this.errors.show(error, {
+          title: 'Failed to enable auto-pickup',
+          fallbackMessage: 'Failed to enable auto-pickup',
+          source: `Project ${project}`,
+        });
+      },
+    });
+  }
 
   readonly view = computed<LiveStatusView | null>(() => {
     const task = this.task();
@@ -159,10 +185,18 @@ export class TaskLiveStatusComponent {
     // runner's own; the headline names the reason the lane header counts.
     const runnerReason = runnerWaitCode(status.queue);
     if (status.queue && runnerReason) {
+      const remoteManual = runnerReason === 'manual-mode'
+        && task.state === TaskState.Ready
+        && !!task.executionLocation?.configuredRunnerId;
+      const runnerName = task.executionLocation?.hostDisplayName
+        || task.executionLocation?.configuredRunnerId
+        || 'the assigned runner';
       return {
         tone: 'waiting',
-        headline: runnerWaitHeadline(runnerReason, status.queue.position),
-        detail: status.queue.reason || activityDetail(task, status.latestEventAt, this.now()),
+        headline: remoteManual
+          ? `Pickup is Manual: switch to Auto to let ${runnerName} claim it`
+          : runnerWaitHeadline(runnerReason, status.queue.position),
+        detail: remoteManual ? null : status.queue.reason || activityDetail(task, status.latestEventAt, this.now()),
         next,
         attempt: status.attempt,
         waitReason: runnerReason,
@@ -171,11 +205,12 @@ export class TaskLiveStatusComponent {
 
     if (status.queue) {
       const queueName = status.queue.kind === 'review' ? 'review slot' : 'runner slot';
+      const queuedHeadline = status.queue.kind === 'runner' ? 'Queued for runner' : `Waiting for ${queueName}`;
       const headline = status.queue.position != null
-        ? `Waiting for ${queueName} · position ${status.queue.position}`
+        ? `${queuedHeadline} · position ${status.queue.position}`
         : status.queue.reason
-          ? `Waiting for ${queueName} · ${status.queue.reason}`
-          : `Waiting for ${queueName}`;
+          ? `${queuedHeadline} · ${status.queue.reason}`
+          : queuedHeadline;
       return {
         tone: 'waiting',
         headline,

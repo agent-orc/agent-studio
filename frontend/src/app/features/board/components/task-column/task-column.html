@@ -192,13 +192,10 @@
           } @else if (archiveLoading() && !archiveLoaded()) {
             <div class="column__empty" data-testid="archive-loading">Loading archived tasks…</div>
           }
-        } @else if (isReview() && !windowed()) {
-          @for (group of reviewGroups(); track group.kind) {
-            <section class="column__subsection" [attr.data-testid]="'review-subsection-' + group.kind">
-              <h3 class="column__subsection-title">
-                <span class="column__subsection-icon" aria-hidden="true">{{ group.icon }}</span>
-                <span>{{ group.label }}</span><span class="column__subsection-count">{{ group.jobs.length }}</span>
-              </h3>
+        } @else if (isGrouped() && !windowed()) {
+          @for (group of laneGroups() ?? []; track group.key) {
+            <section class="column__subsection" [attr.data-testid]="group.testid">
+              <app-lane-group-head [group]="group" [mutationsBlocked]="mutationsBlocked()" />
               @for (job of group.jobs; track job.taskKey) {
                 <app-job-card [job]="job" [compact]="compact()" [highlightJobId]="highlightJobId()"
                               [mutationsBlocked]="mutationsBlocked()" [draggable]="!mutationsBlocked()"
@@ -209,7 +206,7 @@
             </section>
           }
         } @else if (windowed()) {
-          <app-lane-card-window [window]="cardWindow()" [count]="jobs().length" [review]="isReview()" [compact]="compact()"
+          <app-lane-card-window [window]="cardWindow()" [count]="jobs().length" [grouped]="isGrouped()" [compact]="compact()"
             [highlightJobId]="highlightJobId()" [mutationsBlocked]="mutationsBlocked()" [reorderDisabled]="reorderDisabled()" [dropIndex]="dropIndex"
             (jobClick)="jobClick.emit($event)" (deleteRequested)="jobDeleteRequest.emit($event)"
             (pickNextRequested)="jobPickNextRequest.emit($event)"

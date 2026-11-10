@@ -58,8 +58,30 @@ internal static class AcceptedIntegrationBackstopPolicy
         // finalizing; the row itself cannot suppress that check.
         if (task.State is TaskStates.Completed or TaskStates.Archive) return true;
         return task.State == TaskStates.HumanReview
-               && string.Equals(task.Phase, LifecyclePhases.Integrating, StringComparison.Ordinal);
+               && string.Equals(task.Phase, LifecyclePhases.Integrating, StringComparison.Ordinal)
+               && !CarriesPromotionPhase(task);
     }
+
+    /// <summary>
+    /// AGT-3621: a Human Review card whose integration phase came with its
+    /// delivery-chain promotion out of Auto Review. Before the fix, a lane
+    /// change kept that phase, and the backstop read it as a legacy operator
+    /// acceptance and completed the card although no person had accepted it.
+    /// Current backends never write the phase on acceptance, so a card that
+    /// entered Human Review through the delivery chain carries no acceptance.
+    /// </summary>
+    public static bool CarriesPromotionPhase(TaskInfo task)
+        => task.State == TaskStates.HumanReview
+           && string.Equals(task.Phase, LifecyclePhases.Integrating, StringComparison.Ordinal)
+           && task.ParkedBlocker is { } park
+           && IsDeliveryChainPromotion(park.Cause, park.CauseDetail);
+
+    /// <summary>The lane-change cause pairs the delivery chain writes when it promotes a card.</summary>
+    internal static bool IsDeliveryChainPromotion(string? cause, string? causeDetail)
+        => (string.Equals(cause, LaneChangeCauses.AcceptanceIntegrationFailed, StringComparison.Ordinal)
+               && string.Equals(causeDetail, DeliveryChainReasons.VerdictStale, StringComparison.Ordinal))
+           || (string.Equals(cause, LaneChangeCauses.Promoted, StringComparison.Ordinal)
+               && string.Equals(causeDetail, DeliveryChainReasons.Integrated, StringComparison.Ordinal));
 
     public static bool IsAlertCandidate(AcceptedIntegrationAlertCandidate candidate)
     {

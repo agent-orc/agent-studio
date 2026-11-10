@@ -22,7 +22,7 @@
     "build:mockup:usage-header": "ng build usage-header-mockup",
     "postinstall": "node scripts/patch-coding-agent-chat-model-selector.mjs && node scripts/patch-coding-agent-chat-technical-blocks.mjs",
     "test": "ng test",
-    "test:ci": "ng test frontend --watch=false --progress=false",
+    "test:ci": "node scripts/run-unit-tests.mjs",
     "test:release": "ng test frontend --configuration release --watch=false --progress=false --coverage",
     "watch": "ng build frontend --watch --configuration development",
     "e2e": "bash scripts/run-prebuilt-e2e.sh",
