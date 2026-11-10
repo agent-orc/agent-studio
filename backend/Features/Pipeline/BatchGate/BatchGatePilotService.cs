@@ -2601,12 +2601,33 @@ public sealed partial class BatchGatePilotService
             return;
         }
         var replay = _store.ReadReplay(manifest.BatchId, subject.TaskKey);
+        BatchMemberTimeline? timeline = null;
+        try
+        {
+            var published = _store.ReadPublication(manifest.BatchId)?.VerifiedAtUtc;
+            timeline = BatchMemberTimelineProjection.Build(_store, subject, manifest,
+                BatchMemberTimelineProjection.Rows(_services?.GetService<GateRunLedger>(),
+                    manifest.Scope.Project, BatchMemberTimelineProjection.Days(
+                        subject.ReviewCompletedAtUtc, published ?? _time.GetUtcNow())),
+                _store.ListPreChecks(manifest.Scope.Project),
+                _store.ListFallbackCauses(manifest.Scope.Project)) with
+            {
+                PublishedAtUtc = published,
+                TerminalAtUtc = published,
+                Outcome = "published",
+            };
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            _logger.LogWarning(exception, "batch-member-timeline-projection-failed task={TaskKey}",
+                subject.TaskKey);
+        }
         var record = new BatchGateMemberRecord(
             subject.TaskKey, subject.RunAttempt, subject.DeliveryEpoch,
             subject.ResultSha, replay.Replacements.Select(item => item.RebasedSha).ToArray(),
             manifest.BatchId, manifest.MembershipDigest, manifest.BaseSha,
             run.CandidateSha, run.GateProfileDigest, run.BatchRunId,
-            "pass", run.EvidencePath, _time.GetUtcNow());
+            "pass", run.EvidencePath, _time.GetUtcNow(), timeline);
         if (_store.TryReadMember(manifest.BatchId, subject.TaskKey, run.BatchRunId) is null)
             _store.RecordMember(record);
         if (!_store.CanRelease(subject, manifest.BatchId, run.BatchRunId))
