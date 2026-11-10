@@ -348,7 +348,7 @@ export class App implements OnInit, OnDestroy {
    *  itself + show a spinner while a bulk archive is in flight. */
   readonly archivingInProgress = this.boardMutations.archiving;
   /** Cycle 10c: triage panel + j/k navigation + auto-advance live here. */
-  private readonly triage = inject(TriageController);
+  readonly triage = inject(TriageController);
   readonly showCreate = this.createJobForm.visible;
   readonly availableModels = this.createJobForm.availableModels;
   /**
