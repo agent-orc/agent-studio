@@ -16,6 +16,7 @@ function task(id: string, order: number) {
     state: '5-human-review', kind: 'coding', agent: 'codex', cliType: 'codex', model: 'gpt-5.2-codex',
     watchPath: WATCH_PATH, projectName: 'fixture', folderPath: `${WATCH_PATH}/${id}`,
     order, createdAt: '2026-07-11T12:00:00Z', execution: null, commits: [],
+    integration: { status: 'not-applicable', integrationBranch: 'develop' },
     provenance: { branch: `task/${id}`, base: 'base', transitions: [], merge: { mergeCommit: 'abc1234', atUtc: '2026-07-11T12:30:00Z' } },
   };
 }
@@ -38,6 +39,9 @@ function grouped() {
 
 async function baseRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', route => json(route, []));
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
+    profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+  }));
   await page.route('**/api/environment**', route => json(route, { isDev: false, devTools: {} }));
   await page.route('**/api/watch-paths**', route => json(route, [
     { name: 'fixture', path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH },
@@ -53,6 +57,10 @@ async function baseRoutes(page: Page): Promise<void> {
   }));
   await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${FIRST_ID}(\\?|$)`), route => json(route, detail(FIRST_ID)));
   await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${NEXT_ID}(\\?|$)`), route => json(route, detail(NEXT_ID)));
+  await page.route(new RegExp(`/api/tasks/(?:${FIRST_ID}|${NEXT_ID})(\\?|$)`), route => {
+    const id = new URL(route.request().url()).pathname.split('/').pop()!;
+    return json(route, detail(id));
+  });
 }
 
 for (const theme of ['light', 'dark'] as Theme[]) {
@@ -63,11 +71,11 @@ for (const theme of ['light', 'dark'] as Theme[]) {
     const boardGate = new Promise<void>(resolve => { releaseBoard = resolve; });
     const boardRequestStarted = new Promise<void>(resolve => { markBoardRequestStarted = resolve; });
     await page.route('**/api/tasks', async route => {
-      markBoardRequestStarted();
       await boardGate;
       await json(route, [task(FIRST_ID, 1), task(NEXT_ID, 2)]);
     });
     await page.route('**/api/v1/studio/board**', async route => {
+      markBoardRequestStarted();
       await boardGate;
       await json(route, grouped());
     });

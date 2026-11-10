@@ -148,6 +148,31 @@ public static class IntegrationVerificationProjection
             .OrderByDescending(record => record.RecordedAtUtc)
             .FirstOrDefault(record => branchCarries(record.TreeSha) && treeContainsDelivery(record.TreeSha));
 
+    /// <summary>A published batch base verdict proves a contained delivery on its exact tree.</summary>
+    public static BatchGateBaseVerdict? FindPublishedBatchBaseVerdict(
+        IEnumerable<BatchGateBaseVerdict> verdicts,
+        Func<string, bool> branchCarries,
+        Func<string, bool> treeContainsDelivery)
+        => verdicts
+            .Where(verdict => verdict.Source == BatchGateBaseCheckSources.PublishedBatch
+                && verdict.Outcome == "pass" && !verdict.Provisional
+                && ReviewSubjectStore.IsValidResultSha(verdict.VerifiedSha)
+                && string.Equals(verdict.BaseSha, verdict.VerifiedSha, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(verdict => verdict.RecordedAtUtc)
+            .FirstOrDefault(verdict => branchCarries(verdict.VerifiedSha!)
+                && treeContainsDelivery(verdict.VerifiedSha!));
+
+    public static TaskIntegrationVerification FromPublishedBatchBaseVerdict(
+        BatchGateBaseVerdict verdict, string branch, string? tip) => new()
+    {
+        State = IntegrationVerificationStates.Verified,
+        Sha = verdict.VerifiedSha,
+        Evidence = IntegrationVerificationEvidence.PublishedGate,
+        GateVerdict = nameof(BuildTestGateVerdict.Ok),
+        Reason = $"{verdict.Reason}; published batch gate passed on {branch} tree {verdict.VerifiedSha}. "
+            + $"That tree contains this delivery, and {branch} still carries it at {tip}.",
+    };
+
     /// <summary>The card's verdict when it relies on <paramref name="gate"/>.</summary>
     public static TaskIntegrationVerification FromPublishedGate(
         PublishedGateEvidence gate, string currentIntegrationBranch, string? currentIntegrationSha) => new()

@@ -143,8 +143,8 @@ async function mockBootApis(page: Page, currentProject: () => ProjectFixture): P
   }));
   await page.route('**/api/v1/studio/board**', (route) => fulfillJson(route, {
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
-    failedPickup: [], codeNotComplete: [], autoReview: [], review: [],
-    humanReview: [], escalated: [], completed: [], archive: [],
+    failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [],
+    escalated: [], review: [], completed: [], archive: [], gitStateAt: null, stale: false,
   }));
   await page.route('**/api/tasks', (route) => fulfillJson(route, []));
   await page.route('**/api/v1/studio/runner/status**', (route) => fulfillJson(route, { projects: {} }));
@@ -216,6 +216,24 @@ async function openOnboarding(page: Page) {
   return dialog;
 }
 
+function runnerClient(id: string) {
+  return {
+    id,
+    displayName: id,
+    emoji: null,
+    colour: null,
+    kind: 'agent-instance',
+    registeredAt: new Date(Date.now() - 10_000).toISOString(),
+    lastSeenAt: new Date().toISOString(),
+    tokenBudgetMonthly: null,
+    notes: null,
+    runnerGitStatus: 'ok',
+    runnerGitDetail: null,
+    runnerActiveSlots: 0,
+    runnerAvailableSlots: 1,
+  };
+}
+
 test.describe('project onboarding and editable project basics', () => {
   let project: ProjectFixture;
 
@@ -228,6 +246,73 @@ test.describe('project onboarding and editable project basics', () => {
     });
     await mockBootApis(page, () => project);
   });
+
+  for (const registeredRunnerCount of [0, 2]) {
+    test(`opening project onboarding stays responsive with ${registeredRunnerCount} registered runners`, async ({ page }) => {
+      let countOpeningRequests = false;
+      let workspaceRequests = 0;
+      let clientRequests = 0;
+      let releaseClients!: () => void;
+      const clientResponseGate = new Promise<void>((resolve) => { releaseClients = resolve; });
+      const clients = Array.from({ length: registeredRunnerCount }, (_, index) =>
+        runnerClient(`agent-runner-0${index + 1}`));
+
+      await page.route('**/api/v1/workspaces**', (route) => {
+        if (route.request().method() !== 'GET') return route.continue();
+        if (countOpeningRequests) workspaceRequests++;
+        return fulfillJson(route, registryWith(project));
+      });
+      await page.route('**/api/clients', async (route) => {
+        if (countOpeningRequests) {
+          clientRequests++;
+          await clientResponseGate;
+        }
+        await fulfillJson(route, clients);
+      });
+
+      await page.goto('/');
+      await dismissDevErrorDialog(page);
+      const addProject = page.getByTestId('studio-workspace-ws-default-add-project');
+      await expect(addProject).toBeVisible();
+      countOpeningRequests = true;
+      await addProject.click();
+      const dialog = page.getByTestId('onboard-project-dialog');
+      await expect(dialog).toBeVisible();
+
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const responsive = await Promise.race([
+        page.evaluate(() => performance.now()).then(() => true),
+        new Promise<boolean>((resolve) => { timeout = setTimeout(() => resolve(false), 1_000); }),
+      ]);
+      clearTimeout(timeout);
+      expect(responsive).toBe(true);
+      await expect.poll(() => workspaceRequests).toBe(1);
+      await expect.poll(() => clientRequests).toBe(1);
+
+      await dialog.getByTestId('onboard-project-display-name').fill('Unfinished project');
+      await dialog.getByTestId('onboard-project-short-code').fill('UP');
+      releaseClients();
+      const runner = dialog.getByTestId('onboard-project-runner');
+      if (registeredRunnerCount === 2) {
+        await expect(runner.locator('option[value="agent-runner-02"]')).toBeAttached();
+      } else {
+        await expect(runner.locator('option[value="agent-runner-01"]')).toHaveJSProperty('disabled', true);
+      }
+      await expect(dialog.getByTestId('onboard-project-display-name')).toHaveValue('Unfinished project');
+      await expect(dialog.getByTestId('onboard-project-short-code')).toHaveValue('UP');
+      expect(workspaceRequests).toBe(1);
+      expect(clientRequests).toBe(1);
+
+      if (registeredRunnerCount === 2) {
+        for (const theme of ['light', 'dark'] satisfies Theme[]) {
+          await setTheme(page, theme);
+          await dialog.screenshot({ path: join(results, `project-dialog-open-${theme}--mocked.png`) });
+        }
+        await page.setViewportSize({ width: 390, height: 844 });
+        await dialog.screenshot({ path: join(results, 'project-dialog-open-390px--mocked.png') });
+      }
+    });
+  }
 
   test('retired Project Sources deep-link lands on Settings Overview', async ({ page }) => {
     await page.goto('/#/workspace/settings/project-sources');
