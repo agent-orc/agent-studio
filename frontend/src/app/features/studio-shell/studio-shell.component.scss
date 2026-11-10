@@ -2052,10 +2052,6 @@ app-workspace-deployment-dashboard { flex: 1; min-height: 0; }
     border-radius: 3px;
   }
 }
-.studio-titlebar__stall-count {
-  color: var(--studio-danger, #e74c3c);
-  font-variant-numeric: tabular-nums;
-}
 @media (max-width: 720px) {
   .studio-titlebar__actions [data-testid='studio-titlebar-settings'] {
     width: var(--studio-target-coarse-min);

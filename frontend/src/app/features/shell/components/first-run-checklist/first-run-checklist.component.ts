@@ -12,7 +12,7 @@ import { ClaudeSignInDialogService, CodexSignInDialogService, DeviceLoginCodeEnt
 import { claudeSignInTarget, providerAuthTone, signInTarget, type ProviderAuthBadge } from '../../../remote-hosts/models/provider-auth.model';
 import { latestRepositoryProbes, normalizeProjectRegistryEntries } from '../../../remote-hosts/models/deployment-checkpoints';
 import type { InstallationIdentity, ProjectRegistryEntry, ProjectRegistryRead, RepositoryStatus } from '../../../remote-hosts/models/deployment-checkpoints';
-import { credentialFreeRepositoryUrl, deviceLoginTone, gitSetupTone, type DeviceLogin, type GitSetup, type HostJoinToken, type NetworkProof, type Probe, type ProofCard } from './first-run-checklist.models';
+import { credentialFreeRepositoryUrl, deviceLoginTone, gitSetupTone, providerBadgeWaitReason, type DeviceLogin, type GitSetup, type HostJoinToken, type NetworkProof, type Probe, type ProofCard } from './first-run-checklist.models';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { readInstallationIdentity } from './first-run-installation';
 
@@ -86,18 +86,14 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   readonly gitSetupValid = computed(() => (this.localProfile() || !!this.gitRunnerId())
     && !!this.repository().value?.registration?.repositoryUrl
     && (this.gitMethod() === 'deploy-key' || this.gitToken().length >= 20));
-
   readonly firstProject = computed(() => this.projects().value?.find(project => !project.archived) ?? null);
   readonly localProfile = computed(() => this.auth.status()?.profile === 'local');
-  readonly ownerReady = computed(() => {
-    const status = this.monolithWithoutTaskServer() ? this.monolithOwnerStatus().value : this.auth.status();
-    return (this.localProfile() || this.monolithWithoutTaskServer()
-        ? status?.bootstrapRequired === false : this.identity().value?.ownerBootstrapped === true)
-      && status?.authenticated === true
-      && (status.profile === 'local' || status.user?.role === 'owner');
-  });
+  readonly ownerReady = computed(() => this.localProfile() || ((this.monolithWithoutTaskServer()
+      ? this.monolithOwnerStatus().value?.bootstrapRequired === false : this.identity().value?.ownerBootstrapped === true)
+    && (this.monolithWithoutTaskServer() ? this.monolithOwnerStatus().value : this.auth.status())?.authenticated === true
+    && (this.monolithWithoutTaskServer() ? this.monolithOwnerStatus().value : this.auth.status())?.user?.role === 'owner'));
   readonly activeHosts = computed(() => this.hosts.hosts().filter(host =>
-    host.status === 'online' && !!host.lastHeartbeatAt
+    (host.status === 'online' || host.status === 'degraded') && !!host.lastHeartbeatAt
     && this.nowMs() - Date.parse(host.lastHeartbeatAt) < 90_000));
   readonly providerBadges = computed(() => this.providers.statuses());
   readonly providersReady = computed(() => {
@@ -370,6 +366,10 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   badgeReady(badge: ProviderAuthBadge): boolean {
     return badge.reachable && badge.state === 'ok' && !!badge.lastSeenAt
       && this.nowMs() - Date.parse(badge.lastSeenAt) < 5 * 60_000;
+  }
+
+  badgeWaitReason(badge: ProviderAuthBadge): string | null {
+    return providerBadgeWaitReason(badge, this.badgeHostOnline(badge), this.nowMs());
   }
 
   startProof(): void {

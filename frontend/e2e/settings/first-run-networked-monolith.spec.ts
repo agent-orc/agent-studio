@@ -65,12 +65,13 @@ test('networked monolith shows Runner setup before chat can send', async ({ page
         : { ready: false, code: 'runner-not-configured', reason: 'No Runner is configured for this project.' },
     } });
   });
+  await page.addInitScript(() => sessionStorage.setItem('atp.studio.orchestratorOpen.v1', '0'));
   for (const theme of ['light', 'dark'] as const) {
     await page.goto('/');
     await setTheme(page, theme);
     await dismissDevErrorDialog(page);
-    if (await page.getByTestId('orch-side-sheet').evaluate(el => el.getBoundingClientRect().width < 300))
-      await page.getByTestId('orch-side-sheet-toggle').click();
+    await page.getByTestId('studio-titlebar-chat').click();
+    await expect(page.locator('app-orchestrator-side-sheet.is-open')).toBeVisible();
     await expect.poll(() => page.getByTestId('orch-side-sheet').evaluate(el => el.getBoundingClientRect().width))
       .toBeGreaterThan(300);
     const setup = page.getByTestId('orch-chat-runner-setup');
@@ -82,8 +83,8 @@ test('networked monolith shows Runner setup before chat can send', async ({ page
   ready = true;
   await page.reload();
   await dismissDevErrorDialog(page);
-  if (await page.getByTestId('orch-side-sheet').evaluate(el => el.getBoundingClientRect().width < 300))
-    await page.getByTestId('orch-side-sheet-toggle').click();
+  await page.getByTestId('studio-titlebar-chat').click();
+  await expect(page.locator('app-orchestrator-side-sheet.is-open')).toBeVisible();
   await expect.poll(() => page.getByTestId('orch-side-sheet').evaluate(el => el.getBoundingClientRect().width))
     .toBeGreaterThan(300);
   await expect(page.getByTestId('orch-chat-runner-setup')).toHaveCount(0);

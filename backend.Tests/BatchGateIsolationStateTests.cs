@@ -116,6 +116,19 @@ public sealed class BatchGateIsolationStateTests : IDisposable
         finally { File.Delete(outside); }
     }
 
+    [Fact]
+    public void Evidence_route_never_falls_back_to_an_older_finding_of_the_member()
+    {
+        var parent = CloseParent();
+        var (child, run, evidence) = RedChild(parent, "task-2");
+        _store.RecordIsolationFinding(new BatchGateIsolationFinding("project", parent.BatchId, "task-2",
+            "run-1", Base, Base, "proven-red", evidence, Now, child.BatchId, run));
+        _store.RecordIsolationFinding(new BatchGateIsolationFinding("project", parent.BatchId, "task-2",
+            "run-2", Base, Base, "proven-green", "", Now.AddMinutes(5)));
+
+        Assert.Null(_store.IsolationEvidencePath("project", parent.BatchId, "task-2"));
+    }
+
     private JsonElement State()
         => JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
             _store, "project", new BatchGateFormationOptions(Enabled: true), now: Now),
