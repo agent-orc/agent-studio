@@ -896,7 +896,10 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   through `TaskMutationService`.
 - Remote commit attribution is evaluated independently for every fenced run
   attempt. Each attempt's verified delivery range passes through the
-  foreign-task guard before persistence. Card-level `commits[]` is the
+  foreign-task guard before persistence. The guard skips the subject scan only
+  for this card's runner salvage commit, identified by the
+  `Agent-Studio-Task: <key>` and `Agent-Studio-Salvage: teardown` trailers,
+  because its subject carries the card title (AGT-3717). Card-level `commits[]` is the
   SHA-deduplicated union across generations; a later attempt does not replace
   earlier valid commits, and inherited SHAs retain their original
   `runAttemptId`, `runnerId`, delivery `branch`, and proving `resultSha`.
@@ -936,6 +939,16 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   through `TaskMutationService`. The same pass materializes missing remote
   token receipts from that attempt's CLI-log window. Ambiguous cards remain
   unchanged and are listed in the durable migration report.
+- Startup also runs the one-time `salvage-subject-attribution-v1` repair
+  (AGT-3717). It re-attributes a recent current generation without attributed
+  commits only when its verified range contains this card's own salvage commit
+  with another card key in the subject, the one case the guard rejected before
+  it exempted that commit. Its report sits next to the
+  `remote-completion-attribution-v1` report under `.metadata/migrations/`.
+- A batch member whose rebased-commit mapping cannot be recorded after
+  publication is escalated from Auto Review with the reason (its code is on
+  the integration branch), and the other members of the published batch are
+  released. A release failure of one member never holds the members after it.
 - Accepted-card `integration.status` is a read-time projection of attributed
   commit membership. `integration.repositories[]` contains one entry per
   attributed repository with its commits, integration and release branch
