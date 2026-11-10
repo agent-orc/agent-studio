@@ -49,9 +49,12 @@ public static class CompletionContentEvidence
                     .Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
                     ?? [];
                 var skipped = report?.SkippedAspects?.Select(item => item.Aspect).ToArray() ?? [];
+                var reviewVersion = report?.BriefSha256 ?? review?.Subject.Plan?.BriefSha256;
+                reviewVersion = NormalizeLegacyConceptReviewVersion(task, current,
+                    run.BriefVersion, reviewVersion);
                 return new CompletionContentFacts(
                     task.Mode, current, run.BriefVersion,
-                    report?.BriefSha256 ?? review?.Subject.Plan?.BriefSha256,
+                    reviewVersion,
                     required, content?.Status, ran, skipped,
                     ContentSummary: content?.Summary,
                     EvidenceChecked: content?.EvidenceChecked,
@@ -93,6 +96,24 @@ public static class CompletionContentEvidence
             }
         }
         return new(task.Mode, current, null, null, required, null, [], []);
+    }
+
+    internal static string? NormalizeLegacyConceptReviewVersion(TaskInfo task,
+        string current, string? delivery, string? review)
+    {
+        if (!TaskModes.IsConcept(task.Mode)
+            || !string.Equals(current, delivery, StringComparison.OrdinalIgnoreCase)
+            || !File.Exists(Path.Combine(task.FolderPath, ".metadata", "brief-version")))
+            return review;
+        var prompt = Path.Combine(task.FolderPath, "prompt.md");
+        if (!File.Exists(prompt) || !string.Equals(review,
+                AttemptAuthorityService.Hash(File.ReadAllText(prompt)),
+                StringComparison.OrdinalIgnoreCase))
+            return review;
+        // One-time compatibility for a settled review that hashed the whole
+        // prompt including follow-up notes. A later authored edit changes the
+        // recorded brief version and keeps the older verdict stale.
+        return current;
     }
 
     /// <summary>

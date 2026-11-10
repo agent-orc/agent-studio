@@ -435,7 +435,14 @@ public sealed class RemoteReviewPlanBuilder
                 inputs,
                 model,
                 PipelineStepConfigResolver.ResolvePrompt(settings, step.Id),
-                step.Id);
+                step.Id,
+                isConcept ? new Dictionary<string, string?>
+                {
+                    ["dossier_material"] = ConceptDossierReviewMaterial.Render(repositoryPath, task.FolderPath),
+                } : null);
+            if (isConcept && !prompt.Contains("## Published Dossier", StringComparison.Ordinal))
+                prompt += "\n\n## Published Dossier\n\n"
+                    + ConceptDossierReviewMaterial.Render(repositoryPath, task.FolderPath);
             // Version the prompt layout through its frozen prompt bytes. Only the
             // four stock Claude aspects use the shared cache prefix; overrides
             // and other CLIs retain their authored prompt.
@@ -536,7 +543,8 @@ public sealed class RemoteReviewPlanBuilder
                 .Select(command => command.Aspect)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
-            BriefSha256 = isConcept ? BriefHash(task.FolderPath) : BriefVersionStore.ReadOrCreate(task.FolderPath),
+            BriefSha256 = isConcept ? BriefVersionStore.ReadCurrent(task.FolderPath)
+                : BriefVersionStore.ReadOrCreate(task.FolderPath),
             SkippedAspects = skipped,
             TaskMode = isConcept ? TaskModes.Concept : null,
             DeepReviewDecision = deepDecision is null ? null : new Contract.DeepReviewDecisionDto(
@@ -779,12 +787,6 @@ public sealed class RemoteReviewPlanBuilder
             "Review test selection for {TaskId}: plan built in {Milliseconds} ms",
             task.Id,
             (long)audit.PlanBuildTime.Value.TotalMilliseconds);
-    }
-
-    private static string? BriefHash(string folder)
-    {
-        var path = Path.Combine(folder, "prompt.md");
-        return File.Exists(path) ? AttemptAuthorityService.Hash(File.ReadAllText(path)) : null;
     }
 
     private static Contract.ReviewPlanDto ApplyScopedReview(

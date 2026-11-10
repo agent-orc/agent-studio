@@ -976,10 +976,7 @@ public static class V1ReviewPlaneEndpoints
             {
                 if (TaskModes.IsConcept(reviewTask.Mode))
                 {
-                    var briefPath = Path.Combine(reviewTask.FolderPath, "prompt.md");
-                    var currentBriefHash = File.Exists(briefPath)
-                        ? AttemptAuthorityService.Hash(File.ReadAllText(briefPath))
-                        : null;
+                    var currentBriefHash = BriefVersionStore.ReadCurrent(reviewTask.FolderPath);
                     request = frozenPlan is null
                         ? request with
                         {
