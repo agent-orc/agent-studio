@@ -106,6 +106,18 @@ public sealed class StudioBackupService
 
     public IReadOnlyList<BackupRecord> List() => new BackupCatalog(Options.Directory).List();
 
+    /// <summary>Reads the authenticated content list of one local archive for the management UI.</summary>
+    public BackupContents? ReadContents(string id)
+    {
+        var options = Options;
+        var catalog = new BackupCatalog(options.Directory);
+        if (catalog.Find(id) is null) return null;
+        if (options.KeyFile is null)
+            throw new BackupException("backup-key-missing", "The backup key is not configured.");
+        using var stream = File.OpenRead(catalog.ArchivePath(id));
+        return BackupArchive.Read(stream, BackupKey.Load(options.KeyFile), null, null, null).Contents;
+    }
+
     public async Task<BackupRecord> CreateAsync(string trigger, CancellationToken cancellationToken)
     {
         await _run.WaitAsync(cancellationToken).ConfigureAwait(false);

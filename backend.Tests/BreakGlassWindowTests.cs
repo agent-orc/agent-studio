@@ -21,6 +21,7 @@ public sealed class BreakGlassWindowTests : IDisposable
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _root,
+            ["Secrets:KeyFile"] = _root + ".kek",
             ["Security:Profile"] = "networked",
         }).Build();
         _store = new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, _clock);
@@ -162,5 +163,5 @@ public sealed class BreakGlassWindowTests : IDisposable
         }
     }
 
-    public void Dispose() { try { Directory.Delete(_root, true); } catch (DirectoryNotFoundException) { } }
+    public void Dispose() { try { Directory.Delete(_root, true); } catch (DirectoryNotFoundException) { } File.Delete(_root + ".kek"); }
 }

@@ -425,6 +425,7 @@
 /api/usage/cockpit	free	-	-	-
 /api/v1/gates/subjects/{subjectId}	free	-	-	-
 /api/v1/management/backups	free	-	-	-
+/api/v1/management/backups/{id}/contents	free	-	-	-
 /api/v1/management/claim-gate-events	free	-	-	-
 /api/v1/management/credential-inventory	free	-	-	-
 /api/v1/management/device-logins/{handle}	free	-	-	-

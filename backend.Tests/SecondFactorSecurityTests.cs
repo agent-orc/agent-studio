@@ -64,6 +64,66 @@ public sealed class SecondFactorSecurityTests
     }
 
     [Fact]
+    public void Restored_access_state_and_escrowed_key_keep_the_enrolled_authenticator_working()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var source = Path.Combine(root, "source");
+            var restored = Path.Combine(root, "restored");
+            var store = NewStore(source);
+            var password = "long pass phrase " + Guid.NewGuid().ToString("N");
+            var owner = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
+            var secret = store.BeginTotpEnrollment(store.AuthenticateSession(owner.SessionToken)!);
+            var code = SecondFactorCodes.CurrentTotp(secret, TestUtcNow);
+            store.ConfirmTotpEnrollment(store.AuthenticateSession(owner.SessionToken)!, code);
+            var originalState = Path.Combine(source, "workspace", ".security", "access-state.json");
+            var onDisk = File.ReadAllText(originalState);
+            Assert.DoesNotContain(secret, onDisk, StringComparison.Ordinal);
+            Assert.Contains("sealed:v1:", onDisk, StringComparison.Ordinal);
+
+            var restoredState = Path.Combine(restored, "workspace", ".security", "access-state.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(restoredState)!);
+            File.Copy(originalState, restoredState);
+            var restoredKey = Path.Combine(restored, "secrets.kek");
+            File.Copy(Path.Combine(source, "secrets.kek"), restoredKey);
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(restoredKey, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            var reopened = NewStore(restored);
+            var login = reopened.Login("owner", password, "restored", code, requireSecondFactor: true);
+            Assert.False(reopened.AuthenticateSession(login.SessionToken)!.Session.SecondFactorEnrollmentOnly);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Legacy_plaintext_seed_is_sealed_when_access_state_is_first_loaded()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = NewStore(root);
+            var password = "long pass phrase " + Guid.NewGuid().ToString("N");
+            var owner = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
+            var secret = store.BeginTotpEnrollment(store.AuthenticateSession(owner.SessionToken)!);
+            var code = SecondFactorCodes.CurrentTotp(secret, TestUtcNow);
+            store.ConfirmTotpEnrollment(store.AuthenticateSession(owner.SessionToken)!, code);
+            var statePath = Path.Combine(root, "workspace", ".security", "access-state.json");
+            var document = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(statePath))!;
+            document["Users"]![0]!["TotpSecret"] = secret;
+            File.WriteAllText(statePath, document.ToJsonString());
+            var migrationSnapshot = Path.Combine(root, "workspace", ".security", "access-state.v0.before.json");
+            File.Copy(statePath, migrationSnapshot);
+
+            var reopened = NewStore(root);
+            Assert.NotNull(reopened.Login("owner", password, "migrated", code, requireSecondFactor: true));
+            Assert.DoesNotContain(secret, File.ReadAllText(statePath), StringComparison.Ordinal);
+            Assert.Contains("sealed:v1:", File.ReadAllText(statePath), StringComparison.Ordinal);
+            Assert.DoesNotContain(secret, File.ReadAllText(migrationSnapshot), StringComparison.Ordinal);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void Revoke_all_other_sessions_invalidates_them_immediately()
     {
         var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
@@ -174,7 +234,8 @@ public sealed class SecondFactorSecurityTests
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["TaskRepository"] = root,
+            ["TaskRepository"] = Path.Combine(root, "workspace"),
+            ["Secrets:KeyFile"] = Path.Combine(root, "secrets.kek"),
             ["Security:Profile"] = SecurityProfiles.Networked
         }).Build();
         return new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance,

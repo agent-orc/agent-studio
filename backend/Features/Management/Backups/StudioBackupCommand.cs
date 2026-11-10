@@ -69,7 +69,7 @@ public static class StudioBackupCommand
         var (archive, key) = Open(options);
         using var stream = File.OpenRead(archive);
         var (manifest, contents) = BackupArchive.Read(stream, key, null, null, null);
-        output.WriteLine(JsonSerializer.Serialize(new { manifest, files = contents.Files.Count, contents.Consistency },
+        output.WriteLine(JsonSerializer.Serialize(new { manifest, files = contents.Files.Count, contents.CredentialFiles, contents.Consistency },
             BackupArchive.Json));
         return 0;
     }

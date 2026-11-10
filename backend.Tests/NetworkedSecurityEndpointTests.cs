@@ -553,6 +553,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _workspace,
+            ["Secrets:KeyFile"] = _workspace + ".kek",
             ["Security:Profile"] = "networked",
             ["Security:BootstrapCode"] = "website-setup-code",
             ["Security:TrustedProxyAddresses"] = "172.30.83.3",
@@ -582,5 +583,6 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_workspace, true); } catch { }
+        File.Delete(_workspace + ".kek");
     }
 }

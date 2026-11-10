@@ -232,6 +232,7 @@ public sealed class IamEndpointTests : IDisposable
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _workspace,
+            ["Secrets:KeyFile"] = _workspace + ".kek",
             ["Security:Profile"] = profile,
             ["AllowedHosts"] = profile == SecurityProfiles.Networked ? "studio.test" : "*",
         }));
@@ -242,5 +243,6 @@ public sealed class IamEndpointTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_workspace)) Directory.Delete(_workspace, true);
+        File.Delete(_workspace + ".kek");
     }
 }

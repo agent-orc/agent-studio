@@ -35,6 +35,7 @@ public sealed class StandingGrantTests : IDisposable
         _config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _root,
+            ["Secrets:KeyFile"] = _root + ".kek",
             ["Security:Profile"] = "networked",
         }).Build();
         _store = new AccessSecurityStore(_config, NullLogger<AccessSecurityStore>.Instance, _clock);
@@ -241,5 +242,6 @@ public sealed class StandingGrantTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, true);
+        File.Delete(_root + ".kek");
     }
 }
