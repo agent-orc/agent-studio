@@ -1325,7 +1325,24 @@ Product sessions are also denied every task route segment that exposes run
 internals: `session-events`, `agent-work-detail`, `conversation`, `output`,
 `trace`, `logs`, and `raw-logs` in the backend, and `session-events`,
 `agent-work-detail`, `history`, `files`, `output`, `trace`, `logs`, and
-`raw-logs` in Task Server. Segment matching is case-insensitive.
+`raw-logs` in Task Server. Segment matching is case-insensitive. The backend
+also denies `usage`, so `GET /api/tasks/{id}/details/usage` is refused.
+
+A Product session still opens the card (AGT-3669). The browser does not send
+the reads it knows are refused: `TaskSectionAccessService`
+(`frontend/src/app/services/task-section-access.service.ts`) lists them in
+`PRODUCT_DENIED_TASK_SECTIONS`, and the detail skips usage, CLI output, the
+session-event log and the agent-work call breakdown for a contributor session.
+A skipped or refused optional section takes the `restricted` resource phase and
+stays hidden. A refused prompt or status document is marked and the card paints
+from its core. Each section 403 or 404 triggers one core revalidation, and only
+a refused core read clears the selection, with the message "This card is not
+available to this account." The guard
+`ContributorAccessTests.Frontend_product_task_sections_match_the_refused_task_reads`
+fails when that frontend list and the backend policy drift apart. The
+`networked-https-demo` Playwright profile, the `networked-https` stack seeded
+with the demo workspace, covers the flow end to end
+(`frontend/e2e/security/product-card-detail.spec.ts`).
 
 Task Server reads a Product request body as the binder does. It rejects
 duplicate JSON property names, including case variants, and denies a lane field
