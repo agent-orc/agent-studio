@@ -36,6 +36,11 @@ export interface BatchGateConfiguration {
 }
 
 export interface BatchGateState {
+  dailySummary?: {
+    phaseMinutes?: Record<string, { p50: number | null; p90: number | null; cards: number }>;
+    diagnosticRerunShare?: number | null;
+    preCheckYield?: { runs: number; red: number; cardsKeptOut: number; costMinutes: number } | null;
+  } | null;
   reviewFixWaits?: { taskKey: string; reviewAttemptId: string; round: number; maximum: number; aspects: string[] }[];
   preChecksRun?: number;
   preChecksRed?: number;
@@ -152,6 +157,21 @@ export interface BatchMemberState {
   engineRunId?: string | null;
   engineStatus?: string | null;
   preCheck?: BatchPreCheck | null;
+  timeline?: BatchMemberTimeline | null;
+}
+
+export interface BatchMemberTimeline {
+  reviewPassedAtUtc: string;
+  preCheckQueuedAtUtc?: string | null;
+  preCheckStartedAtUtc?: string | null;
+  preCheckFinishedAtUtc?: string | null;
+  joinedBatchAtUtc?: string | null;
+  batchStartedAtUtc?: string | null;
+  batchFinishedAtUtc?: string | null;
+  publishedAtUtc?: string | null;
+  terminalAtUtc?: string | null;
+  outcome: string;
+  diagnosticRerun: boolean;
 }
 
 export interface BatchPreCheck {
