@@ -1,0 +1,75 @@
+<section class="promotion" data-testid="concept-promotion" aria-label="Implementation cards">
+  @if (!open()) {
+    <div class="promotion__bar">
+      <span class="promotion__label">Implementation cards</span>
+      <span class="promotion__hint">One card per Dossier slice. The concept card keeps its lane.</span>
+      <button type="button" class="promotion__button" data-testid="concept-promotion-open"
+              (click)="openPanel()">Create implementation cards</button>
+    </div>
+  } @else {
+    <form class="promotion__panel" data-testid="concept-promotion-panel"
+          (keydown.escape)="close($event)" (submit)="$event.preventDefault(); create()">
+      <header class="promotion__head">
+        <strong>Create implementation cards</strong>
+        <span>Each selected slice becomes one card in Preparation. Accepting the concept is a separate move.</span>
+      </header>
+
+      @if (loading()) {
+        <p class="promotion__state" role="status">Loading the Dossier slices…</p>
+      } @else if (loadError(); as message) {
+        <p class="promotion__error" role="alert" data-testid="concept-promotion-load-error">{{ message }}</p>
+      } @else if (slices().length === 0) {
+        <p class="promotion__state" data-testid="concept-promotion-empty">This Dossier proposes no implementation slices.</p>
+      } @else {
+        @if (remaining().length > 1) {
+          <label class="promotion__all">
+            <input type="checkbox" data-testid="concept-promotion-select-all"
+                   [checked]="allSelected()" [disabled]="creating()" (change)="toggleAll()" />
+            <span>All remaining slices ({{ remaining().length }})</span>
+          </label>
+        }
+        <ol class="promotion__slices">
+          @for (slice of slices(); track slice.index) {
+            <li class="promotion__slice" [attr.data-testid]="'concept-promotion-slice-' + slice.order"
+                [attr.data-created]="slice.card ? 'true' : 'false'">
+              <input type="checkbox" [id]="'concept-promotion-slice-input-' + slice.index"
+                     [attr.data-testid]="'concept-promotion-slice-check-' + slice.order"
+                     [checked]="slice.card !== null || selected().has(slice.index)"
+                     [disabled]="slice.card !== null || creating()" (change)="toggle(slice.index)" />
+              <span class="promotion__order" aria-hidden="true">{{ slice.order }}</span>
+              <label class="promotion__title" [for]="'concept-promotion-slice-input-' + slice.index">
+                <span class="promotion__sr">Slice {{ slice.order }}: </span>{{ slice.title }}
+              </label>
+              <span class="promotion__meta" [attr.data-testid]="'concept-promotion-slice-decision-' + slice.order">
+                {{ slice.decision }}@if (slice.section) { · {{ slice.section }}}
+              </span>
+              @if (slice.card; as card) {
+                <app-status-indicator class="promotion__card" tone="success" [compact]="true"
+                                      [label]="'Created ' + cardLabel(card)" />
+              }
+            </li>
+          }
+        </ol>
+      }
+
+      @if (createError(); as message) {
+        <p class="promotion__error" role="alert" data-testid="concept-promotion-error">{{ message }}</p>
+      }
+      <div class="promotion__buttons">
+        <button type="button" class="promotion__button promotion__button--ghost" data-testid="concept-promotion-cancel"
+                [disabled]="creating()" (click)="close()">Close</button>
+        <button type="submit" class="promotion__button promotion__button--primary" data-testid="concept-promotion-confirm"
+                [disabled]="loading() || creating() || selectedCount() === 0"
+                [attr.aria-busy]="creating()">{{ creating() ? 'Creating…' : createLabel() }}</button>
+      </div>
+    </form>
+  }
+  @if (lastCreated().length > 0) {
+    <p class="promotion__notice" role="status" data-testid="concept-promotion-created">
+      Created {{ lastCreated().length }} card{{ lastCreated().length === 1 ? '' : 's' }}:
+      @for (card of lastCreated(); track card.jobId; let last = $last) {
+        <strong>{{ card.taskKey || card.jobId }}</strong>{{ last ? '.' : ',' }}
+      }
+    </p>
+  }
+</section>

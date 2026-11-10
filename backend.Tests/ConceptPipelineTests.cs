@@ -189,70 +189,7 @@ public sealed class ConceptPipelineTests : IDisposable
     [Fact]
     public void Promotion_CreatesCodingCardsFromPublishedDocument_Idempotently()
     {
-        var repository = Path.Combine(_root, "repository");
-        var taskStore = Path.Combine(_root, "tasks");
-        Directory.CreateDirectory(repository);
-        Directory.CreateDirectory(taskStore);
-        var (_, scanner, _, mutations) = BuildServices(repository, taskStore);
-        var sourceId = mutations.CreateJob(new CreateTaskRequest
-        {
-            Id = "concept-source",
-            Title = "Concept source",
-            Mode = TaskModes.Concept,
-            RequiresIntegration = false,
-            WatchPath = taskStore,
-            TargetState = TaskStates.HumanReview,
-        });
-        Assert.NotNull(sourceId);
-        var source = scanner.FindJob(sourceId!, taskStore);
-        Assert.NotNull(source);
-
-        var workbenchDirectory = ConceptWorkbenchContract.CreateScaffold(
-            repository,
-            "delivery-flow",
-            "Delivery flow",
-            "Approved delivery design.",
-            source!.Key ?? source.Id);
-        var descriptorPath = Path.Combine(workbenchDirectory, "workbench.json");
-        var descriptor = JsonSerializer.Deserialize<ConceptWorkbenchDescriptor>(
-            File.ReadAllText(descriptorPath),
-            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-        descriptor = descriptor with
-        {
-            ImplementationTasks =
-            [
-                new ConceptImplementationTask
-                {
-                    Title = "Implement delivery API",
-                    PromptMarkdown = "Add the approved delivery endpoint.",
-                    Section = "§4",
-                    DecisionId = "delivery-mode",
-                },
-                new ConceptImplementationTask
-                {
-                    Title = "Implement delivery UI",
-                    PromptMarkdown = "Add the approved delivery controls.",
-                },
-            ],
-        };
-        File.WriteAllText(
-            descriptorPath,
-            JsonSerializer.Serialize(
-                descriptor,
-                new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
-        File.AppendAllText(Path.Combine(workbenchDirectory, "index.html"), """
-            <div data-decision-id="delivery-mode" data-decision-kind="single" data-decision-label="Delivery mode">
-              <label data-option-id="queued" data-option-label="A: queued (recommended)"><input checked></label>
-              <label data-option-id="direct" data-option-label="B: direct"><input></label>
-            </div>
-            """);
-        Assert.True(ConceptWorkbenchStore.Write(source.FolderPath, new ConceptWorkbenchRecord
-        {
-            RepoRelativeDirectory = "docs/delivery-flow",
-            RepoRelativeEntrypoint = "docs/delivery-flow/index.html",
-            Title = descriptor.Title,
-            PublishedAt = DateTime.UtcNow,
-        }));
+        var (taskStore, _, scanner, _, mutations, source) = PublishConceptWithTwoSlices();
 
         var plan = scanner.BuildPromoteConceptPlan(source.Id, taskStore);
         Assert.NotNull(plan);
@@ -411,6 +348,138 @@ public sealed class ConceptPipelineTests : IDisposable
             PipelineStepStatus.Skipped,
             execution.Steps.Single(step =>
                 step.StepId == PipelineCatalogue.ConceptPromotionStepId).Status);
+    }
+
+    [Fact]
+    public async Task Promotion_IsSeparateFromAcceptance_AndCreatesOnlyTheSelectedSlices()
+    {
+        var (taskStore, config, scanner, states, mutations, source) = PublishConceptWithTwoSlices();
+        var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
+        pipelineLog.Begin(source.FolderPath, PipelineCatalogue.Concept, source.ProjectName, source.Id);
+        var service = new ConceptPromotionService(
+            scanner, mutations, NullLogger<ConceptPromotionService>.Instance, pipelineLog);
+        var plan = scanner.BuildPromoteConceptPlan(source.Id, taskStore)!;
+        Assert.Empty(service.WithPromotedSlices(source, plan).Promoted);
+
+        var result = service.Promote(source, plan, new PromoteConceptRequest { ItemIndexes = [1] });
+
+        var created = Assert.Single(result.Created);
+        Assert.Equal(1, created.ItemIndex);
+        Assert.Equal("Implement delivery UI", created.Title);
+        Assert.Equal(TaskStates.Preparation, created.State);
+        Assert.Equal(TaskStates.HumanReview, scanner.FindJob(source.Id, taskStore)!.State);
+        var promoted = Assert.Single(service.WithPromotedSlices(source, plan).Promoted);
+        Assert.Equal(created.JobId, promoted.JobId);
+        Assert.Equal(1, promoted.ItemIndex);
+        Assert.Equal(PipelineStepStatus.Passed, PromotionStep(source.FolderPath).Status);
+
+        Directory.CreateDirectory(TaskPaths.ResultsDir(source.FolderPath));
+        File.WriteAllText(Path.Combine(TaskPaths.ResultsDir(source.FolderPath), "deliverables.md"),
+            "# Approved concept\n\nThe sight review approved this no-code deliverable.\n");
+        CompletionContentFixture.RecordPassedReview(source.FolderPath, "concept-fit");
+        var outcome = await Transitions(config, scanner, states, mutations, pipelineLog)
+            .MoveAsync(source.Id, TaskStates.Completed, taskStore);
+
+        Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        var accepted = scanner.FindJob(source.Id, taskStore)!;
+        Assert.Equal(TaskStates.Completed, accepted.State);
+        Assert.Equal(PipelineStepStatus.Passed, PromotionStep(accepted.FolderPath).Status);
+        var repeated = service.Promote(accepted, plan, new PromoteConceptRequest { ItemIndexes = [1] });
+        Assert.Equal(created.JobId, Assert.Single(repeated.Created).JobId);
+    }
+
+    private static PipelineStepExecution PromotionStep(string folder)
+    {
+        var execution = JsonSerializer.Deserialize<PipelineExecutionRecord>(
+            File.ReadAllText(Path.Combine(folder, PipelineExecutionLog.FileName)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        return execution.Steps.Single(step => step.StepId == PipelineCatalogue.ConceptPromotionStepId);
+    }
+
+    private static TaskTransitionService Transitions(
+        IConfiguration config, TaskScannerService scanner, TaskStateMachine states,
+        TaskMutationService mutations, PipelineExecutionLog pipelineLog)
+    {
+        var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
+        return new TaskTransitionService(
+            scanner,
+            states,
+            mutations,
+            new GitService(NullLogger<GitService>.Instance, scanner, config, prompts),
+            new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config),
+            NullLogger<TaskTransitionService>.Instance,
+            pipelineLog: pipelineLog);
+    }
+
+    private (string TaskStore, IConfiguration Config, TaskScannerService Scanner, TaskStateMachine States,
+        TaskMutationService Mutations, TaskInfo Source) PublishConceptWithTwoSlices()
+    {
+        var repository = Path.Combine(_root, "repository");
+        var taskStore = Path.Combine(_root, "tasks");
+        Directory.CreateDirectory(repository);
+        Directory.CreateDirectory(taskStore);
+        var (config, scanner, states, mutations) = BuildServices(repository, taskStore);
+        var sourceId = mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "concept-source",
+            Title = "Concept source",
+            Mode = TaskModes.Concept,
+            RequiresIntegration = false,
+            WatchPath = taskStore,
+            TargetState = TaskStates.HumanReview,
+        });
+        Assert.NotNull(sourceId);
+        var source = scanner.FindJob(sourceId!, taskStore);
+        Assert.NotNull(source);
+
+        var workbenchDirectory = ConceptWorkbenchContract.CreateScaffold(
+            repository,
+            "delivery-flow",
+            "Delivery flow",
+            "Approved delivery design.",
+            source!.Key ?? source.Id);
+        var descriptorPath = Path.Combine(workbenchDirectory, "workbench.json");
+        var descriptor = JsonSerializer.Deserialize<ConceptWorkbenchDescriptor>(
+            File.ReadAllText(descriptorPath),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        descriptor = descriptor with
+        {
+            ImplementationTasks =
+            [
+                new ConceptImplementationTask
+                {
+                    Title = "Implement delivery API",
+                    PromptMarkdown = "Add the approved delivery endpoint.",
+                    Section = "§4",
+                    DecisionId = "delivery-mode",
+                },
+                new ConceptImplementationTask
+                {
+                    Title = "Implement delivery UI",
+                    PromptMarkdown = "Add the approved delivery controls.",
+                },
+            ],
+        };
+        File.WriteAllText(
+            descriptorPath,
+            JsonSerializer.Serialize(
+                descriptor,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+        File.AppendAllText(Path.Combine(workbenchDirectory, "index.html"), """
+            <div data-decision-id="delivery-mode" data-decision-kind="single" data-decision-label="Delivery mode">
+              <label data-option-id="queued" data-option-label="A: queued (recommended)"><input checked></label>
+              <label data-option-id="direct" data-option-label="B: direct"><input></label>
+            </div>
+            """);
+        Assert.True(ConceptWorkbenchStore.Write(source.FolderPath, new ConceptWorkbenchRecord
+        {
+            RepoRelativeDirectory = "docs/delivery-flow",
+            RepoRelativeEntrypoint = "docs/delivery-flow/index.html",
+            Title = descriptor.Title,
+            PublishedAt = DateTime.UtcNow,
+        }));
+
+        return (taskStore, config, scanner, states, mutations, scanner.FindJob(source.Id, taskStore)!);
     }
 
     private (

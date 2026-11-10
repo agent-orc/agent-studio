@@ -482,13 +482,16 @@ public static class TaskCrudEndpoints
             return Results.Ok(plan with { Attachments = attachments });
         });
 
-        // Concept promotion is an explicit sight-review action. It reads only
-        // validated implementation proposals from the published Dossier,
-        // creates coding cards in preparation, and completes the source concept
-        // card after recording the human gate.
+        // Concept promotion is an explicit operator action after sight review.
+        // It reads only validated implementation proposals from the published
+        // Dossier and creates coding cards in preparation. It never moves the
+        // concept card: accepting the concept is the separate Human review to
+        // Accepted move, so a refused acceptance can never hide created cards
+        // behind an error status (AGT-3701).
         group.MapGet("/{jobId}/promote-concept", (string jobId, string? project, string? watchPath,
             TaskScannerService scanner,
-            AgentStudio.Registry.ProjectRegistry projects) =>
+            AgentStudio.Registry.ProjectRegistry projects,
+            AgentStudio.Pipeline.ConceptPromotionService promotion) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var info = scanner.FindJob(jobId, watchPath);
@@ -496,23 +499,20 @@ public static class TaskCrudEndpoints
             if (!TaskModes.IsConcept(info.Mode))
                 return Results.BadRequest(new { error = "Only concept tasks have implementation-card proposals." });
 
-            var plan = scanner.BuildPromoteConceptPlan(jobId, watchPath);
+            var plan = scanner.BuildPromoteConceptPlan(info.Id, info.WatchPath);
             return plan is null
                 ? Results.Conflict(new { error = "The concept Dossier is missing or did not pass concept review." })
-                : Results.Ok(plan);
+                : Results.Ok(promotion.WithPromotedSlices(info, plan));
         });
 
-        group.MapPost("/{jobId}/promote-concept", async (
+        group.MapPost("/{jobId}/promote-concept", (
             string jobId,
             string? project,
             string? watchPath,
             PromoteConceptRequest request,
             TaskScannerService scanner,
             AgentStudio.Registry.ProjectRegistry projects,
-            AgentStudio.Pipeline.ConceptPromotionService promotion,
-            TaskTransitionService transitions,
-            AgentStudio.Pipeline.PipelineExecutionLog pipelineLog,
-            CancellationToken ct) =>
+            AgentStudio.Pipeline.ConceptPromotionService promotion) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var info = scanner.FindJob(jobId, watchPath);
@@ -522,14 +522,13 @@ public static class TaskCrudEndpoints
             if (info.State is not (TaskStates.HumanReview or TaskStates.Completed))
                 return Results.Conflict(new { error = "Complete sight review before promoting implementation cards." });
 
-            var plan = scanner.BuildPromoteConceptPlan(jobId, watchPath);
+            var plan = scanner.BuildPromoteConceptPlan(info.Id, info.WatchPath);
             if (plan is null)
                 return Results.Conflict(new { error = "The concept Dossier is missing or did not pass concept review." });
 
-            PromoteConceptTasksResponse result;
             try
             {
-                result = promotion.Promote(info, plan, request);
+                return Results.Ok(promotion.Promote(info, plan, request));
             }
             catch (ArgumentOutOfRangeException ex)
             {
@@ -539,53 +538,6 @@ public static class TaskCrudEndpoints
             {
                 return Results.Conflict(new { error = ex.Message });
             }
-
-            if (info.State == TaskStates.HumanReview)
-            {
-                var now = DateTime.UtcNow;
-                pipelineLog.RecordStep(info.FolderPath, new PipelineStepExecution
-                {
-                    StepId = AgentStudio.Pipeline.PipelineCatalogue.ConceptSightReviewGateStepId,
-                    Kind = StepKind.Orchestrator,
-                    Status = PipelineStepStatus.Passed,
-                    StartedAt = now,
-                    CompletedAt = now,
-                    Verdict = "sight-review-approved",
-                    VerdictSummary = "Human sight review approved the concept.",
-                });
-                pipelineLog.RecordStep(info.FolderPath, new PipelineStepExecution
-                {
-                    StepId = AgentStudio.Pipeline.PipelineCatalogue.ConceptPromotionStepId,
-                    Kind = StepKind.Tool,
-                    Status = PipelineStepStatus.Passed,
-                    StartedAt = now,
-                    CompletedAt = now,
-                    Verdict = result.Created.Count == 0 ? "no-implementation" : "implementation-cards-created",
-                    VerdictSummary = result.Created.Count == 0
-                        ? "Sight review completed without implementation cards."
-                        : $"Created {result.Created.Count} implementation card(s) from the Dossier.",
-                });
-                pipelineLog.Complete(info.FolderPath, now);
-                SteerPendingMarker.Clear(info.FolderPath);
-
-                var move = await transitions.MoveAsync(
-                    jobId,
-                    TaskStates.Completed,
-                    watchPath,
-                    ct,
-                    cause: "concept-sight-review-approved",
-                    reason: "Concept sight review approved and implementation promotion completed.",
-                    transitionCause: LaneChangeCauses.Accepted,
-                    transitionDetail: "concept-sight-review");
-                if (move.Status != MoveJobStatus.Success)
-                    return Results.Conflict(new
-                    {
-                        error = move.Message ?? "Implementation cards were created, but the concept card could not be completed.",
-                        result,
-                    });
-            }
-
-            return Results.Ok(result);
         });
 
         // AGT-2069 — declare (or clear) "bewusst keine Umsetzung" (deliberately

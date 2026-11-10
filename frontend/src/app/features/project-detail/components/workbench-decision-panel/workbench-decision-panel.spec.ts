@@ -117,8 +117,12 @@ describe('WorkbenchDecisionPanelComponent', () => {
     const confirmation = fixture.nativeElement.querySelector(
       '[data-testid="workbench-decision-feature-confirmation"]');
     expect(confirmation.textContent).toContain('Direct path');
-    expect((confirmation.querySelector('[data-testid="workbench-decision-goal"]') as HTMLTextAreaElement).value)
-      .toContain('Recorded decisions');
+    expect(confirmation.querySelector('[data-testid="workbench-decision-combined-note"]')?.textContent)
+      .toContain('one combined card');
+    const goal = (confirmation.querySelector('[data-testid="workbench-decision-goal"]') as HTMLTextAreaElement).value;
+    expect(goal).not.toContain('Recorded decisions');
+    const preview = confirmation.querySelector('[data-testid="workbench-decision-prompt-preview"]')?.textContent ?? '';
+    expect(preview.split('Direct path').length - 1).toBe(1);
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-draft-notice"]')
       .textContent).toContain('Draft saved');
 

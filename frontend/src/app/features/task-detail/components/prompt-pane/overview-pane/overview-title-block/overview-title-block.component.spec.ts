@@ -186,4 +186,19 @@ describe('OverviewTitleBlockComponent', () => {
     expect(title?.classList.contains('studio-measure')).toBe(true);
     expect(title?.classList.contains('studio-measure--prose')).toBe(true);
   });
+
+  it('offers Create implementation cards on a reviewed concept card with a linked Dossier only', async () => {
+    const dossier = { noDossierNeeded: false, contractSatisfied: true,
+      repoRelativePath: 'docs/delivery-flow/index.html' };
+    const reviewed = await build(baseJob({ mode: 'concept', state: '5-human-review', conceptDossier: dossier }));
+    expect(reviewed.nativeElement.querySelector('[data-testid="concept-promotion-open"]')?.textContent)
+      .toContain('Create implementation cards');
+
+    const running = await build(baseJob({ mode: 'concept', state: '3-progress', conceptDossier: dossier }));
+    expect(running.nativeElement.querySelector('[data-testid="concept-promotion"]')).toBeNull();
+
+    const unlinked = await build(baseJob({ mode: 'concept', state: '6-completed',
+      conceptDossier: { noDossierNeeded: true, contractSatisfied: true } }));
+    expect(unlinked.nativeElement.querySelector('[data-testid="concept-promotion"]')).toBeNull();
+  });
 });

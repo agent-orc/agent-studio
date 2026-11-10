@@ -199,6 +199,17 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   independently reviewable slice and becomes one card with a bounded
   `acceptanceScope`. Promotion rejects an open-ended entry such as `implement
   all recommendations`; use one entry per slice.
+- Promotion and acceptance are separate actions (AGT-3701).
+  `POST /api/tasks/{id}/promote-concept` (from Human review or Accepted) only
+  creates the selected slices (`itemIndexes`, empty for all), records the
+  `post-concept-promotion` step, and returns the created cards with their slice
+  index. It never moves the concept card, so a refused acceptance cannot hide
+  created cards behind an error status. `GET` returns the slices plus
+  `promoted`, the slices that already have a card. Accepting the concept later
+  keeps that step passed; it is marked skipped only when no slice was promoted.
+  The Studio offers this as **Create implementation cards** on the Dossier view
+  (through the Dossier's source concept card) and on the concept card's
+  Overview. The Dossier's **Start one combined task** stays the single-card path.
 - `POST /api/tasks/{id}/continue` on a `concept` or `planning` card refuses
   (`409`) a follow-up prompt that reads as a code-change request, naming the
   card's mode and the matching promotion path (`promote-concept` or

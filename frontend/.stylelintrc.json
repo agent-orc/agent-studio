@@ -234,6 +234,7 @@
         "src/app/features/secrets/project-secrets-page/project-secrets-page.component.scss",
         "src/app/features/board/components/dossier-group-board/dossier-group-board.component.scss",
         "src/app/features/project-detail/components/dossier-card-list/dossier-card-list.component.scss",
+        "src/app/components/concept-promotion/concept-promotion.component.scss",
         "src/app/features/project-detail/components/project-operations/project-operations.scss",
         "src/app/features/project-detail/components/operations-trend/operations-trend.scss",
         "src/app/features/credentials/credential-alerts/credential-alerts.component.scss",

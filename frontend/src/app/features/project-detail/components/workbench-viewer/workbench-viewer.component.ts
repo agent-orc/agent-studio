@@ -44,6 +44,7 @@ import { PublicDemoModeService } from '../../../../services/public-demo-mode.ser
 import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 import { WorkbenchDecisionPanelComponent } from '../workbench-decision-panel/workbench-decision-panel';
 import { DossierCardListComponent } from '../dossier-card-list/dossier-card-list.component';
+import { ConceptPromotionComponent } from '../../../../components/concept-promotion/concept-promotion.component';
 
 /**
  * Trusted host chrome around repository-authored HTML. The artifact receives an
@@ -62,6 +63,7 @@ import { DossierCardListComponent } from '../dossier-card-list/dossier-card-list
     WorkbenchViewerHeaderComponent,
     WorkbenchDecisionPanelComponent,
     DossierCardListComponent,
+    ConceptPromotionComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workbench-viewer.component.html',
@@ -107,6 +109,15 @@ export class WorkbenchViewerComponent {
   readonly liveConnected = this.hub.connected;
   readonly connectionChangedAtUtc = this.hub.connectionChangedAtUtc;
   readonly readOnly = this.publicDemo.readOnly;
+  /**
+   * The concept card that published this Dossier, when the Dossier proposes
+   * implementation slices. Its promotion creates one card per slice (AGT-3701).
+   */
+  readonly promotionSource = computed(() => {
+    const document = this.document();
+    if (!document || this.readOnly() || (document.cards?.implementationSlices ?? 0) === 0) return null;
+    return document.workbench.sourceTaskKeys.find(key => key.trim().length > 0) ?? null;
+  });
 
   readonly srcdoc = computed(() => {
     const document = this.document();

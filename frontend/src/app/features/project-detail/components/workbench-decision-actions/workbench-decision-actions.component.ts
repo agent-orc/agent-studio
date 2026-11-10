@@ -289,12 +289,12 @@ export class WorkbenchDecisionActionsComponent {
   private seedFeatureDraft(): void {
     this.resetFeedback();
     const operationId = createOperationId();
-    const decisions = this.selectedSummary();
+    // The prompt lists the recorded decisions in its own section; the goal
+    // repeating them listed every decision twice (AGT-3701).
     const draft = this.drafts.beginFeature(this.projectName(), this.document().workbench.id, {
       actor: this.actor(),
       title: `Implement ${this.document().workbench.title}`,
-      goal: bounded([this.document().workbench.summary.trim(), decisions
-        ? `Recorded decisions:\n${decisions}` : ''].filter(Boolean).join('\n\n'), 20_000),
+      goal: bounded(this.document().workbench.summary.trim(), 20_000),
       operationId,
     }, this.responses());
     this.title.set(draft.title);

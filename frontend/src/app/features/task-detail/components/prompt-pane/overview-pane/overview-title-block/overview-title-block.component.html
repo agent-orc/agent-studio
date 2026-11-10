@@ -70,6 +70,14 @@
     (promoteRequested)="promote()"
     (changed)="referencesChanged.emit()" />
   <app-concept-dossier-notice [job]="job()" (changed)="referencesChanged.emit()" />
+  @if (canPromoteConcept()) {
+    <app-concept-promotion
+      class="ov-concept-promotion"
+      [taskRef]="job().id"
+      [watchPath]="job().watchPath"
+      [projectName]="job().projectName"
+      (promoted)="referencesChanged.emit()" />
+  }
   <app-delivery-claim-panel [job]="job()" />
   <app-continue-round-panel [job]="job()" />
 </section>

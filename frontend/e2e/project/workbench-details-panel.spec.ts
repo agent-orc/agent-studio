@@ -97,6 +97,19 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
     policyWikiPath: 'docs/system/domains/model-routing-policy.md',
   }));
   await page.route('**/api/crash-recovery/pending**', route => json(route, { pending: [] }));
+  await page.route('**/api/usage/cockpit**', route => json(route, {
+    snapshotVersion: 1, workspaceId: 'workspace-evidence', timeZone: 'UTC', weekStart: 1,
+    generatedAt: '2026-08-11T10:00:00Z', calendar: { timeZone: 'UTC', weekStart: 1 }, clis: [],
+    cost: { currency: 'USD', todayUsd: null, weekUsd: null, projects: [],
+      coverage: { status: 'unavailable', observedAt: null, ttlSeconds: null } },
+    runs: [], slots: [], sources: {},
+  }));
+  await page.route('**/api/token-pricing/calculate', route => json(route, { provider: 'TokenEconomy', items: [] }));
+  await page.route('**/api/workspaces/*/quota/admission**', route => json(route, {
+    workspaceId: 'workspace-evidence',
+    workspace: { codingAllowed: true, hostingAllowed: true, limited: false },
+    projects: [],
+  }));
   await page.route('**/api/workbenches**', route => json(route, {
     includesHistory: true,
     count: 1,

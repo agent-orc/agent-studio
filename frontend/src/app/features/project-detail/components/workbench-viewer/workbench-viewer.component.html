@@ -1,5 +1,5 @@
 <section class="workbench-viewer" data-testid="workbench-viewer">
-  @if (loading()) {
+  @if (loading() && !document()) {
     <div class="workbench-viewer__state" data-testid="workbench-viewer-loading">
       Loading Dossier…
     </div>
@@ -53,6 +53,14 @@
       }
     </div>
     <app-dossier-card-list [list]="doc.cards ?? null" />
+    @if (promotionSource(); as source) {
+      <app-concept-promotion
+        class="workbench-viewer__promotion"
+        [taskRef]="source"
+        [projectName]="projectName()"
+        (promoted)="refreshDecision()"
+      />
+    }
     <div
       class="workbench-viewer__frame-shell"
       [class.workbench-viewer__frame-shell--maximized]="maximized()"

@@ -1246,19 +1246,30 @@ export class TaskService {
     );
   }
 
-  getPromoteConcept(jobId: string, watchPath?: string) {
+  /**
+   * Implementation slices a published concept Dossier proposes, plus the
+   * slices that already have a card. `jobId` may be the card key; `project`
+   * scopes a key lookup when no watch path is known (the Dossier view).
+   */
+  getPromoteConcept(jobId: string, watchPath?: string, project?: string) {
     return this.http.get<import('../models/task.model').PromoteConceptResponse>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/promote-concept`,
-      this.withWatchPath(watchPath),
+      this.withProjectOrWatchPath(watchPath, project),
     );
   }
 
-  promoteConcept(jobId: string, itemIndexes: number[], watchPath?: string) {
+  /** Creates one card per selected slice. It never moves the concept card. */
+  promoteConcept(jobId: string, itemIndexes: number[], watchPath?: string, project?: string) {
     return this.http.post<import('../models/task.model').PromoteConceptTasksResponse>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/promote-concept`,
       { itemIndexes },
-      this.withWatchPath(watchPath),
+      this.withProjectOrWatchPath(watchPath, project),
     );
+  }
+
+  private withProjectOrWatchPath(watchPath?: string, project?: string): { params?: HttpParams } {
+    if (watchPath || !project) return this.withWatchPath(watchPath);
+    return { params: new HttpParams().set('project', project) };
   }
 
   /**

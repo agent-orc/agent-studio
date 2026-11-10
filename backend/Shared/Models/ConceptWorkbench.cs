@@ -95,6 +95,12 @@ public sealed record PromoteConceptResponse
     public string TargetState { get; init; } = TaskStates.Preparation;
     public string WatchPath { get; init; } = "";
     public string ProjectName { get; init; } = "";
+    /// <summary>
+    /// Slices that already have a card from an earlier promotion, read from the
+    /// source card's spawn ledger. A repeated request returns these cards
+    /// instead of creating second ones.
+    /// </summary>
+    public List<PromotedConceptTask> Promoted { get; init; } = [];
 }
 
 public sealed record PromoteConceptRequest
@@ -111,6 +117,10 @@ public sealed record PromotedConceptTask
     public string JobId { get; init; } = "";
     public string? TaskKey { get; init; }
     public string Title { get; init; } = "";
+    /// <summary>Zero-based <see cref="PromoteConceptResponse.Items"/> index; null for a non-slice spawn.</summary>
+    public int? ItemIndex { get; init; }
+    /// <summary>Lane of the card when the response was built; null when the card was not found.</summary>
+    public string? State { get; init; }
 }
 
 public sealed record PromoteConceptTasksResponse

@@ -802,7 +802,7 @@ public sealed class TaskTransitionService
                 && fromState == TaskStates.HumanReview
                 && targetState == TaskStates.Completed)
             {
-                RecordConceptSightReviewCompletion(info, watchPath, cause);
+                RecordConceptSightReviewCompletion(info, watchPath);
             }
 
             if (fromState == TaskStates.HumanReview && targetState == TaskStates.Completed)
@@ -2329,8 +2329,7 @@ public sealed class TaskTransitionService
 
     private void RecordConceptSightReviewCompletion(
         TaskInfo original,
-        string? watchPath,
-        string? cause)
+        string? watchPath)
     {
         var moved = _scanner.FindJob(original.Id, watchPath);
         var folder = moved?.FolderPath;
@@ -2347,7 +2346,9 @@ public sealed class TaskTransitionService
             Verdict = "sight-review-approved",
             VerdictSummary = "Human sight review approved the concept.",
         });
-        if (!string.Equals(cause, "concept-sight-review-approved", StringComparison.Ordinal))
+        // Promotion is its own action and records the promotion step itself.
+        // Only an acceptance with no promoted slice marks the step skipped.
+        if (!AgentStudio.Pipeline.ConceptPromotionService.HasPromotedSlices(folder, _logger))
         {
             _pipelineLog?.RecordStep(folder, new PipelineStepExecution
             {

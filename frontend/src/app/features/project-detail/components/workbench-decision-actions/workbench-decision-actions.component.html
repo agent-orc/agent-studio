@@ -3,6 +3,10 @@
         data-testid="workbench-decision-feature-confirmation"
         (keydown.escape)="closeConfirmation($event)"
         (submit)="$event.preventDefault(); createFeatureCard()">
+    <p class="decision-actions__note" data-testid="workbench-decision-combined-note">
+      This creates one combined card for every recorded selection. To create one card per
+      Dossier slice, use Create implementation cards.
+    </p>
     <label>
       <span>Title</span>
       <input type="text" data-testid="workbench-decision-title" maxlength="240"
@@ -72,7 +76,8 @@
               [attr.title]="reworkDisabledReason() || (!hasReworkComment() ? 'Add a comment to request rework.' : null)"
               [disabled]="!canRequestRework()" (click)="beginRework()">Request rework</button>
       <button type="button" data-testid="workbench-decision-start"
-              [disabled]="!canPrepareFeature()" (click)="prepareFeatureCard()">Start task</button>
+              title="Creates one combined card for every recorded selection."
+              [disabled]="!canPrepareFeature()" (click)="prepareFeatureCard()">Start one combined task</button>
     </div>
   </div>
 }
