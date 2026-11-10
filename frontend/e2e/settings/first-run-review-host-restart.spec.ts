@@ -121,8 +121,8 @@ test('a killed review host is named on the card with its automatic retry and sta
     await setTheme(page, 'dark');
     await shot(lostCard, results, 'card-retry-2-dark');
     await page.setViewportSize({ width: 390, height: 844 });
-    // A narrow board shows one lane group at a time; Auto Review is under Active.
-    await page.getByTestId('board-group-switch-active').click();
+    // A narrow board shows one lane at a time.
+    await page.getByTestId('mobile-lane-picker').locator('select').selectOption('4-auto-review');
     await expect(lossLine).toHaveText(retryLine);
     await lostCard.scrollIntoViewIfNeeded();
     await shot(page, results, 'card-retry-2-390-dark');
