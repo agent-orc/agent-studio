@@ -41,6 +41,14 @@ public sealed partial class BatchGatePilotService
     private IReadOnlyList<BatchGateManifest> OrderForStart(IReadOnlyList<BatchGateManifest> formed)
         => BatchGateFlightQueue.Order(_store, formed, LeaseDeadlineDeferred());
 
+    internal IReadOnlyList<BatchGateManifest> StartOrderForTesting(IReadOnlyList<BatchGateManifest> formed)
+        => OrderForStart(formed);
+
+    internal void DeferAtLeaseDeadlineForTesting(string project, string batchId)
+    {
+        lock (_runningBatches) _leaseDeadlineDeferred[project] = batchId;
+    }
+
     private Func<string, string?> LeaseDeadlineDeferred()
     {
         Dictionary<string, string> deferred;

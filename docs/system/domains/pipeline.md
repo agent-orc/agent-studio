@@ -468,7 +468,9 @@ The batch gate state lists the queue as `flightQueue` (`batchId`, `position`,
 `queuedSinceUtc`, `size`, `taskKeys`; position 1 starts next), gives each
 formed batch its `queuePosition`, and the overdue plan reason names it as
 `flight queue position <n> of <m>`. The batch panel shows the queue and the
-position of each formed batch.
+position of each formed batch. The state reader takes every position from
+`BatchGateFlightQueue.Positions`, which numbers the same `Order` the start
+pass uses, so the shown position cannot drift from the start order (AGT-3712).
 
 The batch panel reads `GET /api/projects/{projectName}/batch-gate/failed-tests`
 to rank failed test names over a seven-day sliding window (`windowDays` may be
