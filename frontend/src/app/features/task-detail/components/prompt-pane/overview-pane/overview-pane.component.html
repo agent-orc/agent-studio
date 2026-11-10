@@ -399,7 +399,7 @@
                 [watchPath]="job().watchPath"
                 [projectName]="job().projectName"
                 [activation]="row.config?.activation ?? null"
-                [attempts]="pipelinePoll.pipeline()?.onDemand?.attempts ?? []" />
+                [attempts]="pipelinePoll.pipeline()?.onDemand?.attempts ?? []" [reviewResults]="pipelinePoll.pipeline()?.onDemand?.runnableStepIds?.includes(row.id) ?? false" />
             }
             </span>
             <span class="ov-pl-step__timing"

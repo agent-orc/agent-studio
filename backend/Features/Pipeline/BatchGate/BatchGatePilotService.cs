@@ -413,7 +413,8 @@ public sealed partial class BatchGatePilotService
             slotUsage,
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
             _time.GetUtcNow(), _services?.GetService<GateRunLedger>(), reviewFixWaits,
-            _services?.GetService<GateCapacitySettings>()?.Current(), DetachedFlights(project));
+            _services?.GetService<GateCapacitySettings>()?.Current(), DetachedFlights(project),
+            LeaseDeadlineDeferred()(project));
     }
 
     private static BatchGateReviewFixWait[] ReviewFixWaits(IEnumerable<TaskInfo> tasks, string project)
@@ -1013,6 +1014,9 @@ public sealed partial class BatchGatePilotService
         bool followsCompletedFlight)
     {
         var waiting = _store.ListPending();
+        // AGT-3710: only the head of a project's queue may stack on the running
+        // flight, so a younger batch on the running base cannot overtake it.
+        var queueHeads = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var manifest in OrderForStart(_store.ListRecoverableManifests()
                      .Where(manifest => (project is null || string.Equals(manifest.Scope.Project,
                              project, StringComparison.OrdinalIgnoreCase))
@@ -1049,7 +1053,8 @@ public sealed partial class BatchGatePilotService
                 StartStack(manifest, membersByKey, current[0].RepositoryPath, ct);
                 continue;
             }
-            if (TryStartStack(manifest, membersByKey, current[0].RepositoryPath, ct))
+            var head = queueHeads.Add(manifest.Scope.Project);
+            if (head && TryStartStack(manifest, membersByKey, current[0].RepositoryPath, ct))
                 continue;
             StartBatch(manifest, membersByKey, current[0].RepositoryPath, ct,
                 followsCompletedFlight);

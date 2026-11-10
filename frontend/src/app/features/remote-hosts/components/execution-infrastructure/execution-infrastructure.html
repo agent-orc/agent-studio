@@ -4,6 +4,9 @@
     <div class="infrastructure__grid">
       <p><strong>Workstation</strong><span>Local execution role in the table below. API process: {{ infrastructure.workstation }}</span></p>
       <p><strong>Task Server</strong><span>{{ infrastructure.taskServer }} · {{ infrastructure.taskServer === 'local monolith' ? 'this API is responding' : 'check installation checkpoints for route health' }}</span></p>
+      @if (infrastructure.taskServer === 'local monolith') {
+        <p data-testid="one-shot-route-status"><strong>One shot jobs</strong><span>Claim route unavailable on the local monolith. Runners retry every five minutes.</span></p>
+      }
       <p><strong>Engine</strong><span>@if (infrastructure.taskServer === 'remote Task Server') { observed by Task Server } @else {
           <app-status-indicator [tone]="engineTone(infrastructure.engine.state)" [label]="infrastructure.engine.state" [compact]="true" testId="execution-engine-state" /> }
         @if (infrastructure.engine.lastEngineId) { · {{ infrastructure.engine.lastEngineId }} }

@@ -107,6 +107,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Remote infrastructure scenario result contract | [contracts/remote-run-result.md](../system/contracts/remote-run-result.md) |
 | Deployment regression scenario (one seeded fixture, three targets, the gate every deployment card and release proves itself against; AGT-2739) | [operations/testing/deployment-scenario.md](../operations/testing/deployment-scenario.md) |
 | Candidate installation scenarios and evidence, including release and nightly gates | [operations/testing/installation-scenarios.md](../operations/testing/installation-scenarios.md) |
+| Product scenario: a product manager, a designer and a manager evolve Click Counter through the product chat, card previews and the Product role, with a run report (AGT-3183) | [operations/testing/product-scenario.md](../operations/testing/product-scenario.md) |
 | Deployment story: operator and administrator journeys from one box to many runner hosts, current availability, option C reconciliation and recovery gates (AGT-2906) | [decision dossier](../operations/deployment-story/index.html) |
 | Credentials and logins: host inventory, incident classification, guided renewal, rotation and typed recovery runbooks (AGT-2968) | [decision Dossier](../credentials-and-logins/index.html) |
 | Dynamic placement: work containers placed by load across hosts, one host agent and budget, pulled gates, per-work-item credentials (AGT-3171) | [decision Dossier](../dynamic-placement/index.html) |
@@ -116,7 +117,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Build/test gate recovery: targeted flaky re-runs, budget environment retries, contention thresholds, and slow-test evidence (AGT-2853, AGT-2872) | [operations/testing/build-test-gate-flaky-rerun.md](../operations/testing/build-test-gate-flaky-rerun.md) |
 | Backend test class durations: complete before and after rankings, three fixture changes, and project wall time under contention (AGT-3507) | [operations/testing/backend-test-class-durations-2026-11-05.md](../operations/testing/backend-test-class-durations-2026-11-05.md) |
 | Batch gate pilot test durations: where the slowest backend class spent its time, the index refresh wait, and the split into topic classes with before and after runs (AGT-3566) | [operations/testing/batch-gate-pilot-test-durations-2026-11-09.md](../operations/testing/batch-gate-pilot-test-durations-2026-11-09.md) |
-| Four slow backend test classes: profiles, changes, and interleaved before and after measurements under recorded host load (AGT-3567) | [operations/testing/backend-slow-classes-2026-11-09.md](../operations/testing/backend-slow-classes-2026-11-09.md) |
+| Four slow backend test classes: profiles, product and fixture changes, and before and after measurements in three layouts under recorded host load (AGT-3567) | [operations/testing/backend-slow-classes-2026-11-09.md](../operations/testing/backend-slow-classes-2026-11-09.md) |
 | ADR archive | [architecture/decisions/adr-archive.md](../system/architecture/decisions/adr-archive.md) |
 | Architecture model | [architecture/model.md](../system/architecture/model.md) |
 | Architecture and Quality layer (Project Map, mapped guides, analysis inventory, component grading) | [concept](../concepts/architecture-quality-layer.md) · [interactive Dossier](../quality/architecture-quality-layer/index.html) |
@@ -212,6 +213,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Wiki classification | [product/wiki-document-classification.md](./wiki-document-classification.md) |
 | Wiki editing flow | [product/wiki-editing-and-branch-flow.md](./wiki-editing-and-branch-flow.md) |
 | Wiki document companion schema | [schemas/wiki-document-companion.schema.json](../app/schemas/wiki-document-companion.schema.json) |
+| Persona descriptor schema, starter catalogue and workspace activation (PT-1) | [schemas/persona.schema.json](../app/schemas/persona.schema.json) · [tasks domain](../system/domains/tasks.md#persona-catalogue-and-workspace-activation-pt-1) · [Dossier](../persona-team/index.html) |
 | Wiki page lifecycle schema | [schemas/wiki-page-lifecycle.schema.json](../app/schemas/wiki-page-lifecycle.schema.json) |
 | Model qualification benchmark event schema | [schemas/model-qualification-event.schema.json](../app/schemas/model-qualification-event.schema.json) |
 | Model escalation and companion routing concept | [concepts/model-escalation-and-companion-routing.md](../concepts/model-escalation-and-companion-routing.md) |

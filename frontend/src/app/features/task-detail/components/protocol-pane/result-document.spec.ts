@@ -196,6 +196,19 @@ describe('compactDurationMetric', () => {
 });
 
 describe('buildResultDocument', () => {
+  it('renders an accepted scaffold and older problem metrics quietly', () => {
+    const current = detail({ statusMarkdown: STATUS_SCAFFOLD, tags: ['code-review:grade-d'] });
+    current.info.state = '6-completed';
+    const doc = buildResultDocument(current, verdict({ label: 'Accepted' }));
+    expect(doc.case.case).toBe('generic');
+    expect(doc.metrics.find(metric => metric.id === 'grade')?.tone).toBe('neutral');
+  });
+
+  it('does not give an accepted Result the old blocked case treatment', () => {
+    const current = detail({ statusMarkdown: '# Status\n- Result: Blocked\n- Case: blocked\n\n## Overview\nThe run waited for a decision.' });
+    current.info.state = '6-completed';
+    expect(buildResultDocument(current, verdict({ label: 'Accepted' })).case.case).toBe('generic');
+  });
   it('parses an explicit ## Overview into problem/solution (not synthesized)', () => {
     const doc = buildResultDocument(detail({ statusMarkdown: STATUS_WITH_OVERVIEW }), verdict({ duration: '4 min' }));
     expect(doc.overview.synthesized).toBe(false);

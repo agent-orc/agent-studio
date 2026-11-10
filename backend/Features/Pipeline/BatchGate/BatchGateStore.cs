@@ -272,6 +272,18 @@ public sealed partial class BatchGateStore
         return File.Exists(path) ? Read<BatchGateBaseVerdict>(path) : null;
     }
 
+    public IReadOnlyList<BatchGateBaseVerdict> ListBaseVerdicts(string project)
+    {
+        var folder = Path.Combine(_root, "base-verdicts", SafeName(project));
+        if (!Directory.Exists(folder)) return [];
+        return Directory.EnumerateFiles(folder, "*.json")
+            .Select(path => Read<BatchGateBaseVerdict>(path))
+            .Where(verdict => verdict is not null
+                && string.Equals(verdict.Project, project, StringComparison.Ordinal))
+            .Select(verdict => verdict!)
+            .ToArray();
+    }
+
     public void RecordBaseVerdict(BatchGateBaseVerdict verdict)
     {
         var path = BaseVerdictPath(verdict.Project, verdict.BaseSha, verdict.GateProfileDigest);
@@ -521,12 +533,20 @@ public sealed partial class BatchGateStore
             : [];
     }
 
+    /// <summary>
+    /// Closed manifests in formation order: close time, then batch id. Batch
+    /// folders are named by hash, so their enumeration order carries no meaning
+    /// and no caller may depend on it (AGT-3710).
+    /// </summary>
     public IReadOnlyList<BatchGateManifest> ListManifests()
         => !Directory.Exists(_root) ? []
-            : Directory.EnumerateDirectories(_root)
+            : InFormationOrder(Directory.EnumerateDirectories(_root)
                 .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
-                .Select(dir => Read<BatchGateManifest>(Path.Combine(dir, "manifest.json")))
-                .ToArray();
+                .Select(dir => Read<BatchGateManifest>(Path.Combine(dir, "manifest.json"))));
+
+    private static BatchGateManifest[] InFormationOrder(IEnumerable<BatchGateManifest> manifests)
+        => manifests.OrderBy(manifest => manifest.ClosedAtUtc)
+            .ThenBy(manifest => manifest.BatchId, StringComparer.Ordinal).ToArray();
 
     /// <summary>
     /// Folders that hold a closed manifest. A manifest is written once, so a
@@ -535,7 +555,8 @@ public sealed partial class BatchGateStore
     public IReadOnlyList<string> ListManifestFolders()
         => !Directory.Exists(_root) ? []
             : Directory.EnumerateDirectories(_root)
-                .Where(dir => File.Exists(Path.Combine(dir, "manifest.json"))).ToArray();
+                .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
+                .Order(StringComparer.Ordinal).ToArray();
 
     public BatchGateManifest ReadManifestIn(string folder)
         => Read<BatchGateManifest>(Path.Combine(folder, "manifest.json"));
@@ -740,14 +761,14 @@ public sealed partial class BatchGateStore
             : [];
     }
 
+    /// <summary>Formed or in-flight manifests in formation order, as <see cref="ListManifests"/>.</summary>
     public IReadOnlyList<BatchGateManifest> ListRecoverableManifests()
     {
         if (!Directory.Exists(_root)) return [];
-        return Directory.EnumerateDirectories(_root)
+        return InFormationOrder(Directory.EnumerateDirectories(_root)
             .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
             .Select(dir => Read<BatchGateManifest>(Path.Combine(dir, "manifest.json")))
-            .Where(manifest => IsRecoverable(manifest))
-            .ToArray();
+            .Where(manifest => IsRecoverable(manifest)));
     }
 
     private bool IsRecoverable(BatchGateManifest manifest)

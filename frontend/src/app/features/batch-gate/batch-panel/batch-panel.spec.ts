@@ -207,4 +207,34 @@ describe('BatchPanelComponent', () => {
     expect(form.newTitle).toBe('Fix failing test: Checkout.Tests.TotalsIncludeShipping');
     expect(form.newPrompt).toContain('Batch isolation proved AGT-2 red in batch batch-17, run run-17.');
   });
+  it('shows each formed batch at its flight queue position, oldest first', async () => {
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
+    const fixture = TestBed.createComponent(BatchPanelComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('closed', vi.fn());
+    await fixture.whenStable();
+    const formed = (batchId: string, taskKey: string) => ({ batchId, phase: 'formed', queuePosition: batchId === 'batch-old' ? 1 : 2,
+      baseSha: 'b'.repeat(40), members: [{ taskKey, replay: 'pending' as const, released: false }], runs: [] });
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush({
+      ...redHalvingState,
+      batches: [formed('batch-new', 'AGT-6'), formed('batch-old', 'AGT-5')],
+      flightQueue: [
+        { batchId: 'batch-old', position: 1, queuedSinceUtc: '2026-11-10T03:47:00Z', size: 1, taskKeys: ['AGT-5'] },
+        { batchId: 'batch-new', position: 2, queuedSinceUtc: '2026-11-10T04:50:00Z', size: 1, taskKeys: ['AGT-6'] },
+      ],
+    });
+    http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({ project: 'Demo', windowDays: 7, tests: [] });
+    await Promise.resolve();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const queue = fixture.nativeElement.querySelector('[data-testid="batch-flight-queue"]') as HTMLElement;
+    const rows = [...queue.querySelectorAll('li')].map(row => (row.textContent ?? '').replace(/\s+/g, ' ').trim());
+    expect(rows[0]).toContain('Position 1 · batch-old');
+    expect(rows[1]).toContain('Position 2 · batch-new');
+    expect([...fixture.nativeElement.querySelectorAll('[data-testid="batch-queue-position"]')]
+      .map(item => (item as HTMLElement).textContent?.trim()))
+      .toEqual(['flight queue position 2 of 2', 'flight queue position 1 of 2']);
+    http.verify();
+  });
 });

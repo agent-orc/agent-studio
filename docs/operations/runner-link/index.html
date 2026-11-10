@@ -232,7 +232,7 @@ operator therefore looked for a sign-in problem; the host was logged in the whol
   <li><b>Repository-owned keeper and watchdog</b> under <code>deploy/windows/agent-runner-tunnel/</code>:
       functional probe through the host, zombie-listener cleanup, two-probe recovery, alarm log. The
       watchdog is not registered because registration needs an elevated shell; the live keeper is the
-      older copy under <code>C:\Users\rmisc\ops\</code>.</li>
+      older copy under <code>%USERPROFILE%\ops\</code>.</li>
   <li><b>Runner-side health check</b> in <code>agent-host</code>: it reports "could not reach the task
       server" honestly and exits with code 4, so systemd restarts it. The report never reaches an
       operator surface because the channel that would carry it is the one that is down.</li>
@@ -468,7 +468,7 @@ is the only state an operator sets by hand.</figcaption>
   <li><code>docs/operations/setup/remote-runner-persistent-connection.md</code>: Option A and B runbooks, prepared keeper and watchdog.</li>
   <li><code>docs/operations/remote-task-server-local-studio.md</code>: Phase A concept for the remote Task Server, WireGuard, credentials, gates, threat model.</li>
   <li><code>docs/concepts/distributed-agent-studio-target-architecture.md</code>: component boundaries, outbound runner channel.</li>
-  <li>Keeper log <code>C:\Users\rmisc\ops\tunnel-keeper.log</code>, runner journal <code>agent-runner.service</code>, Windows scheduler state on 06.09.2026.</li>
+  <li>Keeper log <code>%USERPROFILE%\ops\tunnel-keeper.log</code>, runner journal <code>agent-runner.service</code>, Windows scheduler state on 06.09.2026.</li>
   <li>Frontend <code>features/remote-hosts/models/provider-auth.model.ts</code> (<code>providerAuthWaitReason</code>), runner <code>agent-host</code> route check.</li>
 </ul>
 
