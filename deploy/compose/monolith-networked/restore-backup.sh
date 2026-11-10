@@ -85,6 +85,7 @@ docker run --rm --user 10001:10001 "${agent[@]}" \
   -v "$data_dir/host-certificates:/data/host-certificates" -v "$data_dir/caddy-data:/data/caddy-data" \
   -v "$data_dir/origin-pull:/data/origin-pull" -v "$restored_stack:/data/restored-stack" \
   "$image" --studio-backup restore --key /work/backup.key --archive /work/archive --secret-key /work/secrets.kek \
+    --actor "offline:$(id -un)@$(hostname)" \
     --target workspace=/data/workspace --target home=/data/home --target projects=/data/projects \
     --target host-certificates=/data/host-certificates --target caddy-data=/data/caddy-data \
     --target origin-pull=/data/origin-pull --target stack=/data/restored-stack \

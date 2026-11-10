@@ -55,10 +55,12 @@
         </span>
       </div>
 
-      <app-agent-work-detail
-        class="ov-agent-work__detail"
-        [jobId]="job().id"
-        [watchPath]="job().watchPath" />
+      @if (showCallDetail()) {
+        <app-agent-work-detail
+          class="ov-agent-work__detail"
+          [jobId]="job().id"
+          [watchPath]="job().watchPath" />
+      }
     }
   }
 </section>
