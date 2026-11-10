@@ -1604,39 +1604,18 @@ public static class TaskCrudEndpoints
                 && isolation.Find(card) is { } isolating)
                 return Results.Json(AgentStudio.Pipeline.BatchIsolationGuardPolicy.Body(isolating),
                     statusCode: StatusCodes.Status409Conflict);
-            AgentStudio.Pipeline.BatchGateManifest? activeBatch = null;
-            AgentStudio.Pipeline.BatchGateStore? batchStore = null;
-            AgentStudio.Pipeline.BatchGatePendingRecord? batchMember = null;
-            if (card.State == TaskStates.AutoReview && request.TargetState != card.State)
-            {
-                batchStore = context.RequestServices.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>();
-                batchMember = batchStore.ListPending().FirstOrDefault(item =>
-                    string.Equals(item.JobFolderPath, card.FolderPath, StringComparison.Ordinal));
-                activeBatch = batchMember is null ? null : batchStore.ListManifests().FirstOrDefault(manifest =>
-                    manifest.Scope.Project == batchMember.Subject.Project
-                    && manifest.Members.Any(member => member.TaskKey == batchMember.Subject.TaskKey
-                        && member.RunAttempt == batchMember.Subject.RunAttempt)
-                    && batchStore.LatestState(manifest.BatchId).Phase is not
-                        (AgentStudio.Pipeline.BatchPhase.Published
-                        or AgentStudio.Pipeline.BatchPhase.Red
-                        or AgentStudio.Pipeline.BatchPhase.Abandoned));
-                if (activeBatch is not null && !request.WithdrawFromBatch)
-                {
-                    var phase = batchStore.LatestState(activeBatch.BatchId).Phase.ToString().ToLowerInvariant();
-                    var others = activeBatch.Members.Where(member => member.TaskKey != batchMember!.Subject.TaskKey)
-                        .Select(member => member.TaskKey).ToArray();
-                    var message = $"{batchMember!.Subject.TaskKey} belongs to batch {activeBatch.BatchId} ({phase}). "
-                        + $"Other members: {string.Join(", ", others)}. "
-                        + "Wait for the batch to finish, or confirm withdrawal with withdrawFromBatch: true and a reason. "
-                        + "Withdrawal abandons this batch and returns the other members to planning.";
-                    return Results.Json(new { error = "active-batch-member", message,
-                        batchId = activeBatch.BatchId, phase, otherMembers = others },
-                        statusCode: StatusCodes.Status409Conflict);
-                }
-                if (activeBatch is not null && string.IsNullOrWhiteSpace(request.Reason))
-                    return Results.BadRequest(new { error = "withdrawal-reason-required",
-                        message = "Withdrawing from an active batch requires a written reason." });
-            }
+            // AGT-3612, AGT-3719: the shared guard in MoveAsync refuses this
+            // move too; the route checks first so a withdrawal can request the
+            // eject before the move.
+            var batchStore = context.RequestServices.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>();
+            var batchGuard = new AgentStudio.Pipeline.ActiveBatchMemberGuard(batchStore);
+            var activeBatch = batchGuard.Find(card, request.TargetState);
+            if (activeBatch is not null && !request.WithdrawFromBatch)
+                return Results.Json(AgentStudio.Pipeline.ActiveBatchMemberGuardPolicy.Body(activeBatch),
+                    statusCode: StatusCodes.Status409Conflict);
+            if (activeBatch is not null && string.IsNullOrWhiteSpace(request.Reason))
+                return Results.BadRequest(new { error = "withdrawal-reason-required",
+                    message = "Withdrawing from an active batch requires a written reason." });
             var live = request.TargetState != card.State
                 ? leases.Peek(card.TaskKey).Lease : null;
             var intent = RunDispositionPolicy.ParseMoveIntent(request.RunIntent);
@@ -1665,33 +1644,30 @@ public static class TaskCrudEndpoints
                     Reason = InterventionOwnerDecisionPolicy.Reason(request.Reason),
                 };
 
-            if (activeBatch is not null)
-                batchStore!.RequestEject(batchMember!.Subject.Project, batchMember.Subject.TaskKey);
-            var moved = await transitions.MoveAsync(
+            Task<MoveJobOutcome> Move() => transitions.MoveAsync(
                 jobId, request.TargetState, watchPath, ct, request.TargetIndex,
                 cause: OperatorActor(context), reason: request.Reason,
                 operatorOverride: request.OperatorOverride,
                 archiveOverride: request.ArchiveOverride,
-                reissueInstructions: request.ReissueInstructions);
-            if (activeBatch is not null)
+                reissueInstructions: request.ReissueInstructions,
+                batchWithdrawalId: activeBatch?.BatchId);
+            var moved = activeBatch is null ? await Move()
+                : await batchGuard.WithdrawAsync(activeBatch, Move);
+            if (activeBatch is not null && moved.Status == MoveJobStatus.Success)
             {
-                if (moved.Status == MoveJobStatus.Success)
-                {
-                    var actorName = OperatorActor(context);
-                    var explanation = request.Reason!.Trim();
-                    batchStore!.RecordWithdrawal(new AgentStudio.Pipeline.BatchGateWithdrawal(
-                        activeBatch.BatchId, batchMember!.Subject.TaskKey, actorName, explanation, DateTimeOffset.UtcNow));
-                    batchStore.RequestCloseNow(batchMember.Subject.Project);
-                    var folder = moved.NewFolderPath ?? scanner.FindJob(jobId, watchPath)?.FolderPath ?? card.FolderPath;
-                    timeline.Append(folder, TimelineEventKinds.BatchWithdrawn, actorName,
-                        $"Withdrew {batchMember.Subject.TaskKey} from batch {activeBatch.BatchId}: {explanation}",
-                        details: new Dictionary<string, string>
-                        {
-                            ["batchId"] = activeBatch.BatchId,
-                            ["reason"] = explanation,
-                        });
-                }
-                else batchStore!.ClearEject(batchMember!.Subject.Project, batchMember.Subject.TaskKey);
+                var actorName = OperatorActor(context);
+                var explanation = request.Reason!.Trim();
+                batchStore.RecordWithdrawal(new AgentStudio.Pipeline.BatchGateWithdrawal(
+                    activeBatch.BatchId, activeBatch.TaskKey, actorName, explanation, DateTimeOffset.UtcNow));
+                batchStore.RequestCloseNow(activeBatch.Project);
+                var folder = moved.NewFolderPath ?? scanner.FindJob(jobId, watchPath)?.FolderPath ?? card.FolderPath;
+                timeline.Append(folder, TimelineEventKinds.BatchWithdrawn, actorName,
+                    $"Withdrew {activeBatch.TaskKey} from batch {activeBatch.BatchId}: {explanation}",
+                    details: new Dictionary<string, string>
+                    {
+                        ["batchId"] = activeBatch.BatchId,
+                        ["reason"] = explanation,
+                    });
             }
             if (moved.Status == MoveJobStatus.Success && owner)
                 await attention.OwnerActionAsync(card.TaskKey, card.ProjectName, actor, ct);

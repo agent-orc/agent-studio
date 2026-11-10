@@ -46,10 +46,21 @@ The board move (`POST /api/tasks/{id}/move`) and state update
 tries to move a card out of Auto Review while a formed, running, or publishing
 batch still owns it. The response names the batch, phase, and other members.
 An operator can confirm the move with `withdrawFromBatch: true` and a written
-`reason`. The move requests an eject before changing the lane, records the
-operator and reason on the card timeline and in the batch withdrawal journal,
-and requests a fresh planner pass. A card that is pending but has no batch
-continues to move normally.
+`reason`. The move requests an eject before changing the lane. When the move
+succeeds, it records the operator and reason on the card timeline and in the
+batch withdrawal journal, and requests a fresh planner pass. A refused or
+interrupted move clears the eject again, so the batch keeps running. A card
+that is pending but has no batch continues to move normally.
+
+The rule lives in one shared guard (`ActiveBatchMemberGuard`) that
+`TaskTransitionService.MoveAsync` applies to every operator cause (a person,
+an operator agent session, or a service account). Other routes that move a
+card therefore refuse the same move: `POST /api/tasks/batch-move` reports the
+item as `refused` with a message naming the batch, its phase, and its other
+members, and the other move routes answer `409 active-batch-member`. Batch
+move has no withdrawal option; withdraw a member with the single move. The
+runner, the batch gate, and the orchestrator own their own Auto Review
+transitions and are not refused by this guard.
 
 ### Routing mutation publication
 
@@ -58,8 +69,13 @@ continues to move normally.
 resident core and board generations. `POST /api/tasks` publishes the new card
 after its task file, derived layout index, and timeline have been written.
 Routing writes hold the card's file lock through publication and use the
-latest published card under that lock before deriving related fields. Publication reads
-the written card under the index publication lock. This keeps concurrent
+latest published card under that lock before deriving related fields, unless
+its `task.json` stamp no longer matches the disk; then they read the folder.
+Publication reads the written card outside the index publication lock. When the
+folder version moved during that read (a newer publication, the watcher echo
+of the write, or a refresh prune), it re-reads the card under the lock and
+publishes it; a routing write that cannot publish invalidates the index
+(AGT-3723). This keeps concurrent
 routing writes in durable order across board, core, and detail readers; the
 new board generation also changes board validators and deploy projections.
 Git projections retain their snapshot because routing fields do not enter the
@@ -1312,7 +1328,24 @@ Product sessions are also denied every task route segment that exposes run
 internals: `session-events`, `agent-work-detail`, `conversation`, `output`,
 `trace`, `logs`, and `raw-logs` in the backend, and `session-events`,
 `agent-work-detail`, `history`, `files`, `output`, `trace`, `logs`, and
-`raw-logs` in Task Server. Segment matching is case-insensitive.
+`raw-logs` in Task Server. Segment matching is case-insensitive. The backend
+also denies `usage`, so `GET /api/tasks/{id}/details/usage` is refused.
+
+A Product session still opens the card (AGT-3669). The browser does not send
+the reads it knows are refused: `TaskSectionAccessService`
+(`frontend/src/app/services/task-section-access.service.ts`) lists them in
+`PRODUCT_DENIED_TASK_SECTIONS`, and the detail skips usage, CLI output, the
+session-event log and the agent-work call breakdown for a contributor session.
+A skipped or refused optional section takes the `restricted` resource phase and
+stays hidden. A refused prompt or status document is marked and the card paints
+from its core. Each section 403 or 404 triggers one core revalidation, and only
+a refused core read clears the selection, with the message "This card is not
+available to this account." The guard
+`ContributorAccessTests.Frontend_product_task_sections_match_the_refused_task_reads`
+fails when that frontend list and the backend policy drift apart. The
+`networked-https-demo` Playwright profile, the `networked-https` stack seeded
+with the demo workspace, covers the flow end to end
+(`frontend/e2e/security/product-card-detail.spec.ts`).
 
 Task Server reads a Product request body as the binder does. It rejects
 duplicate JSON property names, including case variants, and denies a lane field
