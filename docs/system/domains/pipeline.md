@@ -58,6 +58,20 @@ compares ledger durations with existing execution facts for the same day; a
 missing host total is Unknown. Historical days before the ledger was enabled
 cannot be reconstructed from card receipts.
 
+The state route reconstructs each member's UTC timeline from the saved review
+subject, pre-check ledger and verdict, closed manifest, batch run and verdict,
+publication, replay, and fallback cause. Released member receipts retain that
+timeline; older receipts are projected from the same facts after a restart.
+The daily summary reports p50 and nearest-rank p90 minutes for review pass to
+pre-check finish, pre-check finish to batch start, batch run, and verdict to
+publication. Each phase has its own sample count; cards without both boundaries
+are omitted from that phase. Only published batch members enter these
+percentiles. Diagnostic rerun share uses the same member set, while per-task
+fallback stays separately labelled. Pre-check yield counts red checks that
+actually resolved a pending member as `pre-check-red`, plus that day's pre-check
+host minutes. It is evidence of avoided admission, not a counterfactual proof
+that the combined batch would certainly have failed.
+
 Each gate-economics row also carries the grouping figures of its window
 (AGT-3399): `batchesClosed` (distinct batches whose gate ran), `meanBatchSize`
 (largest membership per batch, averaged), and `soloGatedMerges` (merges

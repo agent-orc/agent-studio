@@ -65,7 +65,8 @@ public sealed record BatchGateMemberRecord(
     IReadOnlyList<string> ReplacementShas, string BatchId, string MembershipDigest,
     string BaseSha, string TestedCandidateSha, string GateProfileDigest,
     string BatchRunId, string Verdict, string EvidencePath,
-    DateTimeOffset RecordedAtUtc);
+    DateTimeOffset RecordedAtUtc,
+    BatchMemberTimeline? Timeline = null);
 
 public sealed record BatchGateReleaseResult(bool Allowed, string? FailureCode);
 
@@ -738,6 +739,14 @@ public sealed partial class BatchGateStore
             // attempt at once; the first resolution stands.
             SilentCatch.Note(exception, "A concurrent settlement resolved the pending batch member first");
         }
+    }
+
+    public string? ReadPendingOutcome(string reviewAttemptId)
+    {
+        var path = Path.Combine(_root, "pending", SafeName(reviewAttemptId) + ".json.resolved");
+        if (!File.Exists(path)) return null;
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        return document.RootElement.TryGetProperty("outcome", out var outcome) ? outcome.GetString() : null;
     }
 
     public void CloseManifest(BatchGateManifest manifest)
