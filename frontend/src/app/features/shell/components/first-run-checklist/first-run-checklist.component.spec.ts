@@ -213,6 +213,40 @@ describe('FirstRunChecklistComponent probes', () => {
     fixture.destroy();
   });
 
+  it('marks local owner setup not applicable without an installation read', () => {
+    authStatus.set({ authenticated: false, profile: 'local', bootstrapRequired: true });
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    http.expectNone('/api/v1/installation');
+    http.expectOne('/api/projects').flush([]);
+    expect(fixture.componentInstance.ownerReady()).toBe(true);
+    const owner = fixture.nativeElement.querySelector('[data-testid="first-run-owner"]') as HTMLElement;
+    expect(owner.dataset['state']).toBe('ready');
+    expect(owner.textContent).toContain('No owner sign-in is needed in the local profile.');
+    expect(owner.textContent).toContain('Not applicable');
+    fixture.destroy();
+  });
+
+  it('accepts a fresh ok provider probe on a degraded host and explains stale ok badges', () => {
+    authStatus.set({ authenticated: false, profile: 'local', bootstrapRequired: true });
+    host.set([{ id: 'runner-a', clientId: 'runner-a', status: 'degraded',
+      lastHeartbeatAt: new Date().toISOString() } as RemoteHost]);
+    badges.set([readyBadge()]);
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    http.expectOne('/api/projects').flush([]);
+    const component = fixture.componentInstance;
+    expect(component.activeHosts()).toHaveLength(1);
+    expect(component.providersReady()).toBe(true);
+    expect(component.selectedProvider()?.provider).toBe('codex');
+    badges.set([{ ...readyBadge(), lastSeenAt: new Date(Date.now() - 6 * 60_000).toISOString() }]);
+    fixture.detectChanges();
+    expect(component.providersReady()).toBe(false);
+    expect(fixture.nativeElement.querySelector('[data-testid="first-run-providers"]')?.textContent)
+      .toContain('Provider probe is stale.');
+    fixture.destroy();
+  });
+
   it('keeps a registered local project pending until checkout is persisted', () => {
     authStatus.set({ authenticated: true, profile: 'local', bootstrapRequired: false });
     const fixture = TestBed.createComponent(FirstRunChecklistComponent);

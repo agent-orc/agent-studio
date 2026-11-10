@@ -2,7 +2,7 @@
   <header class="first-run__head">
     <div>
       <h2 id="first-run-title">First-run checklist</h2>
-      <p>Follow each step to the first integrated card. Status comes from the Task Server and fresh host probes.</p>
+      <p>Follow each step to the first integrated card. Status comes from {{ localProfile() ? 'the local backend' : 'the Task Server' }} and fresh host probes.</p>
     </div>
     <button type="button" data-testid="first-run-refresh" [disabled]="loading()" (click)="reload()">
       {{ loading() ? 'Checking…' : 'Refresh' }}
@@ -19,18 +19,19 @@
     <li data-testid="first-run-owner" [attr.data-state]="ownerReady() ? 'ready' : 'pending'">
       <span class="first-run__number">1</span>
       <div><h3>Owner account</h3>
-        <p>{{ ownerReady() ? 'Owner account and signed-in session verified.' : identity().error ? 'Installation identity is unavailable. Refresh after the Task Server reconnects.' : 'Create the owner account with the one-time installer code in the sign-in screen.' }}</p></div>
+        <p>{{ localProfile() ? 'No owner sign-in is needed in the local profile.' : ownerReady() ? 'Owner account and signed-in session verified.' : identity().error ? 'Installation identity is unavailable. Refresh after the Task Server reconnects.' : 'Create the owner account with the one-time installer code in the sign-in screen.' }}</p></div>
       <app-status-indicator class="first-run__state" [tone]="ownerReady() ? 'success' : 'neutral'"
-        [label]="ownerReady() ? 'Verified' : 'Pending'" testId="first-run-step-state" />
+        [label]="localProfile() ? 'Not applicable' : ownerReady() ? 'Verified' : 'Pending'" testId="first-run-step-state" />
     </li>
     <li data-testid="first-run-providers" [attr.data-state]="providersReady() ? 'ready' : 'pending'">
       <span class="first-run__number">2</span>
       <div><h3>Provider login on an execution host</h3>
-        <p>Each CLI needs its own live authentication probe on the host that runs it. Device sign-in completes on that host.</p>
+        <p>Each listed Codex and Claude CLI needs a fresh ok probe and a host with a fresh heartbeat. A degraded host can still meet this check. Device sign-in completes on that host.</p>
         @for (badge of providerBadges(); track badge.id) {
           <div class="first-run__subrow" [attr.data-testid]="'first-run-provider-' + badge.id">
             <span>{{ badge.hostName }} · {{ badge.providerLabel }}:</span>
             <app-status-indicator [tone]="tones.provider(badge.state)" [label]="badge.state" [compact]="true" testId="first-run-provider-state" />
+            @if (badgeWaitReason(badge); as reason) { <span>{{ reason }}</span> }
             @if (badge.provider === 'codex' || badge.provider === 'claude') {
               <button type="button" (click)="signIn(badge)">Sign in</button>
             }
@@ -64,7 +65,7 @@
       <span class="first-run__number">3</span>
       <div><h3>GitHub read and write access</h3>
         <p data-testid="first-run-github-app">Recommended: <a href="#/workspace/settings/github">connect the GitHub App</a>. Every host then receives short-lived tokens and nothing below is needed.</p>
-        <p>{{ gitReady() ? 'The registered repository has admitted read and write proof from each online execution host.' : 'Give each execution host access to the registered GitHub repository. Verification fetches and pushes a temporary ref.' }}</p>
+        <p>{{ gitReady() ? 'The registered repository has admitted read and write proof from each connected execution host.' : 'Give each execution host access to the registered GitHub repository. Verification fetches and pushes a temporary ref.' }}</p>
         @if (repository().value?.registration?.repositoryUrl) {
           <div class="first-run__form" data-testid="first-run-git-setup">
             @if (!localProfile()) { <label>Execution host

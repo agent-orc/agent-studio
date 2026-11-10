@@ -1,11 +1,21 @@
 # Frontend Domain Map
 
-Version: 2026-11-05
+Version: 2026-11-09
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
+
+## Manual task creation
+
+The create dialog resolves the selected project's `cliDefault` and
+`modelDefault` from the registry before enabling Create. Changing the project
+replaces those defaults; changing the agent or model afterward is an explicit
+choice. The model displayed at submission is sent as an explicit model so the
+new card shows the same selection. The Create button uses `appPendingButton`
+until the request settles. On success the dialog closes and a short, quiet
+toast opens the new card; on failure the draft remains available.
 
 ## Modal keyboard contract
 
