@@ -146,13 +146,18 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   reports `baseMoves` by new base SHA and `baseMoveTotals`, each counting formed
   batches kept and abandoned. A replay probe infrastructure failure pauses
   the batch rather than classifying a member as conflicting.
-- AGT-3562: one flight per project starts, so the start order decides who
-  waits (`BatchGateStartPolicy`). A stacked successor starts first. Within
-  its maximum wait (`maximumWaitMinutes`, default 45, the planning deadline)
-  the larger formed batch starts first, then the older one. A batch past its
-  maximum wait starts before younger ones, oldest first, regardless of size.
-  On 5 November 2026 batches 24991efe (12:59 UTC) and baddb7f9 (15:11 UTC)
-  stayed formed for hours while later, larger batches ran.
+- AGT-3562, AGT-3710: one flight per project starts, so the start order
+  decides who waits (`BatchGateStartPolicy`). A stacked successor starts
+  first, then a child batch, and a batch deferred after a lease deadline goes
+  last. All other formed batches start first in, first out: the oldest
+  formation time first (a re-formed or repacked batch keeps its place), then
+  the lowest member enqueue sequence, then the batch ID. Size does not reorder
+  the queue. The state reports `flightQueue` and each formed batch's
+  `queuePosition`. On 5 November 2026 batches 24991efe (12:59 UTC) and
+  baddb7f9 (15:11 UTC) stayed formed for hours while later, larger batches
+  ran; on 10 November 2026 four batches formed from 03:47 UTC waited behind
+  batches formed at 04:50 and 05:11 UTC. The full rule is in
+  [the pipeline domain map](../../system/domains/pipeline.md#flight-queue-order-agt-3710).
 - AGT-3562: a flight can wait on the project reservation before it acquires
   its coordinator lease, so lease expiry cannot free its project slot. A
   flight that has not claimed its lease within `flightLeaseDeadlineMinutes`

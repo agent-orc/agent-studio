@@ -90,7 +90,7 @@ describe('deriveProtocolVerdict', () => {
 
   it('AGT-3045: a core run parked on NeedsInput reads needs-decision, never Pipeline failure', () => {
     const v = deriveProtocolVerdict(baseInputs({
-      laneState: '6-completed',
+      laneState: '5-human-review',
       pipelineExecution: {
         pipelineId: 'standard', pipelineVersion: 1, jobId: 'AGT-2798', project: 'agt',
         startedAt: '2026-09-15T10:00:00Z', completedAt: '2026-09-15T10:08:00Z',
@@ -541,7 +541,7 @@ describe('deriveProtocolVerdict', () => {
       expect(verdict.label).toBe('Success');
     });
 
-    it('also trusts the completed lane when the latest review passed', () => {
+    it('shows the accepted lane without replaying a resolved text warning', () => {
       const verdict = deriveProtocolVerdict(baseInputs({
         statusMarkdown: '# Status\n- Result: Success\n\n## Notes\n- Blocked on missing credentials.',
         laneState: '6-completed',
@@ -549,10 +549,8 @@ describe('deriveProtocolVerdict', () => {
       }));
 
       expect(verdict.status).toBe('succeeded');
-      expect(verdict.signals).toContainEqual(expect.objectContaining({
-        label: 'status text mentions: blocked',
-        sourceLabel: 'text scan',
-      }));
+      expect(verdict.label).toBe('Accepted');
+      expect(verdict.signals).toHaveLength(1);
     });
 
     it.each([
@@ -644,22 +642,23 @@ describe('deriveProtocolVerdict', () => {
       expect(v.signals?.some(signal => signal.label === 'Review accepted')).toBe(true);
     });
 
-    it('keeps Blocked authoritative when the card lives in 6-completed', () => {
+    it('shows the accepted lane and moves an older Blocked result to history', () => {
       const v = deriveProtocolVerdict(
         baseInputs({ statusMarkdown: blockedMd, laneState: '6-completed' }),
       );
-      expect(v.kind).toBe('unclear');
-      expect(v.status).toBe('needs-decision');
-      expect(v.label).toBe('Blocked');
+      expect(v.kind).toBe('ok');
+      expect(v.status).toBe('succeeded');
+      expect(v.label).toBe('Accepted');
+      expect(v.signals).toHaveLength(1);
     });
 
-    it('keeps Result: Failed above an accepted review', () => {
+    it('does not present a past failed Result as the accepted card outcome', () => {
       const v = deriveProtocolVerdict(
-        baseInputs({ statusMarkdown: '# Status\n- Result: Failed\n', orchestratorVerdict: 'accept' }),
+        baseInputs({ statusMarkdown: '# Status\n- Result: Failed\n', orchestratorVerdict: 'accept', laneState: '6-completed' }),
       );
-      expect(v.kind).toBe('problem');
-      expect(v.status).toBe('failed');
-      expect(v.label).toBe('Failed');
+      expect(v.kind).toBe('ok');
+      expect(v.status).toBe('succeeded');
+      expect(v.label).toBe('Accepted');
     });
 
     it('does NOT demote under a reissue / escalate / pending decision', () => {

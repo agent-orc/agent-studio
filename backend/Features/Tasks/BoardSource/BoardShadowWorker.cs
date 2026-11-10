@@ -160,7 +160,7 @@ public sealed class BoardShadowWorker : BackgroundService
         var rejected = 0;
         try
         {
-            foreach (var delta in BoardMirrorPlan.Create(_synced, current))
+            foreach (var delta in BoardMirrorPlan.Create(_synced, current, includeUnchanged: true))
             {
                 if (_missingRetryAt.TryGetValue(delta.Project, out var retryAt) && _clock.GetUtcNow() < retryAt)
                 {

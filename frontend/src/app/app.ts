@@ -775,6 +775,9 @@ export class App implements OnInit, OnDestroy {
     });
     effect(() => {
       if (this.projectHubUrls.appliedRevision() === 0) return;
+      // A Hub resolution may release its route gate. A task URL still owns
+      // that gate until its detail has opened the matching task tab.
+      if (parseStudioRoute(window.location.hash)?.kind !== 'hub') return;
       untracked(() => this.studioRouteReady.set(true));
     });
 
@@ -783,12 +786,17 @@ export class App implements OnInit, OnDestroy {
     // because that orchestration concern lives here. F2: also flag the
     // new card so it pulses + scrolls into view, and surface a toast
     // with the title that the operator just submitted.
-    this.createJobForm.submitted$.subscribe(({ jobId }) => {
+    this.createJobForm.submitted$.subscribe(({ jobId, watchPath, title }) => {
       this.refresh();
       this.justCreatedJobId.set(jobId);
-      const job = this.jobService.jobs().find((j) => j.id === jobId);
-      const title = job?.title ?? jobId;
-      this.notifications.success(`Created "${title}"`, 'Task added');
+      const toastId = this.notifications.notify({
+        kind: 'info', message: `Created "${title}"`,
+        actions: [{ label: 'Open card', callback: () => {
+          this.notifications.dismiss(toastId);
+          this.onOpenTaskFromSession({ jobId, watchPath });
+        } }],
+      });
+      setTimeout(() => this.notifications.dismiss(toastId), 8000);
       setTimeout(() => {
         if (this.justCreatedJobId() === jobId) this.justCreatedJobId.set(null);
       }, 2500);

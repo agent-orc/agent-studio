@@ -52,6 +52,10 @@ public sealed class BoardSourcePolicyTests
         Assert.Empty(initial.Removals);
 
         Assert.Empty(BoardMirrorPlan.Create(first, first));
+        var generationOnly = Assert.Single(BoardMirrorPlan.Create(first, first, includeUnchanged: true));
+        Assert.Equal("P", generationOnly.Project);
+        Assert.Empty(generationOnly.Upserts);
+        Assert.Empty(generationOnly.Removals);
 
         var moved = Group(Card("P", "A-1", TaskStates.Ready), Card("Q", "B-1", TaskStates.Backlog));
         var deltas = BoardMirrorPlan.Create(first, moved);

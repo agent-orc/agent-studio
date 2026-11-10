@@ -203,11 +203,34 @@ reports `codeState: awaiting`. The Owner signs in, pastes the code into the
 first-run checklist, and the browser posts it once with its session key
 (`POST /api/v1/management/device-logins/{handle}/code`). The server keeps it
 only in memory and hands it once to the claiming runner
-(`POST /api/v1/runners/{runnerId}/device-login/{handle}/code`), which writes it
-to the CLI's stdin and then closes stdin. The code is never logged, audited,
+(`POST /api/v1/runners/{runnerId}/device-login/{handle}/code`), which types it
+once into the CLI's pseudo-terminal and presses Enter. The code is never logged, audited,
 echoed in a response or written to disk; cancel, timeout and completion drop a
 code no runner took. A code the CLI refuses ends the session with
-"Claude did not accept the authorization code." While the CLI runs, the runner reads the session state
+"Claude did not accept the authorization code."
+
+`claude setup-token` reads that code only from a terminal: it renders its
+prompt with Ink, which switches stdin to raw mode and fails with "Raw mode is
+not supported" on a pipe (checked in the Claude Code 2.1 bundle; the `auth login`
+fallback that reads a piped stdin does not print a setup token). The runner
+therefore starts the Claude sign-in in a pseudo-terminal through Porta.Pty, the
+library its host quota probe already uses, never with plain stdin. Limits:
+
+- The terminal is 4000 columns wide so the authorize URL and the token each stay
+  on one line; output is parsed after stripping CSI and OSC (hyperlink) escapes.
+  Stdout and stderr arrive merged.
+- The CLI answers a wrong code with a retry prompt instead of exiting. A CLI
+  that is still running two minutes after the code (`CodeAcceptanceTimeout`)
+  counts as a refused code, is stopped with its process tree and reports the
+  message above. A slower provider exchange fails the same way; start again.
+- The runner types only one code per session and never presses a key for the
+  retry prompt. A code that is not one `code#state` value of URL-safe
+  characters is never typed.
+- The host needs a working pseudo-terminal device (`/dev/ptmx` on Linux). The
+  pseudo-terminal path is covered on Linux only; Windows ConPTY is untested.
+- Codex keeps its closed stdin pipe; it takes no code.
+
+While the CLI runs, the runner reads the session state
 every 2 seconds (`GET /api/v1/runners/{runnerId}/device-login/{handle}`, state
 only). A Studio cancel, a Task Server timeout or a failed instruction publish
 stops the process tree, accepts no credential and reports `failed`; on runner
@@ -900,6 +923,11 @@ unreported claim expires with its lease and is queued again.
   the networked profile it never executes Codex on the Studio host: an absent
   or unreachable assigned runner produces a failed turn with a clear reason.
   Changing a remotely placed project to local execution requires the Owner.
+- `runner/OneShotJobAdmission.cs`: coding and review hosts poll bounded model
+  jobs independently of task claims. The review host starts this poll after
+  client registration. A missing claim route (HTTP 404) is logged once and
+  retried every five minutes; a successful poll logs restoration and returns
+  to the normal three-second interval.
 - `backend/Features/Runner/RemoteChatWorkBroker.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteProjectChatRunner.cs`: assignment-aware remote side-sheet chat
@@ -2536,6 +2564,12 @@ card), promotes the card to the top of `2-ready` with transition detail
 `202 {"status":"queued","queued":{"reason":"lane-not-runnable"|"delivery-under-review"|"remote-execution"|"project-busy"}}`.
 A manual start carries no prompt, so nothing is persisted; the promotion alone
 carries the intent.
+
+For remote execution, Run now queues the Ready card, but the assigned runner
+claims only while project pickup is Auto. The Ready card's CURRENT line uses the
+runner-level `manual-mode` reason and offers Switch to Auto inline. A reasonless
+runner queue says "Queued for runner"; only the `slots-full` reason says it is
+waiting for a runner slot.
 
 When a follow-up is queued during a live remote run, the card enters Ready but
 the earlier attempt keeps its lease and continues working. Remote dispatch

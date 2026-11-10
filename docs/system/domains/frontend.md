@@ -1,11 +1,21 @@
 # Frontend Domain Map
 
-Version: 2026-11-05
+Version: 2026-11-09
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
+
+## Manual task creation
+
+The create dialog resolves the selected project's `cliDefault` and
+`modelDefault` from the registry before enabling Create. Changing the project
+replaces those defaults; changing the agent or model afterward is an explicit
+choice. The model displayed at submission is sent as an explicit model so the
+new card shows the same selection. The Create button uses `appPendingButton`
+until the request settles. On success the dialog closes and a short, quiet
+toast opens the new card; on failure the draft remains available.
 
 ## Modal keyboard contract
 
@@ -61,6 +71,10 @@ uses the library's shared entry point, leaving composer and conversation
 renderers outside the board startup graph.
 
 ## Environment flow
+
+Environment > Installation shows a single one shot claim route status for the
+local monolith, where that Task Server route is unavailable. The runner retries
+the route every five minutes without filling its log with repeated 404 entries.
 
 DP-S6 renders canary attempt rows beneath their physical host using
 `GET /api/v1/management/attempt-visibility`. Active occupancy follows the
@@ -573,7 +587,9 @@ occur. It is not a claim about tunnel transfer time.
   Ordinary task selection reads the bounded `/core` projection first and paints
   identity, lane, pins, execution, status, prompt, and recent events before
   independent detail resources begin. Two documents load after core paint;
-  usage follows the rich view, Git waits for its pane, and Activity loads its
+  usage follows the rich view, Git waits for its pane (except the provenance
+  read a Human Review card's Accept needs, which Accept awaits for at most
+  8 s, AGT-3621), and Activity loads its
   plan and output on selection. Review evidence and history wait for explicit
   tabs. Neighbor core lookahead starts after the first 1.6 seconds. The event
   ledger starts when Timeline first
