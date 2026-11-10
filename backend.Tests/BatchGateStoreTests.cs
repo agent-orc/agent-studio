@@ -211,7 +211,7 @@ public sealed class BatchGateStoreTests : IDisposable
         var run = new BatchGateRunRecord("timeline-run", manifest.BatchId,
             manifest.MembershipDigest, Base, Next, "full", "digest", "host", 1,
             ["dotnet test"], Now.AddMinutes(30), evidence);
-        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+        BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Assembled, Next, 1, Now.AddMinutes(29)));
         _store.RecordRun(run);
         _store.RecordVerdict(new BatchGateRunVerdict(run.BatchRunId, manifest.BatchId,
