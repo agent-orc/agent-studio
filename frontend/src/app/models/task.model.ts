@@ -2176,8 +2176,8 @@ export interface TaskLiveQueue {
   reasonCode?: RunnerPickupWaitCode | string | null;
   /**
    * AGT-3094: `reviewing` while a review executor holds the ReviewAttempt lease,
-   * `stalled` when nothing will review the delivery without an operator, else
-   * `queued`. Runner queues and legacy review queues are always `queued`.
+   * `stalled` when nothing will review the delivery without an operator,
+   * `integration` after review passes, else `queued`.
    * Absent on payloads from older servers; read it as `queued`.
    */
   state?: TaskLiveQueueState;
@@ -2189,7 +2189,7 @@ export interface TaskLiveQueue {
   outcome?: string | null;
 }
 
-export type TaskLiveQueueState = 'queued' | 'reviewing' | 'stalled';
+export type TaskLiveQueueState = 'queued' | 'reviewing' | 'stalled' | 'integration';
 
 export interface TaskLiveStatus {
   attempt: number;

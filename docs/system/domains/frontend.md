@@ -552,6 +552,12 @@ occur. It is not a claim about tunnel transfer time.
   auto-review status snapshot into a compact current-step or elapsed-wait
   indicator; the lane header reconciles those visible cards as active versus
   waiting, with machine-lock gate queueing remaining a distinct waiting state.
+  The status bar counts only queued or stalled review attempts as review
+  attention; passed reviews waiting for delivery integration have a separate
+  count. The create dialog treats a model as pinned only after a user choice
+  or a project model default; other prefilled values remain routing suggestions.
+  The extra status state adds under 1 kB to the initial bundle, so the
+  production error budget is 2101 kB.
 - Project Explorer entries follow Board, Dossiers, Deploy, Operations, Wiki,
   Deck (NV-D1 option A). Deploy hosts the BD-3 Deploy area (Overview,
   Releases, Pipeline, History, the existing deployment tools) plus a Run steps view with
