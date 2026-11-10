@@ -254,6 +254,11 @@ public static class ProjectSettingsEndpoints
         // Per-project preferences (auto-commit on/off today). Read-all returns a
         // flat map keyed by project name so the header can render every toggle
         // in one shot without N round-trips.
+        // Onboarding needs this before a first project exists, so it cannot
+        // infer local admission from a row in the per-project settings map.
+        app.MapGet("/api/projects/execution-capability", (TaskRunnerService runner) =>
+            Results.Ok(new { localCodingAdmitted = runner.AllowsLocalCoding }));
+
         app.MapGet("/api/projects/settings", (
             HttpContext context,
             ProjectSettingsService settings,

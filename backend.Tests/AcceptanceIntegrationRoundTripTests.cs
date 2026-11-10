@@ -3155,6 +3155,36 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Contains("Gate-neutral document-key commits", completed.CompletionClaim?.Evidence);
     }
 
+    [Fact]
+    public async Task Acceptance_ManagedDocumentKeyCommitBetweenPassedBatches_IsAccepted()
+    {
+        var (deps, keySha) = PublishVerifiedDescriptorAndKey(useManagedTrailer: true);
+        var laterBatch = PublishLaterCommit("later-gated-batch.txt");
+        Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
+            PassedPublishedGate(laterBatch, "AGT-LATER-KEY")));
+
+        var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Contains(keySha, completed.CompletionClaim?.Evidence);
+    }
+
+    [Fact]
+    public async Task Acceptance_LaterPassedBatchDoesNotCoverUngatedCommitAfterDocumentKey()
+    {
+        var (deps, _) = PublishVerifiedDescriptorAndKey(useManagedTrailer: true);
+        var ungated = PublishLaterCommit("still-ungated.txt");
+        var laterBatch = PublishLaterCommit("later-gated-batch.txt");
+        Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
+            PassedPublishedGate(laterBatch, "AGT-LATER-KEY")));
+
+        var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+
+        Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
+        Assert.Contains(ungated, refused.Message);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
