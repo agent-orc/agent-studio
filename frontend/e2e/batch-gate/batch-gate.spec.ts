@@ -320,7 +320,7 @@ test('batch panel shows pending eject and its released outcome', async ({ page }
     await page.setViewportSize({ width, height: 900 });
     for (const theme of ['light', 'dark'] as const) {
       await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
-      if (evidence) await page.screenshot({ path: nodePath.join(evidence, `batch-eject-pending-${width}-${theme}.png`) });
+      if (evidence) await page.screenshot({ path: nodePath.join(evidence, `batch-eject-pending-${width}-${theme}--mocked.png`) });
     }
   }
   phase = 'released';
@@ -335,7 +335,7 @@ test('batch panel shows pending eject and its released outcome', async ({ page }
     await page.getByTestId(`batch-eject-${key}`).scrollIntoViewIfNeeded();
     for (const theme of ['light', 'dark'] as const) {
       await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
-      if (evidence) await page.screenshot({ path: nodePath.join(evidence, `batch-eject-released-${width}-${theme}.png`) });
+      if (evidence) await page.screenshot({ path: nodePath.join(evidence, `batch-eject-released-${width}-${theme}--mocked.png`) });
     }
   }
 });

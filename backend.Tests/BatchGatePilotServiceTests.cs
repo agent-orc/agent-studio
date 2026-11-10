@@ -96,6 +96,29 @@ public abstract partial class BatchGatePilotServiceTests : IDisposable
 public sealed class BatchGatePilotEjectTests : BatchGatePilotServiceTests
 {
     [Fact]
+    public async Task Eject_from_active_batch_is_refused_with_release_condition()
+    {
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-ACTIVE-EJECT", "docs/active-eject.md");
+        SeedMember(factory, "DOC-ACTIVE-OTHER", "docs/active-other.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var batch = ClosePendingBatch(factory);
+
+        using var response = await client.PostAsJsonAsync(
+            $"/api/projects/{ProjectName}/batch-gate/members/{member.Key}/eject",
+            new { reason = "Inspect this card alone" });
+
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, response.StatusCode);
+        var refusal = await response.Content.ReadAsStringAsync();
+        Assert.Contains("Wait for it to finish or pause before ejecting", refusal);
+        Assert.Equal(batch.BatchId, Ownership(member.Key)?.BatchId);
+        Assert.False(store.HasEject(ProjectName, member.Key));
+    }
+
+    [Fact]
     public async Task Eject_of_red_parent_without_isolation_releases_member_on_next_tick()
     {
         using var factory = BuildFactory();

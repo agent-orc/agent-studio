@@ -42,6 +42,8 @@ The batch panel eject request stores its operator and reason. State reads expose
 the next pilot tick, its ownership markers are cleared, and the requested
 member enters the per-task fallback path. Eject is refused while red isolation
 owns the batch; the response tells the operator to wait for isolation to finish.
+An active batch also refuses eject until it finishes or pauses, with a response
+that names the phase and tells the operator to resolve a stuck batch gate.
 
 ### Gate run ledger (AGT-3500)
 

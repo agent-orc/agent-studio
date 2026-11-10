@@ -346,6 +346,8 @@ public sealed partial class BatchGatePilotService
                     batch.ParentBatchId == batchId && _store.LatestState(batch.BatchId).Phase
                         is not BatchPhase.Abandoned and not BatchPhase.Published and not BatchPhase.Red))
                 return $"Batch {batchId} is isolating its red result. Wait for isolation to finish, then eject the member.";
+            if (phase is not BatchPhase.Red and not BatchPhase.Abandoned and not BatchPhase.Paused)
+                return $"Batch {batchId} is {phase.ToString().ToLowerInvariant()}. Wait for it to finish or pause before ejecting; resolve the batch gate if it is stuck.";
         }
         _store.RequestEject(project, taskKey, actor, reason);
         return null;
