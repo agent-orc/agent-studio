@@ -572,7 +572,7 @@ export class TaskDetailComponent implements OnDestroy {
       this.cliPoll.startPolling();
     }
     if ((this.activeInspectorTab() === 'activity' || !d.statusMarkdown)
-      && this.outputLoadedFor !== d.info.taskKey) {
+      && this.outputLoadedFor !== d.info.taskKey && this.cliPoll.canReadOutput()) {
       this.outputLoadedFor = d.info.taskKey;
       this.jobService.getJobOutput(d.info.id, d.info.watchPath).subscribe({
         next: (output) => this.cliPoll.hydrateOutput(output, d.info.execution?.startedAt ?? null),

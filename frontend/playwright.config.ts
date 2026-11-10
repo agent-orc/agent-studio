@@ -26,7 +26,7 @@ const pwTarget = (process.env.PW_TARGET ?? 'dev').toLowerCase();
 const prebuilt = process.env.PW_PREBUILT === '1';
 const profile = process.env.PW_E2E_PROFILE ?? 'standard';
 // Profiles served through the self-signed HTTPS test proxy.
-const tls = profile === 'public-demo' || profile === 'networked-https';
+const tls = profile === 'public-demo' || profile === 'networked-https' || profile === 'networked-https-demo';
 const backendPort = process.env.PW_E2E_BACKEND_PORT;
 const frontendPort = process.env.PW_E2E_FRONTEND_PORT;
 if (prebuilt && (!backendPort || !frontendPort || !process.env.PW_E2E_WORKSPACE)) {
@@ -91,11 +91,12 @@ export default defineConfig({
           : profile === 'first-run' ? '**/settings/first-run-journey.spec.ts'
           : profile === 'networked-monolith' ? '**/settings/first-run-networked-monolith.spec.ts'
           : profile === 'networked-https' ? ['**/security/owner-second-factor-human-pace.spec.ts', '**/security/reviewer-role.networked-https.spec.ts']
+          : profile === 'networked-https-demo' ? '**/security/product-card-detail.spec.ts'
           : profile === 'operator-cli' ? '**/operator/studio-op-operator-cli.spec.ts'
           : profile === 'demo' ? '**/usage-cockpit/cockpit-integration-matrix.spec.ts'
           : profile === 'public-demo' ? '**/system/public-demo-shell.spec.ts' : '**/*.spec.ts',
         testIgnore: profile === 'standard'
-          ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|security\/(owner-second-factor-human-pace|reviewer-role\.networked-https)\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts/
+          ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|security\/(owner-second-factor-human-pace|reviewer-role\.networked-https|product-card-detail)\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts/
           : /visual-evidence\//,
       } : { testIgnore: /visual-evidence\// }),
       use: { ...devices['Desktop Chrome'], channel: undefined },
