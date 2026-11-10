@@ -29,6 +29,13 @@ pipeline view.
 
 ## Gate economics and integration lane
 
+The batch gate state read reports `phaseReason` for a stopped batch and
+`causedByTaskKey` when a member eject or lost review generation caused
+abandonment. Explicit operator withdrawals are retained as batch withdrawal
+records with the actor, card, reason, and time. The existing eject path returns
+the remaining members to planning; the operator move requests a close on the
+next planner tick.
+
 ### Gate run ledger (AGT-3500)
 
 The instance-local gate run ledger lives under `gate-run-ledger` beside the
