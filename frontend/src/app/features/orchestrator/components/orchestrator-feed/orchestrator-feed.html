@@ -68,14 +68,22 @@
         @for (group of dayGroups(); track group.key) {
           <section class="orch-feed__group" [attr.aria-label]="'Events for ' + group.day">
             <header class="orch-feed__group-head" data-testid="orchestrator-feed-day">{{ group.day }}</header>
-            @for (entry of group.entries; track entryKey(entry)) {
-              <app-orchestrator-feed-entry
-                [entry]="entry"
-                [projectFallback]="projectName()"
-                [selected]="isSelected(entry)"
-                (selectRequest)="selectEntry($event)"
-                (projectFilterRequest)="selectProject($event)"
-                (openTaskRequest)="navigateToTask($event)" />
+            @for (row of group.rows; track row.key) {
+              @if (row.burst; as burst) {
+                <app-orchestrator-feed-burst [burst]="burst" [expanded]="isExpanded(burst)"
+                                             [selected]="selectedBurstKey() === burst.key"
+                                             (toggleRequest)="toggleBurst($event)" />
+                @if (isExpanded(burst)) {
+                  <div class="orch-feed__burst-members" role="group" data-testid="orchestrator-feed-burst-members"
+                       [attr.aria-label]="burst.entries.length + ' events with this cause'">
+                    @for (entry of burst.entries; track entryKey(entry)) {
+                      <ng-container *ngTemplateOutlet="entryRow; context: { $implicit: entry }" />
+                    }
+                  </div>
+                }
+              } @else if (row.entry; as entry) {
+                <ng-container *ngTemplateOutlet="entryRow; context: { $implicit: entry }" />
+              }
             }
           </section>
         }
@@ -90,8 +98,20 @@
       </div>
     </section>
 
+    <ng-template #entryRow let-entry>
+      <app-orchestrator-feed-entry
+        [entry]="entry"
+        [projectFallback]="projectName()"
+        [selected]="isSelected(entry)"
+        (selectRequest)="selectEntry($event)"
+        (projectFilterRequest)="selectProject($event)"
+        (openTaskRequest)="navigateToTask($event)" />
+    </ng-template>
+
     <aside class="orch-feed__detail" data-testid="orchestrator-feed-detail">
-      @if (selectedEntry(); as entry) {
+      @if (selectedBurst(); as burst) {
+        <app-orchestrator-feed-burst-detail [burst]="burst" (openTaskRequest)="navigateToTask($event)" />
+      } @else if (selectedEntry(); as entry) {
         <header class="orch-feed__detail-head">
           <span class="orch-feed__kind">{{ kindLabel(entry.kind) }}</span>
           <span class="orch-feed__topic">{{ entry.topic }}</span>

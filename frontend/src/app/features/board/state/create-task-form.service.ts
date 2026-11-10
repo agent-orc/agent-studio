@@ -35,6 +35,8 @@ export class CreateTaskFormService {
   private readonly routingPolicy = inject(QuotaApiService);
 
   readonly visible = signal(false);
+  readonly submitting = signal(false);
+  readonly defaultsPending = signal(false);
   readonly routing = signal<ComponentRoutingResolution | null>(null);
   readonly routingPending = signal(false);
   private routingRequest: ComponentRoutingRequest | null = null;
@@ -65,10 +67,11 @@ export class CreateTaskFormService {
   readonly availableModels = signal<CliModelInfo[]>([]);
   readonly policySuggestion = signal<ModelRoutingRecommendation | null>(null);
   private suggestionRequest = 0;
+  private projectDefaultsRequest = 0;
 
   /** Fired after a successful createJob; shell listens to refresh the board. */
-  private readonly submittedSubject = new Subject<{ jobId: string }>();
-  readonly submitted$: Observable<{ jobId: string }> = this.submittedSubject.asObservable();
+  private readonly submittedSubject = new Subject<{ jobId: string; watchPath: string; title: string }>();
+  readonly submitted$: Observable<{ jobId: string; watchPath: string; title: string }> = this.submittedSubject.asObservable();
 
   /**
    * Whether a "+ Add task" button is allowed in the named lane. Lanes
@@ -98,8 +101,7 @@ export class CreateTaskFormService {
       ? requested
       : TaskState.Preparation;
     this.newWatchPath = pickCreateWatchPath(opts.watchPaths, opts.activeProjects);
-    this.loadCreateModels(this.newCliType);
-    this.refreshPolicySuggestion();
+    this.selectProject(this.newWatchPath);
     this.visible.set(true);
   }
 
@@ -117,8 +119,7 @@ export class CreateTaskFormService {
     this.newWatchPath = watchEntry.path;
     this.newPrompt = event.prefill;
     this.newTitle = `Security follow-up (${event.projectName})`;
-    this.loadCreateModels(this.newCliType);
-    this.refreshPolicySuggestion();
+    this.selectProject(this.newWatchPath);
     this.visible.set(true);
   }
 
@@ -137,8 +138,7 @@ export class CreateTaskFormService {
     this.newWatchPath = watchEntry.path;
     this.newPrompt = event.prefill;
     this.newTitle = event.title;
-    this.loadCreateModels(this.newCliType);
-    this.refreshPolicySuggestion();
+    this.selectProject(this.newWatchPath);
     this.visible.set(true);
   }
 
@@ -185,8 +185,7 @@ export class CreateTaskFormService {
       instruction,
     ].join('\n');
     this.newMode = 'coding';
-    this.loadCreateModels(this.newCliType);
-    this.refreshPolicySuggestion();
+    this.selectProject(this.newWatchPath);
     this.visible.set(true);
   }
 
@@ -204,8 +203,7 @@ export class CreateTaskFormService {
     this.newWatchPath = watchEntry.path;
     this.newPrompt = event.promptText;
     this.newTitle = deriveDraftTitle(event.promptText);
-    this.loadCreateModels(this.newCliType);
-    this.refreshPolicySuggestion();
+    this.selectProject(this.newWatchPath);
     this.visible.set(true);
     this.routingPending.set(true);
     this.routingRequest = {
@@ -221,7 +219,7 @@ export class CreateTaskFormService {
             next: (workspaces) => {
               const destination = workspaces.flatMap(workspace => workspace.projects)
                 .find(project => project.id === route.storageProjectId);
-              if (destination) this.newWatchPath = destination.storageLocation;
+              if (destination) this.selectProject(destination.storageLocation);
               this.routingPending.set(false);
             },
             error: () => this.routingPending.set(false),
@@ -258,8 +256,7 @@ export class CreateTaskFormService {
     // Revoke any previews carried over from a prior open before replacing.
     for (const att of this.newAttachments) URL.revokeObjectURL(att.previewUrl);
     this.newAttachments = attachments;
-    this.loadCreateModels(this.newCliType);
-    this.refreshPolicySuggestion();
+    this.selectProject(this.newWatchPath);
     this.visible.set(true);
   }
 
@@ -267,11 +264,41 @@ export class CreateTaskFormService {
 
   onCreateCliTypeChange(t: CliType): void {
     if (this.newCliType === t) return;
+    this.projectDefaultsRequest++;
+    this.defaultsPending.set(false);
     this.newCliType = t;
     this.newModel = readDefaultModelPref(t);
     this.newThinkingLevel = readDefaultThinkingLevelPref(t);
     this.loadCreateModels(t);
     this.refreshPolicySuggestion();
+  }
+
+  /** Apply the selected project's agent defaults to the visible draft. */
+  selectProject(watchPath: string): void {
+    this.newWatchPath = watchPath;
+    const request = ++this.projectDefaultsRequest;
+    this.defaultsPending.set(true);
+    this.modelSelectionExplicit = false;
+    this.applyStoredCliDefault();
+    this.loadCreateModels(this.newCliType);
+    this.refreshPolicySuggestion();
+    this.jobService.getRegistryProjects().subscribe({
+      next: (projects) => {
+        if (request !== this.projectDefaultsRequest || !this.visible()) return;
+        this.defaultsPending.set(false);
+        const project = projects.find(p => p.storageLocation === watchPath);
+        if (!project?.cliDefault || !(CLI_TYPES as readonly string[]).includes(project.cliDefault)) return;
+        this.newCliType = project.cliDefault as CliType;
+        this.newModel = project.modelDefault ?? '';
+        this.newThinkingLevel = null;
+        this.modelSelectionExplicit = !!project.modelDefault;
+        this.loadCreateModels(this.newCliType);
+        this.refreshPolicySuggestion();
+      },
+      error: () => {
+        if (request === this.projectDefaultsRequest) this.defaultsPending.set(false);
+      },
+    });
   }
 
   markModelSelectionExplicit(): void {
@@ -308,6 +335,8 @@ export class CreateTaskFormService {
 
   cancel(): void {
     this.visible.set(false);
+    this.projectDefaultsRequest++;
+    this.defaultsPending.set(false);
     this.newTitle = '';
     this.newPrompt = '';
     this.newAgent = 'claude';
@@ -336,6 +365,7 @@ export class CreateTaskFormService {
    * fire `submitted$` so the shell can refresh.
    */
   submit(): void {
+    if (this.submitting() || this.defaultsPending()) return;
     const route = this.routing();
     if (this.routingPending() || route?.requiresQuestion) {
       this.errorDialog.show(new Error(route?.questionReason || 'Ownership routing is still being resolved.'), {
@@ -346,6 +376,7 @@ export class CreateTaskFormService {
       return;
     }
     const attachments = this.newAttachments;
+    const title = this.newTitle.trim();
     const promptDraft = this.newPrompt.trim();
     const watchPath = this.newWatchPath;
 
@@ -355,8 +386,9 @@ export class CreateTaskFormService {
     // real `attachments/<file>` references.
     const initialPrompt = attachments.length > 0 ? undefined : (promptDraft || undefined);
 
+    this.submitting.set(true);
     this.jobService.createJob({
-      title: this.newTitle.trim(),
+      title,
       watchPath,
       agent: this.newCliType,
       promptMarkdown: initialPrompt,
@@ -364,8 +396,8 @@ export class CreateTaskFormService {
       cliType: this.newCliType,
       model: this.newModel.trim() || undefined,
       thinkingLevel: this.newThinkingLevel || undefined,
-      modelExplicit: this.modelSelectionExplicit,
-      thinkingLevelExplicit: this.modelSelectionExplicit,
+      modelExplicit: !!this.newModel.trim(),
+      thinkingLevelExplicit: !!this.newThinkingLevel,
       taskType: this.newTaskType,
       tags: this.newTags.length > 0 ? [...this.newTags] : undefined,
       kind: 'task',
@@ -375,14 +407,18 @@ export class CreateTaskFormService {
       requestedTaskPrefix: route?.allowedTicketPrefix ?? undefined,
     }).subscribe({
       next: (res) => {
-        localStorage.setItem('lastCreateWatchPath', watchPath);
+        this.submitting.set(false);
+        this.cancel();
+        // A full or restricted localStorage must not leave a successfully
+        // created task in an open dialog that invites a second submission.
+        try { localStorage.setItem('lastCreateWatchPath', watchPath); } catch { /* preference is optional */ }
         if (attachments.length > 0) {
           void this.uploadCreateAttachments(res.id, watchPath, promptDraft, attachments);
         }
-        this.cancel();
-        this.submittedSubject.next({ jobId: res.id });
+        this.submittedSubject.next({ jobId: res.id, watchPath, title });
       },
       error: (err) => {
+        this.submitting.set(false);
         this.jobService.error.set(err.error || 'Failed to create job');
         this.errorDialog.show(err, {
           title: 'Failed to create task',
@@ -412,6 +448,7 @@ export class CreateTaskFormService {
     }
     this.catalogStore.ensure(cliType).subscribe({
       next: (models) => {
+        if (cliType !== this.newCliType) return;
         const list = [...models];
         this.availableModels.set(list);
         if (!this.newModel) {
@@ -422,7 +459,9 @@ export class CreateTaskFormService {
           }
         }
       },
-      error: () => this.availableModels.set([]),
+      error: () => {
+        if (cliType === this.newCliType) this.availableModels.set([]);
+      },
     });
   }
 
@@ -498,7 +537,7 @@ export class CreateTaskFormService {
       }
     }
     this.jobService.updateJobFile(jobId, 'prompt.md', prompt, watchPath).subscribe({
-      next: () => this.submittedSubject.next({ jobId }),
+      next: () => { /* The create response already announced the new card. */ },
       error: (err) => this.errorDialog.show(err, {
         title: 'Failed to save prompt',
         fallbackMessage: 'Attachments uploaded, but writing prompt.md failed.',

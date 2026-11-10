@@ -98,6 +98,30 @@
   font-weight: 700;
 }
 
+.task-live--manual-remote .task-live__headline {
+  white-space: normal;
+  overflow: visible;
+}
+
+.task-live__auto-action {
+  flex: 0 0 auto;
+  margin-inline-start: var(--studio-spacing-1);
+  border: 0;
+  background: none;
+  color: var(--studio-accent-3-strong);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.task-live__auto-action:focus-visible {
+  outline: 2px solid var(--studio-accent-3);
+  outline-offset: 2px;
+}
+
 .task-live--detail .task-live__current,
 .task-live--detail .task-live__next {
   display: grid;
@@ -206,6 +230,27 @@
 .task-live--dense .task-live__detail,
 .task-live--dense .task-live__next {
   display: none;
+}
+
+@media (max-width: 600px) {
+  .task-live--manual-remote.task-live--detail .task-live__current {
+    grid-template-columns: 3rem 8px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .task-live--manual-remote.task-live--detail .task-live__summary {
+    display: block;
+    grid-column: 3;
+    line-height: 1.5;
+  }
+
+  .task-live--manual-remote.task-live--detail .task-live__headline {
+    display: inline;
+  }
+
+  .task-live--manual-remote.task-live--detail .task-live__attempt {
+    grid-column: 3;
+  }
 }
 
 // AGT-2818: the hold block is the reason, not the summary, so it sits under the

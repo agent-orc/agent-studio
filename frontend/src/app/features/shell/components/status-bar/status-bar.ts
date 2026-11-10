@@ -20,7 +20,10 @@ import { UsageCockpitService, UsageAlarmStatusComponent, buildCliChipView, build
 import type { UsageCli } from '../../../usage-cockpit';
 import { ProviderAuthStatusService } from '../../../remote-hosts/services/provider-auth-status.service';
 import {
+  claimLoadGateLabel,
   deriveBoardRunningTruth,
+  hostsNotClaiming,
+  notClaimingLabel,
   RemoteHostsService,
   ReviewQueueService,
 } from '../../../remote-hosts';
@@ -44,7 +47,7 @@ export function formatRunningLabel(
     ? `remote ${remote}${codingSlotCeiling !== null ? `/${codingSlotCeiling}` : ''}`
     : 'remote idle';
   if (local > 0) return hasRemotePlane ? `${local} local · ${remoteLabel}` : `${local} local`;
-  return hasRemotePlane ? remoteLabel : 'no runners';
+  return hasRemotePlane ? remoteLabel : 'local idle';
 }
 
 @Component({
@@ -121,14 +124,19 @@ export class StatusBarComponent implements OnInit, OnDestroy {
 
   readonly runningCount = computed(() => this.runningTruth().local + this.remoteActiveSlots());
 
+  /** Hosts whose claim gate is closed: free slots there take no new work. */
+  readonly notClaiming = computed(() => hostsNotClaiming(this.remoteHosts.hosts()));
+
   readonly runningLabel = computed(() => {
     const truth = this.runningTruth();
-    return formatRunningLabel(
+    const running = formatRunningLabel(
       truth.local,
       this.remoteActiveSlots(),
       this.slotsByRole().coding.ceiling,
       this.slotsByRole().coding.hostCount,
     );
+    const notClaiming = this.notClaiming().length;
+    return notClaiming ? `${running} · ${notClaimingLabel(notClaiming)}` : running;
   });
   readonly runningSourcesDiverge = computed(() => {
     const coding = this.slotsByRole().coding;
@@ -264,6 +272,13 @@ export class StatusBarComponent implements OnInit, OnDestroy {
   }
 
   runningTooltip(): string {
+    const notClaiming = this.notClaiming();
+    if (!notClaiming.length) return `Open execution hosts. ${this.runningDetail()}`;
+    const reasons = notClaiming.map(host => `${host.name}: ${claimLoadGateLabel(host.claimLoadGate!)}.`).join(' ');
+    return `Open ${notClaiming[0].name} in Execution Hosts. ${reasons} Running work continues. ${this.runningDetail()}`;
+  }
+
+  private runningDetail(): string {
     const truth = this.runningTruth();
     const coding = this.slotsByRole().coding;
     const execution = `Running ${truth.local + this.remoteActiveSlots()} - ${truth.local} local / ${this.remoteActiveSlots()} remote coding slots.`;
@@ -276,18 +291,18 @@ export class StatusBarComponent implements OnInit, OnDestroy {
           : ` Host telemetry reports ${coding.active} active remote coding slots while the board reports ${truth.remote} remote runs.`;
     const hostDetail = this.planeHostDetail('Remote coding', coding);
     const load = this.hostLoad();
-    if (!load) return `Open execution hosts. ${execution}${comparison} ${hostDetail} Execution host load is unavailable.`;
+    if (!load) return `${execution}${comparison} ${hostDetail} Execution host load is unavailable.`;
 
     const loadDetail = `Execution host load ${load.load1.toFixed(1)} / ${load.cpuCores} cores `
       + `(${Math.round(load.ratio * 100)}%); ${load.activeSlots} active execution `
       + `${load.activeSlots === 1 ? 'slot' : 'slots'}.`;
     if (load.correlation === 'load-without-runs') {
-      return `Open execution hosts. ${execution}${comparison} ${hostDetail} ${loadDetail} Quiet consistency hint: host load is elevated without reported runs.`;
+      return `${execution}${comparison} ${hostDetail} ${loadDetail} Quiet consistency hint: host load is elevated without reported runs.`;
     }
     if (load.correlation === 'runs-without-load') {
-      return `Open execution hosts. ${execution}${comparison} ${hostDetail} ${loadDetail} Quiet consistency hint: reported runs and host load may not correspond.`;
+      return `${execution}${comparison} ${hostDetail} ${loadDetail} Quiet consistency hint: reported runs and host load may not correspond.`;
     }
-    return `Open execution hosts. ${execution}${comparison} ${hostDetail} ${loadDetail}`;
+    return `${execution}${comparison} ${hostDetail} ${loadDetail}`;
   }
 
   autoTooltip(): string {
@@ -315,6 +330,19 @@ export class StatusBarComponent implements OnInit, OnDestroy {
     window.location.hash = withRouteSegment(
       window.location.hash,
       '/workspace/settings/environment',
+    );
+  }
+
+  /** The runner entry opens the longest-closed host that is not claiming, else the host list. */
+  openRunnerEntry(): void {
+    const host = this.notClaiming()[0];
+    if (!host) {
+      this.navigateToExecutionHosts();
+      return;
+    }
+    window.location.hash = withRouteSegment(
+      window.location.hash,
+      `/workspace/settings/environment?host=${encodeURIComponent(host.id)}`,
     );
   }
 

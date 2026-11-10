@@ -49,7 +49,9 @@ export class ConfirmDialogService {
     const state: ConfirmDialogState = {
       title: options.title,
       message: options.message,
+      eyebrow: options.eyebrow ?? null,
       detail: options.detail ?? null,
+      items: options.items?.length ? options.items : null,
       confirmLabel: options.confirmLabel ?? 'Confirm',
       cancelLabel: options.cancelLabel ?? 'Cancel',
       kind: options.kind ?? 'danger',

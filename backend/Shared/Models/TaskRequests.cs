@@ -144,6 +144,8 @@ public record MoveJobRequest
     public bool OperatorOverride { get; init; }
     /// <summary>Owner-only, one-card archive override with a written reason.</summary>
     public bool ArchiveOverride { get; init; }
+    /// <summary>Explicitly withdraw this card from its active batch before leaving Auto Review.</summary>
+    public bool WithdrawFromBatch { get; init; }
 
     /// <summary>
     /// Optional operator rationale for the lane move. It is persisted on the

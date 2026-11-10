@@ -27,6 +27,13 @@ export function formatReadiness(report) {
     lines.push(`  ${label[check.state] ?? check.state.toUpperCase()} ${check.id}${subject}: ${check.title}`);
     lines.push(`       ${check.meaning}`);
     if (check.remedy) lines.push(`       remedy: ${check.remedy}`);
+    // AGT-3580: a config entry is text for a file, never a `$` line to run.
+    if (check.configEntry) {
+      lines.push(`       add to ${check.configEntry.file} under ${check.configEntry.section}:`);
+      for (const entry of check.configEntry.text.split('\n').filter(Boolean)) lines.push(`           ${entry}`);
+    }
+    // AGT-3580: the shell command travels apart from the prose remedy.
+    for (const command of (check.command ?? '').split('\n').filter(Boolean)) lines.push(`         $ ${command}`);
   }
   return { text: lines.join('\n'), failing };
 }
