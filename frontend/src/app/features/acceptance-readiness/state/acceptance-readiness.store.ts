@@ -12,6 +12,7 @@ import type {
   AcceptanceResult,
 } from '../models/acceptance-readiness.model';
 import { groupByReadiness, readinessKey, readyJobs, type ReadinessGroup } from '../models/acceptance-readiness-groups.util';
+import { AcceptanceReadinessLaneGrouping } from './acceptance-readiness-lane-grouping';
 
 /** A round the owner is reviewing before it is sent. */
 export interface AcceptanceRoundDraft {
@@ -45,6 +46,10 @@ export class AcceptanceReadinessStore {
 
   /** True once a check has answered; until then the lane keeps its board order. */
   readonly checked = computed(() => this.checkedAt() !== null);
+
+  constructor() {
+    inject(AcceptanceReadinessLaneGrouping).register(jobs => this.groupsFor(jobs));
+  }
 
   itemFor(job: Pick<TaskInfo, 'taskKey' | 'id'>): AcceptanceReadinessItem | null {
     return this.items().get(readinessKey(job)) ?? null;

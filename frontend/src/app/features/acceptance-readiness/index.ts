@@ -1,4 +1,6 @@
-/** Human Review acceptance readiness feature public API (AGT-3564); the lane components live in `lazy.ts`. */
-export { AcceptanceReadinessStore } from './state/acceptance-readiness.store';
-export * from './models/acceptance-readiness.model';
-export * from './models/acceptance-readiness-groups.util';
+/**
+ * Human Review acceptance readiness feature public API (AGT-3564). The eager
+ * lane loads only `AcceptanceReadinessLaneGrouping`; the store, models, and
+ * lane components live in `lazy.ts` and load behind `@defer`.
+ */
+export { AcceptanceReadinessLaneGrouping } from './state/acceptance-readiness-lane-grouping';

@@ -43,7 +43,7 @@ import { BatchLaneIndicatorComponent } from '../../../batch-gate/batch-lane-indi
 import { OrchestratorFeedStore } from '../../../orchestrator';
 import { LaneCardWindow } from './lane-card-window';
 import { LaneCardWindowComponent } from '../lane-card-window/lane-card-window.component';
-import { AcceptanceReadinessStore } from '../../../acceptance-readiness';
+import { AcceptanceReadinessLaneGrouping } from '../../../acceptance-readiness';
 import { AcceptanceReadinessBarComponent } from '../../../acceptance-readiness/lazy';
 /** ASS-1727: Archive pagination and typed-filter debounce. */
 const ARCHIVE_PAGE_SIZE = 50;
@@ -73,7 +73,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   private readonly taskService = inject(TaskService);
   private readonly boardDrag = inject(BoardDragStateService);
   private readonly stalls = inject(OrchestratorFeedStore);
-  private readonly readiness = inject(AcceptanceReadinessStore);
+  private readonly readiness = inject(AcceptanceReadinessLaneGrouping);
   readonly title = input.required<string>();
   readonly icon = input<string>('');
   readonly state = input.required<string>();

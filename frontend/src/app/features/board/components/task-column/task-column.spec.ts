@@ -7,7 +7,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { TaskColumnComponent } from './task-column';
 import type { ArchivedTaskInfo, CliExecution, TaskInfo, ProjectRunnerStatus } from '../../../../models/task.model';
 import { laneName } from '../../../../models/lane-presentation';
-import { AcceptanceReadinessStore } from '../../../acceptance-readiness';
+import { AcceptanceReadinessStore } from '../../../acceptance-readiness/lazy';
 import { readinessItem } from '../../../acceptance-readiness/testing/acceptance-readiness.fixtures';
 
 /**
