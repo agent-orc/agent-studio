@@ -75,6 +75,11 @@ async function stubBackgroundApis(page: Page) {
     { id: 'agent-runner-01', displayName: 'agent-runner-01', kind: 'service', registeredAt: now, lastSeenAt: now,
       runnerGitStatus: 'ready', runnerGitCheckedAt: now, runnerDaemonState: 'running', runnerActiveSlots: 0, runnerAvailableSlots: 2 },
   ]));
+  await page.route('**/api/host/filesystems', json({ host: 'studio-api', observedAt: now,
+    level: 'warning', reason: 'Instance data at /data has 12.0 GiB free.',
+    filesystems: [{ purpose: 'instance data', path: '/data', freeBytes: 12 * 1073741824,
+      totalBytes: 100 * 1073741824, ownedBytes: { 'gate evidence': 5 * 1073741824 } }],
+  }));
   await page.route('**/api/v1/management/remote-hosts', json([]));
   await page.route('**/api/v1/management/links', json([]));
   // AGT-2826: keep the release column deterministic; individual tests override
@@ -319,20 +324,32 @@ test.describe('Execution Hosts settings section', () => {
     await dismissDevErrorDialog(page);
   });
 
-  test('networked profile hides legacy and local phantom machines', async ({ page }) => {
-    await page.route('**/api/auth/status', route => route.fulfill({
+  test('networked profile shows the measured API host without seeded phantom runners', async ({ page }) => {
+    const networkedStatus = { profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'operator', username: 'operator', displayName: 'Operator', role: 'owner',
+        projects: ['agent-taskboard'], disabled: false, mustChangePassword: false } };
+    const respondNetworked = (route: Route) => route.fulfill({
       status: 200, contentType: 'application/json',
-      body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: true,
-        user: { id: 'operator', username: 'operator', displayName: 'Operator', role: 'owner',
-          projects: ['agent-taskboard'], disabled: false, mustChangePassword: false } }),
+      body: JSON.stringify(networkedStatus),
+    });
+    await page.route('**/api/auth/status', respondNetworked);
+    await page.route('**/api/v1/studio/auth/status', respondNetworked);
+    await page.route('**/api/auth/sessions', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [] }),
     }));
     await page.reload();
     await page.goto('/#/workspace/settings/execution-hosts');
     await dismissDevErrorDialog(page);
     await expect(page.getByTestId('remote-hosts-panel')).toBeVisible();
-    await expect(page.getByTestId('remote-host-card')).toHaveCount(0);
+    await expect(page.getByTestId('remote-host-card')).toHaveCount(1);
     await expect(page.getByText('Local machine')).toHaveCount(0);
     await expect(page.getByText('agent-runner-01')).toHaveCount(0);
+    const api = page.getByTestId('remote-host-card').filter({ hasText: 'studio-api' });
+    await expandHost(api);
+    const filesystems = api.getByTestId('remote-host-filesystems');
+    await expect(filesystems).toContainText('/data');
+    await expect(filesystems).toContainText('gate evidence');
+    await filesystems.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(SHOT_DIR, 'networked-hosts-no-phantoms.png'), fullPage: false });
   });
 

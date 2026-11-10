@@ -381,7 +381,7 @@ public sealed class RemoteRunnerDaemon
             }, shutdown);
         }
         var capabilityGeneration = DateTime.UtcNow.Ticks;
-        var telemetry = new HostTelemetrySampler();
+        var telemetry = new HostTelemetrySampler(_options);
         // Claim admission and salvage deletion share this gate. A claim is
         // protected from the server mutation until its card is visible here.
         var salvageAdmissionGate = new SemaphoreSlim(1, 1);
@@ -392,6 +392,10 @@ public sealed class RemoteRunnerDaemon
             admittedCardKeys.TryAdd(accepted.Task.TaskKey, 0);
         // AGT-2999: the coding host owns its salvage store. The sweep runs on its
         // own timer. Deletion and claim admission meet only at the final boundary.
+        var worktreeRetention = new RunnerWorktreeRetention(_options, _client,
+            () => ActiveTaskKeys(inventory.Snapshot(), state)
+                .Concat(admittedCardKeys.Keys).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            salvageAdmissionGate, _log);
         var salvage = _options.Role == "coding" && !string.IsNullOrWhiteSpace(_options.SalvageDir)
             ? new SalvageRetentionSweeper(
                 _options,
@@ -402,7 +406,8 @@ public sealed class RemoteRunnerDaemon
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray(),
                 _log,
-                runAdmissionGate: salvageAdmissionGate)
+                runAdmissionGate: salvageAdmissionGate,
+                worktreeSweep: worktreeRetention.SweepOnceAsync)
             : null;
         using var auxiliaryStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
         var salvageSweep = salvage?.RunAsync(auxiliaryStop.Token) ?? Task.CompletedTask;

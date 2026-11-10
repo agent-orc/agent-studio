@@ -171,7 +171,8 @@ public sealed record HostTelemetrySnapshotDto(
     long? StaleBuildNodesReaped = null,
     DateTime? BuildNodeSweepAt = null,
     IReadOnlyList<HostContainerSummaryDto>? Containers = null,
-    ClaimLoadGateDto? ClaimLoadGate = null);
+    ClaimLoadGateDto? ClaimLoadGate = null,
+    IReadOnlyList<HostFilesystemUsageDto>? Filesystems = null);
 
 /// <summary>Current coding claim admission, observed by the runner process.</summary>
 public sealed record ClaimLoadGateDto(

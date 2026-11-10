@@ -95,7 +95,7 @@ public sealed class RemoteReviewDaemon
         idleWatchdog.RecordActiveSlots(persistedAtStartup.Count(slot =>
             ReviewRestartGuardPolicy.IsBusyPhase(slot.Phase)));
         var connectivity = new TaskServerConnectivityMonitor(_log);
-        var telemetry = new HostTelemetrySampler();
+        var telemetry = new HostTelemetrySampler(_options);
         var planeBudgetProbe = _planeBudgetProbe ?? new ReviewPlaneBudgetProbe();
         HostTelemetrySample? latestTelemetry = null;
         var nextSlotHygieneLog = DateTime.MinValue;
@@ -445,6 +445,7 @@ public sealed class RemoteReviewDaemon
             var emptyClaimWarning = new ReviewClaimEmptyWarning();
             int? announcedSlotCeiling = null;
             var nextRetentionSweep = DateTime.MinValue;
+            var diskAdmission = new RunnerDiskAdmission(_options);
             var consecutiveFaults = 0;
             string? announcedControlRequestId = null;
             while (!shutdown.IsCancellationRequested)
@@ -485,6 +486,13 @@ public sealed class RemoteReviewDaemon
                     var occupied = Math.Max(active.Count, persisted.Busy + persisted.Unreadable);
                     HostRoleDrainControl.Acknowledge(_options.StateDir, "review", hostDrain, occupied);
                     idleWatchdog.RecordPollStarted();
+                    var disk = diskAdmission.Observe();
+                    if (disk.Level == HostDiskPressureLevel.Critical)
+                    {
+                        _log($"review claim paused on {_options.Hostname}: {disk.Reason}");
+                        await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), shutdown);
+                        continue;
+                    }
                     if (occupied == 0)
                     {
                         drainedToStop = true;

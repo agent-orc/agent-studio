@@ -8,6 +8,11 @@ using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using AgentStudio.TaskServer.Contracts.BatchGate;
 using AgentStudio.OrchestrationDecisions;
+using HostDiskPressureDecision = AgentStudio.TaskServer.Contracts.HostDiskPressureDecision;
+using HostDiskPressureLevel = AgentStudio.TaskServer.Contracts.HostDiskPressureLevel;
+using HostDiskPressurePolicy = AgentStudio.TaskServer.Contracts.HostDiskPressurePolicy;
+using HostDiskPressureThresholds = AgentStudio.TaskServer.Contracts.HostDiskPressureThresholds;
+using HostFilesystemProbe = AgentStudio.TaskServer.Contracts.HostFilesystemProbe;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -59,6 +64,9 @@ public sealed partial class BatchGatePilotService
     private readonly ConcurrentDictionary<string, byte> _replanAfterBatch = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Task> _runningPreChecks = new(StringComparer.Ordinal);
     private readonly GateQueueStallMonitor _queueStalls;
+    private bool _diskCritical;
+    private string? _diskPauseReason;
+    private DateTimeOffset _nextStorageRetentionAt;
 
     /// <summary>Coordinator lease renewal cadence; well inside the two-minute grant.</summary>
     internal TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(30);
@@ -393,7 +401,7 @@ public sealed partial class BatchGatePilotService
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
             _time.GetUtcNow(), _services?.GetService<GateRunLedger>(), reviewFixWaits,
             _services?.GetService<GateCapacitySettings>()?.Current(), DetachedFlights(project),
-            LeaseDeadlineDeferred()(project), FallbackWaits(project));
+            LeaseDeadlineDeferred()(project), FallbackWaits(project), _diskPauseReason);
     }
 
     private static BatchGateReviewFixWait[] ReviewFixWaits(IEnumerable<TaskInfo> tasks, string project)
@@ -427,6 +435,29 @@ public sealed partial class BatchGatePilotService
         {
             CancelFlightsPastLeaseDeadline();
             ObserveFallbackFlights();
+            if (_configuration is not null && _time.GetUtcNow() >= _nextStorageRetentionAt)
+            {
+                _nextStorageRetentionAt = _time.GetUtcNow().AddHours(6);
+                try
+                {
+                    HostStorageRetention.Sweep(_store, _scanner, _time.GetUtcNow(),
+                        _configuration.GetValue("DiskPressure:RetentionDays", 14),
+                        message => _logger.LogInformation("{RetentionEvent}", message),
+                        key =>
+                        {
+                            var projection = _authority.GetTaskProjection(key);
+                            return projection.CurrentRunAttempt?.State is
+                                    (AttemptLifecycleState.Pending or AttemptLifecycleState.Leased)
+                                || projection.CurrentReviewAttempt?.State is
+                                    (AttemptLifecycleState.Pending or AttemptLifecycleState.Leased);
+                        });
+                }
+                catch (Exception error) when (error is not OperationCanceledException)
+                {
+                    _logger.LogWarning(error, "host-storage-retention-failed");
+                }
+            }
+            if (DiskPressure().Level == HostDiskPressureLevel.Critical) return;
             var fetchedBases = new Dictionary<(string Repo, string Branch), string?>();
             if (_reservations is not null)
                 foreach (var project in _reservations.ProjectsWithPending())
@@ -1046,6 +1077,7 @@ public sealed partial class BatchGatePilotService
         IReadOnlyDictionary<string, BatchGatePendingRecord> pending,
         string repo, CancellationToken ct, bool followsCompletedFlight = false)
     {
+        if (DiskPressure().Level == HostDiskPressureLevel.Critical) return;
         // A successor has already gated against the predecessor's candidate.
         // Keep later ordinary batches behind it until it publishes or retires.
         lock (_runningStacks)
@@ -1138,6 +1170,7 @@ public sealed partial class BatchGatePilotService
         IReadOnlyDictionary<string, BatchGatePendingRecord> pending,
         string repo, CancellationToken ct)
     {
+        if (DiskPressure().Level == HostDiskPressureLevel.Critical) return;
         lock (_runningStacks)
         {
             if (_runningStacks.TryGetValue(manifest.Scope.Project, out var active)
@@ -1910,7 +1943,9 @@ public sealed partial class BatchGatePilotService
             if (_store.ReadPublication(manifest.BatchId) is null
                 && _store.LatestState(manifest.BatchId).Phase is not
                     (BatchPhase.Publishing or BatchPhase.Unknown))
-                State(manifest, BatchPhase.Paused, null, lease.Fence, ex.GetType().Name);
+                State(manifest, BatchPhase.Paused, null, lease.Fence,
+                    AgentStudio.Tasks.HostDiskWriteFailure.IsDiskFull(ex)
+                        ? "GateInfra: host disk full" : ex.GetType().Name);
         }
         finally
         {
@@ -2726,6 +2761,7 @@ public sealed partial class BatchGatePilotService
         CancellationToken ct, PerTaskFallbackCause cause, bool recordInStore = true,
         string? containedInSha = null, bool clearEject = false)
     {
+        if (DiskPressure().Level == HostDiskPressureLevel.Critical) return Task.CompletedTask;
         FallbackFlight? flight;
         lock (_fallbackFlights)
         {
@@ -3642,6 +3678,34 @@ public sealed partial class BatchGatePilotService
         return settings.BatchGate.Enabled
             && (_postMergeMode?.Resolve(project, settings)
                 ?? IntegrationTestModes.Resolve(settings)) != IntegrationTestModes.PostMerge;
+    }
+
+    private HostDiskPressureDecision DiskPressure()
+    {
+        if (_configuration is null)
+            return new(HostDiskPressureLevel.Healthy, "Disk monitor is not configured.", null);
+        var data = _configuration["TaskRepository"];
+        if (string.IsNullOrWhiteSpace(data))
+            return new(HostDiskPressureLevel.Healthy, "Instance data path is not configured.", null);
+        var paths = new List<(string Purpose, string Path)> { ("instance data", data) };
+        var work = _configuration["DiskPressure:RunnerWorkRoot"];
+        if (!string.IsNullOrWhiteSpace(work)) paths.Add(("runner work", work));
+        var containers = _configuration["DiskPressure:ContainerStoragePath"];
+        if (!string.IsNullOrWhiteSpace(containers)) paths.Add(("container storage", containers));
+        var disks = HostFilesystemProbe.Measure(paths);
+        var thresholds = new HostDiskPressureThresholds(
+            _configuration.GetValue("DiskPressure:WarningFreeBytes", 30L * 1024 * 1024 * 1024),
+            _configuration.GetValue("DiskPressure:WarningFreePercent", 15d),
+            _configuration.GetValue("DiskPressure:CriticalFreeBytes", 8L * 1024 * 1024 * 1024),
+            _configuration.GetValue("DiskPressure:CriticalFreePercent", 5d));
+        var decision = HostDiskPressurePolicy.Decide(disks, thresholds, _diskCritical);
+        var critical = decision.Level == HostDiskPressureLevel.Critical;
+        if (critical != _diskCritical)
+            _logger.LogWarning("batch-gate-disk-admission state={State} reason={Reason}",
+                critical ? "paused" : "resumed", decision.Reason);
+        _diskCritical = critical;
+        _diskPauseReason = critical ? decision.Reason : null;
+        return decision;
     }
 
     private bool BatchRouteEnabled(BatchGateManifest manifest)

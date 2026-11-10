@@ -23,7 +23,8 @@ public static class BatchGateStateSnapshotReader
         GateCapacity? gateCapacity = null,
         IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null,
         string? leaseDeadlineDeferredBatchId = null,
-        IReadOnlyList<BatchGateFallbackWait>? fallbackWaits = null)
+        IReadOnlyList<BatchGateFallbackWait>? fallbackWaits = null,
+        string? diskPauseReason = null)
     {
         // AGT-3694: what each per-task fallback waits for, so an overdue member
         // never shows only its rule.
@@ -117,6 +118,8 @@ public static class BatchGateStateSnapshotReader
                 CloseAtUtc = plan.CloseAtUtc is { } deadline && deadline <= at
                     ? null : plan.CloseAtUtc,
             };
+        if (diskPauseReason is not null)
+            plan = plan with { Decision = "wait", Reason = diskPauseReason };
         var manifests = projectManifests
             .OrderByDescending(item => item.ClosedAtUtc)
             .Take(Math.Clamp(history, 0, 500))
@@ -299,6 +302,7 @@ public static class BatchGateStateSnapshotReader
         }
         return new
         {
+            diskPauseReason,
             plan,
             pending = pending.Select(item =>
             {

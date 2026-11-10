@@ -260,6 +260,8 @@ public sealed partial class BatchGateStore
         _readFailureEvidence = readFailureEvidence;
     }
 
+    internal string StorageRoot => _root;
+
     public string BatchDirectory(string batchId)
         => Path.Combine(_root, SafeName(batchId));
 

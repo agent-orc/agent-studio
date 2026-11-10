@@ -142,10 +142,19 @@ export interface HostTelemetryPoint {
   ioWaitPercent: number | null;
   cpuCores: number;
   activeSlots: number;
+  filesystems?: readonly HostFilesystemUsage[] | null;
+}
+
+export interface HostFilesystemUsage {
+  purpose: string;
+  path: string;
+  freeBytes: number;
+  totalBytes: number;
+  ownedBytes?: Readonly<Record<string, number>> | null;
 }
 
 export interface HostTelemetryFinding {
-  kind: 'vm-throttled' | 'oversubscribed' | 'memory-pressure';
+  kind: 'vm-throttled' | 'oversubscribed' | 'memory-pressure' | 'disk-pressure';
   label: string;
   since: string;
   until: string;
@@ -153,6 +162,7 @@ export interface HostTelemetryFinding {
   occurrences?: number;
   /** Omitted by older servers, whose findings represented active phases only. */
   isActive?: boolean;
+  detail?: string | null;
 }
 
 export interface HostTelemetrySeries {
@@ -241,6 +251,7 @@ export interface TaskServerTelemetrySnapshot {
   claimLoadGate?: ClaimLoadGate | null;
   diskFreeBytes?: number | null;
   diskTotalBytes?: number | null;
+  filesystems?: readonly HostFilesystemUsage[] | null;
   taskServerConnectionStatus?: 'unknown' | 'reachable' | 'unreachable';
   taskServerConnectionObservedAt?: string | null;
   taskServerConnectionFailureStartedAt?: string | null;
@@ -426,6 +437,8 @@ export interface RemoteHost {
   /** Live system stats, or null when the host reports none (e.g. retired). */
   stats: HostSystemStats | null;
   telemetry?: HostTelemetrySeries | null;
+  filesystems?: readonly HostFilesystemUsage[] | null;
+  diskPressureReason?: string | null;
   /** Process-local route observation; capability freshness remains the remote alarm. */
   taskServerConnection?: TaskServerConnectionTelemetry | null;
   /** Freshness of the client/daemon projection requested for this mount. */
