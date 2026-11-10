@@ -871,6 +871,17 @@ export class TaskService {
       : [response.body!]));
   }
 
+  /** Fresh task facts, including the integration verdict used by Human Review. */
+  getFreshDetail(jobId: string, project: string, attempt = 0): Observable<TaskDetail> {
+    const params = new HttpParams().set('project', project);
+    return this.http.get<TaskDetail>(`${this.baseUrl}/tasks/${encodeURIComponent(jobId)}`,
+      { params, observe: 'response' }).pipe(switchMap(response => response.status === 202
+        ? attempt < 20
+          ? timer(100 + 50 * attempt).pipe(switchMap(() => this.getFreshDetail(jobId, project, attempt + 1)))
+          : throwError(() => new Error('Task still warming'))
+        : [response.body!]));
+  }
+
   /**
    * Additive enrichment resource of one core generation (AGT-2955). A reply
    * for another generation answers 409; see `docs/system/domains/tasks.md`.
@@ -920,6 +931,7 @@ export class TaskService {
     reason?: string,
     operatorOverride = false,
     runIntent: 'revoke' | 'steer' = 'revoke',
+    withdrawFromBatch = false,
   ) {
     const body: {
       targetState: string;
@@ -927,10 +939,12 @@ export class TaskService {
       reason?: string;
       operatorOverride?: boolean;
       runIntent: 'revoke' | 'steer';
+      withdrawFromBatch?: boolean;
     } = { targetState, runIntent };
     if (typeof targetIndex === 'number') body.targetIndex = targetIndex;
     if (reason?.trim()) body.reason = reason.trim();
     if (operatorOverride) body.operatorOverride = true;
+    if (withdrawFromBatch) body.withdrawFromBatch = true;
     return this.http.post(
       `${this.taskV1Url(jobId)}/move`,
       body,
@@ -1510,6 +1524,19 @@ export class TaskService {
     }>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/pipeline/steps/${encodeURIComponent(stepId)}/run`,
       { watchPath, addToCard: true },
+    );
+  }
+
+  /** Run only the missing requirement-fit review of a report card's delivered results. */
+  reviewTaskResults(jobId: string, watchPath?: string) {
+    return this.http.post<{
+      stepId: string;
+      ran: boolean;
+      status: string | null;
+      summary: string;
+    }>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/review-results`,
+      { watchPath },
     );
   }
 

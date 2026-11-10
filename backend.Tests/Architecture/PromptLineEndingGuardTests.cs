@@ -62,7 +62,8 @@ public sealed partial class PromptLineEndingGuardTests
             ["backend/Features/Analysis/RecurringOutputPatternService.cs"] = ["RenderGroups", "RenderJobs", "RenderRecentReports"],
             ["backend/Features/Tasks/TaskCrudEndpoints.cs"] = ["AppendDeliveryAcceptanceCriteria"],
             ["runner/RemoteRunPrompt.cs"] = ["Build"],
-            ["runner/RemoteReviewWorkspace.cs"] = ["AppendReviewMaterial", "RenderReviewMaterial"],
+            ["runner/RemoteReviewWorkspace.cs"] = ["RenderReviewMaterial"],
+            ["runner/ReviewAspectInputBudget.cs"] = ["Compose", "Finish", "Join"],
         };
 
     [Fact]

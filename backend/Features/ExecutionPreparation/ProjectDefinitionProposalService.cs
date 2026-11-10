@@ -37,6 +37,15 @@ public sealed class ProjectDefinitionProposalService
     public ProjectDefinitionProposal Generate(string repositoryPath)
         => ProjectDefinitionGenerator.Generate(repositoryPath);
 
+    public ProjectDefinitionProposal? Preview(string projectName)
+    {
+        var entry = _scanner.GetWatchPaths().FirstOrDefault(item =>
+            string.Equals(item.Name, projectName, StringComparison.OrdinalIgnoreCase));
+        if (entry is null) return null;
+        var path = string.IsNullOrWhiteSpace(entry.RepositoryPath) ? entry.RootPath : entry.RepositoryPath;
+        return !string.IsNullOrWhiteSpace(path) && Directory.Exists(path) ? Generate(path) : null;
+    }
+
     public string? CreateCard(string projectName, string? failureReason = null, bool force = false)
     {
         var entry = _scanner.GetWatchPaths().FirstOrDefault(item =>
@@ -183,9 +192,12 @@ public static class ProjectDefinitionGenerator
         }
 
         var yaml = new StringBuilder();
-        yaml.AppendLf("schemaVersion: 1");
+        yaml.AppendLf("schemaVersion: 2");
+        yaml.AppendLf("project:");
+        yaml.AppendLf($"  id: {Id(Path.GetFileName(root))}");
         yaml.AppendLf($"stack: [{string.Join(", ", stacks)}]");
-        yaml.AppendLf("toolVersions:");
+        if (File.Exists(Path.Combine(root, ".nvmrc")) || File.Exists(Path.Combine(root, "global.json")))
+            yaml.AppendLf("toolVersions:");
         if (File.Exists(Path.Combine(root, ".nvmrc"))) yaml.AppendLf("  node: .nvmrc");
         if (File.Exists(Path.Combine(root, "global.json"))) yaml.AppendLf("  dotnetSdk: global.json");
         yaml.AppendLf("commands:");
@@ -193,7 +205,7 @@ public static class ProjectDefinitionGenerator
         AppendList(yaml, "build", build, 2);
         AppendList(yaml, "test", test, 2);
         AppendList(yaml, "lint", lint, 2);
-        yaml.AppendLf("testSuites:");
+        if (suites.Count > 0) yaml.AppendLf("testSuites:");
         foreach (var suite in suites)
         {
             yaml.AppendLf($"  - id: {suite.Id}");
@@ -201,7 +213,7 @@ public static class ProjectDefinitionGenerator
             yaml.AppendLf($"    expectedDurationSeconds: {suite.Duration}");
             yaml.AppendLf($"    command: {Quote(suite.Command)}");
         }
-        yaml.AppendLf("cachePaths:");
+        if (packageRoots.Count > 0) yaml.AppendLf("cachePaths:");
         foreach (var packageRoot in packageRoots)
             yaml.AppendLf($"  - {(string.IsNullOrWhiteSpace(packageRoot) ? "node_modules" : packageRoot + "/node_modules")}");
         yaml.AppendLf("capabilities: [linux]");
@@ -287,6 +299,11 @@ public static class ProjectDefinitionGenerator
     private static void AppendList(StringBuilder yaml, string key, IReadOnlyList<string> values, int indent)
     {
         var spaces = new string(' ', indent);
+        if (values.Count == 0)
+        {
+            yaml.AppendLf($"{spaces}{key}: []");
+            return;
+        }
         yaml.AppendLf($"{spaces}{key}:");
         foreach (var value in values) yaml.AppendLf($"{spaces}  - {Quote(value)}");
     }

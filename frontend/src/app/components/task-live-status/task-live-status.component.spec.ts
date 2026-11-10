@@ -1,9 +1,12 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import type { TaskInfo } from '../../models/task.model';
 import { TaskLiveStatusComponent } from './task-live-status.component';
 import { RemoteHostsService } from '../../features/remote-hosts';
+import { TaskReferenceNavigationService } from '../../services/task-reference-navigation.service';
+import { TaskService } from '../../services/task.service';
+import { of } from 'rxjs';
 
 function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
   const now = Date.now();
@@ -32,14 +35,27 @@ function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
 
 describe('TaskLiveStatusComponent', () => {
   let fixture: ComponentFixture<TaskLiveStatusComponent>;
+  const modeCalls: [string, string][] = [];
+
+  const navigation = { openReferenceOrNotify: vi.fn(() => true) };
 
   beforeEach(async () => {
+    navigation.openReferenceOrNotify.mockClear();
     await TestBed.configureTestingModule({
       imports: [TaskLiveStatusComponent],
       providers: [provideZonelessChangeDetection(),
-        { provide: RemoteHostsService, useValue: { hosts: () => [] } }],
+        { provide: TaskService, useValue: {
+          setRunnerMode: (project: string, mode: string) => {
+            modeCalls.push([project, mode]);
+            return of({});
+          },
+          refresh: vi.fn(),
+        } },
+        { provide: RemoteHostsService, useValue: { hosts: () => [] } },
+        { provide: TaskReferenceNavigationService, useValue: navigation }],
     }).compileComponents();
     fixture = TestBed.createComponent(TaskLiveStatusComponent);
+    modeCalls.length = 0;
   });
 
   it('shows a Ready pickup hold without a previous live run', () => {
@@ -110,6 +126,71 @@ describe('TaskLiveStatusComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Waiting for review slot · position 3');
     expect(fixture.nativeElement.textContent).toContain('Next');
     expect(fixture.nativeElement.textContent).toContain('Requirement fit');
+  });
+
+  // AGT-3617 (playthrough AGT-3560, H1): a card held behind an open cause
+  // breaker said "Waiting for review slot · position 1" while the review host
+  // was idle; the claim skips it, so the hold is the CURRENT state.
+  it('names the cause hold instead of a review slot position, with a link to the cause card', () => {
+    const since = new Date(Date.now() - 12 * 60_000).toISOString();
+    fixture.componentRef.setInput('task', task({
+      liveStatus: {
+        attempt: 2, activeStep: null, nextSteps: [],
+        queue: { kind: 'review', position: 1 },
+        latestEventAt: new Date().toISOString(),
+      },
+      causeWait: {
+        causeKey: 'DEMO-2', fingerprint: 'fp', failureClass: 'ReviewInfra/TestReportUnavailable',
+        since, reason: 'waiting for DEMO-2', summary: 'review cannot read the test report',
+      },
+    }));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    expect(root.dataset['liveTone']).toBe('waiting');
+    expect(root.querySelector('[data-testid="task-live-hold"]')?.textContent?.replace(/\s+/g, ' ').trim())
+      .toBe('Held behind DEMO-2: review cannot read the test report');
+    expect(root.textContent).not.toContain('Waiting for review slot');
+    expect(root.textContent).toMatch(/held for 1[12]m/);
+
+    const cardClick = vi.fn();
+    root.addEventListener('click', cardClick);
+    (root.querySelector('[data-testid="task-live-hold-link"]') as HTMLButtonElement).click();
+    expect(navigation.openReferenceOrNotify).toHaveBeenCalledWith('DEMO-2');
+    // On a board card the link opens the cause card, not the held card.
+    expect(cardClick).not.toHaveBeenCalled();
+  });
+
+  it('shows the cause hold even before the card has a live status', () => {
+    fixture.componentRef.setInput('variant', 'detail');
+    fixture.componentRef.setInput('task', task({
+      liveStatus: null,
+      causeWait: {
+        causeKey: 'DEMO-2', fingerprint: 'fp', failureClass: 'ReviewInfra/ToolUnavailable',
+        since: new Date().toISOString(), reason: 'waiting for DEMO-2',
+      },
+    }));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('[data-testid="task-live-hold"]')?.textContent).toContain('Held behind');
+    expect(root.querySelector('[data-testid="task-live-hold"]')?.textContent)
+      .toContain('review keeps failing for the same cause');
+    // No live status, so no attempt is claimed.
+    expect(root.textContent).not.toContain('Attempt');
+  });
+
+  it('does not show a cause hold outside Post Processing', () => {
+    fixture.componentRef.setInput('task', task({
+      state: '5-human-review',
+      liveStatus: null,
+      causeWait: {
+        causeKey: 'DEMO-2', fingerprint: 'fp', failureClass: 'ReviewInfra/ToolUnavailable',
+        since: new Date().toISOString(), reason: 'waiting for DEMO-2',
+      },
+    }));
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="task-live-hold"]')).toBeNull();
   });
 
   it('names the wait reason instead of an empty queue when no slot position is known', () => {
@@ -201,7 +282,7 @@ describe('TaskLiveStatusComponent', () => {
     const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
     expect(root.querySelectorAll(':scope > div')).toHaveLength(2);
     expect(root.querySelector('[data-testid="task-live-current"]')?.textContent)
-      .toContain('Waiting for runner slot · position 3');
+      .toContain('Queued for runner · position 3');
     expect(root.querySelector('[data-testid="task-live-detail-inline"]')?.textContent)
       .toContain('Last activity');
     expect(root.querySelector('[data-testid="task-live-next"]')?.textContent)
@@ -231,6 +312,30 @@ describe('TaskLiveStatusComponent', () => {
     expect(root.getAttribute('data-live-tone')).toBe('waiting');
     expect(root.querySelector('[data-testid="task-live-current"]')?.textContent).toContain(headline);
     expect(root.querySelector('.task-live__detail')?.textContent).toContain(reason);
+  });
+
+  it('offers Auto inline for a remote Ready card held in Manual mode', () => {
+    fixture.componentRef.setInput('task', task({
+      state: '2-ready',
+      executionLocation: {
+        state: 'no-active-execution', executionKind: 'none',
+        configuredRunnerId: 'first-run-coding', hostDisplayName: 'first-run-coding',
+      },
+      liveStatus: {
+        attempt: 1, activeStep: null, nextSteps: [], latestEventAt: null,
+        queue: { kind: 'runner', position: 1, reasonCode: 'manual-mode', reason: 'Auto-pickup is off.' },
+      },
+    }));
+    fixture.detectChanges();
+
+    const current = fixture.nativeElement.querySelector('[data-testid="task-live-current"]') as HTMLElement;
+    expect(current.textContent).toContain('Pickup is Manual: switch to Auto to let first-run-coding claim it');
+    expect(current.textContent).not.toContain('Waiting for runner slot');
+    const action = current.querySelector('[data-testid="task-live-switch-auto"]') as HTMLButtonElement;
+    expect(action.textContent).toContain('Switch to Auto');
+    action.click();
+    expect(modeCalls).toEqual([['demo', 'auto-continuous']]);
+    expect(TestBed.inject(TaskService).refresh).toHaveBeenCalledWith(true);
   });
 
   it('keeps a card hold ahead of a runner reason', () => {
@@ -302,7 +407,7 @@ describe('TaskLiveStatusComponent', () => {
     });
     fixture.detectChanges();
 
-    expect(current.textContent).toContain('Waiting for runner slot · position 3');
+    expect(current.textContent).toContain('Queued for runner · position 3');
     expect(current.textContent).not.toContain('waits for completion');
     expect(fixture.nativeElement.textContent).toContain('Agent execution');
   });

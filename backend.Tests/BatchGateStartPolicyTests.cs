@@ -3,70 +3,71 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-/// <summary>AGT-3562: start order and pre-lease deadline of batch flights.</summary>
+/// <summary>AGT-3562, AGT-3710: first in, first out start order and pre-lease deadline of batch flights.</summary>
 public sealed class BatchGateStartPolicyTests
 {
     // clock-independent: the pure policy receives an explicit now; fixture instants meet only each other.
     private static readonly DateTimeOffset At = new(2026, 11, 5, 12, 59, 0, TimeSpan.Zero);
 
-    private static BatchGateStartCandidate Batch(string id, int size, DateTimeOffset closed,
-        bool stacked = false, bool deferred = false, int maximumWait = 45)
-        => new(id, size, closed, stacked, deferred, maximumWait);
+    private static BatchGateStartCandidate Batch(string id, DateTimeOffset queuedSince,
+        long firstSequence = 1, bool stacked = false, bool child = false, bool deferred = false)
+        => new(id, queuedSince, firstSequence, stacked, child, deferred);
 
     [Fact]
-    public void Larger_batch_starts_before_an_older_smaller_one_within_the_maximum_wait()
+    public void Formed_batches_start_in_formation_order_regardless_of_size_or_input_order()
     {
-        var older = Batch("older", 2, At);
-        var larger = Batch("larger", 5, At.AddMinutes(10));
+        // 10 November 2026: four batches formed 03:47 to 04:40 UTC waited
+        // while batches formed at 04:50 and 05:11 started within seconds.
+        var batches = new[]
+        {
+            Batch("3735f957", At.AddMinutes(132), firstSequence: 90),
+            Batch("0d8df544", At.AddMinutes(9), firstSequence: 40),
+            Batch("17d2ad28", At.AddMinutes(111), firstSequence: 80),
+            Batch("b80b7541", At.AddMinutes(-12), firstSequence: 20),
+            Batch("64bda9c0", At.AddMinutes(41), firstSequence: 50),
+            Batch("fa98470e", At.AddMinutes(2), firstSequence: 10),
+        };
 
-        Assert.Equal(["larger", "older"],
-            BatchGateStartPolicy.Order([older, larger], At.AddMinutes(44)));
+        Assert.Equal(["b80b7541", "fa98470e", "0d8df544", "64bda9c0", "17d2ad28", "3735f957"],
+            BatchGateStartPolicy.Order(batches));
+        Assert.Equal(BatchGateStartPolicy.Order(batches),
+            BatchGateStartPolicy.Order(batches.Reverse()));
     }
 
     [Fact]
-    public void Batch_past_its_maximum_wait_starts_before_younger_ones_regardless_of_size()
+    public void Equal_formation_times_break_on_the_lowest_enqueue_sequence_then_the_batch_id()
     {
-        var oldest = Batch("oldest", 1, At);
-        var older = Batch("older", 2, At.AddMinutes(5));
-        var larger = Batch("larger", 8, At.AddMinutes(40));
+        var later = Batch("aaaa", At, firstSequence: 7);
+        var earlier = Batch("zzzz", At, firstSequence: 3);
+        var sameSequence = Batch("bbbb", At, firstSequence: 7);
 
-        Assert.Equal(["oldest", "older", "larger"],
-            BatchGateStartPolicy.Order([larger, older, oldest], At.AddMinutes(50)));
-        Assert.Equal(["oldest", "larger", "older"],
-            BatchGateStartPolicy.Order([larger, older, oldest], At.AddMinutes(45)));
+        Assert.Equal(["zzzz", "aaaa", "bbbb"],
+            BatchGateStartPolicy.Order([sameSequence, later, earlier]));
     }
 
     [Fact]
-    public void Stacked_successor_starts_first_and_a_deferred_batch_last()
+    public void Stacked_successor_and_child_start_first_and_a_deferred_batch_last()
     {
-        var ordinary = Batch("ordinary", 5, At);
-        var stacked = Batch("stacked", 2, At, stacked: true);
-        var deferred = Batch("deferred", 8, At.AddMinutes(-120), deferred: true);
+        var ordinary = Batch("ordinary", At);
+        var stacked = Batch("stacked", At.AddMinutes(30), stacked: true);
+        var child = Batch("child", At.AddMinutes(20), child: true);
+        var deferred = Batch("deferred", At.AddMinutes(-120), deferred: true);
 
-        Assert.Equal(["stacked", "ordinary", "deferred"],
-            BatchGateStartPolicy.Order([deferred, ordinary, stacked], At.AddMinutes(60)));
+        Assert.Equal(["stacked", "child", "ordinary", "deferred"],
+            BatchGateStartPolicy.Order([deferred, ordinary, child, stacked]));
     }
 
-    [Theory]
-    [InlineData(45, 50)]
-    [InlineData(20, 20)]
-    public void Older_smaller_batch_starts_within_the_maximum_wait_although_larger_batches_keep_forming(
-        int maximumWait, int expectedStartMinute)
+    [Fact]
+    public void Older_batch_starts_although_larger_batches_keep_forming()
     {
         // 5 November 2026: batch 24991efe (12:59 UTC) stayed in phase 0 for
         // hours while later, larger batches ran. One flight per project starts
-        // per pass; a larger batch forms before each pass.
-        var waiting = new List<BatchGateStartCandidate> { Batch("small", 2, At, maximumWait: maximumWait) };
-        int? startedAt = null;
-        for (var minute = 10; minute <= 240 && startedAt is null; minute += 10)
-        {
-            waiting.Add(Batch($"large-{minute}", 6, At.AddMinutes(minute - 1), maximumWait: maximumWait));
-            var next = BatchGateStartPolicy.Order(waiting, At.AddMinutes(minute))[0];
-            waiting.RemoveAll(batch => batch.BatchId == next);
-            if (next == "small") startedAt = minute;
-        }
+        // per pass; a younger batch forms before each pass.
+        var waiting = new List<BatchGateStartCandidate> { Batch("small", At) };
+        for (var minute = 10; minute <= 30; minute += 10)
+            waiting.Add(Batch($"large-{minute}", At.AddMinutes(minute - 1), firstSequence: minute));
 
-        Assert.Equal(expectedStartMinute, startedAt);
+        Assert.Equal("small", BatchGateStartPolicy.Order(waiting)[0]);
     }
 
     [Theory]

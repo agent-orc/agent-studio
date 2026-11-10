@@ -15,7 +15,11 @@ public sealed record BatchGateState(
     long? RefMutationFence = null,
     string? BaseMoveToSha = null, string? BaseMoveOutcome = null,
     string? SuccessorBatchId = null,
-    IReadOnlyDictionary<string, string>? BaseMoveMemberReasons = null);
+    IReadOnlyDictionary<string, string>? BaseMoveMemberReasons = null,
+    string? CausedByTaskKey = null);
+
+public sealed record BatchGateWithdrawal(string BatchId, string TaskKey,
+    string Actor, string Reason, DateTimeOffset AtUtc);
 
 public sealed record BatchGateRunRecord(
     string BatchRunId, string BatchId, string MembershipDigest, string BaseSha,
@@ -264,6 +268,18 @@ public sealed partial class BatchGateStore
         return File.Exists(path) ? Read<BatchGateBaseVerdict>(path) : null;
     }
 
+    public IReadOnlyList<BatchGateBaseVerdict> ListBaseVerdicts(string project)
+    {
+        var folder = Path.Combine(_root, "base-verdicts", SafeName(project));
+        if (!Directory.Exists(folder)) return [];
+        return Directory.EnumerateFiles(folder, "*.json")
+            .Select(path => Read<BatchGateBaseVerdict>(path))
+            .Where(verdict => verdict is not null
+                && string.Equals(verdict.Project, project, StringComparison.Ordinal))
+            .Select(verdict => verdict!)
+            .ToArray();
+    }
+
     public void RecordBaseVerdict(BatchGateBaseVerdict verdict)
     {
         var path = BaseVerdictPath(verdict.Project, verdict.BaseSha, verdict.GateProfileDigest);
@@ -347,6 +363,24 @@ public sealed partial class BatchGateStore
         File.WriteAllText(Path.Combine(folder, SafeName(taskKey)), DateTimeOffset.UtcNow.ToString("O"));
     }
 
+    public void RecordWithdrawal(BatchGateWithdrawal withdrawal)
+    {
+        var manifest = ReadManifest(withdrawal.BatchId);
+        if (!manifest.Members.Any(member => member.TaskKey == withdrawal.TaskKey))
+            throw new InvalidDataException("The withdrawn card is not a batch member.");
+        var folder = Path.Combine(BatchDirectory(withdrawal.BatchId), "withdrawals");
+        Directory.CreateDirectory(folder);
+        WriteOnce(Path.Combine(folder, Guid.NewGuid().ToString("N") + ".json"), withdrawal);
+    }
+
+    public IReadOnlyList<BatchGateWithdrawal> ListWithdrawals(string batchId)
+    {
+        var folder = Path.Combine(BatchDirectory(batchId), "withdrawals");
+        return Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json").Select(Read<BatchGateWithdrawal>).ToArray()
+            : [];
+    }
+
     public bool HasEject(string project, string taskKey)
         => File.Exists(Path.Combine(_root, "requests", "eject", SafeName(project), SafeName(taskKey)));
 
@@ -427,12 +461,20 @@ public sealed partial class BatchGateStore
             : [];
     }
 
+    /// <summary>
+    /// Closed manifests in formation order: close time, then batch id. Batch
+    /// folders are named by hash, so their enumeration order carries no meaning
+    /// and no caller may depend on it (AGT-3710).
+    /// </summary>
     public IReadOnlyList<BatchGateManifest> ListManifests()
         => !Directory.Exists(_root) ? []
-            : Directory.EnumerateDirectories(_root)
+            : InFormationOrder(Directory.EnumerateDirectories(_root)
                 .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
-                .Select(dir => Read<BatchGateManifest>(Path.Combine(dir, "manifest.json")))
-                .ToArray();
+                .Select(dir => Read<BatchGateManifest>(Path.Combine(dir, "manifest.json"))));
+
+    private static BatchGateManifest[] InFormationOrder(IEnumerable<BatchGateManifest> manifests)
+        => manifests.OrderBy(manifest => manifest.ClosedAtUtc)
+            .ThenBy(manifest => manifest.BatchId, StringComparer.Ordinal).ToArray();
 
     /// <summary>
     /// Folders that hold a closed manifest. A manifest is written once, so a
@@ -441,7 +483,8 @@ public sealed partial class BatchGateStore
     public IReadOnlyList<string> ListManifestFolders()
         => !Directory.Exists(_root) ? []
             : Directory.EnumerateDirectories(_root)
-                .Where(dir => File.Exists(Path.Combine(dir, "manifest.json"))).ToArray();
+                .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
+                .Order(StringComparer.Ordinal).ToArray();
 
     public BatchGateManifest ReadManifestIn(string folder)
         => Read<BatchGateManifest>(Path.Combine(folder, "manifest.json"));
@@ -646,14 +689,14 @@ public sealed partial class BatchGateStore
             : [];
     }
 
+    /// <summary>Formed or in-flight manifests in formation order, as <see cref="ListManifests"/>.</summary>
     public IReadOnlyList<BatchGateManifest> ListRecoverableManifests()
     {
         if (!Directory.Exists(_root)) return [];
-        return Directory.EnumerateDirectories(_root)
+        return InFormationOrder(Directory.EnumerateDirectories(_root)
             .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
             .Select(dir => Read<BatchGateManifest>(Path.Combine(dir, "manifest.json")))
-            .Where(manifest => IsRecoverable(manifest))
-            .ToArray();
+            .Where(manifest => IsRecoverable(manifest)));
     }
 
     private bool IsRecoverable(BatchGateManifest manifest)
@@ -741,9 +784,10 @@ public sealed partial class BatchGateStore
                 .OrderBy(x => x, StringComparer.Ordinal).LastOrDefault()
             : null;
         if (path is not null) return Read<BatchGateState>(path);
-        var manifest = ReadManifest(batchId);
-        return new BatchGateState(batchId, manifest.MembershipDigest,
-            BatchPhase.Unknown, null, 0, manifest.ClosedAtUtc);
+        var manifestPath = Path.Combine(BatchDirectory(batchId), "manifest.json");
+        var manifest = File.Exists(manifestPath) ? Read<BatchGateManifest>(manifestPath) : null;
+        return new BatchGateState(batchId, manifest?.MembershipDigest ?? string.Empty,
+            BatchPhase.Unknown, null, 0, manifest?.ClosedAtUtc ?? DateTimeOffset.MinValue);
     }
 
     public void RecordRun(BatchGateRunRecord run)

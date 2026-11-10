@@ -24,6 +24,7 @@ export {
   primaryActionFor,
   laneLabelFor,
   mergeAcceptViewFor,
+  acceptanceHoldReason,
   LANE_LABELS,
   type MergeAcceptView,
   type TriageActionPayload,

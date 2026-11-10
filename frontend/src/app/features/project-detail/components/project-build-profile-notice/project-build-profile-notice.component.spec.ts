@@ -49,5 +49,6 @@ describe('ProjectBuildProfileNoticeComponent', () => {
     expect(notice.textContent).toContain('go repository');
     expect(notice.querySelector('[data-testid="project-settings-verify-example"]')?.textContent)
       .toContain('stack: [go]');
+    expect(notice.querySelector('a')?.href).toContain('onboard-a-project.md#test-command-output-in-review');
   });
 });

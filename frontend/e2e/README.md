@@ -57,6 +57,18 @@ The spec covers the desktop project picker and the narrow-screen **More →
 Switch project** path at 1280 and 390 px in both themes. With
 `JOB_RESULTS_DIR` set, it writes four screenshots there for review.
 
+### Networked owner setup over HTTPS
+
+Run `npm --prefix frontend run e2e -- e2e/security/owner-second-factor-human-pace.spec.ts`
+from the task worktree. The spec selects the `networked-https` profile: a fresh
+networked monolith with an installer owner code, behind the same temporary
+localhost HTTPS proxy as the public demo, so the browser itself holds the
+Secure session cookie. The spec creates the owner in the sign-in gate, waits
+30 seconds on the second-factor screen (past the four-second offline grace of
+the disconnected live-update hub), then enrolls an authenticator with a code it
+computes from the shown secret (AGT-3614). With `JOB_RESULTS_DIR` set, it
+writes light, dark and 390 px screenshots to `owner-second-factor/`.
+
 ## Suite layout
 
 Specs are grouped by domain under `e2e/<folder>/`, mirroring the feature

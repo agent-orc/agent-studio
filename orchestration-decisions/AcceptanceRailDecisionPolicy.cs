@@ -23,6 +23,7 @@ namespace AgentStudio.OrchestrationDecisions;
 /// integrated: the delivery reconciler returns it to integration, so it is not
 /// an operator review decision for the rail to consume.
 /// </param>
+/// <param name="AutonomyLevel">The project's effective ADR-0026 autonomy level, <c>0..4</c>.</param>
 public sealed record AcceptanceRailOperatorFacts(
     string State,
     bool ExplicitlyHeld,
@@ -37,7 +38,8 @@ public sealed record AcceptanceRailOperatorFacts(
     int InfrastructureRequeues,
     int MaxInfrastructureRequeues,
     bool InfrastructureReplayDue,
-    bool DeliveryChainOwns = false);
+    bool DeliveryChainOwns = false,
+    int AutonomyLevel = AutomaticAcceptancePolicy.DefaultAutonomyLevel);
 
 public enum AcceptanceRailVerdictAction
 {
@@ -63,6 +65,7 @@ public static class AcceptanceRailReasons
     public const string NoCodeAcceptance = "no-code-acceptance";
     public const string GitDerivedIntegrated = "git-derived-integrated";
     public const string IntegratedUnverified = "integrated-unverified";
+    public const string AutonomyRequiresPerson = "autonomy-requires-person";
     public const string RecoverableConflict = "recoverable-integration-conflict";
     public const string RequeueBudgetExhausted = "integration-requeue-budget-exhausted";
     public const string InfrastructureBudgetExhausted = "infrastructure-requeue-budget-exhausted";
@@ -93,10 +96,14 @@ public static class AcceptanceRailDecisionPolicy
 
         // AGT-2849: merged-locally counts; the push is the push backstop's work.
         // AGT-3002: containment without gate evidence is not a reason to accept.
+        // AGT-3621: the system accepts a Human Review card only where the
+        // project's autonomy setting hands that verdict to it.
         if (facts.State == TaskStates.HumanReview && facts.Merged)
-            return facts.VerificationPermitsCompletion
+            return !facts.VerificationPermitsCompletion
+                ? Ignore(AcceptanceRailReasons.IntegratedUnverified)
+                : AutomaticAcceptancePolicy.Permits(facts.AutonomyLevel)
                 ? new(AcceptanceRailVerdictAction.Accept, AcceptanceRailReasons.GitDerivedIntegrated)
-                : Ignore(AcceptanceRailReasons.IntegratedUnverified);
+                : Ignore(AcceptanceRailReasons.AutonomyRequiresPerson);
 
         if (facts.RebaseRecoveryAvailable)
         {
@@ -130,6 +137,24 @@ public static class AcceptanceRailDecisionPolicy
     }
 
     private static AcceptanceRailVerdict Ignore(string reason) => new(AcceptanceRailVerdictAction.Ignore, reason);
+}
+
+/// <summary>
+/// AGT-3621: whether the system may give the Human Review verdict in a
+/// person's place, decided by the project's ADR-0026 autonomy level. Manual and
+/// Cautious keep the click with a person; Balanced (the default) and above let
+/// the acceptance rail accept an integrated delivery whose gate evidence
+/// permits completion.
+/// </summary>
+public static class AutomaticAcceptancePolicy
+{
+    /// <summary>The platform default autonomy level (Balanced).</summary>
+    public const int DefaultAutonomyLevel = 2;
+
+    /// <summary>The lowest autonomy level that permits automatic acceptance.</summary>
+    public const int MinimumAutonomyLevel = 2;
+
+    public static bool Permits(int autonomyLevel) => autonomyLevel >= MinimumAutonomyLevel;
 }
 
 /// <summary>

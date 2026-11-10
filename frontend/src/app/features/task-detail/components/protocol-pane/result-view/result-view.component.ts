@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import type { SummaryOutcome, TaskDetail } from '../../../../../models/task.model';
+import { TaskState, type SummaryOutcome, type TaskDetail } from '../../../../../models/task.model';
 import { laneTone } from '../../../../../models/lane-presentation';
 import type { ProtocolVerdict } from '../protocol-verdict';
 import { buildResultDocument } from '../result-document';
@@ -89,7 +89,11 @@ export class ResultViewComponent {
    * Contradictions the closing Result assessment found between the card's
    * signals (AGT-3046). Empty means no block: a clean card shows nothing.
    */
-  readonly inconsistencies = computed(() => this.detail().summaryAssessment?.inconsistencies ?? []);
+  readonly inconsistencies = computed(() => {
+    const state = this.detail().info.state;
+    if (state === TaskState.Completed || state === TaskState.Archive) return [];
+    return this.detail().summaryAssessment?.inconsistencies ?? [];
+  });
   readonly assessmentOutcome = computed(() => {
     const outcome = this.detail().summaryAssessment?.outcome;
     return outcome ? SUMMARY_OUTCOME_LABELS[outcome] ?? outcome : null;
@@ -98,6 +102,18 @@ export class ResultViewComponent {
 
   readonly latestAspectVerdicts = computed(() =>
     this.detail().info.reviewProjection?.attempts?.[0]?.aspects ?? []);
+
+  /**
+   * Which build graded the latest review attempt, when that matters: a
+   * superseded worker release (AGT-2863) or a host that did not run the
+   * Stable build (AGT-3689). The verdict stands; this only says who made it.
+   */
+  readonly gradingReleaseNotices = computed(() => {
+    const attempt = this.detail().info.reviewProjection?.attempts?.[0];
+    return [attempt?.workerReleaseStable, attempt?.workerReleaseSuperseded]
+      .map(notice => notice?.trim())
+      .filter((notice): notice is string => !!notice);
+  });
 
   openResultReference(reference: { path: string; line: number | null }): void {
     const fileName = reference.path.split('/').pop() ?? reference.path;

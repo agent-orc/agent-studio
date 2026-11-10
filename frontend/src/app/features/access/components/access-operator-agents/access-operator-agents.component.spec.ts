@@ -7,8 +7,10 @@ import { OperatorAgentsService } from '../../services/operator-agents.service';
 import { fakeAccessService } from '../../testing/access-fixtures';
 import { fakeOperatorAgentsService } from '../../testing/operator-fixtures';
 import { AccessOperatorAgentsComponent } from './access-operator-agents.component';
+import { preserveOwnProperty } from '../../../../../testing/preserve-own-property';
 
 describe('AccessOperatorAgentsComponent', () => {
+  preserveOwnProperty(navigator, 'clipboard');
   let operators: ReturnType<typeof fakeOperatorAgentsService>;
   let access: ReturnType<typeof fakeAccessService>;
   let confirm: { confirm: ReturnType<typeof vi.fn> };
