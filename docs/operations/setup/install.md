@@ -1,31 +1,25 @@
 # Install Agent Studio
 
-> **Status (2026-11-09): no release is published yet.** The download URLs on
-> this page (`releases/latest/download/...`) return 404, and the
-> `ghcr.io/agent-orc` images are not anonymously pullable. Until the first
-> GitHub Release exists, use the
-> [source-built Docker one-box](./docker.md#install-from-this-checkout); the
-> [setup guide](./README.md#choose-your-path) names the path for each
-> situation. This page describes the installer for that first release and
-> later ones.
+No GitHub Release is published yet, so the release installer is unavailable:
+its download URLs return 404, and the `ghcr.io/agent-orc` images are not
+anonymously pullable. The working installation path is a source checkout with
+the one-box Compose dev profile. It needs Docker Engine with Compose v2 (or
+Docker Desktop) that your user can reach without `sudo`, Git, and about 8 GB of
+disk. The [setup guide](./README.md#choose-your-path) names the path for every
+other situation.
 
-The Linux `install.sh` detects the distribution and x64 architecture, downloads
-`agent-studio-setup`, verifies it against the release `SHA256SUMS`, and starts
-the guided installer. Debian, Ubuntu, and Fedora are tested. Choose a one-box
-Studio with a runner (Docker or native systemd), or join an existing Studio as
-an agent host. Download the newest published release from the
-[Agent Studio releases page](https://github.com/agent-orc/agent-studio/releases/latest).
-The executable's release version is the default image tag. It verifies each
-downloaded archive against the release `SHA256SUMS` before use.
-
-```sh
-curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh | sh
+```bash
+git clone https://github.com/agent-orc/agent-studio.git
+cd agent-studio
+scripts/compose-distributed-bootstrap.sh
+AGENT_STUDIO_VERSION="$(cat VERSION)" docker compose --profile dev up --build --wait task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev web-dev agent-host-distributed-dev agent-host-review-distributed-dev
 ```
 
-To inspect the script first, download it and run `sh install.sh`. Both forms
-verify the executable before running it. For guided prompts, a piped script
-reads from the terminal. Pass setup options with `sh -s --`, for example
-`curl -fsSL .../install.sh | sh -s -- --target native`.
+The release installer described below is planned for a published release. Its
+Linux `install.sh` checks the distribution and x64 architecture, verifies
+`agent-studio-setup` against `SHA256SUMS`, and starts guided setup. Debian,
+Ubuntu, and Fedora are tested. The executable's release version is the default
+image tag, and setup verifies each downloaded archive before use.
 
 ## Docker installation
 
@@ -36,21 +30,10 @@ companies; Docker Engine on Linux does not. The Docker installation runs as
 your user and does not request elevation. The Windows executable reports
 the Docker Desktop install link if Docker or WSL2 is unavailable.
 
-To download and verify the executable directly:
-
-```bash
-curl -fLO https://github.com/agent-orc/agent-studio/releases/latest/download/agent-studio-setup
-curl -fLO https://github.com/agent-orc/agent-studio/releases/latest/download/SHA256SUMS
-grep '  agent-studio-setup$' SHA256SUMS | sha256sum -c -
-chmod +x agent-studio-setup
-./agent-studio-setup
-```
-
-For a one-line Linux install after a release is published, run
-`curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh | sh`.
-The script downloads the matching setup executable and `SHA256SUMS`, verifies
-the executable, and starts setup. Inspect the script before piping it to a shell
-if your environment requires that review.
+After a release is published and three consecutive nightly installation runs
+pass, this guide can document the release download commands. The script will
+download the matching setup executable and `SHA256SUMS`, verify the executable,
+and start setup.
 
 The Release workflow also accepts `workflow_dispatch` with
 `mode=release-candidate`. It runs the same Linux Docker and native and Windows

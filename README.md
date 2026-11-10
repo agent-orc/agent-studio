@@ -2,6 +2,9 @@
 
 [![License](https://img.shields.io/github/license/agent-orc/agent-studio)](LICENSE)
 
+No GitHub Release is published yet. To install now, use the source checkout and
+the one-box Compose commands in [Install](#install).
+
 **Management layers on top of coding work.** Agents (Claude Code, Codex, GitHub Copilot, Gemini) write the code; this repository is the Studio: a task board, agent pipelines, and project wikis that assign, gate, review, and account for it.
 
 <picture>
@@ -37,11 +40,10 @@
 
 ## Install
 
-No GitHub Release has been published yet, so the release installer
-(`releases/latest/download/install.sh`) returns 404 for now. Until the first
-release, the recommended path for one machine is the source-built one-box
-stack. It needs Docker Engine with Compose v2 (or Docker Desktop) that your
-user can reach without `sudo`, Git, and about 8 GB of disk:
+No GitHub Release is published yet, so the release installer is unavailable.
+The working path for one machine is the source-built one-box Compose stack.
+It needs Docker Engine with Compose v2 (or Docker Desktop) that your user can
+reach without `sudo`, Git, and about 8 GB of disk:
 
 ```bash
 git clone https://github.com/agent-orc/agent-studio.git && cd agent-studio
@@ -63,19 +65,11 @@ Coding tasks additionally need provider and Git credentials mounted into the
 agent host. The default UI listens only on loopback; LAN exposure uses the
 optional HTTPS edge and an exact origin allowlist.
 
-Once a release is published, the Linux script
-
-```bash
-curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh | sh
-```
-
-checks the distribution and architecture, verifies the setup executable
-against `SHA256SUMS`, then offers the same one-box stack from pinned images,
-a native systemd install (root), or an agent host that joins an existing
-Studio. Windows users download `agent-studio-setup.exe` and verify it against
-`SHA256SUMS`. See the [install guide](./docs/operations/setup/install.md) for
-Windows commands, the native and connector profiles, unattended answers,
-update, rollback, uninstall, and remote topologies.
+See the [install guide](./docs/operations/setup/install.md) for prerequisites
+and the release installer profiles that will become available after
+publication: the same one-box stack from pinned images, a native systemd
+install (root), an agent host that joins an existing Studio, and the Windows
+setup executable.
 
 See the [Docker operations guide](./docs/operations/setup/docker.md) for
 updates, backups, product-managed credential rotation, credential mounts, and

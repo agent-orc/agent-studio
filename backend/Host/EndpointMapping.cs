@@ -111,6 +111,7 @@ public static class EndpointMapping
         app.MapWorkspaceEndpoints();
         app.MapWorkspaceSettingsEndpoints();
         app.MapWorkspaceQuotaEndpoints();
+        AgentStudio.Personas.PersonaEndpoints.MapPersonaEndpoints(app);
         app.MapProjectSettingsEndpoints();
         app.MapOperatorBatchTriageEndpoints();
         app.MapProjectCheckoutEndpoints();
