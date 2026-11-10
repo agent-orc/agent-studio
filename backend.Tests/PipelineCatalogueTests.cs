@@ -823,12 +823,25 @@ public class PipelineCatalogueTests
         Assert.Equal(PipelineCatalogue.PreOrchestratorPrepStepId, ro.Pre[3].Id);
         Assert.Equal(PipelineCatalogue.PreReissueOpenItemsStepId, ro.Pre[4].Id);
         Assert.Equal(
-            [PipelineCatalogue.SummaryAssessmentStepId, PipelineCatalogue.OrchestratorReviewStepId, PipelineCatalogue.OrchestratorDecisionStepId],
+            [
+                PipelineCatalogue.SummaryAssessmentStepId,
+                PipelineCatalogue.RequirementFitStepId,
+                PipelineCatalogue.OrchestratorReviewStepId,
+                PipelineCatalogue.OrchestratorDecisionStepId,
+            ],
             ro.Post.Select(step => step.Id));
+
+        // AGT-3565: the report gets its content verdict after the summary
+        // step, also when that step degraded; the review step reads it.
+        var requirementFit = ro.Post.Single(step => step.Id == PipelineCatalogue.RequirementFitStepId);
+        Assert.Equal(StepKind.Aspect, requirementFit.Kind);
+        Assert.Equal([PipelineCatalogue.SummaryAssessmentStepId], requirementFit.DependsOn);
+        Assert.Equal([PipelineCatalogue.RequirementFitStepId],
+            ro.Post.Single(step => step.Id == PipelineCatalogue.OrchestratorReviewStepId).DependsOn);
 
         Assert.DoesNotContain(ro.AllSteps, step =>
             PipelineCatalogue.GitStepIds.Contains(step.Id)
-            || PipelineCatalogue.AspectStepIds.Contains(step.Id)
+            || PipelineCatalogue.AspectStepIds.Contains(step.Id) && step.Id != PipelineCatalogue.RequirementFitStepId
             || step.Id == PipelineCatalogue.BuildTestGateStepId
             || step.Id == PipelineCatalogue.LintScssStepId
             || step.Id == PipelineCatalogue.CodeReviewGradeStepId

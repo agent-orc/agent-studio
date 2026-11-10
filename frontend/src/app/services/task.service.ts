@@ -1516,6 +1516,19 @@ export class TaskService {
     );
   }
 
+  /** Run only the missing requirement-fit review of a report card's delivered results. */
+  reviewTaskResults(jobId: string, watchPath?: string) {
+    return this.http.post<{
+      stepId: string;
+      ran: boolean;
+      status: string | null;
+      summary: string;
+    }>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/review-results`,
+      { watchPath },
+    );
+  }
+
   /**
    * Read one code-review MD body. Used by the panel to expand a row inline.
    */
