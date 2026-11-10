@@ -39,6 +39,18 @@ the matching GET supplies the Deck status panel.
 
 ## Board read contract
 
+### Moving a batch member out of Auto Review
+
+The board move (`POST /api/tasks/{id}/move`) and state update
+(`PUT /api/tasks/{id}/state`) return `409 active-batch-member` when an operator
+tries to move a card out of Auto Review while a formed, running, or publishing
+batch still owns it. The response names the batch, phase, and other members.
+An operator can confirm the move with `withdrawFromBatch: true` and a written
+`reason`. The move requests an eject before changing the lane, records the
+operator and reason on the card timeline and in the batch withdrawal journal,
+and requests a fresh planner pass. A card that is pending but has no batch
+continues to move normally.
+
 ### Routing mutation publication
 
 `PUT /api/tasks/{id}/model`, `/cli-type`, and `/thinking-level` replace
@@ -868,10 +880,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   an active acceptance transaction.
 - Integration status accepts persisted abbreviated Git SHAs of at least seven
   hexadecimal characters when they match a reachable full SHA by prefix.
-  Zero-file lifecycle entries whose subjects start with
-  `wip(runner): salvage before teardown` or `chore: snapshot for review` remain
+  Zero-file lifecycle entries with `Agent-Studio-Salvage: teardown`, the legacy
+  `wip(runner): salvage before teardown` subject, or the
+  `chore: snapshot for review` subject remain
   visible attribution metadata but are not delivery expectations. A matching
-  subject with changed files remains a real integration expectation. Target
+  marker with changed files remains a real integration expectation. Target
   branch ancestry is stronger evidence than stale file metadata: a commit that
   is already reachable from the integration branch is never discarded by the
   zero-file marker heuristic.

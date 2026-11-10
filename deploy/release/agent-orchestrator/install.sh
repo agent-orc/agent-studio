@@ -107,19 +107,22 @@ if [ ! -f "$CONFIG_ROOT/server.env" ]; then
             umask 077
             printf '%s\n' "$studio_token" >"$studio_token_file"
             printf '%s\n' "$engine_token" >"$engine_token_file"
-            owner_bootstrap_code_file="$CONFIG_ROOT/owner_bootstrap_code"
-            if [ ! -f "$owner_bootstrap_code_file" ]; then
-                command -v openssl >/dev/null 2>&1 \
-                    || die "OpenSSL is required to generate the owner bootstrap code. Install openssl and retry."
-                openssl rand -hex 32 >"$owner_bootstrap_code_file"
-            fi
             chown "$SERVICE_USER:$SERVICE_USER" "$studio_token_file" "$engine_token_file" 2>/dev/null || true
-            chown "$SERVICE_USER:$SERVICE_USER" "$owner_bootstrap_code_file" 2>/dev/null || true
             chmod 0600 "$studio_token_file" "$engine_token_file"
-            chmod 0640 "$owner_bootstrap_code_file"
             ;;
         *) die "Authentication mode must be 'none' or 'bearer'." ;;
     esac
+
+    # Keep one code across re-runs; server.env and the log refer to this file.
+    owner_code_file="$CONFIG_ROOT/owner_bootstrap_code"
+    if [ ! -f "$owner_code_file" ]; then
+        command -v openssl >/dev/null 2>&1 \
+            || die "openssl is required to create the owner bootstrap code."
+        umask 077
+        openssl rand -hex 32 >"$owner_code_file"
+    fi
+    chmod 0640 "$owner_code_file"
+    chown "root:$SERVICE_USER" "$owner_code_file" 2>/dev/null || true
 
     sed \
         -e "s/@LISTEN_URL@/$(escape_sed "$listen_url")/" \
@@ -128,7 +131,7 @@ if [ ! -f "$CONFIG_ROOT/server.env" ]; then
         -e "s/@AUTH_MODE@/$(escape_sed "$auth_mode")/" \
         -e "s/@STUDIO_AUTH_TOKEN_FILE@/$(escape_sed "$studio_token_file")/" \
         -e "s/@ENGINE_AUTH_TOKEN_FILE@/$(escape_sed "$engine_token_file")/" \
-        -e "s/@OWNER_BOOTSTRAP_CODE_FILE@/$(escape_sed "${owner_bootstrap_code_file:-}")/" \
+        -e "s/@OWNER_BOOTSTRAP_CODE_FILE@/$(escape_sed "$owner_code_file")/" \
         "$source_dir/config/server.env.template" >"$CONFIG_ROOT/server.env"
     chmod 0640 "$CONFIG_ROOT/server.env"
 
@@ -147,20 +150,10 @@ else
     log "Keeping existing operator configuration in $CONFIG_ROOT."
 fi
 
-# Arm the first-owner screen with a one-time code kept on the authority host.
-# Re-runs retain the same code; the Task Server ignores it once an owner exists.
-owner_code_file="$CONFIG_ROOT/owner-bootstrap.code"
-if [ ! -f "$owner_code_file" ]; then
-    command -v openssl >/dev/null 2>&1 \
-        || die "openssl is required to create the owner bootstrap code."
-    umask 077
-    openssl rand -hex 24 >"$owner_code_file"
-    chmod 0640 "$owner_code_file"
-    chown "root:$SERVICE_USER" "$owner_code_file" 2>/dev/null || true
-fi
-if ! grep -q '^OWNER_BOOTSTRAP_CODE_FILE=' "$CONFIG_ROOT/server.env"; then
-    printf 'OWNER_BOOTSTRAP_CODE_FILE=%s\n' "$owner_code_file" >>"$CONFIG_ROOT/server.env"
-fi
+# The Task Server ignores the code once an owner exists. Log only its configured path.
+owner_code_file=$(read_env_value OWNER_BOOTSTRAP_CODE_FILE "$CONFIG_ROOT/server.env")
+[ -n "$owner_code_file" ] && [ -f "$owner_code_file" ] \
+    || die "OWNER_BOOTSTRAP_CODE_FILE in $CONFIG_ROOT/server.env must name an existing file."
 log "Owner bootstrap code: $owner_code_file (read it on this host to claim the first owner account)."
 
 target=$(install_release_tree "$source_dir")
