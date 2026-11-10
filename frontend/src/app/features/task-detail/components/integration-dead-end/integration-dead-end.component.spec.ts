@@ -103,6 +103,20 @@ describe('IntegrationDeadEndComponent', () => {
         .toContain('no failure to continue');
     });
 
+    it('disables the action with the batch isolation reason as a tooltip', async () => {
+      const continueFromFailure = vi.fn();
+      const reason = 'AGT-3582 is a member of batch flight flight-1, which is isolating a red result.';
+      const { host } = await mount({
+        checkFailureContinuation: vi.fn(() => of({ available: false, reason, isolationActive: true })),
+        continueFromFailure,
+      });
+      const action = host.querySelector<HTMLButtonElement>('[data-testid="dead-end-continue"]');
+      expect(action?.disabled).toBe(true);
+      expect(action?.title).toBe(reason);
+      action?.click();
+      expect(continueFromFailure).not.toHaveBeenCalled();
+    });
+
     it('keeps the action hidden when the check itself fails', async () => {
       const { host } = await mount({
         checkFailureContinuation: vi.fn(() => throwError(() => ({ status: 500, error: {} }))),

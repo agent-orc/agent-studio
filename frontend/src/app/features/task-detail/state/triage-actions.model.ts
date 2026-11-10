@@ -318,7 +318,7 @@ export function mergeAcceptViewFor(
   // Only the published target branch proves that acceptance can proceed.
   const landed = info.integration?.status === 'integrated';
 
-  if (!hasTaskCommits) {
+  if (!hasTaskCommits || info.integration?.status === 'not-applicable') {
     return {
       landed,
       landedState: 'on-branch-only',
@@ -364,6 +364,15 @@ export function mergeAcceptViewFor(
       ? `This task's work is already merged into develop at ${mergeSha}. Accept moves the card to ${laneName(TaskState.Completed)}; no merge is triggered.`
       : `This task's work is already merged into develop. Accept moves the card to ${laneName(TaskState.Completed)}; no merge is triggered.`,
   };
+}
+
+/** Owner-facing reason while the Human Review action is held. */
+export function acceptanceHoldReason(info: TaskInfo): string {
+  const integration = info.integration;
+  if (!integration) return 'Checking whether this delivery needs integration.';
+  if (integration.reachUnavailable) return 'Waiting for the delivery check to finish.';
+  const branch = integration.integrationBranch || 'develop';
+  return `Waiting for the delivery to reach ${branch}.`;
 }
 
 /**

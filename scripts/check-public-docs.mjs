@@ -5,14 +5,16 @@
 // own machine paths, or the test host's real address.
 //
 // With --verify-registry it additionally asks npm and NuGet whether the release
-// claims recorded below still hold. That needs network, so CI runs it on a
-// schedule rather than on every pull request.
+// claims recorded below still hold. --verify-install-urls checks source and
+// release installation URLs in README and the install guide.
 //
 //   node scripts/check-public-docs.mjs
 //   node scripts/check-public-docs.mjs --verify-registry
+//   node scripts/check-public-docs.mjs --verify-install-urls
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const root = resolve(import.meta.dirname, '..');
 
@@ -108,15 +110,91 @@ async function checkRegistry() {
   return findings;
 }
 
-const findings = checkDocs();
-if (process.argv.includes('--verify-registry')) {
-  findings.push(...(await checkRegistry()));
+export function installUrls(source) {
+  const urls = new Set();
+  for (const match of source.matchAll(/https:\/\/[^\s<>'"`\])]+/g)) {
+    const url = match[0].replace(/[.,;]+$/, '');
+    const parsed = new URL(url);
+    const path = parsed.pathname;
+    if (/(?:^|\/)(?:install\.sh|agent-studio-setup(?:\.exe)?|SHA256SUMS|agent-orchestrator-[^/]+\.(?:tar\.gz|zip))$/.test(path)
+      || (parsed.hostname === 'github.com'
+        && (path === '/agent-orc/agent-studio.git'
+          || path.startsWith('/agent-orc/agent-studio/releases/')))) {
+      urls.add(url);
+    }
+  }
+  return [...urls];
 }
 
-if (findings.length > 0) {
-  console.error('Public documentation truth check failed:');
-  for (const finding of findings) console.error(`- ${finding}`);
-  process.exit(1);
+export async function verifyInstallUrls(entries, fetcher = fetch) {
+  const findings = [];
+  for (const { name, url } of entries) {
+    try {
+      const response = await fetcher(url, {
+        headers: { 'user-agent': 'agent-orc-docs-check' },
+        signal: AbortSignal.timeout(15000),
+      });
+      await response.body?.cancel();
+      if (response.status !== 200) findings.push(`${name}: ${url} returned HTTP ${response.status}`);
+    } catch (error) {
+      findings.push(`${name}: ${url} could not be downloaded: ${error.message}`);
+    }
+  }
+  return findings;
 }
 
-console.log('Public documentation truth check passed.');
+async function checkInstallUrls() {
+  const sources = ['README.md', 'docs/operations/setup/install.md'].map((name) => ({
+    name, urls: installUrls(readFileSync(join(root, name), 'utf8')),
+  }));
+  const entries = sources.flatMap(({ name, urls }) => urls.map((url) => ({ name, url })));
+  const findings = await verifyInstallUrls(entries);
+  if (sources[0].urls.some((url) => new URL(url).pathname.endsWith('/install.sh'))) {
+    findings.push(...(await checkNightlyProof()));
+  }
+  return findings;
+}
+
+export function nightlyProofFindings(runs) {
+  const latest = runs.slice(0, 3);
+  const days = latest.map((run) => Date.parse(`${run.created_at?.slice(0, 10)}T00:00:00Z`));
+  if (latest.length < 3 || latest.some((run) =>
+    run.event !== 'schedule' || run.head_branch !== 'main' || run.conclusion !== 'success')
+    || days.some((day) => Number.isNaN(day))
+    || days[0] - days[1] !== 86400000 || days[1] - days[2] !== 86400000) {
+    return ['README.md: the one-line installer needs three consecutive successful scheduled installation nights on main'];
+  }
+  return [];
+}
+
+async function checkNightlyProof() {
+  const url = 'https://api.github.com/repos/agent-orc/agent-studio/actions/workflows/installation-nightly.yml/runs?branch=main&event=schedule&per_page=3';
+  try {
+    const token = process.env.GITHUB_TOKEN;
+    const response = await fetch(url, {
+      headers: {
+        accept: 'application/vnd.github+json',
+        'user-agent': 'agent-orc-docs-check',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (response.status !== 200) return [`README.md: nightly installation history returned HTTP ${response.status}`];
+    const body = await response.json();
+    return nightlyProofFindings(body.workflow_runs ?? []);
+  } catch (error) {
+    return [`README.md: nightly installation history could not be checked: ${error.message}`];
+  }
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const findings = checkDocs();
+  if (process.argv.includes('--verify-registry')) findings.push(...(await checkRegistry()));
+  if (process.argv.includes('--verify-install-urls')) findings.push(...(await checkInstallUrls()));
+  if (findings.length > 0) {
+    console.error('Public documentation truth check failed:');
+    for (const finding of findings) console.error(`- ${finding}`);
+    process.exit(1);
+  }
+  console.log('Public documentation truth check passed.');
+}
