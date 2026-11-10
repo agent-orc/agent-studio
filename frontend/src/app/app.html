@@ -112,6 +112,11 @@
         </div>
         <div studioContent class="studio-projected-content" [class.studio-projected-content--hidden]="studioTabState.activeTab()?.kind === 'structure'">
           <app-workspace-banner [projects]="bannerProjects()" />
+          @if (triage.moveRefusal(); as refusal) {
+            @if (selectedJob()?.info?.taskKey === refusal.taskKey) {
+              <p class="task-move-refusal" data-testid="task-move-refusal" role="alert">{{ refusal.message }}</p>
+            }
+          }
           @switch (studioTabState.activeTab()?.kind) {
             @case ('feed') {
               @defer (on immediate) {
@@ -343,9 +348,12 @@
           [watchPaths]="watchPaths()" [availableModels]="availableModels()"
           [cliTypeDraft]="createJobForm.newCliType"
           [routing]="createJobForm.routing()" [routingPending]="createJobForm.routingPending()"
+          [submitting]="createJobForm.submitting()"
+          [defaultsPending]="createJobForm.defaultsPending()"
           [policySuggestion]="createJobForm.policySuggestion()" [modelSelectionExplicit]="createJobForm.modelSelectionExplicit"
           [(newTitle)]="createJobForm.newTitle"
           [(newWatchPath)]="createJobForm.newWatchPath"
+          (watchPathChange)="createJobForm.selectProject($event)"
           [(newModel)]="createJobForm.newModel"
           [(newThinkingLevel)]="createJobForm.newThinkingLevel"
           [(newPrompt)]="createJobForm.newPrompt"
@@ -572,6 +580,11 @@
             }
 
             <main class="workspace__main">
+              @if (triage.moveRefusal(); as refusal) {
+                @if (detail.info.taskKey === refusal.taskKey) {
+                  <p class="task-move-refusal" data-testid="task-move-refusal" role="alert">{{ refusal.message }}</p>
+                }
+              }
               @defer (when selectedJob() !== null) {
               <app-job-detail #jobDetail
                               [detail]="detail"
@@ -693,9 +706,12 @@
           [watchPaths]="watchPaths()" [availableModels]="availableModels()"
           [cliTypeDraft]="createJobForm.newCliType"
           [routing]="createJobForm.routing()" [routingPending]="createJobForm.routingPending()"
+          [submitting]="createJobForm.submitting()"
+          [defaultsPending]="createJobForm.defaultsPending()"
           [policySuggestion]="createJobForm.policySuggestion()" [modelSelectionExplicit]="createJobForm.modelSelectionExplicit"
           [(newTitle)]="createJobForm.newTitle"
           [(newWatchPath)]="createJobForm.newWatchPath"
+          (watchPathChange)="createJobForm.selectProject($event)"
           [(newModel)]="createJobForm.newModel"
           [(newThinkingLevel)]="createJobForm.newThinkingLevel"
           [(newPrompt)]="createJobForm.newPrompt"

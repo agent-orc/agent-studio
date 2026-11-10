@@ -168,6 +168,7 @@ public sealed class RunnerPickupWaitReasonTests : IDisposable
         var status = new ProjectRunnerStatus
         {
             ProjectName = ProjectName,
+            Mode = "auto-continuous",
             QueuedJobIds = ["a", "b"],
             PickupSkips = [new RunnerPickupSkip("b", RunnerPickupWaitCodes.QuotaDefer, "quota")],
         };
@@ -180,6 +181,32 @@ public sealed class RunnerPickupWaitReasonTests : IDisposable
         Assert.Equal(RunnerPickupWaitCodes.QuotaDefer, TaskLiveStatusProjection.RunnerQueueFor("b", status)!.ReasonCode);
         Assert.Equal(RunnerPickupWaitCodes.SlotsFull, TaskLiveStatusProjection.RunnerQueueFor("b", gated)!.ReasonCode);
         Assert.Null(TaskLiveStatusProjection.RunnerQueueFor("held-elsewhere", gated));
+    }
+
+    [Theory]
+    [InlineData("manual", RunnerPickupWaitCodes.ManualMode)]
+    [InlineData("paused", RunnerPickupWaitCodes.Paused)]
+    public void RunnerQueue_UsesModeBeforeTheNextPickupTick(string mode, string code)
+    {
+        var status = new ProjectRunnerStatus
+        {
+            ProjectName = ProjectName,
+            Mode = mode,
+            QueuedJobIds = ["remote-ready"],
+        };
+
+        foreach (var snapshot in new[]
+        {
+            status,
+            status with { PickupGate = new RunnerPickupWait(RunnerPickupWaitCodes.SlotsFull,
+                "Previous pickup tick found all runner slots occupied.") },
+        })
+        {
+            var queue = TaskLiveStatusProjection.RunnerQueueFor("remote-ready", snapshot);
+            Assert.Equal(code, queue?.ReasonCode);
+            Assert.NotNull(queue?.Reason);
+            Assert.Equal(1, queue.Position);
+        }
     }
 
     private sealed class WaitingModelSelection(string reason) : IModelSelectionService

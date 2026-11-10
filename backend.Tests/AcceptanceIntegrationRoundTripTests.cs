@@ -58,9 +58,13 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         _origin = Path.Combine(_tempDir, "origin.git");
         Directory.CreateDirectory(_tempDir);
         foreach (var state in TaskStates.All) Directory.CreateDirectory(Path.Combine(_watchPath, state));
+        // No test here simulates a power loss. Card, settings and attempt
+        // authority writes stay atomic but skip their fsyncs, a third of the
+        // class on a loaded runner (AGT-3567).
+        AgentStudio.Persistence.AtomicJsonFileWriter.SuspendDiskFlushForTests();
 
         // Built once per test process; each test starts from a copy (AGT-3419).
-        GitRepositoryTemplate.CopyTo("acceptance-integration:repo-and-origin:v1",
+        GitRepositoryTemplate.CopyTo("acceptance-integration:repo-and-origin:v2",
             SeedRepositoryAndOrigin, ("repo", _repo), ("origin.git", _origin));
     }
 
@@ -72,6 +76,11 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         RunGit(root, "init", "-q", "-b", "main", repo);
         RunGit(repo, "config", "user.email", "test@example.com");
         RunGit(repo, "config", "user.name", "test");
+        // Commit, merge and fetch here, the product's included, start no
+        // automatic maintenance child, and a push ends without the receiving
+        // side's gc --auto child (AGT-3567).
+        RunGit(repo, "config", "maintenance.auto", "false");
+        RunGit(root, $"--git-dir={origin}", "config", "receive.autoGc", "false");
         File.WriteAllText(Path.Combine(repo, "shared.txt"), "base\n");
         RunGit(repo, "add", "-A");
         RunGit(repo, "commit", "-q", "-m", "seed");
@@ -670,6 +679,78 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.True(integratedAt >= 0 && reviewedAt > integratedAt);
         Assert.Contains(deps.Timeline.ReadAll(returned.FolderPath),
             entry => entry.Kind == TimelineEventKinds.DeliveryReviewRequested);
+    }
+
+    /// <summary>
+    /// AGT-3621 - newcomer playthrough H5: the delivery chain promoted an
+    /// integrated card with a stale-verdict park and its Auto Review phase
+    /// `integrating` still set. Nobody accepted it, yet the backstop read the
+    /// phase as an interrupted acceptance and moved it to Accepted.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Promotion_waits_for_a_person_and_is_not_accepted_by_the_backstop()
+    {
+        var deliverySha = PublishDelivery("promotion.txt", "integrated delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var deps = Build(deliverySha, guarded: true, initialState: TaskStates.AutoReview);
+        var integrating = deps.Scanner.FindJob(Slug, _watchPath)!;
+        deps.Mutations.SetJobPhase(integrating.FolderPath, LifecyclePhases.Integrating);
+        var reconciler = new DeliveryChainReconciler(deps.Scanner, deps.Integration,
+            deps.Transitions, deps.Configuration, NullLogger<DeliveryChainReconciler>.Instance,
+            timeline: deps.Timeline);
+
+        Assert.Equal(1, await reconciler.RunOnceAsync());
+
+        var promoted = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.HumanReview, promoted.State);
+        Assert.Null(promoted.Phase);
+        Assert.NotNull(promoted.ParkedBlocker);
+        Assert.Equal(LaneChangeCauses.Promoted, promoted.ParkedBlocker!.Cause);
+        Assert.Equal(DeliveryChainReasons.Integrated, promoted.ParkedBlocker.CauseDetail);
+        Assert.Equal(DeliveryChainReconciler.PromotionReason, promoted.ParkedBlocker.Reason);
+        Assert.DoesNotContain(deps.Timeline.ReadAll(promoted.FolderPath), entry =>
+            entry.Kind == TimelineEventKinds.LaneChanged
+            && entry.Details?.GetValueOrDefault(LaneChangeCauses.DetailQualifierKey) == DeliveryChainReasons.VerdictStale);
+
+        var backstop = new AcceptedIntegrationBackstopHostedService(
+            deps.Scanner, deps.Settings, deps.Merge, deps.Integration, deps.Mutations, deps.Configuration,
+            NullLogger<AcceptedIntegrationBackstopHostedService>.Instance, deps.Transitions, deps.Timeline);
+        backstop.RunOnce();
+
+        Assert.Equal(TaskStates.HumanReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+    }
+
+    /// <summary>
+    /// AGT-3621 - a card promoted before the fix still carries the phase and the
+    /// stale-verdict park. The backstop clears the phase and leaves the verdict
+    /// to a person instead of accepting the card.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void Backstop_clears_a_promotion_phase_instead_of_accepting_the_card()
+    {
+        var deliverySha = PublishDelivery("leaked-phase.txt", "integrated delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var deps = Build(deliverySha, guarded: true, initialState: TaskStates.AutoReview);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(MoveJobStatus.Success, deps.States.MoveJob(Slug, TaskStates.HumanReview, _watchPath,
+            cause: TimelineActors.System, reason: "delivery-verdict-stale: Integrate the current delivery and repeat review.",
+            transitionCause: LaneChangeCauses.AcceptanceIntegrationFailed,
+            transitionDetail: DeliveryChainReasons.VerdictStale).Status);
+        card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        // The pre-fix promotion left this phase behind.
+        deps.Mutations.SetJobPhase(card.FolderPath, LifecyclePhases.Integrating);
+        Assert.True(AcceptedIntegrationBackstopPolicy.CarriesPromotionPhase(deps.Scanner.FindJob(Slug, _watchPath)!));
+
+        var backstop = new AcceptedIntegrationBackstopHostedService(
+            deps.Scanner, deps.Settings, deps.Merge, deps.Integration, deps.Mutations, deps.Configuration,
+            NullLogger<AcceptedIntegrationBackstopHostedService>.Instance, deps.Transitions, deps.Timeline);
+
+        Assert.Equal(0, backstop.RunOnce());
+        var waiting = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.HumanReview, waiting.State);
+        Assert.Null(waiting.Phase);
     }
 
     [Fact]
@@ -4064,20 +4145,45 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             timeline: deps.Timeline,
             timeProvider: timeProvider);
 
+    /// <summary>
+    /// Publishes the remote delivery: origin's <see cref="DeliveryRef"/> gets one
+    /// commit on top of <c>origin/develop</c> that adds <paramref name="relativePath"/>.
+    /// The local repository keeps the commit object without a ref to it and
+    /// stays on its clean <c>main</c>. The same <c>git fast-import</c> stream
+    /// runs in both repositories and writes the same commit there (AGT-3567:
+    /// three processes instead of a checkout, commit, push and clean-up of nine,
+    /// in 71 tests). A path may name subdirectories; the import creates them.
+    /// </summary>
     private string PublishDelivery(string relativePath, string content)
     {
-        RunGit(_repo, "checkout", "-q", "-b", DeliveryRef, "origin/develop");
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(_repo, relativePath))!);
-        File.WriteAllText(Path.Combine(_repo, relativePath), content);
-        RunGit(_repo, "add", "-A");
-        RunGit(_repo, "commit", "-q", "-m", $"feat({TaskKey}): remote delivery");
-        var sha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
-        RunGit(_repo, "push", "-q", "origin", $"{DeliveryRef}:{DeliveryRef}");
-        RunGit(_repo, "checkout", "-q", "main");
-        RunGit(_repo, "branch", "-D", DeliveryRef);
-        RunGit(_repo, "update-ref", "-d", $"refs/remotes/origin/{DeliveryRef}");
+        Assert.Equal("ref: refs/heads/main", File.ReadAllText(Path.Combine(_repo, ".git", "HEAD")).Trim());
+        Assert.DoesNotContain(relativePath, c => char.IsWhiteSpace(c) || c is '"' or '\\');
+        // The commit carries its parent's time, so both imports write the same commit.
+        var parentFacts = Git(_repo, "show", "-s", "--format=%H %ct", "refs/remotes/origin/develop").Out.Trim();
+        var (parent, committed) = (parentFacts.Split(' ')[0], parentFacts.Split(' ')[1]);
+        string Import(string targetRef) => string.Join('\n',
+            "feature done",
+            $"commit {targetRef}",
+            "mark :1",
+            $"committer test <test@example.com> {committed} +0000",
+            Data($"feat({TaskKey}): remote delivery\n") + $"from {parent}",
+            $"M 100644 inline {relativePath}",
+            Data(content),
+            "get-mark :1",
+            "");
+        const string scratch = "refs/fixture/delivery";
+        var local = GitWithInput(_repo, Import(scratch) + $"reset {scratch}\ndone\n",
+            "fast-import", "--quiet");
+        var published = GitWithInput(_repo, Import($"refs/heads/{DeliveryRef}") + "done\n",
+            $"--git-dir={_origin}", "fast-import", "--quiet");
+        Assert.True(local.Code == 0, $"local fast-import failed: {local.Err}");
+        Assert.True(published.Code == 0, $"origin fast-import failed: {published.Err}");
+        var sha = local.Out.Trim();
+        Assert.Equal(sha, published.Out.Trim());
         return sha;
     }
+
+    private static string Data(string text) => $"data {Encoding.UTF8.GetByteCount(text)}\n{text}";
 
     private string PublishLocalDelivery(string relativePath, string content)
     {
@@ -4137,8 +4243,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
             notifier,
             NullLogger<TaskMutationService>.Instance);
-        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config,
-            new FixtureSettingsWriter());
+        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         if (configureIntegrationBranch)
             settings.SetIntegrationBranch(Project, "develop");
         settings.SetIntegrationStrategy(Project, integrationStrategy);
@@ -4399,6 +4504,31 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         return (stdout, stderr, process.ExitCode);
     }
 
+    private static (string Out, string Err, int Code) GitWithInput(string cwd, string input, params string[] args)
+    {
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo("git")
+            {
+                WorkingDirectory = cwd,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardInputEncoding = new UTF8Encoding(false),
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            },
+        };
+        foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
+        process.Start();
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        process.StandardInput.Write(input);
+        process.StandardInput.Close();
+        process.WaitForExit();
+        return (stdout.GetAwaiter().GetResult(), stderr.GetAwaiter().GetResult(), process.ExitCode);
+    }
+
     private sealed record Deps(
         TaskScannerService Scanner,
         TaskStateMachine States,
@@ -4414,24 +4544,6 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         AcceptedIntegrationQueue? AcceptedQueue,
         AttemptAuthorityService Authority,
         TaskChangeNotifier Notifier);
-
-    /// <summary>
-    /// Replaces the fixture's settings file atomically (temp file, then
-    /// rename) like the production writer, without its two fsyncs per write
-    /// (AGT-3567). Build stores three or four settings per test; on a loaded
-    /// runner those flushes took several seconds per class run, and no test
-    /// here depends on the settings surviving a power loss.
-    /// </summary>
-    private sealed class FixtureSettingsWriter : AgentStudio.Persistence.IAtomicJsonFileWriter
-    {
-        public void Write(string path, string content)
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            var temporary = $"{path}.{Guid.NewGuid():N}.tmp";
-            File.WriteAllText(temporary, content);
-            File.Move(temporary, path, overwrite: true);
-        }
-    }
 
     private sealed class BlockingBuildTestGateRunner(BuildTestGateResult result)
         : IBuildTestGateRunner

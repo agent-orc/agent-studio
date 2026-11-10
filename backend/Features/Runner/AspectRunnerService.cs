@@ -563,10 +563,10 @@ public sealed class AspectRunnerService
                 _fileGenerationIndex?.Upsert(inputs.JobFolderPath, genMeta with { File = jsonName });
                 if (def.Id == "requirement-fit")
                 {
-                    var briefVersion = AgentStudio.Tasks.CompletionContentEvidence.ReadLocalRunVersion(inputs.JobFolderPath);
-                    await File.WriteAllTextAsync(
-                        Path.Combine(inputs.JobFolderPath, AgentStudio.Tasks.CompletionContentEvidence.LocalContextFile),
-                        JsonSerializer.Serialize(new { briefVersion, reviewedAt = endedAt }), ct);
+                    var briefVersion = inputs.ContentBriefVersion
+                        ?? AgentStudio.Tasks.CompletionContentEvidence.ReadLocalRunVersion(inputs.JobFolderPath);
+                    AgentStudio.Tasks.CompletionContentEvidence.WriteLocalContext(
+                        inputs.JobFolderPath, briefVersion, inputs.ContentRunAttemptId, endedAt);
                 }
             }
             catch (Exception ex)
@@ -998,6 +998,15 @@ public sealed record AspectRunInputs(
     /// <summary>Exact frozen delivery checked by this local aspect, when available.</summary>
     public string? ReviewedResultSha { get; init; }
     public string? ReviewRoundId { get; init; }
+
+    /// <summary>
+    /// Brief version the content verdict is bound to. Null uses the brief the
+    /// local run stamped. A report review sets the brief it read (AGT-3565).
+    /// </summary>
+    public string? ContentBriefVersion { get; init; }
+
+    /// <summary>Run attempt whose delivered report this content verdict reviewed.</summary>
+    public string? ContentRunAttemptId { get; init; }
 }
 
 /// <summary>

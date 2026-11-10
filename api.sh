@@ -89,13 +89,15 @@ if [[ -n "${OPERATOR_PORT:-}" ]]; then
 fi
 HEALTH_URL="${BASE_URL}/healthz"
 PROJECT_FILE="${SCRIPT_DIR}/backend/OrchestratorApi.csproj"
-PID_FILE="${SCRIPT_DIR}/.api.pid"
+# Keep each listener's control files independent. Isolated test stacks can
+# share a checkout while using different ports.
+PID_FILE="${SCRIPT_DIR}/.api.${PORT}.pid"
 # The launcher (`dotnet run`) and the process that owns the port are two
 # different PIDs. Track both: signalling only one of them is what left either
 # a server still serving or a build-output lock nobody could explain.
-LAUNCHER_PID_FILE="${SCRIPT_DIR}/.api.launcher.pid"
-LOG_OUT="${SCRIPT_DIR}/.api.log.out"
-LOG_ERR="${SCRIPT_DIR}/.api.log.err"
+LAUNCHER_PID_FILE="${SCRIPT_DIR}/.api.${PORT}.launcher.pid"
+LOG_OUT="${SCRIPT_DIR}/.api.${PORT}.log.out"
+LOG_ERR="${SCRIPT_DIR}/.api.${PORT}.log.err"
 
 # Identifies a process as this checkout's backend. Always matched together
 # with the checkout path, so a sibling checkout's backend is never touched.
@@ -906,7 +908,7 @@ cmd_start() {
   # Log rotation, not truncate. The truncate-on-start path lost three crash
   # traces in a row when the backend died between restarts: by the time we
   # ran tail on the log it was already empty. Move the previous run's logs
-  # to .api.log.out.<ts>.bak / .api.log.err.<ts>.bak so the final seconds
+  # to port-specific .bak files so the final seconds
   # of the dead process remain readable. Keep the last 5 rotations per
   # stream; older ones drop off so the workspace does not grow unbounded.
   if [[ -s "${LOG_OUT}" ]] || [[ -s "${LOG_ERR}" ]]; then

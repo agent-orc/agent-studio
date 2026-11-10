@@ -25,4 +25,6 @@ export interface ErrorDialogOptions {
   output?: unknown;
   stackTrace?: string | null;
   refusal?: ErrorDialogRefusal | null;
+  /** Action to refocus after the dialog closes, including when Escape closes it. */
+  returnFocusSelector?: string;
 }
