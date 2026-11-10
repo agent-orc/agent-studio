@@ -415,6 +415,20 @@ export class TaskSelectionService {
     this.setSelectedFromAdvance(detail, token);
   }
 
+  /** Restore the task and lane iteration after an optimistic lane move is refused. */
+  restoreFailedMove(detail: TaskDetail, pagerSnapshot: LanePagerSnapshot | null): void {
+    ++this.openDetailToken;
+    this.cancelRequests();
+    this.dismissTriageToast();
+    if (pagerSnapshot) this.pager.restore(pagerSnapshot);
+    else this.pager.clear();
+    this.triageLaneState = detail.info.state;
+    this.browserHistoryTaskKey = null;
+    this.pendingTaskTabReplacement = detail.info.taskKey;
+    this.syncTaskUrl(detail.info, 'replace');
+    this.showFullDetail(detail);
+  }
+
   private projectFor(info: TaskInfo): string {
     const project = this.projectLookup.getProjectDisplay(info.projectName, info.watchPath);
     return project.id ?? project.shortCode ?? project.displayName;
@@ -1515,5 +1529,15 @@ export class TaskSelectionService {
       kind: 'info',
       durationMs,
     });
+  }
+
+  private dismissTriageToast(): void {
+    if (this.triageToastTimer) clearTimeout(this.triageToastTimer);
+    this.triageToastTimer = null;
+    this.triageToast.set(null);
+    if (this.lastTriageNotificationId != null) {
+      this.notifications.dismiss(this.lastTriageNotificationId);
+      this.lastTriageNotificationId = null;
+    }
   }
 }

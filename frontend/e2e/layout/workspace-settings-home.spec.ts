@@ -218,6 +218,21 @@ test.describe('Workspace settings home (Dach)', () => {
     }
   });
 
+  test('phone settings use a section picker above the checklist', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByTestId('studio-titlebar-settings').click();
+    const picker = page.getByTestId('workspace-settings-picker');
+    await expect(picker).toBeVisible();
+    await expect(page.getByTestId('workspace-settings-rail')).toBeHidden();
+    await picker.locator('select').selectOption('first-run');
+    await expect(page.getByTestId('first-run-checklist')).toBeVisible();
+    expect((await page.getByTestId('first-run-checklist').boundingBox())?.y).toBeLessThan(844);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.screenshot({ path: join(process.env.JOB_RESULTS_DIR ?? SHOT_DIR, `settings-390-${theme}.png`), animations: 'disabled' });
+    }
+  });
+
   test('rail navigates between sections, each keeping its legacy hook', async ({ page }) => {
     await page.getByTestId('studio-titlebar-settings').click();
     await expect(settingsHome(page)).toBeVisible();

@@ -1709,7 +1709,9 @@ unreported claim expires with its lease and is queued again.
   one host against the release this server runs; the watchdog projects the
   verdict at `GET /api/v1/management/host-releases` for Execution Hosts and
   raises one `host_release_drift` operator-feed alarm per host release that
-  stays more than 24 hours behind Stable. A same-instance registration may
+  stays more than 24 hours behind Stable. The same version from another commit
+  is `differs` (AGT-3689), never `current`, and a host that names no commit is
+  never `current` either; a differing build alarms on the observed duration. A same-instance registration may
   retain its last reported release when the field is omitted, while a changed
   instance clears an omitted identity to prevent rollback drift from being
   hidden. Operator behaviour and the incident that motivated it live in
