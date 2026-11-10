@@ -2,6 +2,9 @@
 
 [![License](https://img.shields.io/github/license/agent-orc/agent-studio)](LICENSE)
 
+No GitHub Release is published yet. To install now, use the source checkout and
+the one-box Compose commands in [Install](#install).
+
 **Management layers on top of coding work.** Agents (Claude Code, Codex, GitHub Copilot, Gemini) write the code; this repository is the Studio: a task board, agent pipelines, and project wikis that assign, gate, review, and account for it.
 
 <picture>
@@ -76,7 +79,6 @@ Studio. Windows users download `agent-studio-setup.exe` and verify it against
 `SHA256SUMS`. See the [install guide](./docs/operations/setup/install.md) for
 Windows commands, the native and connector profiles, unattended answers,
 update, rollback, uninstall, and remote topologies.
-
 See the [Docker operations guide](./docs/operations/setup/docker.md) for
 updates, backups, product-managed credential rotation, credential mounts, and
 the current route coverage limit beyond `/api/v1`.

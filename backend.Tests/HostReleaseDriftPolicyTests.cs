@@ -75,6 +75,90 @@ public sealed class HostReleaseDriftPolicyTests
         Assert.False(verdict.AlarmDue);
     }
 
+    /// <summary>
+    /// Crisis playthrough AGT-3648 (S4-F12, 9.11.2026): a review host built
+    /// from develop of 5 November (f947f2b) served a server built on 9 November
+    /// (3d61e8b). VERSION was 0.9.5 on both, Stable had no build manifest and so
+    /// no build instant, and the host was reported "current".
+    /// </summary>
+    [Fact]
+    public void An_equal_version_with_a_different_commit_differs_from_stable()
+    {
+        var verdict = HostReleaseDriftPolicy.Evaluate(
+            new Contract.RunnerReleaseIdentityDto(
+                "0.9.5+sha.f947f2b", "0.9.5", "f947f2b",
+                new DateTime(2026, 11, 5, 9, 0, 0, DateTimeKind.Utc)),
+            new StableReleaseIdentity("0.9.5", "3d61e8b0c4", null),
+            Now);
+
+        Assert.Equal(HostReleaseDriftStates.Differs, verdict.State);
+        Assert.Null(verdict.BehindBy);
+        Assert.False(verdict.AlarmDue);
+        Assert.Contains("f947f2b", verdict.Reason, StringComparison.Ordinal);
+        Assert.Contains("3d61e8b", verdict.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_differing_build_alarms_once_it_has_been_observed_past_the_grace_window()
+    {
+        var host = new Contract.RunnerReleaseIdentityDto("0.9.5+sha.f947f2b", "0.9.5", "f947f2b");
+        var stable = new StableReleaseIdentity("0.9.5", "3d61e8b0c4", null);
+
+        var verdict = HostReleaseDriftPolicy.Evaluate(host, stable, Now, Now.AddHours(-25));
+
+        Assert.Equal(HostReleaseDriftStates.Differs, verdict.State);
+        Assert.Equal(25, verdict.BehindFor!.Value.TotalHours);
+        Assert.True(verdict.AlarmDue);
+    }
+
+    /// <summary>The image of the playthrough reported "0.9.5+sha.unknown" and no commit.</summary>
+    [Theory]
+    [InlineData("0.9.5")]
+    [InlineData("0.9.6")]
+    public void A_host_without_a_commit_is_never_current(string hostVersion)
+    {
+        var verdict = HostReleaseDriftPolicy.Evaluate(
+            new Contract.RunnerReleaseIdentityDto($"{hostVersion}+sha.unknown", hostVersion),
+            new StableReleaseIdentity("0.9.5", "3d61e8b0c4", null),
+            Now);
+
+        Assert.Equal(HostReleaseDriftStates.Unknown, verdict.State);
+        Assert.False(verdict.AlarmDue);
+    }
+
+    [Fact]
+    public void A_host_without_a_commit_is_not_current_even_with_a_newer_build_stamp()
+    {
+        var verdict = HostReleaseDriftPolicy.Evaluate(
+            Host(commit: null, builtAtOverride: new DateTime(2026, 9, 14, 8, 0, 0, DateTimeKind.Utc)),
+            Stable(),
+            Now);
+
+        Assert.Equal(HostReleaseDriftStates.Unknown, verdict.State);
+    }
+
+    [Fact]
+    public void An_equal_version_against_a_stable_without_a_commit_is_unknown()
+    {
+        var verdict = HostReleaseDriftPolicy.Evaluate(
+            new Contract.RunnerReleaseIdentityDto("0.9.5+sha.f947f2b", "0.9.5", "f947f2b"),
+            new StableReleaseIdentity("0.9.5", null, null),
+            Now);
+
+        Assert.Equal(HostReleaseDriftStates.Unknown, verdict.State);
+    }
+
+    [Fact]
+    public void An_equal_version_and_the_same_commit_stays_current()
+    {
+        var verdict = HostReleaseDriftPolicy.Evaluate(
+            new Contract.RunnerReleaseIdentityDto("0.9.5+sha.3d61e8b", "0.9.5", "3d61e8b"),
+            new StableReleaseIdentity("0.9.5", "3d61e8b0c4", null),
+            Now);
+
+        Assert.Equal(HostReleaseDriftStates.Current, verdict.State);
+    }
+
     [Fact]
     public void A_host_newer_than_stable_is_not_reported_as_drift()
     {

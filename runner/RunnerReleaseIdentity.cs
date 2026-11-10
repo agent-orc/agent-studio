@@ -34,6 +34,19 @@ internal static class RunnerReleaseIdentity
         @"^[0-9a-fA-F]{7,40}$",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+    /// <summary>Only a digest-pinned reference identifies the image that runs.</summary>
+    private static readonly Regex PinnedImage = new(
+        @"^[A-Za-z0-9./:_-]+@sha256:[0-9a-f]{64}$",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    /// <summary>
+    /// The networked deploy writes the source commit into every release folder
+    /// it installs, and the review image copies that folder to
+    /// <c>/opt/agent-host</c>. Reading it keeps a host whose environment lacks
+    /// <c>RUNNER_RELEASE_COMMIT</c> comparable (AGT-3689).
+    /// </summary>
+    internal const string CommitMarkerFile = "COMMIT";
+
     internal static string Current { get; } = Resolve(AppContext.BaseDirectory);
 
     /// <summary>
@@ -121,7 +134,9 @@ internal static class RunnerReleaseIdentity
         string? informationalVersion = null,
         string? assemblyVersion = null,
         string? configuredCommit = null,
-        string? configuredBuiltAt = null)
+        string? configuredBuiltAt = null,
+        string? configuredImageRef = null,
+        string? releaseDirectory = null)
     {
         var assembly = typeof(RunnerReleaseIdentity).Assembly;
         informationalVersion ??= assembly
@@ -129,20 +144,38 @@ internal static class RunnerReleaseIdentity
         assemblyVersion ??= assembly.GetName().Version?.ToString(3);
         configuredCommit ??= RunnerOptions.Env("RUNNER_RELEASE_COMMIT");
         configuredBuiltAt ??= RunnerOptions.Env("RUNNER_RELEASE_BUILT_AT");
+        configuredImageRef ??= RunnerOptions.Env("RUNNER_REVIEW_IMAGE_REF");
 
         var version = Trim(informationalVersion?.Split('+', 2)[0])
                       ?? Trim(assemblyVersion)
                       ?? "unknown";
         var commit = ParseCommit(configuredCommit)
                      ?? ParseInformationalCommit(informationalVersion)
-                     ?? ParseReleaseIdCommit(releaseId);
+                     ?? ParseReleaseIdCommit(releaseId)
+                     ?? ReadCommitMarker(releaseDirectory ?? AppContext.BaseDirectory);
         var builtAt = ParseInstant(configuredBuiltAt) ?? ParseReleaseStamp(releaseId);
+        var image = Trim(configuredImageRef);
 
         return new Contract.RunnerReleaseIdentityDto(
             Trim(releaseId) ?? "unknown",
             version,
             commit,
-            builtAt);
+            builtAt,
+            image is not null && PinnedImage.IsMatch(image) ? image : null);
+    }
+
+    /// <summary>The commit in the release folder's <see cref="CommitMarkerFile"/>, when it is a sha.</summary>
+    internal static string? ReadCommitMarker(string directory)
+    {
+        try
+        {
+            var marker = Path.Combine(directory, CommitMarkerFile);
+            return File.Exists(marker) ? ParseCommit(File.ReadAllText(marker)) : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
