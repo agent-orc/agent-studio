@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { layoutStructure, leafDetail, linkCrossings, type StructureLayout } from './structure-layout';
 import { complexFixture, complexServices, structureFixtures } from './structure.fixtures';
 import { projectStructure, summaryText, visibleBoxes, type StructureData } from './structure.model';
+import { structureTestClockMs } from './structure-test-clock';
 
 // Canvas width of the structure view at a 1440 px screen: shell navigation,
 // outline column and padding taken off, rounded down.
@@ -41,9 +42,9 @@ describe('Structure layout and routing', () => {
   const medianMs = (run: () => unknown): number => {
     run();
     const timings = Array.from({ length: 5 }, () => {
-      const start = performance.now();
+      const start = structureTestClockMs();
       run();
-      return performance.now() - start;
+      return structureTestClockMs() - start;
     }).sort((p, q) => p - q);
     return timings[2];
   };

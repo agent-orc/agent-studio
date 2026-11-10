@@ -131,7 +131,8 @@ public sealed record BatchGateManifest(
     IReadOnlyList<BatchPlanCard>? PlanningCards = null,
     bool Diagnostic = false,
     string? ReformedFromBatchId = null,
-    string? StackedOnBatchId = null);
+    string? StackedOnBatchId = null,
+    DateTimeOffset? QueuedSinceUtc = null);
 
 public sealed record BatchGateFormation(
     BatchGateManifest? Manifest, IReadOnlyList<BatchGateExclusion> Exclusions,

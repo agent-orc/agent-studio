@@ -98,7 +98,10 @@ public static class ContributorAccessPolicy
                 || (segments.Length >= 4 && segments[0] == "api" && segments[1] == "projects"
                     && segments[3] is "chat" or "docs" or "visual-evidence" or "snapshot"
                         or "throughput" or "cycle-time" or "completed-lane")
-                || path.StartsWith("/api/registry", StringComparison.OrdinalIgnoreCase);
+                || path.StartsWith("/api/registry", StringComparison.OrdinalIgnoreCase)
+                // MAG-1: members read the magazines of what they can see; the handler decides the scope.
+                || path.Equals("/api/magazine", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("/api/magazine/", StringComparison.OrdinalIgnoreCase);
         }
 
         if (HttpMethods.IsPost(method) && path == "/api/tasks/reference-status") return true;

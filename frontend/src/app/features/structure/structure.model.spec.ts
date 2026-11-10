@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { observationGlyph, observationWord, projectStructure, visibleBoxes,
   type StructureData, type StructureNode, type StructureObservation } from './structure.model';
+import { structureTestClockMs } from './structure-test-clock';
 
 const node = (id: string, kind: string, label: string, parentId: string | null,
   role: string | null = null): StructureNode => ({ id, kind, label, parentId, role,
@@ -69,10 +70,10 @@ describe('Structure projection', () => {
   });
 
   it('projects 200 nodes within the layout budget', () => {
-    const start = performance.now();
+    const start = structureTestClockMs();
     const boxes = projectStructure(fixtures[2], 'host', 3, {});
     expect(visibleBoxes(boxes)).toHaveLength(202);
-    expect(performance.now() - start).toBeLessThan(50);
+    expect(structureTestClockMs() - start).toBeLessThan(50);
   });
 
   it('treats an unknown machine kind as a placement box', () => {

@@ -19,6 +19,7 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
       *first-run-journey.spec.ts*) PW_E2E_PROFILE=first-run ;;
       *first-run-networked-monolith.spec.ts*) PW_E2E_PROFILE=networked-monolith ;;
       *product-session-networked-https.spec.ts*) PW_E2E_PROFILE=networked-https ;;
+      *owner-second-factor-human-pace.spec.ts*) PW_E2E_PROFILE=networked-https ;;
       *studio-op-operator-cli.spec.ts*) PW_E2E_PROFILE=operator-cli ;;
       *cockpit-integration-matrix.spec.ts*) PW_E2E_PROFILE=demo ;;
       *public-demo-shell.spec.ts*) PW_E2E_PROFILE=public-demo ;;
