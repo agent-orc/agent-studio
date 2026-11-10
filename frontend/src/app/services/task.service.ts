@@ -920,6 +920,7 @@ export class TaskService {
     reason?: string,
     operatorOverride = false,
     runIntent: 'revoke' | 'steer' = 'revoke',
+    withdrawFromBatch = false,
   ) {
     const body: {
       targetState: string;
@@ -927,10 +928,12 @@ export class TaskService {
       reason?: string;
       operatorOverride?: boolean;
       runIntent: 'revoke' | 'steer';
+      withdrawFromBatch?: boolean;
     } = { targetState, runIntent };
     if (typeof targetIndex === 'number') body.targetIndex = targetIndex;
     if (reason?.trim()) body.reason = reason.trim();
     if (operatorOverride) body.operatorOverride = true;
+    if (withdrawFromBatch) body.withdrawFromBatch = true;
     return this.http.post(
       `${this.taskV1Url(jobId)}/move`,
       body,

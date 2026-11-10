@@ -7,11 +7,24 @@ by adding `key`. New managed commits carry an operation trailer; legacy
 commits require the Agent Studio author and committer identity. Acceptance
 records the inspected commit SHA in the card's
 completion evidence. Every other later commit still needs a passed gate.
+Batch candidates and direct integration merges assign keys to descriptors
+changed by the delivery before the gate tests the resulting tree. Catalogue
+discovery keeps its managed key mutation for descriptors outside a gated
+delivery.
 
-Version: 2026-11-05
+Version: 2026-11-09
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 ## Aspect prompt cache
+
+The review worker bounds every per-card and package agent aspect's final prompt to 800,000
+characters after it adds the authoritative delivery diff. It keeps changed
+template and style files first, limits each diff file to 40,000 characters,
+and limits the total diff to 580,000 characters. Visual review includes at
+most 12 screenshots of at most 2 MiB each. The prompt names omissions, and
+the command's review evidence carries a `review-input-budget-<step>.txt`
+artifact when material was omitted. A CLI refusal before a model verdict,
+including `input_too_large`, is `ReviewInfra` with a named cause.
 
 The four stock Claude aspects freeze a common review-context prefix containing
 the brief, delivery acceptance scope, project and card context, diff summary,
@@ -1544,6 +1557,10 @@ usually exists only under `refs/remotes/origin` in the Studio checkout.
 - `runner/RemoteReviewWorkspace.cs`: exact checkout, integration-ref fetch,
   merge-base, bounded review material, aspect parsing, executor-side citation
   downgrade, and the per-attempt process environment.
+- `runner/ReviewAspectInputBudget.cs` and `runner/ReviewCliRefusalPolicy.cs`:
+  final aspect input limits and pre-model CLI refusal attribution, covered by
+  `runner.Tests/ReviewAspectInputBudgetTests.cs` and
+  `runner.Tests/RemoteReviewAspectParallelismTests.cs`.
 - `runner/RemoteReviewExecutor.cs` (`Write`, `ReapSlot`): the single durable
   slot write and the terminal reap that a late heartbeat renewal cannot undo,
   covered by

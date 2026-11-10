@@ -8,18 +8,28 @@ latest admitted repository proof. A failed read stays pending. Once those
 checks pass, **Create sample card** queues a small overview-document task in
 the first registered project. Studio follows that card by its id and marks the
 proof complete only after coding, review, and integration evidence is visible.
+In the local profile, owner sign-in is not applicable and does not block this
+action. A host with a fresh heartbeat can satisfy the checklist even when its
+overall health is degraded, such as when CPU is above target. Each listed Codex
+or Claude CLI still needs a fresh `ok` authentication probe on a connected host;
+an `ok` badge whose host or probe is stale shows the reason it does not count.
 The browser stores the card id, project id, and task-store path for returning
 to the checklist; it stores no credential. For a local project without a
 checkout, GitHub verification clones the registered URL into backend-managed
 storage and records that checkout on the project. Its read/write probe uses a
 fresh temporary Git repository with only the selected credential, so URL
 rewrites in the project checkout cannot make a different repository pass.
-For a new local project, the checkout also becomes its CLI working directory
-and the local runner is activated before the sample card starts.
+For a new local project, the checkout also becomes its registered CLI working
+directory. Coding still needs an assigned runner host. Start one next to the
+source checkout in **Workspace Settings → Execution Hosts → Set up agent host**
+([host walkthrough](./linux-runner-host.md#product-onboarding-from-execution-hosts)),
+then select it in **Project Settings → Execution location** before creating a
+sample card. The local orchestrator can manage the board but cannot run coding
+when local coding is disabled.
 A networked project uses its registered origin and the runner's checkout. Use
 [onboard-a-project.md](./onboard-a-project.md) to prepare the checkout.
 
-Once a project is attached ([onboard-a-project.md](./onboard-a-project.md)) and at least one CLI is installed ([onboard-an-agent-cli.md](./onboard-an-agent-cli.md)), queue a small first task to confirm the loop works end to end. The goal is to watch a real run: pickup, CLI invocation, log streaming, lane transition, auto-commit, auto-review.
+Once a project is attached ([onboard-a-project.md](./onboard-a-project.md)), a runner host is connected beside a source checkout, and a CLI is available on that host ([onboard-an-agent-cli.md](./onboard-an-agent-cli.md)), queue a small first task to confirm the loop works end to end. The goal is to watch a real run: pickup, CLI invocation, log streaming, lane transition, auto-commit, auto-review.
 
 ## A good first task
 
@@ -44,7 +54,7 @@ The pattern that has worked well on every new project so far is the **Project Ov
 
 What you should see:
 
-1. The card appears in `2-ready`. The runner picks it up within ~5 s in `auto-continuous` mode (or you click Start in `manual` mode).
+1. The card appears in `2-ready`. The assigned runner picks it up in **Auto** pickup mode (or you click Start in **Manual** mode).
 2. The card moves to `3-progress`. The Activity Log streams tool calls live: `Read`, `Glob`, `Grep`, then `Write`.
 3. The agent emits `[[TASK_DONE]]`. The runner records the lane-transition commit (when `AutoCommit` is on), moves the card to `4-auto-review`, and the orchestrator decides accept / re-issue.
 4. The card lands in `5-human-review` for your final sign-off. The protocol view shows the prompt, the activity log, the per-run summary, and the commit.

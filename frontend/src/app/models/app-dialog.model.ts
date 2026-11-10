@@ -31,6 +31,8 @@ export interface NotificationAction {
 export interface ConfirmDialogOptions {
   title: string;
   message: string;
+  /** Context label above the title when the default for this kind is misleading. */
+  eyebrow?: string;
   /** Extra body line below the message, e.g. the affected item's name. */
   detail?: string;
   /** Every item the action touches, one per row (AGT-3585 bulk actions list the cards). */
@@ -52,8 +54,9 @@ export interface ConfirmDialogOptions {
 }
 
 export interface ConfirmDialogState
-  extends Required<Omit<ConfirmDialogOptions, 'detail' | 'items' | 'requireTypedValues' | 'requireTypedPrompt'>> {
+  extends Required<Omit<ConfirmDialogOptions, 'detail' | 'eyebrow' | 'items' | 'requireTypedValues' | 'requireTypedPrompt'>> {
   detail: string | null;
+  eyebrow: string | null;
   items: string[] | null;
   requireTypedValues: string[] | null;
   requireTypedPrompt: string | null;

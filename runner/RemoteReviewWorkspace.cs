@@ -490,15 +490,21 @@ public sealed class RemoteReviewWorkspace
             var command = plannedCommand;
             if (ReviewCommandKinds.IsAgent(command.ExecutionKind))
             {
-                var prompt = AppendReviewMaterial(
+                var screenshots = string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase)
+                    ? VisualReviewScreenshotBundle.PromptSection(_visualScreenshotEvidence, RepositoryPath)
+                    : string.Empty;
+                var input = ReviewAspectInputBudget.Compose(
                     command.Prompt!,
                     reviewMaterial ??= await BuildReviewMaterialAsync(
-                        ReviewMaterialMaximumFiles,
-                        ReviewMaterialMaximumLines,
-                        ct));
-                if (string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase))
-                    prompt += VisualReviewScreenshotBundle.PromptSection(
-                        _visualScreenshotEvidence, RepositoryPath);
+                        ReviewMaterialMaximumFiles, ReviewMaterialMaximumLines, ct),
+                    screenshots);
+                var prompt = input.Prompt;
+                if (input.Report != "No review input omitted.")
+                    artifacts.Add(await WriteArtifactAsync(
+                        $"review-input-budget-{SafeSegment(command.StepId)}.txt",
+                        input.Report, includeContent: true, ct));
+                _log($"review-aspect-input step={command.StepId} characters={prompt.Length} " +
+                     $"limit={ReviewAspectInputBudget.MaximumCharacters} omissions={input.Report != "No review input omitted."}");
                 var budget = ReviewAspectBudgetPolicy.Derive(
                     command.CliType,
                     command.Model,
@@ -649,8 +655,10 @@ public sealed class RemoteReviewWorkspace
                     ct);
             }
 
+            var cliRefusal = ReviewCliRefusalPolicy.Classify(command, execution.Process);
             if (MissingToolchain(execution.Process)
-                || AgentCommandUnavailable(command, execution.Process))
+                || AgentCommandUnavailable(command, execution.Process)
+                || cliRefusal is not null)
             {
                 commands.Add(await AddCommandEvidenceAsync(
                     command.StepId,
@@ -680,7 +688,7 @@ public sealed class RemoteReviewWorkspace
                 var remover = lostScope is null ? null : candidateDependencyRemovers.GetValueOrDefault(lostScope.Scope);
                 // AGT-3420: a CLI that refuses its model failed on the
                 // project's review setting, not on this host's toolchain.
-                if (AgentModelUnknownToCli(command, execution.Process))
+                if (cliRefusal is null && AgentModelUnknownToCli(command, execution.Process))
                     throw await InfrastructureFailureAsync(
                         ReviewModelConfigurationPolicy.Classification,
                         ReviewModelConfigurationPolicy.Summary(command.StepId, command.CliType, command.Model) +
@@ -689,10 +697,11 @@ public sealed class RemoteReviewWorkspace
                         artifacts,
                         ct);
                 throw await InfrastructureFailureAsync(
-                    lostScope is null ? "ToolUnavailable" : "DependencyDirectoryMissing",
+                    cliRefusal ?? (lostScope is null ? "ToolUnavailable" : "DependencyDirectoryMissing"),
                     lostScope is null
                         ? $"Review command '{command.StepId}' could not use its declared toolchain: " +
                           $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
+                          $"cause={cliRefusal ?? "tool unavailable"}; detail={FailureDetail(execution.Process)}; " +
                           $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}."
                         : $"Candidate dependency scope '{lostScope.Scope}' disappeared after step " +
                           $"'{remover ?? command.StepId}' while '{command.StepId}' ran; " +
@@ -3224,15 +3233,6 @@ public sealed class RemoteReviewWorkspace
     /// <c>ReviewAspectCachePrompt</c>; the review material replaces it.
     /// </summary>
     internal const string SharedMaterialMarker = "<!-- remote-review-shared-material-v1 -->";
-
-    private static string AppendReviewMaterial(string prompt, string reviewMaterial)
-    {
-        var markerAt = prompt.IndexOf(SharedMaterialMarker, StringComparison.Ordinal);
-        if (markerAt < 0)
-            return prompt.TrimEnd() + PromptText.NewLine + PromptText.NewLine + reviewMaterial;
-        return prompt[..markerAt] + reviewMaterial + PromptText.NewLine + PromptText.NewLine
-               + prompt[(markerAt + SharedMaterialMarker.Length)..].TrimStart();
-    }
 
     /// <summary>
     /// Renders the prompt section from a diff object. The text depends only on

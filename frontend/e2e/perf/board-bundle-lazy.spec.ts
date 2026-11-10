@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { loadavg } from 'node:os';
 
 const output = process.env.JOB_RESULTS_DIR;
 const phase = process.env.BUNDLE_PHASE ?? 'after';
@@ -167,32 +168,45 @@ test('create task, chat, and workspace settings mount on first use', async ({ pa
 test('interleaved baseline and candidate board timing', async ({ browser }) => {
   const baselineUrl = process.env.BUNDLE_BASELINE_URL;
   test.skip(!baselineUrl, 'Requires a saved baseline build on a second static port.');
-  test.setTimeout(240_000);
-  const samples: { phase: 'before' | 'after'; count: number; firstPaintMs: number; detailOpenMs: number }[] = [];
-  for (const count of [20, 830]) {
-    for (let run = 0; run < 3; run++) {
+  const pairedRuns = Number(process.env.BUNDLE_PAIRED_RUNS ?? 3);
+  test.setTimeout(Math.max(240_000, pairedRuns * 60_000));
+  const counts = pairedRuns > 3 ? [20] : [20, 830];
+  const samples: { phase: 'before' | 'after'; count: number; pair: number; loadAverage1m: number; firstPaintMs: number; detailOpenMs: number }[] = [];
+  for (const count of counts) {
+    for (let run = 0; run < pairedRuns; run++) {
+      const loadAverage1m = loadavg()[0];
       const order = run % 2 === 0 ? ['before', 'after'] as const : ['after', 'before'] as const;
       for (const current of order) {
         const context = await browser.newContext({ serviceWorkers: 'block' });
         const page = await context.newPage();
         await installFixture(page, count);
-        await page.goto(current === 'before' ? baselineUrl! : '/');
-        await page.waitForFunction(() => Boolean((window as any).__boardFirstPaint));
+        await page.goto(current === 'before' ? baselineUrl! : '/', { timeout: 45_000 });
+        await page.waitForFunction(() => Boolean((window as any).__boardFirstPaint), undefined, { timeout: 60_000 });
         const firstPaintMs = await page.evaluate(() => (window as any).__boardFirstPaint as number);
         await page.getByTestId('task-card').first().click();
-        await page.waitForFunction(() => Boolean((window as any).__detailFirstPaint));
+        await page.waitForFunction(() => Boolean((window as any).__detailFirstPaint), undefined, { timeout: 60_000 });
         const detailOpenMs = await page.evaluate(() => (window as any).__detailFirstPaint - (window as any).__detailClickAt);
-        samples.push({ phase: current, count, firstPaintMs, detailOpenMs });
+        samples.push({ phase: current, count, pair: run + 1, loadAverage1m, firstPaintMs, detailOpenMs });
         await context.close();
       }
     }
   }
-  if (output) writeFileSync(join(output, 'browser-timing-interleaved.json'), JSON.stringify(samples, null, 2) + '\n');
-  const median = (values: number[]) => values.sort((a, b) => a - b)[1];
-  for (const count of [20, 830]) {
+  if (output) writeFileSync(join(output, `browser-timing-paired-${pairedRuns}.json`), JSON.stringify(samples, null, 2) + '\n');
+  const median = (values: number[]) => {
+    const sorted = values.sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  };
+  for (const count of counts) {
     for (const current of ['before', 'after'] as const) {
       const values = samples.filter(sample => sample.count === count && sample.phase === current);
       console.log(`interleaved ${current} ${count}: paint ${median(values.map(value => value.firstPaintMs)).toFixed(1)} ms, detail ${median(values.map(value => value.detailOpenMs)).toFixed(1)} ms`);
     }
+    const pairs = Array.from({ length: pairedRuns }, (_, pair) => {
+      const before = samples.find(sample => sample.count === count && sample.pair === pair + 1 && sample.phase === 'before')!;
+      const after = samples.find(sample => sample.count === count && sample.pair === pair + 1 && sample.phase === 'after')!;
+      return { paint: before.firstPaintMs - after.firstPaintMs, detail: before.detailOpenMs - after.detailOpenMs };
+    });
+    console.log(`interleaved ${count}: paired median paint improvement ${median(pairs.map(pair => pair.paint)).toFixed(1)} ms; detail improvement ${median(pairs.map(pair => pair.detail)).toFixed(1)} ms`);
   }
 });
