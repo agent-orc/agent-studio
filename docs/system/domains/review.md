@@ -517,7 +517,16 @@ valid screenshot path in the review context.
 An artifact must have a PNG, JPEG, or WebP header matching its extension before
 it uses an image slot; matching size and digest alone do not prove the header is
 valid. The server does not decode pixels, so later image viewing can still
-reject damaged payloads.
+reject damaged payloads. Candidates are selected by extension, not by the
+uploaded media type, so a `.webp` that an older runner sent as
+`application/octet-stream` still counts once its header is proven.
+The review daemon captures the screenshots while it prepares the attempt, but
+the detached review worker runs the plan in a separate process. The daemon
+therefore writes `visual-evidence/index.json` beside the copies (artifact name,
+file name, header-proven media type, and the `light` or `dark` theme read from
+the name), and the worker reloads that index when it adopts the prepared
+workspace (AGT-3718). A copy missing at reload is named as unavailable in the
+prompt.
 Name delivered screenshots under `results/` by surface, stage, viewport width,
 and theme, for example `bars/before-1920-light.png` and
 `bars/after-1920-light.png`. Use the same suffix for matching before and after
