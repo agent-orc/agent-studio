@@ -880,10 +880,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   an active acceptance transaction.
 - Integration status accepts persisted abbreviated Git SHAs of at least seven
   hexadecimal characters when they match a reachable full SHA by prefix.
-  Zero-file lifecycle entries whose subjects start with
-  `wip(runner): salvage before teardown` or `chore: snapshot for review` remain
+  Zero-file lifecycle entries with `Agent-Studio-Salvage: teardown`, the legacy
+  `wip(runner): salvage before teardown` subject, or the
+  `chore: snapshot for review` subject remain
   visible attribution metadata but are not delivery expectations. A matching
-  subject with changed files remains a real integration expectation. Target
+  marker with changed files remains a real integration expectation. Target
   branch ancestry is stronger evidence than stale file metadata: a commit that
   is already reachable from the integration branch is never discarded by the
   zero-file marker heuristic.
