@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Formats.Tar;
 using AgentStudio.Secrets;
+using AgentStudio.Pipeline;
 
 namespace AgentStudio.Management;
 
@@ -157,18 +158,24 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
 
     private void Walk(TarWriter writer, BackupCollectRequest request, BackupSource source, string root,
         IReadOnlyList<(string Root, bool Worktree)> checkouts, List<BackupContentEntry> contents, Stats stats,
-        Action releaseWhenOverdue, CancellationToken cancellationToken)
+        Action releaseWhenOverdue, CancellationToken cancellationToken, string? archiveRoot = null)
     {
         var excluded = new HashSet<string>(ExcludedPaths(request.Options), PathComparer);
         var excludes = DefaultAndSourceExcludes(source).ToArray();
         var pending = new Stack<string>();
         pending.Push(root);
         var spool = Path.Combine(catalog.StagingDirectory, "file.spool");
+        string Relative(string path)
+        {
+            var relative = BackupCheckouts.Relative(root, path);
+            return archiveRoot is null ? BackupCheckouts.Relative(source.Path, path)
+                : relative == "." ? archiveRoot : archiveRoot + "/" + relative;
+        }
         while (pending.Count > 0)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var directory = pending.Pop();
-            var relativeDirectory = BackupCheckouts.Relative(source.Path, directory);
+            var relativeDirectory = Relative(directory);
             BackupArchive.WriteDirectory(writer, relativeDirectory == "." ? source.Name : $"{source.Name}/{relativeDirectory}");
             DirectoryInfo[] children;
             FileInfo[] files;
@@ -185,7 +192,7 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
                 releaseWhenOverdue();
                 if ((file.Attributes & FileAttributes.ReparsePoint) != 0) { stats.Symlinks++; continue; }
                 var full = file.FullName;
-                var relative = BackupCheckouts.Relative(source.Path, full);
+                var relative = Relative(full);
                 if (excluded.Contains(full) || IsExcluded(relative, excludes)) continue;
                 if (full.EndsWith(".kek", StringComparison.OrdinalIgnoreCase)
                     || BackupSnapshotReader.HoldsKeyMaterial(full, request.KeyFingerprints))
@@ -207,8 +214,29 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
             {
                 if ((child.Attributes & FileAttributes.ReparsePoint) != 0) { stats.Symlinks++; continue; }
                 var full = child.FullName;
-                if (excluded.Contains(full) || IsExcluded(BackupCheckouts.Relative(source.Path, full), excludes)) continue;
+                var relative = Relative(full);
+                if (excluded.Contains(full) || IsExcluded(relative, excludes)) continue;
                 if (checkouts.Any(checkout => PathComparer.Equals(checkout.Root, full))) continue;
+                if (archiveRoot is null && !source.Projects && child.Name == ".git")
+                {
+                    var snapshot = Path.Combine(catalog.StagingDirectory, "git-" + Guid.NewGuid().ToString("N"));
+                    lock (WorkspaceArtifactCommitService.RepositoryGate(directory))
+                    {
+                        var cloned = BackupCheckouts.Git(directory,
+                            ["clone", "--mirror", "--no-hardlinks", "--", directory, snapshot]);
+                        if (!cloned.Success)
+                            throw new BackupException("backup-git-snapshot-failed", cloned.StandardError.Trim());
+                        // A mirror is a bare repository. Restore the original working-tree
+                        // configuration and index, which the mirror does not carry.
+                        File.Copy(Path.Combine(full, "config"), Path.Combine(snapshot, "config"), overwrite: true);
+                        var index = Path.Combine(full, "index");
+                        if (File.Exists(index)) File.Copy(index, Path.Combine(snapshot, "index"), overwrite: true);
+                    }
+                    Walk(writer, request, source, snapshot, checkouts, contents, stats,
+                        releaseWhenOverdue, cancellationToken, relative);
+                    Directory.Delete(snapshot, recursive: true);
+                    continue;
+                }
                 pending.Push(full);
             }
         }

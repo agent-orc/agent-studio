@@ -47,7 +47,7 @@ public sealed record BackupOverview(
 /// Installation backups (AGT-3574): creates consistent encrypted archives,
 /// applies retention, verifies the newest archive by restoring it into an
 /// isolated staging host, and copies every archive to the off-host target.
-/// One operation runs at a time. The management commands
+/// Local archive mutations run one at a time; off-host transfers use a separate gate. The management commands
 /// <c>backup-create</c>, <c>restore-verify</c>, <c>backup-retention</c> and
 /// <c>backup-upload</c> and the <see cref="BackupHostedService"/> schedule all
 /// go through here. Each create, upload, verification and retention writes a
@@ -65,6 +65,7 @@ public sealed class StudioBackupService
     private readonly Func<BackupOptions, IBackupTarget?> _targets;
     private readonly ControlPlaneAuditLog? _audit;
     private readonly SemaphoreSlim _run = new(1, 1);
+    private readonly SemaphoreSlim _upload = new(1, 1);
 
     public StudioBackupService(
         IConfiguration configuration,
@@ -98,7 +99,7 @@ public sealed class StudioBackupService
 
     public BackupOptions Options => BackupOptions.From(_configuration);
 
-    public bool IsRunning => _run.CurrentCount == 0;
+    public bool IsRunning => _run.CurrentCount == 0 || _upload.CurrentCount == 0;
 
     /// <summary>How long a held mutation waits for a backup's read phase; read per request, so kept cheap.</summary>
     public TimeSpan MaxRequestHold
@@ -122,9 +123,9 @@ public sealed class StudioBackupService
 
     public async Task<int> UploadPendingAsync(bool force, string trigger, CancellationToken cancellationToken)
     {
-        await _run.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await _upload.WaitAsync(cancellationToken).ConfigureAwait(false);
         try { return await UploadLockedAsync(force, trigger, cancellationToken).ConfigureAwait(false); }
-        finally { _run.Release(); }
+        finally { _upload.Release(); }
     }
 
     /// <summary>Keeps the newest <paramref name="keep"/> local archives. Retention at the off-host target is configured there.</summary>
@@ -389,8 +390,16 @@ public sealed class StudioBackupService
             var expected = result.Contents.Files.Count(file => !file.Path.StartsWith(BackupArchive.BundlePrefix, StringComparison.Ordinal));
             if (result.FilesRestored != expected)
                 throw new BackupException("backup-restore-incomplete", $"Restored {result.FilesRestored} of {expected} files.");
+            foreach (var head in result.Contents.Files.Where(file => file.Path.EndsWith("/.git/HEAD", StringComparison.Ordinal)))
+            {
+                var repository = Path.Combine(staging, head.Path[..^"/.git/HEAD".Length].Replace('/', Path.DirectorySeparatorChar));
+                var checkedRepository = BackupCheckouts.Git(repository, ["fsck", "--connectivity-only", "--no-reflogs"]);
+                if (!checkedRepository.Success)
+                    throw new BackupException("backup-git-invalid",
+                        $"Restored repository {head.Path} failed git fsck: {checkedRepository.StandardError.Trim()}");
+            }
             verification = new BackupVerificationRecord(started.ToString("O"), "verified",
-                $"Restored {result.FilesRestored} files and {result.Manifest.Checkouts.Count} checkout records into an empty staging host; every hash matched.",
+                $"Restored {result.FilesRestored} files and {result.Manifest.Checkouts.Count} checkout records into an empty staging host; every hash matched and Git connectivity passed.",
                 result.FilesRestored);
         }
         catch (Exception ex) when (ex is BackupException or IOException or UnauthorizedAccessException
@@ -437,10 +446,8 @@ public sealed class StudioBackupService
                 await target.UploadAsync(catalog.ArchivePath(record.Id), record.FileName, cancellationToken).ConfigureAwait(false);
                 await target.UploadAsync(catalog.ChecksumPath(record.Id), record.FileName + ".sha256", cancellationToken)
                     .ConfigureAwait(false);
-                catalog.Save(record with
-                {
-                    Upload = new BackupUploadRecord(target.Description, "uploaded", _clock.GetUtcNow().ToString("O"), attempt, null, attempts),
-                });
+                await SaveUploadAsync(catalog, record.Id, new BackupUploadRecord(target.Description, "uploaded",
+                    _clock.GetUtcNow().ToString("O"), attempt, null, attempts), cancellationToken).ConfigureAwait(false);
                 uploaded++;
                 _logger?.LogInformation("backup-uploaded {BackupId} {Target}", record.Id, target.Kind);
                 Audit(BackupAudit.Record(trigger, BackupAudit.Upload, BackupAudit.Succeeded, record.Id,
@@ -449,10 +456,8 @@ public sealed class StudioBackupService
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                catalog.Save(record with
-                {
-                    Upload = new BackupUploadRecord(target.Description, "failed", null, attempt, ex.Message, attempts),
-                });
+                await SaveUploadAsync(catalog, record.Id, new BackupUploadRecord(target.Description, "failed",
+                    null, attempt, ex.Message, attempts), cancellationToken).ConfigureAwait(false);
                 _logger?.LogError("backup-upload-failed {BackupId} {Reason}", record.Id, ex.Message);
                 Audit(BackupAudit.Record(trigger, BackupAudit.Upload, BackupAudit.Failed, record.Id,
                     $"Copy of {record.Id} to the {target.Kind} target failed: {ex.Message}",
@@ -460,6 +465,17 @@ public sealed class StudioBackupService
             }
         }
         return uploaded;
+    }
+
+    private async Task SaveUploadAsync(BackupCatalog catalog, string id, BackupUploadRecord upload,
+        CancellationToken cancellationToken)
+    {
+        await _run.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (catalog.Find(id) is { } current) catalog.Save(current with { Upload = upload });
+        }
+        finally { _run.Release(); }
     }
 
     /// <summary>

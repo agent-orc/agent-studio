@@ -165,6 +165,8 @@ public sealed class ManagementService
         if (string.IsNullOrWhiteSpace(key)) throw new ManagementException(400, "idempotency-key-required");
         if (key.Length > 128) throw new ManagementException(400, "idempotency-key-too-long");
         var requestFingerprint = Fingerprint(request, kind);
+        if (kind == "backup-upload")
+            return ExecuteBackupUpload(request, actor, key, requestFingerprint);
 
         lock (_gate)
         {
@@ -225,6 +227,40 @@ public sealed class ManagementService
                     requestFingerprint);
                 throw;
             }
+        }
+    }
+
+    private ManagementCommandResult ExecuteBackupUpload(
+        ManagementCommandRequest request, string actor, string key, string requestFingerprint)
+    {
+        string commandId;
+        lock (_gate)
+        {
+            var prior = FindPrior(key, "backup-upload", request.DryRun, actor, requestFingerprint);
+            if (prior is not null) return prior;
+            if (!request.DryRun && !string.Equals(request.Confirmation, "backup-upload", StringComparison.Ordinal))
+                throw new ManagementException(400, "confirmation must exactly equal 'backup-upload'");
+            commandId = "cmd_" + Guid.NewGuid().ToString("N");
+            AppendAudit(new ManagementCommandResult(commandId, "backup-upload", request.DryRun, "started",
+                0, 0, "Command accepted for execution.", DateTime.UtcNow.ToString("O"), actor, key), requestFingerprint);
+        }
+        try
+        {
+            var result = UploadBackups(request.DryRun, actor, key) with { CommandId = commandId };
+            lock (_gate) AppendAudit(result, requestFingerprint);
+            return result;
+        }
+        catch (SecurityOperationException ex)
+        {
+            lock (_gate) AppendAudit(new ManagementCommandResult(commandId, "backup-upload", request.DryRun,
+                "failed", 0, 0, ex.Code, DateTime.UtcNow.ToString("O"), actor, key), requestFingerprint);
+            throw new ManagementException(ex.Status, ex.Code);
+        }
+        catch (Exception ex)
+        {
+            lock (_gate) AppendAudit(new ManagementCommandResult(commandId, "backup-upload", request.DryRun,
+                "failed", 0, 0, ex.Message, DateTime.UtcNow.ToString("O"), actor, key), requestFingerprint);
+            throw;
         }
     }
 
