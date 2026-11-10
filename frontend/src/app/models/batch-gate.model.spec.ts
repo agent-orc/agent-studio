@@ -40,6 +40,9 @@ describe('batch isolation model (AGT-3577)', () => {
 
   it('reports isolating while a child of the red batch is active', () => {
     expect(batchAlert(redHalvingState)).toEqual({ state: 'isolating', batchId: 'batch-7', culprits: [] });
+    expect(batchAlert({ ...redHalvingState, batches: redHalvingState.batches.map(batch =>
+      batch.batchId === 'batch-7' ? { ...batch, isolationActive: false } : batch) }))
+      .toEqual({ state: 'red', batchId: 'batch-7', culprits: [] });
     expect(batchAlert({ ...redHalvingState, batches: [] })).toBeNull();
     expect(batchAlert(null)).toBeNull();
   });

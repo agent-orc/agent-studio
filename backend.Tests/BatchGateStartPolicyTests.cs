@@ -6,6 +6,17 @@ namespace AgentStudio.Tests;
 /// <summary>AGT-3562: start order and pre-lease deadline of batch flights.</summary>
 public sealed class BatchGateStartPolicyTests
 {
+    [Theory]
+    [InlineData(true, false, true, false, true)]
+    [InlineData(true, false, false, false, true)]
+    [InlineData(true, false, false, true, false)]
+    [InlineData(true, true, true, false, false)]
+    [InlineData(false, false, true, false, false)]
+    public void Only_an_unfinished_red_parent_without_a_live_flight_ends_isolation(
+        bool red, bool active, bool pending, bool allFound, bool expected)
+        => Assert.Equal(expected, BatchGateStartPolicy.EndInterruptedIsolation(
+            red, active, pending, allFound));
+
     // clock-independent: the pure policy receives an explicit now; fixture instants meet only each other.
     private static readonly DateTimeOffset At = new(2026, 11, 5, 12, 59, 0, TimeSpan.Zero);
 

@@ -120,6 +120,7 @@
               }</p>
               @if (!phases.includes(batch.phase)) { <p>Phase: {{ batch.phase }}</p> }
               <p><strong>{{ batch.phase }}</strong>@if (batch.phaseReason) { · {{ batch.phaseReason }} }</p>
+              @if (isolationState(batch); as state) { <p data-testid="batch-isolation-state">{{ state }}</p> }
               @if (batch.formationReason) { <p>{{ batch.formationReason }}</p> }
               @if (batch.exclusions?.length) {
                 <ul aria-label="Cards placed in another batch">

@@ -173,6 +173,13 @@ public sealed partial class BatchGatePilotService
 
     public bool IsPerTaskGateRunning(string reviewAttemptId) => FallbackInFlight(reviewAttemptId);
 
+    public bool IsIsolationFlightActive(string parentBatchId)
+    {
+        lock (_runningBatches)
+            return _batchFlights.Values.Any(flight => flight.Manifest.BatchId == parentBatchId
+                && flight.Task is { IsCompleted: false } && !flight.Cancelled);
+    }
+
     /// <summary>
     /// Records the review-side verification minutes of a settled batch-deferred
     /// review once per review attempt, whatever its outcome. Replays find the
@@ -392,7 +399,17 @@ public sealed partial class BatchGatePilotService
             slotUsage,
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
             _time.GetUtcNow(), _services?.GetService<GateRunLedger>(), reviewFixWaits,
-            _services?.GetService<GateCapacitySettings>()?.Current(), DetachedFlights(project));
+            _services?.GetService<GateCapacitySettings>()?.Current(), DetachedFlights(project),
+            ActiveIsolationFlights(project));
+    }
+
+    private IReadOnlySet<string> ActiveIsolationFlights(string project)
+    {
+        lock (_runningBatches)
+            return _batchFlights.Values.Where(flight =>
+                    string.Equals(flight.Manifest.Scope.Project, project, StringComparison.OrdinalIgnoreCase)
+                    && flight.Task is { IsCompleted: false } && !flight.Cancelled)
+                .Select(flight => flight.Manifest.BatchId).ToHashSet(StringComparer.Ordinal);
     }
 
     private static BatchGateReviewFixWait[] ReviewFixWaits(IEnumerable<TaskInfo> tasks, string project)
@@ -883,6 +900,39 @@ public sealed partial class BatchGatePilotService
     {
         foreach (var parent in _store.ListManifests().Where(item => item.ParentBatchId is null))
             DeriveIsolationFindings(parent);
+        // Red is a verdict, but isolation is still work in progress. A restart
+        // loses the bisection's in-memory frontier, so close the parent and
+        // return every unresolved member to planning as one recovery action.
+        foreach (var parent in _store.ListManifests().Where(item => item.ParentBatchId is null
+                     && _store.LatestState(item.BatchId).Phase == BatchPhase.Red))
+        {
+            var waiting = _store.ListPending();
+            var hasPendingMember = parent.Members.Any(member => waiting.Any(item =>
+                item.Subject.TaskKey == member.TaskKey
+                && item.Subject.RunAttempt == member.RunAttempt));
+            var findings = _store.ListIsolationFindings(parent.Scope.Project)
+                .Where(item => item.ParentBatchId == parent.BatchId).ToArray();
+            var allFound = parent.Members.All(member => findings.Any(item =>
+                item.TaskKey == member.TaskKey && item.RunAttempt == member.RunAttempt));
+            bool active;
+            lock (_runningBatches)
+                active = _runningBatches.TryGetValue(parent.Scope.Project, out var flight)
+                    && !flight.IsCompleted;
+            if (!MonolithTransitionAdapter.BatchEndInterruptedIsolation(true, active,
+                    hasPendingMember, allFound)) continue;
+            BatchCoordinatorLease? recovery;
+            try { recovery = _leases.TryAcquire(LeaseScope(parent), "red-isolation-recovery"); }
+            catch (IOException) { continue; }
+            if (recovery is null) continue;
+            try
+            {
+                if (_store.LatestState(parent.BatchId).Phase != BatchPhase.Red) continue;
+                State(parent, BatchPhase.Paused, _store.LatestState(parent.BatchId).CandidateSha,
+                    recovery.Fence, "isolation interrupted");
+                ReturnToPending(parent);
+            }
+            finally { _leases.Release(recovery); }
+        }
         foreach (var manifest in _store.ListRecoverableManifests())
         {
             if (_store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
@@ -1193,6 +1243,13 @@ public sealed partial class BatchGatePilotService
         foreach (var manifest in _store.ListPausedManifests())
         {
             ct.ThrowIfCancellationRequested();
+            // Recovery already returned these members to planning. Keep the
+            // interrupted isolation verdict visible as its terminal state.
+            if (_store.LatestState(manifest.BatchId).Reason == "isolation interrupted")
+            {
+                ReturnToPending(manifest);
+                continue;
+            }
             BatchCoordinatorLease? lease;
             try { lease = _leases.TryAcquire(LeaseScope(manifest), "batch-pause-fallback"); }
             catch (IOException) { continue; }
@@ -1562,7 +1619,12 @@ public sealed partial class BatchGatePilotService
     {
         var released = new List<BatchGatePendingRecord>();
         if (manifest.ParentBatchId is { } parentId)
+        {
+            // A diagnostic child may be abandoned before its red parent has
+            // finished isolation. Its cleanup must not release the parent.
+            if (_store.LatestState(parentId).Phase == BatchPhase.Red) return released;
             released.AddRange(ReturnToPending(_store.ReadManifest(parentId)));
+        }
         foreach (var member in manifest.Members)
         {
             var pending = _store.ListPending().FirstOrDefault(item =>

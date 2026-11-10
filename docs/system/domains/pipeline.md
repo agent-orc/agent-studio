@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-05
+Version: 2026-11-10
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -28,6 +28,19 @@ pipeline view.
   caps required before parallel work starts.
 
 ## Gate economics and integration lane
+
+An interrupted deterministic red batch ends as `Paused` with reason
+`isolation interrupted` on the next pilot tick when unresolved members remain.
+The pilot derives any child findings, releases the parent members to planning,
+and keeps that terminal state visible in the batch article and card. A live
+isolation flight alone blocks continue, steer, and requeue; a persisted red
+verdict by itself is not a live flight. Coordinator leases record the local
+process identity so a restarted host can reclaim a dead process's lease
+without waiting for its two-minute expiry.
+The batch state response exposes `phaseAtUtc`, `isolationActive`, and
+`isolationPending` on each batch. The card and batch panel use those facts to
+name the active or interrupted wait without treating a stored red child as a
+live process.
 
 The batch gate state read reports `phaseReason` for a stopped batch and
 `causedByTaskKey` when a member eject or lost review generation caused

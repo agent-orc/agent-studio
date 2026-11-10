@@ -132,6 +132,11 @@ public static class MonolithTransitionAdapter
         => BatchGateStartPolicy.StartsNextAfterFlight(cancelledAtLeaseDeadline, batchStillFormed,
             batchRetired, gateRan, reformedIntoSuccessor, followsCompletedFlight);
 
+    public static bool BatchEndInterruptedIsolation(bool red, bool flightActive,
+        bool hasPendingMember, bool allMembersHaveFindings)
+        => BatchGateStartPolicy.EndInterruptedIsolation(red, flightActive,
+            hasPendingMember, allMembersHaveFindings);
+
     public static string BatchFlightLeaseDeadlineReason(int deadlineMinutes)
         => BatchGateStartPolicy.LeaseDeadlineReason(deadlineMinutes);
 

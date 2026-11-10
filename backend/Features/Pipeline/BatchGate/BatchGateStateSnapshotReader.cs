@@ -21,7 +21,8 @@ public static class BatchGateStateSnapshotReader
         GateRunLedger? ledger = null,
         IReadOnlyList<BatchGateReviewFixWait>? reviewFixWaits = null,
         GateCapacity? gateCapacity = null,
-        IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null)
+        IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null,
+        IReadOnlySet<string>? activeIsolationFlights = null)
     {
         var at = now ?? DateTimeOffset.UtcNow;
         var dailySummary = ledger?.Summary(store, project, DateOnly.FromDateTime(at.UtcDateTime));
@@ -122,6 +123,13 @@ public static class BatchGateStateSnapshotReader
                 manifest.StackedOnBatchId,
                 phase = phase.Phase.ToString().ToLowerInvariant(),
                 phaseReason = phase.Reason,
+                phaseAtUtc = phase.RecordedAtUtc,
+                isolationActive = phase.Phase == BatchPhase.Red
+                    && activeIsolationFlights?.Contains(manifest.BatchId) == true,
+                isolationPending = phase.Phase == BatchPhase.Red
+                    && manifest.Members.Any(member => pending.Any(item =>
+                        item.Subject.TaskKey == member.TaskKey
+                        && item.Subject.RunAttempt == member.RunAttempt)),
                 causedByTaskKey = phase.CausedByTaskKey,
                 baseMoveToSha = phase.BaseMoveToSha,
                 baseMoveOutcome = phase.BaseMoveOutcome,
@@ -201,7 +209,10 @@ public static class BatchGateStateSnapshotReader
                     continue;
                 }
                 var ejected = replay is { Outcome: "unattributable" };
-                var left = phase == BatchPhase.Abandoned || ejected;
+                var left = phase == BatchPhase.Abandoned
+                    || phase == BatchPhase.Paused
+                       && store.LatestState(manifest.BatchId).Reason == "isolation interrupted"
+                    || ejected;
                 var baseMoveReason = store.LatestState(manifest.BatchId)
                     .BaseMoveMemberReasons?.GetValueOrDefault(member.TaskKey);
                 var cause = left

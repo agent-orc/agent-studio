@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, O
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { ModalStackService } from '../../../services/modal-stack.service';
-import { batchIsolationRows, batchPublishedSha, batchReplayLabel, batchRiskLabel } from '../../../models/batch-gate.model';
+import { batchIsolationRows, batchIsolationState, batchPublishedSha, batchReplayLabel, batchRiskLabel } from '../../../models/batch-gate.model';
 import type { BatchGateBatch, BatchTestFailureRank, BatchTestFailureReport, BatchGateState } from '../../../models/batch-gate.model';
 import { CreateTaskFormService } from '../../board';
 import { TaskService } from '../../../services/task.service';
@@ -98,6 +98,7 @@ export class BatchPanelComponent implements OnDestroy {
   }
   phaseLabel(phase: string): string { return phase; }
   isolationRows(batch: BatchGateBatch) { return batchIsolationRows(this.state(), batch); }
+  isolationState(batch: BatchGateBatch) { return batchIsolationState(batch); }
   /** The members a failed run proved red, joined for display, or null. */
   provenBy(failure: { batchId: string; runId: string }): string | null {
     const culprits = (this.state()?.isolationFindings ?? []).filter(finding => finding.status === 'proven-red'

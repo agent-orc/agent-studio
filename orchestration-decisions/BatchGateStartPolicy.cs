@@ -78,6 +78,14 @@ public static class BatchGateStartPolicy
         => !cancelledAtLeaseDeadline && !batchStillFormed
             && (gateRan || !batchRetired || reformedIntoSuccessor && followsCompletedFlight);
 
+    /// <summary>
+    /// A red parent without a live flight needs a terminal recovery state
+    /// unless every member has an isolation finding and none remains pending.
+    /// </summary>
+    public static bool EndInterruptedIsolation(bool red, bool flightActive,
+        bool hasPendingMember, bool allMembersHaveFindings)
+        => red && !flightActive && (hasPendingMember || !allMembersHaveFindings);
+
     /// <summary>Visible phase reason of a formed batch whose flight was cancelled before its lease.</summary>
     public static string LeaseDeadlineReason(int deadlineMinutes)
         => $"flight cancelled: no coordinator lease within {Math.Max(1, deadlineMinutes)} minutes;"

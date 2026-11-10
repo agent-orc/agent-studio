@@ -1890,6 +1890,72 @@ public sealed class BatchGatePilotPublicationTests : BatchGatePilotServiceTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Red_parent_is_paused_and_members_released_after_restart(bool childRunning)
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var members = Enumerable.Range(1, 4)
+            .Select(index => SeedMember(factory, $"DOC-RED-RESTART-{index}", $"docs/red-restart-{index}.md"))
+            .ToArray();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var parent = ClosePendingBatch(factory);
+        _gate.Batch = request => Green(request.ExpectedSha);
+        store.AppendState(new BatchGateState(parent.BatchId, parent.MembershipDigest,
+            BatchPhase.Red, null, 1, _clock, "deterministic suite red"));
+        if (childRunning)
+        {
+            var subset = parent.Members.Take(2).ToArray();
+            var digest = BatchGatePolicy.MembershipDigest(parent.BaseSha, parent.Scope, subset);
+            var child = parent with { BatchId = Guid.NewGuid().ToString("N"),
+                MembershipDigest = digest, Members = subset, ParentBatchId = parent.BatchId,
+                Diagnostic = true };
+            store.CloseManifest(child);
+            store.AppendState(new BatchGateState(child.BatchId, digest,
+                BatchPhase.Running, null, 1, _clock));
+            // The abandoned child may already have cleared every parent's
+            // ownership marker before the restarted host sees the red parent.
+            foreach (var item in store.ListPending())
+                BatchGateOwnershipStore.Write(item.JobFolderPath,
+                    new BatchGateOwnership(item.ReviewAttemptId, item.Subject));
+        }
+        else
+        {
+            // The red verdict can be durable while the old process still
+            // owns a two-minute coordinator lease. Its dead PID is reclaimable.
+            var held = factory.Services.GetRequiredService<BatchGateLeaseService>()
+                .TryAcquire(parent.Scope, "old-process")!;
+            var path = Assert.Single(Directory.GetFiles(
+                Path.Combine(_workspace, "batch-gate-leases"), "lease.json",
+                SearchOption.AllDirectories));
+            File.WriteAllText(path, JsonSerializer.Serialize(held with { ProcessId = int.MaxValue }));
+        }
+
+        using var restarted = BuildFactory();
+        _ = restarted.CreateClient();
+        EnableBatchGate(restarted, closeSize: 4);
+        var guard = restarted.Services.GetRequiredService<BatchIsolationGuard>();
+        var scanner = restarted.Services.GetRequiredService<TaskScannerService>();
+        foreach (var member in members)
+            Assert.Null(guard.Find(scanner.FindJob(member.Key, _watchPath)!));
+        await restarted.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+
+        Assert.Equal(BatchPhase.Paused, store.LatestState(parent.BatchId).Phase);
+        Assert.Equal("isolation interrupted", store.LatestState(parent.BatchId).Reason);
+        if (childRunning)
+            Assert.Equal(BatchPhase.Abandoned, store.LatestState(Assert.Single(
+                store.ListManifests(), manifest => manifest.ParentBatchId == parent.BatchId).BatchId).Phase);
+        foreach (var member in members)
+        {
+            Assert.NotEqual(parent.BatchId, Ownership(member.Key)?.BatchId);
+            Assert.Null(guard.Find(scanner.FindJob(member.Key, _watchPath)!));
+        }
+    }
+
 }
 
 /// <summary>
