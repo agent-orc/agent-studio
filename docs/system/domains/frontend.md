@@ -388,6 +388,11 @@ restore both the task and its captured lane position even when the task has
 since moved to a terminal lane. Pipeline-driven changes replace the current
 route instead and do not add review-history entries.
 
+A refused optimistic triage move restores the original task, lane-pager
+snapshot, route, and active task tab together. The detail shows the refusal
+beside the action with the next step. If an error dialog opens, closing it
+returns focus to the failed action.
+
 Each Wiki/Dossier tab owns a history stack containing its current target and up
 to 49 earlier or forward targets. Normal link navigation truncates that tab's
 forward entries and appends the destination. The tab toolbar and Alt+Left or
