@@ -13,7 +13,15 @@
       <span class="task-live__label">Current</span>
       <span class="task-live__signal" aria-hidden="true"></span>
       <span class="task-live__summary">
-        <span class="task-live__headline">{{ live.headline }}</span>
+        @if (live.loss; as loss) {
+          <span class="task-live__headline task-live__headline--wrap" data-testid="task-live-review-loss">
+            @if (loss.hostRoute; as route) {{{ loss.before }}<a class="task-live__host-link"
+              data-testid="task-live-host-link" [href]="'#' + route"
+              (click)="openHost($event, route)">{{ loss.host }}</a>{{ loss.after }}} @else {{{ loss.text }}}
+          </span>
+        } @else {
+          <span class="task-live__headline">{{ live.headline }}</span>
+        }
         @if (live.waitReason === 'manual-mode' && task().executionLocation?.configuredRunnerId) {
           <button type="button" class="task-live__auto-action" data-testid="task-live-switch-auto"
                   [disabled]="switchingToAuto()" (click)="switchToAuto($event)">

@@ -394,6 +394,15 @@ public sealed class BoardConditionalReadTests : IClassFixture<BoardConditionalRe
         Assert.Equal(HttpStatusCode.OK, after.Status);
         Assert.NotEqual(before.ETag, after.ETag);
         Assert.Contains("infrastructureFailure", after.Body, StringComparison.Ordinal);
+
+        // AGT-3690: the scheduled retry turns the line into a named loss with
+        // the retry number, under a new tag.
+        Assert.True(authority.ScheduleReviewInfrastructureRetry(leased.AttemptId, "ExecutorRestarted").Accepted);
+        var scheduled = await GetAsync(client, "/api/tasks/grouped", after.ETag);
+        Assert.Equal(HttpStatusCode.OK, scheduled.Status);
+        Assert.NotEqual(after.ETag, scheduled.ETag);
+        Assert.Contains("retry-scheduled", scheduled.Body, StringComparison.Ordinal);
+        Assert.Contains("Automatic retry 1 of 3", scheduled.Body, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -8117,7 +8117,7 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
         const string reviewInstance = "review-divergent-host:4243";
         SeedTask(TaskStates.AutoReview, TaskKey, "Remote review divergent chain", "Build and verify.");
 
-        var now = DateTime.UtcNow;
+        var now = WallClockNow();
         using var factory = BuildFactory(authorityNow: () => now);
         using var http = factory.CreateClient();
         var scheduler = factory.Services.GetRequiredService<ReviewInfrastructureRetryScheduler>();
@@ -8182,6 +8182,107 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
         Assert.Contains("ReviewInfra/ShaMismatch", reason);
         Assert.Contains("Divergent chain", reason);
     }
+
+    /// <summary>
+    /// AGT-3690 (S5-F14): the operator crisis playthrough killed the review host
+    /// mid-review. The runner settled the lost review as ReviewInfra /
+    /// ExecutorRestarted and the Task Server scheduled retry 1 of 3, yet the
+    /// card's CURRENT line said only "review ended (infrastructureFailure)". The
+    /// card names the restart, the host and the retry, and a chain the host
+    /// keeps losing escalates on the restarts, not on "cannot be materialized".
+    /// </summary>
+    [Fact]
+    public async Task Monolith_v1_review_host_restart_names_the_host_and_retry_then_escalates_on_the_restarts()
+    {
+        const string reviewRunnerId = "first-run-review";
+        const string reviewInstance = "review-restart-host:4243";
+        SeedTask(TaskStates.AutoReview, TaskKey, "Remote review lost to host restarts", "Build and verify.");
+
+        var now = WallClockNow();
+        using var factory = BuildFactory(authorityNow: () => now);
+        using var http = factory.CreateClient();
+        var scheduler = factory.Services.GetRequiredService<ReviewInfrastructureRetryScheduler>();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        await RegisterReviewExecutorAsync(http, reviewRunnerId, reviewInstance);
+        using var reviewClient = new RClient(http, reviewRunnerId, usesDurableTaskServer: true);
+
+        // One adoption failure per restart, worded as RemoteReviewExecutor does.
+        // Identical wording would open the fleet-wide cause breaker at the
+        // third restart and park the card on a cause card before the budget
+        // is spent; that path is the cause breaker's, not this test's.
+        string[] adoptionFailures =
+        [
+            "worker process is gone",
+            "daemon stopped during workspace preparation",
+            "worker identity file names another process",
+            "worker exited without writing a result",
+        ];
+        var last = AttemptAuthorityService.ReviewInfrastructureRetryBudget + 1;
+        for (var attemptNumber = 1; attemptNumber <= last; attemptNumber++)
+        {
+            var claim = await reviewClient.ClaimReviewAsync(
+                new Contract.ReviewClaimRequest(reviewRunnerId, reviewInstance, 120),
+                CancellationToken.None);
+            Assert.Equal("claimed", claim.Status);
+            var lostAt = now;
+            var report = await reviewClient.ReportReviewAsync(
+                claim.Attempt!.AttemptId,
+                InfrastructureReport(
+                    claim, reviewRunnerId, reviewInstance, $"review-restart-{attemptNumber}",
+                    "ExecutorRestarted",
+                    $"The replacement daemon could not adopt the persisted review process: "
+                    + $"{adoptionFailures[attemptNumber - 1]}. Lost work extent: 1 of 5 review commands "
+                    + "completed (12 command-seconds; steps: verify-1)."),
+                CancellationToken.None);
+
+            if (attemptNumber == 1)
+            {
+                Assert.True(report.RetryScheduled);
+                var activity = authority.ReadBoardAuthoritySnapshot().Reviews[TaskKey];
+                var queue = TaskLiveStatusProjection.ReviewQueueFor(true, activity, null, null, null, now)!;
+                Assert.Equal(TaskLiveQueueStates.RetryScheduled, queue.State);
+                Assert.Equal(TaskLiveReviewLossCauses.HostRestarted, queue.Lost!.Cause);
+                Assert.Equal("review-host", queue.Lost.HostId);
+                Assert.Equal(reviewRunnerId, queue.Lost.ExecutorId);
+                Assert.Equal(lostAt, queue.Lost.At);
+                Assert.Equal(1, queue.Retry!.Number);
+                Assert.Equal(AttemptAuthorityService.ReviewInfrastructureRetryBudget, queue.Retry.Budget);
+                Assert.Equal(lostAt.Add(AttemptAuthorityService.ReviewInfrastructureRetryBackoff[0]), queue.Retry.DueAt);
+                Assert.StartsWith("Review lost: review host restarted (review-host, ", queue.Reason);
+                Assert.EndsWith(
+                    $"Automatic retry 1 of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} at "
+                    + $"{queue.Retry.DueAt:yyyy-MM-dd HH:mm:ss}Z.",
+                    queue.Reason);
+            }
+
+            if (attemptNumber < last)
+            {
+                now = now.Add(AttemptAuthorityService.ReviewInfrastructureRetryBackoff[^1])
+                          .Add(TimeSpan.FromSeconds(1));
+                scheduler.RunOnce();
+            }
+        }
+
+        var status = await File.ReadAllTextAsync(
+            Path.Combine(_watchPath, TaskStates.Escalated, TaskKey, "status.md"));
+        var reason = status
+            .Split('\n')
+            .First(line => line.StartsWith("- Reason: ", StringComparison.Ordinal));
+        Assert.Contains($"The review was lost to {last} review host restarts: review-host ", reason);
+        Assert.Contains(
+            $"The automatic retry budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} is spent",
+            reason);
+        Assert.DoesNotContain("cannot be materialized", status, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"- Category: {HumanReviewEscalationCategories.Environmental}", status);
+        Assert.Contains("Find out why the review host restarted", status);
+    }
+
+    /// <summary>
+    /// The report endpoint checks lease expiry against the wall clock, so a
+    /// fake authority clock in these tests starts at it.
+    /// </summary>
+    private static DateTime WallClockNow() => DateTime.UtcNow;
 
     private static int CountLines(string text, string prefix) => text
         .Split('\n')

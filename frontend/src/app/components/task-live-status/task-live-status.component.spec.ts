@@ -195,6 +195,92 @@ describe('TaskLiveStatusComponent', () => {
     expect(root.textContent).not.toContain('Waiting for review slot');
   });
 
+  // AGT-3690 (S5-F14): a review host killed mid-review. The CURRENT line names
+  // the restart, the host (as a link to its detail) and the automatic retry.
+  it('names a review host restart, links the host, and states the next automatic retry', () => {
+    const lostAt = '2026-11-10T01:27:16Z';
+    const dueAt = '2026-11-10T01:28:16Z';
+    const clock = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    fixture.componentRef.setInput('task', task({
+      liveStatus: {
+        attempt: 1,
+        activeStep: null,
+        nextSteps: [],
+        queue: {
+          kind: 'review',
+          state: 'retry-scheduled',
+          outcome: 'infrastructureFailure',
+          reason: 'Review lost: review host restarted (lab-review-host, 2026-11-10 01:27:16Z). Automatic retry 1 of 3 at 2026-11-10 01:28:16Z.',
+          lost: { cause: 'host-restarted', classification: 'ExecutorRestarted', hostId: 'lab-review-host',
+            executorId: 'first-run-review', at: lostAt },
+          retry: { number: 1, budget: 3, dueAt },
+        },
+        latestEventAt: new Date().toISOString(),
+      },
+    }));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    expect(root.dataset['liveTone']).toBe('waiting');
+    const headline = root.querySelector('[data-testid="task-live-review-loss"]') as HTMLElement;
+    expect(headline.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      `Review lost: review host restarted (lab-review-host, ${clock(lostAt)}). Automatic retry 1 of 3 at ${clock(dueAt)}.`);
+    const link = root.querySelector('[data-testid="task-live-host-link"]') as HTMLAnchorElement;
+    expect(link.textContent).toBe('lab-review-host');
+    expect(link.getAttribute('href')).toBe('#/workspace/settings/environment?host=first-run-review');
+    expect(root.textContent).not.toContain('Review stalled');
+    expect(root.textContent).not.toContain('Waiting for review slot');
+  });
+
+  it('opens the host from the link without opening the card', () => {
+    const previousHash = window.location.hash;
+    fixture.componentRef.setInput('task', task({
+      liveStatus: {
+        attempt: 1,
+        activeStep: null,
+        nextSteps: [],
+        queue: {
+          kind: 'review',
+          state: 'retry-scheduled',
+          lost: { cause: 'host-restarted', hostId: 'lab-review-host', executorId: 'first-run-review',
+            at: new Date().toISOString() },
+          retry: { number: 2, budget: 3, dueAt: new Date(Date.now() + 180_000).toISOString() },
+        },
+      },
+    }));
+    fixture.detectChanges();
+    const parentClick = vi.fn();
+    (fixture.nativeElement as HTMLElement).addEventListener('click', parentClick);
+
+    (fixture.nativeElement.querySelector('[data-testid="task-live-host-link"]') as HTMLAnchorElement).click();
+
+    expect(parentClick).not.toHaveBeenCalled();
+    expect(window.location.hash).toContain('/workspace/settings/environment?host=first-run-review');
+    window.location.hash = previousHash;
+  });
+
+  it('keeps a review host restart without a retry stalled and still names the restart', () => {
+    fixture.componentRef.setInput('task', task({
+      liveStatus: {
+        attempt: 1,
+        activeStep: null,
+        nextSteps: [],
+        queue: {
+          kind: 'review',
+          state: 'stalled',
+          outcome: 'infrastructureFailure',
+          lost: { cause: 'host-restarted', hostId: 'lab-review-host', at: new Date().toISOString() },
+        },
+      },
+    }));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    expect(root.dataset['liveTone']).toBe('stalled');
+    expect(root.querySelector('[data-testid="task-live-review-loss"]')?.textContent)
+      .toContain('No automatic retry is scheduled · operator decision needed');
+  });
+
   it('keeps detail status to compact CURRENT and NEXT rows', () => {
     fixture.componentRef.setInput('variant', 'detail');
     fixture.componentRef.setInput('task', task({

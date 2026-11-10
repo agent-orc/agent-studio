@@ -385,6 +385,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-review-host-restart-invisible-retry">
+          <td>2026-11-10</td>
+          <td><code>AGT-3648</code> S5-F14<br><span class="small">review-host-restart-invisible-retry (fix <code>AGT-3690</code>)</span></td>
+          <td>No CLI crashed. The operator crisis playthrough killed the review host mid-review. The replacement daemon settled the review as <code>ReviewInfra / ExecutorRestarted</code> ("Lost work extent: 1 of 5 review commands completed") and the Task Server scheduled retry 1 of 3, due 60 seconds later. The card head went from "Reviewing on first-run-review" to an operator-decision park; the retry existed only as a timeline row. The host detail said "Restarted · 1 reviews lost" without naming the card, and the next restart of that host overwrote it with "0 reviews lost".</td>
+          <td>The card's queue line was worded from the outcome enum alone and never carried the failure classification, the host, or the retry number. The host kept only its newest restart. A spent budget escalated as "cannot be materialized", which also parked the card on a git-ancestry condition that a host restart never clears.</td>
+          <td>The observed terminal was an Auto Review card with a scheduled retry that read as parked. The queue line now has a <code>retry-scheduled</code> state with the loss (classification, host, time) and the retry (number, budget, due time): "Review lost: review host restarted (lab-review-host, 02:27). Automatic retry 1 of 3 at 02:28." The host name links to the host. The attempt authority keeps 20 restarts per review runner with their lost attempts, and the host detail lists them with links to the cards. A budget spent on restarts escalates as <code>environmental</code> and names every restart.</td>
+        </tr>
         <tr id="case-report-summary-stalled-review">
           <td>2026-11-05</td>
           <td><code>AGT-3496</code>, <code>AGT-3506</code>, <code>AGT-3511</code>, <code>AGT-3512</code>, <code>AGT-3515</code><br><span class="small">report-summary-stalled-review (fix <code>AGT-3547</code>)</span></td>
