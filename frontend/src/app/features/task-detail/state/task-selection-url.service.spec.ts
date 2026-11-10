@@ -159,6 +159,13 @@ describe('TaskSelectionService · stable task URLs', () => {
 
   afterEach(() => {
     try {
+      // Human Review core opens read the full detail acceptance authority.
+      // Tests outside that contract may leave this independent read pending.
+      for (const request of http.match(req => req.url.startsWith('/api/v1/projects/')
+        && req.url.includes('/tasks/')))
+        if (!request.cancelled) request.flush(null, { status: 503, statusText: 'Unavailable' });
+      for (const request of http.match(req => /^\/api\/tasks\/[^/]+$/.test(req.url)))
+        if (!request.cancelled) request.flush(null, { status: 503, statusText: 'Unavailable' });
       http.verify();
     } finally {
       history.replaceState(null, '', '/');
@@ -1136,7 +1143,11 @@ describe('TaskSelectionService · stable task URLs', () => {
 
     expect(selection.selectedCore()).toBeNull();
     expect(selection.detailPreview()).toBeNull();
-    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug')).flush(detail);
+    const detailReads = http.match(req => req.url.startsWith('/api/v1/projects/')
+      && req.url.endsWith('/tasks/human-readable-slug'));
+    const activeDetailReads = detailReads.filter(request => !request.cancelled);
+    expect(activeDetailReads).toHaveLength(1);
+    activeDetailReads[0].flush(detail);
     expect(selection.selected()?.info.id).toBe(info.id);
     expect(selection.detailLoadError()).toBeNull();
   });
