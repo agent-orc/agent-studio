@@ -58,11 +58,10 @@ Every archive is encrypted with AES-256-GCM in 1 MiB authenticated chunks under 
 bash backup-key.sh create
 ```
 
-Escrow it once, apart from the backups and apart from the secret store key copy, for example as its own password manager entry:
+Escrow it once, apart from the backups and apart from the secret store key copy, for example as its own password manager entry. Run the escrow commands as a host account with Docker access: the key belongs to UID 10001, and `print` reads it through a one-shot container of the edge image pinned by `STUDIO_EDGE_DIGEST`. The shell creates the output file before `print` runs, so a failed `print` (no Docker access, or a file that is not base64 of 32 bytes) says so and exits 1; the `|| rm -f` removes the empty file it leaves behind.
 
 ```sh
-bash backup-key.sh print > studio-backup.key   # move this file off the host, then delete it here
-bash backup-key.sh id studio-backup.key         # 16-character fingerprint, shown as the key id on the Operations page
+bash backup-key.sh print > studio-backup.key || rm -f studio-backup.key
 ```
 
 Without the key file the Operations page shows `backup-key-missing` and no backup runs.
@@ -71,16 +70,26 @@ Without the key file the Operations page shows `backup-key-missing` and no backu
 
 The API seals secrets with the key-encryption key at `STUDIO_SECRETS_KEY_FILE`, mounted read-only and named by `Secrets__KeyFile`. `setup.sh` creates it outside the data directory, by default at `keys/secrets.kek` in the stack directory. No backup contains it in any form: a stolen archive together with the backup key still does not open the sealed secrets.
 
-Escrow its own copy apart from the backups and apart from the backup key copy, for example as a second password manager entry:
+Escrow its own copy apart from the backups and apart from the backup key copy, for example as a second password manager entry, with the same Docker access as above:
 
 ```sh
-bash secret-key.sh print "$STUDIO_DATA_DIR" > studio-secrets.kek   # move this file off the host, then delete it here
-bash secret-key.sh id studio-secrets.kek                            # 16-character fingerprint
+bash secret-key.sh print "$STUDIO_DATA_DIR" > studio-secrets.kek || rm -f studio-secrets.kek
 ```
 
 Every backup manifest records the fingerprint of the key that was in place (shown as the secret key id), and `restore-backup.sh` refuses a key copy with a different fingerprint. Sealed secrets carried over from another installation open only with that installation's key; the restore installs the copy at the path in `.env` before the first start. For an existing installation without `STUDIO_SECRETS_KEY_FILE`, follow the key setup instructions in [Studio website](./studio-website.md#update-and-stop) first.
 
 Keep the two escrowed keys in separate places: whoever holds the backup key and an archive can read everything except the sealed secrets; only together with the secret store key do the sealed secrets open.
+
+### Check the escrowed copies
+
+This check is required, not optional: a copy counts as escrowed only when its id matches the Operations page. Before you move the two files off the host, and again on each copy in its safe place, run:
+
+```sh
+bash backup-key.sh id studio-backup.key    # must equal "Backup key id" on the Operations page
+bash secret-key.sh id studio-secrets.kek   # must equal "Secret store key id" on the Operations page
+```
+
+Each command prints a 16-character fingerprint, or fails on a file that is not base64 of 32 bytes, such as an empty one. If an id is missing or differs, the copy is no escrow: delete it and repeat `print`. When both match, move the files off the host and delete them here.
 
 ## Off-host target
 
