@@ -164,12 +164,14 @@ Recommended: the in-app **Create a project** dialog, not hand-editing config fil
    **Working directory**. Under **Default coding agent**, pick the CLI and
    model.
 3. Under **Execution location**, choose the **Execution runner**. The
-   orchestrator does not run coding tasks on its own host: with **Local host**
-   and pickup mode Auto, Project Settings shows "Local coding is disabled on
-   this orchestrator." Coding needs an execution host; attach one with
-   [linux-runner-host.md](./linux-runner-host.md) or
-   [workstation-runner-host.md](./workstation-runner-host.md) and select it
-   here or later in Project Settings.
+   checkout tells the agent where the source is; it does not provide a coding
+   executor. When local coding is disabled, the orchestrator is listed as
+   **Local (board and orchestration only)** and the dialog requires a runner
+   for a project with a checkout. If no host is listed, start one next to the
+   source checkout in **Workspace Settings > Execution Hosts > Set up agent
+   host** ([host walkthrough](./linux-runner-host.md#product-onboarding-from-execution-hosts),
+   or [workstation-runner-host.md](./workstation-runner-host.md)), give it
+   access to the project's Git origin and the Task Server, then select it.
 4. Choose **Create project**. This calls `POST /api/projects` and provisions
    the project's task store immediately - **no backend restart needed.**
 
@@ -186,8 +188,8 @@ That's the whole onboarding step: **register the project, and (if you want the p
 
 Three things describe one project and should be decided in the same sitting. Skipping the third is the trap that broke a real onboarding (a fresh repo escalated its review because the gate ran a Studio-specific build command that did not exist there - AGT-1919 / TE-2):
 
-1. **Registry entry** - the project registration itself (`POST /api/projects`). Without it there is no board column and no runner.
-2. **Working directory** (`rootPath`, and `RepositoryPath` when the repo root differs from the CLI working dir) - where the CLI runs and where Git status/diff resolve. Without it the project has no local runner, and a mode change returns `409` with "has no RootPath configured".
+1. **Registry entry** - the project registration itself (`POST /api/projects`). Without it there is no board column.
+2. **Working directory** (`rootPath`, and `RepositoryPath` when the repo root differs from the CLI working dir) - where the source is and where Git status/diff resolve. A coding runner needs its own checkout or access to the Git origin.
 3. **Build profile / verify gate** - *how this project is verified*. You usually get this for free: the deterministic build/test gate (`post-build-test-gate`) **derives** its verify commands from the repo layout, so there is nothing to configure for a conventional stack:
    - a `.sln`, `.slnx`, or `.csproj` at the **repo root** -> bare `dotnet build` + `dotnet test` (auto-discovery, no hardcoded project path);
    - a `package.json` (repo root or one level down, e.g. `frontend/`) -> `npm run build` / `npm test` / `npm run lint`, but only for the scripts that manifest actually declares;
@@ -235,7 +237,7 @@ Three things describe one project and should be decided in the same sitting. Ski
 Full walkthrough, with screenshots of the current UI: [your-first-task.md](./your-first-task.md). Short version:
 
 1. Commit `.agent-studio/project.yml` and its executable `.agent-studio/prepare` to the target repository. Without a definition or derivable build commands, Project Settings shows "No verify commands defined" and Studio refuses to merge the delivery.
-2. In Project Settings, on the **Execution location** card, select the execution host and set **Pickup mode** to **Auto** ("Ready tasks are offered automatically."). **Manual** admits only explicit starts; **Paused** holds pickup and keeps the location.
+2. In Project Settings, on the **Execution location** card, select a connected runner host with a checkout of the source and set **Pickup mode** to **Auto** ("Ready tasks are offered automatically."). **Manual** admits only explicit starts; **Paused** holds pickup and keeps the location. Execution location and pickup mode are separate settings; a local path on the orchestrator alone cannot run coding tasks when local coding is disabled.
 3. Choose **Add task**, write a small read-then-write prompt (the "Project overview" pattern in that doc), and queue it in **Ready**.
 4. Watch the card move **Ready -> In Progress -> Post Processing -> Human review**. The Activity Log streams the CLI's tool calls live; the detail panel shows a live `git diff` once the agent starts writing.
 5. Open the card in **Human review**, read the **Result** tab, and choose **Accept**. The card moves to **Accepted**.
@@ -254,7 +256,7 @@ Scripting task creation instead of clicking through the dialog: the Task API ski
 | `claude` / `gemini` command is missing or broken on Windows after an interrupted npm update | Half-completed npm install left orphan shim files or a stub binary | `bash tools/check-cli-shims.sh` - self-heals and re-verifies with `claude --version`. |
 | Port 5030 / 4010 (or 5031 / 4011) already in use | A previous `dotnet run` or `ng serve` is still listening | `./api.sh stop` (sweeps the port owner and this checkout's backend processes, not just the tracked PID); for the frontend, stop the other `ng serve` or pass `--port <n>`. |
 | A pickup mode change returns `409` "has no RootPath configured" or `404` "Unknown project" | The project has no working directory, so no local runner exists, or the name is wrong | Set **Working directory** in Project Settings, or use the exact project name. Full detail: [troubleshooting.md](./troubleshooting.md#a-pickup-mode-change-is-refused). |
-| Ready tasks wait and the Execution location card says "Local coding is disabled on this orchestrator" | The project runs on **Local host**; the orchestrator does not run coding tasks itself | Select an execution host in Project Settings > Execution location. |
+| Ready tasks wait and the Execution location card says "Local coding is disabled on this orchestrator" | The project runs on **Local (board and orchestration only)**; the orchestrator does not run coding tasks itself | Select an execution host in Project Settings > Execution location. |
 
 For anything not on this short list, the full FAQ is [troubleshooting.md](./troubleshooting.md), and CLI-specific quirks (Codex's Windows sandbox setting, Copilot's auth, Gemini's stdout buffering) are in [onboard-an-agent-cli.md](./onboard-an-agent-cli.md).
 

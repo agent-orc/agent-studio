@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { signal, provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { of } from 'rxjs';
+import { HttpClient } from '@angular/common/http';
 import { OnboardProjectDialogComponent } from './onboard-project-dialog.component';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 import { TaskService } from '../../../../services/task.service';
@@ -13,13 +14,13 @@ import type { CreateRegistryProjectRequest } from '../../../../models/task.model
 describe('OnboardProjectDialogComponent', () => {
   async function setup() {
     let submitted: CreateRegistryProjectRequest | undefined;
-    // Mirrors RemoteHostsService.reload(): it reads and replaces its own host list.
-    const hosts = signal<{ id: string }[]>([]);
-    const ensureLoaded = vi.fn(() => hosts.set(hosts().map(host => ({ ...host }))));
     const manager = {
       onboardProjectOpen: signal(false), onboardWorkspaceId: signal<string | null>(null),
       closeProjectOnboard: vi.fn(), refreshAfterProjectCreate: vi.fn(),
     };
+    const hosts = signal([]);
+    const ensureLoaded = vi.fn(() => hosts.set([...hosts()]));
+    const getCapability = vi.fn(() => of({ localCodingAdmitted: true }));
     await TestBed.configureTestingModule({
       imports: [OnboardProjectDialogComponent],
       providers: [
@@ -35,16 +36,21 @@ describe('OnboardProjectDialogComponent', () => {
         { provide: NotificationService, useValue: { success: vi.fn(), error: vi.fn() } },
         { provide: CliCatalogStore, useValue: { ensure: () => of(null), modelsFor: () => [] } },
         { provide: RemoteHostsService, useValue: { ensureLoaded, hosts } },
+        { provide: HttpClient, useValue: { get: getCapability } },
       ],
     }).overrideComponent(OnboardProjectDialogComponent, { set: { template: '' } }).compileComponents();
-    const component = TestBed.createComponent(OnboardProjectDialogComponent).componentInstance;
+    const fixture = TestBed.createComponent(OnboardProjectDialogComponent);
+    const component = fixture.componentInstance;
     component.registryWorkspaces.set([{
       id: 'ws-default', displayName: 'Default', projects: [],
     } as never]);
     component.workspaceId.set('ws-default');
     component.displayName.set('Fresh Site');
     component.shortCode.set('FS');
-    return { component, manager, ensureLoaded, submitted: () => submitted };
+    component.executionCapabilityLoaded.set(true);
+    component.localCodingAdmitted.set(true);
+    component.executionRunner.set('local');
+    return { component, fixture, manager, hosts, ensureLoaded, getCapability, submitted: () => submitted };
   }
 
   it('submits an existing repository without provisioning', async () => {
@@ -76,11 +82,28 @@ describe('OnboardProjectDialogComponent', () => {
     expect(submitted()?.repositoryUrl).toBeUndefined();
   });
 
-  it('loads the host registry once when the dialog opens', async () => {
-    const { manager, ensureLoaded } = await setup();
+  it('requires a runner for a checkout when local coding is disabled', async () => {
+    const { component, submitted } = await setup();
+    component.repositoryPath.set('/work/fresh-site');
+    component.localCodingAdmitted.set(false);
+    component.executionRunner.set('local');
+    expect(component.codingNeedsRunner()).toBe(true);
+    expect(component.canSubmit()).toBe(false);
+    component.onSubmit();
+    expect(submitted()).toBeUndefined();
+    component.executionRunner.set('agent-runner-01');
+    expect(component.canSubmit()).toBe(true);
+  });
+
+  it('loads execution capability once when the host registry updates', async () => {
+    const { fixture, manager, hosts, ensureLoaded, getCapability } = await setup();
+    fixture.detectChanges();
     manager.onboardWorkspaceId.set('ws-default');
     manager.onboardProjectOpen.set(true);
-    for (let pass = 0; pass < 5; pass++) TestBed.tick();
+    await fixture.whenStable();
+    hosts.set([...hosts()]);
+    await fixture.whenStable();
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
+    expect(getCapability).toHaveBeenCalledTimes(1);
   });
 });

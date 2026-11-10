@@ -41,13 +41,20 @@ fresh host probes; **Refresh** reads them again.
    ([github-app.md](./github-app.md)). Otherwise choose the **Access method**
    (**Generated deploy key** or **GitHub token**), then **Configure access on
    host** and **Verify read and write**. Verification fetches and pushes a
-   temporary ref.
+   temporary ref from a fresh temporary repository that holds only the
+   selected credential. For a project without a checkout, it also clones the
+   registered URL into backend-managed storage and records that checkout on
+   the project.
 4. **First project**: **Create project** opens the dialog in step 3 of this
    guide. Then register the credential-free **Repository clone URL** and
    **Integration branch** with **Register repository**.
 5. **Execution host**: verified when a host's heartbeat reaches the Task
    Server. In the one-box stack, `distributed-runner` (coding) and
-   `distributed-review-runner` (review) are already running.
+   `distributed-review-runner` (review) are already running. Elsewhere, start
+   a runner next to the source checkout in **Workspace Settings > Execution
+   Hosts > Set up agent host**
+   ([host walkthrough](./linux-runner-host.md#product-onboarding-from-execution-hosts));
+   it needs access to the project's Git origin and the Task Server.
 6. **Proof run**: covered in step 6 of this guide.
 
 ## 3. Create the project
@@ -61,14 +68,19 @@ row in the Explorer (tooltip "Create project in this workspace"). The
 - **Identity**: workspace, **Display name**, **Short code** (2 to 6 uppercase
   letters or digits, starting with a letter; task keys use it), and colour.
 - **Code location** (optional now): **Repository checkout path**, **Working
-  directory**, and **Repository URL**. For a project that runs on a runner
-  host, the URL is enough; the host resolves its own checkout.
+  directory**, and **Repository URL**. These register where the source is;
+  they do not make the orchestrator a coding host. For a project that runs on
+  a runner host, the URL is enough; the host resolves its own checkout.
 - **Default coding agent**: the CLI and model new tasks use.
 - **Execution location**: the **Execution runner** that runs this project's
   coding tasks. Choose the runner host, `distributed-runner` in the one-box
-  stack. Do not keep **Local host**: the orchestrator does not run coding
-  tasks on its own host, and tasks would wait in **Ready**. Offline and
-  draining runners are listed but cannot be selected.
+  stack; the dialog preselects the first available one. When local coding is
+  disabled, the orchestrator is listed as **Local (board and orchestration
+  only)**, and a project with a checkout cannot be created on it: the dialog
+  says "Local coding is disabled on this orchestrator. Start a runner host
+  next to the source checkout and select it here." and keeps **Create
+  project** disabled. Offline and draining runners are listed but cannot be
+  selected.
 
 ![Create a project dialog with Identity, Code location, Default coding agent, and Execution location, where distributed-runner is selected as the execution runner](./images/your-first-task/create-project-dialog.png)
 
@@ -139,10 +151,11 @@ two independent controls:
 - **Execution location**: the host, the same choice as in the dialog. Change
   it here if the project still says **Local**.
 
-If the project still runs on **Local** with **Auto**, the card warns "Local
-coding is disabled on this orchestrator. Ready coding tasks will wait until
-this project is routed to a remote runner." Select the runner host to clear
-it. **Try it** (**Start probe**) checks the code channel, develop branch,
+If the project still runs on **Local**, the card warns "Local coding is
+disabled on this orchestrator. Coding tasks need a runner host with a source
+checkout before they can start." Ready cards then show an
+`execution-placement` pickup hold whose **Open Project Settings** button
+leads to this card. Select the runner host to clear it. **Try it** (**Start probe**) checks the code channel, develop branch,
 toolchain, and a no-op run on the selected host.
 
 ![Execution location card with Pickup mode Auto selected and the Local coding is disabled warning for a project still on the local host](./images/your-first-task/execution-location-auto.png)

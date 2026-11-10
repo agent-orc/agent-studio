@@ -73,7 +73,7 @@
           <span class="opd__step" aria-hidden="true">4</span>
           <div>
             <h3 id="onboard-project-execution-title" class="opd__section-title">Execution location</h3>
-            <p class="opd__section-desc">Choose where this project's coding tasks run. You can change it later in Project Settings.</p>
+            <p class="opd__section-desc">Coding tasks need a runner host with a source checkout. Choose one before creating the first coding card.</p>
           </div>
         </header>
         <label class="opd__field">
@@ -83,15 +83,21 @@
                   [disabled]="submitting()"
                   [ngModel]="executionRunner()"
                   (ngModelChange)="executionRunner.set($event)">
-            <option value="local">Local host</option>
+            <option value="" disabled>Select an execution runner</option>
+            <option value="local">{{ localCodingAdmitted() ? 'Local host' : 'Local (board and orchestration only)' }}</option>
             @for (host of hostRegistry.hosts(); track host.id) {
-              @if (host.id !== 'local' && host.status !== 'retired') {
+              @if (codingRunner(host) && host.status !== 'retired') {
                 <option [value]="host.id" [disabled]="runnerUnavailable(host)">
                   {{ runnerLabel(host) }}
                 </option>
               }
             }
           </select>
+          @if (codingNeedsRunner() && executionRunner() === 'local') {
+            <span class="opd__hint" role="alert" data-testid="onboard-project-runner-required">Local coding is disabled on this orchestrator. Start a runner host next to the source checkout and select it here.</span>
+          } @else if (codingNeedsRunner() && !executionRunner()) {
+            <span class="opd__hint" role="alert" data-testid="onboard-project-runner-required">Start a runner host next to the source checkout, then select it here before creating this project.</span>
+          }
           <span class="opd__hint">Offline and draining runners stay visible for context but cannot be selected.</span>
         </label>
       </section>

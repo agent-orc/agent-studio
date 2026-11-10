@@ -64,7 +64,6 @@ function mount(host: RemoteHost, expanded = true, expandSections = true) {
   const fixture = TestBed.createComponent(RemoteHostCardComponent);
   fixture.componentRef.setInput('host', host);
   fixture.componentRef.setInput('roles', [host]);
-  fixture.componentRef.setInput('roleActiveSlots', { [host.id]: 0 });
   fixture.componentRef.setInput('now', Date.parse('2026-07-10T12:00:00Z'));
   fixture.componentRef.setInput('expanded', expanded);
   fixture.detectChanges();
@@ -86,6 +85,31 @@ describe('RemoteHostCardComponent', () => {
     const slots = fixture.nativeElement.querySelector('[data-testid="remote-host-machine-slots"]');
     expect(slots?.textContent).toContain('Not claiming: load 5.5 per core above 4.0 for 12 min');
     expect(slots?.querySelector('[data-testid="remote-host-claim-load-gate"]')).toBeTruthy();
+  });
+
+  it('reads the slot count from host telemetry so Slots, Capacity and Host work agree', () => {
+    const coding: RemoteHost = { ...HOST, id: 'coding', serviceRole: 'coding', roleMaxParallelism: 6,
+      telemetry: { ...HOST.telemetry!, points: [{ ...HOST.telemetry!.points[0], activeSlots: 4 }] } };
+    const review: RemoteHost = { ...HOST, id: 'review', serviceRole: 'review', roleMaxParallelism: 2,
+      telemetry: { ...HOST.telemetry!, points: [{ ...HOST.telemetry!.points[0], activeSlots: 1 }] } };
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({ imports: [RemoteHostCardComponent], providers: [provideZonelessChangeDetection()] });
+    const fixture = TestBed.createComponent(RemoteHostCardComponent);
+    fixture.componentRef.setInput('host', coding);
+    fixture.componentRef.setInput('roles', [coding, review]);
+    fixture.componentRef.setInput('boardActiveSlots', 0);
+    fixture.componentRef.setInput('now', Date.parse('2026-07-10T12:00:00Z'));
+    fixture.detectChanges();
+    const el: HTMLElement = fixture.nativeElement;
+    expect(el.querySelector('[data-testid="remote-host-machine-slots"]')?.textContent).toContain('5 / 8');
+    expect(el.querySelector('[data-testid="remote-host-detail-toggle-capacity"]')?.textContent).toContain('5 / 8 role slots active');
+    expect(el.querySelector('[data-testid="remote-host-detail-toggle-work"]')?.textContent).toContain('5 active');
+    expect(fixture.componentInstance.runSlotsDiverge()).toBe(true);
+
+    fixture.componentRef.setInput('now', Date.parse('2026-07-10T12:30:00Z'));
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="remote-host-machine-slots"]')?.textContent).toContain('5 / 8 · stale');
+    expect(el.querySelector('[data-testid="remote-host-detail-toggle-work"]')?.textContent).toContain('5 active · stale');
   });
 
   it('keeps retired actions in the selected detail and emits delete', () => {
@@ -117,13 +141,13 @@ describe('RemoteHostCardComponent', () => {
       .toContain('CPU quota 4 cores · 2 slot ceiling · throttled 34%');
     expect(el.querySelector('[data-testid="remote-host-review-plane-alarm"]')?.textContent)
       .toContain('Raise the review role quota.');
-    expect(el.querySelector('[data-testid="remote-host-machine-slots"]')?.textContent).toContain('0 / 2');
+    expect(el.querySelector('[data-testid="remote-host-machine-slots"]')?.textContent).toContain('1 / 2');
   });
 
   it('shows compact facts before the detail disclosures', () => {
     const el: HTMLElement = mount(HOST, false).nativeElement;
     expect(el.querySelector('[data-testid="remote-host-detail-row"]')).toBeTruthy();
-    expect(el.querySelector('[data-testid="remote-host-machine-slots"]')?.textContent).toContain('0 / 20');
+    expect(el.querySelector('[data-testid="remote-host-machine-slots"]')?.textContent).toContain('1 / 20');
     expect(el.querySelector('[data-testid="remote-host-detail-toggle-load"]')?.textContent).toContain('54%');
     expect(el.querySelector('[data-testid="remote-host-release"]')?.textContent)
       .toContain('release-20260811.1');

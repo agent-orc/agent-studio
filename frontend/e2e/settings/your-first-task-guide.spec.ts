@@ -113,13 +113,24 @@ test.describe('your first task guide', () => {
     await page.getByTestId('onboard-project-repository-path').fill(repository);
     await expect(dialog).toContainText('Execution location');
     const runner = page.getByTestId('onboard-project-runner');
-    await expect(runner.locator('option', { hasText: 'Local host' })).toHaveCount(1);
+    // Local coding is disabled on this stack: a checkout needs a runner host.
+    await expect(runner.locator('option[value="local"]')).toHaveText('Local (board and orchestration only)');
+    await runner.selectOption('local');
+    await expect(dialog.getByTestId('onboard-project-runner-required')).toContainText('Local coding is disabled');
+    await expect(page.getByTestId('onboard-project-submit')).toBeDisabled();
     await runner.selectOption(RUNNER);
+    await expect(dialog.getByTestId('onboard-project-runner-required')).toHaveCount(0);
     await dialog.getByRole('heading', { name: 'Execution location' }).scrollIntoViewIfNeeded();
     await capture(page, 'create-project-dialog');
-    // The isolated backend knows no runner principal, so it stores the
-    // project on the local host; the guide's choice is captured above.
-    await runner.selectOption('local');
+    // The isolated backend knows no runner principal, so the request drops the
+    // stubbed runner and the project lands on the local host; the guide's
+    // choice is captured above.
+    await page.route('**/api/v1/projects', route => {
+      const request = route.request();
+      if (request.method() !== 'POST') return route.continue();
+      const { executionRunner: _runner, ...body } = request.postDataJSON() as Record<string, unknown>;
+      return route.continue({ postData: JSON.stringify(body) });
+    });
     const createdProject = page.waitForResponse(response => response.request().method() === 'POST'
       && new URL(response.url()).pathname === '/api/v1/projects', { timeout: 30_000 });
     await page.getByTestId('onboard-project-submit').click();
@@ -141,8 +152,9 @@ test.describe('your first task guide', () => {
     await card.getByTestId('project-pickup-mode-auto').click();
     await expect(card.getByTestId('project-pickup-mode-auto')).toHaveAttribute('aria-pressed', 'true');
     await expect(card).toContainText('Ready tasks are offered automatically.');
-    // Auto on the orchestrator's own host is refused in production builds.
-    await expect(card.getByTestId('local-coding-disabled-warning')).toContainText('Local coding is disabled');
+    // The orchestrator's own host does not run coding in production builds.
+    await expect(card.getByTestId('local-coding-disabled-warning')).toContainText(
+      'Coding tasks need a runner host with a source checkout');
     await card.scrollIntoViewIfNeeded();
     await capture(page, 'execution-location-auto', card);
 

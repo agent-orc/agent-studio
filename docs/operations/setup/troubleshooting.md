@@ -62,17 +62,21 @@ What to check:
 
 ## "Ready tasks wait: Local coding is disabled on this orchestrator"
 
-Symptom: tasks stay in **Ready** with pickup mode **Auto**, and the
-**Execution location** card in Project Settings says "Local coding is disabled
-on this orchestrator. Ready coding tasks will wait until this project is
-routed to a remote runner."
+Symptom: tasks stay in **Ready**, each shows an `execution-placement` pickup
+hold, and the **Execution location** card in Project Settings says "Local
+coding is disabled on this orchestrator. Coding tasks need a runner host with
+a source checkout before they can start."
 
-Cause: the project's execution location is **Local host**. The orchestrator
-does not run coding tasks on its own host; coding runs on an execution host.
+Cause: the project's execution location is **Local (board and orchestration
+only)**. The orchestrator does not run coding tasks on its own host; coding
+runs on an execution host.
 
-Fix: select an execution host in the card's **Execution location** list (in
-the Docker one-box, `distributed-runner`). If none is listed, attach one, see
-[linux-runner-host.md](./linux-runner-host.md).
+Fix: choose **Open Project Settings** on the hold, or open Project Settings,
+and select an execution host in the card's **Execution location** list (in the
+Docker one-box, `distributed-runner`). If none is listed, start one next to
+the source checkout in **Workspace Settings > Execution Hosts > Set up agent
+host**, see
+[linux-runner-host.md](./linux-runner-host.md#product-onboarding-from-execution-hosts).
 
 ## "Counters look wrong for a project"
 

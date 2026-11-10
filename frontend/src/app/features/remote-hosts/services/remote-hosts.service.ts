@@ -19,6 +19,7 @@ import type {
   HostReleaseDriftSnapshot,
   StableReleaseIdentity,
 } from '../models/host-release-drift';
+import type { ClaimGateEvent } from '../models/claim-load-gate';
 import { seedRemoteHosts } from './remote-hosts.seed';
 import { ProviderAuthStatusService } from './provider-auth-status.service';
 import { NotificationService } from '../../../services/notification.service';
@@ -99,6 +100,19 @@ export class RemoteHostsService {
     });
   }
   readonly runnerInfrastructureFailures = signal<readonly RunnerInfrastructureFailure[]>([]);
+  /** Claim gate stops and resumes, newest first; loaded when History opens. */
+  readonly claimGateEvents = signal<readonly ClaimGateEvent[]>([]);
+
+  loadClaimGateEvents(): void {
+    if (!this.http) return;
+    this.http.get<ClaimGateEvent[]>('/api/v1/management/claim-gate-events?days=14').subscribe({
+      next: events => this.claimGateEvents.set(events ?? []),
+      error: error => {
+        this.claimGateEvents.set([]);
+        this.log('claim-gate-events-hydrate-failed', { message: error?.message ?? 'unknown' });
+      },
+    });
+  }
 
   private static readonly FRESH_CLIENT_MS = 90_000;
   private static readonly DEGRADED_CLIENT_MS = 5 * 60_000;
