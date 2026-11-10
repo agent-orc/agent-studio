@@ -211,11 +211,16 @@ so unrelated commits do not invalidate an unchanged Dossier.
 | Stop | `archived / archive` | Explicit confirmation records why no feature follows. |
 
 The feature action creates the Ready card and confirms the Dossier receipt in
-one owner action. If confirmation fails, Studio removes the newly created card
-and keeps the Dossier available for retry. If removal also fails, the owner sees
-the card key and is directed to an operator for cleanup before retrying. Studio
-uses its own author and committer identity for the Dossier commit; the service
-user does not need a global Git identity for this write.
+one owner action. The confirm request names the card by its job id
+(`spawnedTaskIds`). If the decision cannot be recorded, the server removes that
+card while no run has picked it up and reports `removedTaskIds`; a card it could
+not remove is reported in `retainedTaskIds` and named in the message, so the
+owner removes it before retrying. A draft card restored without its job id is
+looked up first; a card that cannot be found is never removed by its display
+key. A confirm request that gets no answer keeps the card for the retry, which
+links it under the same operation id. Dossier commits use the configured
+`Git:StudioCommitIdentity` as author and committer, so the service user does
+not need a Git identity of its own.
 
 The closing invariant mirrors the intent of the
 [planning-task spawn contract](planning-task-lifecycle.md) without pretending a
