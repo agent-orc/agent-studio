@@ -278,9 +278,8 @@ export class TaskDetailComponent implements OnDestroy {
    * yet. Gates the detail-header's git-dependent acceptance primary so it cannot
    * fire (or show a guessed "Merge into Develop" label) before the branch/merge
    * truth is known (AGT-2006). Flips to `false` atomically with `landedState`
-   * resolving, so the button switches straight to its true label without a
-   * wrong -> right flicker. Only an in-flight request counts, since a hidden git
-   * pane defers it (AGT-3625); the wait is bounded by `PROVENANCE_WAIT_MS` (AGT-3621).
+   * resolving, without a wrong -> right flicker. Only an in-flight request counts
+   * (a hidden git pane defers it, AGT-3625); `PROVENANCE_WAIT_MS` bounds it (AGT-3621).
    */
   readonly gitInfoLoading = computed(() => this.git.provenanceLoading() && !this.git.provenanceLoaded());
   readonly commitActionsAvailable = computed(() => {
