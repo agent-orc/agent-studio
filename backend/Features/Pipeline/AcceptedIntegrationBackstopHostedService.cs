@@ -76,7 +76,9 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
     {
         // AGT-2480: the automation scanner excludes fixture cards. Keep the
         // acceptedJobs name from AGT-2428 because it describes the recovery set.
-        var acceptedJobs = _scanner.ScanAllAutomationJobsWithArchive()
+        var scanned = _scanner.ScanAllAutomationJobsWithArchive();
+        ClearPromotionPhases(scanned);
+        var acceptedJobs = scanned
             .Where(AcceptedIntegrationBackstopPolicy.IsRecoveryCandidate)
             .OrderBy(job => job.ProjectName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(DeliveryOrder)
@@ -372,6 +374,34 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
         }
     }
 
+    /// <summary>
+    /// AGT-3621: drops the integration phase a delivery-chain promotion carried
+    /// into Human Review, so the card waits for a person instead of reading as an
+    /// interrupted acceptance.
+    /// </summary>
+    private void ClearPromotionPhases(IEnumerable<TaskInfo> jobs)
+    {
+        foreach (var job in jobs.Where(AcceptedIntegrationBackstopPolicy.CarriesPromotionPhase))
+        {
+            try
+            {
+                _mutations.SetJobPhase(job.FolderPath, null);
+                _logger.LogInformation(
+                    "accepted-integration-backstop cleared promotion phase project={Project} job={JobId}",
+                    job.ProjectName,
+                    job.Id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "accepted-integration-backstop promotion phase clear failed project={Project} job={JobId}",
+                    job.ProjectName,
+                    job.Id);
+            }
+        }
+    }
+
     private void ClearPendingTag(TaskInfo job)
     {
         var tags = (job.Tags ?? [])
@@ -418,7 +448,7 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
                 job.WatchPath,
                 CancellationToken.None,
                 cause: TimelineActors.System,
-                reason: "Recovered transactional acceptance after integration succeeded.",
+                reason: "Completed the interrupted operator acceptance after integration succeeded.",
                 expectedSourceState: TaskStates.HumanReview,
                 suppressIntegrationTrigger: true,
                 transitionCause: LaneChangeCauses.Accepted,
@@ -443,7 +473,7 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
             completed.FolderPath,
             TimelineEventKinds.IntegrationSucceeded,
             TimelineActors.System,
-            "Recovered acceptance integration succeeded; task moved to Completed.");
+            "The interrupted operator acceptance integrated; task moved to Completed.");
     }
 
     private void ReturnTransactionalAcceptToReview(

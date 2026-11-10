@@ -74,7 +74,7 @@ function taskDetail() {
   };
 }
 
-async function installRoutes(page: Page): Promise<void> {
+async function installRoutes(page: Page, detail = taskDetail()): Promise<void> {
   const jobId = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const step = pipelineStep();
 
@@ -95,6 +95,11 @@ async function installRoutes(page: Page): Promise<void> {
       user: null,
     }),
   }));
+  await page.route('**/api/usage/cockpit**', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ clis: [], cost: null }),
+  }));
   await page.route('**/api/v1/studio/runner/status**', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -113,6 +118,16 @@ async function installRoutes(page: Page): Promise<void> {
     status: 200,
     contentType: 'application/json',
     body: '[]',
+  }));
+  await page.route(new RegExp(`/api/tasks/${jobId}/session-events(\\?|$)`), route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ events: [], sessionChain: [], currentSessionId: null }),
+  }));
+  await page.route(new RegExp(`/api/tasks/${jobId}/runs(\\?|$)`), route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ runs: [] }),
   }));
   await page.route('**/api/v1/studio/board**', route => route.fulfill({
     status: 200,
@@ -196,11 +211,65 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${jobId}(\\?|$)`), route => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify(taskDetail()),
+    body: JSON.stringify(detail),
   }));
 }
 
 test.describe('Task-header live status', () => {
+  test('Manual remote Run now explains the claim gate and switches pickup inline', async ({ page }) => {
+    const detail = taskDetail();
+    const remoteDetail = {
+      ...detail,
+      info: {
+        ...detail.info,
+        liveStatus: {
+          ...detail.info.liveStatus,
+          queue: { kind: 'runner', position: 1, reasonCode: 'manual-mode',
+            reason: 'Auto-pickup is off; switch the project to auto to let its runner claim the card.' },
+        },
+        executionLocation: {
+          state: 'no-active-execution', executionKind: 'none',
+          configuredRunnerId: 'first-run-coding', hostDisplayName: 'first-run-coding',
+        },
+      },
+    };
+    let startCalls = 0;
+    let modeCalls = 0;
+    await installRoutes(page, remoteDetail);
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}/start(\\?|$)`), route => {
+      startCalls++;
+      return route.fulfill({ status: 202, contentType: 'application/json',
+        body: JSON.stringify({ status: 'queued', queued: { reason: 'remote-execution' } }) });
+    });
+    await page.route(`**/api/runner/${PROJECT}/mode`, route => {
+      modeCalls++;
+      expect(route.request().postDataJSON()).toEqual({ mode: 'auto-continuous' });
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+
+    await page.getByTestId('studio-triage-action-run-now').click();
+    await expect.poll(() => startCalls).toBe(1);
+    const status = page.getByTestId('studio-task').getByTestId('task-live-status');
+    await expect(status).toHaveAttribute('data-wait-reason', 'manual-mode');
+    await expect(status.getByTestId('task-live-current'))
+      .toContainText('Pickup is Manual: switch to Auto to let first-run-coding claim it');
+    await expect(status.getByTestId('task-live-current')).not.toContainText('Waiting for runner slot');
+
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.screenshot({ path: path.join(RESULTS_DIR, `agt-3619-manual-remote-${theme}.png`) });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(status.getByTestId('task-live-switch-auto')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    await page.screenshot({ path: path.join(RESULTS_DIR, 'agt-3619-manual-remote-390px.png') });
+
+    await status.getByTestId('task-live-switch-auto').click();
+    await expect.poll(() => modeCalls).toBe(1);
+  });
+
   test('queued CURRENT and NEXT rows share the banner, tab, and pane grid', async ({ page }) => {
     await page.addInitScript(() => {
       localStorage.setItem(
@@ -218,7 +287,7 @@ test.describe('Task-header live status', () => {
     await expect(banner).toBeAttached();
     await expect(status).toHaveClass(/task-live--detail/);
     await expect(status.getByTestId('task-live-current'))
-      .toContainText('Waiting for runner slot · position 3');
+      .toContainText('Queued for runner · position 3');
     await expect(status.getByTestId('task-live-next')).toContainText('Loop check');
     await expect(status.getByTestId('task-live-detail-inline')).toContainText('Last activity');
     await expect(taskSurface.getByTestId('prompt-tab-overview')).toBeVisible();

@@ -45,7 +45,7 @@ export class BoardMutationsService {
    * so a stale `/api/tasks/grouped` response can't repaint the old lane.
    * On failure, revert the local snapshot and surface the error.
    */
-  moveJob(event: { jobId: string; watchPath: string; targetState: string; targetIndex?: number }): void {
+  moveJob(event: { jobId: string; watchPath: string; targetState: string; targetIndex?: number }, withdrawFromBatch = false): void {
     // Virtual lanes inside the same filesystem state (e.g. the intake
     // sub-lane that splits 2-ready into "Human Ready" and "Orch Intake")
     // map back to the real state for the backend move; the orchestrator
@@ -67,11 +67,14 @@ export class BoardMutationsService {
     }
     const snapshot = this.jobService.applyOptimisticMove(event.jobId, event.watchPath, event.targetState, event.targetIndex);
     this.jobService.beginOptimisticPersist();
-    this.jobService.moveJob(event.jobId, event.targetState, event.watchPath, event.targetIndex).subscribe({
+    this.jobService.moveJob(event.jobId, event.targetState, event.watchPath, event.targetIndex,
+      withdrawFromBatch ? `Operator withdrew the card to move it to ${laneName(event.targetState)}.` : undefined,
+      false, 'revoke', withdrawFromBatch).subscribe({
       next: () => this.jobService.endOptimisticPersist(),
       error: (err) => {
         this.jobService.endOptimisticPersist();
         if (snapshot) this.jobService.revertOptimisticMove(snapshot);
+        if (this.offerBatchWithdrawal(err, () => this.moveJob(event, true), withdrawFromBatch)) return;
         this.jobService.error.set(err.message || 'Failed to move job');
         this.errorDialog.show(err, {
           title: 'Failed to move task',
@@ -197,7 +200,8 @@ export class BoardMutationsService {
    * "changing" flag is cleared by the detail component's effect when
    * the new `state` arrives.
    */
-  changeStateFromDetail(info: TaskInfo, targetState: string, updateSelection = true): void {
+  changeStateFromDetail(info: TaskInfo, targetState: string, updateSelection = true,
+    withdrawFromBatch = false): void {
     if (!targetState || targetState === info.state) return;
     const refusal = decisionMoveRefusal(info, targetState);
     if (refusal) {
@@ -232,7 +236,9 @@ export class BoardMutationsService {
       prevIndex,
       persisted,
     });
-    this.jobService.moveJob(info.id, targetState, info.watchPath).subscribe({
+    this.jobService.moveJob(info.id, targetState, info.watchPath, undefined,
+      withdrawFromBatch ? `Operator withdrew the card to move it to ${laneName(targetState)}.` : undefined,
+      false, 'revoke', withdrawFromBatch).subscribe({
       next: () => {
         this.jobService.endOptimisticPersist();
         persistResolve();
@@ -262,6 +268,8 @@ export class BoardMutationsService {
         persistReject(err);
         this.undo.cancelActive();
         if (snapshot) this.jobService.revertOptimisticMove(snapshot);
+        if (this.offerBatchWithdrawal(err,
+          () => this.changeStateFromDetail(info, targetState, updateSelection, true), withdrawFromBatch)) return;
         this.jobService.error.set(err.message || 'Failed to move job');
         this.errorDialog.show(err, {
           title: 'Failed to move task',
@@ -270,6 +278,19 @@ export class BoardMutationsService {
         });
       },
     });
+  }
+
+  private offerBatchWithdrawal(error: unknown, retry: () => void, alreadyConfirmed: boolean): boolean {
+    const response = error as { status?: number; error?: { error?: string; message?: string } };
+    if (alreadyConfirmed || response?.status !== 409 || response.error?.error !== 'active-batch-member')
+      return false;
+    const message = response.error.message ?? 'This card belongs to an active batch.';
+    void this.confirmDialog.confirm({
+      title: 'Withdraw from batch?', eyebrow: 'Confirm withdrawal', message,
+      detail: 'This will abandon the current batch and return its other members to planning.',
+      confirmLabel: 'Withdraw and move', kind: 'danger',
+    }).then(confirmed => { if (confirmed) retry(); });
+    return true;
   }
 
   // ---------- bulk moves (archive all, group actions) ----------

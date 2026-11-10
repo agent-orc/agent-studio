@@ -342,7 +342,8 @@ public static class RoutePermissionCatalog
         // lease is one per installation; holding it needs a binding that may
         // operate runs in at least one project.
         Add("R", IamPermissions.ProjectRead,
-            "/api/operator/decisions", "/api/operator/decisions/stream", "/api/operator/watcher/lease",
+            "/api/operator/decisions", "/api/operator/decisions/stream", "/api/operator/attention",
+            "/api/operator/watcher/lease",
             "/api/operator/capacity", "/api/operator/backups");
         AddProjectChecked("W", IamPermissions.ProjectRunsOperate,
             "/api/operator/watcher/lease", "/api/operator/watcher/lease/{}", "/api/operator/watcher/lease/{}/heartbeat");
@@ -455,6 +456,7 @@ public static class RoutePermissionCatalog
         Add("POST", IamPermissions.ProjectRunsOperate, "/api/projects/{}/batch-gate/queue-stalls/release");
         Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/failed-tests");
         Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/isolation-evidence");
+        Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/execution/proposal-preview");
 
         // --- Documents -----------------------------------------------------
         Under("W", IamPermissions.ProjectDocsWrite, "/api/projects/{}",
@@ -474,6 +476,7 @@ public static class RoutePermissionCatalog
             "publish/automation", "urls", "urls/**", "ownership-mappings/**", "pipeline-definition/**");
 
         // --- Project reads -------------------------------------------------
+        Add("GET", IamPermissions.WorkspaceRead, "/api/projects/execution-capability");
         Add("GET", IamPermissions.ProjectRead,
             "/api/projects/{}/review-packages",
             "/api/projects/{}/review-packages/formation",

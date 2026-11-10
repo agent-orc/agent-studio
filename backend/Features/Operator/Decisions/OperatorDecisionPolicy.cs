@@ -37,9 +37,13 @@ public static class OperatorDecisionPolicy
     /// every reader of the stream sees it.
     /// </summary>
     public static bool Shows(OperatorDecisionEvent item, OperatorDecisionReader reader)
+        => Shows(item.Type, item.Project, reader);
+
+    /// <summary>The same scope rule for a current fact (the attention list).</summary>
+    public static bool Shows(string type, string? project, OperatorDecisionReader reader)
     {
-        if (reader.Unrestricted || item.Type == OperatorDecisionTypes.WatcherHeartbeat) return true;
-        return item.Project is { } project && reader.AllowsProject(project);
+        if (reader.Unrestricted || type == OperatorDecisionTypes.WatcherHeartbeat) return true;
+        return project is { } name && reader.AllowsProject(name);
     }
 }
 
