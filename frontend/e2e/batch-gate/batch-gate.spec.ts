@@ -121,7 +121,8 @@ for (const width of [1280, 390]) {
     await routeBoard(page, state);
     await page.goto('/?includeFixtures=true');
     await page.getByRole('tab', { name: 'All projects · Board' }).click();
-    if (width === 390) await page.getByRole('button', { name: 'Active 1' }).click();
+    if (width === 390) await page.getByRole('combobox', { name: 'Board lane' })
+      .selectOption({ label: 'Post Processing' });
     const opener = page.getByTestId('batch-lane-indicator').first();
     await opener.click();
     const dialog = page.getByTestId('batch-panel');
