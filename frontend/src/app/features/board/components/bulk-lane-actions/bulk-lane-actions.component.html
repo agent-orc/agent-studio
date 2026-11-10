@@ -1,0 +1,17 @@
+@if (offer(); as offer) {
+  @if (offer.actions.length > 0) {
+    <div class="bulk-actions" role="group" data-testid="bulk-lane-actions"
+         [attr.aria-label]="'Actions for all ' + tasks().length + ' cards'">
+      @for (action of offer.actions; track action.id; let first = $first) {
+        <button type="button" class="bulk-actions__button"
+                [class.bulk-actions__button--primary]="first"
+                [attr.data-testid]="'bulk-action-' + action.id"
+                [attr.aria-busy]="busy() ? 'true' : null"
+                [disabled]="busy() || mutationsBlocked()"
+                (click)="run(action); $event.stopPropagation()">{{ action.label }}</button>
+      }
+    </div>
+  } @else if (showReason()) {
+    <p class="bulk-actions__reason" data-testid="bulk-lane-actions-reason">{{ offer.reason }}</p>
+  }
+}

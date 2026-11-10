@@ -240,7 +240,7 @@
                     <app-project-hub-view
                       [projectName]="tab.projectName" [projectId]="projectHubUrls.projectIdForName(tab.projectName)"
                       [initialSection]="tab.section ?? 'overview'" [wikiTarget]="tab.wikiTarget"
-                      [pipelineStepId]="tab.pipelineStepId"
+                      [pipelineStepId]="tab.pipelineStepId" [settingKey]="tab.settingKey"
                       (openTask)="onOpenTaskFromReel($event)" />
                   }
                 }
@@ -343,9 +343,12 @@
           [watchPaths]="watchPaths()" [availableModels]="availableModels()"
           [cliTypeDraft]="createJobForm.newCliType"
           [routing]="createJobForm.routing()" [routingPending]="createJobForm.routingPending()"
+          [submitting]="createJobForm.submitting()"
+          [defaultsPending]="createJobForm.defaultsPending()"
           [policySuggestion]="createJobForm.policySuggestion()" [modelSelectionExplicit]="createJobForm.modelSelectionExplicit"
           [(newTitle)]="createJobForm.newTitle"
           [(newWatchPath)]="createJobForm.newWatchPath"
+          (watchPathChange)="createJobForm.selectProject($event)"
           [(newModel)]="createJobForm.newModel"
           [(newThinkingLevel)]="createJobForm.newThinkingLevel"
           [(newPrompt)]="createJobForm.newPrompt"
@@ -693,9 +696,12 @@
           [watchPaths]="watchPaths()" [availableModels]="availableModels()"
           [cliTypeDraft]="createJobForm.newCliType"
           [routing]="createJobForm.routing()" [routingPending]="createJobForm.routingPending()"
+          [submitting]="createJobForm.submitting()"
+          [defaultsPending]="createJobForm.defaultsPending()"
           [policySuggestion]="createJobForm.policySuggestion()" [modelSelectionExplicit]="createJobForm.modelSelectionExplicit"
           [(newTitle)]="createJobForm.newTitle"
           [(newWatchPath)]="createJobForm.newWatchPath"
+          (watchPathChange)="createJobForm.selectProject($event)"
           [(newModel)]="createJobForm.newModel"
           [(newThinkingLevel)]="createJobForm.newThinkingLevel"
           [(newPrompt)]="createJobForm.newPrompt"

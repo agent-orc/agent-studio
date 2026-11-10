@@ -358,6 +358,8 @@ Written whenever a task enters `5-human-review` or `5e-escalated`, and deleted w
   "lane": "5-human-review",
   "parkedAt": "2026-07-29T22:07:00Z",
   "reason": "4x ReviewInfra/BaselineUnavailable - parked for an operator decision, no auto rerun",
+  "cause": "escalated",
+  "causeDetail": "review-subject-unmaterialisierbar",
   "lastEvaluation": { "status": "blocked", "at": "2026-08-03T12:00:00Z", "detail": "'task/agt-2220' still does not contain 'develop'." },
   "reportedRecallableAt": null,
   "needsInputFile": "results/needs-input.md",
@@ -375,6 +377,8 @@ Written whenever a task enters `5-human-review` or `5e-escalated`, and deleted w
 ```
 
 `blockerType` is the escalation category, or `operator-decision` for a manual park. `condition.kind` is one of `manual` or `git-ancestor`; `lastEvaluation.status` is one of `blocked`, `recallable`, or `undeterminable`. The recall sweep owns `lastEvaluation` and `reportedRecallableAt`; `TaskInfo.ParkedBlocker` projects the file at read time and adds the lane age. Legacy parks without the file are backfilled from `enteredLaneAt`. A `recallable` blocker is reported, never auto-requeued. See [parked-card recall](../../concepts/parked-card-recall.md).
+
+`cause` and `causeDetail` (AGT-3586) repeat the `details.cause` and `details.causeDetail` of the `lane_changed` row that parked the card, for example `acceptance-integration-failed` with `missing-delivery`. The task detail chooses the park copy from them: who parked the card, whether the latest run caused the park, and which lane button the suggested next step names. Both are absent on markers written before the fields existed; the UI then reads the cause from that ledger row.
 
 `decision` (AGT-2816) is the human half of the park. `questionId` is the park slug and stays an identifier; `question` is the one sentence a person answers and is empty when the parking run stated none. `options` uses the field names of the decision-card work (Dossier AGT-W54) so a park of type `operator-decision` converts without translation, and `documents` lists the repository-relative write-ups the run named. `ParkedDecisionReader` derives the block from the park reason plus `needsInputFile`; it is additive and never replaces `reason`, which stays verbatim.
 

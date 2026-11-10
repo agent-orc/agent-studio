@@ -85,6 +85,51 @@ public sealed class AcceptanceRailPolicyTests
         Assert.Equal(AcceptanceRailAction.Accept, decision.Action);
     }
 
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(1, false)]
+    [InlineData(2, true)]
+    [InlineData(3, true)]
+    [InlineData(4, true)]
+    public void IntegratedCodingCard_IsAcceptedOnlyWhenTheProjectAutonomyAllowsIt(int autonomyLevel, bool accepted)
+    {
+        // AGT-3621: Manual and Cautious keep the Human Review verdict with a person.
+        var decision = OperatorDecisionHarness.RailDecide(
+            Card(),
+            Status(IntegrationStatuses.Integrated),
+            conflictRequeues: 0,
+            Options,
+            Now,
+            autonomyLevel: autonomyLevel);
+
+        Assert.Equal(accepted ? AcceptanceRailAction.Accept : AcceptanceRailAction.Ignore, decision.Action);
+        if (!accepted) Assert.Equal(AcceptanceRailReasons.AutonomyRequiresPerson, decision.Reason);
+    }
+
+    [Fact]
+    public void DetailRead_StatesNotApplicableForACodeFreeCardWhileGitFactsWarm()
+    {
+        // AGT-3621: a new code-free card had no Git fact yet, so Accept read
+        // "Await integration" and stayed disabled.
+        var concept = Card() with { Mode = TaskModes.Concept, RequiresIntegration = false };
+        var filled = TaskEndpointHelpers.WithContractIntegration(concept, "develop");
+        Assert.Equal(IntegrationStatuses.NotApplicable, filled.Integration?.Status);
+        Assert.Equal("develop", filled.Integration?.IntegrationBranch);
+
+        // A coding card keeps waiting for its Git fact; a known fact is never replaced.
+        Assert.Null(TaskEndpointHelpers.WithContractIntegration(Card(), "develop").Integration);
+        var known = concept with { Integration = Status(IntegrationStatuses.Integrated) };
+        Assert.Same(known, TaskEndpointHelpers.WithContractIntegration(known, "develop"));
+    }
+
+    [Fact]
+    public void AutomaticAcceptance_NamesTheRailAndTheAutonomyLevel()
+    {
+        Assert.Equal("the acceptance rail (project autonomy Balanced)", AutomaticAcceptanceText.AcceptedBy(2));
+        Assert.Equal("the acceptance rail (project autonomy Fully auto)", AutomaticAcceptanceText.AcceptedBy(4));
+        Assert.False(AutomaticAcceptancePolicy.Permits(1));
+    }
+
     [Fact]
     public void IntegratedCodingCardWithoutGateEvidence_IsNotAccepted()
     {

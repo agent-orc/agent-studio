@@ -15,7 +15,7 @@ namespace AgentStudio.Tests;
 /// the write and refuses every later write of the dead process is installed
 /// for the scenario's own asynchronous flow only.
 /// </summary>
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGatePilotFaultInjectionTests : BatchGatePilotServiceTests
 {
     // Durable batch authority writes of each uninterrupted scenario. The
     // counting facts pin them, so the crash theories cover every write.
@@ -27,7 +27,7 @@ public sealed partial class BatchGatePilotServiceTests
     // them in parallel with the rest of the suite instead of after this class.
     public sealed class PublicationCrashes : IDisposable
     {
-        private readonly BatchGatePilotServiceTests _host = new();
+        private readonly BatchGatePilotFaultInjectionTests _host = new();
         public static IEnumerable<object[]> Points => CrashPoints(PublicationWrites);
         public void Dispose() => _host.Dispose();
 
@@ -43,7 +43,7 @@ public sealed partial class BatchGatePilotServiceTests
 
     public sealed class BaseMoveCrashes : IDisposable
     {
-        private readonly BatchGatePilotServiceTests _host = new();
+        private readonly BatchGatePilotFaultInjectionTests _host = new();
         public static IEnumerable<object[]> Points => CrashPoints(BaseMoveWrites);
         public void Dispose() => _host.Dispose();
 
@@ -59,7 +59,7 @@ public sealed partial class BatchGatePilotServiceTests
 
     public sealed class IsolationCrashes : IDisposable
     {
-        private readonly BatchGatePilotServiceTests _host = new();
+        private readonly BatchGatePilotFaultInjectionTests _host = new();
         public static IEnumerable<object[]> Points => CrashPoints(IsolationWrites);
         public void Dispose() => _host.Dispose();
 

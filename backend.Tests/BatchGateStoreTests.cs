@@ -277,6 +277,24 @@ public sealed class BatchGateStoreTests : IDisposable
             manifest.BatchId, "wrong", BatchPhase.Green, Next, 1, Now)));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Manifest_without_state_is_unknown_and_not_recoverable(bool keepEmptyStateFolder)
+    {
+        var manifest = Close();
+        var stateFolder = Path.Combine(_store.BatchDirectory(manifest.BatchId), "state");
+        Directory.Delete(stateFolder, recursive: true);
+        if (keepEmptyStateFolder) Directory.CreateDirectory(stateFolder);
+        // AGT-3563: the phase record is the commit point, so "without state" means neither.
+        File.Delete(Path.Combine(_store.BatchDirectory(manifest.BatchId), "phase.json"));
+
+        Assert.Equal(BatchPhase.Unknown, _store.LatestState(manifest.BatchId).Phase);
+        Assert.DoesNotContain(_store.ListRecoverableManifests(),
+            item => item.BatchId == manifest.BatchId);
+        Assert.Empty(_store.ListPausedManifests());
+    }
+
     [Fact]
     public void ConflictDoesNotMoveTipAndCascadeDefersTail()
     {

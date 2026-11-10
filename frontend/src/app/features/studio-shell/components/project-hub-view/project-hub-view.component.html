@@ -167,7 +167,7 @@
   }
   @defer (when isSettingsRail(activeRail())) {
     @if (isSettingsRail(activeRail())) {
-      <app-project-settings-panel [projectName]="projectName()" />
+      <app-project-settings-panel [projectName]="projectName()" appSettingFocus [focusSettingKey]="settingKey()" />
     }
   }
   @defer (when activeRail() === 'orchestrator') {

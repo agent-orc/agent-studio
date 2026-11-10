@@ -21,6 +21,7 @@ public sealed class BatchPhaseTransitionPolicyTests
         { BatchPhase.Assembling, BatchPhase.Assembled },
         { BatchPhase.Assembling, BatchPhase.Paused },
         { BatchPhase.Assembling, BatchPhase.Abandoned },
+        { BatchPhase.Assembled, BatchPhase.Assembled },
         { BatchPhase.Assembled, BatchPhase.Running },
         { BatchPhase.Assembled, BatchPhase.Paused },
         { BatchPhase.Assembled, BatchPhase.Abandoned },
@@ -38,6 +39,7 @@ public sealed class BatchPhaseTransitionPolicyTests
         { BatchPhase.Red, BatchPhase.Abandoned },
         { BatchPhase.Paused, BatchPhase.Paused },
         { BatchPhase.Paused, BatchPhase.Abandoned },
+        { BatchPhase.Unknown, BatchPhase.Formed },
     };
 
     [Fact]

@@ -126,10 +126,11 @@ public static class ParkedBlockerCatalog
     /// question, options, and documents once the artifact exists.</para>
     /// </summary>
     /// <param name="transitionCause">
-    /// Ledger cause id of the lane change (<see cref="LaneChangeCauses"/>), used
-    /// only as a fallback reason when the caller supplied none.
+    /// Ledger cause id of the lane change (<see cref="LaneChangeCauses"/>). It is
+    /// recorded as <see cref="ParkedBlockerRecord.Cause"/> and stands in as the
+    /// reason when the caller supplied none.
     /// </param>
-    /// <param name="transitionDetail">Short qualifier for <paramref name="transitionCause"/>, same fallback role.</param>
+    /// <param name="transitionDetail">Short qualifier for <paramref name="transitionCause"/>, recorded and used the same way.</param>
     public static ParkedBlockerRecord? Build(
         string? lane,
         string? reason,
@@ -146,6 +147,8 @@ public static class ParkedBlockerCatalog
             Lane = lane!,
             ParkedAt = parkedAt,
             Reason = ResolveReason(reason, transitionCause, transitionDetail),
+            Cause = string.IsNullOrWhiteSpace(transitionCause) ? null : transitionCause.Trim(),
+            CauseDetail = string.IsNullOrWhiteSpace(transitionDetail) ? null : transitionDetail.Trim(),
             Decision = ParkedDecisionReader.Read(reason, message: null),
         };
     }

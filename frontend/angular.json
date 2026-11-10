@@ -127,7 +127,7 @@
             "tsConfig": "tsconfig.spec.json",
             "runner": "vitest",
             "runnerConfig": "vitest.config.ts",
-            "setupFiles": ["src/test-locale.ts", "src/test-lazy-imports.ts"]
+            "setupFiles": ["src/test-locale.ts", "src/test-lazy-imports.ts", "src/test-dom-prototype-guard.ts"]
           },
           "configurations": {
             "release": {

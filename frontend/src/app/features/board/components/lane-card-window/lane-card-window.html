@@ -2,12 +2,10 @@
 @for (row of window().rows; track row.job.taskKey) {
   <div class="column__window-row" [attr.data-window-key]="row.job.taskKey" [attr.data-window-index]="row.index">
     @if (row.group; as group) {
-      <h3 class="column__subsection-title" [attr.data-testid]="'review-subsection-' + group.kind">
-        <span aria-hidden="true">{{ group.icon }}</span><span>{{ group.label }}</span>
-        <span class="column__subsection-count">{{ group.jobs.length }}</span>
-      </h3>
+      <app-lane-group-head class="column__window-group" [attr.data-testid]="group.testid" [group]="group"
+                           [mutationsBlocked]="mutationsBlocked()" />
     }
-    @if (!review() && !reorderDisabled() && !mutationsBlocked()) {
+    @if (!grouped() && !reorderDisabled() && !mutationsBlocked()) {
       <div class="column__drop-zone" [class.column__drop-zone--active]="dropIndex() === row.index"
            (dragover)="slotDragOver.emit({ event: $event, index: row.index })"
            (dragleave)="slotDragLeave.emit()"
@@ -21,7 +19,7 @@
   </div>
 }
 <div class="column__spacer" [style.height.px]="window().bottom" data-testid="lane-window-after"></div>
-@if (!review() && !reorderDisabled() && !mutationsBlocked() && window().end === count()) {
+@if (!grouped() && !reorderDisabled() && !mutationsBlocked() && window().end === count()) {
   <div class="column__drop-zone column__drop-zone--last" data-testid="lane-drop-slot-end"
        [class.column__drop-zone--active]="dropIndex() === count()"
        (dragover)="slotDragOver.emit({ event: $event, index: count() })"

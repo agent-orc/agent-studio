@@ -55,9 +55,15 @@ public sealed class TaskIndexCache
 {
     /// <summary>Coalescing window for the bulk-changed push after a background publish.</summary>
     internal static readonly TimeSpan BulkChangedDebounce = TimeSpan.FromMilliseconds(250);
+    /// <summary>
+    /// Default wait before a background refresh scans, so mutation readers
+    /// arriving together share one scan. <c>TaskIndexCache:RefreshCoalesceMilliseconds</c>
+    /// overrides it; a fixture that drives one reader at a time sets 0.
+    /// </summary>
     internal static readonly TimeSpan RefreshCoalesceWindow = TimeSpan.FromMilliseconds(200);
 
     private readonly TimeSpan _safetyTtl;
+    private readonly TimeSpan _refreshCoalesceWindow;
     private readonly TimeSpan _reconciliationInterval;
     private readonly TimeProvider _time;
     private readonly Func<List<TaskInfo>> _scanAllJobsRaw;
@@ -221,6 +227,9 @@ public sealed class TaskIndexCache
         _safetyTtl = incremental ? TimeSpan.MaxValue : TimeSpan.FromSeconds(Math.Max(1, ttlSec));
         var reconcileSec = int.TryParse(config["TaskIndexCache:ReconciliationSeconds"], out var r) ? r : 900;
         _reconciliationInterval = TimeSpan.FromSeconds(Math.Max(1, reconcileSec));
+        _refreshCoalesceWindow = int.TryParse(config["TaskIndexCache:RefreshCoalesceMilliseconds"], out var coalesceMs)
+            ? TimeSpan.FromMilliseconds(Math.Max(0, coalesceMs))
+            : RefreshCoalesceWindow;
     }
 
     /// <summary>The refresh in flight, if any (tests wait on it).</summary>
@@ -377,6 +386,38 @@ public sealed class TaskIndexCache
     public TaskIndexPublication? TryGetPublished()
     {
         lock (_lock) return _hasSnapshot ? _publication : null;
+    }
+
+    /// <summary>
+    /// Waits for the mutation requirements present at entry to be published.
+    /// Unlike a board read, this observes the write's generation. Later
+    /// mutations do not move the target while the caller is waiting.
+    /// </summary>
+    internal async Task<TaskIndexPublication> WaitForCurrentMutationPublicationAsync(
+        CancellationToken cancellationToken)
+    {
+        long targetMutationGen;
+        long targetMutationScanGen;
+        lock (_lock)
+        {
+            targetMutationGen = _requiredMutationGen;
+            targetMutationScanGen = _requiredMutationScanGen;
+        }
+
+        while (true)
+        {
+            Task refresh;
+            lock (_lock)
+            {
+                if (_hasSnapshot
+                    && _publishedMutationGen >= targetMutationGen
+                    && _publishedInvalidationGen >= targetMutationScanGen)
+                    return _publication;
+                StartBackgroundRefreshLocked();
+                refresh = _refreshCompletion!.Task;
+            }
+            await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -784,9 +825,15 @@ public sealed class TaskIndexCache
     /// </summary>
     public void PublishRoutingFromFolder(string folder, Func<TaskInfo?> read)
     {
+        long observedVersion;
+        lock (_lock) observedVersion = _coreFolderVersions.GetValueOrDefault(folder);
+        var info = read();
         lock (_corePublicationLock)
         {
-            var info = read();
+            // A later publication may have completed while this folder was
+            // being read. Do not replace it with the older result.
+            lock (_lock)
+                if (_coreFolderVersions.GetValueOrDefault(folder) != observedVersion) return;
             if (info is null)
             {
                 Invalidate(InvalidationSource.Mutation, changedPath: Path.Combine(folder, "task.json"));
@@ -1773,7 +1820,7 @@ public sealed class TaskIndexCache
 
         void StartWorker() => _ = Task.Factory.StartNew(() =>
         {
-            Thread.Sleep(RefreshCoalesceWindow);
+            if (_refreshCoalesceWindow > TimeSpan.Zero) Thread.Sleep(_refreshCoalesceWindow);
             RunBackgroundRefresh(completion);
         }, CancellationToken.None, TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach,
             TaskScheduler.Default);

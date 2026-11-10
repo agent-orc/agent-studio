@@ -19,10 +19,10 @@ its history until its next change creates the record.
 
 | From | Legal next phases |
 |---|---|
-| none (closed manifest) | `Formed` |
+| none or `Unknown` (closed manifest) | `Formed` |
 | `Formed` | `Formed` (annotation), `Assembling`, `Paused`, `Abandoned` |
 | `Assembling` | `Assembling`, `Assembled`, `Paused`, `Abandoned` |
-| `Assembled` | `Running`, `Paused`, `Abandoned` |
+| `Assembled` | `Assembled` (document-keyed candidate), `Running`, `Paused`, `Abandoned` |
 | `Running` | `Green`, `Red`, `Paused`, `Abandoned` |
 | `Green` | `Publishing`, `Paused`, `Abandoned` |
 | `Publishing` | `Published`, `Paused`, `Abandoned` |
@@ -221,7 +221,9 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   <n> minutes`, each member's timeline records
   `batch-flight-lease-deadline`, and the next formed batch starts first. The
   cancelled batch is retried after it. On 2 November 2026 only an API
-  restart freed such a slot.
+  restart freed such a slot. Until the detached flight exits, the batch gate
+  state lists it under `detachedFlights` (batch, start, detach time, deadline,
+  reason), and a flight wait does not wait for it.
 - AGT-3562: a flight that completes or fails (its batch ran a gate, or left
   the formed phase other than by retirement before replay) starts the next
   eligible formed batch of its project at once, instead of on the next hosted
@@ -276,6 +278,10 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   member records its exact source-to-published-SHA mapping before lane release.
   A deferred `IntegrationBranchDefect` review releases on verified batch evidence.
   Recovery failures are logged per manifest, allowing later batches to proceed.
+  A manifest found without a phase record or state rows reads as `Unknown`
+  (the phase is never stored); recovery skips it and logs the missing state
+  once per manifest per store instance until the next tick writes its first
+  `Formed` record (AGT-3563).
   A queued code push keeps its project batch reservation pending until origin
   verifies the merged SHA. The pending marker is a durable recovery job, so a
   startup sweep re-drives it even if the card remains in Auto Review and the

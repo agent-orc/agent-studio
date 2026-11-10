@@ -5,6 +5,10 @@ namespace AgentStudio.Pipeline;
 public sealed record BatchGateReviewFixWait(string TaskKey, string ReviewAttemptId,
     int Round, int Maximum, IReadOnlyList<string> Aspects);
 
+/// <summary>AGT-3562: a flight cancelled at its lease deadline that has not exited yet.</summary>
+public sealed record BatchGateDetachedFlight(string BatchId, string Project,
+    DateTimeOffset StartedAtUtc, DateTimeOffset DetachedAtUtc, int DeadlineMinutes, string Reason);
+
 public static class BatchGateStateSnapshotReader
 {
     public static object Read(BatchGateStore store, string project,
@@ -17,6 +21,7 @@ public static class BatchGateStateSnapshotReader
         GateRunLedger? ledger = null,
         IReadOnlyList<BatchGateReviewFixWait>? reviewFixWaits = null,
         GateCapacity? gateCapacity = null,
+        IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null,
         BatchGateInvariantReport? invariants = null)
     {
         var at = now ?? DateTimeOffset.UtcNow;
@@ -118,6 +123,7 @@ public static class BatchGateStateSnapshotReader
                 manifest.StackedOnBatchId,
                 phase = phase.Phase.ToString().ToLowerInvariant(),
                 phaseReason = phase.Reason,
+                causedByTaskKey = phase.CausedByTaskKey,
                 baseMoveToSha = phase.BaseMoveToSha,
                 baseMoveOutcome = phase.BaseMoveOutcome,
                 successorBatchId = phase.SuccessorBatchId,
@@ -263,6 +269,7 @@ public static class BatchGateStateSnapshotReader
                 abandoned = moved.Count(state => state.BaseMoveOutcome == "abandoned") },
             members,
             reviewFixWaits = reviewFixWaits ?? [],
+            detachedFlights = detachedFlights ?? [],
             isolationFindings = store.ListIsolationFindings(project)
                 .Select(finding => IsolationFinding(store, projectManifests, finding)).ToArray(),
             // AGT-3563: the last invariant check of the pilot tick; null before the first tick.

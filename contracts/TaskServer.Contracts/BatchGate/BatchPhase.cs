@@ -6,8 +6,10 @@ namespace AgentStudio.Pipeline;
 /// Phase of one closed batch manifest. The numeric values are persisted in the
 /// batch state history and the phase record, so append new phases at the end.
 /// The legal transitions are <c>BatchPhaseTransitionPolicy</c> (AGT-3563).
+/// <see cref="Unknown"/> is never stored: it is how a manifest without any
+/// state reads before the next tick writes its first record.
 /// </summary>
-public enum BatchPhase { Formed, Assembling, Assembled, Running, Green, Publishing, Published, Red, Paused, Abandoned }
+public enum BatchPhase { Formed, Assembling, Assembled, Running, Green, Publishing, Published, Red, Paused, Abandoned, Unknown }
 
 /// <summary>
 /// What a batch did with one member it claimed, keyed by the member's

@@ -920,6 +920,7 @@ export class TaskService {
     reason?: string,
     operatorOverride = false,
     runIntent: 'revoke' | 'steer' = 'revoke',
+    withdrawFromBatch = false,
   ) {
     const body: {
       targetState: string;
@@ -927,10 +928,12 @@ export class TaskService {
       reason?: string;
       operatorOverride?: boolean;
       runIntent: 'revoke' | 'steer';
+      withdrawFromBatch?: boolean;
     } = { targetState, runIntent };
     if (typeof targetIndex === 'number') body.targetIndex = targetIndex;
     if (reason?.trim()) body.reason = reason.trim();
     if (operatorOverride) body.operatorOverride = true;
+    if (withdrawFromBatch) body.withdrawFromBatch = true;
     return this.http.post(
       `${this.taskV1Url(jobId)}/move`,
       body,
@@ -1385,6 +1388,30 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/release`,
       { released },
       this.withWatchPath(watchPath),
+    );
+  }
+
+  /** AGT-3580: clear a recorded runner refusal so the next dispatch tick offers the card again. */
+  clearDispatchRejection(jobId: string, watchPath?: string) {
+    return this.http.delete<{ message: string }>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/dispatch-rejection`,
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /** AGT-3580: run project intake on one Ready card now instead of waiting for the next tick. */
+  runTaskIntake(jobId: string, watchPath?: string) {
+    return this.http.post<{ outcome: string; reason: string }>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/intake`,
+      { watchPath: watchPath ?? '' },
+    );
+  }
+
+  /** AGT-3580: place a project at a runner through the existing execution-runner route. */
+  setProjectExecutionLocation(projectName: string, executionLocation: string) {
+    return this.http.put<{ executionLocation?: string }>(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/execution-runner`,
+      { executionLocation },
     );
   }
 

@@ -17,13 +17,17 @@ Choose:
 - An optional local Git checkout path, CLI working directory, repository URL,
   or any useful combination of them.
 - A default coding CLI/model and project colour. Both can be changed later.
-- An optional execution runner. Onboard the host first if it is not listed yet.
+- An execution runner for coding. Onboard the host first if it is not listed yet.
 
-For a local runner, the repository path must be an existing absolute Git
-checkout on the backend host. The working directory must also exist and may be
-the checkout itself or a subdirectory. For a remote runner whose checkout is
-not visible on the backend host, omit both local paths and provide the
-repository URL. The selected remote host resolves its own checkout.
+The repository path must be an existing absolute Git checkout on the backend
+host when supplied. The working directory must also exist and may be the
+checkout itself or a subdirectory. These paths register the source; they do
+not make the orchestrator a coding host. Start a runner beside the checkout
+through **Workspace Settings → Execution Hosts → Set up agent host**
+([host walkthrough](./linux-runner-host.md#product-onboarding-from-execution-hosts)).
+The runner needs access to the Git origin and Task Server. For a remote runner
+whose checkout is not visible on the backend host, omit both local paths and
+provide the repository URL; the selected host resolves its own checkout.
 
 ## UI workflow
 
@@ -34,7 +38,9 @@ repository URL. The selected remote host resolves its own checkout.
 4. Under **Code location**, enter the local checkout, CLI working directory,
    and/or HTTP(S) repository URL.
 5. Under **Default coding agent**, select the default CLI/model, then choose
-   the local host or an onboarded runner under **Execution location**.
+   an onboarded runner under **Execution location**. When local coding is
+   disabled, **Local** supports the board and orchestration only. The dialog
+   requires a runner for a project with a source checkout.
 6. Choose **Create project**.
 
 There is no project-source selection or Project Sources administration step.
@@ -56,6 +62,55 @@ repository when the project has no checkout and stores the managed checkout
 path and CLI working directory on the project. A generated deploy key is
 configured in that checkout's Git settings, so later task fetches and pushes
 use the same key after restart.
+
+## Test command output in Review
+
+Put `.agent-studio/project.yml` in the repository root when discovery cannot
+find the checks you intend to run. This is a minimal valid definition for a
+custom shell test script:
+
+```yaml
+schemaVersion: 1
+stack: [custom]
+commands:
+  prepare: .agent-studio/prepare
+  test:
+    - ./scripts/test.sh
+```
+
+Create `.agent-studio/prepare` as an executable shell script containing
+`#!/bin/sh` and `set -eu`, then add the dependency installation your stack
+needs. Create `scripts/test.sh` as an executable script that runs real checks
+and returns their exit status. Review accepts a successful exit even when it
+cannot parse a test summary; the exit code is recorded as command evidence.
+A parsed test summary lets Review compare failure names as well as exit
+status. A failed command without a parsed result cannot supply that
+comparison and receives a report retry.
+
+Use the same YAML shape with the following `stack`, `commands.test`, and
+prepare script body for other stacks. Replace paths with your repository's
+actual paths. A Node example needs a `package-lock.json` and a `test` script
+in `package.json`.
+
+| Stack | `stack` | `commands.test` | Add to `.agent-studio/prepare` |
+|---|---|---|---|
+| .NET | `[dotnet]` | `dotnet test App.sln --no-build` | `dotnet restore App.sln` |
+| Node built-in runner | `[node]` | `node --test` | `npm ci` |
+| Jest or Vitest | `[node]` | `npm test` | `npm ci` |
+| Python | `[python]` | `python -m pytest` | `python -m pip install -e .` |
+| Go | `[go]` | `go test ./...` | `go mod download` |
+| Make | `[make]` | `make test` | Add the setup required by the Makefile, if any. |
+
+For `.NET`, add `commands.build: [dotnet build App.sln]` before the test step
+when `--no-build` is used. Each row above is the `test` list entry in the YAML
+example; the prepare script starts with the two shell lines shown above.
+Review recognizes completed summaries from `dotnet test`, `node --test` TAP,
+Jest, and Vitest for named-test comparison. Successful `pytest`, `go test`,
+`make test`, and other scripts use exit-status evidence. A failed baseline
+without parsed failure names cannot support a named-test comparison. A runner
+that explicitly reports a missing test report, or an Angular bundle that
+finishes without a Vitest result, still gets a report retry and an
+infrastructure finding.
 
 ## API workflow
 
@@ -122,8 +177,8 @@ The server performs these steps in one onboarding workflow:
 7. Persists the project colour and default coding CLI/model.
 8. Adds the project to the scanner and filesystem watcher from the registry,
    without adding a `WatchPaths` setting.
-9. Creates a live local runner immediately when the local working directory
-   exists, or persists the selected remote-runner assignment.
+9. Persists the selected runner assignment. A local working directory alone
+   does not enable coding on the orchestrator.
 
 The board refresh after creation reads the same registry-backed source, so the new empty project is visible immediately.
 
@@ -304,7 +359,7 @@ task store to perform it.
 | `409 shortCode ... is already used` | Choose another 2 to 6 character code. Codes are case-insensitively unique. |
 | `400 repositoryPath ...` | Use an existing absolute local Git checkout. For a repository available only to a remote runner, omit the local path and provide `repositoryUrl`. |
 | `404 Unknown workspaceId` | Read `GET /api/workspaces` and use a current workspace id. |
-| Project exists but auto-pickup is unavailable | A board-only project has no local working directory, or the selected remote host is not ready. Set a valid working directory in Project Settings and restart the backend to instantiate a local runner, or complete [remote host onboarding](./linux-runner-host.md). |
+| Project exists but auto-pickup is unavailable | Check **Project Settings → Execution location** for a connected runner host with a source checkout, then check **Pickup mode**. If no host is available, complete [runner host onboarding](./linux-runner-host.md) next to the checkout. A local working directory on the orchestrator does not enable local coding. |
 | Project is missing from the board after `201` | Refresh once and inspect `GET /api/workspaces`. If the API listing is also missing, inspect structured `project-onboarded` and `watch-path-activated` log events. No restart should be required. |
 | Old project uses `.orchestrator/jobs` | Treat it as legacy. Follow the migration outline above; do not onboard a duplicate project or push that folder. |
 

@@ -54,7 +54,8 @@ public static class BatchPhaseTransitionPolicy
             // assembly, pause on an assembly failure or be retired.
             [BatchPhase.Formed] = [BatchPhase.Formed, BatchPhase.Assembling, BatchPhase.Paused, BatchPhase.Abandoned],
             [BatchPhase.Assembling] = [BatchPhase.Assembling, BatchPhase.Assembled, BatchPhase.Paused, BatchPhase.Abandoned],
-            [BatchPhase.Assembled] = [BatchPhase.Running, BatchPhase.Paused, BatchPhase.Abandoned],
+            // Document key assignment re-records the keyed candidate.
+            [BatchPhase.Assembled] = [BatchPhase.Assembled, BatchPhase.Running, BatchPhase.Paused, BatchPhase.Abandoned],
             [BatchPhase.Running] = [BatchPhase.Green, BatchPhase.Red, BatchPhase.Paused, BatchPhase.Abandoned],
             [BatchPhase.Green] = [BatchPhase.Publishing, BatchPhase.Paused, BatchPhase.Abandoned],
             [BatchPhase.Publishing] = [BatchPhase.Published, BatchPhase.Paused, BatchPhase.Abandoned],
@@ -63,6 +64,9 @@ public static class BatchPhaseTransitionPolicy
             [BatchPhase.Paused] = [BatchPhase.Paused, BatchPhase.Abandoned],
             [BatchPhase.Published] = [],
             [BatchPhase.Abandoned] = [],
+            // A manifest without any state reads as unknown; like a batch
+            // without a record it may only form.
+            [BatchPhase.Unknown] = [BatchPhase.Formed],
         };
 
     /// <summary>The phases a batch in <paramref name="from"/> may change to; a batch without a record may only form.</summary>

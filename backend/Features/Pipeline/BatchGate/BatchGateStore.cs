@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Diagnostics;
+using Serilog;
 using AgentStudio.TaskServer.Contracts.BatchGate;
 using AgentStudio.TaskServer.Contracts;
 
@@ -14,7 +15,11 @@ public sealed record BatchGateState(
     long? RefMutationFence = null,
     string? BaseMoveToSha = null, string? BaseMoveOutcome = null,
     string? SuccessorBatchId = null,
-    IReadOnlyDictionary<string, string>? BaseMoveMemberReasons = null);
+    IReadOnlyDictionary<string, string>? BaseMoveMemberReasons = null,
+    string? CausedByTaskKey = null);
+
+public sealed record BatchGateWithdrawal(string BatchId, string TaskKey,
+    string Actor, string Reason, DateTimeOffset AtUtc);
 
 public sealed record BatchGateRunRecord(
     string BatchRunId, string BatchId, string MembershipDigest, string BaseSha,
@@ -152,6 +157,7 @@ public sealed partial class BatchGateStore
         WriteIndented = true,
     };
     private readonly string _root;
+    private readonly HashSet<string> _missingStateWarnings = new(StringComparer.Ordinal);
     private readonly object _failureRankingLock = new();
     private sealed class FailureRankingProjection
     {
@@ -230,8 +236,7 @@ public sealed partial class BatchGateStore
     public string? IsolationEvidencePath(string project, string parentBatchId, string taskKey)
     {
         var finding = ListIsolationFindings(project).LastOrDefault(item =>
-            item.ParentBatchId == parentBatchId && item.TaskKey == taskKey
-            && item.EvidencePath.Length > 0);
+            item.ParentBatchId == parentBatchId && item.TaskKey == taskKey);
         return finding is null ? null : StoredEvidenceFile(finding.EvidencePath);
     }
 
@@ -346,6 +351,24 @@ public sealed partial class BatchGateStore
         var folder = Path.Combine(_root, "requests", "eject", SafeName(project));
         Directory.CreateDirectory(folder);
         File.WriteAllText(Path.Combine(folder, SafeName(taskKey)), DateTimeOffset.UtcNow.ToString("O"));
+    }
+
+    public void RecordWithdrawal(BatchGateWithdrawal withdrawal)
+    {
+        var manifest = ReadManifest(withdrawal.BatchId);
+        if (!manifest.Members.Any(member => member.TaskKey == withdrawal.TaskKey))
+            throw new InvalidDataException("The withdrawn card is not a batch member.");
+        var folder = Path.Combine(BatchDirectory(withdrawal.BatchId), "withdrawals");
+        Directory.CreateDirectory(folder);
+        WriteOnce(Path.Combine(folder, Guid.NewGuid().ToString("N") + ".json"), withdrawal);
+    }
+
+    public IReadOnlyList<BatchGateWithdrawal> ListWithdrawals(string batchId)
+    {
+        var folder = Path.Combine(BatchDirectory(batchId), "withdrawals");
+        return Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json").Select(Read<BatchGateWithdrawal>).ToArray()
+            : [];
     }
 
     public bool HasEject(string project, string taskKey)
@@ -653,19 +676,31 @@ public sealed partial class BatchGateStore
         return Directory.EnumerateDirectories(_root)
             .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
             .Select(dir => Read<BatchGateManifest>(Path.Combine(dir, "manifest.json")))
-            .Where(manifest => !HasState(manifest.BatchId)
-                || LatestState(manifest.BatchId).Phase is
-                    BatchPhase.Formed or BatchPhase.Assembling
-                    or BatchPhase.Assembled or BatchPhase.Running)
+            .Where(manifest => IsRecoverable(manifest))
             .ToArray();
+    }
+
+    private bool IsRecoverable(BatchGateManifest manifest)
+    {
+        var phase = LatestState(manifest.BatchId).Phase;
+        if (phase == BatchPhase.Unknown)
+        {
+            lock (_missingStateWarnings)
+            {
+                if (_missingStateWarnings.Add(manifest.BatchId))
+                    Log.Warning("Batch gate manifest {BatchId} has no state rows; recovery skips it until the tick writes its first record", manifest.BatchId);
+            }
+            return false;
+        }
+        return phase is BatchPhase.Formed or BatchPhase.Assembling
+            or BatchPhase.Assembled or BatchPhase.Running;
     }
 
     // A pause stays in the append-only history, but an unpublished paused batch
     // must hand its members back; the pilot resolves each one on its next tick.
     public IReadOnlyList<BatchGateManifest> ListPausedManifests()
         => ListManifests()
-            .Where(manifest => HasState(manifest.BatchId)
-                && LatestState(manifest.BatchId).Phase == BatchPhase.Paused
+            .Where(manifest => LatestState(manifest.BatchId).Phase == BatchPhase.Paused
                 && ReadPublication(manifest.BatchId) is null)
             .ToArray();
 
@@ -723,14 +758,23 @@ public sealed partial class BatchGateStore
                 result.Record?.State.Phase, state.Phase, result.Refusal);
     }
 
-    /// <summary>The state of the phase record; a batch closed before AGT-3563 reads its history.</summary>
+    /// <summary>
+    /// The state of the phase record; a batch closed before AGT-3563 reads its
+    /// history. A manifest without either is <see cref="BatchPhase.Unknown"/>
+    /// until the next tick writes its first record.
+    /// </summary>
     public BatchGateState LatestState(string batchId)
     {
         if (ReadPhaseRecord(batchId) is { } record) return record.State;
         var folder = Path.Combine(BatchDirectory(batchId), "state");
-        var path = Directory.EnumerateFiles(folder, "*.json")
-            .OrderBy(x => x, StringComparer.Ordinal).Last();
-        return Read<BatchGateState>(path);
+        var path = Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json")
+                .OrderBy(x => x, StringComparer.Ordinal).LastOrDefault()
+            : null;
+        if (path is not null) return Read<BatchGateState>(path);
+        var manifest = ReadManifest(batchId);
+        return new BatchGateState(batchId, manifest.MembershipDigest,
+            BatchPhase.Unknown, null, 0, manifest.ClosedAtUtc);
     }
 
     public void RecordRun(BatchGateRunRecord run)

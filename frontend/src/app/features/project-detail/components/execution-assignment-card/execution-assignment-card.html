@@ -1,4 +1,4 @@
-<article class="execution-card" data-testid="project-execution-card">
+<article class="execution-card" data-testid="project-execution-card" tabindex="-1">
   <div class="execution-card__heading">
     <div>
       <p class="execution-card__eyebrow">Execution</p>
@@ -12,9 +12,9 @@
     to another runner does not pause or resume its queue.
   </p>
 
-  @if (pickupMode() === 'auto' && selectedHostId() === 'local' && !localCodingAdmitted()) {
+  @if (selectedHostId() === 'local' && !localCodingAdmitted()) {
     <p class="execution-card__placement-warning" role="alert" data-testid="local-coding-disabled-warning">
-      Local coding is disabled on this orchestrator. Ready coding tasks will wait until this project is routed to a remote runner.
+      Local coding is disabled on this orchestrator. Coding tasks need a runner host with a source checkout before they can start.
     </p>
   }
 
@@ -30,7 +30,7 @@
     </small>
   </fieldset>
 
-  <label class="execution-card__field">
+  <label class="execution-card__field" data-setting-key="execution-runner">
     <span>Execution location</span>
     <select
       data-testid="project-execution-host-select"
@@ -41,7 +41,7 @@
           [value]="host.id"
           [selected]="host.id === selectedHostId()"
           [disabled]="host.status === 'offline' || host.status === 'draining'">
-          {{ host.role === 'local' ? 'Local' : host.name }}{{ host.role === 'remote' ? ' · ' + host.os : '' }}
+          {{ host.role === 'local' ? (localCodingAdmitted() ? 'Local' : 'Local (board and orchestration only)') : host.name }}{{ host.role === 'remote' ? ' · ' + host.os : '' }}
         </option>
       }
     </select>
