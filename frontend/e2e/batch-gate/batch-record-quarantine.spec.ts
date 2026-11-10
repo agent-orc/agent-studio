@@ -61,6 +61,14 @@ const json = (route: Route, body: unknown) =>
 
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/operator/attention', route => json(route, attention));
+  // The Needs you count also reads Dossiers, backups and credentials; keep them quiet.
+  await page.route('**/api/workbenches', route => json(route, { items: [] }));
+  await page.route('**/api/operator/backups', route => json(route, {
+    state: 'ok', stale: false, generatedAt: quarantined.detectedAtUtc, warnings: [], backups: [], offHost: {},
+  }));
+  await page.route('**/api/v1/management/credential-inventory', route => json(route, {
+    generatedAt: quarantined.detectedAtUtc, items: [],
+  }));
   await page.route(`**/api/projects/${PROJECT}/batch-gate/state**`, route => json(route, batchState));
   await page.route(`**/api/projects/${PROJECT}/batch-gate/failed-tests**`, route => json(route, {
     project: PROJECT, windowDays: 7, pendingEvidenceRuns: 0, tests: [],
