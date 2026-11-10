@@ -339,6 +339,18 @@ public sealed class RemoteReviewWorkspace
                 verdicts.AddRange(scoped.CarriedVerdicts);
             }
 
+            // The command inventory is authoritative at the target branch. A
+            // delivery based on an older tree must merge before that inventory
+            // can be run against it. This check precedes even preparation.
+            var skew = await FindPlanSkewAsync(plannedCommands, ct);
+            if (skew is not null)
+                return new ReviewExecutionEvidence(
+                    ReviewOutcomeKinds.DeliveryPredatesReviewPlan,
+                    await CurrentProofAsync(ct), [], [], [])
+                {
+                    Summary = $"Review plan needs {skew}, which this delivery predates; merge round sent.",
+                };
+
             candidateCache = await ExecutePreparationAsync(
                 RepositoryPath,
                 "candidate",
@@ -1924,6 +1936,54 @@ public sealed class RemoteReviewWorkspace
                 commands.ToArray(),
                 artifacts.ToArray(),
                 []));
+
+    private static readonly Regex PlanFileReference = new(
+        @"(?<![A-Za-z0-9_./-])(?:\./)?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private async Task<string?> FindPlanSkewAsync(
+        IReadOnlyList<ReviewCommandDto> commands, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_subject.Plan.IntegrationRef)) return null;
+        var tokens = commands.Where(command => !ReviewCommandKinds.IsAgent(command.ExecutionKind))
+            .SelectMany(command => new[] { command.FileName }.Concat(command.Arguments))
+            .Concat((_subject.Plan.Preparation ?? []).SelectMany(command =>
+                new[] { command.FileName }.Concat(command.Arguments)))
+            .SelectMany(value => PlanFileReference.Matches(value).Select(match => match.Value))
+            .Select(path => path.StartsWith("./", StringComparison.Ordinal) ? path[2..] : path)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (tokens.Length == 0) return null;
+        var missing = new List<string>();
+        foreach (var path in tokens)
+        {
+            var local = Path.GetFullPath(Path.Combine(RepositoryPath, path));
+            if (!local.StartsWith(RepositoryPath + Path.DirectorySeparatorChar,
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                continue;
+            var candidate = await ProcessRunner.RunAsync("git", ["cat-file", "-e", $"{_subject.ExpectedResultSha}:{path}"],
+                RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+            if (!candidate.Success) missing.Add(path);
+        }
+        if (missing.Count == 0) return null;
+        await ResolveBaselineShaAsync(ct);
+        var planSha = _subject.Plan.PlanCommitSha ?? _integrationHeadSha!;
+        if (!Regex.IsMatch(planSha, "^[0-9a-fA-F]{40,64}$", RegexOptions.CultureInvariant))
+            throw new ReviewInfrastructureException("PlanCommitUnavailable", "Review plan has no valid target-branch commit.");
+        var commit = await ProcessRunner.RunAsync("git", ["cat-file", "-e", planSha + "^{commit}"],
+            RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+        if (!commit.Success)
+            throw new ReviewInfrastructureException("PlanCommitUnavailable",
+                $"Review plan commit {planSha} is not available on the review host.");
+
+        foreach (var path in missing)
+        {
+            var type = await ProcessRunner.RunAsync("git", ["cat-file", "-t", $"{planSha}:{path}"],
+                RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+            if (type.Success && type.StdOut.Trim() == "blob") return path;
+        }
+        return null;
+    }
 
     private async Task<ReviewWorkspaceProofDto> CurrentProofAsync(CancellationToken ct)
     {
@@ -4206,7 +4266,10 @@ public sealed record ReviewExecutionEvidence(
     ReviewWorkspaceProofDto Workspace,
     IReadOnlyList<ReviewCommandEvidenceDto> Commands,
     IReadOnlyList<ReviewArtifactEvidenceDto> Artifacts,
-    IReadOnlyList<ReviewVerdictDto> Verdicts);
+    IReadOnlyList<ReviewVerdictDto> Verdicts)
+{
+    public string? Summary { get; init; }
+}
 
 internal sealed record ReviewExecutionCheckpoint(
     IReadOnlyList<string> CompletedStepIds,

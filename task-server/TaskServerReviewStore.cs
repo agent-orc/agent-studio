@@ -1364,6 +1364,13 @@ public sealed partial class TaskServerStore
         if (request.Workspace.DirtyAfter) return ("ReviewInfra", "MutatedAfter");
         if (string.IsNullOrWhiteSpace(request.Workspace.TreeHash))
             return ("ReviewInfra", "TreeHashMissing");
+        if (string.Equals(request.Outcome, ReviewOutcomeKinds.DeliveryPredatesReviewPlan,
+                StringComparison.Ordinal)
+            && request.Commands.Count == 0 && request.Verdicts.Count == 0
+            && !string.IsNullOrWhiteSpace(subject.Plan.IntegrationRef)
+            && !string.IsNullOrWhiteSpace(request.Summary))
+            return (ReviewOutcomeKinds.DeliveryPredatesReviewPlan,
+                ReviewOutcomeKinds.DeliveryPredatesReviewPlan);
         if (string.Equals(request.Outcome, "ReviewInfra", StringComparison.Ordinal)
             && request.FailureClassification is "ToolUnavailable" or ReviewModelConfigurationPolicy.Classification)
             return ("ReviewInfra", request.FailureClassification);

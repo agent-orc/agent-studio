@@ -438,7 +438,7 @@ internal sealed class DurableReviewProcess
             result = new DetachedReviewResult(
                 evidence,
                 null,
-                null,
+                evidence.Summary,
                 DateTime.UtcNow);
         }
         catch (ReviewInfrastructureException exception)

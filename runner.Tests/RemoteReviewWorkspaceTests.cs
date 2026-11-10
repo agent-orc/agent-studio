@@ -1243,7 +1243,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
                 "verify-node",
                 "build-tests",
                 PosixShell.RequirePath(),
-                ["-c", "exit 127"])],
+                ["-c", "missing-review-fixture-binary"])],
             24014,
             preparation: [preparation],
             preserveGlobs: ["node_modules"]);
@@ -1258,6 +1258,58 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             127,
             Assert.Single(exception.Evidence.Commands, item => item.Phase == "verification").ExitCode);
         Assert.False(exception.Evidence.Workspace.DirtyAfter);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task New_plan_script_on_target_branch_sends_delivery_to_merge_without_running_commands()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (_, deliverySha) = await SeedSubjectBranchAsync();
+        var seed = Path.Combine(_root, "seed");
+        await GitAsync(seed, "checkout", "main");
+        Directory.CreateDirectory(Path.Combine(seed, "scripts"));
+        await File.WriteAllTextAsync(Path.Combine(seed, "scripts", "check-release-build.sh"),
+            "#!/bin/sh\nprintf 'plan script ran\\n'\n");
+        await GitAsync(seed, "add", "scripts/check-release-build.sh");
+        await GitAsync(seed, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-m", "add target review script");
+        await GitAsync(seed, "push", "origin", "main");
+        var planSha = (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
+        var command = new ReviewCommandDto("verify-2", "build-tests", PosixShell.RequirePath(),
+            ["-lc", "bash scripts/check-release-build.sh"]);
+        var (workspace, _) = Workspace("plan-skew", deliverySha, [command], 26441,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main",
+            planCommitSha: planSha);
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal(ReviewOutcomeKinds.DeliveryPredatesReviewPlan, evidence.Outcome);
+        Assert.Contains("scripts/check-release-build.sh", evidence.Summary, StringComparison.Ordinal);
+        Assert.Empty(evidence.Commands);
+        Assert.False(evidence.Workspace.DirtyAfter);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Delivery_with_declared_script_runs_review_as_before()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var sha = await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["scripts/check-release-build.sh"] = "#!/bin/sh\nprintf 'passed\\n'\n",
+        });
+        var command = new ReviewCommandDto("verify-2", "build-tests", PosixShell.RequirePath(),
+            ["-lc", "bash scripts/check-release-build.sh"]);
+        var (workspace, _) = Workspace("plan-present", sha, [command], 26442,
+            integrationRef: "refs/heads/main", planCommitSha: sha);
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Equal(0, Assert.Single(evidence.Commands, item => item.StepId == "verify-2").ExitCode);
     }
 
     /// <summary>
@@ -3406,7 +3458,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Action<string>? log = null,
         Func<string, Task<FailureFingerprintHistoryDto?>>? historyReader = null,
         AgentRunner.SourceFacts.ISourceFactsClient? sourceFacts = null,
-        bool productionTempBase = false)
+        bool productionTempBase = false,
+        string? planCommitSha = null)
     {
         var repositoryId = TaskServerClient.RepositoryIdentity(_origin)!;
         var subject = new ReviewSubjectDto(
@@ -3426,7 +3479,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
                 commands.Select(command => command.Aspect).ToArray(),
                 IntegrationRef: integrationRef,
                 Preparation: preparation,
-                PreserveGlobs: preserveGlobs),
+                PreserveGlobs: preserveGlobs,
+                PlanCommitSha: planCommitSha),
             DateTime.UtcNow);
         var lease = new ReviewLeaseDto(
             "lease-" + attemptId,

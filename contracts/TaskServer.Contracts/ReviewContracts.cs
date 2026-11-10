@@ -140,7 +140,9 @@ public sealed record ReviewPlanDto(
     // example. The delivery is not integrated while it is set.
     string? VerifyDefinitionMissing = null,
     /// <summary>Rule that required a per-card verify gate instead of batch deferral.</summary>
-    string? BuildTestDeferralDisabledReason = null);
+    string? BuildTestDeferralDisabledReason = null,
+    /// <summary>Exact target-branch commit from which the command plan was read.</summary>
+    string? PlanCommitSha = null);
 
 /// <summary>Frozen engine decision visible with the review subject before any review command runs.</summary>
 public sealed record DeepReviewDecisionDto(string ReceiptId, string Mode, bool Selected,
