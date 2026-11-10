@@ -251,24 +251,9 @@ export class StatusBarComponent implements OnInit, OnDestroy {
 
   readonly projectCount = computed(() => this.projectNames().length || Object.keys(this.jobService.runnerStatus().projects).length);
 
-  /** Every project whose active run is on a quota fallback, so the entry never hides the second one. */
-  readonly activeFallbacks = computed(() => Object.values(this.jobService.runnerStatus().projects)
-    .filter(project => project.activeJobId && project.quotaFallbackModel)
-    .sort((a, b) => a.projectName.localeCompare(b.projectName)));
-
-  readonly fallbackLabel = computed(() => {
-    const fallbacks = this.activeFallbacks();
-    return fallbacks.length === 1
-      ? `fallback: ${fallbacks[0].quotaFallbackModel}`
-      : `fallback: ${fallbacks.length} projects`;
-  });
-
-  readonly fallbackTooltip = computed(() => {
-    const fallbacks = this.activeFallbacks();
-    const rows = fallbacks.map(project =>
-      `${project.projectName} on ${project.quotaFallbackModel}: ${project.quotaFallbackReason || 'reason not reported'}`);
-    return `Quota fallback active in ${fallbacks.length} ${fallbacks.length === 1 ? 'project' : 'projects'}. ${rows.join('; ')}.`;
-  });
+  /** Count every project whose active run is on a quota fallback. */
+  readonly fallbackCount = computed(() => Object.values(this.jobService.runnerStatus().projects)
+    .filter(project => project.activeJobId && project.quotaFallbackModel).length);
 
   ngOnInit(): void {
     this.remoteHosts.refresh();

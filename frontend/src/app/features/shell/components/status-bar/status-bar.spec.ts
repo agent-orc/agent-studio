@@ -197,17 +197,15 @@ describe('StatusBarComponent quota fallback entry', () => {
 
     const entry = fixture.nativeElement.querySelector('[data-testid="status-bar-quota-fallback"]');
     expect(entry?.textContent).toContain('fallback: 2 projects');
-    expect(fixture.componentInstance.fallbackTooltip()).toBe(
-      'Quota fallback active in 2 projects. alpha on claude-sonnet-5: session window at 99%; '
-      + 'beta on gpt-6-sol: weekly window at 97%.');
+    expect(fixture.componentInstance.fallbackCount()).toBe(2);
   });
 
-  it('names the model when one project is on a fallback and uses no space without one', async () => {
+  it('counts one project on a fallback and uses no space without one', async () => {
     const { fixture, service } = await render();
     service.runnerStatus.set({ projects: { alpha: project('alpha', 'gpt-6-sol', 'weekly cap') } });
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="status-bar-quota-fallback"]')?.textContent)
-      .toContain('fallback: gpt-6-sol');
+      .toContain('fallback: 1 project');
 
     service.runnerStatus.set({ projects: { alpha: project('alpha', null, null) } });
     fixture.detectChanges();
