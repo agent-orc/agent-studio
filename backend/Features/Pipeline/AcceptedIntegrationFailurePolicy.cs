@@ -104,6 +104,14 @@ public static class AcceptedIntegrationFailureCodes
     public const string ReleaseLineMoving = "release-line-moving";
 
     /// <summary>
+    /// The concept Dossier placement check refused a concept delivery before
+    /// its task-branch merge: the delivery changed anything besides one
+    /// <c>docs/&lt;slug&gt;/</c> directory, or the Dossier failed the
+    /// deterministic concept contract. Nothing was merged.
+    /// </summary>
+    public const string ConceptDossierRejected = "concept-dossier-rejected";
+
+    /// <summary>
     /// Maps a non-successful merge result onto its typed code. An
     /// <see cref="MergeIntoIntegrationOutcome.Error"/> result carries its own
     /// <see cref="MergeIntoIntegrationResult.FailureCode"/>; a legacy Error
@@ -351,6 +359,14 @@ public static class AcceptedIntegrationFailurePolicy
                     verdictSummary,
                     "The release line moved during every full-suite run on the merge result; nothing was published."),
                 RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.ConceptDossierRejected => new(
+                code,
+                "Dossier placement failed",
+                FirstNonBlank(
+                    reason,
+                    verdictSummary,
+                    "The concept delivery is not one complete docs/<slug>/ Dossier; nothing was merged."),
+                RebaseRecoveryAvailable: false),
             _ => new(
                 AcceptedIntegrationFailureCodes.IntegrationError,
                 "Integration failed",
@@ -454,6 +470,7 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.GateUnavailable => AcceptedIntegrationFailureCodes.GateUnavailable,
             AcceptedIntegrationFailureCodes.VerifyDefinitionMissing => AcceptedIntegrationFailureCodes.VerifyDefinitionMissing,
             AcceptedIntegrationFailureCodes.ReleaseLineMoving => AcceptedIntegrationFailureCodes.ReleaseLineMoving,
+            AcceptedIntegrationFailureCodes.ConceptDossierRejected => AcceptedIntegrationFailureCodes.ConceptDossierRejected,
             _ => null,
         };
     }

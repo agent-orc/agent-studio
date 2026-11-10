@@ -237,10 +237,13 @@ public sealed class RemoteReviewPlanBuilder
             RequireDifferentHostFailureDomain = projectSettings?.RequireDifferentReviewHost == true,
         };
         var ordinaryToolPlan = toolPlan;
+        // A concept delivery never joins a batch: its Dossier placement and
+        // concept review run around the per-delivery merge
+        // (ConceptDeliveryPostSteps), which a batch candidate would bypass.
         var deferBuildTest = projectSettings?.BatchGate.Enabled == true
             && (_postMergeMode?.Resolve(task?.ProjectName ?? string.Empty, projectSettings)
                 ?? IntegrationTestModes.Resolve(projectSettings)) != IntegrationTestModes.PostMerge
-            && task is not null && !TaskModes.IsReportOnly(task.Mode)
+            && task is not null && !TaskModes.IsReportOnly(task.Mode) && !TaskModes.IsConcept(task.Mode)
             && (projectSettings.BatchGate.EffectiveScope == "code"
                 || DocsOnlyDeliveryPolicy.IsDocsOnly(changedPaths))
             && changedPaths is { Count: > 0 }

@@ -79,6 +79,21 @@ public static class ConceptWorkbenchContract
         IReadOnlyList<string> changedFiles,
         string? expectedSourceTaskKey = null)
     {
+        var containment = ReviewContainment(changedFiles);
+        return containment.RepoRelativeDirectory is { } rel
+            ? ReviewDirectory(checkoutRoot, rel, expectedSourceTaskKey)
+            : containment;
+    }
+
+    /// <summary>
+    /// The containment half of <see cref="ReviewChangedFiles"/>: a concept
+    /// delivery may change exactly one <c>docs/&lt;topic&gt;/</c> directory and
+    /// nothing else. A contained delivery returns that directory as
+    /// <see cref="ConceptWorkbenchReview.RepoRelativeDirectory"/> with no
+    /// findings; it is not yet a content review.
+    /// </summary>
+    public static ConceptWorkbenchReview ReviewContainment(IReadOnlyList<string> changedFiles)
+    {
         var normalized = changedFiles
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Select(NormalizeRepoPath)
@@ -111,8 +126,7 @@ public static class ConceptWorkbenchContract
         if (findings.Count > 0)
             return new ConceptWorkbenchReview(false, null, null, null, findings);
 
-        var rel = topicRoots[0];
-        return ReviewDirectory(checkoutRoot, rel, expectedSourceTaskKey);
+        return new ConceptWorkbenchReview(false, null, topicRoots[0], null, []);
     }
 
     public static ConceptWorkbenchReview ReviewDirectory(

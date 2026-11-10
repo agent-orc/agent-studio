@@ -1457,12 +1457,13 @@ artifact on `pipeline-execution.json`. Findings are report-only in this phase:
 they do not reissue or block a delivery. The evidence supports the shadow
 comparison before Quality Studio's verdict contract can decide a review.
 - `backend/Features/Pipeline/ConceptWorkbenchContract.cs`,
-  `ConceptWorkbenchPublisher.cs`, and `ConceptPromotionService.cs`: the
-  document-first concept contract. One isolated concept run may author exactly
-  one `docs/<slug>/` dossier, publishes it through the managed project-artifact
-  commit boundary, verifies the source-card key plus `decision-pending` status
-  and task-file links, waits for human sight review, then creates coding cards
-  from the descriptor.
+  `ConceptDeliveryPostSteps.cs`, `ConceptDossierSnapshot.cs`, and
+  `ConceptPromotionService.cs`: the document-first concept contract. One
+  Remote concept run may author exactly one `docs/<slug>/` dossier. The
+  reviewed task-branch merge integrates it after a pre-merge Dossier placement
+  check. The post-steps verify the source-card key plus `decision-pending`
+  status and task-file links, wait for human sight review, then create coding
+  cards from the descriptor.
 - `backend/Features/Docs/DossierMaintenanceService.cs` and
   `DossierImplementationContract.cs`: resolve a delivery card's Dossiers from
   `references.workbenches` or descriptor `sourceTaskKeys`, frame the CORE run,
@@ -2766,11 +2767,40 @@ operator changes cause the step to fail before its writer runs.
   regression radar, Wiki automation, and drift checks. Research additionally
   requires `results/report.html`; the full deliverable and prompt contract is
   the [Research task delivery convention](../../operations/research-deliverables/index.html).
-- The concept pipeline is distinct from the report-only pipeline. It runs in an
-  isolated worktree, permits a diff only inside one
-  `docs/<slug>/` directory, and never merges that task branch.
-  Dossier placement publishes `workbench.json` plus `index.html` through the
-  managed project-artifact commit boundary. Concept review checks alternatives,
+- The concept pipeline is distinct from the report-only pipeline. It runs on a
+  Remote runner (local concept runs are not admitted, see
+  `RemoteExecutionRequirement`) and permits a diff only inside one
+  `docs/<slug>/` directory. Concept delivery integration has one contract
+  (AGT-3696): the reviewed task-branch merge that every Remote delivery takes
+  through `RemoteDeliveryIntegrationCoordinator`. There is no managed
+  project-artifact copy of the Dossier. `ConceptDeliveryPostSteps` brackets that
+  merge, independent of `ReviewDecisionOrchestrator:Enabled`:
+  - Before the merge, Dossier placement fetches the fenced result and requires
+    its diff against the integration line to stay inside exactly one
+    `docs/<slug>/` directory. The Dossier at that commit must pass the
+    concept contract, and `results/deliverables.md` must name it. The
+    backend-owned `status.md` keeps that reference, as summary generation
+    does. A refused delivery merges nothing. Its merge row records failure
+    code `concept-dossier-rejected` with `Dossier placement failed:
+    <findings>`. The delivery-chain reconciler then escalates the
+    integrating card with that reason.
+  - After the merge, placement writes `.metadata/concept-workbench.json` with
+    the integrated commit. Concept review reruns on that commit. The step then
+    writes the `concept-sight-review` marker. An integrated but incomplete
+    Dossier enters Human Review with `Concept review failed: <findings>`.
+  - Both steps read git objects through `ConceptDossierSnapshot`, because the
+    merge runs in the integration worktree and does not update the developer
+    checkout. Placement stores the Dossier's two contract files at the
+    integrated commit under the card's `.metadata/concept-dossier/`.
+    `promote-concept` reads the checkout first and falls back to that copy,
+    so its read request spawns no git process.
+  - A concept delivery never joins a batch, so it always takes this
+    per-delivery merge.
+  - A new `workbench.json` without a document key gets one in the integration
+    merge itself (`IncludeDocumentKeysInIntegrationMerge` amends the merge).
+    The integration line then moves to that keyed merge before the gate runs.
+    Before AGT-3696 publication refused the keyed SHA as `sha-not-on-branch`.
+  Concept review checks alternatives,
   recommendation, evidence, open decisions, implementation-card source data,
   the own-card `sourceTaskKeys` entry, `status=decision-pending`, and the dossier
   path in both `results/deliverables.md` and `status.md`. New scaffolds use the
@@ -2779,8 +2809,8 @@ operator changes cause the step to fail before its writer runs.
   `concept`. The template includes the canonical append-only Implementation
   section and log markers. Its implementation convention requires one
   `implementationTasks` entry per independently reviewable slice, never one
-  open-ended all-recommendations entry. The local concept pipeline does not run
-  build, test, code aspects, or integration. A concept delivery entering Remote
+  open-ended all-recommendations entry. The concept pipeline runs no code
+  aspects. A concept delivery entering Remote
   Review retains its project build and lint commands and adds the read-only
   `aspect-concept-fit` content check. Its project pipeline-step setting controls
   model, thinking level, CLI, and prompt. The frozen ReviewSubject records the

@@ -206,6 +206,40 @@ public sealed class BatchGateReviewPlanTests
     }
 
     /// <summary>
+    /// AGT-3696: a docs-only concept delivery never joins a batch. Its Dossier
+    /// placement and concept review run around the per-delivery merge, which a
+    /// batch candidate would bypass.
+    /// </summary>
+    [Fact]
+    public void ConceptDossierDeliveryIsNeverDeferredToTheBatch()
+    {
+        var fixture = CreateFixture();
+        var (repo, builder, task) = (fixture.Repo, fixture.Builder, fixture.Task);
+        try
+        {
+            Git(repo, "switch", "-qc", "agent-studio/results/task");
+            Directory.CreateDirectory(Path.Combine(repo, "docs", "pilot"));
+            File.WriteAllText(Path.Combine(repo, "docs", "pilot", "index.html"), "<!DOCTYPE html>\n");
+            Git(repo, "add", ".");
+            Git(repo, "commit", "-qm", "dossier");
+            var resultSha = Git(repo, "rev-parse", "HEAD").Trim();
+            Git(repo, "switch", "-q", "develop");
+
+            var plan = builder.Build(task with { Mode = TaskModes.Concept }, repo,
+                new ProjectSettings { BatchGate = new(Enabled: true) }, "develop",
+                resultSha, ["docs/pilot/index.html"], "refs/heads/agent-studio/results/task");
+
+            Assert.False(plan.BuildTestDeferredToBatch);
+            Assert.Equal(TaskModes.Concept, plan.TaskMode);
+            Assert.Contains(plan.Commands, command => command.Aspect == "concept-fit");
+        }
+        finally
+        {
+            DeleteDirectory(fixture.Root);
+        }
+    }
+
+    /// <summary>
     /// AGT-3085: a deferred plan for a backend-only delivery runs the test
     /// classes that name the changed types, read from the exact result commit
     /// through one <c>git cat-file --batch</c>. The added test file exists only

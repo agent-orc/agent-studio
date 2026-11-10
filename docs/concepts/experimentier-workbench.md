@@ -236,9 +236,11 @@ The remaining repository-write classes have explicit durability ownership:
 
 - Interactive Wiki CRUD, curation, order, and classification endpoints commit
   their source and content-metadata companion paths before returning success.
-- Pipeline Wiki maintenance, learnings, designated-topic sync, and Concept
-  Dossier placement run inside `ManagedProjectArtifactCommitService`, which
-  commits, stamps, and queues their task-attributed changes.
+- Pipeline Wiki maintenance, learnings, and designated-topic sync run inside
+  `ManagedProjectArtifactCommitService`, which commits, stamps, and queues
+  their task-attributed changes. A concept Dossier is not written here: it
+  reaches the integration branch through the reviewed task-branch merge of its
+  Remote delivery (AGT-3696).
 - Package publishing commits the bounded version file and performs its atomic
   commit-and-tag push as the publish transaction.
 - Observational `agentReads` telemetry is not document metadata. It writes only
