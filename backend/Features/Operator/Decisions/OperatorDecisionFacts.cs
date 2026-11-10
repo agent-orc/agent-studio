@@ -150,6 +150,23 @@ public static class OperatorDecisionFacts
         return facts;
     }
 
+    /// <summary>
+    /// AGT-3681: one fact per batch record the store quarantined. The occurrence
+    /// is the file as written, so a restored and later damaged file is new.
+    /// </summary>
+    public static IReadOnlyList<OperatorDecisionFact> FromQuarantinedBatchRecords(
+        IEnumerable<BatchGateQuarantinedRecord> records)
+        => records.Select(record => new OperatorDecisionFact(OperatorDecisionTypes.BatchRecordUnreadable,
+            Key(OperatorDecisionTypes.BatchRecordUnreadable, record.File, Stamp(record.FileWrittenAtUtc.UtcDateTime)),
+            record.Project, null,
+            $"Batch record unreadable: the {record.Kind} record of batch {record.BatchId} in project "
+                + $"{record.Project ?? "unknown"} does not read ({record.File}): {record.Error} "
+                + $"Next step: {record.NextStep}",
+            record.DetectedAtUtc.UtcDateTime,
+            record.Project is { } project
+                ? [new OperatorEvidenceLink("batch-gate-state", ProjectHref(project, "batch-gate/state"))]
+                : [new OperatorEvidenceLink("batch-triage", "/api/operator/batch-triage")])).ToArray();
+
     /// <summary>Pending integration pushes past the batch gate's own age alert.</summary>
     public static IReadOnlyList<OperatorDecisionFact> FromPendingPushes(string project,
         IEnumerable<PendingIntegrationPushWait> waits, Func<string, string?> cardKeyOf)

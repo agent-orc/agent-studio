@@ -220,7 +220,7 @@ one result per project; exit 6 means some projects refused, exit 1 all.
 | 21 | Watch woke on `human-review.ready`. |
 | 22 | Watch woke on `decision-card.opened`. |
 | 23 | Watch woke on `backend.stalled` or `progress.idle-with-ready`. |
-| 24 | Watch woke on `batch.red` or `batch.isolating`. |
+| 24 | Watch woke on `batch.red`, `batch.isolating` or `batch.record-unreadable`. |
 | 25 | Watch woke on `push.pending-overdue`. |
 | 26 | Watch woke on `quota.exhausted` or `quota.fallback-active`. |
 | 27 | Watch woke on `stream.gap`: events were lost; read triage and capacity. |

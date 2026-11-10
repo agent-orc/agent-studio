@@ -436,6 +436,19 @@ manifest. A visible manifest with no state rows, for example after external
 file loss, has phase `Unknown` and is skipped by recovery until a state exists.
 The recovery scan logs this condition once per manifest and store instance.
 
+A record that does not deserialize is quarantined per record (AGT-3681,
+`BatchGateStore.Quarantine.cs`). `ListManifests` and `ListRecoverableManifests`
+skip an unreadable manifest, `ListRuns` skips an unreadable run record, and
+`LatestState` answers `Unknown` with reason `batch-state-record-unreadable` when
+the newest state row is unreadable; it never falls back to an older row, whose
+phase the batch may already have left. A direct read of one named record
+(`ReadManifest`, `ReadRun`) raises `BatchGateRecordUnreadableException`, a
+`JsonException`, and the pilot's recovery skips that batch. The quarantine is an
+in-memory projection of the files: `ListQuarantined` drops a record whose file
+is removed, superseded by a newer state row, or reads again after a change. The
+decision stream publishes each record once as `batch.record-unreadable`, and the
+state route lists them under `quarantined`.
+
 The batch panel reads `GET /api/projects/{projectName}/batch-gate/failed-tests`
 to rank failed test names over a seven-day sliding window (`windowDays` may be
 1 through 90). The store reads historical execution evidence once per project

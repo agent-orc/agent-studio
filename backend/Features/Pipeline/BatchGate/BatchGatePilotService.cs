@@ -881,8 +881,16 @@ public sealed partial class BatchGatePilotService
 
     private void RecoverInterrupted()
     {
+        // AGT-3681: the store quarantines an unreadable record; a batch whose
+        // own reads still fail is skipped so every other batch recovers.
         foreach (var parent in _store.ListManifests().Where(item => item.ParentBatchId is null))
-            DeriveIsolationFindings(parent);
+        {
+            try { DeriveIsolationFindings(parent); }
+            catch (BatchGateRecordUnreadableException ex)
+            {
+                _logger.LogWarning(ex, "batch-recovery-skipped-unreadable batch={BatchId}", parent.BatchId);
+            }
+        }
         foreach (var manifest in _store.ListRecoverableManifests())
         {
             if (_store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
@@ -898,6 +906,10 @@ public sealed partial class BatchGatePilotService
                 State(manifest, BatchPhase.Abandoned, null, recovery.Fence,
                     "interrupted before a publishable verdict; reconstruct from the closed snapshot");
                 ReturnToPending(manifest);
+            }
+            catch (BatchGateRecordUnreadableException ex)
+            {
+                _logger.LogWarning(ex, "batch-recovery-skipped-unreadable batch={BatchId}", manifest.BatchId);
             }
             finally { _leases.Release(recovery); }
         }

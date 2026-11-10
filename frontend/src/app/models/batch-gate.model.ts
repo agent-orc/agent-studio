@@ -71,6 +71,20 @@ export interface BatchGateState {
   members: Record<string, BatchMemberState>;
   /** AGT-3577: per member of a red batch, what the bisection proved. */
   isolationFindings?: BatchIsolationFinding[];
+  /** AGT-3681: batch records the store could not read; `batches` leaves those batches out. */
+  quarantined?: BatchQuarantinedRecord[];
+}
+
+/** One unreadable manifest, state or run record of the batch store (AGT-3681). */
+export interface BatchQuarantinedRecord {
+  batchId: string;
+  /** Null when the damaged record no longer names its project. */
+  project: string | null;
+  kind: 'manifest' | 'state' | 'run' | string;
+  file: string;
+  error: string;
+  detectedAtUtc: string;
+  nextStep: string;
 }
 
 export type BatchGateBatch = BatchGateState['batches'][number];

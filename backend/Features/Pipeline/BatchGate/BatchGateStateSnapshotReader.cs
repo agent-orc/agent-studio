@@ -37,8 +37,11 @@ public static class BatchGateStateSnapshotReader
                     null, [], 0, []);
         if (pushWait is not null)
             plan = plan with { Reason = pushWait.Reason };
+        // AGT-3681: a batch whose manifest or newest state row does not read is
+        // quarantined by the store; the route lists it under `quarantined`.
         var projectManifests = store.ListManifests()
-            .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
+            .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase)
+                && store.LatestState(item.BatchId).Reason != BatchGateStore.StateUnreadableReason)
             .ToArray();
         var recoverable = store.ListRecoverableManifests()
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
@@ -281,8 +284,24 @@ public static class BatchGateStateSnapshotReader
             preChecksRed = preChecks.Count(check => check.Outcome == "red"),
             preCheckMinutesSaved = preChecks.Sum(check => check.MinutesSaved),
             dailySummary,
+            quarantined = Quarantined(store, project),
         };
     }
+
+    /// <summary>
+    /// The project's quarantined batch records, read after the route's own
+    /// reads so it lists what they met. A record whose project cannot be read
+    /// may belong to any project, so every project lists it.
+    /// </summary>
+    private static object[] Quarantined(BatchGateStore store, string project)
+        => store.ListQuarantined()
+            .Where(record => record.Project is null
+                || string.Equals(record.Project, project, StringComparison.OrdinalIgnoreCase))
+            .Select(record => (object)new
+            {
+                record.BatchId, record.Project, record.Kind, record.File, record.Error,
+                record.DetectedAtUtc, record.NextStep,
+            }).ToArray();
 
     /// <summary>
     /// AGT-3577: a finding with the run that proved it. A proven-red finding
