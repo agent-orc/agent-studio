@@ -230,8 +230,7 @@ public sealed partial class BatchGateStore
     public string? IsolationEvidencePath(string project, string parentBatchId, string taskKey)
     {
         var finding = ListIsolationFindings(project).LastOrDefault(item =>
-            item.ParentBatchId == parentBatchId && item.TaskKey == taskKey
-            && item.EvidencePath.Length > 0);
+            item.ParentBatchId == parentBatchId && item.TaskKey == taskKey);
         return finding is null ? null : StoredEvidenceFile(finding.EvidencePath);
     }
 

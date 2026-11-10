@@ -63,5 +63,35 @@
     "file": "src/app/features/task-timeline/models/task-timeline.model.ts",
     "literal": "Accepted",
     "reason": "Completion-loop verdict label (Accepted / Re-opened). Not the 6-completed lane."
+  },
+  {
+    "file": "src/app/features/board/components/failure-intervention-chip/failure-intervention-chip.component.html",
+    "literal": "item.lane",
+    "reason": "Pre-existing `{{ ... }}` lane binding baselined when the AGT-3591 raw-lane-key rule landed; the component already fills `lane` with stateLabel(), so this is a display name, not a slug."
+  },
+  {
+    "file": "src/app/features/orchestrator/components/orchestrator-context-header/orchestrator-context-header.component.html",
+    "literal": "lane",
+    "reason": "Pre-existing `{{ ... }}` lane binding baselined when the AGT-3591 raw-lane-key rule landed; `lane` is a component-derived label, not audited in AGT-3591."
+  },
+  {
+    "file": "src/app/features/project-detail/components/project-detail/project-detail.html",
+    "literal": "item.lane",
+    "reason": "Pre-existing `{{ ... }}` lane binding baselined when the AGT-3591 raw-lane-key rule landed; structural health diagnostics print the on-disk lane folder name in <code>, so the slug is intended."
+  },
+  {
+    "file": "src/app/features/project-detail/components/project-wiki-section/wiki-pulse/wiki-pulse.component.html",
+    "literal": "run.lane",
+    "reason": "Pre-existing `{{ ... }}` lane binding baselined when the AGT-3591 raw-lane-key rule landed; wiki run lane, not audited in AGT-3591."
+  },
+  {
+    "file": "src/app/features/studio-shell/components/environment-flow/environment-flow.component.html",
+    "literal": "lane.lane",
+    "reason": "Pre-existing `{{ ... }}` lane binding baselined when the AGT-3591 raw-lane-key rule landed; lane-flow table row header, not audited in AGT-3591."
+  },
+  {
+    "file": "src/app/features/task-detail/components/protocol-pane/previous-results-control/previous-results-control.component.html",
+    "literal": "previous.lane",
+    "reason": "Pre-existing `{{ ... }}` lane binding baselined when the AGT-3591 raw-lane-key rule landed; previous-result provenance line, not audited in AGT-3591."
   }
 ]

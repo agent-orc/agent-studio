@@ -58,6 +58,8 @@ export class PickupHoldResolutionComponent implements OnInit {
   readonly labelIsButton = computed(() => this.control() === 'api' && this.buttonText() === this.resolution().label);
   readonly linkText = computed(() => {
     const action = this.action();
+    if (this.resolution().kind === 'route-to-remote-runner' && action?.kind === 'setting')
+      return 'Open Project Settings';
     return this.control() === 'link' && action ? remedyLinkLabel(action) : null;
   });
   readonly runners = computed(() => (this.hostRegistry?.hosts() ?? [])

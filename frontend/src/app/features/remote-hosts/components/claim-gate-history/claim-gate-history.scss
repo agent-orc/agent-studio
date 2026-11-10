@@ -1,0 +1,19 @@
+:host { display: block; min-width: 0; }
+.claim-history { border-top: 1px solid var(--studio-border); }
+.claim-history h3 { margin: var(--studio-spacing-3) 0; font-size: var(--studio-font-size-lg); }
+.claim-history__row {
+  display: grid;
+  grid-template-columns: 9rem 12rem 9rem minmax(0, 1fr);
+  align-items: center;
+  gap: var(--studio-spacing-3);
+  padding: var(--studio-spacing-2) 0;
+  border-bottom: 1px solid var(--studio-border);
+  font-variant-numeric: tabular-nums;
+}
+.claim-history__row time { color: var(--studio-fg-dim); }
+.claim-history__row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.claim-history__empty { margin: 0; padding: var(--studio-spacing-2) 0; color: var(--studio-fg-dim); }
+@media (max-width: 600px) {
+  .claim-history__row { grid-template-columns: 1fr 1fr; }
+  .claim-history__detail { grid-column: 1 / -1; }
+}
