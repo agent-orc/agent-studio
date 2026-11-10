@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskInfo } from '../../../models/task.model';
 import type { TaskIntegrationStatus } from '../../git';
-import { acceptanceRefusalFor, serverAcceptanceRefusal } from './acceptance-refusal.model';
+import { acceptanceRefusalSource, serverAcceptanceRefusal } from './acceptance-refusal.model';
+import { acceptanceRefusalFor } from './acceptance-refusal-reason';
 
 const card = (integration: Partial<TaskIntegrationStatus> | null, extra: Partial<TaskInfo> = {}): TaskInfo => ({
   id: 'AGT-1', taskKey: 'wp::AGT-1', state: '5-human-review', title: 'Concept',
@@ -46,6 +47,14 @@ describe('acceptanceRefusalFor (AGT-3704)', () => {
     expect(acceptanceRefusalFor(card({ status: 'pending' }, { acceptanceAttemptGap: {
       authorityEpoch: 2, subjectRunAttemptId: 'run-1', resultSha: 'a'.repeat(40), reason: 'gap' } }), null, false))
       .toBeNull();
+  });
+
+  it('decides whether the toolbar shows a refusal without loading its wording', () => {
+    const server = { taskKey: 'wp::AGT-1', code: 'integration-dead-end', message: 'Acceptance refused.' };
+    expect(acceptanceRefusalSource(card({ status: 'pending' }), null, false)).toBe('hold');
+    expect(acceptanceRefusalSource(card({ status: 'integrated' }), server, false)).toBe('server');
+    expect(acceptanceRefusalSource(card({ status: 'integrated' }), null, false)).toBeNull();
+    expect(acceptanceRefusalSource(card({ status: 'pending' }), null, true)).toBeNull();
   });
 
   it('reads the hint of a code-only server refusal', () => {

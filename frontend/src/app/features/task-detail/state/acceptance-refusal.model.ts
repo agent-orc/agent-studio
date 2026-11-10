@@ -27,49 +27,26 @@ export interface ServerAcceptanceRefusal {
   message: string;
 }
 
-const OVERRIDE_LABEL = 'Accept with override…';
-
 /**
- * The refusal for `info`, or null when Accept may act. `awaitingGit` is the
- * bounded provenance wait: that state renders its own progress skeleton, so
- * a speculative hold reason is not added beside it.
+ * Whether the toolbar shows an acceptance refusal for `info`, and why:
+ * `server` for a refused click, `hold` for a held Accept, null when Accept
+ * may act. `awaitingGit` is the bounded provenance wait: that state renders
+ * its own progress skeleton, so a speculative hold reason is not added
+ * beside it. The wording lives in `acceptance-refusal-reason.ts`, which only
+ * the deferred toolbar component loads.
  */
-export function acceptanceRefusalFor(
+export function acceptanceRefusalSource(
   info: TaskInfo,
   server: ServerAcceptanceRefusal | null,
   awaitingGit: boolean,
-): AcceptanceRefusal | null {
+): AcceptanceRefusal['source'] | null {
   if (info.state !== TaskState.HumanReview) return null;
   // The attempt-gap notice owns the run-attempt refusal and its override.
   if (info.acceptanceAttemptGap) return null;
-  if (server && server.taskKey === info.taskKey && server.code !== 'run-attempt-missing')
-    return { reason: server.message, action: 'override', actionLabel: OVERRIDE_LABEL, source: 'server' };
+  if (server && server.taskKey === info.taskKey && server.code !== 'run-attempt-missing') return 'server';
   if (awaitingGit) return null;
-  const integration = info.integration;
-  const status = integration?.status;
-  if (status === 'integrated' || status === 'not-applicable') return null;
-  const branch = integration?.integrationBranch || 'develop';
-  if (status === 'conflict-skipped') {
-    const failure = integration?.failure;
-    return {
-      reason: failure?.reason || failure?.label || `Integration into ${branch} failed.`,
-      action: 'retry-integration',
-      actionLabel: 'Retry integration',
-      source: 'hold',
-    };
-  }
-  const reason = !integration
-    ? 'No integration verdict for this delivery yet.'
-    : integration.reachUnavailable
-      ? `The ${branch} reach check could not run.`
-      : status === 'merged-locally'
-        ? `The delivery is merged locally but not yet pushed to ${branch}.`
-        : status === 'partial'
-          ? `Part of the delivery is not in ${branch} yet.`
-          : status === 'no-branch'
-            ? 'No delivery branch or commit was found for this card.'
-            : `The delivery is not in ${branch} yet.`;
-  return { reason, action: 'override', actionLabel: OVERRIDE_LABEL, source: 'hold' };
+  const status = info.integration?.status;
+  return status === 'integrated' || status === 'not-applicable' ? null : 'hold';
 }
 
 /** The refusal sentence of a failed move to Accepted, in the server's words. */

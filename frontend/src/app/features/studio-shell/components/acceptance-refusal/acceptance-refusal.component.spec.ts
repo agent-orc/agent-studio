@@ -6,15 +6,12 @@ import { AcceptanceRefusalComponent } from './acceptance-refusal.component';
 import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
 import type { TaskInfo } from '../../../../models/task.model';
-import { AcceptanceRefusalStore, type AcceptanceRefusal } from '../../../task-detail/runtime';
+import { AcceptanceRefusalStore } from '../../../task-detail/runtime';
 
-const JOB = { id: 'AGT-3649', taskKey: 'wp::AGT-3649', state: '5-human-review', watchPath: '/project/tasks' } as TaskInfo;
-const OVERRIDE: AcceptanceRefusal = {
-  reason: 'The delivery is not in develop yet.', action: 'override',
-  actionLabel: 'Accept with override…', source: 'hold',
-};
+const JOB = { id: 'AGT-3649', taskKey: 'wp::AGT-3649', state: '5-human-review', watchPath: '/project/tasks',
+  integration: { status: 'pending', integrationBranch: 'develop' } } as TaskInfo;
 
-async function mount(refusal: AcceptanceRefusal, tasks: Partial<Record<'moveJob' | 'retryIntegration', unknown>> = {}) {
+async function mount(job: TaskInfo, tasks: Partial<Record<'moveJob' | 'retryIntegration', unknown>> = {}) {
   const moveJob = vi.fn(() => of({}));
   const retryIntegration = vi.fn(() => of({}));
   const refresh = vi.fn();
@@ -30,8 +27,7 @@ async function mount(refusal: AcceptanceRefusal, tasks: Partial<Record<'moveJob'
     ],
   }).compileComponents();
   const fixture = TestBed.createComponent(AcceptanceRefusalComponent);
-  fixture.componentRef.setInput('refusal', refusal);
-  fixture.componentRef.setInput('job', JOB);
+  fixture.componentRef.setInput('job', job);
   fixture.detectChanges();
   await fixture.whenStable();
   const host = fixture.nativeElement as HTMLElement;
@@ -55,7 +51,7 @@ describe('AcceptanceRefusalComponent (AGT-3704)', () => {
   afterEach(() => TestBed.resetTestingModule());
 
   it('names the reason next to its one action', async () => {
-    const { host } = await mount(OVERRIDE);
+    const { host } = await mount(JOB);
     expect(host.querySelector('[data-testid="acceptance-refusal-reason"]')?.textContent)
       .toContain('The delivery is not in develop yet.');
     expect(host.querySelector('[data-testid="acceptance-refusal-action"]')?.textContent?.trim())
@@ -63,7 +59,7 @@ describe('AcceptanceRefusalComponent (AGT-3704)', () => {
   });
 
   it('accepts with an owner override only after a written reason', async () => {
-    const { find, click, typeReason, moveJob, refresh, success } = await mount(OVERRIDE);
+    const { find, click, typeReason, moveJob, refresh, success } = await mount(JOB);
     TestBed.inject(AcceptanceRefusalStore).record({ taskKey: JOB.taskKey, code: 'integration-dead-end', message: 'x' });
     await click('acceptance-refusal-action');
     expect(find('acceptance-refusal-form')).not.toBeNull();
@@ -83,7 +79,7 @@ describe('AcceptanceRefusalComponent (AGT-3704)', () => {
   it('keeps the form open with the server words when the override is refused', async () => {
     const moveJob = vi.fn(() => throwError(() => ({ status: 403,
       error: { error: 'operator-authority-required', message: 'Only an owner can override acceptance.' } })));
-    const { find, click, typeReason } = await mount(OVERRIDE, { moveJob });
+    const { find, click, typeReason } = await mount(JOB, { moveJob });
     await click('acceptance-refusal-action');
     typeReason('Accepting the concept Dossier.');
     await click('acceptance-refusal-submit');
@@ -92,10 +88,10 @@ describe('AcceptanceRefusalComponent (AGT-3704)', () => {
   });
 
   it('retries a failed integration directly', async () => {
-    const { click, retryIntegration, refresh, find } = await mount({
-      reason: 'develop moved under the delivery.', action: 'retry-integration',
-      actionLabel: 'Retry integration', source: 'hold',
-    });
+    const { click, retryIntegration, refresh, find } = await mount({ ...JOB, integration: {
+      status: 'conflict-skipped', integrationBranch: 'develop',
+      failure: { code: 'merge-conflict', label: 'Conflict', reason: 'develop moved under the delivery.' },
+    } } as TaskInfo);
     await click('acceptance-refusal-action');
     expect(retryIntegration).toHaveBeenCalledWith('AGT-3649', '/project/tasks');
     expect(refresh).toHaveBeenCalledWith(true);

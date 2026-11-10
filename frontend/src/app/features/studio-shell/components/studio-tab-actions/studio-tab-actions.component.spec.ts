@@ -311,12 +311,12 @@ describe('StudioTabActionsComponent - triage cluster', () => {
 
   it('shows an acceptance refusal and its action directly before the primary (AGT-3704)', async () => {
     const fixture = await build({
-      task: detail(),
-      triage: { ...withPrimary, blockedByIntegration: true, refusal: {
-        reason: 'The delivery is not in develop yet.', action: 'override',
-        actionLabel: 'Accept with override…', source: 'hold',
-      } },
+      task: detail({ integration: { status: 'pending', integrationBranch: 'develop' } as TaskInfo['integration'] }),
+      triage: { ...withPrimary, blockedByIntegration: true, acceptanceRefusal: 'hold' },
     });
+    // The refusal is a deferred block, loaded on first render.
+    await fixture.whenStable();
+    fixture.detectChanges();
     const refusal = query(fixture, 'acceptance-refusal');
     const primary = query(fixture, 'studio-triage-action-mark-done') as HTMLButtonElement;
     expect(refusal?.textContent).toContain('The delivery is not in develop yet.');

@@ -59,7 +59,25 @@ public static class AtomicJsonFileWriterBackups
 
 public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
 {
+    private static readonly AsyncLocal<bool> DiskFlushSuspended = new();
+
     private readonly bool _keepLastGoodBackup;
+
+    /// <summary>
+    /// False only in a flow whose test fixture called
+    /// <see cref="SuspendDiskFlushForTests"/>.
+    /// </summary>
+    internal static bool FlushesToDisk => !DiskFlushSuspended.Value;
+
+    /// <summary>
+    /// For test fixtures that never simulate a power loss (AGT-3567). Writes made
+    /// in the calling flow, including tasks it starts, stay atomic (temp file,
+    /// then rename) but skip the file and directory fsync: on a loaded runner
+    /// those flushes were a third of <c>AcceptanceIntegrationRoundTripTests</c>.
+    /// Work that runs in another flow, such as a request a test host serves,
+    /// still flushes.
+    /// </summary>
+    internal static void SuspendDiskFlushForTests() => DiskFlushSuspended.Value = true;
 
     public AtomicJsonFileWriter() : this(keepLastGoodBackup: false)
     {
@@ -149,7 +167,7 @@ public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
             using var stream = new FileStream(
                 temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
             JsonSerializer.Serialize(stream, value, options);
-            stream.Flush(flushToDisk: true);
+            stream.Flush(flushToDisk: FlushesToDisk);
         });
     }
 
@@ -170,7 +188,7 @@ public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
             using var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
             using (var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true))
                 writer.Write(content);
-            stream.Flush(flushToDisk: true);
+            stream.Flush(flushToDisk: FlushesToDisk);
         });
 
     private void Swap(string path, Action<string> writeTemporary)
@@ -197,7 +215,7 @@ public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
                             source.Position = 0;
                         }
                         source.CopyTo(backup);
-                        backup.Flush(flushToDisk: true);
+                        backup.Flush(flushToDisk: FlushesToDisk);
                     }
                     MoveWithRetry(backupTemp, path + ".bak");
                     FlushDirectory(path);
@@ -226,7 +244,7 @@ public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
     /// a directory through FileStream; the flushed files remain recoverable via .bak.</summary>
     internal static void FlushDirectory(string path)
     {
-        if (OperatingSystem.IsWindows()) return;
+        if (OperatingSystem.IsWindows() || !FlushesToDisk) return;
         var directory = Path.GetDirectoryName(Path.GetFullPath(path))!;
         var descriptor = open(directory, 0);
         if (descriptor < 0) return;

@@ -1,4 +1,4 @@
-import { Injectable, inject } from '@angular/core';
+import { Injectable, inject, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { TaskInfo, TaskState, type TaskDeliveryClaimAnswer } from '../../../models/task.model';
 import { TaskService } from '../../../services/task.service';
@@ -10,6 +10,7 @@ import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
 import { TaskSelectionService } from './task-selection.service';
 import { LanePagerService, LANE_LABELS } from './lane-pager.service';
 import { AcceptanceRefusalStore, serverAcceptanceRefusal } from './acceptance-refusal.model';
+import { StudioTabStateService } from '../../studio-shell/services/studio-tab-state.service';
 import {
   archiveIntegrationVerdict,
   deliveryClaimVerdict,
@@ -44,6 +45,8 @@ export class TriageController {
   private readonly prefetch = inject(TaskDetailPrefetchService);
   private readonly undo = inject(UndoController);
   private readonly acceptanceRefusals = inject(AcceptanceRefusalStore);
+  private readonly studioTabs = inject(StudioTabStateService);
+  readonly moveRefusal = signal<{ taskKey: string; message: string } | null>(null);
 
   /**
    * Invoked at every triage decision so the TaskDetailComponent's
@@ -188,8 +191,11 @@ export class TriageController {
     reason?: string,
   ): void {
     const keepTaskOpen = ev.actionId === 'reissue-escalated';
+    this.moveRefusal.set(null);
     const lane = this.jobSelection.triageLaneState ?? info.state;
     const peers = this.jobSelection.triageLanePeers();
+    const originalDetail = this.jobSelection.selected();
+    const originalPager = this.lanePager.snapshot();
     // Capture prev lane + slot BEFORE the optimistic move so undo can
     // restore the card to its exact origin position.
     const prevState = info.state;
@@ -259,11 +265,21 @@ export class TriageController {
         persistReject(err);
         this.undo.cancelActive();
         if (snapshot) this.jobService.revertOptimisticMove(snapshot);
-        // Optimistic navigation must roll back too: the user clicked
-        // Accept on `info`, the move failed, the only sensible landing
-        // spot is the job they tried to act on.
-        this.jobSelection.openDetail(info);
+        // Undo navigation as one operation: card, pager, URL and active task tab.
+        if (originalDetail?.info.taskKey === info.taskKey)
+          this.jobSelection.restoreFailedMove(originalDetail, originalPager);
+        else this.jobSelection.openDetail(info);
+        this.studioTabs.open({ kind: 'task', taskKey: info.taskKey }, 'replace-current');
         this.clearActing();
+        const refusal = typeof err?.error?.error === 'string' ? err.error.error.trim() : '';
+        const message = err?.status === 409 && err?.error?.code === 'completion-content-gap'
+          ? `${(refusal || 'Completion refused: the current brief has no passing content verdict.').replace(/^Completion refused:\s*/i, 'Acceptance needs content review: ')} Complete the required review for the current brief, or use a written operator override, then try Accept again.`
+          : err?.status === 409 && err?.error?.code === 'run-attempt-missing'
+            ? 'Acceptance needs an operator override. Add a written reason in the acceptance section below, then accept with override.'
+            : err?.status === 409 && err?.error?.code === 'integration-dead-end'
+              ? `${refusal || 'Delivery is not integrated.'} Resolve the delivery evidence, then try Accept again.`
+              : `The task stayed in ${laneLabelFor(prevState)}. ${refusal || 'The move failed.'} Try the action again.`;
+        this.moveRefusal.set({ taskKey: info.taskKey, message });
         if (ev.targetState === '6-completed' && err?.status === 409
             && err?.error?.code === 'run-attempt-missing') {
           // AGT-3096: checked before the integration match below, whose
@@ -284,17 +300,21 @@ export class TriageController {
               || (typeof err?.error?.error === 'string'
                 && /integrat|delivery|containment/i.test(err.error.error)))) {
           // AGT-3704: never a silent refusal. The toolbar shows the reason
-          // next to Accept with the action that resolves it.
-          const refusal = serverAcceptanceRefusal(info, err);
-          this.acceptanceRefusals.record(refusal);
-          this.notifications.warning(refusal.message, 'Accept refused');
+          // next to Accept with the action that resolves it, so it owns this
+          // refusal instead of the generic move-refusal line.
+          const serverRefusal = serverAcceptanceRefusal(info, err);
+          this.acceptanceRefusals.record(serverRefusal);
+          this.moveRefusal.set(null);
+          this.notifications.warning(serverRefusal.message, 'Accept refused');
           this.jobService.refresh(true);
           return;
         }
+        if (err?.status === 409 && err?.error?.code === 'completion-content-gap') return;
         this.errorDialog.show(err, {
           title: 'Failed to move task',
           fallbackMessage: 'Failed to move task',
           source: `Task ${info.id}`,
+          returnFocusSelector: `[data-action-id="${ev.actionId}"]`,
         });
       },
     });

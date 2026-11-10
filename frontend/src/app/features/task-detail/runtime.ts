@@ -9,7 +9,7 @@ export { TriageController } from './state/triage-controller.service';
 export { LanePagerService } from './state/lane-pager.service';
 export {
   AcceptanceRefusalStore,
-  acceptanceRefusalFor,
+  acceptanceRefusalSource,
   type AcceptanceRefusal,
 } from './state/acceptance-refusal.model';
 export {
@@ -17,6 +17,7 @@ export {
   primaryActionFor,
   laneLabelFor,
   mergeAcceptViewFor,
+  acceptanceHoldReason,
   LANE_LABELS,
   triageDecisionRefusal,
   triageDecisionRowState,

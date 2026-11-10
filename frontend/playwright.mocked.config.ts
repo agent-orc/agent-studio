@@ -31,6 +31,8 @@ export default defineConfig({
       '**/cli/consumer-model-policy.spec.ts',
       '**/task-detail/task-detail-instant-navigation.spec.ts',
       '**/task-detail/concept-accept-refusal.spec.ts',
+      '**/task-detail/acceptance-attempt-gap-core-first.spec.ts',
+      '**/task-detail/triage-merge-status.spec.ts',
       '**/perf/board-bundle-lazy.spec.ts',
       '**/perf/board-window-benchmark.spec.ts',
     ],

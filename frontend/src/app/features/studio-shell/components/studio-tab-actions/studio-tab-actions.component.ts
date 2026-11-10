@@ -18,6 +18,7 @@ import { stateLabel as fmtStateLabel } from '../../../../services/format.util';
 import type { RunActivityBadge } from '../../../../services/run-activity.util';
 import type { TaskDetail } from '../../../../models/task.model';
 import type { AcceptanceRefusal } from '../../../task-detail/runtime';
+// Rendered only inside an @defer block, so it stays out of the initial bundle.
 import { AcceptanceRefusalComponent } from '../acceptance-refusal/acceptance-refusal.component';
 
 /** Which of the task detail panes the shell currently shows. */
@@ -56,8 +57,8 @@ export interface StudioTabTriage {
   blockedByDecision?: boolean;
   actingId: string | null;
   menuItems: MenuItem[];
-  /** AGT-3704: why the Human Review Accept is held or was refused, shown before it. */
-  refusal?: AcceptanceRefusal | null;
+  /** AGT-3704: the Human Review Accept is held or was refused; its reason renders before it. */
+  acceptanceRefusal?: AcceptanceRefusal['source'] | null;
 }
 
 /**

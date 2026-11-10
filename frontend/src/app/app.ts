@@ -48,10 +48,11 @@ import {
   TriageController,
   LanePagerService,
   AcceptanceRefusalStore,
-  acceptanceRefusalFor,
+  acceptanceRefusalSource,
   overflowActionsFor,
   primaryActionFor,
   mergeAcceptViewFor,
+  acceptanceHoldReason,
   triageDecisionRefusal,
   triageDecisionRowState,
   type MergeAcceptView,
@@ -98,6 +99,7 @@ import {
   ProjectHubUrlService,
   StudioTabStateService,
   StudioPanelStateService,
+  ThemeService,
   studioTabKey,
   parseStudioRoute,
   navigateStudioRoute,
@@ -350,7 +352,7 @@ export class App implements OnInit, OnDestroy {
    *  itself + show a spinner while a bulk archive is in flight. */
   readonly archivingInProgress = this.boardMutations.archiving;
   /** Cycle 10c: triage panel + j/k navigation + auto-advance live here. */
-  private readonly triage = inject(TriageController);
+  readonly triage = inject(TriageController);
   private readonly acceptanceRefusals = inject(AcceptanceRefusalStore);
   readonly showCreate = this.createJobForm.visible;
   readonly availableModels = this.createJobForm.availableModels;
@@ -432,6 +434,8 @@ export class App implements OnInit, OnDestroy {
    * working unchanged. Methods further down delegate to the service.
    */
   private readonly laneCollapse = inject(LaneCollapseService);
+  // Initialize document theme before the auth gate can render.
+  readonly theme = inject(ThemeService).theme;
   readonly collapsedLanes = this.laneCollapse.collapsedLanes;
   readonly focusedContainer = this.laneCollapse.focusedContainer;
   readonly taskNavCollapsed = this.uiPrefs.taskNavCollapsed;
@@ -577,16 +581,35 @@ export class App implements OnInit, OnDestroy {
    * shown alone (null: all of them); on wide boards it is the container focus.
    */
   readonly singleGroupBoard = this.laneCollapse.singleGroupLayout;
+  readonly singleLaneBoard = this.laneCollapse.singleLaneLayout;
+  readonly mobileLaneChoice = signal<string | null>(null);
+  readonly mobileLaneOptions = computed(() => [
+    ...this.laneGroups().flatMap(group => group.lanes.map(lane => ({
+      id: lane.state, label: lane.title, groupId: group.id,
+    }))),
+    ...(this.visibleDeliveryGroup()?.columns.map(column => ({
+      id: `delivery:${column.id}`, label: column.title, groupId: DELIVERY_GROUP_ID,
+    })) ?? []),
+  ]);
+  readonly mobileLane = computed(() => {
+    const options = this.mobileLaneOptions();
+    return options.find(option => option.id === this.mobileLaneChoice()) ?? options[0] ?? { id: '', label: '', groupId: '' };
+  });
+  selectMobileLane(id: string): void {
+    this.mobileLaneChoice.set(id);
+  }
   readonly deliveryGroupId = DELIVERY_GROUP_ID;
   private readonly deliverySection = viewChild(DeliverySectionComponent);
   readonly visibleDeliveryGroup = computed(() => {
     const section = this.deliverySection();
     return section?.visible() ? section.group() : null;
   });
-  readonly studioBoardFocus = computed(() => this.laneCollapse.boardFocus([
-    ...this.laneGroups().map((g) => g.id),
-    ...(this.visibleDeliveryGroup() ? [DELIVERY_GROUP_ID] : []),
-  ]));
+  readonly studioBoardFocus = computed(() => this.singleLaneBoard()
+    ? this.mobileLane()?.groupId ?? null
+    : this.laneCollapse.boardFocus([
+      ...this.laneGroups().map((g) => g.id),
+      ...(this.visibleDeliveryGroup() ? [DELIVERY_GROUP_ID] : []),
+    ]));
   selectBoardGroup(id: string): void {
     this.laneCollapse.selectSingleGroup(id);
   }
@@ -1238,16 +1261,15 @@ export class App implements OnInit, OnDestroy {
     return this.studioMergeAcceptView()?.acceptLabel ?? p.label;
   });
   /**
-   * True while the studio Human Review acceptance primary (`mark-done`) depends
-   * on git status that has not loaded yet. Until the graph-derived provenance
-   * settles, `landedState` is `null` and the label would guess "Merge into
-   * Develop" (an actionable merge) before flipping to "Accept" once the work is
-   * revealed as already merged - the race Robert reported (AGT-2006). The button
-   * stays disabled + skeletoned while this holds, then switches atomically.
+   * A missing integration verdict keeps the acceptance primary held while
+   * Git is loading. A fresh integrated or not-applicable verdict already
+   * proves Accept is safe; provenance may refine the explanation later.
    */
   readonly studioPrimaryAwaitingGit = computed(() => {
     const p = this.studioTriagePrimary();
     if (!p || p.id !== 'mark-done') return false;
+    const status = this.selectedJob()?.info.integration?.status;
+    if (status === 'integrated' || status === 'not-applicable') return false;
     return this.jobDetailSig()?.gitInfoLoading() ?? false;
   });
   readonly studioPrimaryBlockedByIntegration = computed(() => {
@@ -1256,13 +1278,14 @@ export class App implements OnInit, OnDestroy {
     return status !== 'integrated' && status !== 'not-applicable';
   });
   /**
-   * AGT-3704: the reason a Human Review Accept is held or was refused, with
-   * the one action that resolves it, rendered before the Accept button.
+   * AGT-3704: whether a Human Review Accept is held or was refused. The
+   * toolbar then renders the reason and the one action that resolves it
+   * before the Accept button.
    */
   readonly studioAcceptanceRefusal = computed(() => {
     const info = this.selectedJob()?.info;
     if (!info || this.studioTriagePrimary()?.id !== 'mark-done' || this.studioPrimaryDecisionRefusal()) return null;
-    return acceptanceRefusalFor(info, this.acceptanceRefusals.forTask(info.taskKey),
+    return acceptanceRefusalSource(info, this.acceptanceRefusals.forTask(info.taskKey),
       this.studioPrimaryAwaitingGit());
   });
   /** AGT-2795: the decision lane guard's refusal for the studio primary move. */
@@ -1297,16 +1320,16 @@ export class App implements OnInit, OnDestroy {
       hasActions: this.studioTriageHasActions(),
       primaryId: primary?.id ?? null,
       primaryLabel: label,
-      primaryTooltip: this.studioPrimaryAwaitingGit()
-        ? 'Checking git status — action available once loaded.'
-        : this.studioPrimaryDecisionRefusal()
-          ?? `${this.studioMergeAcceptView()?.statusTooltip || label} (Enter)`,
+      primaryTooltip: this.studioPrimaryDecisionRefusal()
+        ?? (this.studioPrimaryBlockedByIntegration()
+          ? acceptanceHoldReason(this.selectedJob()!.info)
+          : `${this.studioMergeAcceptView()?.statusTooltip || label} (Enter)`),
       awaitingGit: this.studioPrimaryAwaitingGit(),
       blockedByIntegration: this.studioPrimaryBlockedByIntegration(),
       blockedByDecision: !!this.studioPrimaryDecisionRefusal(),
       actingId: this.studioTriageActingId(),
       menuItems: this.studioTriageMenuItems(),
-      refusal: this.studioAcceptanceRefusal(),
+      acceptanceRefusal: this.studioAcceptanceRefusal(),
     };
   });
 

@@ -6,10 +6,9 @@ import type { TaskInfo } from '../../../../models/task.model';
 import { NotificationService } from '../../../../services/notification.service';
 import { TaskService } from '../../../../services/task.service';
 import { serverErrorMessage } from '../../../../utils/server-error-message';
-import {
-  AcceptanceRefusalStore,
-  type AcceptanceRefusal,
-} from '../../../task-detail/runtime';
+import { AcceptanceRefusalStore } from '../../../task-detail/runtime';
+// Direct import, not through the barrel: the wording loads with this deferred component.
+import { acceptanceRefusalFor } from '../../../task-detail/state/acceptance-refusal-reason';
 
 /**
  * AGT-3704: the reason a Human Review Accept is held or was refused, rendered
@@ -26,7 +25,6 @@ import {
   styleUrl: './acceptance-refusal.component.scss',
 })
 export class AcceptanceRefusalComponent {
-  readonly refusal = input.required<AcceptanceRefusal>();
   readonly job = input.required<TaskInfo>();
   readonly disabled = input(false);
 
@@ -41,9 +39,13 @@ export class AcceptanceRefusalComponent {
   private readonly notifications = inject(NotificationService);
   private readonly refusals = inject(AcceptanceRefusalStore);
 
+  /** The toolbar renders this component only once the Git wait has settled. */
+  readonly refusal = computed(() =>
+    acceptanceRefusalFor(this.job(), this.refusals.forTask(this.job().taskKey), false));
+
   onAction(event: MouseEvent): void {
     if (this.disabled() || this.busy()) return;
-    if (this.refusal().action === 'retry-integration') {
+    if (this.refusal()?.action === 'retry-integration') {
       this.retryIntegration();
       return;
     }

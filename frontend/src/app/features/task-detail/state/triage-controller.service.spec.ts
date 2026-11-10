@@ -273,12 +273,14 @@ describe('TriageController · optimistic navigation on Accept', () => {
     const errorDialog = TestBed.inject(ErrorDialogService);
     vi.spyOn(errorDialog, 'show').mockImplementation(noop);
 
-    const openSpy = vi.spyOn(selection, 'openDetail').mockImplementation(noop);
+    const beforePager = TestBed.inject(LanePagerService).snapshot();
 
     ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
 
     expect(revertSpy).toHaveBeenCalled();
-    expect(openSpy).toHaveBeenCalledWith(taskA);
+    expect(selection.selected()?.info.taskKey).toBe(taskA.taskKey);
+    expect(TestBed.inject(LanePagerService).snapshot()).toEqual(beforePager);
+    expect(ctrl.moveRefusal()?.taskKey).toBe(taskA.taskKey);
   });
 
   /**
@@ -305,11 +307,10 @@ describe('TriageController · optimistic navigation on Accept', () => {
     const refresh = vi.spyOn(jobService, 'refresh').mockImplementation(noop);
     const errorDialog = vi.spyOn(TestBed.inject(ErrorDialogService), 'show').mockImplementation(noop);
     const warning = vi.spyOn(TestBed.inject(NotificationService), 'warning');
-    const openSpy = vi.spyOn(selection, 'openDetail').mockImplementation(noop);
 
     ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
 
-    expect(openSpy).toHaveBeenCalledWith(taskA);
+    expect(selection.selected()?.info.taskKey).toBe(taskA.taskKey);
     expect(warning).toHaveBeenCalledWith(refusal, 'Acceptance needs an operator override');
     expect(refresh).not.toHaveBeenCalled();
     expect(errorDialog).not.toHaveBeenCalled();
@@ -342,7 +343,30 @@ describe('TriageController · optimistic navigation on Accept', () => {
     expect(warning).toHaveBeenCalledWith(refusal, 'Accept refused');
     expect(TestBed.inject(AcceptanceRefusalStore).forTask(taskA.taskKey))
       .toEqual({ taskKey: taskA.taskKey, code: 'integration-dead-end', message: refusal });
+    expect(ctrl.moveRefusal()).toBeNull();
     expect(errorDialog).not.toHaveBeenCalled();
+  });
+
+  it('shows a completion-content-gap refusal inline and keeps the task in review', () => {
+    const taskA = makeJob('task-a', '5-human-review');
+    selection.selected.set(makeDetail('task-a', '5-human-review'));
+    TestBed.inject(LanePagerService).capture('5-human-review', [taskA], taskA.taskKey);
+    selection.triageLaneState = '5-human-review';
+    vi.spyOn(jobService, 'applyOptimisticMove').mockReturnValue({} as never);
+    vi.spyOn(jobService, 'revertOptimisticMove').mockImplementation(noop);
+    vi.spyOn(jobService, 'moveJob').mockReturnValue(throwError(() => ({
+      status: 409, error: { code: 'completion-content-gap', error: 'Completion refused: no content verdict for the current brief.' },
+    })));
+    const dialog = vi.spyOn(TestBed.inject(ErrorDialogService), 'show').mockImplementation(noop);
+    selection.showTriageToast('Lane cleared.');
+
+    ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
+
+    expect(selection.selected()?.info.taskKey).toBe(taskA.taskKey);
+    expect(TestBed.inject(LanePagerService).snapshot()?.jobs[0].taskKey).toBe(taskA.taskKey);
+    expect(ctrl.moveRefusal()?.message).toContain('Complete the required review for the current brief, or use a written operator override');
+    expect(selection.triageToast()).toBeNull();
+    expect(dialog).not.toHaveBeenCalled();
   });
 });
 

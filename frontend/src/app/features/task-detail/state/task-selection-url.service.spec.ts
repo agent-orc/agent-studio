@@ -170,9 +170,14 @@ describe('TaskSelectionService · stable task URLs', () => {
 
   afterEach(() => {
     try {
-      // AGT-3704: every paint of a Human Review card reads Git upfront. The
-      // repaint and conflict tests below are not about that read; the test
-      // "reads the Git verdict upfront only for a Human Review card" is.
+      // Human Review core opens read the full detail acceptance authority,
+      // and (AGT-3704) the Git resource upfront. Tests outside those
+      // contracts may leave these independent reads pending.
+      for (const request of http.match(req => req.url.startsWith('/api/v1/projects/')
+        && req.url.includes('/tasks/')))
+        if (!request.cancelled) request.flush(null, { status: 503, statusText: 'Unavailable' });
+      for (const request of http.match(req => /^\/api\/tasks\/[^/]+$/.test(req.url)))
+        if (!request.cancelled) request.flush(null, { status: 503, statusText: 'Unavailable' });
       for (const request of http.match(req => req.url.endsWith('/details/git')))
         if (!request.cancelled) request.flush({}, { status: 503, statusText: 'Unavailable' });
       http.verify();
@@ -558,8 +563,9 @@ describe('TaskSelectionService · stable task URLs', () => {
   it('reads the Git verdict upfront only for a Human Review card (AGT-3704)', async () => {
     selection.openDetail(info);
     http.expectOne(req => req.url.endsWith('/human-readable-slug/core')).flush(coreFor(info, 'Agent Studio'));
+    // paintRich expects exactly one upfront Git read for this Human Review card.
     await paintRich(info);
-    http.verify();
+    expect(http.match(req => req.url.endsWith('/details/git'))).toHaveLength(0);
   });
 
   it('reads no Git resource upfront outside Human Review (AGT-3704)', async () => {
@@ -1166,7 +1172,11 @@ describe('TaskSelectionService · stable task URLs', () => {
 
     expect(selection.selectedCore()).toBeNull();
     expect(selection.detailPreview()).toBeNull();
-    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug')).flush(detail);
+    const detailReads = http.match(req => req.url.startsWith('/api/v1/projects/')
+      && req.url.endsWith('/tasks/human-readable-slug'));
+    const activeDetailReads = detailReads.filter(request => !request.cancelled);
+    expect(activeDetailReads).toHaveLength(1);
+    activeDetailReads[0].flush(detail);
     expect(selection.selected()?.info.id).toBe(info.id);
     expect(selection.detailLoadError()).toBeNull();
   });
