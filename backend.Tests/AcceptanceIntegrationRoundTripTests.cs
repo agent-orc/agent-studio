@@ -3511,6 +3511,115 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         },
     };
 
+    [Fact]
+    public async Task Acceptance_CurrentGenerationCoveredByOwnVerifiedMerge_IsAccepted()
+    {
+        var older = PublishDelivery("earlier-generation.txt", "earlier delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{older}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deliverySha = PublishDelivery("current-generation.txt", "current delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        RunGit(_repo, "checkout", "-q", "-b", "fenced-result", deliverySha);
+        RunGit(_repo, "commit", "-q", "--allow-empty", "-m", "fenced result snapshot");
+        var fencedResult = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "push", "-q", "origin", $"{fencedResult}:refs/heads/{DeliveryRef}");
+        RunGit(_repo, "checkout", "-q", "main");
+        var deps = Build(fencedResult);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        TaskJsonFile.UpdateFieldOrThrow(card.FolderPath, "commits", new[]
+        {
+            card.Commits[0] with { Sha = older, DeliveryGeneration = 1, SupersededBySha = deliverySha },
+            card.Commits[0] with { Sha = deliverySha, DeliveryGeneration = 4 },
+        });
+        IntegrationVerificationStore.Write(card.FolderPath, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = deliverySha,
+            IntegrationBranch = "develop",
+            DeliveryShas = [older],
+            Evidence = IntegrationVerificationEvidence.MergeGate,
+            GateVerdict = nameof(BuildTestGateVerdict.Ok),
+            Reason = "Merge gate passed.",
+        });
+        var later = PublishLaterCommit("current-generation-later.txt");
+        Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
+            PassedPublishedGate(later, "AGT-LATER")));
+
+        var classified = deps.Integration.BuildForCompletion(deps.Scanner.FindJob(Slug, _watchPath)!);
+        Assert.Contains("superseded by", classified.Detail);
+        Assert.Equal(IntegrationVerificationStates.Verified, classified.Verification?.State);
+
+        var moved = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+
+        Assert.Equal(MoveJobStatus.Success, moved.Status);
+        Assert.Contains(deliverySha,
+            deps.Scanner.FindJob(Slug, _watchPath)!.CompletionClaim?.Evidence);
+    }
+
+    [Fact]
+    public async Task Acceptance_NewerDeliveryOutsideOwnVerifiedTree_IsRefused()
+    {
+        var oldTree = PublishDelivery("older-verified.txt", "older delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{oldTree}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var newerDelivery = PublishDelivery("newer-unverified.txt", "newer delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{newerDelivery}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(newerDelivery);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        IntegrationVerificationStore.Write(card.FolderPath, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = oldTree,
+            IntegrationBranch = "develop",
+            DeliveryShas = [oldTree],
+            Evidence = IntegrationVerificationEvidence.MergeGate,
+            GateVerdict = nameof(BuildTestGateVerdict.Ok),
+        });
+
+        var moved = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+
+        Assert.Equal(MoveJobStatus.IntegrationFailed, moved.Status);
+        Assert.Contains("integrated-unverified", moved.Message);
+    }
+
+    [Theory]
+    [InlineData("superseded-a")]
+    [InlineData("superseded-b")]
+    [InlineData("already-integrated")]
+    public async Task Acceptance_ContainedDeliveryCoveredByPublishedBatchBaseVerdict_IsAccepted(string outcome)
+    {
+        var deliverySha = PublishDelivery($"{outcome}.txt", "delivered\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var verifiedTree = PublishLaterCommit($"{outcome}-batch.txt");
+        var batches = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
+        batches.RecordBaseVerdict(new BatchGateBaseVerdict(Project, verifiedTree,
+            "profile", "pass", null, $"batch fixture-{outcome} verified and published this tip",
+            Path.Combine(_tempDir, "gate.log"), new DateTimeOffset(VerificationFixtureAtUtc),
+            BatchGateBaseCheckSources.PublishedBatch, 0, verifiedTree));
+        var deps = Build(deliverySha, batchGates: batches);
+        if (outcome.Contains("superseded", StringComparison.Ordinal))
+        {
+            var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+            IntegrationVerificationStore.Write(card.FolderPath, new IntegrationVerificationRecord
+            {
+                State = IntegrationVerificationStates.Unverified,
+                Sha = verifiedTree,
+                IntegrationBranch = "develop",
+                Reason = "The last merge outcome was superseded.",
+            });
+        }
+
+        var moved = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+
+        Assert.Equal(MoveJobStatus.Success, moved.Status);
+        var evidence = deps.Scanner.FindJob(Slug, _watchPath)!.CompletionClaim?.Evidence;
+        Assert.Contains($"fixture-{outcome}", evidence);
+        Assert.Contains(verifiedTree, evidence);
+    }
+
     private static void WriteBatchEvidence(BatchGateStore batches, string batchId,
         string baseSha, string candidateSha)
     {
