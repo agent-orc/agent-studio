@@ -40,9 +40,24 @@
         data-testid="workbench-decision-rework-confirmation"
         (keydown.escape)="closeConfirmation($event)"
         (submit)="$event.preventDefault(); confirmRework()">
-    <p class="decision-actions__chosen" data-testid="workbench-decision-rework-response">
-      <span>Selection and comment</span><strong>{{ selectedSummary() }}</strong>
-    </p>
+    <label>
+      <span>What should the revision change?</span>
+      <textarea rows="3" data-testid="workbench-decision-rework-request" maxlength="20000"
+                placeholder="For example: add a section on data retention."
+                [value]="request()" [disabled]="pending()" (input)="updateRequest($event)"></textarea>
+    </label>
+    @if (revisionCard(); as card) {
+      <p class="decision-actions__chosen" data-testid="workbench-decision-revision-card">
+        <span>Runs the revision</span>
+        <strong>{{ card.key }}@if (card.title) { · {{ card.title }}}</strong>
+        <small>{{ revisionCardLane() }} · a follow-up round starts, or queues with its reason</small>
+      </p>
+    }
+    @if (selectedSummary()) {
+      <p class="decision-actions__chosen" data-testid="workbench-decision-rework-response">
+        <span>Recorded selections</span><strong>{{ selectedSummary() }}</strong>
+      </p>
+    }
     <div class="decision-actions__configuration">
       <span>CLI, model and thinking level</span>
       <app-cli-model-selector
@@ -53,7 +68,7 @@
     <div class="decision-actions__buttons">
       <button type="button" [disabled]="pending()" (click)="closeConfirmation()">Cancel</button>
       <button type="submit" data-testid="workbench-decision-confirm-rework"
-              [disabled]="!canRequestRework() || !model().trim()" [appPendingButton]="pending()"
+              [disabled]="!canConfirmRework()" [appPendingButton]="pending()"
               pendingLabel="Requesting…">Confirm rework request</button>
     </div>
   </form>
@@ -69,7 +84,7 @@
                 [disabled]="settled() || pending()" (click)="archiveRequested.emit()">Archive</button>
       }
       <button type="button" data-testid="workbench-decision-rework"
-              [attr.title]="reworkDisabledReason() || (!hasReworkComment() ? 'Add a comment to request rework.' : null)"
+              [attr.title]="reworkDisabledReason()"
               [disabled]="!canRequestRework()" (click)="beginRework()">Request rework</button>
       <button type="button" data-testid="workbench-decision-start"
               [disabled]="!canPrepareFeature()" (click)="prepareFeatureCard()">Start task</button>

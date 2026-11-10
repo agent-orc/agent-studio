@@ -3,16 +3,24 @@
 Acceptance checks the first-parent line after a delivery's verified tree. A
 server-authored document-key discovery commit is gate-neutral only when its
 first-parent diff changes existing `docs/**/workbench.json` descriptors solely
-by adding `key`. New managed commits carry an operation trailer; legacy
-commits require the Agent Studio author and committer identity. Acceptance
-records the inspected commit SHA in the card's
-completion evidence. Every other later commit still needs a passed gate.
+by adding `key`. A server-authored Dossier decision-receipt commit
+(`chore(workbench): request revision for|record decision for|archive <id>`)
+is gate-neutral only when it modifies exactly one `docs/**/workbench.json`,
+adds a `decision` receipt object, only appends to `lifecycleHistory` and
+`relatedTaskKeys`, and changes no descriptor value outside the receipt and its
+lifecycle bookkeeping (`lifecycleState`, `status`, `editedBy`, `editedAt`,
+`updatedAt`; AGT-3703). New managed commits carry an operation trailer
+(`Agent-Studio-Operation: workbench-key-discovery` or `workbench-decision`);
+legacy commits require the Agent Studio author and committer identity.
+Acceptance records the inspected commit SHA in the card's completion evidence
+as a gate-neutral Dossier descriptor commit. Every other later commit still
+needs a passed gate.
 Batch candidates and direct integration merges assign keys to descriptors
 changed by the delivery before the gate tests the resulting tree. Catalogue
 discovery keeps its managed key mutation for descriptors outside a gated
 delivery.
 
-Version: 2026-11-09
+Version: 2026-11-10
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 ## Aspect prompt cache

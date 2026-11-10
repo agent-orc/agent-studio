@@ -3,6 +3,7 @@ import {
   WorkbenchDecisionPoint,
   WorkbenchDecisionResponse,
   WorkbenchDocument,
+  WorkbenchRevisionRound,
   WorkbenchTaskDraft,
 } from '../../../../models/project-docs.model';
 
@@ -50,17 +51,54 @@ export function reworkPrompt(
   document: WorkbenchDocument,
   points: readonly WorkbenchDecisionPoint[],
   responses: readonly WorkbenchDecisionResponse[],
+  request = '',
 ): string {
+  const selections = selectedDecisionText(points, responses);
   return [
     `Revise Dossier ${document.workbench.key ?? document.workbench.id}: ${document.workbench.title}.`,
     '',
-    'The operator requested a new Dossier revision instead of accepting the current decision.',
-    'Revise both index.html and workbench.json in the project repository through the normal orchestrator delivery path.',
-    'Keep the decision open, preserve lifecycle history, remove the pending rework receipt after the new revision is delivered, and update the inline decision markup to match the revision.',
-    '',
-    'Operator response:',
-    selectedDecisionText(points, responses),
+    'The owner requested a new Dossier revision instead of accepting the current decision.',
+    `Source: \`${document.workbench.entryPath}\``,
+    'Revise both index.html and workbench.json in the project repository through the normal delivery path.',
+    'Keep the decision open, preserve lifecycle history, and keep the pending rework receipt in workbench.json: the Dossier reads the owner\'s recorded selections from it.',
+    'In the revised inline decision markup, mark the owner\'s recorded selections below as the checked options instead of the authored recommendations.',
+    ...(request.trim() ? ['', 'Owner request:', request.trim()] : []),
+    ...(selections ? ['', 'Owner selections:', selections] : []),
   ].join('\n');
+}
+
+/**
+ * After a revision lands, the owner's recorded selections win over the authored
+ * defaults wherever the revised markup still offers them. A point that is new,
+ * changed its kind, or dropped a recorded option keeps the authored default.
+ * Comments belonged to the rework request and are not carried forward.
+ */
+export function carryRecordedSelections(
+  recorded: readonly WorkbenchDecisionResponse[] | null | undefined,
+  points: readonly WorkbenchDecisionPoint[],
+  authored: readonly WorkbenchDecisionResponse[],
+): WorkbenchDecisionResponse[] {
+  const byId = new Map((recorded ?? []).map(response => [response.decisionId, response]));
+  return authored.map(response => {
+    const point = points.find(candidate => candidate.id === response.decisionId);
+    const previous = byId.get(response.decisionId);
+    if (!point || !previous || previous.kind !== point.kind || previous.selectedOptionIds.length === 0)
+      return response;
+    const offered = new Set(point.options.map(option => option.id));
+    if (!previous.selectedOptionIds.every(id => offered.has(id))) return response;
+    return { ...response, selectedOptionIds: [...previous.selectedOptionIds] };
+  });
+}
+
+/** One readable line for the follow-up round a rework request started or queued. */
+export function revisionRoundText(round: WorkbenchRevisionRound): string {
+  const card = round.title ? `${round.taskKey} · ${round.title}` : round.taskKey;
+  switch (round.status) {
+    case 'started': return `Revision round started on ${card}.`;
+    case 'queued': return `Revision round queued on ${card}. ${round.detail ?? ''}`.trim();
+    case 'saved': return `Revision request saved on ${card}. ${round.detail ?? ''}`.trim();
+    default: return `The rework request is recorded, but the revision round on ${card} could not start: ${round.detail ?? 'unknown reason'}`;
+  }
 }
 
 export function taskKeyTail(taskKey: string): string {

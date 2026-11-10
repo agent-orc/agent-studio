@@ -30,6 +30,7 @@ import { WorkbenchDecisionActionsComponent } from '../workbench-decision-actions
 import {
   createOperationId,
   laneLabel,
+  revisionRoundText,
   selectedDecisionText,
 } from './workbench-decision-panel.util';
 
@@ -80,6 +81,14 @@ export class WorkbenchDecisionPanelComponent {
   readonly persistedDecision = computed(() =>
     this.reworkRevisionLanded() ? null : this.storedDecision());
   readonly result = computed(() => this.requestState().result);
+  /** The follow-up round of a rework confirmed in this session (AGT-3703). */
+  readonly revisionRound = computed(() => {
+    const result = this.result();
+    return result?.outcome === 'rework'
+      && result.operationId === this.persistedDecision()?.operationId
+      ? result.revisionRound ?? null : null;
+  });
+  readonly revisionRoundText = revisionRoundText;
   readonly pending = computed(() => this.requestState().pending !== null);
   readonly settled = computed(() => {
     const decision = this.persistedDecision();

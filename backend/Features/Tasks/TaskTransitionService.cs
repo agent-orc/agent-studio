@@ -418,7 +418,7 @@ public sealed class TaskTransitionService
             {
                 Evidence = $"{contentClaim.Evidence} {gateName}"
                     + (gate.GateNeutralCommits.Count == 0 ? string.Empty
-                        : $" Gate-neutral document-key commits: {string.Join(", ", gate.GateNeutralCommits)}."),
+                        : $" Gate-neutral Dossier descriptor commits: {string.Join(", ", gate.GateNeutralCommits)}."),
             };
         }
         var boundCompletionClaim = contentClaim is null

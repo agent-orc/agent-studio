@@ -26,6 +26,9 @@ public sealed class ManagedRepositoryMutationService
 {
     public const string DocumentKeyOperationId = "workbench-key-discovery";
     public const string DocumentKeyCommitTrailer = "Agent-Studio-Operation: workbench-key-discovery";
+    /// <summary>Operation ids of Dossier decision-receipt writes start with this (AGT-3703).</summary>
+    public const string DecisionReceiptOperationPrefix = "workbench-decision-";
+    public const string DecisionReceiptCommitTrailer = "Agent-Studio-Operation: workbench-decision";
     private static readonly ConcurrentDictionary<string, object> RepositoryGates =
         new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
@@ -143,7 +146,10 @@ public sealed class ManagedRepositoryMutationService
                 return new ManagedRepositoryMutationResult(true, false, false, null, false, null);
 
             var recordedMessage = operationId == DocumentKeyOperationId
-                ? $"{commitMessage}\n\n{DocumentKeyCommitTrailer}" : commitMessage;
+                ? $"{commitMessage}\n\n{DocumentKeyCommitTrailer}"
+                : operationId.StartsWith(DecisionReceiptOperationPrefix, StringComparison.Ordinal)
+                    ? $"{commitMessage}\n\n{DecisionReceiptCommitTrailer}"
+                    : commitMessage;
             var commit = _git.CommitPaths(root, recordedMessage, paths);
             if (!commit.Success || string.IsNullOrWhiteSpace(commit.Sha))
             {

@@ -62,29 +62,30 @@ describe('WorkbenchDecisionStore', () => {
     expect(store.state('Demo', 'layout').result?.decisionStage).toBe('succeeded');
   });
 
-  it('persists the pending rework receipt before queuing one Dossier-session steer', () => {
+  it('hands the rework request and its round prompt to confirm without an orchestrator turn', () => {
+    let round: unknown = null;
     store.requestRework(
-      'Agent Studio', 'layout', 'AGT-W48', PREPARE,
-      'Revise the Dossier.\nMove the total higher.',
+      'Agent Studio', 'layout', { ...PREPARE, request: 'Add a privacy section.' },
+      'Revise the Dossier.\nAdd a privacy section.',
       { cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'high' },
-    ).subscribe();
+    ).subscribe(confirmed => round = confirmed.revisionRound);
 
     http.expectOne('/api/projects/Agent%20Studio/workbenches/layout/decisions/prepare')
       .flush({ ...result('prepared'), revision: 'c'.repeat(40) });
     const confirm = http.expectOne(
       '/api/projects/Agent%20Studio/workbenches/layout/decisions/confirm');
     expect(confirm.request.body).toEqual(expect.objectContaining({
-      outcome: 'rework', expectedRevision: 'c'.repeat(40),
+      outcome: 'rework', expectedRevision: 'c'.repeat(40), request: 'Add a privacy section.',
+      revisionPrompt: 'Revise the Dossier.\nAdd a privacy section.',
       cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'high', confirmed: true,
     }));
-    confirm.flush(result('pending'));
-    const steer = http.expectOne(
-      '/api/v1/studio/orchestrator/sessions/workbench:Agent%20Studio/AGT-W48/turns');
-    expect(steer.request.body).toEqual({
-      prompt: 'Revise the Dossier.\nMove the total higher.',
-      cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'high',
-    });
-    steer.flush({ status: 'queued' });
+    const queued = {
+      status: 'queued', taskKey: 'AGT-2300', title: 'Concept', queueReason: 'project-busy',
+      detail: 'Another card holds the project\'s runner slot.',
+    };
+    confirm.flush({ ...result('pending'), revisionRound: queued });
+    expect(round).toEqual(queued);
+    http.expectNone(request => request.url.includes('/orchestrator/sessions/'));
   });
 });
 

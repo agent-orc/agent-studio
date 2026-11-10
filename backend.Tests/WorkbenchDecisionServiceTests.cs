@@ -230,6 +230,64 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
     }
 
     [Fact]
+    public void Confirm_ReworkWithOnlyARequestRecordsTheRequestAndTheRevisionCard()
+    {
+        // AGT-3703: the owner asks for more in the rework form itself, not in a
+        // decision's comment, and the receipt names the card that owes the revision.
+        WriteSchemaTwo("routing-policy");
+        var (catalogue, decisions) = Services();
+
+        var result = decisions.Confirm("Project", "routing-policy", new ConfirmWorkbenchDecisionRequest
+        {
+            OperationId = "workbench-ui-rework-request",
+            Outcome = "rework",
+            Actor = "Robert",
+            ExpectedFingerprint = catalogue.Read("Project", "routing-policy")!.Fingerprint,
+            Request = "Add a privacy section.",
+            Responses =
+            [
+                new WorkbenchDecisionResponse { DecisionId = "route", Kind = "single", SelectedOptionIds = ["b"] },
+            ],
+            Confirmed = true,
+        }, revisionTaskKey: "PRJ-12");
+
+        Assert.True(result.Success, result.Error);
+        using var written = JsonDocument.Parse(File.ReadAllText(Descriptor("routing-policy")));
+        var descriptor = written.RootElement;
+        var receipt = descriptor.GetProperty("decision");
+        Assert.Equal("Add a privacy section.", receipt.GetProperty("request").GetString());
+        Assert.Equal("PRJ-12", receipt.GetProperty("revisionTaskKey").GetString());
+        Assert.Equal("Revision requested from PRJ-12", descriptor.GetProperty("lifecycleHistory")
+            .EnumerateArray().Last().GetProperty("note").GetString());
+
+        var item = Assert.Single(catalogue.List("Project", includeHistory: true)!.Items);
+        Assert.True(item.Valid, item.Error);
+        Assert.Equal("Add a privacy section.", item.Decision!.Request);
+        Assert.Equal("PRJ-12", item.Decision.RevisionTaskKey);
+        Assert.Equal(["b"], Assert.Single(item.Decision.Responses).SelectedOptionIds);
+    }
+
+    [Fact]
+    public void Prepare_RefusesAReworkWithNeitherRequestNorComment()
+    {
+        WriteSchemaTwo("routing-policy");
+        var (catalogue, decisions) = Services();
+
+        var result = decisions.Prepare("Project", "routing-policy", new PrepareWorkbenchDecisionRequest
+        {
+            OperationId = "workbench-ui-rework-empty",
+            Outcome = "rework",
+            Actor = "Robert",
+            ExpectedFingerprint = catalogue.Read("Project", "routing-policy")!.Fingerprint,
+            Request = "  ",
+        });
+
+        Assert.False(result.Success);
+        Assert.Equal("validation", result.ErrorCode);
+        Assert.Contains("request or a comment", result.Error);
+    }
+
+    [Fact]
     public void Prepare_UsesTheFileFingerprintWhenRepositoryRevisionMovedElsewhere()
     {
         WriteSchemaTwo("routing-policy");

@@ -1081,6 +1081,12 @@ public sealed class WorkbenchCatalogueService
             throw new InvalidDataException("decision decidedAt must be an ISO UTC timestamp ending in Z.");
         var reason = OptionalString(value, "reason");
         var failure = OptionalString(value, "failure");
+        var request = OptionalString(value, "request");
+        var revisionTaskKey = OptionalString(value, "revisionTaskKey");
+        if (request is { Length: > 20_000 })
+            throw new InvalidDataException("decision request is too long.");
+        if (revisionTaskKey is { Length: > 100 })
+            throw new InvalidDataException("decision revisionTaskKey is too long.");
         var spawned = StringArray(value, "spawnedTaskKeys");
         List<WorkbenchDecisionResponse> responses = [];
         if (value.TryGetProperty("responses", out var responsesValue))
@@ -1134,8 +1140,9 @@ public sealed class WorkbenchCatalogueService
         {
             if (value.TryGetProperty("taskDraft", out _))
                 throw new InvalidDataException("Rework requests cannot carry a task draft.");
-            if (!responses.Any(response => !string.IsNullOrWhiteSpace(response.Comment)))
-                throw new InvalidDataException("Rework requests need a comment.");
+            if (string.IsNullOrWhiteSpace(request)
+                && !responses.Any(response => !string.IsNullOrWhiteSpace(response.Comment)))
+                throw new InvalidDataException("Rework requests need a request or a comment.");
             if (state != "pending")
                 throw new InvalidDataException("Rework requests stay pending until a new revision lands.");
         }
@@ -1182,7 +1189,11 @@ public sealed class WorkbenchCatalogueService
             outcome, state, operationId, sourceRevision, sourceFingerprint,
             preparedAt, preparedBy, confirmedAt, confirmedBy, decidedAt,
             reason, failure, spawned, responses, parsedTaskDraft,
-            action, cliType, model, thinkingLevel, sourceEntryFingerprint);
+            action, cliType, model, thinkingLevel, sourceEntryFingerprint)
+        {
+            Request = request,
+            RevisionTaskKey = revisionTaskKey,
+        };
     }
 
     private static string[] DescriptorTaskKeys(JsonElement descriptor) =>
@@ -1424,6 +1435,8 @@ public record WorkbenchDocument(WorkbenchListItem Workbench, string Html, string
     bool WorkingTreeModified, string? Fingerprint, string? EntryFingerprint)
 {
     public DossierCardList? Cards { get; init; }
+    /// <summary>The card a rework request would run its revision on (AGT-3703).</summary>
+    public WorkbenchRevisionCard? RevisionCard { get; init; }
 }
 
 public sealed record WorkbenchDecisionProjection(
@@ -1446,7 +1459,13 @@ public sealed record WorkbenchDecisionProjection(
     string? CliType,
     string? Model,
     string? ThinkingLevel,
-    string? SourceEntryFingerprint);
+    string? SourceEntryFingerprint)
+{
+    /// <summary>The owner's free-text rework request (AGT-3703).</summary>
+    public string? Request { get; init; }
+    /// <summary>The card a rework request asked to run the revision.</summary>
+    public string? RevisionTaskKey { get; init; }
+}
 
 internal sealed record WorkbenchMutationSnapshot(
     string Root,

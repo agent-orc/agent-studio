@@ -3215,7 +3215,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(MoveJobStatus.Success, accepted.Status);
         var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
         Assert.Contains(keySha, completed.CompletionClaim?.Evidence);
-        Assert.Contains("Gate-neutral document-key commits", completed.CompletionClaim?.Evidence);
+        Assert.Contains("Gate-neutral Dossier descriptor commits", completed.CompletionClaim?.Evidence);
     }
 
     [Fact]
@@ -3273,6 +3273,98 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
         Assert.Contains(keySha, refused.Message);
+    }
+
+    [Fact]
+    public async Task Acceptance_BatchPublicationFollowedByManagedDecisionReceiptCommit_IsAccepted()
+    {
+        var (deps, receiptSha) = PublishVerifiedDescriptorAndDecisionReceipt();
+
+        var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Contains(receiptSha, completed.CompletionClaim?.Evidence);
+        Assert.Contains("Gate-neutral Dossier descriptor commits", completed.CompletionClaim?.Evidence);
+    }
+
+    [Theory]
+    [InlineData("other-file")]
+    [InlineData("title")]
+    [InlineData("history-rewrite")]
+    [InlineData("no-trailer")]
+    public async Task Acceptance_DecisionReceiptCommitBeyondTheReceipt_IsRefused(string variant)
+    {
+        var (deps, receiptSha) = PublishVerifiedDescriptorAndDecisionReceipt(
+            otherChange: variant == "other-file",
+            alterTitle: variant == "title",
+            rewriteHistory: variant == "history-rewrite",
+            useManagedTrailer: variant != "no-trailer");
+
+        var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+
+        Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
+        Assert.Contains(receiptSha, refused.Message);
+    }
+
+    /// <summary>
+    /// AGT-3703: the shape <see cref="WorkbenchDecisionService"/> commits for a
+    /// rework request on top of a gated Dossier descriptor.
+    /// </summary>
+    private (Deps Deps, string ReceiptSha) PublishVerifiedDescriptorAndDecisionReceipt(
+        bool otherChange = false, bool alterTitle = false, bool rewriteHistory = false,
+        bool useManagedTrailer = true)
+    {
+        const string path = "docs/acceptance-dossier/workbench.json";
+        var deliverySha = PublishDelivery(path,
+            """
+            {"schemaVersion":1,"id":"acceptance-dossier","title":"Before","key":"FIX-W1","status":"decision-pending","lifecycleHistory":[{"state":"in-progress","editedBy":"agent","editedAt":"2026-11-09T10:00:00Z","note":null}]}
+            """ + "\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var batchSha = PublishLaterCommit("batch-publication.txt");
+        var batches = new BatchGateStore(Path.Combine(_tempDir, "batch-gates"));
+        WriteBatchEvidence(batches, "descriptor-batch", deliverySha, batchSha);
+        var deps = Build(deliverySha, batchGates: batches);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        IntegrationVerificationStore.Write(card.FolderPath, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = deliverySha,
+            IntegrationBranch = "develop",
+            DeliveryShas = [deliverySha],
+            Evidence = IntegrationVerificationEvidence.MergeGate,
+            GateVerdict = nameof(BuildTestGateVerdict.Ok),
+            Reason = "The batch gate passed on the published delivery tree.",
+        });
+
+        RunGit(_repo, "checkout", "-q", "-B", "decision-receipt", "origin/develop");
+        var history = rewriteHistory
+            ? "[]"
+            : """[{"state":"in-progress","editedBy":"agent","editedAt":"2026-11-09T10:00:00Z","note":null},{"state":"review-requested","editedBy":"Owner","editedAt":"2026-11-10T09:00:00Z","note":"Revision requested from FIX-1"}]""";
+        File.WriteAllText(Path.Combine(_repo, path),
+            $$"""
+            {
+              "schemaVersion": 1,
+              "id": "acceptance-dossier",
+              "title": "{{(alterTitle ? "After" : "Before")}}",
+              "key": "FIX-W1",
+              "status": "decision-pending",
+              "lifecycleHistory": {{history}},
+              "updatedAt": "2026-11-10T09:00:00Z",
+              "editedBy": "Owner",
+              "decision": {"outcome":"rework","action":"rework-requested","state":"pending","operationId":"workbench-ui-receipt","request":"Add a privacy section.","revisionTaskKey":"FIX-1"}
+            }
+            """ + "\n");
+        if (otherChange) File.WriteAllText(Path.Combine(_repo, "other.txt"), "ungated\n");
+        RunGit(_repo, "add", "-A");
+        var message = "chore(workbench): request revision for acceptance-dossier"
+            + (useManagedTrailer ? "\n\n" + ManagedRepositoryMutationService.DecisionReceiptCommitTrailer : "");
+        RunGit(_repo, "commit", "-q", "-m", message);
+        var receiptSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        return (deps, receiptSha);
     }
 
     private (Deps Deps, string KeySha) PublishVerifiedDescriptorAndKey(

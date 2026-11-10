@@ -15,6 +15,8 @@ public sealed record PrepareWorkbenchDecisionRequest
     public string? ArchiveReason { get; init; }
     public WorkbenchTaskDraft? Task { get; init; }
     public List<WorkbenchDecisionResponse> Responses { get; init; } = [];
+    /// <summary>The owner's free-text rework request (AGT-3703).</summary>
+    public string? Request { get; init; }
 }
 
 /// <summary>
@@ -36,6 +38,10 @@ public sealed record ConfirmWorkbenchDecisionRequest
     public string? CliType { get; init; }
     public string? Model { get; init; }
     public string? ThinkingLevel { get; init; }
+    /// <summary>The owner's free-text rework request (AGT-3703).</summary>
+    public string? Request { get; init; }
+    /// <summary>The follow-up prompt the source concept card receives for a rework request.</summary>
+    public string? RevisionPrompt { get; init; }
     public bool Confirmed { get; init; }
 }
 
@@ -60,6 +66,10 @@ public sealed record WorkbenchDecisionResult
     /// <see cref="ConfirmWorkbenchDecisionRequest.SpawnedTaskKeys"/>.
     /// </summary>
     public WorkbenchTaskDraft? TaskDraft { get; init; }
+    /// <summary>The card that runs a rework revision, on prepare and confirm.</summary>
+    public WorkbenchRevisionCard? RevisionCard { get; init; }
+    /// <summary>The follow-up round a confirmed rework request started or queued.</summary>
+    public WorkbenchRevisionRoundResult? RevisionRound { get; init; }
 }
 
 /// <summary>
@@ -113,7 +123,7 @@ public sealed class WorkbenchDecisionService
     {
         var gate = Gate(projectName, id, body.OperationId, body.Outcome, body.Actor,
             body.ArchiveReason, body.Task, body.Responses,
-            body.ExpectedRevision, body.ExpectedFingerprint);
+            body.ExpectedRevision, body.ExpectedFingerprint, body.Request);
         if (gate.Failure != null) return gate.Failure;
         var snapshot = gate.Snapshot!;
         return new WorkbenchDecisionResult
@@ -137,8 +147,13 @@ public sealed class WorkbenchDecisionService
     /// would both pass the gate and the second would silently overwrite the
     /// first decision.
     /// </summary>
+    /// <param name="revisionTaskKey">
+    /// The card the caller resolved to run a rework revision; recorded in the
+    /// receipt so the Dossier names the card that owes the revision.
+    /// </param>
     public WorkbenchDecisionResult Confirm(
-        string projectName, string id, ConfirmWorkbenchDecisionRequest body)
+        string projectName, string id, ConfirmWorkbenchDecisionRequest body,
+        string? revisionTaskKey = null)
     {
         if (!body.Confirmed)
             return Failure(id, body.OperationId, "validation",
@@ -151,6 +166,8 @@ public sealed class WorkbenchDecisionService
                 return Failure(id, body.OperationId, "validation", "model must be at most 200 characters.");
             if (body.ThinkingLevel is { Length: > 80 })
                 return Failure(id, body.OperationId, "validation", "thinkingLevel must be at most 80 characters.");
+            if (body.RevisionPrompt is { Length: > 60_000 })
+                return Failure(id, body.OperationId, "validation", "revisionPrompt must be at most 60000 characters.");
         }
 
         var gateKey = ConfirmGateKey(projectName, id);
@@ -158,7 +175,7 @@ public sealed class WorkbenchDecisionService
         writeGate.Wait();
         try
         {
-            return ConfirmSerialized(projectName, id, body);
+            return ConfirmSerialized(projectName, id, body, revisionTaskKey);
         }
         finally
         {
@@ -188,11 +205,11 @@ public sealed class WorkbenchDecisionService
     }
 
     private WorkbenchDecisionResult ConfirmSerialized(
-        string projectName, string id, ConfirmWorkbenchDecisionRequest body)
+        string projectName, string id, ConfirmWorkbenchDecisionRequest body, string? revisionTaskKey)
     {
         var gate = Gate(projectName, id, body.OperationId, body.Outcome, body.Actor,
             body.ArchiveReason, body.Task, body.Responses,
-            body.ExpectedRevision, body.ExpectedFingerprint,
+            body.ExpectedRevision, body.ExpectedFingerprint, body.Request,
             body.SpawnedTaskKeys);
         if (gate.Failure != null) return gate.Failure;
         var snapshot = gate.Snapshot!;
@@ -205,7 +222,9 @@ public sealed class WorkbenchDecisionService
         var now = DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
         var actor = body.Actor.Trim();
         var note = rework
-            ? "Revision requested"
+            ? string.IsNullOrWhiteSpace(revisionTaskKey)
+                ? "Revision requested"
+                : $"Revision requested from {revisionTaskKey.Trim()}"
             : archive
                 ? $"Archived: {body.ArchiveReason!.Trim()}"
                 : $"Decided to build a feature: {gate.Draft!.Title.Trim()}";
@@ -235,6 +254,11 @@ public sealed class WorkbenchDecisionService
         });
         if (archive) receipt["reason"] = body.ArchiveReason!.Trim();
         else if (!rework) receipt["taskDraft"] = JsonSerializer.SerializeToNode(gate.Draft, DraftJson);
+        else
+        {
+            if (!string.IsNullOrWhiteSpace(body.Request)) receipt["request"] = body.Request.Trim();
+            if (!string.IsNullOrWhiteSpace(revisionTaskKey)) receipt["revisionTaskKey"] = revisionTaskKey.Trim();
+        }
         descriptor["decision"] = receipt;
         if (spawned.Length > 0)
         {
@@ -310,7 +334,7 @@ public sealed class WorkbenchDecisionService
         var mutation = _repositoryMutations.Execute(
             projectName,
             snapshot.Root,
-            $"workbench-decision-{id}",
+            $"{ManagedRepositoryMutationService.DecisionReceiptOperationPrefix}{id}",
             $"chore(workbench): {(rework ? "request revision for" : archive ? "archive" : "record decision for")} {id}",
             [snapshot.DescriptorRelPath],
             () => _fileWriter.Write(snapshot.DescriptorPath, RepositoryTextLayout.IndentedJsonFor(
@@ -357,7 +381,7 @@ public sealed class WorkbenchDecisionService
         string projectName, string id, string operationId, string outcome, string actor,
         string? archiveReason, WorkbenchTaskDraft? task,
         IReadOnlyList<WorkbenchDecisionResponse> responses,
-        string? expectedRevision, string? expectedFingerprint,
+        string? expectedRevision, string? expectedFingerprint, string? request,
         string[]? spawnedTaskKeys = null)
     {
         if (!WorkbenchDecisionContracts.SafeOperationId(operationId))
@@ -405,9 +429,13 @@ public sealed class WorkbenchDecisionService
             if (!string.IsNullOrWhiteSpace(archiveReason) || task != null)
                 return new(Failure(id, operationId, "validation",
                     "A rework request cannot carry an archive reason or task draft."));
-            if (!responses.Any(response => !string.IsNullOrWhiteSpace(response.Comment)))
+            if (request is { Length: > 20_000 })
                 return new(Failure(id, operationId, "validation",
-                    "A rework request needs a comment."));
+                    "A rework request must be at most 20000 characters."));
+            if (string.IsNullOrWhiteSpace(request)
+                && !responses.Any(response => !string.IsNullOrWhiteSpace(response.Comment)))
+                return new(Failure(id, operationId, "validation",
+                    "A rework request needs a request or a comment."));
             if (spawnedTaskKeys != null
                 && spawnedTaskKeys.Any(key => !string.IsNullOrWhiteSpace(key)))
                 return new(Failure(id, operationId, "validation",

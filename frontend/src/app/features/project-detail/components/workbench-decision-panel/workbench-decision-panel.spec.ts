@@ -11,6 +11,7 @@ import {
 } from '../../../../models/project-docs.model';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { TaskService } from '../../../../services/task.service';
+import { CliCatalogStore } from '../../../cli';
 import { WorkbenchDecisionPanelComponent } from './workbench-decision-panel';
 
 const POINTS: WorkbenchDecisionPoint[] = [{
@@ -53,6 +54,10 @@ const DOCUMENT: WorkbenchDocument = {
   revision: 'a'.repeat(40),
   workingTreeModified: false,
   fingerprint: 'b'.repeat(64),
+  revisionCard: {
+    available: true, key: 'AGT-2300', jobId: 'routing-concept', title: 'Concept: routing policy',
+    lane: '2-ready', mode: 'concept', reason: null,
+  },
 };
 
 describe('WorkbenchDecisionPanelComponent', () => {
@@ -300,19 +305,142 @@ describe('WorkbenchDecisionPanelComponent', () => {
     expect(confirm.request.body).toEqual(expect.objectContaining({
       outcome: 'rework', cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'high',
     }));
+    expect(confirm.request.body.revisionPrompt).toContain('Move the total higher.');
     confirm.flush({
       success: true, errorCode: null, error: null, workbenchId: 'routing-policy',
       operationId: confirm.request.body.operationId, outcome: 'rework', decisionStage: 'pending',
       revision: 'd'.repeat(40), fingerprint: 'e'.repeat(64), spawnedTaskKeys: [],
       responses: fixture.componentInstance.responses(), idempotent: false,
+      revisionRound: { status: 'started', taskKey: 'AGT-2300', title: 'Concept: routing policy',
+        queueReason: null, detail: 'The revision round is running.' },
     });
-    const steer = http.expectOne(
-      '/api/v1/studio/orchestrator/sessions/workbench:Agent%20Studio/AGT-W48/turns');
-    expect(steer.request.body).toEqual(expect.objectContaining({
-      cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'high',
+    http.expectNone(request => request.url.includes('/orchestrator/sessions/'));
+  });
+
+  it('asks for the revision in the form itself and names the card that runs it', () => {
+    fixture.componentRef.setInput('responses', [{ ...RESPONSES[0], comment: null }]);
+    fixture.detectChanges();
+
+    const rework = fixture.nativeElement.querySelector(
+      '[data-testid="workbench-decision-rework"]') as HTMLButtonElement;
+    expect(rework.disabled).toBe(false);
+    click('workbench-decision-rework');
+    const confirmButton = () => fixture.nativeElement.querySelector(
+      '[data-testid="workbench-decision-confirm-rework"]') as HTMLButtonElement;
+    expect(confirmButton().disabled).toBe(true);
+    const card = fixture.nativeElement.querySelector(
+      '[data-testid="workbench-decision-revision-card"]') as HTMLElement;
+    expect(card.textContent).toContain('AGT-2300 · Concept: routing policy');
+    expect(card.textContent).toContain('Ready');
+
+    setValue('workbench-decision-rework-request', 'Add a privacy section.');
+    expect(confirmButton().disabled).toBe(false);
+    confirmButton().click();
+    fixture.detectChanges();
+    const prepare = http.expectOne(
+      '/api/projects/Agent%20Studio/workbenches/routing-policy/decisions/prepare');
+    expect(prepare.request.body).toEqual(expect.objectContaining({
+      outcome: 'rework', request: 'Add a privacy section.',
     }));
-    expect(steer.request.body.prompt).toContain('Move the total higher.');
-    steer.flush({ status: 'queued' });
+    prepare.flush({
+      success: true, errorCode: null, error: null, workbenchId: 'routing-policy',
+      operationId: prepare.request.body.operationId, outcome: 'rework', decisionStage: 'prepared',
+      revision: 'c'.repeat(40), fingerprint: 'b'.repeat(64), spawnedTaskKeys: [],
+      responses: fixture.componentInstance.responses(), idempotent: false,
+    });
+    const confirm = http.expectOne(
+      '/api/projects/Agent%20Studio/workbenches/routing-policy/decisions/confirm');
+    expect(confirm.request.body.request).toBe('Add a privacy section.');
+    expect(confirm.request.body.revisionPrompt).toContain('Owner request:\nAdd a privacy section.');
+    expect(confirm.request.body.revisionPrompt).toContain('Choose the route: Direct path');
+    const operationId = confirm.request.body.operationId;
+    confirm.flush({
+      success: true, errorCode: null, error: null, workbenchId: 'routing-policy',
+      operationId, outcome: 'rework', decisionStage: 'pending',
+      revision: 'd'.repeat(40), fingerprint: 'e'.repeat(64), spawnedTaskKeys: [],
+      responses: fixture.componentInstance.responses(), idempotent: false,
+      revisionRound: { status: 'queued', taskKey: 'AGT-2300', title: 'Concept: routing policy',
+        queueReason: 'project-busy',
+        detail: 'Another card holds the project\'s runner slot. The round starts when the slot is free.' },
+    });
+
+    fixture.componentRef.setInput('document', {
+      ...DOCUMENT,
+      workbench: {
+        ...DOCUMENT.workbench,
+        status: 'decision-pending',
+        decision: {
+          outcome: 'rework', action: 'rework-requested', state: 'pending', operationId,
+          sourceRevision: 'c'.repeat(40), sourceFingerprint: 'b'.repeat(64),
+          preparedAt: '2026-11-10T09:00:00Z', preparedBy: 'Operator',
+          confirmedAt: '2026-11-10T09:00:00Z', confirmedBy: 'Operator', decidedAt: null,
+          reason: null, failure: null, spawnedTaskKeys: [], responses: RESPONSES, taskDraft: null,
+          request: 'Add a privacy section.', revisionTaskKey: 'AGT-2300',
+        },
+      },
+    });
+    fixture.detectChanges();
+    expect(text('workbench-decision-request-receipt')).toContain('Add a privacy section.');
+    const round = fixture.nativeElement.querySelector(
+      '[data-testid="workbench-decision-revision-round"]') as HTMLElement;
+    expect(round.getAttribute('role')).toBe('status');
+    expect(round.textContent).toContain('Revision round queued on AGT-2300');
+    expect(round.textContent).toContain('runner slot');
+  });
+
+  it('explains why no card can run the revision instead of failing silently', () => {
+    fixture.componentRef.setInput('document', {
+      ...DOCUMENT,
+      revisionCard: {
+        available: false, key: null, jobId: null, title: null, lane: null, mode: null,
+        reason: 'The source concept card AGT-2300 is archived. Restore it to run the revision.',
+      },
+    });
+    fixture.detectChanges();
+
+    const rework = fixture.nativeElement.querySelector(
+      '[data-testid="workbench-decision-rework"]') as HTMLButtonElement;
+    expect(rework.disabled).toBe(true);
+    expect(rework.title).toContain('is archived');
+  });
+
+  it('preselects the catalog default model when no default is stored', () => {
+    localStorage.removeItem('defaultModel:codex');
+    localStorage.removeItem('defaultThinkingLevel:codex');
+    const ensure = vi.spyOn(TestBed.inject(CliCatalogStore), 'ensure').mockReturnValue(of([
+      { id: 'gpt-5.5', label: 'GPT-5.5', multiplier: null, vendor: 'openai', isDefault: false },
+      { id: 'gpt-6-sol', label: 'GPT-6 Sol', multiplier: null, vendor: 'openai', isDefault: true,
+        thinkingLevels: ['low', 'medium', 'high'], defaultThinkingLevel: 'medium' },
+    ]));
+    fixture = TestBed.createComponent(WorkbenchDecisionPanelComponent);
+    fixture.componentRef.setInput('projectName', 'Agent Studio');
+    fixture.componentRef.setInput('document', DOCUMENT);
+    fixture.componentRef.setInput('decisionPoints', POINTS);
+    fixture.componentRef.setInput('responses', RESPONSES);
+    fixture.detectChanges();
+
+    click('workbench-decision-rework');
+    expect(ensure).toHaveBeenCalledWith('codex');
+    setValue('workbench-decision-rework-request', 'Add a privacy section.');
+    const confirmButton = fixture.nativeElement.querySelector(
+      '[data-testid="workbench-decision-confirm-rework"]') as HTMLButtonElement;
+    expect(confirmButton.disabled).toBe(false);
+    confirmButton.click();
+    fixture.detectChanges();
+    const prepare = http.expectOne(
+      '/api/projects/Agent%20Studio/workbenches/routing-policy/decisions/prepare');
+    prepare.flush({
+      success: true, errorCode: null, error: null, workbenchId: 'routing-policy',
+      operationId: prepare.request.body.operationId, outcome: 'rework', decisionStage: 'prepared',
+      revision: 'c'.repeat(40), fingerprint: 'b'.repeat(64), spawnedTaskKeys: [],
+      responses: RESPONSES, idempotent: false,
+    });
+    const confirm = http.expectOne(
+      '/api/projects/Agent%20Studio/workbenches/routing-policy/decisions/confirm');
+    expect(confirm.request.body).toEqual(expect.objectContaining({
+      cliType: 'codex', model: 'gpt-6-sol', thinkingLevel: 'medium',
+    }));
+    confirm.flush({ success: true, outcome: 'rework', decisionStage: 'pending' });
   });
 
   function click(testId: string): void {
@@ -331,5 +459,10 @@ describe('WorkbenchDecisionPanelComponent', () => {
     return (fixture.nativeElement.querySelector(
       `[data-testid="${testId}"]`,
     ) as HTMLInputElement).value;
+  }
+
+  function text(testId: string): string {
+    return (fixture.nativeElement.querySelector(`[data-testid="${testId}"]`) as HTMLElement)
+      .textContent ?? '';
   }
 });

@@ -286,6 +286,35 @@ export interface WorkbenchDecisionProjection {
   model?: string | null;
   thinkingLevel?: string | null;
   sourceEntryFingerprint?: string | null;
+  /** The owner's free-text rework request (AGT-3703). */
+  request?: string | null;
+  /** The card a rework request asked to run the revision. */
+  revisionTaskKey?: string | null;
+}
+
+/**
+ * The card a rework request runs its revision on (AGT-3703). `available` is
+ * false when no source concept card can take a follow-up round; `reason`
+ * then says why.
+ */
+export interface WorkbenchRevisionCard {
+  available: boolean;
+  key: string | null;
+  jobId: string | null;
+  title: string | null;
+  lane: string | null;
+  mode: string | null;
+  reason: string | null;
+}
+
+/** What happened to the follow-up round a confirmed rework request asked for. */
+export interface WorkbenchRevisionRound {
+  status: 'started' | 'queued' | 'saved' | 'failed';
+  taskKey: string;
+  title: string | null;
+  queueReason: string | null;
+  detail: string | null;
+  queuePosition?: number | null;
 }
 
 export interface WorkbenchDecisionResult {
@@ -307,6 +336,8 @@ export interface WorkbenchDecisionResult {
    * task API and may report the resulting keys back via `spawnedTaskKeys`.
    */
   taskDraft?: WorkbenchTaskDraft | null;
+  revisionCard?: WorkbenchRevisionCard | null;
+  revisionRound?: WorkbenchRevisionRound | null;
 }
 
 export interface PrepareWorkbenchDecisionRequest {
@@ -318,6 +349,8 @@ export interface PrepareWorkbenchDecisionRequest {
   archiveReason: string | null;
   task: WorkbenchTaskDraft | null;
   responses: WorkbenchDecisionResponse[];
+  /** The owner's free-text rework request (AGT-3703). */
+  request?: string | null;
 }
 
 /**
@@ -338,6 +371,9 @@ export interface ConfirmWorkbenchDecisionRequest {
   cliType?: string | null;
   model?: string | null;
   thinkingLevel?: string | null;
+  request?: string | null;
+  /** The follow-up prompt the source concept card receives for a rework request. */
+  revisionPrompt?: string | null;
   confirmed: true;
 }
 
@@ -472,6 +508,7 @@ export interface WorkbenchDocument {
   fingerprint: string | null;
   entryFingerprint?: string | null;
   cards?: DossierCardList | null;
+  revisionCard?: WorkbenchRevisionCard | null;
 }
 
 export interface DossierCardList {

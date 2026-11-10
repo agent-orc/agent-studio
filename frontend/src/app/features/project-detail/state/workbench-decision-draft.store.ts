@@ -21,6 +21,8 @@ export interface WorkbenchDecisionDraft {
   cliType?: string;
   model?: string;
   thinkingLevel?: string | null;
+  /** The owner's free-text rework request (AGT-3703). */
+  request?: string;
   updatedAt: string;
 }
 
@@ -90,7 +92,7 @@ export class WorkbenchDecisionDraftStore {
     projectName: string,
     workbenchId: string,
     patch: Partial<Pick<WorkbenchDecisionDraft,
-      'actor' | 'title' | 'goal' | 'operationId' | 'cliType' | 'model' | 'thinkingLevel'>>,
+      'actor' | 'title' | 'goal' | 'operationId' | 'cliType' | 'model' | 'thinkingLevel' | 'request'>>,
   ): void {
     this.patch(projectName, workbenchId, patch);
   }

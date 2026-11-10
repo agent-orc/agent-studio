@@ -55,7 +55,9 @@
 }
 
 .decision-actions__chosen { margin: 0; }
-.decision-actions__chosen strong { color: var(--studio-fg-strong); font-weight: 500; }
+.decision-actions__chosen strong { color: var(--studio-fg-strong); font-weight: 500; overflow-wrap: anywhere; }
+.decision-actions__chosen small { color: var(--studio-fg-muted); font-size: 0.68rem; }
+.decision-actions__confirmation textarea::placeholder { color: var(--studio-fg-muted); }
 
 .decision-actions__buttons {
   display: flex;

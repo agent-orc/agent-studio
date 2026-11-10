@@ -1519,6 +1519,7 @@ builder.Services.AddSingleton<DossierCardsService>();
 builder.Services.AddSingleton<DossierMaintenanceService>();
 builder.Services.AddSingleton<WorkbenchChangeNotifier>();
 builder.Services.AddSingleton<WorkbenchDecisionService>();
+builder.Services.AddSingleton<WorkbenchRevisionRoundService>();
 builder.Services.AddSingleton<WorkbenchReviewService>();
 // AGT-2803: the classification vocabulary. The areas registry merges the
 // product defaults with the project additions from the workspace project

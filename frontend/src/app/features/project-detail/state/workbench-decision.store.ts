@@ -1,6 +1,6 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
-import { Observable, catchError, finalize, map, switchMap, tap, throwError } from 'rxjs';
+import { Observable, catchError, finalize, switchMap, tap, throwError } from 'rxjs';
 import {
   ConfirmWorkbenchDecisionRequest,
   PrepareWorkbenchDecisionRequest,
@@ -44,12 +44,16 @@ export class WorkbenchDecisionStore {
     return this.mutate(projectName, workbenchId, 'confirm', request);
   }
 
+  /**
+   * Records the pending rework receipt and starts (or queues) the follow-up
+   * round on the Dossier's source concept card in the same confirm call
+   * (AGT-3703). The result's `revisionRound` says which happened and why.
+   */
   requestRework(
     projectName: string,
     workbenchId: string,
-    workbenchKey: string,
     prepareRequest: PrepareWorkbenchDecisionRequest,
-    prompt: string,
+    revisionPrompt: string,
     agent: { cliType: string; model: string; thinkingLevel: string | null },
   ): Observable<WorkbenchDecisionResult> {
     return this.prepare(projectName, workbenchId, prepareRequest).pipe(
@@ -59,19 +63,11 @@ export class WorkbenchDecisionStore {
         expectedFingerprint: prepared.fingerprint,
         spawnedTaskKeys: [],
         cliType: agent.cliType,
-        model: agent.model,
+        model: agent.model || null,
         thinkingLevel: agent.thinkingLevel,
+        revisionPrompt,
         confirmed: true,
       })),
-      switchMap(confirmed => this.http.post<unknown>(
-        `/api/v1/studio/orchestrator/sessions/workbench:${encodeURIComponent(projectName)}/${encodeURIComponent(workbenchKey)}/turns`,
-        {
-          prompt,
-          cliType: agent.cliType,
-          model: agent.model,
-          thinkingLevel: agent.thinkingLevel,
-        },
-      ).pipe(map(() => confirmed))),
     );
   }
 

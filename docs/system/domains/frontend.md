@@ -1,6 +1,6 @@
 # Frontend Domain Map
 
-Version: 2026-11-09
+Version: 2026-11-10
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
@@ -837,7 +837,17 @@ occur. It is not a claim about tunnel transfer time.
   mutations use the two-phase decision gate. Unfinished feature preparation
   retains its title, goal, actor, option responses, comments, and operation id
   for the browser session. The details panel shows that retained state and an
-  explicit discard action. A decided item
+  explicit discard action. Request rework opens a form with a free-text
+  request field and names the source concept card that runs the revision
+  (`revisionCard` on the Dossier document); the model the picker marks as
+  default is preselected. Confirm records the pending receipt (with `request`
+  and `revisionTaskKey`) and starts or queues an ordinary follow-up round on
+  that card through the task continue admission; the receipt shows whether
+  the round started or why it queued. Without a source card the action stays
+  disabled with the reason, and confirm writes nothing. After the revision
+  lands, the Dossier opens on the owner's recorded selections wherever the
+  revised markup still offers them, not on the authored defaults (AGT-3703).
+  A decided item
   remains current while its referenced cards are still moving. References are
   derived from the Slice-1 `references.workbenches` index, with descriptor
   `sourceTaskKeys`, `relatedTaskKeys`, and decision receipts retained as

@@ -79,6 +79,20 @@
       @if (decision.reason) {
         <span class="decision-panel__receipt-note">{{ decision.reason }}</span>
       }
+      @if (decision.outcome === 'rework' && decision.request) {
+        <span class="decision-panel__receipt-note" data-testid="workbench-decision-request-receipt">
+          Request: {{ decision.request }}
+        </span>
+      }
+      @if (revisionRound(); as round) {
+        <span class="decision-panel__receipt-note" data-testid="workbench-decision-revision-round"
+              [attr.role]="round.status === 'failed' ? 'alert' : 'status'"
+              [attr.data-round-status]="round.status">{{ revisionRoundText(round) }}</span>
+      } @else if (decision.outcome === 'rework' && decision.revisionTaskKey) {
+        <span class="decision-panel__receipt-note" data-testid="workbench-decision-revision-round">
+          Revision requested from {{ decision.revisionTaskKey }}
+        </span>
+      }
       @if (decision.spawnedTaskKeys.length > 0) {
         <div class="decision-panel__created" data-testid="workbench-decision-created-tasks">
           <span>Created card</span>
