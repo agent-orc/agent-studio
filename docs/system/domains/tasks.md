@@ -58,8 +58,13 @@ continues to move normally.
 resident core and board generations. `POST /api/tasks` publishes the new card
 after its task file, derived layout index, and timeline have been written.
 Routing writes hold the card's file lock through publication and use the
-latest published card under that lock before deriving related fields. Publication reads
-the written card under the index publication lock. This keeps concurrent
+latest published card under that lock before deriving related fields, unless
+its `task.json` stamp no longer matches the disk; then they read the folder.
+Publication reads the written card outside the index publication lock. When the
+folder version moved during that read (a newer publication, the watcher echo
+of the write, or a refresh prune), it re-reads the card under the lock and
+publishes it; a routing write that cannot publish invalidates the index
+(AGT-3723). This keeps concurrent
 routing writes in durable order across board, core, and detail readers; the
 new board generation also changes board validators and deploy projections.
 Git projections retain their snapshot because routing fields do not enter the
