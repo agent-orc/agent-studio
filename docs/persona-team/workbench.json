@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "id": "persona-team",
   "title": "Persona team for global orchestrator sessions",
-  "summary": "Turns global orchestrator sessions into a team of personas that watch the installation from different aspects (security, operations, reliability, quality, design, product, cost, documentation), each with a versioned charter, an honest character sheet, a budget carved from the workspace token limit, a configurable reporting obligation, its own feed and management page. Two manager personas decide within standing grants; a weekly magazine and a presenter deck rank every item by a 0 to 100 importance number computed from impact, urgency and confidence with fact floors. A dedicated operations warden watches backups and the security posture and reports the magazine\u0027s fifteen-row Operations watch panel, so a missing or stale backup or an expired credential always ranks high. Personas run as short sessions of their own principal on runner hosts, scheduled by the Watcher sweep. Twelve decisions with recommended options, diagrams, mockups, light and dark evidence captures, a phased plan and twelve implementation cards. The owner decided PT-D1 to PT-D12 as recommended on 9 November 2026.",
+  "summary": "Turns global orchestrator sessions into a team of personas that watch the installation from different aspects (security, operations, reliability, quality, design, product, cost, documentation), each with a versioned charter, an honest character sheet, a budget carved from the workspace token limit, a configurable reporting obligation, its own feed and management page. Two manager personas decide within standing grants; a weekly magazine and a presenter deck rank every item by a 0 to 100 importance number computed from impact, urgency and confidence with fact floors. A dedicated operations warden watches backups and the security posture and reports the magazine\u0027s fifteen-row Operations watch panel, so a missing or stale backup or an expired credential always ranks high. Personas run as short sessions of their own principal on runner hosts, scheduled by the Watcher sweep. Twelve decisions with recommended options, diagrams, mockups, light and dark evidence captures, a phased plan and twelve implementation cards. The owner decided PT-D1 to PT-D12 as recommended on 9 November 2026. A capabilities addendum of 10 November 2026 separates roles from persona instances assigned to an installation, workspace or project, and adds a versioned catalogue of interfaces and actions, per-persona grants on standing grants with explicit time-boxed T2 grants, triggers, usage records and an append-only log per persona (pending PT-D13 to PT-D20, slices PT-13 to PT-20).",
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-11-09T18:10:00Z",
+  "updatedAt": "2026-11-10T21:00:00Z",
   "sourceTaskKeys": [
     "AGT-3573"
   ],
@@ -19,7 +19,9 @@
     "AGT-3353",
     "AGT-3177",
     "AGT-3485",
-    "AGT-2800"
+    "AGT-2800",
+    "AGT-3714",
+    "AGT-3715"
   ],
   "tags": [
     "personas",
@@ -29,7 +31,9 @@
     "security",
     "magazine",
     "importance",
-    "budgets"
+    "budgets",
+    "capabilities",
+    "grants"
   ],
   "openDecisions": [
     {
@@ -115,6 +119,70 @@
       "recommendation": "Eight aspect personas with a dedicated operations warden, presenter, two managers; warden and cost controller start active.",
       "rejectedOption": "Reliability takes operations; everything active at once.",
       "ownerDecision": "Decided as recommended by the owner on 9 November 2026."
+    },
+    {
+      "id": "PT-D13",
+      "question": "Is a persona the role descriptor itself, or an instance of a role?",
+      "recommendation": "Role template plus persona instances; one role, many personas, each its own principal.",
+      "rejectedOption": "One persona per descriptor; free personas without roles.",
+      "state": "pending",
+      "ownerDecision": "Pending. Added by the Persona capabilities addendum on 10 November 2026."
+    },
+    {
+      "id": "PT-D14",
+      "question": "Where can a persona be assigned, and how does that map onto IAM scopes?",
+      "recommendation": "Installation, workspace or project assignment; new IAM scope kind registry-workspace.",
+      "rejectedOption": "Workspace only; project only with listed projects.",
+      "state": "pending",
+      "ownerDecision": "Pending. Added by the Persona capabilities addendum on 10 November 2026."
+    },
+    {
+      "id": "PT-D15",
+      "question": "How are the interfaces and actions available to personas defined and shown?",
+      "recommendation": "Versioned capabilities.v1.json mapped to routes and operations, with an inventory test, an API and a catalogue page.",
+      "rejectedOption": "Operator operations only; route allowlists per descriptor.",
+      "state": "pending",
+      "ownerDecision": "Pending. Added by the Persona capabilities addendum on 10 November 2026."
+    },
+    {
+      "id": "PT-D16",
+      "question": "How does the owner configure what each persona may use?",
+      "recommendation": "Role template defaults plus per-persona grant rows with scope, limits and expiry, stored as SM-4 standing grants; no ambient reads.",
+      "rejectedOption": "One grant per persona with ambient reads; per-request approval for everything.",
+      "state": "pending",
+      "ownerDecision": "Pending. Added by the Persona capabilities addendum on 10 November 2026."
+    },
+    {
+      "id": "PT-D17",
+      "question": "Can a persona ever skip a check or override a decision?",
+      "recommendation": "Explicit, time-boxed owner grant for check.skip, decision.override and named settings only; every other T2 stays per-request or closed.",
+      "rejectedOption": "Never delegable; T2 in role templates.",
+      "state": "pending",
+      "ownerDecision": "Pending. Added by the Persona capabilities addendum on 10 November 2026."
+    },
+    {
+      "id": "PT-D18",
+      "question": "What can wake a persona?",
+      "recommendation": "Schedule, event types and mentions as grant entries; mentions wake but never authorize.",
+      "rejectedOption": "Cadence only; any bus message.",
+      "state": "pending",
+      "ownerDecision": "Pending. Added by the Persona capabilities addendum on 10 November 2026."
+    },
+    {
+      "id": "PT-D19",
+      "question": "How is persona activity recorded and shown?",
+      "recommendation": "PersonaUsageRecordV1 per occurrence and an append-only, hash-chained PersonaLogEntryV1 log per persona; timeline, usage and history are projections.",
+      "rejectedOption": "Bus messages only; control plane audit only.",
+      "state": "pending",
+      "ownerDecision": "Pending. Added by the Persona capabilities addendum on 10 November 2026."
+    },
+    {
+      "id": "PT-D20",
+      "question": "Which component refuses a read or action the persona does not hold?",
+      "recommendation": "Three enforcement points: grounds builder, policy step with capability refusals, output validator.",
+      "rejectedOption": "Prompt only; grounds builder only.",
+      "state": "pending",
+      "ownerDecision": "Pending. Added by the Persona capabilities addendum on 10 November 2026."
     }
   ],
   "implementationTasks": [
@@ -321,6 +389,142 @@
         ]
       },
       "promptMarkdown": "# Remaining starter personas with templates and shadow periods\n\nSource: docs/persona-team/index.html (AGT-3573), decisions PT-D12, PT-D5. Read that Dossier and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html and the Dossier\u0027s Starter catalogue. Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-5, PT-6, PT-8. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: Descriptors from PT-1, the scout profile (AGT-3020) for migration.\n\n## Deliver\nEnable the security officer, reliability engineer, quality lead, design lead, product manager, cost controller, documentation editor and presenter with their report templates (security-v1, reliability-v1, quality-v1, design-v1, product-v1, cost-v1, docs-v1), grounds sources and triggers. Each starts in shadow for one report period and is activated by the Owner. Move the improvement scout into the catalogue as an aspect persona that keeps its decided cadence, proposal lifecycle and Dossier homes, and move its subceiling from the Watcher contingent into the persona pool when it migrates. Calibrate each template\u0027s anchors against two weeks of shadow output and record the calibration in the Dossier\u0027s implementation log.\n\n## Out of scope\nNew aspects beyond the catalogue.\n\n## Acceptance\n- Each persona produces a valid report in shadow with coverage listed\n- No persona reads outside its scope in a scope test\n- The scout runs once per due window after migration, never twice\n- Allowances of the activated set stay within the pool\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-13",
+      "title": "PT-13 \u00B7 Persona capability catalogue v1 and inventory test",
+      "section": "cards",
+      "decisionId": "PT-D15",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-13",
+        "criteria": [
+          "Every catalogue entry validates against the schema and a changed file without a new revision fails the test",
+          "A mapped route that no entry covers and that is not marked notForPersonas fails the inventory test",
+          "Every new operation has exactly one tier and passes the operator catalogue inventory test",
+          "GET /api/personas/capabilities answers the catalogue with revision and changelog and needs no write permission"
+        ]
+      },
+      "promptMarkdown": "# Persona capability catalogue v1 and inventory test\n\nSource: docs/persona-team/index.html (AGT-3573, Persona capabilities addendum of 10 November 2026), decisions PT-D15. Read that Dossier\u0027s Persona capabilities section and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/security-model/index.html and docs/operations/security/overview.md (SM-1, SM-4, SM-5). Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-2. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: backend/Policies/personas/, backend/Features/Security/Iam/OperatorPolicy/OperatorOperationCatalog.cs, backend/Features/Security/Iam/RoutePermissionCatalog.cs, OperatorOperationCatalogInventoryTests, RoutePermissionInventoryTests.\n\n## Deliver\nAdd \u0060backend/Policies/personas/capabilities.v1.json\u0060 and \u0060docs/app/schemas/persona-capability.schema.json\u0060 with the interfaces and actions of the Dossier\u0027s inventory: id, kind, title, routes or operation, permission, sensitivity, scopes, tier, delegable, limit fields, since. Catalogue the new operations \u0060card.create\u0060, \u0060card.comment\u0060, \u0060card.edit\u0060, \u0060batch.eject\u0060, \u0060persona.article.write\u0060 and \u0060chat.reply\u0060 in \u0060OperatorOperationCatalog\u0060 with one tier each. Add a revision test like the descriptor test, and an inventory test that requires every mapped route to be covered by exactly one entry or listed as \u0060notForPersonas\u0060 with a reason. Serve the catalogue read-only at \u0060GET /api/personas/capabilities\u0060.\n\n## Out of scope\nGrant rows and enforcement (PT-15); the catalogue page (PT-19).\n\n## Acceptance\n- Every catalogue entry validates against the schema and a changed file without a new revision fails the test\n- A mapped route that no entry covers and that is not marked notForPersonas fails the inventory test\n- Every new operation has exactly one tier and passes the operator catalogue inventory test\n- GET /api/personas/capabilities answers the catalogue with revision and changelog and needs no write permission\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-14",
+      "title": "PT-14 \u00B7 Role templates, persona instances and scope assignment",
+      "section": "cards",
+      "decisionId": "PT-D13",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-14",
+        "criteria": [
+          "Two personas of one role have separate principals, budgets and records",
+          "A registry-workspace scope covers a project added to the workspace later and stops covering a project moved out",
+          "A template containing a T2 or closed capability fails validation",
+          "Each PT-1 activation migrates to exactly one persona instance with unchanged history"
+        ]
+      },
+      "promptMarkdown": "# Role templates, persona instances and scope assignment\n\nSource: docs/persona-team/index.html (AGT-3573, Persona capabilities addendum of 10 November 2026), decisions PT-D13, PT-D14. Read that Dossier\u0027s Persona capabilities section and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/security-model/index.html and docs/operations/security/overview.md (SM-1, SM-4, SM-5). Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-1, PT-13. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: the PT-1 descriptor and activation code, /api/workspaces/{id}/personas, backend/Features/Security/Iam/ (IamScope, PermissionEvaluator), backend/Features/Registry/.\n\n## Deliver\nTurn the descriptor\u0027s \u0060operations\u0060 into \u0060grants\u0060 defaults (catalogue ids, default scope, limits; T0 and T1 only). Add persona instances with id \u0060prs_*\u0060, display name, mention handle, role id and revision, and assignment scope installation, registry workspace or project, created by the Owner with step-up. Add the IAM scope kind \u0060registry-workspace\u0060, resolved to the workspace\u0027s projects on every request. Migrate each PT-1 activation to one persona instance. Changing a persona\u0027s assignment revokes grants outside the new scope and keeps its history.\n\n## Out of scope\nGrant rows and the policy step (PT-15); UI beyond the existing persona page (PT-20).\n\n## Acceptance\n- Two personas of one role have separate principals, budgets and records\n- A registry-workspace scope covers a project added to the workspace later and stops covering a project moved out\n- A template containing a T2 or closed capability fails validation\n- Each PT-1 activation migrates to exactly one persona instance with unchanged history\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-15",
+      "title": "PT-15 \u00B7 Persona grant rows, overrides and capability enforcement",
+      "section": "cards",
+      "decisionId": "PT-D16",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-15",
+        "criteria": [
+          "A persona session reading an interface without a grant gets 403 capability-not-granted and the refusal is audited",
+          "A design lead persona calling card.create is refused while a chief of staff persona with the template grant is admitted",
+          "Narrowing a grant takes effect on the next request without step-up and widening without step-up answers 403 step-up-required",
+          "An API token or operator session never satisfies a persona capability check"
+        ]
+      },
+      "promptMarkdown": "# Persona grant rows, overrides and capability enforcement\n\nSource: docs/persona-team/index.html (AGT-3573, Persona capabilities addendum of 10 November 2026), decisions PT-D16, PT-D20. Read that Dossier\u0027s Persona capabilities section and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/security-model/index.html and docs/operations/security/overview.md (SM-1, SM-4, SM-5). Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-2, PT-13, PT-14. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: backend/Features/Security/Iam/AccessSecurityStore.StandingGrants.cs, StandingGrantModels.cs, AccessSecurityMiddleware.cs (policy step), the PT-4 grounds builder and validator.\n\n## Deliver\nExtend standing grants with \u0060capability\u0060, \u0060limits\u0060 and \u0060kind\u0060 (\u0060interface\u0060, \u0060action\u0060). Seed a persona\u0027s rows from its role template, apply Owner overrides (narrowing without step-up, widening with step-up) and keep overrides across role revision adoption. For persona sessions, map every request to one catalogue entry and refuse with \u0060capability-not-catalogued\u0060, \u0060capability-not-granted\u0060, \u0060capability-limit-exceeded\u0060 or \u0060capability-expired\u0060. Reads are not ambient for persona principals. Apply the instruction-source rule to every persona grant row. The grounds builder packs only granted interfaces.\n\n## Out of scope\nExplicit T2 grants (PT-16); triggers (PT-17); the grants UI (PT-20).\n\n## Acceptance\n- A persona session reading an interface without a grant gets 403 capability-not-granted and the refusal is audited\n- A design lead persona calling card.create is refused while a chief of staff persona with the template grant is admitted\n- Narrowing a grant takes effect on the next request without step-up and widening without step-up answers 403 step-up-required\n- An API token or operator session never satisfies a persona capability check\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-16",
+      "title": "PT-16 \u00B7 Explicit T2 grants for personas with expiry, use cap and audit",
+      "section": "cards",
+      "decisionId": "PT-D17",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-16",
+        "criteria": [
+          "Issuing a delegated T2 grant for secrets.change or any non-delegable operation is refused",
+          "The fourth use of a grant with a cap of three is refused and audited",
+          "A use from an occurrence triggered by a mention or card content is refused",
+          "Every use appears in the audit, the decision stream and the owner\u0027s feed with the grant id"
+        ]
+      },
+      "promptMarkdown": "# Explicit T2 grants for personas with expiry, use cap and audit\n\nSource: docs/persona-team/index.html (AGT-3573, Persona capabilities addendum of 10 November 2026), decisions PT-D17. Read that Dossier\u0027s Persona capabilities section and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/security-model/index.html and docs/operations/security/overview.md (SM-1, SM-4, SM-5). Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-15. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: the PT-15 grant rows, backend/Features/Security/Iam/OperatorApprovals/, the decision stream publisher, the kill switch.\n\n## Deliver\nAdd grant kind \u0060delegated-t2\u0060 for the delegable capabilities \u0060check.skip\u0060, \u0060decision.override\u0060 and \u0060settings.change\u0060 only. Owner only, fresh step-up, one capability, one project and one named target, expiry 24 hours by default and 72 at most, use cap 3 by default and 10 at most, not renewable, never in a template and not renewed by Renew team grants. Every use writes a control plane audit entry with grant id, session, target and instruction source, a \u0060persona.t2-used\u0060 decision stream event and a persona item at 70 or more. Refuse a use when the occurrence was triggered by untrusted content. Revoke without step-up; stop-all and the SM-2 kill switch revoke it.\n\n## Out of scope\nEvery other T2 operation, which stays per-request approval or closed.\n\n## Acceptance\n- Issuing a delegated T2 grant for secrets.change or any non-delegable operation is refused\n- The fourth use of a grant with a cap of three is refused and audited\n- A use from an occurrence triggered by a mention or card content is refused\n- Every use appears in the audit, the decision stream and the owner\u0027s feed with the grant id\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-17",
+      "title": "PT-17 \u00B7 Persona triggers: schedule, event types and mentions",
+      "section": "cards",
+      "decisionId": "PT-D18",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-17",
+        "criteria": [
+          "An event type the persona cannot read never wakes it",
+          "A seventh mention within an hour joins the next occurrence instead of starting one",
+          "A mention never changes the persona\u0027s grants or admits an action",
+          "Schedule, event and mention triggers each yield one occurrence per key after a restart"
+        ]
+      },
+      "promptMarkdown": "# Persona triggers: schedule, event types and mentions\n\nSource: docs/persona-team/index.html (AGT-3573, Persona capabilities addendum of 10 November 2026), decisions PT-D18. Read that Dossier\u0027s Persona capabilities section and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/security-model/index.html and docs/operations/security/overview.md (SM-1, SM-4, SM-5). Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-3, PT-15. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: the PT-3 scheduler in the Watcher sweep, backend/Features/Operator/Decisions/, the new card.comment route, the operator log, orchestrator chat sessions.\n\n## Deliver\nMake event and mention subscriptions grant entries: \u0060trigger.event:\u003Ctype\u003E\u0060 only for event types whose source interface the persona holds, and \u0060trigger.mention:\u003Csurface\u003E\u0060 for \u0060@handle\u0060 in card comments, the operator log, Dossier comments and the Owner\u0027s chat. A mention wakes the persona, enters the grounds as untrusted content with its instruction source, and grants nothing. Rate limit mentions per persona (6 per hour by default) and coalesce further mentions into the next occurrence; a persona mentioning another counts against its own rate.\n\n## Out of scope\nUsage records (PT-18).\n\n## Acceptance\n- An event type the persona cannot read never wakes it\n- A seventh mention within an hour joins the next occurrence instead of starting one\n- A mention never changes the persona\u0027s grants or admits an action\n- Schedule, event and mention triggers each yield one occurrence per key after a restart\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-18",
+      "title": "PT-18 \u00B7 Usage records, append-only persona log and timeline API",
+      "section": "cards",
+      "decisionId": "PT-D19",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-18",
+        "criteria": [
+          "Usage totals for a replayed week equal the sum of the occurrence records",
+          "Editing or removing a log line makes verification report the first broken entry",
+          "No log entry or usage record contains an item body or a secret value",
+          "A retired persona\u0027s log stays readable and refuses appends"
+        ]
+      },
+      "promptMarkdown": "# Usage records, append-only persona log and timeline API\n\nSource: docs/persona-team/index.html (AGT-3573, Persona capabilities addendum of 10 November 2026), decisions PT-D19. Read that Dossier\u0027s Persona capabilities section and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/security-model/index.html and docs/operations/security/overview.md (SM-1, SM-4, SM-5). Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-4, PT-15. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: the PT-4 occurrence receipt, the persona store, backend/Features/Security/Audit/ControlPlaneAuditLog.cs (chain pattern).\n\n## Deliver\nWrite one \u0060PersonaUsageRecordV1\u0060 per occurrence (trigger, reads, actions, outputs, counts, tokens, refusals). Append \u0060PersonaLogEntryV1\u0060 entries for every persona event to \u0060.metadata/personas/\u003Cprs id\u003E/log/\u003Cyyyy-mm\u003E.jsonl\u0060 through the application store, each with the previous entry\u0027s digest. Store ids, counts, capability ids and refusal codes only. Add read routes for the timeline (grouped by occurrence), usage over a window, configuration history and chain verification, all scoped by the persona\u0027s assignment.\n\n## Out of scope\nUI (PT-20).\n\n## Acceptance\n- Usage totals for a replayed week equal the sum of the occurrence records\n- Editing or removing a log line makes verification report the first broken entry\n- No log entry or usage record contains an item body or a secret value\n- A retired persona\u0027s log stays readable and refuses appends\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-19",
+      "title": "PT-19 \u00B7 Capability catalogue page",
+      "section": "cards",
+      "decisionId": "PT-D15",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-19",
+        "criteria": [
+          "Filter counts equal the visible rows",
+          "Closed entries are shown and cannot be granted from the page",
+          "At 390 px every row shows name, tier, sensitivity and scopes without horizontal scrolling",
+          "Playwright light and dark captures at desktop and 390 px are saved to results"
+        ]
+      },
+      "promptMarkdown": "# Capability catalogue page\n\nSource: docs/persona-team/index.html (AGT-3573, Persona capabilities addendum of 10 November 2026), decisions PT-D15. Read that Dossier\u0027s Persona capabilities section and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/security-model/index.html and docs/operations/security/overview.md (SM-1, SM-4, SM-5). Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-13. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: frontend settings surfaces, docs/quality/frontend/style-guide/living-rules.md, docs/operations/admin-design-guideline/index.html, GET /api/personas/capabilities.\n\n## Deliver\nAdd the read-only page \u0060#/workspace/settings/persona-capabilities\u0060 as in the Dossier mockup: filter by kind, tier, sensitivity and scope, search, one row per entry with tier and sensitivity chips, routes or operation and the number of personas holding it, a detail panel with limits, grant rule and changelog. Standalone OnPush components with signal state, both themes, 390 px layout, no coloured left edge.\n\n## Out of scope\nEditing the catalogue, which stays a code change.\n\n## Acceptance\n- Filter counts equal the visible rows\n- Closed entries are shown and cannot be granted from the page\n- At 390 px every row shows name, tier, sensitivity and scopes without horizontal scrolling\n- Playwright light and dark captures at desktop and 390 px are saved to results\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
+    },
+    {
+      "id": "PT-20",
+      "title": "PT-20 \u00B7 Persona page: grants matrix, timeline and usage tabs",
+      "section": "cards",
+      "decisionId": "PT-D16",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "PT-20",
+        "criteria": [
+          "Usage tiles equal the sums of their table rows",
+          "A refused action appears in the timeline with its refusal code",
+          "Revoking an explicit T2 grant paints optimistically and rolls back on failure",
+          "Playwright light and dark captures of the three tabs at desktop and 390 px are saved to results"
+        ]
+      },
+      "promptMarkdown": "# Persona page: grants matrix, timeline and usage tabs\n\nSource: docs/persona-team/index.html (AGT-3573, Persona capabilities addendum of 10 November 2026), decisions PT-D16, PT-D19. Read that Dossier\u0027s Persona capabilities section and its workbench.json first, then AGENTS.md, docs/start/contribution-and-style-guide.html, docs/security-model/index.html and docs/operations/security/overview.md (SM-1, SM-4, SM-5). Use the Dossier\u0027s recommended option for each named decision unless a recorded owner decision selects another, and record in results/status.md which option you implemented.\n\nDependencies: PT-6, PT-15, PT-18. Resolve card ids (PT-n) to promoted task keys before starting dependent work.\n\nEntry points: the PT-6 persona page, the PT-15 grant routes, the PT-18 timeline and usage routes, docs/quality/frontend/style-guide/living-rules.md.\n\n## Deliver\nAdd the Grants, Timeline and Usage tabs as in the Dossier mockups. Grants: one row per capability with template default, persona state, scope, limits, expiry and use count; narrowing applies at once, widening asks for step-up; explicit T2 grants in their own panel with expiry, uses and revoke. Timeline: log entries grouped by day and occurrence with trigger, reads, actions, outputs and cost; refusals tinted. Usage: tiles and per-capability table split by trigger kind, tokens by trigger, unused-grant suggestion. Both themes, 390 px.\n\n## Out of scope\nThe Team page and role page layout beyond the role grouping.\n\n## Acceptance\n- Usage tiles equal the sums of their table rows\n- A refused action appears in the timeline with its refusal code\n- Revoking an explicit T2 grant paints optimistically and rolls back on failure\n- Playwright light and dark captures of the three tabs at desktop and 390 px are saved to results\n\nThis is one bounded slice. Keep changes to its scope, update the owning docs, and add the Playwright or unit coverage named in Acceptance."
     }
   ],
   "key": "AGT-W3459"
