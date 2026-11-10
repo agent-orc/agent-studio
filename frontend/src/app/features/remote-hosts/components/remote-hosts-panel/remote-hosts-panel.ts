@@ -27,7 +27,7 @@ import {
   groupPhysicalHosts,
   type PhysicalHostGroup,
 } from '../../models/physical-host-group';
-import { stableReleaseLabel } from '../../models/host-release-drift';
+import { differsFromStableLabel, stableReleaseLabel } from '../../models/host-release-drift';
 import { DeploymentCheckpointsComponent } from '../deployment-checkpoints/deployment-checkpoints';
 import { ExecutionInfrastructureComponent } from '../execution-infrastructure/execution-infrastructure';
 import { HttpClient } from '@angular/common/http';
@@ -188,6 +188,13 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   readonly stableReleaseLabel = computed(() => stableReleaseLabel(this.stableRelease()));
   readonly behindReleaseCount = computed(() => this.hostGroups()
     .filter(group => group.machine.releaseDrift?.state === 'behind').length);
+  /** "1 differs from Stable 3d61e8b": same version, another commit (AGT-3689). */
+  readonly differsReleaseLabel = computed(() => {
+    const count = this.hostGroups().filter(group => group.machine.releaseDrift?.state === 'differs').length;
+    if (!count) return null;
+    const label = differsFromStableLabel(this.stableRelease());
+    return count === 1 ? `1 ${label}` : `${count} ${label.replace(/^differs/, 'differ')}`;
+  });
 
   /** Auto-review post-processing queue snapshot (AGT-2645). */
   readonly reviewQueueSnapshot = computed(() => this.reviewQueue.snapshot());
