@@ -45,6 +45,9 @@ public static class IamPermissions
     public const string ProjectSettingsWrite = "project.settings.write";
     public const string ProjectPipelineWrite = "project.pipeline.write";
 
+    public const string MagazineRead = "magazine.read";
+    public const string MagazineWrite = "magazine.write";
+
     public const string EnvironmentDeploy = "environment.deploy";
     public const string EnvironmentProductionDeploy = "environment.production.deploy";
     public const string EnvironmentProductionDeployApprove = "environment.production.deploy.approve";
@@ -75,6 +78,10 @@ public static class IamPermissions
         new(ProjectDocsWrite, PermissionLevel.Project, "Edit the wiki, Dossiers, steering, and security documents."),
         new(ProjectSettingsWrite, PermissionLevel.Project, "Change project settings, pipeline, checkout, and URLs."),
         new(ProjectPipelineWrite, PermissionLevel.Project, "Change one pipeline step override of a project: enabled, mode, and model."),
+        new(MagazineRead, PermissionLevel.Project,
+            "Read magazine articles: a project's where the project is visible, a workspace's where one of its projects is, the installation's with a workspace binding."),
+        new(MagazineWrite, PermissionLevel.Project,
+            "Publish, pin, and archive magazine articles; the installation and workspace magazines need a workspace binding."),
         new(EnvironmentDeploy, PermissionLevel.Environment, "Release an artifact to a non-production environment."),
         new(EnvironmentProductionDeploy, PermissionLevel.Environment, "Deploy to or roll back an environment, production included."),
         new(EnvironmentProductionDeployApprove, PermissionLevel.Environment, "Approve or reject a production release."),
@@ -133,14 +140,14 @@ public static class IamRoles
         + "accept it, or send it back with a note for the next run. Cannot create cards or control runs.";
 
     private static readonly string[] ReadSet =
-        [IamPermissions.WorkspaceRead, IamPermissions.ProjectRead, IamPermissions.SecretsRead];
+        [IamPermissions.WorkspaceRead, IamPermissions.ProjectRead, IamPermissions.SecretsRead, IamPermissions.MagazineRead];
 
     private static readonly string[] DeveloperSet =
     [
         .. ReadSet,
         IamPermissions.ProjectCardsWrite, IamPermissions.ProjectCardsReview, IamPermissions.ProjectRunsOperate,
         IamPermissions.ProjectChatWrite, IamPermissions.ProjectDocsWrite, IamPermissions.EnvironmentDeploy,
-        IamPermissions.SecretsResolve,
+        IamPermissions.SecretsResolve, IamPermissions.MagazineWrite,
     ];
 
     private static readonly string[] AdminSet =
@@ -158,13 +165,15 @@ public static class IamRoles
     /// models, installation operation reads such as the watcher, and stage
     /// deploys. No secret, production, access, or installation setting. It
     /// reads the security view (AGT-3575) so it can watch expiries and audit
-    /// anomalies without the Owner's access administration.
+    /// anomalies without the Owner's access administration. It publishes the
+    /// magazine articles the orchestrator agent keeps up to date (MAG-1).
     /// </summary>
     private static readonly string[] OperatorAgentSet =
     [
         IamPermissions.WorkspaceRead, IamPermissions.ProjectRead, IamPermissions.ProjectCardsWrite,
         IamPermissions.ProjectRunsOperate, IamPermissions.ProjectPipelineWrite, IamPermissions.WorkspaceOperate,
         IamPermissions.EnvironmentDeploy, IamPermissions.SecurityPostureRead,
+        IamPermissions.MagazineRead, IamPermissions.MagazineWrite,
     ];
 
     public static readonly IReadOnlyList<RoleDefinition> All =
@@ -181,7 +190,8 @@ public static class IamRoles
             "Operates the board for a coding agent: reads, lane moves, runs, batch gate, review step models, and stage deploys; no secrets, production approval, access, or installation settings.",
             OperatorAgentSet, [IamScopeKind.Workspace, IamScopeKind.Project], serviceAccounts: true, users: false),
         Role(Contributor, StudioRoles.ContributorDisplayName, 20, "Product role: writes and accepts cards in assigned projects.",
-            [IamPermissions.WorkspaceRead, IamPermissions.ProjectRead, IamPermissions.ProjectCardsWrite, IamPermissions.ProjectChatWrite],
+            [IamPermissions.WorkspaceRead, IamPermissions.ProjectRead, IamPermissions.ProjectCardsWrite, IamPermissions.ProjectChatWrite,
+                IamPermissions.MagazineRead],
             [IamScopeKind.Project], serviceAccounts: false),
         // AGT-3670: the person who reviews deliveries. It reads what a Viewer
         // reads, secret metadata excluded, and holds only the review decision:
@@ -192,7 +202,8 @@ public static class IamRoles
         Role(Viewer, "Viewer", 10, "Reads everything in its scope, secret values excluded.",
             ReadSet, [IamScopeKind.Workspace, IamScopeKind.Project, IamScopeKind.Environment], serviceAccounts: true),
         Role(Approver, "Approver", 15, "Approves or rejects production releases in its scope.",
-            [IamPermissions.WorkspaceRead, IamPermissions.ProjectRead, IamPermissions.EnvironmentProductionDeployApprove],
+            [IamPermissions.WorkspaceRead, IamPermissions.ProjectRead, IamPermissions.EnvironmentProductionDeployApprove,
+                IamPermissions.MagazineRead],
             [IamScopeKind.Workspace, IamScopeKind.Project, IamScopeKind.Environment], serviceAccounts: false),
     ];
 

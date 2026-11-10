@@ -1003,14 +1003,28 @@ or two distinct cards within 24 hours, all three adjustable per project via
 `FailureInterventionService.RaiseCause` (ledger
 `.orchestrator/failure-interventions.json`, fleet store
 `.metadata/cause-breakers.json`). Every affected card stays in `4-auto-review`
-with a `cause-wait.json` marker, renders "Waiting for <key>", gets no scheduled
-retry, and is skipped by the review claim. A pending review whose plan calls
+with a `cause-wait.json` marker, gets no scheduled retry, and is skipped by the
+review claim. Its CURRENT line names the hold instead of a review queue
+position: "Held behind <key>: <cause>", where the cause is
+`CauseBreakerWording.Summary` of the failure class (for example "review cannot
+read the test report") and `<key>` links the cause card (AGT-3617). A pending review whose plan calls
 an open breaker's model route (any project), or whose project already saw an
 open tool-level cause, is held before it is claimed. The breaker closes when
 the cause card reaches `6-completed` (`CauseBreakerHostedService`) or a review
 of the exact successor attempt released by
 `POST /api/cause-breakers/{fingerprint}/probe` passes (probe green); a passing
-older review on the same waiting card does not close it. A card whose existing review is still
+older review on the same waiting card does not close it. The probe is the
+newest waiting delivery (the run behind the card's current review finished
+last), not the card that waited longest: that card's delivery is usually the
+one that broke the review. An optional body `{ "taskKey": "..." }` names the
+card to re-check instead; 409 means no card could be released. The cause
+card's detail view reads `GET /api/cause-breakers/by-cause/{causeKey}` (held
+cards in probe order, probe state) and offers one primary action, "Re-check
+now", that requests the probe. An operator moving a code-free intervention card
+to Accepted without an override is the owner's decision that the cause is
+resolved: the move endpoint records it as a `deliverable-without-code` claim
+(`InterventionOwnerDecisionPolicy`), and the sweep closes the breaker. A card
+with commits or a run attempt keeps the ordinary acceptance checks. A card whose existing review is still
 pending resumes that attempt; a terminal review gets one freshly planned successor.
 The report acknowledgement, evidence projection, and delivery resume each
 observe the durable passed verdict, so any of those paths can close the exact

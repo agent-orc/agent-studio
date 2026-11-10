@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -138,6 +139,36 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
         Assert.True(recorded.HasValue);
         Assert.Equal(new WorkbenchDecisionRecordedEvent(
             "Project", "routing-policy", "active", "decided"), recorded.Value);
+    }
+
+    [Fact]
+    public void Confirm_CommitsWithStudioIdentityWhenRepositoryHasNoUserIdentity()
+    {
+        WriteSchemaTwo("routing-policy");
+        Git("init", "-q");
+        Git("add", "--", "docs");
+        Git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+            "commit", "-qm", "initial");
+        Git("config", "--local", "user.name", "");
+        Git("config", "--local", "user.email", "");
+        var (catalogue, decisions) = Services();
+        var fingerprint = catalogue.Read("Project", "routing-policy")!.Fingerprint;
+
+        var result = decisions.Confirm("Project", "routing-policy", new ConfirmWorkbenchDecisionRequest
+        {
+            OperationId = "workbench-ui-no-identity",
+            Outcome = "feature-spawn",
+            Actor = "Robert",
+            ExpectedFingerprint = fingerprint,
+            Task = FeaturePrepare(fingerprint).Task,
+            SpawnedTaskKeys = ["AGT-42"],
+            Confirmed = true,
+        });
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal("Agent Studio <studio@agent-studio.invalid>", Git("show", "-s", "--format=%an <%ae>", "HEAD").Trim());
+        Assert.Equal("Agent Studio <studio@agent-studio.invalid>", Git("show", "-s", "--format=%cn <%ce>", "HEAD").Trim());
+        Assert.Equal("decided", catalogue.Read("Project", "routing-policy")!.Workbench.Status);
     }
 
     [Fact]
@@ -412,6 +443,23 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
 
     private string Descriptor(string id) =>
         Path.Combine(_root, "docs", "workbenches", id, "workbench.json");
+
+    private string Git(params string[] args)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = _root,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode != 0) throw new InvalidOperationException(error);
+        return output;
+    }
 
     private void WriteSchemaTwo(string id)
     {

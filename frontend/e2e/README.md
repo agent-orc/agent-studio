@@ -70,6 +70,17 @@ injection. Playwright ignores certificate errors only for this profile and
 `public-demo`. The Reviewer role spec (AGT-3670) writes its light, dark, and
 390 px screenshots and the review audit entries to
 `$JOB_RESULTS_DIR/reviewer-role/`.
+### Networked owner setup over HTTPS
+
+Run `npm --prefix frontend run e2e -- e2e/security/owner-second-factor-human-pace.spec.ts`
+from the task worktree. The spec selects the `networked-https` profile: a fresh
+networked monolith with an installer owner code, behind the same temporary
+localhost HTTPS proxy as the public demo, so the browser itself holds the
+Secure session cookie. The spec creates the owner in the sign-in gate, waits
+30 seconds on the second-factor screen (past the four-second offline grace of
+the disconnected live-update hub), then enrolls an authenticator with a code it
+computes from the shown secret (AGT-3614). With `JOB_RESULTS_DIR` set, it
+writes light, dark and 390 px screenshots to `owner-second-factor/`.
 
 ## Suite layout
 

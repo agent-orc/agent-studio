@@ -101,6 +101,18 @@
           }</ul>
         } @else { <p>No cards are waiting for a batch.</p> }
       </section>
+      <section aria-labelledby="batch-flight-queue-title" data-testid="batch-flight-queue">
+        <h3 id="batch-flight-queue-title">Flight queue ({{ data.flightQueue?.length ?? 0 }})</h3>
+        @if (data.flightQueue?.length) {
+          <p>Formed batches start one at a time, oldest first.</p>
+          <ol>@for (entry of data.flightQueue; track entry.batchId) {
+            <li [attr.data-testid]="'batch-flight-queue-' + entry.batchId">
+              <strong>Position {{ entry.position }}</strong> · <a [href]="'#batch-' + entry.batchId" (click)="$event.preventDefault(); openBatch(entry.batchId)">{{ entry.batchId }}</a>
+              · formed {{ date(entry.queuedSinceUtc) }} · {{ entry.size }} {{ entry.size === 1 ? 'card' : 'cards' }}: {{ entry.taskKeys.join(', ') }}
+            </li>
+          }</ol>
+        } @else { <p>No formed batch is waiting for a flight.</p> }
+      </section>
       @if (data.reviewFixWaits?.length) {
         <section aria-labelledby="batch-review-fix-title" data-testid="batch-review-fix-waits">
           <h3 id="batch-review-fix-title">Waiting for review fixes</h3>
@@ -119,7 +131,7 @@
                 <span [class.batch-panel__phase-current]="batch.phase === phase">{{ phaseLabel(phase) }}</span>
               }</p>
               @if (!phases.includes(batch.phase)) { <p>Phase: {{ batch.phase }}</p> }
-              <p><strong>{{ batch.phase }}</strong>@if (batch.phaseReason) { · {{ batch.phaseReason }} }</p>
+              <p><strong>{{ batch.phase }}</strong>@if (batch.queuePosition) { · <span data-testid="batch-queue-position">flight queue position {{ batch.queuePosition }} of {{ data.flightQueue?.length ?? batch.queuePosition }}</span> }@if (batch.phaseReason) { · {{ batch.phaseReason }} }</p>
               @if (batch.formationReason) { <p>{{ batch.formationReason }}</p> }
               @if (batch.exclusions?.length) {
                 <ul aria-label="Cards placed in another batch">

@@ -298,12 +298,17 @@ through its groups. Code: `backend/Features/Security/Iam/`.
 |---|---|---|
 | Owner | workspace | every permission; break-glass role, the only one with `access.read`, `access.manage`, and `workspace.administer` |
 | Admin | workspace, project | settings, operation, production deploy and approval, `secrets.write` |
-| Developer | workspace, project, environment | cards, runs, chats, documents, non-production deploys, the Human Review decision (`project.cards.review`) |
-| Operator agent (`operator-agent`) | workspace, project; service accounts only | the operator surface: reads, cards, runs, batch gate, review step models (`project.pipeline.write`), installation operation reads, stage deploys, the security view (`security.posture.read`) |
+| Developer | workspace, project, environment | cards, runs, chats, documents, magazine articles, non-production deploys, the Human Review decision (`project.cards.review`) |
+| Operator agent (`operator-agent`) | workspace, project; service accounts only | the operator surface: reads, cards, runs, batch gate, review step models (`project.pipeline.write`), installation operation reads, stage deploys, the security view (`security.posture.read`), magazine publishing (`magazine.write`) |
 | Product (`contributor`) | project | cards and chat, narrowed further by the Product allowlist |
 | Reviewer (`reviewer`) | workspace, project; users only | reads and `project.cards.review`: accepts a Human Review card or sends it back with a note; see [Who reviews cards](#who-reviews-cards-the-reviewer-role-agt-3670) |
 | Viewer | workspace, project, environment | reads, secret metadata included |
 | Approver | workspace, project, environment | `environment.production.deploy.approve` and reads |
+
+Every role reads the magazines it can see (`magazine.read`); Owner, Admin,
+Developer and Operator agent also publish (`magazine.write`). The
+installation and workspace magazines take writes only through a workspace
+binding ([magazine domain](../../system/domains/magazine.md#access)).
 
 - Every route declares one named permission, such as `project.cards.write`,
   `environment.production.deploy.approve`, `secrets.write`, or
@@ -1291,12 +1296,13 @@ stream that API tokens may read. SignalR stays closed to tokens.
   for example a provider limit) need an Owner, an all-projects grant, or the
   local profile. `watcher.heartbeat` names no project data and every reader
   receives it, because the lease is per installation.
-- `GET /api/operator/attention` (AGT-3576) returns the facts the stream
-  currently sees as one list, `{ items, count }`, where `count` is the number
-  of items. It declares `project.read`, applies the same project scope as
-  the stream, omits `watcher.heartbeat`, and publishes nothing. The Studio
-  header's Needs you entry reads it. The fact read is reused for up to one
-  sweep interval.
+- `GET /api/operator/attention` returns current operator facts as
+  `{ items, count }`. Card rows include the title and a review or escalation
+  reason. It declares `project.read`, applies the stream's project scope, omits
+  `watcher.heartbeat`, and publishes nothing. The Studio Needs you entry adds
+  Dossier decision gates, backup and credential warnings from their existing reads.
+  Its bell total equals the rows it shows. Decision facts are reused for up
+  to one sweep interval.
 - `GET /api/operator/watcher/lease` reads the lease. `POST` takes it, `POST
   .../lease/{leaseId}/heartbeat` renews it, and `DELETE .../lease/{leaseId}`
   releases it. The writes declare `project.runs.operate` with project

@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  differsFromStableLabel,
   releaseAgeLabel,
   releaseDriftLabel,
   releaseDriftTone,
   releaseDriftTooltip,
+  reviewImageComparison,
+  shortImageDigest,
   stableReleaseLabel,
   worstDrift,
   type HostReleaseDrift,
@@ -89,6 +92,8 @@ describe('host release drift labels (AGT-2826)', () => {
 
   it('names the Stable release for the header, or nothing when it is unknown', () => {
     expect(stableReleaseLabel({ version: '0.3.0' })).toBe('Stable 0.3.0');
+    expect(stableReleaseLabel({ version: '0.9.5', commit: '3d61e8b0c4' })).toBe('Stable 0.9.5 · 3d61e8b');
+    expect(stableReleaseLabel({ version: '0.9.5', commit: 'unknown' })).toBe('Stable 0.9.5');
     expect(stableReleaseLabel({ version: '  ' })).toBeNull();
     expect(stableReleaseLabel(null)).toBeNull();
   });
@@ -103,5 +108,38 @@ describe('host release drift labels (AGT-2826)', () => {
     expect(worstDrift([current, lagging, alarmed])).toBe(alarmed);
     expect(worstDrift([current])).toBe(current);
     expect(worstDrift([null, undefined])).toBeNull();
+  });
+
+  /**
+   * AGT-3648 S4-F12: a review host built from an older develop commit kept
+   * VERSION 0.9.5 and read "current". The server now says "differs"; the
+   * marker names the Stable commit it differs from.
+   */
+  it('marks a build that only differs from Stable with the Stable commit', () => {
+    const differs = drift({ state: 'differs', behindByHours: null, behindForHours: 2, alarmDue: false });
+    expect(releaseDriftLabel(differs, { version: '0.9.5', commit: '3d61e8b0c4' })).toBe('differs from Stable 3d61e8b');
+    expect(releaseDriftLabel(differs, { version: '0.9.5' })).toBe('differs from Stable');
+    expect(differsFromStableLabel({ version: '0.9.5', commit: 'sha' })).toBe('differs from Stable');
+    expect(releaseDriftTone(differs)).toBe('calm');
+    expect(releaseDriftTone({ ...differs, alarmDue: true })).toBe('warn');
+    expect(worstDrift([drift({ state: 'current', alarmDue: false }), differs])).toBe(differs);
+  });
+
+  it('reads a reported release without a comparable commit as release unknown', () => {
+    expect(releaseDriftLabel(drift({ state: 'unknown', release: { releaseId: '0.9.5+sha.unknown', version: '0.9.5' } })))
+      .toBe('release unknown');
+  });
+
+  it('compares the running review image with the one the server expects', () => {
+    const running = `registry.example/review@sha256:${'a'.repeat(64)}`;
+    const expected = `registry.example/review@sha256:${'b'.repeat(64)}`;
+    expect(reviewImageComparison({ releaseId: 'r', version: '0.9.5', imageRef: running }, drift({ expectedImageRef: expected })))
+      .toEqual({ running, expected, state: 'differs' });
+    expect(reviewImageComparison({ releaseId: 'r', version: '0.9.5', imageRef: running },
+      drift({ expectedImageRef: `other.example/review@sha256:${'a'.repeat(64)}` }))?.state).toBe('matches');
+    expect(reviewImageComparison({ releaseId: 'r', version: '0.9.5', imageRef: running }, drift())?.state).toBe('unpinned');
+    expect(reviewImageComparison({ releaseId: 'r', version: '0.9.5' }, drift({ expectedImageRef: expected }))?.state).toBe('unreported');
+    expect(reviewImageComparison({ releaseId: 'r', version: '0.9.5' }, drift())).toBeNull();
+    expect(shortImageDigest(running)).toBe('sha256:aaaaaaaaaaaa');
   });
 });
