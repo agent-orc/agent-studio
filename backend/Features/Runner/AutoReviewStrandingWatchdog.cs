@@ -310,8 +310,10 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
 
     private static bool IsActiveManifest(BatchGateStore batches, BatchGateManifest manifest)
     {
-        return !batches.HasState(manifest.BatchId)
-            || IsActiveBatchPhase(batches.LatestState(manifest.BatchId).Phase);
+        // Until a state is visible, keep ownership with the batch so the
+        // watchdog cannot send its members through review a second time.
+        var phase = batches.LatestState(manifest.BatchId).Phase;
+        return phase == BatchPhase.Unknown || IsActiveBatchPhase(phase);
     }
 
     internal static bool IsActiveBatchPhase(BatchPhase phase)
