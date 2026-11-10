@@ -21,6 +21,7 @@ An older, host-level backup with a systemd timer and age encryption (AGT-3365) i
 | Backup key (`keys/backup/backup.key`) | Never | The owner's escrowed copy |
 | Host CA private key (`STUDIO_HOST_CA_DIR`) | No | The owner's escrowed copy, or a new CA and re-issued host certificates |
 | `api-tmp`, `caddy-config`, `frontend-data`, `frontend-config` | No | Recreated at start |
+| Control plane lock (`workspace/.security/control-plane.lock`) | No; the running API holds it exclusively | Recreated at start |
 
 With the archive, the two escrowed keys and the Git remotes, a new host comes back to the state of the backup. URL passwords and tokens are removed from recorded `origin` URLs. A file whose content is the secret store key or the backup key, or whose name ends in `.kek`, is left out of every source whatever its path; the archive's content list counts such files.
 
@@ -45,6 +46,8 @@ A backup never archives a half-written state:
 - Append-only journals (`.jsonl`, `.ndjson`, `.log`) are cut after their last complete line.
 
 Background writers inside the API (runner loops, CLI logs) are not stopped; their files go through the same per-file rules. A file that changed on all five attempts is archived from its last complete read and listed as unsettled in the archive's content list and on the Operations page.
+
+A file or directory that exists but cannot be opened for reading, for example because another process holds an exclusive lock on it, is left out; the backup goes on. The archive's content list names it with the reason, the API logs `backup-files-unreadable`, and the Operations page shows a warning while the newest good backup has such files. A failure to write the archive itself (backup directory not writable, disk full) fails the run with `backup-io-failed` and the path; `Create backup` then answers `409` with that reason instead of `500`.
 
 ## Keys
 
