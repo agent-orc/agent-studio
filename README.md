@@ -66,13 +66,8 @@ Coding tasks additionally need provider and Git credentials mounted into the
 agent host. The default UI listens only on loopback; LAN exposure uses the
 optional HTTPS edge and an exact origin allowlist.
 
-Once a release is published, the Linux script
-
-```bash
-curl -fsSL https://github.com/agent-orc/agent-studio/releases/latest/download/install.sh | sh
-```
-
-checks the distribution and architecture, verifies the setup executable
+After a release is published, its Linux installer checks the distribution and
+architecture, verifies the setup executable
 against `SHA256SUMS`, then offers the same one-box stack from pinned images,
 a native systemd install (root), or an agent host that joins an existing
 Studio. Windows users download `agent-studio-setup.exe` and verify it against
