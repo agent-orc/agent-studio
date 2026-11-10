@@ -8,6 +8,11 @@ latest admitted repository proof. A failed read stays pending. Once those
 checks pass, **Create sample card** queues a small overview-document task in
 the first registered project. Studio follows that card by its id and marks the
 proof complete only after coding, review, and integration evidence is visible.
+In the local profile, owner sign-in is not applicable and does not block this
+action. A host with a fresh heartbeat can satisfy the checklist even when its
+overall health is degraded, such as when CPU is above target. Each listed Codex
+or Claude CLI still needs a fresh `ok` authentication probe on a connected host;
+an `ok` badge whose host or probe is stale shows the reason it does not count.
 The browser stores the card id, project id, and task-store path for returning
 to the checklist; it stores no credential. For a local project without a
 checkout, GitHub verification clones the registered URL into backend-managed

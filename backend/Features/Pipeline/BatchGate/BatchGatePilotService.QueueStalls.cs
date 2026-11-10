@@ -8,7 +8,8 @@ namespace AgentStudio.Pipeline;
 /// <summary>Releasable cards, the open stall episode and recent stall events of one project.</summary>
 public sealed record GateQueueStallReport(
     string Project, IReadOnlyList<string> Releasable,
-    GateQueueStallEvent? OpenEpisode, IReadOnlyList<GateQueueStallEvent> RecentEvents);
+    GateQueueStallEvent? OpenEpisode, IReadOnlyList<GateQueueStallEvent> RecentEvents,
+    IReadOnlyList<BatchGateFallbackStall>? FallbackStalls = null);
 
 public sealed record GateQueueStallRefusal(string TaskKey, string Reason);
 
@@ -327,7 +328,9 @@ public sealed partial class BatchGatePilotService
         => new(project, QueueStalledEscalations(project).Where(item => item.Refusal is null)
                 .Select(item => item.Task.Key ?? item.Task.Id).ToArray(),
             _queueStalls.OpenEpisode(project),
-            _store.ListQueueStalls(project, RecentQueueStalls));
+            _store.ListQueueStalls(project, RecentQueueStalls),
+            // AGT-3694: per-task fallback waits past their bound.
+            _store.ListFallbackStalls(project, RecentQueueStalls));
 
     /// <summary>
     /// Returns every card of the project that was escalated for a machine gate

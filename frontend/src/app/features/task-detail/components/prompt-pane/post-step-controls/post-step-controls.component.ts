@@ -33,6 +33,8 @@ export class PostStepControlsComponent {
   readonly projectName = input.required<string>();
   readonly activation = input<PostStepActivation | null>(null);
   readonly attempts = input<readonly OnDemandPostStepAttempt[]>([]);
+  /** The backend lists this step as a missing review the Review results action can run. */
+  readonly reviewResults = input(false);
 
   private readonly jobs = inject(TaskService);
   private readonly notifs = inject(NotificationService);
@@ -41,7 +43,7 @@ export class PostStepControlsComponent {
 
   readonly busy = signal(false);
   readonly historyOpen = signal(false);
-  readonly supported = computed(() => SUPPORTED_STEP_IDS.has(this.stepId()));
+  readonly supported = computed(() => this.reviewResults() || SUPPORTED_STEP_IDS.has(this.stepId()));
   readonly activationView = computed(() => this.activation() ?? {
     state: 'unknown' as const,
     source: 'unknown' as const,
@@ -69,6 +71,10 @@ export class PostStepControlsComponent {
   run(): void {
     if (!this.supported() || this.busy()) return;
     this.busy.set(true);
+    if (this.reviewResults()) {
+      this.runReviewResults();
+      return;
+    }
     this.jobs.runTaskPostStep(this.jobId(), this.stepId(), this.watchPath()).subscribe({
       next: result => {
         this.busy.set(false);
@@ -81,6 +87,21 @@ export class PostStepControlsComponent {
       error: () => {
         this.busy.set(false);
         this.notifs.warning(`${this.label()} could not be run.`, 'Post-step failed');
+      },
+    });
+  }
+
+  private runReviewResults(): void {
+    this.jobs.reviewTaskResults(this.jobId(), this.watchPath()).subscribe({
+      next: result => {
+        this.busy.set(false);
+        this.pipelinePoll.refresh();
+        if (result.ran) this.notifs.success(result.summary, 'Results reviewed');
+        else this.notifs.warning(result.summary, 'Results not reviewed');
+      },
+      error: () => {
+        this.busy.set(false);
+        this.notifs.warning('The results could not be reviewed.', 'Review failed');
       },
     });
   }

@@ -58,7 +58,42 @@ public sealed record CauseBreakerRecord
     public List<string> Variants { get; init; } = [];
 
     public bool IsOpen => State == CauseBreakerStates.Open;
+
+    /// <summary>The cause in plain words, derived from <see cref="FailureClass"/> (AGT-3617).</summary>
+    public string Summary => CauseBreakerWording.Summary(FailureClass);
 }
+
+/// <summary>One held card as the cause card shows it (AGT-3617).</summary>
+/// <param name="TaskKey">The breaker's identity of the card; pass it back to choose the probe.</param>
+/// <param name="Key">The card's public key, for the link.</param>
+/// <param name="DeliveredAt">When the delivery under review finished, when known.</param>
+/// <param name="RecheckFirst">The card "Re-check now" releases: the newest waiting delivery.</param>
+public sealed record CauseBreakerHeldCard(
+    string TaskKey,
+    string Key,
+    string? Title,
+    string? ProjectName,
+    string? WatchPath,
+    DateTime Since,
+    DateTime? DeliveredAt,
+    bool RecheckFirst);
+
+/// <summary>
+/// The open breaker a cause card owns, projected for its detail view: what
+/// the cause is, which cards wait behind it, and the state of a re-check.
+/// </summary>
+public sealed record CauseBreakerCauseView(
+    string Fingerprint,
+    string FailureClass,
+    string Summary,
+    string Toolchain,
+    string? CauseKey,
+    DateTime? OpenedAt,
+    string? ProbeTaskKey,
+    string? ProbeKey,
+    string? ProbeState,
+    bool Resolving,
+    IReadOnlyList<CauseBreakerHeldCard> Held);
 
 /// <summary>What the review report path has to do with one infrastructure failure.</summary>
 public sealed record CauseBreakerOutcome(
@@ -693,11 +728,61 @@ public sealed class CauseBreakerService
     }
 
     /// <summary>
-    /// Releases the longest-waiting card of an open breaker as a probe. A green
-    /// review then closes the breaker; a red one parks the card again without
-    /// opening a second cause card.
+    /// The open breaker whose cause card is <paramref name="causeKey"/> (its
+    /// key or folder id), or null. The cause card's detail view reads it to
+    /// offer "Re-check now" (AGT-3617).
     /// </summary>
-    public CauseBreakerRecord? RequestProbe(string fingerprint)
+    public CauseBreakerCauseView? ForCause(string causeKey)
+    {
+        if (string.IsNullOrWhiteSpace(causeKey)) return null;
+        lock (_gate)
+        {
+            var record = Records().FirstOrDefault(item => item.IsOpen
+                && (Same(item.CauseKey, causeKey) || Same(item.CauseTaskId, causeKey)));
+            if (record is null) return null;
+            var ranked = ProbeCandidates(record);
+            var first = ranked.FirstOrDefault().Waiting;
+            var held = ranked.Select(item => new CauseBreakerHeldCard(
+                    item.Waiting.TaskKey,
+                    item.Task?.Key ?? item.Task?.Id ?? PublicKey(item.Waiting.TaskKey),
+                    item.Task?.Title,
+                    item.Task?.ProjectName ?? item.Waiting.Project,
+                    item.Task?.WatchPath ?? item.Waiting.WatchPath,
+                    item.Waiting.Since,
+                    item.DeliveredAt,
+                    RecheckFirst: first is not null && Same(first.TaskKey, item.Waiting.TaskKey)))
+                .ToArray();
+            var probe = record.ProbeTaskKey is null
+                ? null
+                : record.Waiting.FirstOrDefault(item => Same(item.TaskKey, record.ProbeTaskKey));
+            var probeTask = probe is null ? null : ResolveWaitingTask(record, probe);
+            return new CauseBreakerCauseView(
+                record.Fingerprint,
+                record.FailureClass,
+                record.Summary,
+                record.Toolchain,
+                record.CauseKey,
+                record.OpenedAt,
+                record.ProbeTaskKey,
+                record.ProbeTaskKey is null ? null : probeTask?.Key ?? PublicKey(record.ProbeTaskKey),
+                ProbeStateOf(record),
+                Resolving: record.CloseReason is not null,
+                held);
+        }
+    }
+
+    /// <summary>
+    /// Releases one waiting card of an open breaker as a probe. A green review
+    /// then closes the breaker; a red one parks the card again without opening
+    /// a second cause card.
+    /// <para>
+    /// AGT-3617: the probe is the newest waiting delivery, not the card that
+    /// waited longest. The oldest card is usually the one whose delivery broke
+    /// the review, so probing it again proved nothing and kept a fixed delivery
+    /// behind it. <paramref name="taskKey"/> lets the owner choose the card.
+    /// </para>
+    /// </summary>
+    public CauseBreakerRecord? RequestProbe(string fingerprint, string? taskKey = null)
     {
         lock (_gate)
         {
@@ -705,11 +790,12 @@ public sealed class CauseBreakerService
             var record = records.FirstOrDefault(item => item.IsOpen && Same(item.Fingerprint, fingerprint));
             if (record is null || record.ProbeTaskKey is not null || record.CloseReason is not null)
                 return record;
-            foreach (var waiting in record.Waiting.OrderBy(item => item.Since))
+            foreach (var (waiting, task, _) in ProbeCandidates(record))
             {
-                if (waiting.Released) continue;
-                var task = ResolveWaitingTask(record, waiting);
                 if (task is null) continue;
+                if (!string.IsNullOrWhiteSpace(taskKey) && !Same(waiting.TaskKey, taskKey)
+                    && !Same(task.Key, taskKey) && !Same(task.Id, taskKey) && !Same(task.TaskKey, taskKey))
+                    continue;
                 // A probe whose marker still reads "waiting" would be shown
                 // and withheld as parked while it runs; try the next card. A
                 // failed restore below is repaired by the next sweep.
@@ -732,6 +818,35 @@ public sealed class CauseBreakerService
             return record;
         }
     }
+
+    /// <summary>
+    /// The unreleased waiting cards in probe order: newest delivery first, then
+    /// the most recently parked. A card held before its first claim has no
+    /// finished review yet and ranks by its delivery all the same.
+    /// </summary>
+    private IReadOnlyList<(CauseBreakerWaitingCard Waiting, TaskInfo? Task, DateTime? DeliveredAt)> ProbeCandidates(
+        CauseBreakerRecord record)
+        => record.Waiting
+            .Where(item => !item.Released)
+            .Select(item => (Waiting: item, Task: ResolveWaitingTask(record, item), DeliveredAt: DeliveredAt(item.TaskKey)))
+            .OrderByDescending(item => item.DeliveredAt ?? item.Waiting.Since)
+            .ThenByDescending(item => item.Waiting.Since)
+            .ToArray();
+
+    /// <summary>When the run behind the card's current review finished: the age of the delivery under review.</summary>
+    private DateTime? DeliveredAt(string taskKey)
+    {
+        var review = _authority.GetTaskProjection(taskKey).CurrentReviewAttempt;
+        if (review is null) return null;
+        var run = string.IsNullOrWhiteSpace(review.SourceRunAttemptId) ? null : _authority.GetRun(review.SourceRunAttemptId);
+        return run?.TerminalAt ?? run?.CreatedAt ?? review.Subject.CreatedAt;
+    }
+
+    /// <summary>The public key of a path-qualified authority key (<c>{watchPath}::{key}</c>).</summary>
+    private static string PublicKey(string taskKey)
+        => taskKey.Contains("::", StringComparison.Ordinal)
+            ? taskKey[(taskKey.LastIndexOf("::", StringComparison.Ordinal) + 2)..]
+            : taskKey;
 
     private CauseBreakerRecord Park(
         CauseBreakerRecord record,
@@ -902,6 +1017,7 @@ public sealed class CauseBreakerService
         FailureClass = record.FailureClass,
         Since = since,
         Reason = $"waiting for {record.CauseKey}: {record.FailureClass} on {record.Toolchain}",
+        Summary = record.Summary,
         Probe = probe,
     };
 

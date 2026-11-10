@@ -98,6 +98,30 @@
   font-weight: 700;
 }
 
+.task-live--manual-remote .task-live__headline {
+  white-space: normal;
+  overflow: visible;
+}
+
+.task-live__auto-action {
+  flex: 0 0 auto;
+  margin-inline-start: var(--studio-spacing-1);
+  border: 0;
+  background: none;
+  color: var(--studio-accent-3-strong);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.task-live__auto-action:focus-visible {
+  outline: 2px solid var(--studio-accent-3);
+  outline-offset: 2px;
+}
+
 .task-live--detail .task-live__current,
 .task-live--detail .task-live__next {
   display: grid;
@@ -116,6 +140,38 @@
 .task-live--detail .task-live__headline {
   flex: 0 1 auto;
   font-size: 12px;
+}
+
+// AGT-3617: the hold names its cause in one sentence; it wraps instead of
+// cutting the cause off on a narrow card.
+.task-live__headline--hold {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+// AGT-3617: the cause card a held card waits behind, inline in the headline.
+// It reads as a link, not as a button: text colour and underline only.
+.task-live__link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--studio-accent);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--studio-accent-strong);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--studio-accent);
+    outline-offset: 1px;
+    border-radius: 2px;
+  }
 }
 
 .task-live--detail .task-live__signal {
@@ -174,6 +230,27 @@
 .task-live--dense .task-live__detail,
 .task-live--dense .task-live__next {
   display: none;
+}
+
+@media (max-width: 600px) {
+  .task-live--manual-remote.task-live--detail .task-live__current {
+    grid-template-columns: 3rem 8px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .task-live--manual-remote.task-live--detail .task-live__summary {
+    display: block;
+    grid-column: 3;
+    line-height: 1.5;
+  }
+
+  .task-live--manual-remote.task-live--detail .task-live__headline {
+    display: inline;
+  }
+
+  .task-live--manual-remote.task-live--detail .task-live__attempt {
+    grid-column: 3;
+  }
 }
 
 // AGT-2818: the hold block is the reason, not the summary, so it sits under the

@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-11-05
+Version: 2026-11-09
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -38,6 +38,18 @@ The service token is `secret://workspace/quality-studio-api-token` by default;
 the matching GET supplies the Deck status panel.
 
 ## Board read contract
+
+### Moving a batch member out of Auto Review
+
+The board move (`POST /api/tasks/{id}/move`) and state update
+(`PUT /api/tasks/{id}/state`) return `409 active-batch-member` when an operator
+tries to move a card out of Auto Review while a formed, running, or publishing
+batch still owns it. The response names the batch, phase, and other members.
+An operator can confirm the move with `withdrawFromBatch: true` and a written
+`reason`. The move requests an eject before changing the lane, records the
+operator and reason on the card timeline and in the batch withdrawal journal,
+and requests a fresh planner pass. A card that is pending but has no batch
+continues to move normally.
 
 ### Routing mutation publication
 
@@ -218,7 +230,7 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   A queued round also returns `base` when it starts from a result ref
   (AGT-3483); `BaseRef` on the request selects another ref of the same card,
   see the [runner domain](runner.md) for the rule and its error codes.
-- Continue (every mode), preview feedback, the orchestrator-log steer override,
+- Continue (every mode), failure continuation, preview feedback, the orchestrator-log steer override,
   and an operator requeue (a move or batch move into Backlog, Preparation,
   Ready or In Progress) refuse a card that is a member of a batch under
   isolation with `409 batch-isolation-active`, naming the flight
@@ -228,6 +240,9 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   active and no isolation finding released it. Eject
   (`POST /api/projects/{project}/batch-gate/members/{taskKey}/eject`) stays
   allowed (AGT-3483, `BatchIsolationGuard`).
+  The read-only failure continuation check reports the same isolation reason
+  and marks the action unavailable, so task detail disables it with that reason
+  as its tooltip (AGT-3687).
 
 ## Entry Points
 
@@ -868,10 +883,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   an active acceptance transaction.
 - Integration status accepts persisted abbreviated Git SHAs of at least seven
   hexadecimal characters when they match a reachable full SHA by prefix.
-  Zero-file lifecycle entries whose subjects start with
-  `wip(runner): salvage before teardown` or `chore: snapshot for review` remain
+  Zero-file lifecycle entries with `Agent-Studio-Salvage: teardown`, the legacy
+  `wip(runner): salvage before teardown` subject, or the
+  `chore: snapshot for review` subject remain
   visible attribution metadata but are not delivery expectations. A matching
-  subject with changed files remains a real integration expectation. Target
+  marker with changed files remains a real integration expectation. Target
   branch ancestry is stronger evidence than stale file metadata: a commit that
   is already reachable from the integration branch is never discarded by the
   zero-file marker heuristic.
@@ -949,7 +965,12 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
 - The guarded delivery chain is workspace-wide by default. `DeliveryChain:Guarded`
   can be set to `false` only during migration to the former badge-only behavior.
   A coding card stays in `4-auto-review` with phase `integrating` until the
-  published result is integrated, then enters Human Review. Missing code
+  published result is integrated, then enters Human Review. The promotion is
+  recorded as cause `promoted` with detail `delivery-integrated`, and no lane
+  change carries the `integrating` phase into the next lane (AGT-3621). The
+  accepted-integration backstop finishes only an interrupted operator
+  acceptance; it clears a promotion's leftover phase instead of accepting the
+  card, and a stale-verdict park on an integrated card is not shown. Missing code
   delivery, conflict, gate failure, and unrecoverable error go to escalation
   with a category and recovery action. A pull-request project's approval stays
   on the pull request while the card waits in Auto Review; Human Review starts
@@ -1385,10 +1406,14 @@ before changing lanes if no generated Result is available. If that write fails,
 the card remains in its source lane. Admission refusals and no-op moves do not write
 `status.md`, `current-result.json`, or Result history. An engine decision
 refreshes its scaffold at most once during the accepted move. The service never
-replaces a real Result. Backend startup runs
-the same idempotent repair over missing Results in `5-human-review`,
-`6-completed`, and `7-archive`; repaired files are marked as operator
-backfills.
+replaces a real Result.
+When an accepted move finds a scaffold and Result history contains a generated
+summary, it restores the latest real summary instead of refreshing lane-only
+scaffold prose. The displaced scaffold remains in Result history.
+Backend startup runs the same idempotent repair over missing Results in
+`5-human-review`, `6-completed`, and `7-archive`; repaired missing files are
+marked as operator backfills. It also restores the last generated Result for
+an already Accepted card whose current file is still a scaffold.
 
 ## Completion contract (AGT-2817)
 
@@ -1647,6 +1672,55 @@ line (observations, cases updated, proposals created, comments appended,
 contingent-blocked count, analysis calls, last-run timestamp), the same shape
 as `acceptance-rail-run`.
 
+## Persona catalogue and workspace activation (PT-1)
+
+The persona team ([Dossier](../../persona-team/index.html), AGT-3573, decisions
+PT-D1 and PT-D12) starts with a versioned catalogue and an application-owned
+activation per workspace. Nothing runs yet: principals and grants (PT-2) and
+scheduling (PT-3) read these records.
+
+- **Descriptor.** `docs/app/schemas/persona.schema.json` (`PersonaDescriptorV1`):
+  id, revision (`year.month.sequence`), title, aspect, kind
+  (`persona | presenter | manager`), a charter of at most 600 characters,
+  scope (projects, areas, excluded paths), owner-set attributes (focus weights
+  summing to 100, autonomy A0 to A2, risk appetite, thoroughness, signal
+  threshold), persona operations, model capability class and thinking, cadence,
+  triggers, weekly budget, report template and fact floors.
+  `AgentStudio.Personas.PersonaDescriptorValidator` mirrors the schema in code
+  and adds what a schema cannot state: focus weights sum to 100, A2 and the
+  manager operations belong to managers only.
+- **Catalogue.** The eleven starter descriptors live in
+  `backend/Policies/personas/<id>.persona.json` and are embedded in the
+  backend (`PersonaCatalogue`). `revisions.lock.json` beside them records the
+  digest of every published revision; `PersonaCatalogueTests` validates every
+  file against the schema and fails when a file changed without a new
+  revision. The operations warden and the cost controller carry
+  `startsActive: true`; activation still needs the Owner.
+- **Digest.** `PersonaDescriptorDigest`: `sha256:` over the descriptor as
+  compact JSON with keys sorted ordinally. Formatting never changes it.
+- **Activation store.** `PersonaActivationStore` keeps activations and forks
+  per workspace in `.metadata/personas/<workspace>.json`, written only through
+  the routes below. An activation stores a snapshot of the descriptor it runs,
+  so a new catalogue revision changes nothing until the Owner adopts it.
+- **Routes.** `GET /api/workspaces/{id}/personas` lists every catalogue entry
+  and custom persona with its activation (state `shadow`, `active`, `paused`
+  or `inactive`) and `adoptableRevision` when the catalogue has a newer one.
+  `POST .../personas/{personaId}/activate` takes optional `attributes`,
+  `allowance` and `scope` (narrowing only) and `reason`; it needs an active
+  Owner and a fresh, single-use step-up (`403 step-up-required` otherwise),
+  records `descriptorRevision`, `descriptorDigest` and the operations its
+  autonomy grants, and starts in `shadow` until one report period has passed.
+  `.../pause`, `.../resume` and `.../deactivate` need the Owner and no
+  step-up. `.../fork` copies a catalogue persona into a custom persona
+  (`id`, optional `title`, `charter`, `attributes`, `budget`, `scope`) with its
+  own revision chain. `.../adopt` builds the next fork revision from the
+  current catalogue revision plus the fork's own changes, or moves a live
+  catalogue activation to the current revision; adopting into a live
+  activation needs a step-up. Refusals answer `{ error, message }`.
+- **Audit.** Every change appends `persona.activate`, `persona.pause`,
+  `persona.resume`, `persona.deactivate`, `persona.fork` or `persona.adopt` to
+  the IAM audit with target `persona:<workspace>/<personaId>`.
+
 ## Dossier links and retired parent fields
 
 Tasks use `task` or `decision` kind. Dossier membership is the card's
@@ -1728,6 +1802,9 @@ from completion backfill, cycle time, throughput, and environment flow metrics.
   Git ancestry, Remote Review build-tests grades, and deterministic gate logs.
 - `backend/Services/Tasks/ReviewEvidenceLog.cs` and
   `ScreenshotIndexService.cs`: review evidence and visual proof.
+- `backend/Features/Personas/`: persona descriptor, catalogue, workspace
+  activation store and routes (PT-1); `backend/Policies/personas/` holds the
+  starter descriptors and `revisions.lock.json`.
 - `backend/Features/Registry/WorkspaceSettingsService.cs` and
   `WorkspaceSettingsEndpoints.cs`: per-workspace default orchestrator settings
   (`WorkspaceSettings` beside `WorkspaceRecord`, persisted to
