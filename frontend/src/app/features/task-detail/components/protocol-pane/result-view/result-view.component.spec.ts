@@ -131,6 +131,27 @@ describe('ResultViewComponent', () => {
       .toContain('status text mentions: blocked');
   });
 
+  /** AGT-3648 S4-F12: the card has to say when a non-Stable build graded it. */
+  it('names the grading release when it is not the Stable build or was superseded', async () => {
+    const stableNotice = 'graded by release 20261105T090000Z-review-f947f2b1c3d4 (commit f947f2b), which differs from Stable 0.9.5 (3d61e8b)';
+    const superseded = 'graded by release 20261105T090000Z-review-f947f2b1c3d4, current 20261109T101203Z-review-3d61e8b0c4ab';
+    const fixture = await build(detail(HEAD_ONLY, {
+      reviewProjection: { attempts: [{ attemptId: 'r-2', aspects: [], workerReleaseStable: stableNotice, workerReleaseSuperseded: superseded }] },
+    }), verdict());
+    const notices = [...(fixture.nativeElement as HTMLElement)
+      .querySelectorAll('[data-testid="result-grading-release-notice"]')].map(node => node.textContent?.trim());
+
+    expect(notices).toEqual([`Review ${stableNotice}.`, `Review ${superseded}.`]);
+  });
+
+  it('renders no grading-release note for a Stable-built grade', async () => {
+    const fixture = await build(detail(HEAD_ONLY, {
+      reviewProjection: { attempts: [{ attemptId: 'r-2', aspects: [], workerReleaseStable: null, workerReleaseSuperseded: null }] },
+    }), verdict());
+
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="result-grading-release"]')).toBeNull();
+  });
+
   it('renders the case badge and the overview problem/solution', async () => {
     const fixture = await build(detail(HEAD_ONLY), verdict());
     const el = fixture.nativeElement as HTMLElement;

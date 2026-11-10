@@ -39,6 +39,11 @@ export interface BatchGateState {
   /** Gate processes detached at a lease deadline and still exiting. */
   detachedFlights?: { batchId: string; project: string; startedAtUtc: string; detachedAtUtc: string;
     deadlineMinutes: number; reason: string }[];
+  dailySummary?: {
+    phaseMinutes?: Record<string, { p50: number | null; p90: number | null; cards: number }>;
+    diagnosticRerunShare?: number | null;
+    preCheckYield?: { runs: number; red: number; cardsKeptOut: number; costMinutes: number } | null;
+  } | null;
   reviewFixWaits?: { taskKey: string; reviewAttemptId: string; round: number; maximum: number; aspects: string[] }[];
   preChecksRun?: number;
   preChecksRed?: number;
@@ -160,7 +165,28 @@ export interface BatchMemberState {
   size?: number | null;
   reason?: string | null;
   reasonDetail?: string | null;
+  /** What a per-task fallback waits for (AGT-3694); the detail names the engine run or the stage. */
+  waitKind?: string | null;
+  waitingFor?: string | null;
+  waitSinceUtc?: string | null;
+  engineRunId?: string | null;
+  engineStatus?: string | null;
   preCheck?: BatchPreCheck | null;
+  timeline?: BatchMemberTimeline | null;
+}
+
+export interface BatchMemberTimeline {
+  reviewPassedAtUtc: string;
+  preCheckQueuedAtUtc?: string | null;
+  preCheckStartedAtUtc?: string | null;
+  preCheckFinishedAtUtc?: string | null;
+  joinedBatchAtUtc?: string | null;
+  batchStartedAtUtc?: string | null;
+  batchFinishedAtUtc?: string | null;
+  publishedAtUtc?: string | null;
+  terminalAtUtc?: string | null;
+  outcome: string;
+  diagnosticRerun: boolean;
 }
 
 export interface BatchPreCheck {
@@ -202,6 +228,21 @@ export function batchEjectionLabel(reason: string | null | undefined): string | 
     case 'conflict': return 'replay conflict';
     case 'unattributable': return 'unattributable history';
     default: return reason || null;
+  }
+}
+
+/** Short card label of what a per-task fallback waits for. */
+export function batchFallbackWaitLabel(kind: string | null | undefined): string | null {
+  switch (kind) {
+    case 'engine-decision': return 'waits for engine decision';
+    case 'per-task-slot': return 'waits for per-task slot';
+    case 'batch-slot': return 'waits for batch slot';
+    case 'machine-gate-slot': return 'waits for machine gate slot';
+    case 'preparing': return 'preparing gate';
+    case 'gate-running': return 'gate running';
+    case 'integration': return 'integrating';
+    case 'resume-pending': return 'resumes next tick';
+    default: return kind || null;
   }
 }
 
