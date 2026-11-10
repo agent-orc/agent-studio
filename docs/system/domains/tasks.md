@@ -1000,6 +1000,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   The target ref fingerprint is diagnostic evidence, not an acceptance boundary.
   A new delivery epoch or result SHA, or a delivery no longer integrated in the
   published branch, makes the verdict stale and returns the card to Auto Review.
+  Stale-verdict recovery records the integration request and returns from the
+  delivery-chain pass before the per-project merge gate finishes. Its completion
+  requests a fresh review or queues a merge round. After a restart, the
+  reconciler resumes a returned Auto Review card whose latest lane change was
+  the stale-verdict transition and whose review is still pending recovery.
   Older claims without these delivery fields remain accepted while Git reports
   the delivery integrated. An explicit operator override remains accepted for
   its recorded delivery; advancing the target branch does not reopen it.

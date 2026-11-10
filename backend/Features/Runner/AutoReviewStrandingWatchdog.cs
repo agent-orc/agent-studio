@@ -94,7 +94,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     { State: AttemptLifecycleState.Failed, Outcome: ReviewTerminalOutcome.InfrastructureFailure };
                 var facts = new AutoReviewStrandingFacts(withoutOwner, threshold,
                     _pipeline.Read(card.FolderPath)?.Steps.Any(step => step.Status == PipelineStepStatus.Running) == true
-                        || IntegrationGateJournal.Read(card.FolderPath) is not null,
+                        || IntegrationGateJournal.Read(card.FolderPath) is not null
+                        || card.Phase == LifecyclePhases.Integrating,
                     currentReview?.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased,
                     pending.Any(item => IsPendingForDelivery(item, card.ProjectName, key,
                         run, currentReview?.AttemptId))
