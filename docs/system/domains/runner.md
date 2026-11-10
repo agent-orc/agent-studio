@@ -151,6 +151,16 @@ Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
 
+Ready pickup order is one rule for every runner and the board (AGT-3587). Each
+project's Ready queue is that project's `2-ready` lane order
+(`LaneSortApplier.Sort`, default `lane-entry`: placed cards by `order`, then
+the newest lane entry). The local runner takes the first pickup-eligible card;
+the remote claim uses `LaneSortApplier.PickupOrder`, which keeps each project's
+order and offers every project's head before any second card. The runner
+status `queuedJobIds` list is that queue, and the board marks only its head as
+Next. Move to top (`PromoteToReadyTop`) rewrites only the placed cards and the
+promoted one, so the other cards keep their order.
+
 Unknown or interrupted attempts that publish salvage hand its exact ref and SHA
 to the next coding claim. The runner starts that worktree at the salvage commit;
 an unavailable or moved ref fails preparation instead of selecting the
@@ -890,6 +900,11 @@ unreported claim expires with its lease and is queued again.
   the networked profile it never executes Codex on the Studio host: an absent
   or unreachable assigned runner produces a failed turn with a clear reason.
   Changing a remotely placed project to local execution requires the Owner.
+- `runner/OneShotJobAdmission.cs`: coding and review hosts poll bounded model
+  jobs independently of task claims. The review host starts this poll after
+  client registration. A missing claim route (HTTP 404) is logged once and
+  retried every five minutes; a successful poll logs restoration and returns
+  to the normal three-second interval.
 - `backend/Features/Runner/RemoteChatWorkBroker.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteProjectChatRunner.cs`: assignment-aware remote side-sheet chat
@@ -2526,6 +2541,12 @@ card), promotes the card to the top of `2-ready` with transition detail
 `202 {"status":"queued","queued":{"reason":"lane-not-runnable"|"delivery-under-review"|"remote-execution"|"project-busy"}}`.
 A manual start carries no prompt, so nothing is persisted; the promotion alone
 carries the intent.
+
+For remote execution, Run now queues the Ready card, but the assigned runner
+claims only while project pickup is Auto. The Ready card's CURRENT line uses the
+runner-level `manual-mode` reason and offers Switch to Auto inline. A reasonless
+runner queue says "Queued for runner"; only the `slots-full` reason says it is
+waiting for a runner slot.
 
 When a follow-up is queued during a live remote run, the card enters Ready but
 the earlier attempt keeps its lease and continues working. Remote dispatch

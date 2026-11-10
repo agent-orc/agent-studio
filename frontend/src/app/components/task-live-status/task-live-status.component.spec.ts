@@ -1,9 +1,11 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import type { TaskInfo } from '../../models/task.model';
 import { TaskLiveStatusComponent } from './task-live-status.component';
 import { RemoteHostsService } from '../../features/remote-hosts';
+import { TaskService } from '../../services/task.service';
+import { of } from 'rxjs';
 
 function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
   const now = Date.now();
@@ -32,14 +34,23 @@ function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
 
 describe('TaskLiveStatusComponent', () => {
   let fixture: ComponentFixture<TaskLiveStatusComponent>;
+  const modeCalls: [string, string][] = [];
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [TaskLiveStatusComponent],
       providers: [provideZonelessChangeDetection(),
+        { provide: TaskService, useValue: {
+          setRunnerMode: (project: string, mode: string) => {
+            modeCalls.push([project, mode]);
+            return of({});
+          },
+          refresh: vi.fn(),
+        } },
         { provide: RemoteHostsService, useValue: { hosts: () => [] } }],
     }).compileComponents();
     fixture = TestBed.createComponent(TaskLiveStatusComponent);
+    modeCalls.length = 0;
   });
 
   it('shows a Ready pickup hold without a previous live run', () => {
@@ -201,7 +212,7 @@ describe('TaskLiveStatusComponent', () => {
     const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
     expect(root.querySelectorAll(':scope > div')).toHaveLength(2);
     expect(root.querySelector('[data-testid="task-live-current"]')?.textContent)
-      .toContain('Waiting for runner slot · position 3');
+      .toContain('Queued for runner · position 3');
     expect(root.querySelector('[data-testid="task-live-detail-inline"]')?.textContent)
       .toContain('Last activity');
     expect(root.querySelector('[data-testid="task-live-next"]')?.textContent)
@@ -231,6 +242,30 @@ describe('TaskLiveStatusComponent', () => {
     expect(root.getAttribute('data-live-tone')).toBe('waiting');
     expect(root.querySelector('[data-testid="task-live-current"]')?.textContent).toContain(headline);
     expect(root.querySelector('.task-live__detail')?.textContent).toContain(reason);
+  });
+
+  it('offers Auto inline for a remote Ready card held in Manual mode', () => {
+    fixture.componentRef.setInput('task', task({
+      state: '2-ready',
+      executionLocation: {
+        state: 'no-active-execution', executionKind: 'none',
+        configuredRunnerId: 'first-run-coding', hostDisplayName: 'first-run-coding',
+      },
+      liveStatus: {
+        attempt: 1, activeStep: null, nextSteps: [], latestEventAt: null,
+        queue: { kind: 'runner', position: 1, reasonCode: 'manual-mode', reason: 'Auto-pickup is off.' },
+      },
+    }));
+    fixture.detectChanges();
+
+    const current = fixture.nativeElement.querySelector('[data-testid="task-live-current"]') as HTMLElement;
+    expect(current.textContent).toContain('Pickup is Manual: switch to Auto to let first-run-coding claim it');
+    expect(current.textContent).not.toContain('Waiting for runner slot');
+    const action = current.querySelector('[data-testid="task-live-switch-auto"]') as HTMLButtonElement;
+    expect(action.textContent).toContain('Switch to Auto');
+    action.click();
+    expect(modeCalls).toEqual([['demo', 'auto-continuous']]);
+    expect(TestBed.inject(TaskService).refresh).toHaveBeenCalledWith(true);
   });
 
   it('keeps a card hold ahead of a runner reason', () => {
@@ -302,7 +337,7 @@ describe('TaskLiveStatusComponent', () => {
     });
     fixture.detectChanges();
 
-    expect(current.textContent).toContain('Waiting for runner slot · position 3');
+    expect(current.textContent).toContain('Queued for runner · position 3');
     expect(current.textContent).not.toContain('waits for completion');
     expect(fixture.nativeElement.textContent).toContain('Agent execution');
   });

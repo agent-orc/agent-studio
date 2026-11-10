@@ -893,7 +893,7 @@ public static class LeaseEndpoints
 
                 var dependencyTargets = waitsOn.DependencyTargets(liveSnapshot.Where(t => t.State == TaskStates.Ready));
                 var dependencyStatuses = dependencyGitProjection.ReadDependencyIntegration(dependencyTargets);
-                var eligible = liveSnapshot
+                var routable = liveSnapshot
                     .Where(t => !t.Fixture && t.State == TaskStates.Ready
                         && !t.WaitingForEngineDecision)
                     // SM-9: a runner credential claims only cards of its bound projects.
@@ -904,8 +904,10 @@ public static class LeaseEndpoints
                         return RemoteDispatchEligibility.IsAssignedAndRoutable(
                             t, project, req.RunnerId, req.RunnerName, waitsOn, dependencyStatuses);
                     })
-                    .OrderBy(t => t.Order)
-                    .ThenBy(t => t.CreatedAt);
+                    .ToList();
+                // AGT-3587: claim in each project's displayed Ready order, the
+                // same order the local runner and the board use.
+                var eligible = LaneSortApplier.PickupOrder(routable, settings.Get);
                 var occupiedByProject = ProjectExecutionPolicy.ProjectOccupancy(liveSnapshot);
 
                 TaskInfo? candidate = null;
@@ -3443,7 +3445,8 @@ public static class LeaseEndpoints
             settings.ResolveContextMode(task.ProjectName, cliType, task.ContextMode).Mode,
             modeFraming,
             RunTimeoutSeconds: operatorLimit ?? emergency.Item1,
-            RunTimeoutSource: operatorLimit is null ? emergency.Item2 : "operator");
+            RunTimeoutSource: operatorLimit is null ? emergency.Item2 : "operator",
+            TaskTitle: task.Title);
     }
 
     internal static string? BuildModeFraming(

@@ -10,8 +10,8 @@ import { buildThinkingLevelIndicator, type ThinkingLevelIndicator } from '../../
 import { phaseStaticLabel } from '../../../../services/lifecycle-phase.util';
 import { isTaskRunActive, resolveRunActivityKind } from '../../../../services/run-activity.util';
 import { buildTokenCostTooltip, formatTokenCostDisplay } from '../../../tokens';
-import { LANE_PRESENTATIONS, laneName, lanePresentation } from '../../../../models/lane-presentation';
-import { MANUAL_MOVE_LANES } from '../../../task-detail/state/triage-actions.model';
+import { laneName, lanePresentation } from '../../../../models/lane-presentation';
+import { MANUAL_MOVE_LANES, manualMoveSkipsExecution } from '../../../task-detail/state/triage-actions.model';
 import type { StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
 
 export function taskTypeIconName(kind: string): StudioIconName {
@@ -1097,6 +1097,9 @@ function pipelineView(
  * per-step results.
  */
 export function buildPipelineDots(job: TaskInfo): PipelineDotsView {
+  if (job.state === TaskState.Completed || job.state === TaskState.Archive) {
+    return pipelineView(null, null, 'review');
+  }
   switch (job.phase ?? null) {
     case 'intake-running':
       return pipelineView('pre', null, null);
@@ -1124,10 +1127,6 @@ export function buildPipelineDots(job: TaskInfo): PipelineDotsView {
   }
 
   if (job.state === TaskState.HumanReview || job.state === TaskState.Escalated) {
-    return pipelineView(null, null, 'review');
-  }
-
-  if (job.state === TaskState.Completed || job.state === TaskState.Archive) {
     return pipelineView(null, null, 'review');
   }
 
@@ -1239,6 +1238,7 @@ export function buildPhaseBadge(
   nowMs?: number,
   state?: string,
 ): PhaseBadge | null {
+  if (state === TaskState.Completed || state === TaskState.Archive) return null;
   if (state && HISTORY_PRESENTATION_LANES.has(state) && phase !== 'integrating') return null;
   if (!phase) return null;
   const pill = PHASE_PILL[phase];
@@ -1761,6 +1761,7 @@ export function buildDependencyChip(waitsOn: TaskInfo['waitsOn']): DependencyChi
  * dependency chip only as a fallback for older payloads without liveStatus.
  */
 export function buildVisibleDependencyChip(job: TaskInfo): DependencyChip | null {
+  if (job.state === TaskState.Completed || job.state === TaskState.Archive) return null;
   if (job.liveStatus) return null;
   // AGT-2795: an edge to a pending decision card already renders as its own
   // "blocked by" link; do not repeat it as a generic waits-on chip.
@@ -1854,6 +1855,14 @@ export const DELETE_ID = 'delete-task';
 export const REVIEW_FIRST_ID = 'review-first';
 export const REVIEW_NORMAL_ID = 'review-normal';
 export const MOVE_PREFIX = 'move-card:';
+export const MOVE_TOP_ID = 'move-to-top';
+export const MOVE_BOTTOM_ID = 'move-to-bottom';
+
+/** Whether a Ready card already heads or ends its project's queue. */
+export interface ReadyQueueEdge {
+  first: boolean;
+  last: boolean;
+}
 
 export function cardMoveTarget(id: string): string | null {
   const target = id.startsWith(MOVE_PREFIX) ? id.slice(MOVE_PREFIX.length) : null;
@@ -1867,6 +1876,7 @@ export function buildCardCtxMenuItems(
   job: TaskInfo,
   mutationsBlocked = false,
   visibleLanes: readonly string[] = MANUAL_MOVE_LANES,
+  queueEdge: ReadyQueueEdge | null = null,
 ): MenuItem[] {
   const items: MenuItem[] = [
     { kind: 'row', id: 'copy-name', label: 'Copy Name' },
@@ -1888,29 +1898,24 @@ export function buildCardCtxMenuItems(
       disabled: mutationsBlocked || job.reviewPriority !== 'urgent' });
   }
 
+  // AGT-3588: every allowed manual target is listed by its lane name, so
+  // Backlog reaches Ready in one move. Targets that would skip the run
+  // (Human review, Accepted from an unrun card) are left out.
   const current = job.state === '2-ready-intake' ? TaskState.Ready : job.state;
-  const targets = MANUAL_MOVE_LANES.filter((state) => visibleLanes.includes(state));
-  const laneOrder = LANE_PRESENTATIONS.map((lane) => lane.state);
-  const currentIndex = laneOrder.indexOf(current);
-  const previous = currentIndex >= 0
-    ? [...targets].reverse().find((state) => laneOrder.indexOf(state) < currentIndex) ?? null
-    : null;
-  const forward = currentIndex >= 0
-    ? targets.find((state) => laneOrder.indexOf(state) > currentIndex) ?? null
-    : null;
-  const moveRows: { state: string; label: string }[] = [];
-  if (previous) moveRows.push({ state: previous, label: `Move back: ${laneName(previous)}` });
-  if (forward) moveRows.push({ state: forward, label: `Move forward: ${laneName(forward)}` });
-  if (current !== TaskState.Completed && previous !== TaskState.Completed && forward !== TaskState.Completed) {
-    moveRows.push({ state: TaskState.Completed, label: `Move to ${laneName(TaskState.Completed)}` });
+  const targets = MANUAL_MOVE_LANES.filter((state) => visibleLanes.includes(state)
+    && state !== current
+    && !manualMoveSkipsExecution(current, state));
+  if (current === TaskState.Ready) {
+    items.push({ kind: 'separator' }, { kind: 'header', label: 'Queue position' });
+    items.push({ kind: 'row', id: MOVE_TOP_ID, label: 'Move to top',
+      disabled: mutationsBlocked || queueEdge?.first === true });
+    items.push({ kind: 'row', id: MOVE_BOTTOM_ID, label: 'Move to bottom',
+      disabled: mutationsBlocked || queueEdge?.last === true });
   }
-  if (current !== TaskState.Archive && previous !== TaskState.Archive && forward !== TaskState.Archive) {
-    moveRows.push({ state: TaskState.Archive, label: `Move to ${laneName(TaskState.Archive)}` });
-  }
-  if (moveRows.length) {
+  if (targets.length) {
     items.push({ kind: 'separator' }, { kind: 'header', label: 'Move' });
-    for (const row of moveRows) {
-      items.push({ kind: 'row', id: MOVE_PREFIX + row.state, label: row.label, disabled: mutationsBlocked });
+    for (const state of targets) {
+      items.push({ kind: 'row', id: MOVE_PREFIX + state, label: `Move to ${laneName(state)}`, disabled: mutationsBlocked });
     }
   }
 

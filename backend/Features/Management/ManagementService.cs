@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using System.Diagnostics;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -36,6 +35,7 @@ public sealed class ManagementService
     private readonly TaskMutationService? _mutations;
     private readonly TimelineLog? _timeline;
     private readonly ManagementStatisticsCache _statistics;
+    private readonly StudioBackupService? _backups;
     private readonly object _gate = new();
 
     public ManagementService(
@@ -50,7 +50,8 @@ public sealed class ManagementService
         TaskIntegrationStatusService? integrationStatus = null,
         TaskMutationService? mutations = null,
         TimelineLog? timeline = null,
-        ManagementStatisticsCache? statistics = null)
+        ManagementStatisticsCache? statistics = null,
+        StudioBackupService? backups = null)
     {
         _configuration = configuration;
         _scanner = scanner;
@@ -63,6 +64,7 @@ public sealed class ManagementService
         _integrationStatus = integrationStatus;
         _mutations = mutations;
         _timeline = timeline;
+        _backups = backups;
         _statistics = statistics ?? new ManagementStatisticsCache(() => ComputeStatistics());
     }
 
@@ -71,22 +73,22 @@ public sealed class ManagementService
     private string Metadata => Path.Combine(Root, ".metadata");
     private string StatePath => Path.Combine(Metadata, "management-state.json");
     private string AuditPath => Path.Combine(Root, ".audit", "management.jsonl");
-    private string BackupDirectory => Path.GetFullPath(_configuration["Management:BackupDirectory"]
-        ?? Path.Combine(Path.GetDirectoryName(Root)!, Path.GetFileName(Root) + "-backups"));
-    private int DefaultRetention => Math.Clamp(_configuration.GetValue("Management:BackupRetention", 7), 1, 100);
+    private StudioBackupService Backups => _backups ?? throw new ManagementException(503, "backups-unavailable");
 
     public ManagementStatus Snapshot(string url)
     {
         var statistics = _statistics.Current();
         var maintenance = ReadState();
         var migrations = _migrations.List();
-        var backupFailure = ReadBackupFailure();
+        var backupOverview = _backups?.Overview();
+        var backupFailure = backupOverview?.LastRun is { Outcome: "failed" } failedRun ? failedRun.Error : null;
         var reasons = new List<string>();
         if (!Directory.Exists(Root)) reasons.Add("data-directory-missing");
         if (migrations.Any(x => x.State == "running")) reasons.Add("migration-running");
         if (migrations.Any(x => x.State == "failed")) reasons.Add("migration-failed");
         if (maintenance.Mode != "normal") reasons.Add("maintenance-" + maintenance.Mode);
         if (!string.IsNullOrWhiteSpace(backupFailure)) reasons.Add("backup-failed");
+        if (backupOverview is { Stale: true }) reasons.Add("backup-stale");
         var ready = Directory.Exists(Root)
                     && maintenance.Mode == "normal"
                     && migrations.All(x => x.State is not ("running" or "failed"));
@@ -101,7 +103,7 @@ public sealed class ManagementService
             : identities.Count;
         var healthState = maintenance.Mode != "normal" || migrations.Any(x => x.State == "running")
             ? "maintenance"
-            : reasons.Any(reason => reason is "data-directory-missing" or "migration-failed" or "backup-failed")
+            : reasons.Any(reason => reason is "data-directory-missing" or "migration-failed" or "backup-failed" or "backup-stale")
                 ? "degraded"
                 : "healthy";
 
@@ -126,8 +128,8 @@ public sealed class ManagementService
             migrations,
             runners,
             ReadSecurityStatus(),
-            new BackupStatus("server-owned backup directory", DefaultRetention,
-                statistics.Snapshot?.Backups ?? [], backupFailure),
+            new BackupStatus("server-owned backup directory", backupOverview?.RetentionCount ?? 0,
+                backupOverview?.Backups.Select(Summary).ToArray() ?? [], backupFailure, backupOverview),
             new StatisticsStatus(statistics.State, statistics.Snapshot?.RefreshedAt));
     }
 
@@ -183,9 +185,10 @@ public sealed class ManagementService
                     "delivery-stale-repair-2026-10-11" => RepairDeliveryBounce(request.DryRun, actor, key),
                     "orphan-sweep" => SweepOrphans(request.DryRun, actor, key),
                     "fixture-sweep" => SweepFixtures(request.DryRun, actor, key),
-                    "backup-create" => CreateBackup(request.DryRun, actor, key, request.RetentionCount),
+                    "backup-create" => CreateBackup(request.DryRun, actor, key),
                     "restore-verify" => VerifyRestore(request.DryRun, actor, key, request.BackupId),
                     "backup-retention" => ApplyRetention(request.DryRun, actor, key, request.RetentionCount),
+                    "backup-upload" => UploadBackups(request.DryRun, actor, key),
                     "maintenance-enter" => SetMaintenance(request.DryRun, actor, key, "maintenance", request.Reason),
                     "maintenance-read-only" => SetMaintenance(request.DryRun, actor, key, "read-only", request.Reason),
                     "maintenance-exit" => SetMaintenance(request.DryRun, actor, key, "normal", request.Reason),
@@ -407,88 +410,67 @@ public sealed class ManagementService
             dry ? $"{candidates.Length} fixture tasks would be deleted." : $"Deleted {affected} fixture tasks.", actor, key);
     }
 
-    private ManagementCommandResult CreateBackup(bool dry, string actor, string key, int? retention)
+    private ManagementCommandResult CreateBackup(bool dry, string actor, string key)
     {
         if (!Directory.Exists(Root)) throw new ManagementException(409, "data-directory-missing");
-        EnsureBackupDirectoryOutsideRoot();
-        if (dry) return Result("backup-create", true, 1, 0, "A consistent data-directory backup would be created and verified.", actor, key);
-        if (ReadState().Mode == "normal")
-            throw new ManagementException(409, "backup-requires-maintenance");
-        if (_migrations.List().Any(item => item.State is "running" or "failed"))
-            throw new ManagementException(409, "backup-requires-settled-migrations");
-        var legacy = SecurityProfiles.IsNetworked(_configuration) ? [] : _clients.ListAll();
-        if (ReadRunners(legacy).Any(x => x.ActiveSlots > 0))
-            throw new ManagementException(409, "backup-requires-drained-runners");
-        Directory.CreateDirectory(BackupDirectory);
-        var id = "backup-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..8];
-        var path = Path.Combine(BackupDirectory, id + ".zip");
-        var temp = path + ".tmp";
+        var options = Backups.Options;
+        if (!options.Configured) throw new ManagementException(409, "backup-not-configured");
+        if (dry)
+            return Result("backup-create", true, 1, 0,
+                $"An encrypted backup of {options.Sources.Count} sources would be created; writes are held while the stores are read.",
+                actor, key);
         try
         {
-            ZipFile.CreateFromDirectory(Root, temp, CompressionLevel.Fastest, includeBaseDirectory: false);
-            var archive = InspectArchive(temp);
-            if (archive.EntryCount == 0) throw new InvalidDataException("Backup verification failed: archive is empty.");
-            File.Move(temp, path);
-            WriteBackupManifest(path, archive with
-            {
-                Id = id,
-                FileName = Path.GetFileName(path),
-                CreatedAt = DateTime.UtcNow.ToString("O"),
-            });
-            var verified = InspectBackup(path);
-            if (verified.VerificationState != "verified")
-                throw new InvalidDataException("Backup verification failed after publication.");
-            Retain(Math.Clamp(retention ?? DefaultRetention, 1, 100));
-            ClearBackupFailure();
-            return Result("backup-create", false, 1, 1, $"Created and verified backup {id}.", actor, key, verified);
+            var record = Backups.CreateAsync("manual:" + actor, CancellationToken.None).GetAwaiter().GetResult();
+            return Result("backup-create", false, 1, 1,
+                $"Created encrypted backup {record.Id} ({record.FileCount} files).", actor, key, record);
         }
-        catch (Exception ex)
-        {
-            if (File.Exists(temp)) File.Delete(temp);
-            if (File.Exists(path)) File.Delete(path);
-            var manifest = BackupManifestPath(path);
-            if (File.Exists(manifest)) File.Delete(manifest);
-            WriteBackupFailure(ex.Message);
-            throw;
-        }
+        catch (BackupException ex) { throw new ManagementException(409, ex.Code + ": " + ex.Message); }
     }
 
     private ManagementCommandResult VerifyRestore(bool dry, string actor, string key, string? backupId)
     {
-        var summary = ResolveBackup(backupId);
-        if (dry) return Result("restore-verify", true, 1, 0, $"Backup {summary.Id} would be extracted into isolated restore staging and verified.", actor, key);
-        var backupPath = Path.Combine(BackupDirectory, summary.FileName);
-        var verified = InspectBackup(backupPath);
-        if (verified.VerificationState != "verified")
-            return Result("restore-verify", false, 1, 0,
-                $"Backup {verified.Id} restore verification failed before extraction.",
-                actor, key, new { backup = verified, stagingState = "failed", extractedFiles = 0 });
-        var staging = Path.Combine(BackupDirectory, ".restore-verification", summary.Id + "-" + Guid.NewGuid().ToString("N"));
+        var records = Backups.List();
+        var summary = backupId is { Length: > 0 }
+            ? records.FirstOrDefault(item => item.Id == backupId.Trim())
+            : StudioBackupService.NewestGood(records);
+        if (summary is null) throw new ManagementException(404, "backup-not-found");
+        if (dry) return Result("restore-verify", true, 1, 0, $"Backup {summary.Id} would be restored into an isolated staging host and verified.", actor, key);
         try
         {
-            Directory.CreateDirectory(staging);
-            ZipFile.ExtractToDirectory(backupPath, staging);
-            var extractedFiles = Directory.EnumerateFiles(staging, "*", SearchOption.AllDirectories).Count();
-            var state = verified.VerificationState == "verified" && extractedFiles == verified.EntryCount
-                ? "verified" : "failed";
-            return Result("restore-verify", false, 1, state == "verified" ? 1 : 0,
-                $"Backup {verified.Id} restore verification: {state} ({extractedFiles} files extracted).",
-                actor, key, new { backup = verified, stagingState = state, extractedFiles });
+            var verification = Backups.VerifyAsync(summary.Id, "manual:" + actor, CancellationToken.None).GetAwaiter().GetResult();
+            var verified = verification.Outcome == "verified";
+            return Result("restore-verify", false, 1, verified ? 1 : 0,
+                verified
+                    ? $"Backup {summary.Id} restore verification: verified ({verification.RestoredFiles} files restored)."
+                    : $"Backup {summary.Id} restore verification failed: {verification.Detail}",
+                actor, key, new { backupId = summary.Id, verification });
         }
-        finally
-        {
-            if (Directory.Exists(staging)) Directory.Delete(staging, true);
-        }
+        catch (BackupException ex) { throw new ManagementException(409, ex.Code + ": " + ex.Message); }
     }
 
     private ManagementCommandResult ApplyRetention(bool dry, string actor, string key, int? requested)
     {
-        var keep = Math.Clamp(requested ?? DefaultRetention, 1, 100);
-        var matched = Math.Max(0, ListBackups().Count - keep);
-        var affected = dry ? 0 : Retain(keep);
+        var keep = Math.Clamp(requested ?? Backups.Options.RetentionCount, 1, 500);
+        var (matched, affected) = Backups.ApplyRetention(keep, dry);
         return Result("backup-retention", dry, matched, affected,
             dry ? $"{matched} backups would be removed; newest {keep} retained." : $"Removed {affected} backups; newest {keep} retained.", actor, key);
     }
+
+    private ManagementCommandResult UploadBackups(bool dry, string actor, string key)
+    {
+        var overview = Backups.Overview();
+        var pending = Backups.List().Count(record => record.Upload?.State != "uploaded");
+        if (overview.OffHost.State is "not-configured" or "invalid")
+            throw new ManagementException(409, "backup-target-not-configured");
+        if (dry) return Result("backup-upload", true, pending, 0, $"{pending} backups would be copied to {overview.OffHost.Target}.", actor, key);
+        var uploaded = Backups.UploadPendingAsync(force: true, CancellationToken.None).GetAwaiter().GetResult();
+        return Result("backup-upload", false, pending, uploaded, $"Copied {uploaded} of {pending} backups to {overview.OffHost.Target}.", actor, key);
+    }
+
+    private static BackupSummary Summary(BackupOverviewItem item) => new(
+        item.Id, item.Id + BackupCatalog.ArchiveSuffix, item.SizeBytes, item.CreatedAt, item.Sha256,
+        item.Verification, item.FileCount);
 
     private ManagementCommandResult SetMaintenance(bool dry, string actor, string key, string mode, string? reason)
     {
@@ -736,99 +718,6 @@ public sealed class ManagementService
             .ToArray();
     }
 
-    private IReadOnlyList<BackupSummary> ListBackups()
-    {
-        if (!Directory.Exists(BackupDirectory)) return [];
-        return Directory.EnumerateFiles(BackupDirectory, "backup-*.zip")
-            .OrderByDescending(File.GetCreationTimeUtc).Select(InspectBackup).ToArray();
-    }
-    private BackupSummary ResolveBackup(string? id)
-    {
-        var item = ListBackups().FirstOrDefault(x => string.IsNullOrWhiteSpace(id) || x.Id == id);
-        return item ?? throw new ManagementException(404, "backup-not-found");
-    }
-    private static BackupSummary InspectBackup(string path)
-    {
-        BackupManifest actual;
-        try { actual = InspectArchive(path); }
-        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
-        {
-            var info = new FileInfo(path);
-            return new(Path.GetFileNameWithoutExtension(path), Path.GetFileName(path), info.Exists ? info.Length : 0,
-                info.Exists ? info.CreationTimeUtc.ToString("O") : DateTime.MinValue.ToString("O"), "", "failed", 0);
-        }
-
-        var manifestPath = BackupManifestPath(path);
-        BackupManifest? expected = null;
-        try
-        {
-            if (File.Exists(manifestPath))
-                expected = JsonSerializer.Deserialize<BackupManifest>(File.ReadAllText(manifestPath), Json);
-        }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
-        {
-            expected = null;
-        }
-
-        var verified = expected is not null
-                       && expected.Id == actual.Id
-                       && expected.FileName == actual.FileName
-                       && expected.SizeBytes == actual.SizeBytes
-                       && expected.EntryCount == actual.EntryCount
-                       && string.Equals(expected.Sha256, actual.Sha256, StringComparison.OrdinalIgnoreCase);
-        return new(actual.Id, actual.FileName, actual.SizeBytes,
-            expected?.CreatedAt ?? actual.CreatedAt, actual.Sha256,
-            verified ? "verified" : "failed", actual.EntryCount);
-    }
-
-    private static BackupManifest InspectArchive(string path)
-    {
-        var info = new FileInfo(path);
-        using var zip = ZipFile.OpenRead(path);
-        var entries = zip.Entries.Count(entry => !string.IsNullOrEmpty(entry.Name));
-        using var stream = File.OpenRead(path);
-        var hash = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
-        return new BackupManifest(Path.GetFileNameWithoutExtension(path), Path.GetFileName(path), info.Length,
-            info.CreationTimeUtc.ToString("O"), hash, entries);
-    }
-
-    private static void WriteBackupManifest(string archivePath, BackupManifest manifest)
-    {
-        var path = BackupManifestPath(archivePath);
-        var temporary = path + ".tmp";
-        using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
-        {
-            JsonSerializer.Serialize(stream, manifest, Json);
-            stream.Flush(flushToDisk: true);
-        }
-        File.Move(temporary, path, true);
-    }
-
-    private static string BackupManifestPath(string archivePath) => archivePath + ".manifest.json";
-
-    private int Retain(int keep)
-    {
-        var removed = 0;
-        foreach (var item in ListBackups().Skip(keep))
-        {
-            var archive = Path.Combine(BackupDirectory, item.FileName);
-            File.Delete(archive);
-            var manifest = BackupManifestPath(archive);
-            if (File.Exists(manifest)) File.Delete(manifest);
-            removed++;
-        }
-        return removed;
-    }
-
-    private void EnsureBackupDirectoryOutsideRoot()
-    {
-        var root = Root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var backup = BackupDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        if (string.Equals(root, backup, StringComparison.OrdinalIgnoreCase)
-            || backup.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-            throw new ManagementException(409, "backup-directory-must-be-outside-data-directory");
-    }
-
     private bool CanWriteRoot()
     {
         if (!Directory.Exists(Root)) return false;
@@ -852,21 +741,14 @@ public sealed class ManagementService
             jobs.Count(x => x.State != TaskStates.Archive),
             jobs.Count(x => x.State == TaskStates.Archive),
             files.EventFiles, files.ArtifactFiles, files.LastWriteAt,
-            ListBackups(), DateTime.UtcNow.ToString("O"));
+            [], DateTime.UtcNow.ToString("O"));
     }
     private static DateTime ReadProcessStartUtc()
     {
         using var process = Process.GetCurrentProcess();
         return process.StartTime.ToUniversalTime();
     }
-    private string? ReadBackupFailure() { var path = Path.Combine(Metadata, "last-backup-failure.txt"); return File.Exists(path) ? File.ReadAllText(path) : null; }
-    private void WriteBackupFailure(string message) { Directory.CreateDirectory(Metadata); File.WriteAllText(Path.Combine(Metadata, "last-backup-failure.txt"), message); }
-    private void ClearBackupFailure() { var path = Path.Combine(Metadata, "last-backup-failure.txt"); if (File.Exists(path)) File.Delete(path); }
 }
-
-internal sealed record BackupManifest(
-    string Id, string FileName, long SizeBytes, string CreatedAt,
-    string Sha256, int EntryCount);
 
 public sealed class ManagementException(int statusCode, string message) : Exception(message)
 {

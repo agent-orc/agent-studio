@@ -33,6 +33,28 @@ public sealed class IntegrationPublicationGatePolicyTests
     }
 
     [Fact]
+    public void GateNeutralKeyCommitAfterBatchGate_DoesNotRequireAnotherGate()
+    {
+        var decision = IntegrationPublicationGatePolicy.Check(Verified, Later,
+            [new(Later, Batch), new(Batch, Verified)],
+            [new(Batch, Verified, "batch gate")],
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Later });
+
+        Assert.True(decision.Verified);
+    }
+
+    [Fact]
+    public void GateNeutralKeyCommitDoesNotCoverAnEarlierUngatedCommit()
+    {
+        var decision = IntegrationPublicationGatePolicy.Check(Verified, Later,
+            [new(Later, Batch), new(Batch, Verified)], [],
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Later });
+
+        Assert.False(decision.Verified);
+        Assert.Equal(Batch, decision.MissingTree);
+    }
+
+    [Fact]
     public void VerificationTreeOutsideFirstParentBranch_IsRefused()
     {
         var decision = IntegrationPublicationGatePolicy.Check(Outside, Later, FirstParentLine,

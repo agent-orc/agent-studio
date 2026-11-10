@@ -358,6 +358,9 @@ public sealed record TaskIntegrationVerification
 
     /// <summary>Why the card is verified or unverified. Tooltip and audit only.</summary>
     public string? Reason { get; init; }
+
+    /// <summary>Later server document-key commits inspected as gate-neutral at acceptance.</summary>
+    public IReadOnlyList<string> GateNeutralCommits { get; init; } = [];
 }
 
 /// <summary>

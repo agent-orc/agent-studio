@@ -1,0 +1,10 @@
+# Optional: a mounted remote file system (NFS, SMB, sshfs) as the off-host
+# backup target. Set STUDIO_BACKUP_TARGET=directory and STUDIO_BACKUP_MOUNT to
+# the host mount point, then start with
+#   docker compose -f compose.yaml -f compose.backup-mount.yaml up -d
+# The mount point must exist and be writable by UID 10001; see
+# docs/operations/setup/studio-backup-restore.md.
+services:
+  api:
+    volumes:
+      - ${STUDIO_BACKUP_MOUNT:?Set STUDIO_BACKUP_MOUNT to the mounted backup directory}:/mnt/studio-backup-target

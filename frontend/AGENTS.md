@@ -208,6 +208,8 @@ The task-detail header carries a lane `<select>` (studio shell: `data-testid="st
 
 When you add a new manual-target lane or a new move affordance, route it through `ORCHESTRATOR_CONTROLLED_LANES` / `studioLaneOptions` rather than re-deriving the exclusion list inline, so the two surfaces stay in lockstep.
 
+**Board card menu (AGT-3588).** The card context menu (`buildCardCtxMenuItems`) lists every lane in `MANUAL_MOVE_LANES` by name (`Move to Ready`), never relative "forward/back" rows. `manualMoveSkipsExecution` (`triage-actions.model.ts`) drops Human review and Accepted for a card in a pre-execution lane, because that move would skip the run. Ready cards also get Move to top / Move to bottom. These reorder the card inside its own project's queue (`ready-queue-order.ts`), paint first, and offer Undo.
+
 **Pager position is stable across a lane move.** The Prev/Next pager iterates a snapshot captured on detail entry (`LanePagerService`), not the live lane. Moving the current task out of its lane shrinks that snapshot by one and auto-advances to the next captured slug in the *original* lane — the `X / N` context does not jump to the destination lane. See `advanceAfterMutation` / `removeAndAdvance`.
 
 Regression coverage (run with `PW_TARGET=stable`):
@@ -406,6 +408,17 @@ Regression coverage is acceptance-level (DOM render via `TestBed`) in the librar
 ## Tests
 
 `npm test` runs Vitest via `@angular/build:unit-test` (Angular 21's first-party runner). All `src/**/*.spec.ts` are picked up; `e2e/` is Playwright-only and not part of `npm test`.
+
+Angular's test command does not forward Vitest's `--sequence.shuffle` flag. To
+exercise the same seeded shuffle with the normal worker settings, run
+`FRONTEND_TEST_SHUFFLE=1 FRONTEND_TEST_SEED=<integer> npm run test:ci`.
+
+Spec files in one worker share globals (`isolate: false`). A spec that replaces
+a DOM member such as `scrollIntoView` or `navigator.clipboard` stubs the element
+instance, or restores the original descriptor after each test
+(`preserveOwnProperty` in `src/testing/preserve-own-property.ts`).
+`src/test-dom-prototype-guard.ts` restores every monitored slot a spec left
+changed and fails that spec by name.
 
 **Smoke tests** (Cycle 11c). Every standalone component has a generated `<name>.spec.ts` that mounts the component with the standard provider stack (`provideZonelessChangeDetection`, `provideHttpClient` + `provideHttpClientTesting`, `provideRouter([])`) and checks the constructor + `inject()` wiring + decorator metadata don't throw. They DO NOT exercise the full render path — `detectChanges()` is wrapped in try/catch so a missing required input or per-component service stub surfaces as a console note instead of a red test. Re-generate after adding components: `node scripts/generate-smoke-specs.mjs` (skips files that already have a `.spec.ts`).
 

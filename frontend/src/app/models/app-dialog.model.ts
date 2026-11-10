@@ -31,8 +31,12 @@ export interface NotificationAction {
 export interface ConfirmDialogOptions {
   title: string;
   message: string;
+  /** Context label above the title when the default for this kind is misleading. */
+  eyebrow?: string;
   /** Extra body line below the message, e.g. the affected item's name. */
   detail?: string;
+  /** Every item the action touches, one per row (AGT-3585 bulk actions list the cards). */
+  items?: string[];
   confirmLabel?: string;
   cancelLabel?: string;
   /** Visual flavour. `danger` is the default for delete-style flows. */
@@ -50,8 +54,10 @@ export interface ConfirmDialogOptions {
 }
 
 export interface ConfirmDialogState
-  extends Required<Omit<ConfirmDialogOptions, 'detail' | 'requireTypedValues' | 'requireTypedPrompt'>> {
+  extends Required<Omit<ConfirmDialogOptions, 'detail' | 'eyebrow' | 'items' | 'requireTypedValues' | 'requireTypedPrompt'>> {
   detail: string | null;
+  eyebrow: string | null;
+  items: string[] | null;
   requireTypedValues: string[] | null;
   requireTypedPrompt: string | null;
 }

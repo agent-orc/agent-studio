@@ -297,10 +297,10 @@ public class TaskStateMachine
                     TaskJsonFile.UpdateField(recheck.FolderPath, "enteredLaneAt", DateTime.UtcNow.ToString("o"), _logger);
                     if (recheck.State == TaskStates.Completed && targetState != TaskStates.Archive)
                         TaskJsonFile.RemoveField(recheck.FolderPath, "completionClaim", _logger);
-                    ClearIncompatiblePhase(recheck.FolderPath, targetState);
+                    ClearIncompatiblePhase(recheck.FolderPath, targetState, recheck.State);
                     RecordLaneChange(recheck.FolderPath, recheck.State, targetState, cause, authorityWrite, reason,
                         transitionCause, transitionDetail);
-                    RecordParkedBlocker(recheck.FolderPath, targetState, reason, transitionCause, transitionDetail);
+                    RecordParkedBlocker(recheck.FolderPath, recheck.State, targetState, cause, reason, transitionCause, transitionDetail);
                     _scanner.InvalidateCache();
                     _scanner.PublishCoreFromFolder(recheck.FolderPath, recheck.WatchPath, recheck.ProjectName, targetState);
                     EnqueueEvidence(recheck.WatchPath, recheck.ProjectName, recheck.Id, recheck.State, targetState);
@@ -377,12 +377,12 @@ public class TaskStateMachine
             TaskJsonFile.UpdateField(targetDir, "enteredLaneAt", DateTime.UtcNow.ToString("o"), _logger);
             if (recheck.State == TaskStates.Completed && targetState != TaskStates.Archive)
                 TaskJsonFile.RemoveField(targetDir, "completionClaim", _logger);
-            ClearIncompatiblePhase(targetDir, targetState);
+            ClearIncompatiblePhase(targetDir, targetState, recheck.State);
             // T2b: write the lane-change ledger row to the *new* folder (the
             // source folder is gone after the move above).
             RecordLaneChange(targetDir, recheck.State, targetState, cause, authorityWrite, reason,
                 transitionCause, transitionDetail);
-            RecordParkedBlocker(targetDir, targetState, reason, transitionCause, transitionDetail);
+            RecordParkedBlocker(targetDir, recheck.State, targetState, cause, reason, transitionCause, transitionDetail);
             // Keep the canonical id in lockstep with the (possibly suffixed)
             // folder name so FindJob resolves the moved folder immediately,
             // without waiting for the scanner's self-heal pass.
@@ -497,18 +497,23 @@ public class TaskStateMachine
             if (moved.Status != MoveJobStatus.Success) return 0;
         }
 
-        // Recompute order across all 2-ready jobs in the same project, with
+        // Recompute order across the 2-ready jobs in the same project, with
         // the rule above. We only need to bump the moved job; everyone else
-        // keeps relative order.
+        // keeps relative order. AGT-3587: the lane is read in its displayed
+        // order (placed cards by order, then key), and cards nobody placed
+        // keep the unpinned sentinel so they keep flowing by lane entry
+        // below the placed head instead of being frozen in scan order.
         var ready = _scanner.ScanAllJobs()
             .Where(j => j.WatchPath == info.WatchPath && j.State == TaskStates.Ready)
-            .OrderBy(j => j.Order)
             .ToList();
+        ready.Sort(LaneSortStrategies.GetComparer(LaneSortStrategies.LaneEntry));
 
         // Build the new ordering: existing pending-intent jobs first (keep
-        // their relative order), then the promoted job, then the rest.
+        // their relative order), then the promoted job, then the other
+        // placed jobs.
         var pendingHead = ready.Where(j => j.Id != jobId && j.PendingIntent != null).ToList();
-        var rest = ready.Where(j => j.Id != jobId && j.PendingIntent == null).ToList();
+        var rest = ready.Where(j => j.Id != jobId && j.PendingIntent == null
+                                    && j.Order != LaneSortStrategies.UnpinnedOrder).ToList();
         var target = ready.FirstOrDefault(j => j.Id == jobId)
                      ?? _scanner.FindJob(jobId, watchPath); // post-move re-fetch
         if (target == null) return 0;
@@ -754,7 +759,7 @@ public class TaskStateMachine
                 // Lane-entry anchor: archive/failed-pickup/restore are genuine
                 // lane changes, so re-stamp the entry time like a normal move.
                 TaskJsonFile.UpdateField(targetDir, "enteredLaneAt", enteredLaneAt, _logger);
-                ClearIncompatiblePhase(targetDir, targetState);
+                ClearIncompatiblePhase(targetDir, targetState, Path.GetFileName(stateDir));
                 // T2b: archive / dead-letter / restore are real lane crossings;
                 // record them in the ledger like a normal move. From-lane is the
                 // source folder's parent directory name.
@@ -888,7 +893,13 @@ public class TaskStateMachine
         => string.Equals(lane, TaskStates.Archive, StringComparison.Ordinal)
            || string.Equals(lane, TaskStates.Completed, StringComparison.Ordinal);
 
-    private void ClearIncompatiblePhase(string folderPath, string targetState)
+    /// <summary>
+    /// Drops a phase the target lane does not allow. AGT-3621: the integration
+    /// phase never crosses a lane change. It marks a transaction of the lane
+    /// that wrote it; carried from Auto Review into Human Review it read as a
+    /// legacy operator acceptance, and the backstop accepted the card.
+    /// </summary>
+    private void ClearIncompatiblePhase(string folderPath, string targetState, string? sourceState)
     {
         var jobJsonPath = Path.Combine(folderPath, "task.json");
         if (!File.Exists(jobJsonPath)) return;
@@ -903,7 +914,11 @@ public class TaskStateMachine
             }
 
             var phase = phaseEl.GetString();
-            if (string.IsNullOrWhiteSpace(phase) || LifecyclePhases.IsAllowed(targetState, phase)) return;
+            if (string.IsNullOrWhiteSpace(phase)) return;
+            var crossesLane = !string.Equals(sourceState, targetState, StringComparison.Ordinal);
+            if (LifecyclePhases.IsAllowed(targetState, phase)
+                && !(crossesLane && string.Equals(phase, LifecyclePhases.Integrating, StringComparison.Ordinal)))
+                return;
 
             TaskJsonFile.UpdateField(folderPath, "phase", "", _logger);
             _logger.LogInformation(
@@ -1006,20 +1021,28 @@ public class TaskStateMachine
     /// park, the UI-iteration gate, an operator drag - without each of the
     /// ~15 call sites having to remember.
     ///
+    /// <para>The marker records the same cause id as the ledger row, so the
+    /// park copy can say who parked the card (AGT-3586).</para>
+    ///
     /// <para>Best-effort by design: the move has already landed when this runs,
     /// so a marker write must never undo it.</para>
     /// </summary>
     private void RecordParkedBlocker(
         string jobFolderPath,
+        string fromState,
         string toState,
+        string? cause,
         string? reason,
         string? transitionCause = null,
         string? transitionDetail = null)
     {
         try
         {
+            var actor = string.IsNullOrWhiteSpace(cause) ? TimelineActors.System : cause!.Trim();
+            var resolvedCause = ResolveTransitionCause(actor, fromState, toState, transitionCause);
             var record = ParkedBlockerCatalog.Build(
                 toState, reason, DateTime.UtcNow, transitionCause, transitionDetail);
+            if (record is not null && resolvedCause is not null) record = record with { Cause = resolvedCause };
             if (record is null) ParkedBlockerMarker.Clear(jobFolderPath, _logger);
             else ParkedBlockerMarker.Write(jobFolderPath, record, _logger);
         }

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Formats.Tar;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -343,7 +344,8 @@ public record GitCommitInfo(
     string Subject,
     int FilesChanged,
     int Added,
-    int Removed);
+    int Removed,
+    string? Body = null);
 
 public sealed record RemoteDeliveryCommitRange(
     bool Success,
@@ -4752,6 +4754,62 @@ public partial class GitService
     }
 
     /// <summary>
+    /// Recognizes a server document-key mutation only after checking
+    /// every changed blob against its first parent. Formatting may change when
+    /// the server rewrites JSON, but no descriptor value other than key may change.
+    /// </summary>
+    public bool IsManagedDocumentKeyCommit(string repoRoot, string sha, string parentSha)
+    {
+        if (!ReviewSubjectStore.IsValidResultSha(sha)
+            || !ReviewSubjectStore.IsValidResultSha(parentSha)) return false;
+        var (metadata, _, metadataCode) = RunGitArgs(repoRoot, "show", "-s",
+            "--format=%P%x1f%s%x1f%ae%x1f%ce%x1f%B", sha);
+        if (metadataCode != 0) return false;
+        var fields = metadata.Trim().Split('\x1f');
+        const string serverEmail = "agent-studio@users.noreply.github.com";
+        if (fields.Length != 5
+            || !string.Equals(fields[0], parentSha, StringComparison.OrdinalIgnoreCase)
+            || fields[1] != "chore(workbench): assign document keys"
+            || !((fields[2] == serverEmail && fields[3] == serverEmail)
+                || fields[4].Split('\n').Any(line =>
+                    line.Trim() == ManagedRepositoryMutationService.DocumentKeyCommitTrailer))) return false;
+
+        var (changes, _, changeCode) = RunGitArgs(repoRoot, "diff-tree", "--name-status",
+            "-r", "-z", parentSha, sha);
+        if (changeCode != 0) return false;
+        var (summary, _, summaryCode) = RunGitArgs(repoRoot, "diff-tree", "--summary",
+            "-r", parentSha, sha);
+        if (summaryCode != 0 || !string.IsNullOrWhiteSpace(summary)) return false;
+        var entries = changes.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        if (entries.Length == 0 || entries.Length % 2 != 0) return false;
+        for (var i = 0; i < entries.Length; i += 2)
+        {
+            var path = entries[i + 1];
+            if (entries[i] != "M" || !path.StartsWith("docs/", StringComparison.Ordinal)
+                || !path.EndsWith("/workbench.json", StringComparison.Ordinal)) return false;
+            var before = GetFileAtCommit(repoRoot, parentSha, path);
+            var after = GetFileAtCommit(repoRoot, sha, path);
+            if (before is null || after is null) return false;
+            try
+            {
+                if (JsonNode.Parse(before) is not JsonObject oldDescriptor
+                    || JsonNode.Parse(after) is not JsonObject newDescriptor
+                    || (oldDescriptor.TryGetPropertyValue("key", out var oldKey) && oldKey is not null)
+                    || newDescriptor["key"] is not JsonValue key
+                    || !key.TryGetValue<string>(out var value)
+                    || string.IsNullOrWhiteSpace(value)) return false;
+                newDescriptor.Remove("key");
+                if (!JsonNode.DeepEquals(oldDescriptor, newDescriptor)) return false;
+            }
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException or ArgumentException)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>
     /// Commits reachable from <paramref name="toRef"/> but not
     /// <paramref name="fromRef"/> (<c>git log fromRef..toRef --no-merges</c>),
     /// newest first. This is the graph merge-set ASS-1724 displays: with
@@ -4890,7 +4948,8 @@ public partial class GitService
             var integrationBranch = TaskIntegrationBranch.NormalizeRef(recordedIntegrationBranch);
             if (integrationBranch is null)
                 integrationBranch = TaskIntegrationBranch.NormalizeRef("main");
-            var exactCommits = GetCommitsInRangeAtRoot(repoRoot, baseSha, deliveryRef);
+            var exactCommits = WithMessagesAtRoot(repoRoot,
+                GetCommitsInRangeAtRoot(repoRoot, baseSha, deliveryRef));
             exactCommits.Reverse();
             return new RemoteDeliveryCommitRange(
                 true,
@@ -4929,7 +4988,8 @@ public partial class GitService
         if (string.IsNullOrWhiteSpace(selected.Branch))
             return Failed("No recorded main/develop base line shares history with the remote delivery.");
 
-        var commits = GetCommitsInRangeAtRoot(repoRoot, selected.Base, deliveryRef);
+        var commits = WithMessagesAtRoot(repoRoot,
+            GetCommitsInRangeAtRoot(repoRoot, selected.Base, deliveryRef));
         commits.Reverse();
         return new RemoteDeliveryCommitRange(
             true,
@@ -4944,6 +5004,29 @@ public partial class GitService
             string warning,
             DeliveryVerificationStatus verification = DeliveryVerificationStatus.NotVerifiable) =>
             new(false, null, null, null, [], warning, verification);
+    }
+
+    private List<GitCommitInfo> WithMessagesAtRoot(string repoRoot, List<GitCommitInfo> commits)
+    {
+        if (commits.Count == 0) return commits;
+        const char us = '\x1f';
+        const char rs = '\x1e';
+        var args = "show -s --no-patch --pretty=format:\"%H%x1f%B%x1e\" "
+            + string.Join(' ', commits.Select(commit => commit.Sha));
+        var (output, _, code) = RunGit(repoRoot, args);
+        if (code != 0) return commits;
+
+        var messages = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var record in output.Split(rs, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = record.Trim('\r', '\n', ' ');
+            var separator = trimmed.IndexOf(us);
+            if (separator > 0)
+                messages[trimmed[..separator]] = trimmed[(separator + 1)..].TrimEnd('\r', '\n');
+        }
+        return commits.Select(commit => messages.TryGetValue(commit.Sha, out var body)
+            ? commit with { Body = body }
+            : commit).ToList();
     }
 
     /// <summary>

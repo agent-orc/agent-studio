@@ -270,6 +270,25 @@ public class LifecyclePhaseCompatibilityTests : IDisposable
         Assert.Equal(beforeMtime, File.GetLastWriteTimeUtc(path));
     }
 
+    [Fact]
+    public void LaneChange_DoesNotCarryTheIntegrationPhaseIntoHumanReview()
+    {
+        // AGT-3621: a promotion out of Auto Review kept phase `integrating`. In
+        // Human Review that reads as an interrupted operator acceptance, and the
+        // backstop completed the card although nobody had accepted it.
+        WriteJob(TaskStates.AutoReview, "promoted", phase: LifecyclePhases.Integrating);
+        var scanner = BuildScanner();
+        var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);
+
+        var moved = states.MoveJob("promoted", TaskStates.HumanReview, _watchPath);
+
+        Assert.Equal(MoveJobStatus.Success, moved.Status);
+        scanner.InvalidateCache();
+        var promoted = scanner.FindJob("promoted", _watchPath);
+        Assert.Equal(TaskStates.HumanReview, promoted!.State);
+        Assert.Null(promoted.Phase);
+    }
+
     // ---- helpers -------------------------------------------------------------
 
     private void WriteJob(string state, string slug, string? phase)

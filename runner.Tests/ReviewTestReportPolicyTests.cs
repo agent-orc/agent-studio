@@ -18,6 +18,23 @@ public sealed class ReviewTestReportPolicyTests
         Assert.Equal("Angular bundle completed but Vitest did not report a run",
             ReviewTestReportPolicy.MissingPhase(new ProcessResult(
                 0, "Application bundle generation complete.", string.Empty)));
+        Assert.False(ReviewTestReportPolicy.Missing(command,
+            new ProcessResult(0, "custom check passed", string.Empty)));
+    }
+
+    [Fact]
+    public void Missing_vitest_file_report_path_is_named_in_diagnostic()
+    {
+        var result = new ProcessResult(2, string.Empty,
+            "Vitest completed without a readable report at /tmp/review-vite/report.json: ENOENT");
+        Assert.Equal("/tmp/review-vite/report.json",
+            ReviewTestReportPolicy.MissingReportPath(result, "/review/artifacts/verify.stdout.log"));
+        Assert.True(ReviewTestReportPolicy.HasExplicitMissingReport(result));
+        Assert.Equal("/review/artifacts/verify.stdout.log",
+            ReviewTestReportPolicy.MissingReportPath(new ProcessResult(0, "bundle complete", ""),
+                "/review/artifacts/verify.stdout.log"));
+        Assert.False(ReviewTestReportPolicy.HasExplicitMissingReport(
+            new ProcessResult(1, "", "ordinary test crash")));
     }
 
     [Theory]

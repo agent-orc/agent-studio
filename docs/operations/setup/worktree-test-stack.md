@@ -81,15 +81,24 @@ bash scripts/worktree-test-stack.sh down
 - `api.sh` **refuses** `ATP_WORKTREE_TEST_BACKEND=1` without an isolated
   `TaskRepository`, mirroring the in-process xunit isolation guard in
   `backend/Program.cs`.
+- `api.sh` stores PID and log files under `.api.<port>.*`. Starting or stopping
+  one port leaves another stack's control files and log rotations intact.
 - If the worktree carries a `backend/appsettings.Local.json` (whose `WatchPaths`
   could pull in shared projects), `up` refuses unless
   `ATP_WORKTREE_TEST_ALLOW_LOCAL_CONFIG=1` is set as an explicit acknowledgement.
 - `down` only removes a workspace path that matches `*atp-worktree-test-*`.
+- Quota probes are off (AGT-3593). With `ATP_WORKTREE_TEST_BACKEND=1`, the
+  `public-demo-readonly` profile, or `Quota:Mode=demo`, `QuotaService` never
+  spawns the host's CLIs and never reads a quota cache file. It serves the
+  pinned demo snapshot from `DemoQuotaSnapshots` (fixed percentages, current
+  timestamps), so captures show the footer quota without exposing the runner
+  host's real subscription usage.
 
 ## Verifying
 
 ```sh
 bash scripts/worktree-test-stack.test.sh   # port allocator, proxy, api.sh guards
+bash scripts/api-port-files.test.sh        # independent PID and log files per port
 ```
 
 The script exercises the parts that don't require a .NET build. The full

@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-11-05
+Version: 2026-11-09
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -38,6 +38,18 @@ The service token is `secret://workspace/quality-studio-api-token` by default;
 the matching GET supplies the Deck status panel.
 
 ## Board read contract
+
+### Moving a batch member out of Auto Review
+
+The board move (`POST /api/tasks/{id}/move`) and state update
+(`PUT /api/tasks/{id}/state`) return `409 active-batch-member` when an operator
+tries to move a card out of Auto Review while a formed, running, or publishing
+batch still owns it. The response names the batch, phase, and other members.
+An operator can confirm the move with `withdrawFromBatch: true` and a written
+`reason`. The move requests an eject before changing the lane, records the
+operator and reason on the card timeline and in the batch withdrawal journal,
+and requests a fresh planner pass. A card that is pending but has no batch
+continues to move normally.
 
 ### Routing mutation publication
 
@@ -868,10 +880,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   an active acceptance transaction.
 - Integration status accepts persisted abbreviated Git SHAs of at least seven
   hexadecimal characters when they match a reachable full SHA by prefix.
-  Zero-file lifecycle entries whose subjects start with
-  `wip(runner): salvage before teardown` or `chore: snapshot for review` remain
+  Zero-file lifecycle entries with `Agent-Studio-Salvage: teardown`, the legacy
+  `wip(runner): salvage before teardown` subject, or the
+  `chore: snapshot for review` subject remain
   visible attribution metadata but are not delivery expectations. A matching
-  subject with changed files remains a real integration expectation. Target
+  marker with changed files remains a real integration expectation. Target
   branch ancestry is stronger evidence than stale file metadata: a commit that
   is already reachable from the integration branch is never discarded by the
   zero-file marker heuristic.
@@ -949,7 +962,12 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
 - The guarded delivery chain is workspace-wide by default. `DeliveryChain:Guarded`
   can be set to `false` only during migration to the former badge-only behavior.
   A coding card stays in `4-auto-review` with phase `integrating` until the
-  published result is integrated, then enters Human Review. Missing code
+  published result is integrated, then enters Human Review. The promotion is
+  recorded as cause `promoted` with detail `delivery-integrated`, and no lane
+  change carries the `integrating` phase into the next lane (AGT-3621). The
+  accepted-integration backstop finishes only an interrupted operator
+  acceptance; it clears a promotion's leftover phase instead of accepting the
+  card, and a stale-verdict park on an integrated card is not shown. Missing code
   delivery, conflict, gate failure, and unrecoverable error go to escalation
   with a category and recovery action. A pull-request project's approval stays
   on the pull request while the card waits in Auto Review; Human Review starts
@@ -1321,6 +1339,10 @@ site or derived from the lane pair for a human actor) and `details.causeDetail`
 when one was supplied; otherwise it falls back to `cause: causeDetail` (or
 whichever of the two is present) so the marker's `reason` field is never empty
 even when the lane-transition site only passed the taxonomy fields (AGT-2838).
+The marker also records the resolved cause and its qualifier as `cause` and
+`causeDetail`, so the park copy says who parked the card (for example the
+acceptance audit) instead of presenting the latest run as the parking run, and
+states the reason once (AGT-3586).
 
 A park whose run ended without a terminal sentinel carries its reason through the
 move, so the marker is never written with an empty `reason` and its `blockerType`
@@ -1381,10 +1403,14 @@ before changing lanes if no generated Result is available. If that write fails,
 the card remains in its source lane. Admission refusals and no-op moves do not write
 `status.md`, `current-result.json`, or Result history. An engine decision
 refreshes its scaffold at most once during the accepted move. The service never
-replaces a real Result. Backend startup runs
-the same idempotent repair over missing Results in `5-human-review`,
-`6-completed`, and `7-archive`; repaired files are marked as operator
-backfills.
+replaces a real Result.
+When an accepted move finds a scaffold and Result history contains a generated
+summary, it restores the latest real summary instead of refreshing lane-only
+scaffold prose. The displaced scaffold remains in Result history.
+Backend startup runs the same idempotent repair over missing Results in
+`5-human-review`, `6-completed`, and `7-archive`; repaired missing files are
+marked as operator backfills. It also restores the last generated Result for
+an already Accepted card whose current file is still a scaffold.
 
 ## Completion contract (AGT-2817)
 
@@ -2275,8 +2301,10 @@ disk for runner state.
   shared body build pins the same generation itself, so the tag always names the
   generation the body came from.
 - **A dirty index refreshes in the background.** A dirty index
-  starts one single-flight background refresh after a 200 ms coalescing window.
-  It inherits neither the request trace nor the pin, and the read answers from
+  starts one single-flight background refresh after a 200 ms coalescing window
+  (`TaskIndexCache:RefreshCoalesceMilliseconds`; the batch gate pilot test
+  fixture sets 0 because each of its tests drives one reader at a time,
+  AGT-3566). It inherits neither the request trace nor the pin, and the read answers from
   the last snapshot. A cold start answers from the persisted board (below);
   only a first start without one waits, asynchronously and cancelled with
   the request. A failed background refresh keeps the last

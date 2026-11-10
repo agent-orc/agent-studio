@@ -159,7 +159,8 @@ public sealed class TaskTransitionService
         bool acceptOlderBriefDelivery = false,
         bool engineDecisionRequeue = false,
         AgentStudio.Runner.ContinuationBaseRecord? engineContinuationBase = null,
-        bool operatorDecisionPark = false)
+        bool operatorDecisionPark = false,
+        string? automaticAcceptanceBy = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return new MoveJobOutcome(MoveJobStatus.NotFound);
@@ -415,7 +416,9 @@ public sealed class TaskTransitionService
                       + $"tree {gate.Sha}: {gate.Reason}";
             contentClaim = contentClaim with
             {
-                Evidence = $"{contentClaim.Evidence} {gateName}",
+                Evidence = $"{contentClaim.Evidence} {gateName}"
+                    + (gate.GateNeutralCommits.Count == 0 ? string.Empty
+                        : $" Gate-neutral document-key commits: {string.Join(", ", gate.GateNeutralCommits)}."),
             };
         }
         var boundCompletionClaim = contentClaim is null
@@ -545,7 +548,14 @@ public sealed class TaskTransitionService
         // it landed. A refused move restores the claim the card had before.
         var stampedCompletionClaim = boundCompletionClaim is null
             ? null
-            : boundCompletionClaim with { RecordedAtUtc = _time.GetUtcNow().UtcDateTime };
+            : boundCompletionClaim with
+            {
+                RecordedAtUtc = _time.GetUtcNow().UtcDateTime,
+                // AGT-3621: only a system actor accepts automatically.
+                AcceptedAutomaticallyBy = TimelineActors.IsHuman(cause) || string.IsNullOrWhiteSpace(automaticAcceptanceBy)
+                    ? null
+                    : automaticAcceptanceBy.Trim(),
+            };
         var completionClaimStaged = stampedCompletionClaim is not null
             && _mutations.SetCompletionClaimOnFolder(info.FolderPath, stampedCompletionClaim);
         var acceptanceWrite = operatorAcceptance is null
@@ -1102,7 +1112,8 @@ public sealed class TaskTransitionService
 
     /// <summary>
     /// One-time, idempotent operator repair for legacy accepted cards whose
-    /// Result tab is empty. Existing non-empty status documents are preserved.
+    /// Result tab is empty or still shows a scaffold over a real prior result.
+    /// Existing non-scaffold status documents are preserved.
     /// The startup caller invokes this once per process; subsequent boots are
     /// no-ops because every repaired card now owns a marked status.md.
     /// </summary>
@@ -1111,6 +1122,7 @@ public sealed class TaskTransitionService
         var repaired = 0;
         var failures = new List<string>();
         var missing = new List<TaskInfo>();
+        var staleScaffolds = new List<TaskInfo>();
         var candidates = _scanner.ScanAllAutomationJobsWithArchive()
             .Where(task => task.State is
                 TaskStates.HumanReview or TaskStates.Completed or TaskStates.Archive)
@@ -1124,8 +1136,19 @@ public sealed class TaskTransitionService
             var path = Path.Combine(task.FolderPath, "status.md");
             try
             {
-                if (File.Exists(path) && !string.IsNullOrWhiteSpace(File.ReadAllText(path)))
-                    continue;
+                if (File.Exists(path))
+                {
+                    var existing = File.ReadAllText(path);
+                    if (!string.IsNullOrWhiteSpace(existing))
+                    {
+                        if (task.State == TaskStates.Completed && _resultVersions is not null
+                            && existing.TrimStart().StartsWith(ResultScaffoldMarker, StringComparison.Ordinal)
+                            && _resultVersions.ReadLocalVersions(task.FolderPath).Any(version =>
+                                !version.Markdown.TrimStart().StartsWith(ResultScaffoldMarker, StringComparison.Ordinal)))
+                            staleScaffolds.Add(task);
+                        continue;
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -1172,6 +1195,16 @@ public sealed class TaskTransitionService
             {
                 failures.Add($"{task.TaskKey}: {error}");
             }
+        }
+
+        foreach (var task in staleScaffolds)
+        {
+            if (TryEnsureResultDocument(task, task.State,
+                    operatorBackfill: false, refreshOwnedScaffold: true,
+                    at, integrationReferenceOverride: null, out var error))
+                repaired++;
+            else
+                failures.Add($"{task.TaskKey}: {error}");
         }
 
         if (repaired > 0)
@@ -1400,6 +1433,24 @@ public sealed class TaskTransitionService
                 {
                     error = null;
                     return true;
+                }
+                // On acceptance, an earlier generated Result is more useful
+                // than another scaffold describing only the new lane. The
+                // scaffold stays in version history when we restore it.
+                if (targetState == TaskStates.Completed && _resultVersions is not null
+                    && existing.TrimStart().StartsWith(ResultScaffoldMarker, StringComparison.Ordinal))
+                {
+                    var lastReal = _resultVersions.ReadLocalVersions(task.FolderPath)
+                        .FirstOrDefault(version => !version.Markdown.TrimStart()
+                            .StartsWith(ResultScaffoldMarker, StringComparison.Ordinal));
+                    if (lastReal.Markdown is not null)
+                    {
+                        _resultVersions.Replace(task.FolderPath, lastReal.Markdown,
+                            lastReal.Version.Producer,
+                            targetState, lastReal.Version.ProducedAtUtc, TimelineActors.System);
+                        error = null;
+                        return true;
+                    }
                 }
                 refreshingOwnedScaffold = !string.IsNullOrWhiteSpace(existing)
                     && existing.Contains(ResultScaffoldMarker, StringComparison.Ordinal);

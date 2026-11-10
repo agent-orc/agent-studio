@@ -29,6 +29,13 @@ pipeline view.
 
 ## Gate economics and integration lane
 
+The batch gate state read reports `phaseReason` for a stopped batch and
+`causedByTaskKey` when a member eject or lost review generation caused
+abandonment. Explicit operator withdrawals are retained as batch withdrawal
+records with the actor, card, reason, and time. The existing eject path returns
+the remaining members to planning; the operator move requests a close on the
+next planner tick.
+
 ### Gate run ledger (AGT-3500)
 
 The instance-local gate run ledger lives under `gate-run-ledger` beside the
@@ -423,6 +430,11 @@ worktree. Non-linear members still use a detached worktree for their merge.
 Temporary worktree removal is retried, and cleanup leftovers do not discard
 a successful replay. Candidate refs use
 `refs/agent-studio/batch-candidates/<batchId>/<membershipDigest>/<coordinatorFence>`.
+
+The store durably writes the initial `Formed` state before publishing a closed
+manifest. A visible manifest with no state rows, for example after external
+file loss, has phase `Unknown` and is skipped by recovery until a state exists.
+The recovery scan logs this condition once per manifest and store instance.
 
 The batch panel reads `GET /api/projects/{projectName}/batch-gate/failed-tests`
 to rank failed test names over a seven-day sliding window (`windowDays` may be
