@@ -385,6 +385,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-review-ran-build-tests-batch-refusal">
+          <td>2026-11-10</td>
+          <td><code>AGT-3243</code><br><span class="small">review-ran-build-tests-batch-refusal (fix <code>AGT-3740</code>)</span></td>
+          <td>No CLI crashed. Delivery <code>5f9803b43</code> passed every review aspect, but its review ran its own six build-tests steps instead of deferring them to the batch gate. The card stayed in Auto Review without an owner. The stranding watchdog re-entered the batch, admission refused it with "Batch admission failed: BuildTestNotDeferred.", and after about 70 minutes the card escalated with "Auto Review had no active owner". Moving it back to Auto Review repeated the cycle three times that day. Terminal at discovery: Escalated.</td>
+          <td>The watchdog's recovery for any passed review was "resume integration, else re-enter the batch". A non-deferred pass without a delivery settlement record (for example settled while the card was outside Auto Review) could not resume, and the batch never admits a review that ran its own build and tests. The plan also named no rule for most non-deferral cases, so the card could not show why.</td>
+          <td>A passed review that ran its own build and tests now takes the per-task route: integration with the review's journaled verdicts, rebuilding a missing settlement record with the settlement gate policy, or a re-planned review when no recorded verdict admits it. The receipt and the batch gate state name the rule and the route. Every non-deferring plan records its rule. The route is tried once per lane visit; if it does not hold, the card escalates with the reason.</td>
+        </tr>
         <tr id="case-report-summary-stalled-review">
           <td>2026-11-05</td>
           <td><code>AGT-3496</code>, <code>AGT-3506</code>, <code>AGT-3511</code>, <code>AGT-3512</code>, <code>AGT-3515</code><br><span class="small">report-summary-stalled-review (fix <code>AGT-3547</code>)</span></td>
