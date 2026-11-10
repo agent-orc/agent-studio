@@ -19,7 +19,16 @@ public static class BackupEndpoints
             var overview = backups.Overview();
             var scoped = context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access
                          && !access.Allows(IamPermissions.WorkspaceOperate, PermissionTarget.WorkspaceWide);
-            return Results.Ok(scoped ? overview with { OffHost = overview.OffHost with { Target = null } } : overview);
+            return Results.Ok(scoped
+                ? overview with
+                {
+                    OffHost = overview.OffHost with
+                    {
+                        Target = null,
+                        Listing = overview.OffHost.Listing is { } listing ? listing with { Detail = null } : null,
+                    },
+                }
+                : overview);
         }).RequirePermission(IamPermissions.ProjectRead);
     }
 }

@@ -359,6 +359,13 @@ export const COMMANDS = {
           ? `restore verification ${backups.lastVerification.outcome} at ${backups.lastVerification.at}`
           : 'restore verification: not run yet',
         `off-host ${backups.offHost?.kind ?? 'none'}: ${backups.offHost?.state ?? 'unknown'}`,
+        // AGT-3734: archives at the target that this host does not know, and the last offline restore.
+        backups.offHost?.listing?.state === 'listed'
+          ? `off-host archives ${backups.offHost.listing.archiveCount}, unknown here ${backups.offHost.listing.notInCatalog.length}`
+          : backups.offHost?.listing ? `off-host archives: ${backups.offHost.listing.state}` : [],
+        backups.lastRestore
+          ? `restored ${backups.lastRestore.backupId} (made ${backups.lastRestore.archiveCreatedAt}) at ${backups.lastRestore.restoredAt} by ${backups.lastRestore.restoredBy}; work after ${backups.lastRestore.archiveCreatedAt} is not here`
+          : [],
         (backups.warnings ?? []).map(warning => `warning ${warning.code}: ${warning.message}`)) };
     },
   },

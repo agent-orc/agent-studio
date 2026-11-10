@@ -107,6 +107,66 @@ describe('BackupStatusPanelComponent', () => {
     expect(rows[1].textContent).toContain('Failed');
   });
 
+  it('shows the restore receipt with the archive time after which work is gone (AGT-3734)', async () => {
+    const host = await render(overview({
+      lastGood: null, lastGoodAgeHours: null, lastVerification: null,
+      lastRestore: {
+        backupId: 'studio-backup-20261109T060000Z-abc123', archiveFileName: 'studio-backup-20261109T060000Z-abc123.tar.gz.sbk',
+        archiveSha256: 'e'.repeat(64), archiveCreatedAt: '2026-11-09T06:00:00+00:00', archiveHost: 'host-a',
+        archiveStudioVersion: '1.0.0', restoredAt: '2026-11-10T09:00:00+00:00', restoredBy: 'owner@host-b',
+        keyId: 'a1b2c3d4e5f60718', secretKeyId: '0011223344556677', secretKeyCopyId: '0011223344556677',
+        filesRestored: 420, checkoutsCloned: 3, skippedSources: [],
+      },
+    }));
+
+    const receipt = host.querySelector('[data-testid="operations-backups-restore"]');
+    expect(receipt?.textContent).toContain('owner@host-b');
+    expect(receipt?.textContent).toContain('studio-backup-20261109T060000Z-abc123');
+    expect(receipt?.textContent).toContain('host-a');
+    expect(receipt?.textContent).toContain('a1b2c3d4e5f60718');
+    expect(host.querySelector('[data-testid="operations-backups-restore-loss"]')?.textContent).toContain('is not in this installation');
+  });
+
+  it('lists off-host archives the local catalog does not know, or says it cannot list (AGT-3734)', async () => {
+    const listed = await render(overview({
+      offHost: { ...overview().offHost, kind: 'directory', listing: {
+        state: 'listed', detail: null, archiveCount: 4,
+        notInCatalog: [{ id: 'studio-backup-20261108T000000Z-111111', fileName: 'studio-backup-20261108T000000Z-111111.tar.gz.sbk',
+          sizeBytes: 2048, modifiedAt: '2026-11-08T00:01:00+00:00' }],
+      } },
+    }));
+    expect(listed.querySelector('[data-testid="operations-backups-offhost-listing"]')?.textContent)
+      .toContain('1 of 4 archives that this host does not know');
+    const rows = listed.querySelectorAll('[data-testid="operations-backups-offhost-unknown"] tbody tr');
+    expect([...rows].map(row => row.getAttribute('data-backup-id'))).toEqual(['studio-backup-20261108T000000Z-111111']);
+
+    TestBed.resetTestingModule();
+    await TestBed.configureTestingModule({
+      imports: [BackupStatusPanelComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    const writeOnly = await render(overview({
+      offHost: { ...overview().offHost, listing: {
+        state: 'not-listable', detail: 'This host may only write to the sftp target, so it cannot list the archives there.',
+        archiveCount: 0, notInCatalog: [],
+      } },
+    }));
+    expect(writeOnly.querySelector('[data-testid="operations-backups-offhost-listing"]')?.getAttribute('data-listing-state')).toBe('not-listable');
+    expect(writeOnly.querySelector('[data-testid="operations-backups-offhost-listing-detail"]')?.textContent).toContain('cannot list');
+    expect(writeOnly.querySelector('[data-testid="operations-backups-offhost-unknown"]')).toBeNull();
+  });
+
+  it('states what the last verification proved and what it did not (AGT-3734)', async () => {
+    const host = await render(overview({
+      lastVerification: { ...overview().lastVerification!,
+        proved: ['The backup key on this host (fingerprint a1b2c3d4e5f60718) opens and authenticates it.'],
+        notProved: ['Project checkouts were not cloned from their origins.'] },
+    }));
+
+    expect(host.querySelector('[data-testid="operations-backups-verification-proved"]')?.textContent).toContain('key on this host');
+    expect(host.querySelector('[data-testid="operations-backups-verification-not-proved"]')?.textContent).toContain('not cloned');
+  });
+
   it('formats ages and sizes', () => {
     expect(formatAge(0.5)).toBe('30 min');
     expect(formatAge(5.55)).toBe('5.6 h');

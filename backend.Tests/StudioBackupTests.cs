@@ -388,6 +388,50 @@ public sealed class StudioBackupTests : IDisposable
     }
 
     [Fact]
+    public async Task Overview_shows_the_restore_receipt_unknown_off_host_archives_and_the_verification_scope()
+    {
+        // The lost host's archives are at the off-host target; this host's catalog is empty.
+        Directory.CreateDirectory(_fixture.OffHost);
+        var lost = "studio-backup-20261108T000000Z-111111";
+        File.WriteAllBytes(Path.Combine(_fixture.OffHost, lost + BackupCatalog.ArchiveSuffix), [1, 2, 3]);
+        File.WriteAllText(Path.Combine(_fixture.OffHost, lost + BackupCatalog.ArchiveSuffix + ".sha256"), "x");
+        File.WriteAllBytes(Path.Combine(_fixture.OffHost, "studio-backup-20261108T060000Z-222222" + BackupCatalog.ArchiveSuffix + ".partial"), [1]);
+        BackupRestoreReceipts.Write(_fixture.Workspace, new BackupRestoreReceipt(
+            lost, lost + BackupCatalog.ArchiveSuffix, new string('e', 64), "2026-11-08T00:00:00.0000000+00:00", "host-a", "1.0.0",
+            Start.ToString("O"), "owner@host-b", "a1b2c3d4e5f60718", "0011223344556677", "0011223344556677", 10, 1, []));
+        var service = _fixture.Service(_clock, new DirectoryBackupTarget(_fixture.OffHost));
+
+        var before = service.Overview();
+        Assert.Equal(lost, before.LastRestore?.BackupId);
+        Assert.Equal("owner@host-b", before.LastRestore?.RestoredBy);
+        Assert.Contains(before.Warnings, warning => warning.Code == "backup-missing" && warning.Message.Contains(lost));
+        var listing = before.OffHost.Listing!;
+        Assert.Equal("listed", listing.State);
+        Assert.Equal(1, listing.ArchiveCount);
+        Assert.Equal(lost, Assert.Single(listing.NotInCatalog).Id);
+
+        var record = await service.CreateAsync("test", CancellationToken.None);
+        await service.UploadPendingAsync(force: true, CancellationToken.None);
+        await service.VerifyAsync(record.Id, "test", CancellationToken.None);
+        var after = service.Overview();
+        Assert.Equal(2, after.OffHost.Listing!.ArchiveCount);
+        Assert.Equal(lost, Assert.Single(after.OffHost.Listing.NotInCatalog).Id);
+        var verification = after.LastVerification!;
+        Assert.Contains(verification.Proved!, line => line.Contains(record.KeyId, StringComparison.Ordinal));
+        Assert.Contains(verification.NotProved!, line => line.Contains("origins", StringComparison.Ordinal));
+        Assert.Contains(verification.NotProved!, line => line.Contains("backup-key.sh id", StringComparison.Ordinal)
+                                                         && line.Contains("secret-key.sh id", StringComparison.Ordinal));
+        Assert.Contains("escrowed key copies were not checked", service.List()[0].Verification!.Detail);
+
+        // A write-only target says that it cannot list; a missing mount says that it is unreachable.
+        var writeOnly = _fixture.Service(_clock, new FakeTarget()).Overview().OffHost.Listing!;
+        Assert.Equal("not-listable", writeOnly.State);
+        Assert.Contains("cannot list", writeOnly.Detail);
+        var missing = _fixture.Service(_clock, new DirectoryBackupTarget(Path.Combine(_fixture.Root, "not-mounted"))).Overview();
+        Assert.Equal("unreachable", missing.OffHost.Listing!.State);
+    }
+
+    [Fact]
     public async Task Overview_reports_backups_off_without_a_key_and_creation_refuses()
     {
         var service = _fixture.Service(_clock, null, withKey: false);
@@ -480,12 +524,33 @@ public sealed class StudioBackupTests : IDisposable
         var args = new List<string>
         {
             "restore", "--key", _fixture.KeyFile, "--archive", archive,
-            "--secret-key", _fixture.SecretKeyFile, "--secret-key-target", secretTarget,
+            "--secret-key", _fixture.SecretKeyFile, "--secret-key-target", secretTarget, "--restored-by", "owner@new-host",
         };
         foreach (var (name, path) in targets) args.AddRange(["--target", $"{name}={path}"]);
 
-        Assert.Equal(0, StudioBackupCommand.Run(args.ToArray(), output, error));
+        _clock.Advance(TimeSpan.FromHours(30));
+        Assert.Equal(0, StudioBackupCommand.Run(args.ToArray(), output, error, _clock));
         Assert.Equal("", error.ToString());
+
+        // AGT-3734: the restore leaves a receipt in the workspace and a row in the management audit.
+        var receipt = BackupRestoreReceipts.Latest(targets["workspace"]);
+        Assert.NotNull(receipt);
+        Assert.Equal(record.Id, receipt.BackupId);
+        Assert.Equal(record.CreatedAt, receipt.ArchiveCreatedAt);
+        Assert.Equal(record.Sha256, receipt.ArchiveSha256);
+        Assert.Equal(_clock.GetUtcNow().ToString("O"), receipt.RestoredAt);
+        Assert.Equal("owner@new-host", receipt.RestoredBy);
+        Assert.Equal(BackupKey.Load(_fixture.KeyFile).Id, receipt.KeyId);
+        Assert.Equal(kek.Load(createIfMissing: false).Id, receipt.SecretKeyCopyId);
+        Assert.Equal(receipt.SecretKeyId, receipt.SecretKeyCopyId);
+        Assert.Equal(2, receipt.CheckoutsCloned);
+        var audit = File.ReadAllLines(BackupRestoreReceipts.ManagementAuditPath(targets["workspace"]))
+            .Select(line => JsonSerializer.Deserialize<ManagementAuditEvent>(line, new JsonSerializerOptions(JsonSerializerDefaults.Web))!)
+            .Single(row => row.Kind == BackupRestoreReceipts.AuditKind);
+        Assert.Equal("owner@new-host", audit.Actor);
+        Assert.Contains(record.Id, audit.Summary);
+        Assert.Contains($"work after {record.CreatedAt} is not in this installation", audit.Summary);
+        Assert.Contains("is not in this installation", output.ToString());
 
         Assert.Equal("{\"users\":[]}", File.ReadAllText(Path.Combine(targets["workspace"], ".security-access.json")));
         Assert.True(Directory.Exists(Path.Combine(targets["workspace"], "Ready")));

@@ -33,6 +33,8 @@ The API's `BackupHostedService` checks once a minute, five minutes after start:
 - **Off-host copy** of every archive and its `.sha256` file right after the backup. A failed copy is retried after 15 minutes, doubling up to six hours.
 - **Restore verification** of the newest good backup once a day (`Backup__VerifyIntervalHours`), and at once when the last verification failed and a newer backup exists. It checks the archive against the checksum recorded at creation, decrypts it, restores every source into an empty staging host below the backup directory with the real restore code, checks every file against the SHA-256 list in the archive, and deletes the staging host again.
 
+A **Verified** result proves three things: the archive matches its recorded checksum, the backup key on this host opens and authenticates it, and every restored file matches its hash. It does not prove that the project checkouts can be cloned from their origins (the staging restore skips the clone), and it does not check the owner's escrowed copies of the backup key and the secret store key. The Operations page lists both halves under **What the last verification shows**; the [periodic owner check](#periodic-owner-check-of-the-escrowed-keys) covers the escrowed copies.
+
 Local archives live in `$STUDIO_DATA_DIR/backups` (`Backup__Directory`) as `studio-backup-<UTC time>-<id>.tar.gz.sbk` with a `.sha256` file and a non-secret `.json` record (size, hash, key fingerprints, consistency figures, verification and copy state). The backup directory must lie outside every source; the API refuses to back up otherwise.
 
 ### Consistency
@@ -82,6 +84,17 @@ Every backup manifest records the fingerprint of the key that was in place (show
 
 Keep the two escrowed keys in separate places: whoever holds the backup key and an archive can read everything except the sealed secrets; only together with the secret store key do the sealed secrets open.
 
+### Periodic owner check of the escrowed keys
+
+The daily verification uses the keys on the host, never the escrowed copies. A lost or replaced copy only shows up during a restore, when it is too late. Once a quarter, and after every key rotation, the owner brings each escrowed copy to the host for a moment and compares fingerprints:
+
+```sh
+bash backup-key.sh id studio-backup.key      # must equal the key id on the Operations page
+bash secret-key.sh id studio-secrets.kek     # must equal the secret key id on the Operations page
+```
+
+Delete the copies from the host again afterwards. A different fingerprint means the escrowed copy does not open the current backups or secrets: escrow a new copy with `print` at once. Record the date of the check where the owner keeps the copies.
+
 ## Off-host target
 
 Set the target in `.env` and recreate the API container (`docker compose up -d api`). Credentials go into `backup-target/` in the stack directory, owned by UID 10001 with mode 600 (`bash backup-key.sh create` prepares the folder); the API mounts it read-only. Give the Studio host write access only: no read, list or delete, so a compromised host cannot remove the off-host copies.
@@ -110,6 +123,12 @@ The **Operations** page of every project shows an **Installation backups** panel
 | `verification-failed`, `verification-overdue` | The last restore verification failed, or none ran within two verification intervals. |
 | `offhost-not-configured`, `offhost-invalid`, `offhost-pending`, `offhost-failed` | The newest backup is not, or not yet, off the host. |
 
+The panel also shows (AGT-3734):
+
+- **Restored from a backup**, after an offline restore: the archive, when it was made and on which host, when and by whom it was restored, the backup key and secret store key fingerprints, and that work done on the old host after the archive time is not in this installation. The receipt comes from `<workspace>/.audit/restore-receipts.jsonl`; the same restore is a `backup-restore` row in the management audit `<workspace>/.audit/management.jsonl`.
+- **Archives at the off-host target that this host does not know**, for example those of a lost host. A `directory` target is listed (complete `studio-backup-*.tar.gz.sbk` files only, bounded at 5 seconds). An `sftp` or `s3` target is write-only for the host by design, so the panel says that it cannot list the target; list it there with an account that may read it.
+- **What the last verification shows**: what a verified run proved and what it did not (see [Schedule, retention and verification](#schedule-retention-and-verification)).
+
 Owners and operators read the same state from `GET /api/v1/management/backups` (`no-store`). Operator agents, whose credentials never reach `/api/v1`, read it from `GET /api/operator/backups` or `studio-op backups`; a caller without installation-wide operate permission does not see the target. The management commands of `POST /api/v1/management/commands` run the same engine: `backup-create`, `restore-verify` (optional `backupId`), `backup-retention` (optional `retentionCount`) and `backup-upload`. Each needs `dryRun: false` and `confirmation` equal to the kind for a real run; `backup-create` no longer needs maintenance mode.
 
 ## Restore onto a new host
@@ -119,7 +138,7 @@ Restore needs the archive with its `.sha256` file, the backup key copy, the secr
 1. On the new host, extract the matching release's `deploy/compose/monolith-networked` directory and run `bash setup.sh [--cloudflare | --private] <version> <hostname> <data-directory>`. Do not start the stack. Use the version that made the backup or a newer one.
 2. Fetch the archive and its `.sha256` file from the off-host target with an account that may read it. Bring both key copies to the host temporarily.
 3. Load an SSH agent with a key that can clone each project remote (`ssh-add`), or use HTTPS remotes that need no credentials.
-4. Run `bash restore-backup.sh --key <backup-key-copy> --secret-key <secret-key-copy> <archive>` in the stack directory. A one-shot container of the stack's API image checks the checksum and both key fingerprints, clones every checkout from its recorded origin and branch, and only then writes the workspace, home, task storage, host certificates, Caddy data and origin-pull CA, fetches the Studio refs from the bundles, and checks every file against its hash. It refuses a running stack and any target that already holds a file; the only exception is the workspace repository that `setup.sh` initialized (its single installer commit of `.gitignore` and a clean working tree), which the archived workspace and its repository replace. It installs both key copies and writes the archived stack configuration into `restored-stack/`.
+4. Run `bash restore-backup.sh --key <backup-key-copy> --secret-key <secret-key-copy> <archive>` in the stack directory. A one-shot container of the stack's API image checks the checksum and both key fingerprints, clones every checkout from its recorded origin and branch, and only then writes the workspace, home, task storage, host certificates, Caddy data and origin-pull CA, fetches the Studio refs from the bundles, and checks every file against its hash. It refuses a running stack and any target that already holds a file; the only exception is the workspace repository that `setup.sh` initialized (its single installer commit of `.gitignore` and a clean working tree), which the archived workspace and its repository replace. It installs both key copies and writes the archived stack configuration into `restored-stack/`. Last, it writes a restore receipt into the workspace (archive id and checksum, archive time and host, restore time, the operator as `user@host`, the key fingerprints, files restored and checkouts cloned) and a `backup-restore` row into the management audit; the Operations page shows it after the start.
 5. Delete the key copies from the host again.
 6. Compare `restored-stack/.env` with the new `.env`: carry over the backup target settings and `backup-target/` credentials; keep the new installer code, which is not needed because the restored access state already has an owner.
 7. For a public installation, install the Docker firewall as in the [install steps](./studio-website.md#install). Point DNS at the host.
@@ -134,7 +153,7 @@ The API binary has offline backup commands that run without starting the host, f
 ```sh
 dotnet OrchestratorApi.dll --studio-backup inspect --key backup.key --archive <archive>         # manifest, file count, consistency
 dotnet OrchestratorApi.dll --studio-backup decrypt --key backup.key --archive <archive> --output backup.tar.gz
-dotnet OrchestratorApi.dll --studio-backup restore --key backup.key --archive <archive> --target workspace=<dir> ... [--no-clone]
+dotnet OrchestratorApi.dll --studio-backup restore --key backup.key --archive <archive> --target workspace=<dir> ... [--restored-by <name>] [--no-clone]
 dotnet OrchestratorApi.dll --studio-backup key-create <file> | key-id <file>
 ```
 
@@ -153,6 +172,12 @@ AGT-3574 implemented these options:
 - **Encryption:** a symmetric backup key file outside the data directory, escrowed by the owner, with AES-256-GCM chunks. A key the API can read lets the product verify every day by a real restore; a public-key recipient would have made the daily restore verification impossible on the host.
 - **Targets:** SFTP through the OpenSSH client in the image, S3-compatible storage through a signed PUT without a new package, and a mounted directory. All need only write access.
 - **Coverage:** the data home, host certificates, stack configuration and Caddy data join the workspace and task storage; checkouts still come back from their remotes; the secret store key, the backup key and the host CA key stay with the owner.
+
+AGT-3734 (restore playthrough AGT-3711, finding F6) added:
+
+- **Restore receipt in the workspace:** the offline restore writes `.audit/restore-receipts.jsonl` and a `backup-restore` row in `.audit/management.jsonl` of the restored workspace, not into the backup directory, which is not a backup source. The receipt therefore travels with every later backup.
+- **Listing the target only where the host may read it:** a `directory` target is listed; SFTP and S3 targets keep write-only credentials, and the panel says that it cannot list them instead of widening the host's rights.
+- **Verification scope stated, not widened:** the daily verification still restores with the key on the host and without cloning; the panel and the record say so, and the escrowed copies get a periodic owner check.
 
 ## Host-level backup with the systemd timer
 

@@ -4,7 +4,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { take } from 'rxjs';
 import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
 import {
-  formatAge, formatBytes, isBackupOverview, itemOffHostLabel, offHostLabel, offHostTone, overviewLabel, overviewTone,
+  formatAge, formatBytes, isBackupOverview, itemOffHostLabel, offHostLabel, offHostListingSummary, offHostTone, overviewLabel, overviewTone,
   verificationLabel, verificationTone, type BackupOverview,
 } from '../backup-status.model';
 
@@ -12,6 +12,9 @@ import {
  * Installation backups on the Operations page (AGT-3574): the last good
  * backup with its age and size, the last restore verification, the
  * off-host copy, and the warnings of `GET /api/v1/management/backups`.
+ * AGT-3734 adds the restore receipt of an offline restore, the archives at
+ * the off-host target that the local catalog does not know, and what the
+ * last verification proved and did not prove.
  * Accounts without the management role get 401/403 and see nothing.
  */
 @Component({
@@ -32,6 +35,7 @@ export class BackupStatusPanelComponent {
   readonly overviewLabel = overviewLabel;
   readonly offHostLabel = offHostLabel;
   readonly offHostTone = offHostTone;
+  readonly offHostListingSummary = offHostListingSummary;
   readonly verificationTone = verificationTone;
   readonly verificationLabel = verificationLabel;
   readonly itemOffHostLabel = itemOffHostLabel;
