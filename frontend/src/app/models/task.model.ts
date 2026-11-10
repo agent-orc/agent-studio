@@ -1267,6 +1267,7 @@ export interface ContinueRoundBase {
 export interface FailureContinuationCheck {
   available: boolean;
   reason: string | null;
+  isolationActive?: boolean;
 }
 
 export interface ContinueTaskQueuedInfo {

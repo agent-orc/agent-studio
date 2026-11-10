@@ -230,7 +230,7 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   A queued round also returns `base` when it starts from a result ref
   (AGT-3483); `BaseRef` on the request selects another ref of the same card,
   see the [runner domain](runner.md) for the rule and its error codes.
-- Continue (every mode), preview feedback, the orchestrator-log steer override,
+- Continue (every mode), failure continuation, preview feedback, the orchestrator-log steer override,
   and an operator requeue (a move or batch move into Backlog, Preparation,
   Ready or In Progress) refuse a card that is a member of a batch under
   isolation with `409 batch-isolation-active`, naming the flight
@@ -240,6 +240,9 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   active and no isolation finding released it. Eject
   (`POST /api/projects/{project}/batch-gate/members/{taskKey}/eject`) stays
   allowed (AGT-3483, `BatchIsolationGuard`).
+  The read-only failure continuation check reports the same isolation reason
+  and marks the action unavailable, so task detail disables it with that reason
+  as its tooltip (AGT-3687).
 
 ## Entry Points
 
