@@ -69,6 +69,17 @@ the disconnected live-update hub), then enrolls an authenticator with a code it
 computes from the shown secret (AGT-3614). With `JOB_RESULTS_DIR` set, it
 writes light, dark and 390 px screenshots to `owner-second-factor/`.
 
+### Product card detail check
+
+Run `npm --prefix frontend run e2e -- e2e/security/product-card-detail.spec.ts`.
+The spec selects the `networked-https-demo` profile: the `networked-https`
+stack above, seeded with the demo workspace. It bootstraps an Owner with a
+second factor, invites a Product user into Demo App, opens a Ready and a Human
+Review card as that user, and fails on any task read answered 403. With
+`JOB_RESULTS_DIR` set, it writes light, dark and 390 px screenshots to
+`product-card-detail/`. Both specs bootstrap the first Owner, so each profile
+runs on its own fresh stack.
+
 ## Suite layout
 
 Specs are grouped by domain under `e2e/<folder>/`, mirroring the feature

@@ -35,7 +35,7 @@ public sealed class RemoteReviewWorkspace
     private bool _baselineCachePruned;
     private bool _verifyCachePruned;
     private bool _dirtyBefore;
-    private string _visualScreenshotEvidence = "No delivered screenshots were attached to this run.";
+    private string _visualScreenshotEvidence = VisualReviewScreenshotBundle.NoScreenshots;
 
     public RemoteReviewWorkspace(
         RunnerOptions options,
@@ -282,6 +282,9 @@ public sealed class RemoteReviewWorkspace
             throw new ReviewInfrastructureException(
                 "DirtyBefore",
                 "Prepared review workspace became dirty before the detached worker adopted it.");
+        // The daemon captured the screenshots; this process only sees what it
+        // persisted beside the copied files.
+        _visualScreenshotEvidence = VisualReviewScreenshotBundle.LoadEvidence(AttemptRoot);
         return Proof(_subject.RepositoryId, head, _initialTree, false);
     }
 
