@@ -512,7 +512,7 @@ public sealed class TaskFileHistoryOwnHostTests : TaskFileHistoryTestBase, IDisp
         Assert.Equal("feat: update app", entries[0].GetProperty("message").GetString());
         Assert.Equal(JsonValueKind.Null, entries[0].GetProperty("runIndex").ValueKind);
 
-        using var contentResponse = await client.GetAsync($"/api/tasks/ASS-900/files/src/app.cs?watchPath={watchPath}&scope=code&at={firstSha}");
+        using var contentResponse = await GetReadyHistoryAsync(client, $"/api/tasks/ASS-900/files/src/app.cs?watchPath={watchPath}&scope=code&at={firstSha}");
         contentResponse.EnsureSuccessStatusCode();
         Assert.Equal("class App { }\n", await contentResponse.Content.ReadAsStringAsync());
     }
@@ -556,7 +556,7 @@ public sealed class TaskFileHistoryOwnHostTests : TaskFileHistoryTestBase, IDisp
         Assert.Equal(2, entries[0].GetProperty("provenance").GetProperty("generation").GetProperty("runIndex").GetInt32());
         Assert.Equal("aspect", entries[0].GetProperty("provenance").GetProperty("generation").GetProperty("kind").GetString());
 
-        using var contentResponse = await client.GetAsync($"/api/tasks/ASS-853/files/code-review.md?watchPath={watchPath}&at={firstSha}");
+        using var contentResponse = await GetReadyHistoryAsync(client, $"/api/tasks/ASS-853/files/code-review.md?watchPath={watchPath}&at={firstSha}");
         contentResponse.EnsureSuccessStatusCode();
         Assert.Equal("text/markdown", contentResponse.Content.Headers.ContentType?.MediaType);
         Assert.Equal("run 1 review\n", await contentResponse.Content.ReadAsStringAsync());
@@ -654,7 +654,8 @@ public sealed class TaskFileHistoryOwnHostTests : TaskFileHistoryTestBase, IDisp
         history.EnsureSuccessStatusCode();
         using var list = JsonDocument.Parse(await history.Content.ReadAsStringAsync());
         Assert.Equal(sha, list.RootElement.EnumerateArray().First().GetProperty("sha").GetString());
-        using var at = await client.GetAsync(prefix + query + "&at=" + sha);
+        // The historical object can still be warming after the history list is ready (202).
+        using var at = await GetReadyHistoryAsync(client, prefix + query + "&at=" + sha);
         at.EnsureSuccessStatusCode();
         Assert.Equal("class Worktree { }\n", await at.Content.ReadAsStringAsync());
     }

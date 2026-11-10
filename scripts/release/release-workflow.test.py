@@ -74,6 +74,16 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("docker logout ghcr.io", check)
         self.assertIn("GITHUB_STEP_SUMMARY", check)
 
+    def test_powershell_argument_arrays_do_not_concatenate_elements(self):
+        # PowerShell binds ',' tighter than '+', so @('-p:Version=' + $v, ...)
+        # passes '-p:Version=' and the bare value as two arguments; dotnet
+        # publish then fails with MSB1008. This broke every tag up to v0.9.5.
+        concatenated = re.compile(r"'-[^'\s]*=' *\+ *\$")
+        for path in sorted(WORKFLOW.parent.glob("*.yml")):
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                with self.subTest(workflow=path.name, line=number):
+                    self.assertIsNone(concatenated.search(line), line.strip())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -284,6 +284,10 @@ public sealed class StandaloneReviewLoopCutoverTests
         await store.RegisterRunnerAsync("integration-a", new RegisterRunnerRequest(
             "integration-a", "coding-host", "integration-instance", "1.0.0", TaskServerProtocol.Current,
             [IntegrationCapabilities.Executor]), "setup", default);
+        // An authenticated Task Server requires a host project policy before any claim.
+        foreach (var hostId in new[] { "coding-host", "review-host" })
+            await store.UpdateHostProjectPolicyAsync(hostId,
+                new UpdateHostProjectPolicyRequest(false, [projectId], 0), "setup", default);
         return (projectId, task);
     }
 
@@ -329,7 +333,8 @@ public sealed class StandaloneReviewLoopCutoverTests
         string repositoryUrl = RepositoryUrl, bool sourceBundleOnly = false, byte[]? sourceBundle = null)
     {
         var claim = await store.ClaimAsync(new ClaimRequest("coding-a", "coding-instance"), "coding-a", default);
-        Assert.Equal("claimed", claim.Status);
+        Assert.True(claim.Status == "claimed",
+            $"Coding claim was '{claim.Status}': {claim.Message} ({claim.PlacementReason})");
         var run = claim.Run!;
         var lease = claim.Lease!;
         if (claim.FollowUp is { } followUp)

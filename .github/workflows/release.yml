@@ -54,7 +54,9 @@ jobs:
     name: Test and build Linux release
     needs: version
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # 'Test .NET solution' alone took 28 minutes at v0.9.5; the job has since
+    # gained both scenario targets, the frontend coverage run and seven publishes.
+    timeout-minutes: 120
     steps:
       - name: Check out exact tag
         uses: actions/checkout@v4

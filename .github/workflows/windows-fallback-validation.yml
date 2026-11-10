@@ -41,7 +41,7 @@ jobs:
             '--configuration', 'Release', '--runtime', 'win-x64', '--self-contained', 'true',
             '-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true',
             '-p:DebugType=None', '-p:DebugSymbols=false',
-            '-p:Version=' + $version, '-p:SourceRevisionId=' + $sha
+            "-p:Version=$version", "-p:SourceRevisionId=$sha"
           )
           $root = 'ci-package/agent-orchestrator-win-x64'
           New-Item -ItemType Directory -Path $root -Force | Out-Null

@@ -763,7 +763,8 @@ public sealed class DeviceLoginExecutorTests
             }
             catch (IOException)
             {
-                Assert.True(process.HasExited); // The fake exited before the write.
+                // The fake exited before the write. HasExited can still be false here because
+                // .NET reaps the child asynchronously; the exit code below proves the refusal.
             }
             await process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
 
