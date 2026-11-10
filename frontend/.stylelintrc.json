@@ -412,6 +412,17 @@
           { "ignoreValues": ["0", "auto"], "ignoreFunctions": false, "disableFix": true, "severity": "error" }
         ]
       }
+    },
+    {
+      "comment": "Task move refusal uses semantic theme and spacing tokens.",
+      "files": ["src/app/_move-refusal.scss"],
+      "rules": {
+        "color-no-hex": true,
+        "scale-unlimited/declaration-strict-value": [
+          ["padding", "padding-block", "padding-inline", "margin", "gap", "row-gap", "column-gap"],
+          { "ignoreValues": ["0", "auto"], "ignoreFunctions": false, "disableFix": true, "severity": "error" }
+        ]
+      }
     }
   ],
 

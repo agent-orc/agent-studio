@@ -93,6 +93,7 @@ public sealed class WorkspaceRepositoryMaintenanceService
         "/.metadata/attempt-authority*",
         "*.bak",
         AgentStudio.Git.SecurityStorePathPolicy.IgnorePattern,
+        AgentStudio.Magazine.MagazineStorePathPolicy.IgnorePattern,
     };
     internal const long LegacyFallbackUntrackBytes = 1024 * 1024;
 
@@ -173,7 +174,10 @@ public sealed class WorkspaceRepositoryMaintenanceService
 
         lock (WorkspaceArtifactCommitService.RepositoryGate(gitRoot))
         {
-            var excluded = EnsureExcluded(gitRoot, [AgentStudio.Git.SecurityStorePathPolicy.IgnorePattern], ct);
+            // The magazine store (MAG-1) is server state too; it is excluded
+            // here but was never tracked, so nothing needs untracking.
+            var excluded = EnsureExcluded(gitRoot,
+                [AgentStudio.Git.SecurityStorePathPolicy.IgnorePattern, AgentStudio.Magazine.MagazineStorePathPolicy.IgnorePattern], ct);
             if (!excluded.Success) return excluded;
 
             var securitySpec = $":(top,icase){AgentStudio.Git.SecurityStorePathPolicy.DirectoryName}";

@@ -50,6 +50,23 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
 
 ## Delivered
 
+- The Agent Studio project definition runs `bash scripts/check-release-build.sh`
+  as a build step after the Debug solution build. It builds the published API,
+  runner, and Task Server projects with `--configuration Release --no-restore`.
+  It disables shared compilation so a busy compiler server cannot hold the
+  gate behind unrelated builds.
+  Batch pre-checks, batch and per-task gates, and package-reference delivery
+  reviews inherit this command from the same project definition. It does not
+  repeat the test suites. A failing command makes the gate red; the durable
+  reason prefers a compiler or MSBuild diagnostic from bounded output windows
+  over a generic error line. The Release build shares the existing gate run
+  budget and is measured separately from the
+  Debug build in the gate process evidence.
+  On the shared runner on 2026-11-04, the new step reached the existing
+  Six Labors Release license error in 97.3 seconds (1.6 minutes). This is
+  the measured time to a red verdict; the successful three-project build
+  time remains unmeasured until AGT-3361 resolves the license decision.
+
 - A reviewed, batch-deferred delivery gets an opportunistic pre-check on its
   result SHA: project build commands, `.NET` guards, and touched frontend lint
   and format scripts. Regular batches retain the first gate slot; the pre-check
@@ -125,6 +142,15 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   `reasonDetail`. The first cause of a review generation is kept until the
   review returns to the batch queue. A member of an abandoned batch that is
   queued again shows `pending` with reason `requeued`, not `fallback`.
+  AGT-3694: the member also names what its fallback waits for: `waitKind`
+  (`engine-decision`, `per-task-slot`, `batch-slot`, `machine-gate-slot`,
+  `preparing`, `gate-running`, `integration`, `resume-pending`), `waitingFor`,
+  `waitSinceUtc`, and for an engine decision `engineRunId` and
+  `engineStatus`. An overdue plan reason appends the same text. A wait past
+  its bound is a `batch-fallback-stalled` event (state `fallbackStalls`, the
+  queue stall report, the card timeline and the operator feed); a stalled
+  engine decision or a flight that would not stop escalates the card as
+  `GateInfra`.
 - AGT-3498: when a formed batch's base moves before replay, the worker checks
   each member's current review and immutable delivery against the new base.
   Compatible members close together in one successor linked by
@@ -135,13 +161,18 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   reports `baseMoves` by new base SHA and `baseMoveTotals`, each counting formed
   batches kept and abandoned. A replay probe infrastructure failure pauses
   the batch rather than classifying a member as conflicting.
-- AGT-3562: one flight per project starts, so the start order decides who
-  waits (`BatchGateStartPolicy`). A stacked successor starts first. Within
-  its maximum wait (`maximumWaitMinutes`, default 45, the planning deadline)
-  the larger formed batch starts first, then the older one. A batch past its
-  maximum wait starts before younger ones, oldest first, regardless of size.
-  On 5 November 2026 batches 24991efe (12:59 UTC) and baddb7f9 (15:11 UTC)
-  stayed formed for hours while later, larger batches ran.
+- AGT-3562, AGT-3710: one flight per project starts, so the start order
+  decides who waits (`BatchGateStartPolicy`). A stacked successor starts
+  first, then a child batch, and a batch deferred after a lease deadline goes
+  last. All other formed batches start first in, first out: the oldest
+  formation time first (a re-formed or repacked batch keeps its place), then
+  the lowest member enqueue sequence, then the batch ID. Size does not reorder
+  the queue. The state reports `flightQueue` and each formed batch's
+  `queuePosition`. On 5 November 2026 batches 24991efe (12:59 UTC) and
+  baddb7f9 (15:11 UTC) stayed formed for hours while later, larger batches
+  ran; on 10 November 2026 four batches formed from 03:47 UTC waited behind
+  batches formed at 04:50 and 05:11 UTC. The full rule is in
+  [the pipeline domain map](../../system/domains/pipeline.md#flight-queue-order-agt-3710).
 - AGT-3562: a flight can wait on the project reservation before it acquires
   its coordinator lease, so lease expiry cannot free its project slot. A
   flight that has not claimed its lease within `flightLeaseDeadlineMinutes`
@@ -208,6 +239,9 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   member records its exact source-to-published-SHA mapping before lane release.
   A deferred `IntegrationBranchDefect` review releases on verified batch evidence.
   Recovery failures are logged per manifest, allowing later batches to proceed.
+  The initial `Formed` state is durable before its manifest becomes visible.
+  A manifest found without state rows is `Unknown`; recovery skips it and logs
+  the missing state once per manifest per store instance.
   A queued code push keeps its project batch reservation pending until origin
   verifies the merged SHA. The pending marker is a durable recovery job, so a
   startup sweep re-drives it even if the card remains in Auto Review and the

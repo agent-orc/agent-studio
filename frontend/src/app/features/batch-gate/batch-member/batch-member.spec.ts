@@ -62,6 +62,31 @@ describe('BatchMemberComponent', () => {
     expect(badge.title).toBe('Immutable result ref does not resolve to the expected SHA.');
   });
 
+  it('names what a per-task fallback waits for on the card', async () => {
+    const detail = 'engine decision orch_1 on the gate red is pending since 2026-11-09 22:55 UTC';
+    const state = signal({
+      ...redHalvingState,
+      members: {
+        ...redHalvingState.members,
+        'AGT-12': {
+          status: 'fallback' as const, reason: 'batch-ejected', reasonDetail: 'batch paused: unresolved-cohort',
+          waitKind: 'engine-decision', waitingFor: detail, engineRunId: 'orch_1', engineStatus: 'pending',
+        },
+      },
+    });
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), {
+      provide: BatchGateService,
+      useValue: { state: () => state.asReadonly(), watch: () => vi.fn() },
+    }] });
+    const fixture = TestBed.createComponent(BatchMemberComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('taskKey', 'AGT-12');
+    await fixture.whenStable();
+    const badge = fixture.nativeElement.querySelector('[data-testid="batch-member-badge"]') as HTMLElement;
+    expect(badge.textContent).toContain('Per-task fallback · batch-ejected · waits for engine decision');
+    expect(badge.title).toBe(detail);
+  });
+
   it('shows the pending approved push on its matching card', async () => {
     const matchingWait = {
       jobId: 'AGT-2', approvedSha: 'a'.repeat(40),

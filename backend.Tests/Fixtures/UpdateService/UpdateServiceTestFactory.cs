@@ -10,6 +10,7 @@ using GitProbe = UpdSvc::AgentTaskboard.UpdateService.GitProbe;
 using IGitProbe = UpdSvc::AgentTaskboard.UpdateService.IGitProbe;
 using BackendProbe = UpdSvc::AgentTaskboard.UpdateService.BackendProbe;
 using IBackendProbe = UpdSvc::AgentTaskboard.UpdateService.IBackendProbe;
+using TriggerToken = UpdSvc::AgentTaskboard.UpdateService.TriggerToken;
 using UpdateStatusStore = UpdSvc::AgentTaskboard.UpdateService.UpdateStatusStore;
 using PeriodicProbeService = UpdSvc::AgentTaskboard.UpdateService.PeriodicProbeService;
 
@@ -35,6 +36,10 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
     private readonly string? _frontendUrl;
     private readonly int _frontendWaitSeconds;
     private readonly int _restartHealthWaitSeconds;
+
+    // Mutating routes always demand the trigger token; every client this
+    // factory creates sends this generated fixture value.
+    private readonly string _triggerToken = "fixture-" + Guid.NewGuid().ToString("N");
 
     public UpdateServiceTestFactory(
         FakeStableCheckout checkout,
@@ -155,6 +160,12 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
         return base.CreateHost(builder);
     }
 
+    protected override void ConfigureClient(HttpClient client)
+    {
+        base.ConfigureClient(client);
+        client.DefaultRequestHeaders.Add(TriggerToken.HeaderName, _triggerToken);
+    }
+
     private UpdateServiceOptions CreateOptions() => new()
     {
         ListenUrl = "http://127.0.0.1:0",
@@ -173,7 +184,8 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
         ProbeIntervalSeconds = 5,
         AutoRollback = _autoRollback,
         Mode = _mode,
-        TriggerToken = null,
+        TriggerToken = _triggerToken,
+        TriggerTokenFile = Path.Combine(_checkout.DevspaceDir, TriggerToken.DefaultFileName),
         RequireReleaseManifest = _requireReleaseManifest,
         CandidateManifestFile = _checkout.CandidateManifestFile,
         ApprovedTagFile = _checkout.ApprovedTagFile,

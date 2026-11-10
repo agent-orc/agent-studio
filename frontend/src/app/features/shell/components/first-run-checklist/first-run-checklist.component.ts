@@ -2,7 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, output, signal } from '@angular/core';
 import { catchError, forkJoin, map, of, switchMap } from 'rxjs';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
-import { AuthService } from '../../../../services/auth.service';
+import { AuthService, type AuthStatus } from '../../../../services/auth.service';
 import { TaskService } from '../../../../services/task.service';
 import type { TaskDetail } from '../../../../models/task.model';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
@@ -12,8 +12,9 @@ import { ClaudeSignInDialogService, CodexSignInDialogService, DeviceLoginCodeEnt
 import { claudeSignInTarget, providerAuthTone, signInTarget, type ProviderAuthBadge } from '../../../remote-hosts/models/provider-auth.model';
 import { latestRepositoryProbes, normalizeProjectRegistryEntries } from '../../../remote-hosts/models/deployment-checkpoints';
 import type { InstallationIdentity, ProjectRegistryEntry, ProjectRegistryRead, RepositoryStatus } from '../../../remote-hosts/models/deployment-checkpoints';
-import { credentialFreeRepositoryUrl, deviceLoginTone, gitSetupTone, type DeviceLogin, type GitSetup, type HostJoinToken, type NetworkProof, type Probe, type ProofCard } from './first-run-checklist.models';
+import { credentialFreeRepositoryUrl, deviceLoginTone, gitSetupTone, providerBadgeWaitReason, type DeviceLogin, type GitSetup, type HostJoinToken, type NetworkProof, type Probe, type ProofCard } from './first-run-checklist.models';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
+import { readInstallationIdentity } from './first-run-installation';
 
 /** Installation facts are re-read from the authority and runner probes on every refresh. */
 @Component({
@@ -43,6 +44,8 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   readonly loading = signal(false);
   readonly nowMs = signal(Date.now());
   readonly identity = signal<Probe<InstallationIdentity>>({ value: null, error: false });
+  readonly monolithOwnerStatus = signal<Probe<AuthStatus>>({ value: null, error: false });
+  readonly monolithWithoutTaskServer = computed(() => this.monolithOwnerStatus().value?.profile === 'networked');
   readonly taskServerUnavailable = computed(() => !this.localProfile() && this.identity().error);
   readonly projects = signal<Probe<readonly ProjectRegistryEntry[]>>({ value: null, error: false });
   readonly repository = signal<Probe<RepositoryStatus>>({ value: null, error: false });
@@ -83,16 +86,14 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   readonly gitSetupValid = computed(() => (this.localProfile() || !!this.gitRunnerId())
     && !!this.repository().value?.registration?.repositoryUrl
     && (this.gitMethod() === 'deploy-key' || this.gitToken().length >= 20));
-
   readonly firstProject = computed(() => this.projects().value?.find(project => !project.archived) ?? null);
   readonly localProfile = computed(() => this.auth.status()?.profile === 'local');
-  readonly ownerReady = computed(() => (this.localProfile()
-      ? this.auth.status()?.bootstrapRequired === false
-      : this.identity().value?.ownerBootstrapped === true)
-    && this.auth.status()?.authenticated === true
-    && (this.auth.status()?.profile === 'local' || this.auth.status()?.user?.role === 'owner'));
+  readonly ownerReady = computed(() => this.localProfile() || ((this.monolithWithoutTaskServer()
+      ? this.monolithOwnerStatus().value?.bootstrapRequired === false : this.identity().value?.ownerBootstrapped === true)
+    && (this.monolithWithoutTaskServer() ? this.monolithOwnerStatus().value : this.auth.status())?.authenticated === true
+    && (this.monolithWithoutTaskServer() ? this.monolithOwnerStatus().value : this.auth.status())?.user?.role === 'owner'));
   readonly activeHosts = computed(() => this.hosts.hosts().filter(host =>
-    host.status === 'online' && !!host.lastHeartbeatAt
+    (host.status === 'online' || host.status === 'degraded') && !!host.lastHeartbeatAt
     && this.nowMs() - Date.parse(host.lastHeartbeatAt) < 90_000));
   readonly providerBadges = computed(() => this.providers.statuses());
   readonly providersReady = computed(() => {
@@ -149,14 +150,11 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
     if (this.loading()) { this.reloadQueued = true; return; }
     this.nowMs.set(Date.now());
     this.loading.set(true);
+    this.monolithOwnerStatus.set({ value: null, error: false });
     this.hosts.reload();
     this.providers.refresh();
-    const identity = (this.localProfile()
-      ? of({ installationId: 'local', ownerBootstrapped: this.auth.status()?.bootstrapRequired === false,
-          ownerBootstrapArmed: false } as InstallationIdentity)
-      : this.http.get<InstallationIdentity>('/api/v1/installation')).pipe(
-      map(value => ({ value, error: false } as Probe<InstallationIdentity>)),
-      catchError(() => of({ value: null, error: true } as Probe<InstallationIdentity>)));
+    const identity = readInstallationIdentity(this.http, this.auth.status(),
+      probe => this.monolithOwnerStatus.set(probe));
     const projects = this.http.get<ProjectRegistryRead[]>(this.localProfile() ? '/api/projects' : '/api/v1/projects').pipe(
       map(value => ({ value: normalizeProjectRegistryEntries(value), error: false } as Probe<readonly ProjectRegistryEntry[]>)),
       catchError(() => of({ value: null, error: true } as Probe<readonly ProjectRegistryEntry[]>)));
@@ -368,6 +366,10 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   badgeReady(badge: ProviderAuthBadge): boolean {
     return badge.reachable && badge.state === 'ok' && !!badge.lastSeenAt
       && this.nowMs() - Date.parse(badge.lastSeenAt) < 5 * 60_000;
+  }
+
+  badgeWaitReason(badge: ProviderAuthBadge): string | null {
+    return providerBadgeWaitReason(badge, this.badgeHostOnline(badge), this.nowMs());
   }
 
   startProof(): void {

@@ -101,9 +101,7 @@ public static class SupersededCommitSweepPolicy
     }
 
     internal static bool IsRunnerFence(TaskCommitInfo commit)
-        => Subject(commit).StartsWith(
-            "wip(runner): salvage before teardown",
-            StringComparison.OrdinalIgnoreCase);
+        => RunnerSalvageCommit.IsTeardown(commit.Message);
 
     private static bool IsLifecycleMarker(TaskCommitInfo commit)
     {

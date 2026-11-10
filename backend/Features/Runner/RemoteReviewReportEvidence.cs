@@ -26,7 +26,8 @@ internal static class RemoteReviewReportEvidence
         Contract.ReviewReportRequest request,
         string reportSha256,
         DateTime receivedAt,
-        CancellationToken ct)
+        CancellationToken ct,
+        StableReleaseIdentity? stable = null)
     {
         var fileName = EvidenceFileName(attemptId);
         var path = Path.Combine(jobFolder, fileName);
@@ -41,7 +42,8 @@ internal static class RemoteReviewReportEvidence
             request,
             reportSha256,
             receivedAt,
-            artifactFiles);
+            artifactFiles,
+            stable);
         await File.WriteAllTextAsync(path, report, new UTF8Encoding(false), ct);
         return fileName;
     }
@@ -52,7 +54,8 @@ internal static class RemoteReviewReportEvidence
         Contract.ReviewReportRequest request,
         string reportSha256,
         DateTime receivedAt,
-        IReadOnlyDictionary<string, string> artifactFiles)
+        IReadOnlyDictionary<string, string> artifactFiles,
+        StableReleaseIdentity? stable = null)
     {
         var text = new StringBuilder();
         text.AppendLine("---");
@@ -79,6 +82,10 @@ internal static class RemoteReviewReportEvidence
             if (Contract.ReviewWorkerProvenancePolicy.SupersededNotice(workerProvenance)
                 is { } supersededNotice)
                 text.AppendLine($"workerReleaseSuperseded: {Yaml(supersededNotice)}");
+            // AGT-3689: say so when the grading build is not the Stable build.
+            if (HostReleaseDriftPolicy.GradedAgainstStableNotice(workerProvenance.WorkerReleaseId, stable)
+                is { } stableNotice)
+                text.AppendLine($"workerReleaseStable: {Yaml(stableNotice)}");
         }
         var baselineReuse = BaselineReuseCitations(request.Commands);
         if (baselineReuse is not null)

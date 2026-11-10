@@ -66,6 +66,8 @@ public static class TimelineEventKinds
     public const string AgentRunFinished = "agent_run_finished";
     /// <summary>An operator move fenced a remote attempt while retaining its work as reference.</summary>
     public const string RunAttemptRevoked = "run_attempt_revoked";
+    /// <summary>An operator withdrew a card from an active batch before moving its lane.</summary>
+    public const string BatchWithdrawn = "batch_withdrawn";
     /// <summary>A remote result awaits an operator decision because its brief is older.</summary>
     public const string OlderBriefDeliveryOffered = "older_brief_delivery_offered";
     /// <summary>A result producer replaced status.md after preserving the prior version.</summary>
