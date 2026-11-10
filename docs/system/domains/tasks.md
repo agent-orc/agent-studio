@@ -46,10 +46,21 @@ The board move (`POST /api/tasks/{id}/move`) and state update
 tries to move a card out of Auto Review while a formed, running, or publishing
 batch still owns it. The response names the batch, phase, and other members.
 An operator can confirm the move with `withdrawFromBatch: true` and a written
-`reason`. The move requests an eject before changing the lane, records the
-operator and reason on the card timeline and in the batch withdrawal journal,
-and requests a fresh planner pass. A card that is pending but has no batch
-continues to move normally.
+`reason`. The move requests an eject before changing the lane. When the move
+succeeds, it records the operator and reason on the card timeline and in the
+batch withdrawal journal, and requests a fresh planner pass. A refused or
+interrupted move clears the eject again, so the batch keeps running. A card
+that is pending but has no batch continues to move normally.
+
+The rule lives in one shared guard (`ActiveBatchMemberGuard`) that
+`TaskTransitionService.MoveAsync` applies to every operator cause (a person,
+an operator agent session, or a service account). Other routes that move a
+card therefore refuse the same move: `POST /api/tasks/batch-move` reports the
+item as `refused` with a message naming the batch, its phase, and its other
+members, and the other move routes answer `409 active-batch-member`. Batch
+move has no withdrawal option; withdraw a member with the single move. The
+runner, the batch gate, and the orchestrator own their own Auto Review
+transitions and are not refused by this guard.
 
 ### Routing mutation publication
 
