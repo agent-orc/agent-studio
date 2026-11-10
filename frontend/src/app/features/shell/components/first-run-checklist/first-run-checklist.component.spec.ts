@@ -55,6 +55,7 @@ describe('FirstRunChecklistComponent probes', () => {
   });
 
   beforeEach(() => {
+    for (const mock of Object.values(deviceLogins)) mock.mockReset();
     localStorage.removeItem('studio-first-run-proof');
     localStorage.removeItem('studio-first-run-git-setup-id');
     host.set([]);
