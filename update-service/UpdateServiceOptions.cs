@@ -93,7 +93,37 @@ public sealed class UpdateServiceOptions
     /// </summary>
     public int DoneLingerSeconds { get; set; } = 60;
 
+    /// <summary>
+    /// Shared secret for every state-changing route (header
+    /// <c>X-Update-Token</c>, env <c>ATP_UPDATE_TOKEN</c>). When unset, the
+    /// token is read from <see cref="TriggerTokenFile"/>, and the first start
+    /// generates it there. The service never accepts a mutation without one.
+    /// </summary>
     public string? TriggerToken { get; set; } = null;
+
+    /// <summary>
+    /// Owner-only token file (env <c>ATP_UPDATE_TOKEN_FILE</c>). Defaults to
+    /// <c>.update-token</c> in the service content root, beside appsettings.json.
+    /// The Studio backend reads the same file.
+    /// </summary>
+    public string? TriggerTokenFile { get; set; } = null;
+
+    /// <summary>
+    /// Studio origins granted CORS, separated by <c>;</c> (env
+    /// <c>ATP_UPDATE_ALLOWED_ORIGINS</c>). Defaults to the loopback dev (4010)
+    /// and Stable (4011) frontends. An empty value grants no origin, for a
+    /// Studio that calls the service server-to-server. Credentials are never
+    /// allowed.
+    /// </summary>
+    public string AllowedOrigins { get; set; } =
+        "http://127.0.0.1:4010;http://localhost:4010;http://127.0.0.1:4011;http://localhost:4011";
+
+    public IReadOnlyList<string> AllowedOriginList()
+        => AllowedOrigins.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(origin => origin.TrimEnd('/'))
+            .Where(origin => origin != "*")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
     /// <summary>
     /// AGT-2947: the placement this service manages. Only

@@ -226,6 +226,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | studio-op operator CLI: installation, Owner token file setup, commands and their routes, watcher lock and lease, accept check, stable exit codes (AGT-3462 OP-8) | [operations/setup/studio-op.md](../operations/setup/studio-op.md) |
 | Installation connectivity manifest, resolved ports and single RunnerLinks owner (I04) | [operations/setup/connectivity-manifest.md](../operations/setup/connectivity-manifest.md) |
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
+| Update Service operations: loopback bind, owner-only trigger token file, allowed Studio origins, forced triggers (AGT-3713) | [operations/setup/update-service.md](../operations/setup/update-service.md) |
 | Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |
 | Application telemetry intake: OTLP metrics and logs per project environment, ingest tokens, retention, query API (IP-15) | [operations/setup/app-telemetry-intake.md](../operations/setup/app-telemetry-intake.md) |
 | Project definition v2 proposal (inactive; shared AGT/QS/Voice properties, quality applicability and rollout) | [plan](../operations/docker-ausfuehrungswelt-migration/project-definition-v2-plan.md) · [draft schema](../operations/docker-ausfuehrungswelt-migration/project-execution.v2.draft.schema.json) |
