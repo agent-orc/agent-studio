@@ -32,9 +32,11 @@ internal static class OperatorDecisionHarness
         DateTimeOffset now,
         int infrastructureRequeues = 0,
         DateTimeOffset? lastInfrastructureRequeueAt = null,
-        DateTimeOffset? quotaResetAt = null)
+        DateTimeOffset? quotaResetAt = null,
+        int autonomyLevel = AutomaticAcceptancePolicy.DefaultAutonomyLevel)
         => AcceptanceRailHostedService.RailDecision(AiOperatorDecisionPolicy.Decide(new AiOperatorDecisionPayload(
             AiOperatorDeciders.AcceptanceRail, "acceptance-rail:test",
             AcceptanceRail: AcceptanceRailFacts.From(task, integration, conflictRequeues, options, now,
-                infrastructureRequeues, lastInfrastructureRequeueAt, quotaResetAt))));
+                infrastructureRequeues, lastInfrastructureRequeueAt, quotaResetAt,
+                autonomyLevel: autonomyLevel))));
 }

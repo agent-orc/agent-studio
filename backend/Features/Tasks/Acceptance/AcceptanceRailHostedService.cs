@@ -50,6 +50,7 @@ public sealed class AcceptanceRailHostedService : BackgroundService, IAiOperator
     private readonly IConfiguration _configuration;
     private readonly ILogger<AcceptanceRailHostedService> _logger;
     private readonly AiOperatorDecisionGateway _decisions;
+    private readonly AgentStudio.Registry.OrchestratorDefaultsProvider? _orchestratorDefaults;
     private readonly object _snapshotGate = new();
     private readonly SemaphoreSlim _runGate = new(1, 1);
     private readonly DateTime _startedAtUtc = DateTime.UtcNow;
@@ -78,9 +79,11 @@ public sealed class AcceptanceRailHostedService : BackgroundService, IAiOperator
         ILogger<AcceptanceRailHostedService> logger,
         IntegrationGenerationReconcileSweep? generationReconcile = null,
         AttemptAuthorityService? attemptAuthority = null,
-        AiOperatorDecisionGateway? decisions = null)
+        AiOperatorDecisionGateway? decisions = null,
+        AgentStudio.Registry.OrchestratorDefaultsProvider? orchestratorDefaults = null)
     {
         _decisions = decisions ?? AiOperatorDecisionGateway.ForTestHost(configuration);
+        _orchestratorDefaults = orchestratorDefaults;
         _scanner = scanner;
         _generationReconcile = generationReconcile;
         _attemptAuthority = attemptAuthority;
@@ -168,7 +171,8 @@ public sealed class AcceptanceRailHostedService : BackgroundService, IAiOperator
                 }
                 var recoveryBudget = CountConflictRequeues(job);
                 var infrastructureUsed = CountInfrastructureRequeues(job);
-                var facts = Facts(job, status, deliveryChainOwns, recoveryBudget, infrastructureUsed, options);
+                var facts = Facts(job, status, deliveryChainOwns, recoveryBudget, infrastructureUsed, options,
+                    AutonomyLevel(job));
                 var submission = _decisions.Submit(new AiOperatorDecisionRequest(job.ProjectName, job.Id, job.State,
                     new AiOperatorDecisionPayload(Decider, SubjectKey(job, facts), AcceptanceRail: facts),
                     Period: null));
@@ -238,7 +242,8 @@ public sealed class AcceptanceRailHostedService : BackgroundService, IAiOperator
             _integrationStatus.BuildLookup([job]).TryGetValue(job.TaskKey, out var status);
             var recoveryBudget = CountConflictRequeues(job);
             var infrastructureUsed = CountInfrastructureRequeues(job);
-            var facts = Facts(job, status, DeliveryChainOwns(job, status), recoveryBudget, infrastructureUsed, options);
+            var facts = Facts(job, status, DeliveryChainOwns(job, status), recoveryBudget, infrastructureUsed, options,
+                AutonomyLevel(job));
             if (SubjectKey(job, facts) != application.Payload.SubjectKey) return;
             await ApplyDecisionAsync(job, status, RailDecision(application.Decision), recoveryBudget,
                 infrastructureUsed, options, new RailTally(), ct);
@@ -252,9 +257,15 @@ public sealed class AcceptanceRailHostedService : BackgroundService, IAiOperator
             && AcceptanceIntegrationPolicy.IsIntegrationRequired(job)
             && status?.Status != IntegrationStatuses.Integrated;
 
+    /// <summary>The project's effective autonomy level; the platform default without a resolver.</summary>
+    private int AutonomyLevel(TaskInfo job)
+        => _orchestratorDefaults?.ResolveAutonomyLevel(job.ProjectName, AutomaticAcceptancePolicy.DefaultAutonomyLevel)
+           ?? AutomaticAcceptancePolicy.DefaultAutonomyLevel;
+
     private static AcceptanceRailOperatorFacts Facts(TaskInfo job, TaskIntegrationStatus? status,
         bool deliveryChainOwns, IntegrationRecoveryBudgetUsage recoveryBudget,
-        (int Count, DateTimeOffset? LastAt) infrastructureUsed, AcceptanceRailOptions options)
+        (int Count, DateTimeOffset? LastAt) infrastructureUsed, AcceptanceRailOptions options,
+        int autonomyLevel)
         => AcceptanceRailFacts.From(
             job,
             status,
@@ -267,7 +278,8 @@ public sealed class AcceptanceRailHostedService : BackgroundService, IAiOperator
             // rail backs off exponentially instead of waiting for a known
             // reset. The facts take the instant for the callers that know it.
             quotaResetAt: null,
-            deliveryChainOwns: deliveryChainOwns);
+            deliveryChainOwns: deliveryChainOwns,
+            autonomyLevel: autonomyLevel);
 
     private static string SubjectKey(TaskInfo job, AcceptanceRailOperatorFacts facts)
         => AiOperatorDecisionGateway.FactsSubjectKey("acceptance-rail", job.Id, facts);
@@ -334,7 +346,7 @@ public sealed class AcceptanceRailHostedService : BackgroundService, IAiOperator
                 // that judgement on the operator's behalf.
                 if (_configuration.GetValue("DeliveryChain:Guarded", true))
                     tally.Held++;
-                else if (await AcceptAsync(job, ct)) tally.Accepted++;
+                else if (await AcceptAsync(job, AutonomyLevel(job), ct)) tally.Accepted++;
                 else { tally.Failed++; RememberRefusal(job, fingerprint); }
                 break;
             case AcceptanceRailAction.Requeue:
@@ -428,8 +440,10 @@ public sealed class AcceptanceRailHostedService : BackgroundService, IAiOperator
             if (!present.Contains(key)) _refusedAttempts.TryRemove(key, out _);
     }
 
-    private async Task<bool> AcceptAsync(TaskInfo job, CancellationToken ct)
+    private async Task<bool> AcceptAsync(TaskInfo job, int autonomyLevel, CancellationToken ct)
     {
+        // The decision already required this autonomy level; it only names it here.
+        var acceptedBy = AutomaticAcceptanceText.AcceptedBy(autonomyLevel);
         var current = _scanner.FindJob(job.Id, job.WatchPath);
         if (current is null)
         {
@@ -447,10 +461,11 @@ public sealed class AcceptanceRailHostedService : BackgroundService, IAiOperator
             current.WatchPath,
             ct,
             cause: TimelineActors.System,
-            reason: "The acceptance rail accepted the Git-derived integrated delivery.",
+            reason: $"Accepted automatically by {acceptedBy}: the delivery is integrated and its gate evidence permits completion.",
             expectedSourceState: TaskStates.HumanReview,
             transitionCause: LaneChangeCauses.Accepted,
-            transitionDetail: TaskIntegrationRecoveryService.AcceptanceRailSource);
+            transitionDetail: TaskIntegrationRecoveryService.AcceptanceRailSource,
+            automaticAcceptanceBy: acceptedBy);
         if (outcome.Status != MoveJobStatus.Success)
         {
             _logger.LogWarning(
@@ -464,7 +479,7 @@ public sealed class AcceptanceRailHostedService : BackgroundService, IAiOperator
 
         var moved = _scanner.FindJob(job.Id, job.WatchPath);
         if (moved is not null)
-            AppendAction(moved, "accepted", "Accepted integrated delivery without a session-bound orchestrator tick.");
+            AppendAction(moved, "accepted", $"Accepted automatically by {acceptedBy}.");
         return true;
     }
 
