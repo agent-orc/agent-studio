@@ -340,7 +340,7 @@ for (const scenario of [
     if (scenario.name === 'light') {
       await page.getByTestId(`studio-tab-close-workbench:${PROJECT}:${WORKBENCH_ID}`).click();
       await page.getByTestId('studio-ab-workbenches').click();
-      await page.getByTestId(`workbench-overview-open-${PROJECT}-${WORKBENCH_ID}`).click();
+      await page.getByRole('button', { name: 'Open full view' }).click();
       await expect(page.getByTestId('workbench-viewer')).toBeVisible();
       await expect(page.getByTestId('workbench-inline-decision-action')
         .getByTestId('workbench-decision-confirm')).toBeEnabled();
