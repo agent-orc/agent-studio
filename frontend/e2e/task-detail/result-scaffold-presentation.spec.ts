@@ -127,6 +127,9 @@ function detail(fixture: ScaffoldFixture) {
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+  await page.route('**/api/usage/cockpit**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ workspaceId: 'fixture', clis: [], cost: null }) }));
   await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
@@ -236,6 +239,65 @@ async function installRoutes(page: Page): Promise<void> {
 
 test.describe('Result scaffold presentation', () => {
   test.use({ serviceWorkers: 'block' });
+
+  for (const theme of ['light', 'dark'] as const) {
+    test(`accepted card keeps its real Result and renders quietly in ${theme}`, async ({ page }) => {
+      const pageErrors: string[] = [];
+      page.on('pageerror', error => pageErrors.push(error.message));
+      await page.addInitScript((selectedTheme) => localStorage.setItem('atp.studio.theme', selectedTheme), theme);
+      await installRoutes(page);
+      const fixture = FIXTURES[0];
+      const id = encodeURIComponent(fixture.id);
+      const real = '# Status\n- Result: Success\n\n## Overview\n\n- Problem: The first run needed a decision.\n- Solution: The delivered change is integrated and accepted.\n\n## What Was Done\n\n- Finished the requested implementation.\n';
+      const accepted = detail(fixture);
+      accepted.info.state = '6-completed';
+      accepted.statusMarkdown = real;
+      await page.route(`**/api/tasks/${id}/delivery-claim**`, route =>
+        route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+          taskKey: accepted.info.taskKey, jobId: fixture.id, lane: '6-completed',
+          deliveryRef: null, integrationBranch: 'develop', releaseBranch: 'main',
+          containmentStatus: 'not-applicable', integrated: false, released: null,
+          integratedSha: null, mergeCommit: null, mergeSubject: null, mergedAt: null,
+          hasIntegrationRecord: false, class: 'no-delivery', findings: [], completionClaim: null,
+        }) }));
+      await page.route('**/api/v1/studio/board**', route =>
+        route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+          backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
+          failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [],
+          escalated: [], review: [], completed: [accepted.info], archive: [],
+        }) }));
+      await page.route(`**/api/v1/projects/*/tasks/${id}?**`, route =>
+        route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+          ...accepted,
+          info: { ...accepted.info, outcomeIssue: {
+            kind: 'pipeline-failure', label: 'Pipeline failure', severity: 'High',
+            summary: 'Earlier attempt failed.', lastSeenAt: null,
+          } },
+        }) }));
+      for (const width of theme === 'light' ? [1280, 390] : [1280, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(`/?job=${id}&watchPath=${encodeURIComponent(WATCH_PATH)}`, { waitUntil: 'domcontentloaded' });
+        const tab = page.getByTestId('inspector-tab-protocol');
+        if (await tab.getAttribute('aria-selected') !== 'true') await tab.click();
+        const result = page.getByTestId('protocol-beautiful-results');
+        await expect(result.getByTestId('result-case-badge')).toContainText('Accepted');
+        await expect(result).toContainText('The delivered change is integrated and accepted.');
+        await expect(result).not.toContainText('Pipeline failure');
+        await expect(result.getByTestId('result-scaffold-notice')).toHaveCount(0);
+        await expect(result.getByTestId('result-inconsistencies')).toHaveCount(0);
+        await expect(page.getByTestId('delivery-claim-panel')).not.toHaveAttribute('data-integration', 'not-integrated');
+        await expect(page.getByTestId('delivery-claim-panel')).toHaveAttribute('data-settled', 'true');
+        await page.waitForTimeout(500);
+        await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
+        expect(pageErrors).toEqual([]);
+        // This fixture has no SignalR backend; keep its unrelated outage banner
+        // out of the accepted-card visual evidence.
+        await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
+        mkdirSync(SHOTS_DIR, { recursive: true });
+        await page.screenshot({ path: join(SHOTS_DIR, `accepted-card-result-${width}-${theme}.png`), fullPage: true });
+      }
+    });
+  }
 
   for (const theme of ['light', 'dark'] as const) {
     test(`AGT-2514 and a second marked scaffold render one understandable origin notice in ${theme} theme`, async ({ page }) => {

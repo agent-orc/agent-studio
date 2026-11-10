@@ -385,6 +385,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-per-task-fallback-silent-engine-wait">
+          <td>2026-11-10</td>
+          <td><code>AGT-3563</code>, <code>AGT-3183</code><br><span class="small">per-task-fallback-silent-engine-wait (fix <code>AGT-3694</code>)</span></td>
+          <td>No CLI crashed. Two batch-ejected cards sat in <span class="lane">4-auto-review</span> for 11 to 12 hours after deploy 37 restarted the API. Their per-task marker was active with two of two starts spent, yet no per-task gate ran, no escalation followed and the queue-stall report was empty. The plan said only <code>overdue pending: ... per-task fallback: batch-ejected</code>. Terminal at discovery: Auto Review without a stated wait.</td>
+          <td>The fallback returned before its start budget check whenever an engine GateResult decision on its release or red key was <code>pending</code>, <code>leased</code> or <code>applying</code>. On Engine mode, the budget escalation itself opens such a red decision; with no engine instance deciding it, every tick repeated the same early return. Nothing bounded that wait or a fallback flight that never returned, and neither the batch state nor the card named it.</td>
+          <td>The observed terminal was Auto Review. <code>PerTaskFallbackWaitPolicy</code> now bounds every wait: an engine decision open for 30 minutes, or with an unrenewed lease two minutes past expiry, is superseded and the card escalates as <code>GateInfra</code> with the run id, the starts and the base. A stalled gate flight is cancelled with its start charged; one that does not stop is detached and its resume escalates. Each bound raises a <code>batch-fallback-stalled</code> event (batch store, card timeline, operator feed), and the batch state and card badge name the current wait.</td>
+        </tr>
         <tr id="case-clean-repeat-unobserved">
           <td>2026-11-10</td>
           <td><code>AGT-3641</code><br><span class="small">clean-repeat-unobserved (fix <code>AGT-3650</code>)</span></td>
@@ -3162,6 +3169,13 @@
           <td>After the Linux server move, Result summaries, post-summary assessments, and tag calls launched a provider CLI in the API container. The CLI exited 1 with "Not logged in". Summary finalization tried three times and cards displayed <code>Summary pending (degraded: exitCode=1)</code>.</td>
           <td>The control plane had no provider login by design. Its short completion paths still used local process execution instead of the accepted coding or review host.</td>
           <td>The observed terminal was a degraded Result summary; other short completions failed. Networked one-shots now travel as bounded Task Server jobs. A host claims only with fresh <code>model-acceptance:&lt;cli&gt;:&lt;model&gt;</code> evidence. With no host, the Result reports <code>waiting for a host with &lt;capability&gt;</code> and defers without spending the summary retry budget. A later accepted host lets the retry complete.</td>
+        </tr>
+        <tr id="case-cause-breaker-recheck-newest-delivery">
+          <td>2026-11-09</td>
+          <td><code>AGT-3617</code><br><span class="small">cause-breaker-recheck-newest-delivery</span></td>
+          <td>Newcomer playthrough AGT-3560 (H1): with the breaker open, held cards read "Waiting for review slot &middot; position 1" while the review host was idle. "Move to Accepted" on intervention card DEMO-2 returned 409 for a missing delivery brief and content verdict. The probe always released the oldest card, whose delivery still carried the broken test, so it failed twice.</td>
+          <td>The probe ordered waiting cards by park time, no UI read <code>/api/cause-breakers</code>, the CURRENT line ignored the cause-wait marker, and a plain move of a code-free intervention card hit the content check meant for deliveries.</td>
+          <td>The breaker cleared only after the first card was deleted. The CURRENT line now says "Held behind &lt;key&gt;: &lt;cause&gt;" with a link, the intervention card offers "Re-check now", the probe takes the newest waiting delivery or the card the owner chose, and the owner's Accepted move on a code-free intervention completes as a recorded decision that closes the breaker.</td>
         </tr>
       </tbody>
     </table>

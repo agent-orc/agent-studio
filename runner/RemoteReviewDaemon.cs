@@ -65,7 +65,7 @@ public sealed class RemoteReviewDaemon
             idleWatchdog.AbortToken);
         shutdown = daemonStop.Token;
         using var auxiliaryStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
-        var oneShotPoll = new OneShotJobAdmission(_options, _client, _log).PollAsync(auxiliaryStop.Token);
+        Task oneShotPoll = Task.CompletedTask;
         var gitSetupPoll = new RunnerGitSetupAgent(_options, _client, _log)
             .PollAsync(auxiliaryStop.Token);
         var repositoryProbePoll = new RunnerProjectRepositoryProbe(_options, _client,
@@ -403,6 +403,7 @@ public sealed class RemoteReviewDaemon
                 () => Math.Max(active.Count, persistedAtStartup.Count),
                 shutdown,
                 HonorControlBeforeClaimsAsync);
+            oneShotPoll = new OneShotJobAdmission(_options, _client, _log).PollAsync(auxiliaryStop.Token);
 
             var startupReconciliation = await reconciler.ReconcileAsync(
                 new HashSet<string>(StringComparer.Ordinal),

@@ -408,13 +408,32 @@ export function parkedSecondsAt(park: ParkedBlockerStatus, nowMs: number): numbe
  * Build the full view, or null when the card is not parked. `timeline` lets a
  * park whose marker predates the recorded cause take it from the ledger.
  */
+const STALE_VERDICT_PARK_DETAIL = 'delivery-verdict-stale';
+
+/**
+ * AGT-3621: a stale-verdict park says "integrate the current delivery". Once
+ * the card's computed integration field says the delivery is integrated, that
+ * precondition is met and the park no longer describes the card. The delivery
+ * chain once wrote this park on a plain promotion, so integrated Human Review
+ * cards carried a false "Only a person can clear this park" banner.
+ */
+export function parkPreconditionMet(
+  info: Pick<TaskInfo, 'parkedBlocker'> & Partial<Pick<TaskInfo, 'integration'>>,
+): boolean {
+  const park = info.parkedBlocker;
+  return !!park
+    && park.cause === 'acceptance-integration-failed'
+    && park.causeDetail === STALE_VERDICT_PARK_DETAIL
+    && info.integration?.status === 'integrated';
+}
+
 export function buildParkedBlockerView(
-  info: Pick<TaskInfo, 'parkedBlocker'>,
+  info: Pick<TaskInfo, 'parkedBlocker'> & Partial<Pick<TaskInfo, 'integration'>>,
   nowMs = Date.now(),
   timeline: readonly ParkTimelineEvent[] = [],
 ): ParkedBlockerView | null {
   const park = info.parkedBlocker;
-  if (!park) return null;
+  if (!park || parkPreconditionMet(info)) return null;
 
   const cause = resolveParkCause(park, timeline);
   const reason = parkReasonSentence(park.reason, cause);
@@ -462,7 +481,7 @@ export interface ParkedBoardBadge {
 
 /** The board badge for a parked card, or null when the card is not parked. */
 export function buildParkedBadge(
-  info: Pick<TaskInfo, 'parkedBlocker'>,
+  info: Pick<TaskInfo, 'parkedBlocker'> & Partial<Pick<TaskInfo, 'integration'>>,
   nowMs = Date.now(),
 ): ParkedBoardBadge | null {
   const view = buildParkedBlockerView(info, nowMs);

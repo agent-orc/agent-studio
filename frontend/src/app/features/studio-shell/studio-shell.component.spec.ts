@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
@@ -9,6 +9,12 @@ import type { RegistryProjectSummary, RegistryWorkspaceListItem, TaskInfo } from
 import { TaskService } from '../../services/task.service';
 import { StudioTabStateService } from './services/studio-tab-state.service';
 import { projectIdentity } from '../../services/project-identity.util';
+
+beforeEach(async () => {
+  // Individual specs must not depend on the smoke test running first to
+  // resolve the component's external template and styles.
+  await TestBed.configureTestingModule({ imports: [StudioShellComponent] }).compileComponents();
+});
 
 // AGT-2035: the workspace-delete gating helpers (`canDeleteWorkspace` /
 // `workspaceDeleteTooltip`) moved to WorkspaceManagementComponent; their unit
@@ -667,7 +673,8 @@ describe('StudioShellComponent active-tab scroll-into-view (AGT-2135)', () => {
     const active = Array.from(list.querySelectorAll<HTMLElement>('.studio-tab'))
       .find(el => el.getAttribute('data-tab-key') === activeTabKey)!;
     const spy = vi.fn();
-    active.scrollIntoView = spy as unknown as HTMLElement['scrollIntoView'];
+    // Stub the instance: plain assignment throws if a prototype slot is non-writable.
+    Object.defineProperty(active, 'scrollIntoView', { configurable: true, writable: true, value: spy });
     // Visible strip spans x ∈ [0, 200].
     list.getBoundingClientRect = (() => ({ left: 0, right: 200, top: 0, bottom: 30, width: 200, height: 30, x: 0, y: 0, toJSON() { return {}; } }) as DOMRect);
     active.getBoundingClientRect = (() => ({ left: tabRect.left, right: tabRect.right, top: 0, bottom: 30, width: tabRect.right - tabRect.left, height: 30, x: tabRect.left, y: 0, toJSON() { return {}; } }) as DOMRect);
