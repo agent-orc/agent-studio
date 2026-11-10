@@ -1683,6 +1683,16 @@ comparison before Quality Studio's verdict contract can decide a review.
   target-Completed-only exception; no-branch task metadata is exempt without an
   override.
 
+  A current delivery can inherit its card's verified merge record when the
+  commit memberships used for the integration detail place its effective
+  commits in that verified tree, even if an earlier delivery SHA list omitted
+  the current review result. For a contained delivery without a card-local
+  verification record, acceptance can use the newest passing, final
+  `published-batch` base verdict whose tree contains the delivery and remains
+  on the branch. Red or provisional verdicts, rewritten branches, and newer
+  deliveries outside the verified tree never qualify. The completion claim
+  names the batch and verified tree.
+
   `DeliveryRefResolver` chooses the immutable result ref first, then an
   attributed commit branch, then `runner/<runner>/<task-key>`, with
   `task/<slug>` only as the legacy local fallback. Remote delivery is fetched
