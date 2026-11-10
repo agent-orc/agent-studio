@@ -16,6 +16,7 @@ import {
   type TaskUrlHistoryMode,
 } from './task-url';
 import { ProjectLookupService } from '../../../services/project-lookup.service';
+import { TaskSectionAccessService } from '../../../services/task-section-access.service';
 import { parseStudioRoute } from '../../studio-shell/services/studio-route';
 import { taskCoreKey, type TaskCore, type TaskCoreResult, type TaskDocumentData, type TaskResource,
   type ResourceName, type TaskUsageData, type TaskReviewData, type TaskHistoryData,
@@ -28,6 +29,9 @@ export interface TaskDetailLoadError {
 }
 
 const TASK_PAGER_HISTORY_STATE = 'studioTaskPager';
+
+/** A refused core read: the card is gone or this session may not open it. */
+const CARD_NOT_AVAILABLE_MESSAGE = 'This card is not available to this account.';
 
 interface CoreOpenOptions {
   /** Reuse the current task tab once the core is accepted. */
@@ -106,6 +110,7 @@ export class TaskSelectionService {
   private readonly prefetch = inject(TaskDetailPrefetchService);
   private readonly boardFilters = inject(BoardFiltersService);
   private readonly projectLookup = inject(ProjectLookupService);
+  private readonly sectionAccess = inject(TaskSectionAccessService);
   private readonly destroyRef = inject(DestroyRef);
 
   /** How many slots ahead of the current pager index to warm. */
@@ -439,6 +444,11 @@ export class TaskSelectionService {
       && current.runtime.attemptId === core.runtime.attemptId;
   }
 
+  /**
+   * Only a refused core read lands here: the card itself is gone or no
+   * longer readable for this session. Section reads go through
+   * `sectionRefused`, which never clears the selection on its own.
+   */
   private revokeSelection(error: unknown, id: string): boolean {
     const status = httpStatus(error);
     if (status !== 403 && status !== 404) return false;
@@ -448,7 +458,25 @@ export class TaskSelectionService {
     this.detailPreview.set(null);
     this.selected.set(null);
     this.detailLoading.set(false);
-    this.failDetailLoad(error, id, () => this.restoreFromUrl());
+    this.failDetailLoad(error, id, () => this.restoreFromUrl(), CARD_NOT_AVAILABLE_MESSAGE);
+    return true;
+  }
+
+  /**
+   * A 403 or 404 on one detail section answers for that section only
+   * (AGT-3669): a Product session is refused run internals such as usage,
+   * yet may read the card. The section is hidden or marked and one core
+   * revalidation decides whether the card itself is still readable; only a
+   * refused core read revokes the selection.
+   */
+  private sectionRefused(name: ResourceName, error: unknown, token: number, core: TaskCore): boolean {
+    const status = httpStatus(error);
+    if (status !== 403 && status !== 404) return false;
+    if (status === 404) this.setResourceState(name, 'unavailable', 'section-not-found');
+    // The prompt and status documents are the card itself: mark them, never hide them.
+    else if (name === 'documents') this.setResourceState(name, 'unavailable', 'document-access-denied');
+    else this.setResourceState(name, 'restricted', 'section-access-denied');
+    this.refreshCore(token, core, false);
     return true;
   }
 
@@ -754,7 +782,7 @@ export class TaskSelectionService {
           finish();
         },
         error: error => {
-          if (current() && !this.revokeSelection(error, core.id)) {
+          if (current() && !this.sectionRefused('documents', error, token, core)) {
             if (httpStatus(error) === 409) {
               this.setResourceState('documents', 'stale', 'core-generation-changed');
               this.refreshCore(token, core);
@@ -785,6 +813,11 @@ export class TaskSelectionService {
       const review = this.reviewRequest;
       if (name !== 'review' || !evidence || !review || review.evidence || review.subscription.closed) return;
       review.subscription.unsubscribe();
+    }
+    if (this.resourceStates()[name].phase === 'restricted') return;
+    if (!this.sectionAccess.canRead(name)) {
+      this.setResourceState(name, 'restricted', 'section-access-denied');
+      return;
     }
     const token = this.openDetailToken;
     this.setResourceState(name, 'loading', null);
@@ -844,7 +877,7 @@ export class TaskSelectionService {
         }
       },
       error: error => {
-        if (!this.isCurrent(token, core) || this.revokeSelection(error, core.id)) return;
+        if (!this.isCurrent(token, core) || this.sectionRefused(name, error, token, core)) return;
         const stale = httpStatus(error) === 409;
         this.setResourceState(name, stale ? 'stale' : 'error',
           stale ? 'core-generation-changed' : `${name} request failed`);
@@ -1432,7 +1465,7 @@ export class TaskSelectionService {
     this.detailLoadError.set(null);
   }
 
-  private failDetailLoad(error: unknown, taskLabel: string, retry: () => void): void {
+  private failDetailLoad(error: unknown, taskLabel: string, retry: () => void, message?: string): void {
     const status = typeof error === 'object' && error !== null && 'status' in error
       ? Number((error as { status?: unknown }).status)
       : 0;
@@ -1441,11 +1474,11 @@ export class TaskSelectionService {
       && 'name' in error && (error as { name?: unknown }).name === 'TimeoutError';
     this.detailLoadError.set({
       taskLabel,
-      message: timedOut
+      message: message ?? (timedOut
         ? 'The detail request timed out. Retry to request the sections again.'
         : status === 404
         ? 'The task reference is no longer current. Retry to resolve its latest location.'
-        : 'The detail request failed. Check the connection and try again.',
+        : 'The detail request failed. Check the connection and try again.'),
     });
   }
 

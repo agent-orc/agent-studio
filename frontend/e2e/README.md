@@ -57,6 +57,16 @@ The spec covers the desktop project picker and the narrow-screen **More →
 Switch project** path at 1280 and 390 px in both themes. With
 `JOB_RESULTS_DIR` set, it writes four screenshots there for review.
 
+### Product card detail check
+
+Run `npm --prefix frontend run e2e -- e2e/security/product-card-detail.spec.ts`.
+The spec selects the `networked-https` profile: the networked security profile
+behind the frontend hop that forwards the HTTPS scheme, seeded with the demo
+workspace. It bootstraps an Owner with a second factor, invites a Product user
+into Demo App, opens a Ready and a Human Review card as that user, and fails on
+any API read answered 403. With `JOB_RESULTS_DIR` set, it writes light, dark
+and 390 px screenshots to `product-card-detail/`.
+
 ## Suite layout
 
 Specs are grouped by domain under `e2e/<folder>/`, mirroring the feature

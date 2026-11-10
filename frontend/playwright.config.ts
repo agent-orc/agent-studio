@@ -30,6 +30,8 @@ const frontendPort = process.env.PW_E2E_FRONTEND_PORT;
 if (prebuilt && (!backendPort || !frontendPort || !process.env.PW_E2E_WORKSPACE)) {
   throw new Error('PW_PREBUILT=1 requires ports and an isolated PW_E2E_WORKSPACE. Run npm run e2e.');
 }
+// Profiles whose frontend hop serves a temporary localhost certificate.
+const tls = profile === 'public-demo' || profile === 'networked-https';
 const resolvedBaseUrl =
   process.env.PW_BASE_URL?.trim()
   || (pwTarget === 'stable' ? 'http://localhost:4011' : 'http://localhost:4010');
@@ -62,8 +64,8 @@ export default defineConfig({
       },
       {
         command: `node scripts/serve-prebuilt-frontend.mjs dist/frontend/browser ${frontendPort} http://127.0.0.1:${backendPort}`,
-        url: `${profile === 'public-demo' ? 'https' : 'http'}://127.0.0.1:${frontendPort}/`,
-        ignoreHTTPSErrors: profile === 'public-demo',
+        url: `${tls ? 'https' : 'http'}://127.0.0.1:${frontendPort}/`,
+        ignoreHTTPSErrors: tls,
         timeout: 15_000,
         reuseExistingServer: true,
         gracefulShutdown: { signal: 'SIGTERM' as const, timeout: 5_000 },
@@ -78,7 +80,7 @@ export default defineConfig({
     actionTimeout: 10_000,
     navigationTimeout: 15_000,
     serviceWorkers: 'block',
-    ignoreHTTPSErrors: profile === 'public-demo',
+    ignoreHTTPSErrors: tls,
   },
   projects: [
     {
@@ -88,11 +90,12 @@ export default defineConfig({
           : profile === 'ref-drift' ? '**/system/crash-recovery-prompt.spec.ts'
           : profile === 'first-run' ? '**/settings/first-run-journey.spec.ts'
           : profile === 'networked-monolith' ? '**/settings/first-run-networked-monolith.spec.ts'
+          : profile === 'networked-https' ? '**/security/product-card-detail.spec.ts'
           : profile === 'operator-cli' ? '**/operator/studio-op-operator-cli.spec.ts'
           : profile === 'demo' ? '**/usage-cockpit/cockpit-integration-matrix.spec.ts'
           : profile === 'public-demo' ? '**/system/public-demo-shell.spec.ts' : '**/*.spec.ts',
         testIgnore: profile === 'standard'
-          ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts/
+          ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|security\/product-card-detail\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts/
           : /visual-evidence\//,
       } : { testIgnore: /visual-evidence\// }),
       use: { ...devices['Desktop Chrome'], channel: undefined },
