@@ -154,6 +154,11 @@ function makeJob(overrides: Partial<TaskInfo> = {}): TaskInfo {
 }
 
 describe('buildVisibleDependencyChip with pending decision edges (AGT-2795)', () => {
+  it('hides resolved dependency signals after acceptance', () => {
+    expect(buildVisibleDependencyChip({ state: '6-completed', waitsOn: {
+      items: [{ key: 'DEMO-2', fulfilled: false }],
+    } } as TaskInfo)).toBeNull();
+  });
   it('leaves a pending decision edge to the blocked-by chip and keeps other edges', () => {
     const decisionEdge = { key: 'AGT-2792', resolved: true, fulfilled: false, pendingDecision: true };
     const otherEdge = { key: 'AGT-2800', resolved: true, fulfilled: false };

@@ -17,6 +17,15 @@ Status: System-of-record map for Remote Review material, semantic verdicts, and 
 
 ## Aspect prompt cache
 
+The review worker bounds every per-card and package agent aspect's final prompt to 800,000
+characters after it adds the authoritative delivery diff. It keeps changed
+template and style files first, limits each diff file to 40,000 characters,
+and limits the total diff to 580,000 characters. Visual review includes at
+most 12 screenshots of at most 2 MiB each. The prompt names omissions, and
+the command's review evidence carries a `review-input-budget-<step>.txt`
+artifact when material was omitted. A CLI refusal before a model verdict,
+including `input_too_large`, is `ReviewInfra` with a named cause.
+
 The four stock Claude aspects freeze a common review-context prefix containing
 the brief, delivery acceptance scope, project and card context, diff summary,
 and results inventory. The review host inserts the authoritative merge-base diff
@@ -994,14 +1003,28 @@ or two distinct cards within 24 hours, all three adjustable per project via
 `FailureInterventionService.RaiseCause` (ledger
 `.orchestrator/failure-interventions.json`, fleet store
 `.metadata/cause-breakers.json`). Every affected card stays in `4-auto-review`
-with a `cause-wait.json` marker, renders "Waiting for <key>", gets no scheduled
-retry, and is skipped by the review claim. A pending review whose plan calls
+with a `cause-wait.json` marker, gets no scheduled retry, and is skipped by the
+review claim. Its CURRENT line names the hold instead of a review queue
+position: "Held behind <key>: <cause>", where the cause is
+`CauseBreakerWording.Summary` of the failure class (for example "review cannot
+read the test report") and `<key>` links the cause card (AGT-3617). A pending review whose plan calls
 an open breaker's model route (any project), or whose project already saw an
 open tool-level cause, is held before it is claimed. The breaker closes when
 the cause card reaches `6-completed` (`CauseBreakerHostedService`) or a review
 of the exact successor attempt released by
 `POST /api/cause-breakers/{fingerprint}/probe` passes (probe green); a passing
-older review on the same waiting card does not close it. A card whose existing review is still
+older review on the same waiting card does not close it. The probe is the
+newest waiting delivery (the run behind the card's current review finished
+last), not the card that waited longest: that card's delivery is usually the
+one that broke the review. An optional body `{ "taskKey": "..." }` names the
+card to re-check instead; 409 means no card could be released. The cause
+card's detail view reads `GET /api/cause-breakers/by-cause/{causeKey}` (held
+cards in probe order, probe state) and offers one primary action, "Re-check
+now", that requests the probe. An operator moving a code-free intervention card
+to Accepted without an override is the owner's decision that the cause is
+resolved: the move endpoint records it as a `deliverable-without-code` claim
+(`InterventionOwnerDecisionPolicy`), and the sweep closes the breaker. A card
+with commits or a run attempt keeps the ordinary acceptance checks. A card whose existing review is still
 pending resumes that attempt; a terminal review gets one freshly planned successor.
 The report acknowledgement, evidence projection, and delivery resume each
 observe the durable passed verdict, so any of those paths can close the exact
@@ -1071,13 +1094,14 @@ Three rules keep a hit honest:
 - **Entries expire.** A result older than 24 hours is dropped and re-executed,
   and every baseline SHA the freshly fetched integration ref no longer contains
   is pruned before the first lookup of an attempt.
-- **Only a measured baseline is stored.** A `test-failures` baseline must
-  report at least one test result. A nonzero exit also needs a parsed failure
-  name for comparison. A run with no test result, such as an unbuilt
-  `--no-build` invocation or a green exit that ran no tests, ends as
-  `ReviewInfra/BaselineUnavailable` and is not cached. Reuse checks the same
-  evidence, including for entries written by older workers. `exit-status`
-  entries carry their result in the exit code and remain reusable.
+- **Only a measured baseline is stored.** A successful `test-failures` command
+  with no parsed summary carries exit-status evidence for this attempt, and is
+  re-executed rather than reused from the baseline result cache. A nonzero exit
+  still needs a parsed failure name for failure-name comparison. An incomplete known
+  runner or an unbuilt `--no-build` invocation that fails before tests run
+  ends as `ReviewInfra/BaselineUnavailable` and is not cached. Reuse checks
+  the same evidence, including for entries written by older workers.
+  `exit-status` entries carry their result in the exit code and remain reusable.
 - **Reuse is visible.** The verdict summary, the Markdown grade
   (`baselineReused`/`baselineReuse` frontmatter plus a `Baseline` column in the
   command evidence table), and `ReviewProjectionView.Attempts[].BaselineReused`
@@ -1170,13 +1194,12 @@ that verdict.
 | Clean repeat green, baseline red on cached state, clean baseline repeat green | `DependencyCacheDefect` or `BaselineResultCacheDefect` | no |
 | Reviewer block without evidence against a changed path | `concern` | no |
 
-**Missing test reports.** A test-failures baseline must report at least one
-completed test, even when it exits zero. The review host retries a baseline
-with no parseable result once, before saving the dependency cache, and records
-both attempts. If it still has no result, it settles as
+**Missing test reports.** A successful test command without a recognized
+summary supplies exit-status evidence. A failed test command with no parseable
+result is retried once, before saving the dependency cache, and both attempts
+are recorded. If it still has no result, it settles as
 `ReviewInfra/BaselineUnavailable` and names the expected report path (or the
-captured stdout artifact for console-only reporters). A delivery run that exits
-zero without a test result is also retried once. An explicit missing-file
+captured stdout artifact for console-only reporters). An explicit missing-file
 diagnostic from the frontend wrapper follows the same path even when the wrapper
 exits nonzero. If its retry still has no result, it settles as
 `ReviewInfra/TestReportUnavailable`, unless the delivery changed test
@@ -1548,6 +1571,10 @@ usually exists only under `refs/remotes/origin` in the Studio checkout.
 - `runner/RemoteReviewWorkspace.cs`: exact checkout, integration-ref fetch,
   merge-base, bounded review material, aspect parsing, executor-side citation
   downgrade, and the per-attempt process environment.
+- `runner/ReviewAspectInputBudget.cs` and `runner/ReviewCliRefusalPolicy.cs`:
+  final aspect input limits and pre-model CLI refusal attribution, covered by
+  `runner.Tests/ReviewAspectInputBudgetTests.cs` and
+  `runner.Tests/RemoteReviewAspectParallelismTests.cs`.
 - `runner/RemoteReviewExecutor.cs` (`Write`, `ReapSlot`): the single durable
   slot write and the terminal reap that a late heartbeat renewal cannot undo,
   covered by

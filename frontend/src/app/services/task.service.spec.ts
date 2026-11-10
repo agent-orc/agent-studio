@@ -106,6 +106,23 @@ describe('TaskService', () => {
     }
   });
 
+  it('reads the fresh local task detail for Human Review integration', () => {
+    vi.useFakeTimers();
+    try {
+      let selected: TaskDetail | undefined;
+      service.getFreshDetail('AGT-1', 'project-1').subscribe(detail => { selected = detail; });
+      const read = () => http.expectOne(request => request.url === '/api/tasks/AGT-1'
+        && request.params.get('project') === 'project-1');
+      read().flush({ state: 'warming' }, { status: 202, statusText: 'Accepted' });
+      expect(selected).toBeUndefined();
+      vi.advanceTimersByTime(100);
+      read().flush({ info: { id: 'AGT-1', integration: { status: 'not-applicable' } } } as unknown as TaskDetail);
+      expect(selected?.info.integration?.status).toBe('not-applicable');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('stops retrying a detail that never leaves warming', () => {
     vi.useFakeTimers();
     try {

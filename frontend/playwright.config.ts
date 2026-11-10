@@ -25,7 +25,8 @@ import { defineConfig, devices } from '@playwright/test';
 const pwTarget = (process.env.PW_TARGET ?? 'dev').toLowerCase();
 const prebuilt = process.env.PW_PREBUILT === '1';
 const profile = process.env.PW_E2E_PROFILE ?? 'standard';
-const tlsProfile = profile === 'public-demo' || profile === 'networked-https';
+// Profiles served through the self-signed HTTPS test proxy.
+const tls = profile === 'public-demo' || profile === 'networked-https';
 const backendPort = process.env.PW_E2E_BACKEND_PORT;
 const frontendPort = process.env.PW_E2E_FRONTEND_PORT;
 if (prebuilt && (!backendPort || !frontendPort || !process.env.PW_E2E_WORKSPACE)) {
@@ -63,8 +64,8 @@ export default defineConfig({
       },
       {
         command: `node scripts/serve-prebuilt-frontend.mjs dist/frontend/browser ${frontendPort} http://127.0.0.1:${backendPort}`,
-        url: `${tlsProfile ? 'https' : 'http'}://127.0.0.1:${frontendPort}/`,
-        ignoreHTTPSErrors: tlsProfile,
+        url: `${tls ? 'https' : 'http'}://127.0.0.1:${frontendPort}/`,
+        ignoreHTTPSErrors: tls,
         timeout: 15_000,
         reuseExistingServer: true,
         gracefulShutdown: { signal: 'SIGTERM' as const, timeout: 5_000 },
@@ -79,7 +80,7 @@ export default defineConfig({
     actionTimeout: 10_000,
     navigationTimeout: 15_000,
     serviceWorkers: 'block',
-    ignoreHTTPSErrors: tlsProfile,
+    ignoreHTTPSErrors: tls,
   },
   projects: [
     {
@@ -89,12 +90,14 @@ export default defineConfig({
           : profile === 'ref-drift' ? '**/system/crash-recovery-prompt.spec.ts'
           : profile === 'first-run' ? '**/settings/first-run-journey.spec.ts'
           : profile === 'networked-monolith' ? '**/settings/first-run-networked-monolith.spec.ts'
-          : profile === 'networked-https' ? '**/security/product-session-networked-https.spec.ts'
+          // run-prebuilt-e2e.sh gives each networked-https spec its own stack:
+          // both bootstrap the first Owner.
+          : profile === 'networked-https' ? ['**/security/owner-second-factor-human-pace.spec.ts', '**/security/product-session-networked-https.spec.ts']
           : profile === 'operator-cli' ? '**/operator/studio-op-operator-cli.spec.ts'
           : profile === 'demo' ? '**/usage-cockpit/cockpit-integration-matrix.spec.ts'
           : profile === 'public-demo' ? '**/system/public-demo-shell.spec.ts' : '**/*.spec.ts',
         testIgnore: profile === 'standard'
-          ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|security\/product-session-networked-https\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts/
+          ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|security\/owner-second-factor-human-pace\.spec\.ts|security\/product-session-networked-https\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts/
           : /visual-evidence\//,
       } : { testIgnore: /visual-evidence\// }),
       use: { ...devices['Desktop Chrome'], channel: undefined },

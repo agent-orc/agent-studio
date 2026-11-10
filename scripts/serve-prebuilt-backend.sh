@@ -54,8 +54,10 @@ case "${PW_E2E_PROFILE:-standard}" in
     export Security__TrustedProxyAddresses=127.0.0.1
     export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
     ;;
-  # networked-https: a networked monolith with a second project, so a Product
-  # session bound to the first one proves it never sees the other (AGT-3668).
+  # networked-https: a fresh networked monolith behind the HTTPS test proxy,
+  # so the browser itself holds the Secure session (AGT-3614). Its second
+  # project proves a Product session bound to the first one never sees the
+  # other (AGT-3668).
   networked-https)
     export Security__Profile=networked
     export Security__TrustedProxyAddresses=127.0.0.1
@@ -146,7 +148,7 @@ while true; do
   if (( failures < 5 )); then
     continue
   fi
-  backend_pid="$(cat "${REPO_ROOT}/.api.pid" 2>/dev/null || true)"
+  backend_pid="$(cat "${REPO_ROOT}/.api.${PORT}.pid" 2>/dev/null || true)"
   if [[ "${backend_pid}" =~ ^[0-9]+$ ]] && kill -0 "${backend_pid}" 2>/dev/null; then
     failures=0
     continue

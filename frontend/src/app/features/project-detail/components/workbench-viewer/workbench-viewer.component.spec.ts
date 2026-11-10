@@ -16,6 +16,7 @@ import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
 import { TaskService } from '../../../../services/task.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { WorkbenchViewerComponent } from './workbench-viewer.component';
+import { preserveOwnProperty } from '../../../../../testing/preserve-own-property';
 
 const DOCUMENT: WorkbenchDocument = {
   workbench: {
@@ -41,6 +42,7 @@ const DOCUMENT: WorkbenchDocument = {
 };
 
 describe('WorkbenchViewerComponent', () => {
+  preserveOwnProperty(navigator, 'clipboard');
   beforeEach(() => {
     sessionStorage.clear();
     TestBed.overrideProvider(TaskReferenceNavigationService,

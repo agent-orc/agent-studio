@@ -50,6 +50,7 @@ import {
   overflowActionsFor,
   primaryActionFor,
   mergeAcceptViewFor,
+  acceptanceHoldReason,
   triageDecisionRefusal,
   triageDecisionRowState,
   type MergeAcceptView,
@@ -96,6 +97,7 @@ import {
   ProjectHubUrlService,
   StudioTabStateService,
   StudioPanelStateService,
+  ThemeService,
   studioTabKey,
   parseStudioRoute,
   navigateStudioRoute,
@@ -348,7 +350,7 @@ export class App implements OnInit, OnDestroy {
    *  itself + show a spinner while a bulk archive is in flight. */
   readonly archivingInProgress = this.boardMutations.archiving;
   /** Cycle 10c: triage panel + j/k navigation + auto-advance live here. */
-  private readonly triage = inject(TriageController);
+  readonly triage = inject(TriageController);
   readonly showCreate = this.createJobForm.visible;
   readonly availableModels = this.createJobForm.availableModels;
   /**
@@ -429,6 +431,8 @@ export class App implements OnInit, OnDestroy {
    * working unchanged. Methods further down delegate to the service.
    */
   private readonly laneCollapse = inject(LaneCollapseService);
+  // Initialize document theme before the auth gate can render.
+  readonly theme = inject(ThemeService).theme;
   readonly collapsedLanes = this.laneCollapse.collapsedLanes;
   readonly focusedContainer = this.laneCollapse.focusedContainer;
   readonly taskNavCollapsed = this.uiPrefs.taskNavCollapsed;
@@ -574,16 +578,35 @@ export class App implements OnInit, OnDestroy {
    * shown alone (null: all of them); on wide boards it is the container focus.
    */
   readonly singleGroupBoard = this.laneCollapse.singleGroupLayout;
+  readonly singleLaneBoard = this.laneCollapse.singleLaneLayout;
+  readonly mobileLaneChoice = signal<string | null>(null);
+  readonly mobileLaneOptions = computed(() => [
+    ...this.laneGroups().flatMap(group => group.lanes.map(lane => ({
+      id: lane.state, label: lane.title, groupId: group.id,
+    }))),
+    ...(this.visibleDeliveryGroup()?.columns.map(column => ({
+      id: `delivery:${column.id}`, label: column.title, groupId: DELIVERY_GROUP_ID,
+    })) ?? []),
+  ]);
+  readonly mobileLane = computed(() => {
+    const options = this.mobileLaneOptions();
+    return options.find(option => option.id === this.mobileLaneChoice()) ?? options[0] ?? { id: '', label: '', groupId: '' };
+  });
+  selectMobileLane(id: string): void {
+    this.mobileLaneChoice.set(id);
+  }
   readonly deliveryGroupId = DELIVERY_GROUP_ID;
   private readonly deliverySection = viewChild(DeliverySectionComponent);
   readonly visibleDeliveryGroup = computed(() => {
     const section = this.deliverySection();
     return section?.visible() ? section.group() : null;
   });
-  readonly studioBoardFocus = computed(() => this.laneCollapse.boardFocus([
-    ...this.laneGroups().map((g) => g.id),
-    ...(this.visibleDeliveryGroup() ? [DELIVERY_GROUP_ID] : []),
-  ]));
+  readonly studioBoardFocus = computed(() => this.singleLaneBoard()
+    ? this.mobileLane()?.groupId ?? null
+    : this.laneCollapse.boardFocus([
+      ...this.laneGroups().map((g) => g.id),
+      ...(this.visibleDeliveryGroup() ? [DELIVERY_GROUP_ID] : []),
+    ]));
   selectBoardGroup(id: string): void {
     this.laneCollapse.selectSingleGroup(id);
   }
@@ -775,6 +798,9 @@ export class App implements OnInit, OnDestroy {
     });
     effect(() => {
       if (this.projectHubUrls.appliedRevision() === 0) return;
+      // A Hub resolution may release its route gate. A task URL still owns
+      // that gate until its detail has opened the matching task tab.
+      if (parseStudioRoute(window.location.hash)?.kind !== 'hub') return;
       untracked(() => this.studioRouteReady.set(true));
     });
 
@@ -1232,16 +1258,15 @@ export class App implements OnInit, OnDestroy {
     return this.studioMergeAcceptView()?.acceptLabel ?? p.label;
   });
   /**
-   * True while the studio Human Review acceptance primary (`mark-done`) depends
-   * on git status that has not loaded yet. Until the graph-derived provenance
-   * settles, `landedState` is `null` and the label would guess "Merge into
-   * Develop" (an actionable merge) before flipping to "Accept" once the work is
-   * revealed as already merged - the race Robert reported (AGT-2006). The button
-   * stays disabled + skeletoned while this holds, then switches atomically.
+   * A missing integration verdict keeps the acceptance primary held while
+   * Git is loading. A fresh integrated or not-applicable verdict already
+   * proves Accept is safe; provenance may refine the explanation later.
    */
   readonly studioPrimaryAwaitingGit = computed(() => {
     const p = this.studioTriagePrimary();
     if (!p || p.id !== 'mark-done') return false;
+    const status = this.selectedJob()?.info.integration?.status;
+    if (status === 'integrated' || status === 'not-applicable') return false;
     return this.jobDetailSig()?.gitInfoLoading() ?? false;
   });
   readonly studioPrimaryBlockedByIntegration = computed(() => {
@@ -1281,10 +1306,10 @@ export class App implements OnInit, OnDestroy {
       hasActions: this.studioTriageHasActions(),
       primaryId: primary?.id ?? null,
       primaryLabel: label,
-      primaryTooltip: this.studioPrimaryAwaitingGit()
-        ? 'Checking git status — action available once loaded.'
-        : this.studioPrimaryDecisionRefusal()
-          ?? `${this.studioMergeAcceptView()?.statusTooltip || label} (Enter)`,
+      primaryTooltip: this.studioPrimaryDecisionRefusal()
+        ?? (this.studioPrimaryBlockedByIntegration()
+          ? acceptanceHoldReason(this.selectedJob()!.info)
+          : `${this.studioMergeAcceptView()?.statusTooltip || label} (Enter)`),
       awaitingGit: this.studioPrimaryAwaitingGit(),
       blockedByIntegration: this.studioPrimaryBlockedByIntegration(),
       blockedByDecision: !!this.studioPrimaryDecisionRefusal(),
