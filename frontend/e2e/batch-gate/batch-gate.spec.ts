@@ -204,7 +204,8 @@ test('stale running batch from the real backend shows timing and attention', asy
       await expect(page.locator('html')).toHaveAttribute('data-studio-theme', theme);
       await page.getByRole('tab', { name: 'All projects · Board' }).click();
       if (width === 390)
-        await page.getByTestId('board-group-switcher').getByRole('button', { name: /^Active/ }).click();
+        await page.getByTestId('mobile-lane-picker').getByRole('combobox', { name: 'Board lane' })
+          .selectOption('4-auto-review');
       await page.getByTestId('batch-lane-indicator').filter({ visible: true }).first().click();
       const panel = page.getByTestId('batch-panel');
       await expect(panel.getByTestId('batch-phase-time').first()).toContainText(/running since \d{2}:\d{2} UTC, 3 h \d+ min/);
@@ -213,7 +214,11 @@ test('stale running batch from the real backend shows timing and attention', asy
       if (process.env.JOB_RESULTS_DIR) await panel.screenshot({ path: nodePath.join(process.env.JOB_RESULTS_DIR, `stale-batch-panel-${theme}-${width}.png`) });
       await panel.getByRole('button', { name: 'Close batch panel' }).click();
       await page.getByTestId('studio-attention-trigger').click();
-      await expect(page.getByTestId('attention-row').filter({ hasText: 'Batch running without a live gate' })).toContainText('lease held by gate-host-01');
+      const attentionRow = page.getByTestId('attention-row').filter({ hasText: 'Batch running without a live gate' });
+      const reason = attentionRow.getByTestId('attention-row-reason');
+      await expect(reason).toContainText('lease held by gate-host-01');
+      await expect(reason).toContainText('Next automatic retry at');
+      expect(await reason.evaluate(element => element.scrollHeight <= element.clientHeight + 1)).toBe(true);
       if (process.env.JOB_RESULTS_DIR) await page.screenshot({ path: nodePath.join(process.env.JOB_RESULTS_DIR, `stale-batch-attention-${theme}-${width}.png`) });
     }
   } finally { cleanup(); }
