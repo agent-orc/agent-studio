@@ -100,6 +100,7 @@ jobs:
 
       - name: Test release shell contracts
         run: |
+          sh scripts/release/owner-bootstrap-install.test.sh
           bash scripts/release/release-scripts.test.sh
           sh scripts/release/linux-install-script.test.sh
           python3 scripts/release/installation-scenarios.test.py
@@ -689,11 +690,31 @@ jobs:
           retention-days: 30
 
   verify-visibility:
-    name: Report anonymous package visibility after release
+    name: Verify public downloads and report package visibility
     if: github.event_name == 'push'
     needs: [version, publish-release]
     runs-on: ubuntu-24.04
     steps:
+      - name: Verify installer downloads anonymously
+        run: |
+          set -euo pipefail
+          for asset in install.sh agent-studio-setup SHA256SUMS; do
+            url="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$asset"
+            available=false
+            for attempt in 1 2 3 4 5 6; do
+              if status="$(curl --fail --silent --show-error --location --connect-timeout 10 --max-time 60 --output /dev/null --write-out '%{http_code}' "$url")" \
+                && [[ "$status" == 200 ]]; then
+                available=true
+                break
+              fi
+              sleep 5
+            done
+            if [[ "$available" != true ]]; then
+              echo "Release download is unavailable: $url" >&2
+              exit 1
+            fi
+            echo "$asset: anonymous HTTP 200" >> "$GITHUB_STEP_SUMMARY"
+          done
       - name: Check anonymous package visibility
         continue-on-error: true
         env:

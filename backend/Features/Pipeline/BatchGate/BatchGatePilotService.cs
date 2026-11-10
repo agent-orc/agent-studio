@@ -392,7 +392,8 @@ public sealed partial class BatchGatePilotService
             slotUsage,
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
             _time.GetUtcNow(), _services?.GetService<GateRunLedger>(), reviewFixWaits,
-            _services?.GetService<GateCapacitySettings>()?.Current(), DetachedFlights(project));
+            _services?.GetService<GateCapacitySettings>()?.Current(), DetachedFlights(project),
+            LeaseDeadlineDeferred()(project));
     }
 
     private static BatchGateReviewFixWait[] ReviewFixWaits(IEnumerable<TaskInfo> tasks, string project)
@@ -991,6 +992,9 @@ public sealed partial class BatchGatePilotService
         bool followsCompletedFlight)
     {
         var waiting = _store.ListPending();
+        // AGT-3710: only the head of a project's queue may stack on the running
+        // flight, so a younger batch on the running base cannot overtake it.
+        var queueHeads = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var manifest in OrderForStart(_store.ListRecoverableManifests()
                      .Where(manifest => (project is null || string.Equals(manifest.Scope.Project,
                              project, StringComparison.OrdinalIgnoreCase))
@@ -1027,7 +1031,8 @@ public sealed partial class BatchGatePilotService
                 StartStack(manifest, membersByKey, current[0].RepositoryPath, ct);
                 continue;
             }
-            if (TryStartStack(manifest, membersByKey, current[0].RepositoryPath, ct))
+            var head = queueHeads.Add(manifest.Scope.Project);
+            if (head && TryStartStack(manifest, membersByKey, current[0].RepositoryPath, ct))
                 continue;
             StartBatch(manifest, membersByKey, current[0].RepositoryPath, ct,
                 followsCompletedFlight);
@@ -3494,9 +3499,24 @@ public sealed partial class BatchGatePilotService
         string? sha, long fence, string? reason = null,
         string? runId = null, long? refFence = null)
     {
+        var causingMember = phase == BatchPhase.Abandoned
+            ? manifest.Members.FirstOrDefault(member =>
+                _store.HasEject(manifest.Scope.Project, member.TaskKey)
+                || reason?.Contains(member.TaskKey, StringComparison.Ordinal) == true
+                || _store.ListPending().FirstOrDefault(item =>
+                    item.Subject.TaskKey == member.TaskKey
+                    && item.Subject.RunAttempt == member.RunAttempt) is { } pending
+                    && !Refresh(pending).Subject.CurrentGeneration)
+            : null;
+        var withdrawal = causingMember is null ? null : _store.ListWithdrawals(manifest.BatchId)
+            .Where(item => item.TaskKey == causingMember.TaskKey)
+            .OrderBy(item => item.AtUtc).LastOrDefault();
+        if (withdrawal is not null)
+            reason = $"{reason}; {withdrawal.Actor} withdrew {withdrawal.TaskKey}: {withdrawal.Reason}";
         _store.AppendState(new BatchGateState(manifest.BatchId,
             manifest.MembershipDigest, phase, sha, fence, _time.GetUtcNow(),
-            reason, runId, refFence));
+            reason, runId, refFence,
+            CausedByTaskKey: causingMember?.TaskKey));
         if ((phase is BatchPhase.Red or BatchPhase.Abandoned or BatchPhase.Paused)
             && _stackGateCancellations.TryGetValue(manifest.BatchId, out var cancellation))
         {

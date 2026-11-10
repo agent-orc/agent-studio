@@ -225,6 +225,7 @@ test.describe('HUC-S6 board and task protocol rhythm', () => {
       await installRoutes(page);
       await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded', timeout: 60_000 });
       const review = page.locator('[data-testid="lane-5-human-review"]').first();
+      if (width === 390) await page.getByTestId('mobile-lane-picker').locator('select').selectOption('5-human-review');
       await expect(review).toBeVisible({ timeout: 15_000 });
 
       for (const state of ['2-ready', '3-progress', '5-human-review']) {
@@ -234,19 +235,26 @@ test.describe('HUC-S6 board and task protocol rhythm', () => {
         await expect(lane.locator('app-job-card')).toHaveCount(count);
       }
       if (width === 390) {
-        // The phone lane control pages through tasks; it never mutates a lane.
+        const picker = page.getByTestId('mobile-lane-picker').locator('select');
+        const visibleLanes = page.locator('.column[data-testid^="lane-"]:visible').filter({ has: page.locator('app-job-card') });
+        await expect(visibleLanes).toHaveCount(1);
         const mutations: string[] = [];
         page.on('request', (request) => {
           if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method()) && /\/api\/tasks\//.test(request.url())) mutations.push(request.url());
         });
-        await page.getByTestId('lane-3-progress').first().locator('app-job-card').first().click();
-        const laneSelect = page.getByTestId('studio-lane-select');
-        await laneSelect.selectOption('5-human-review');
-        await expect(laneSelect).toHaveValue('5-human-review');
-        await expect(page).toHaveURL(/#\/tasks\/DEMO-0(?:98|97|96)/);
-        expect(mutations).toEqual([]);
-        await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded', timeout: 60_000 });
+        await picker.selectOption('3-progress');
+        await expect(page.getByTestId('lane-3-progress').first()).toBeVisible();
+        await expect(review).toBeHidden();
+        await cleanOverlays(page);
+        for (const theme of ['light', 'dark'] as const) {
+          await page.evaluate(value => { localStorage.setItem('atp.studio.theme', value); document.documentElement.dataset['studioTheme'] = value; }, theme);
+          if (RESULTS_DIR) await page.screenshot({ path: path.join(RESULTS_DIR, `board-390-${theme}.png`), animations: 'disabled' });
+        }
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+        await picker.selectOption('5-human-review');
         await expect(review).toBeVisible();
+        await expect(page.getByTestId('lane-3-progress').first()).toBeHidden();
+        expect(mutations).toEqual([]);
       }
 
       if (width >= 1024) {

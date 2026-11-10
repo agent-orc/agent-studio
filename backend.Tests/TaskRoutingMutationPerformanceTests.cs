@@ -152,6 +152,64 @@ public sealed class TaskRoutingMutationPerformanceTests : IDisposable
     }
 
     [Fact]
+    public async Task SlowRoutingFolderRead_DoesNotBlockOtherPublicationsOrReplaceANewerCard()
+    {
+        var watchPath = Path.Combine(_root, "publication-project");
+        var firstFolder = Path.Combine(watchPath, TaskStates.Ready, "first");
+        var secondFolder = Path.Combine(watchPath, TaskStates.Ready, "second");
+        Directory.CreateDirectory(firstFolder);
+        Directory.CreateDirectory(secondFolder);
+        File.WriteAllText(Path.Combine(firstFolder, "task.json"),
+            """{"id":"first","title":"First","state":"2-ready","order":10,"thinkingLevel":"high"}""");
+        File.WriteAllText(Path.Combine(secondFolder, "task.json"),
+            """{"id":"second","title":"Second","state":"2-ready","order":20}""");
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root,
+            ["WatchPaths:0:Name"] = "publication-project",
+            ["WatchPaths:0:Path"] = watchPath,
+            ["WatchPaths:0:RootPath"] = watchPath,
+        }).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var cache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config,
+            scanner.ScanAllJobsRaw);
+        scanner.SetIndexCache(cache);
+        var initial = scanner.ScanAllJobs();
+        var oldFirst = Assert.Single(initial, task => task.Id == "first");
+        var second = Assert.Single(initial, task => task.Id == "second");
+        using var readEntered = new ManualResetEventSlim();
+        using var releaseRead = new ManualResetEventSlim();
+        var slowRead = Task.Run(() => cache.PublishRoutingFromFolder(firstFolder, () =>
+        {
+            readEntered.Set();
+            if (!releaseRead.Wait(TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("Routing folder read was not released");
+            return oldFirst;
+        }));
+        try
+        {
+            Assert.True(readEntered.Wait(TimeSpan.FromSeconds(10)));
+            var unrelated = Task.Run(() => cache.PublishRoutingMutation(second));
+            await unrelated.WaitAsync(TimeSpan.FromSeconds(3));
+
+            File.WriteAllText(Path.Combine(firstFolder, "task.json"),
+                """{"id":"first","title":"First","state":"2-ready","order":10,"thinkingLevel":"medium"}""");
+            var newer = scanner.ScanJobFolder(firstFolder,
+                new WatchPathEntry { Name = "publication-project", Path = watchPath },
+                TaskStates.Ready, bypassMemo: true)!;
+            cache.PublishRoutingMutation(newer);
+        }
+        finally
+        {
+            releaseRead.Set();
+            await slowRead;
+        }
+        Assert.Equal("medium", Assert.Single(scanner.ScanAllJobs(), task => task.Id == "first").ThinkingLevel);
+        Assert.Equal("medium", cache.GetCore("first", watchPath).Record?.ThinkingLevel);
+    }
+
+    [Fact]
     public void CreateJob_PublishesIntoWarmBoardWithoutAnotherWorkspaceScan()
     {
         var watchPath = Path.Combine(_root, "create-project");

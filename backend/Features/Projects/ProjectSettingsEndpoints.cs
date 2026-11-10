@@ -241,6 +241,23 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(new { cleared = true });
         });
 
+        app.MapGet("/api/projects/{projectName}/execution/proposal-preview", (
+            string projectName,
+            ProjectDefinitionProposalService proposals) =>
+        {
+            var preview = proposals.Preview(projectName);
+            return preview is null
+                ? Results.NotFound(new { error = "A repository checkout is required to preview the definition." })
+                : Results.Ok(new
+                {
+                    preview.Definition,
+                    preview.PrepareScript,
+                    preview.DetectedStacks,
+                    preview.Reasoning,
+                    reviewCommands = ProjectDefinitionReader.Parse(preview.Definition).Definition?.Commands,
+                });
+        });
+
         app.MapPost("/api/projects/{projectName}/execution/proposal", (
             string projectName,
             ProjectDefinitionProposalService proposals) =>

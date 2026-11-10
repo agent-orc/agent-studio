@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, inject, input, output } from '@angular/core';
+import { afterNextRender, ChangeDetectionStrategy, Component, DestroyRef, inject, input, output } from '@angular/core';
 import { ErrorDialogState } from '../../models/error-dialog.model';
 import { ModalStackService } from '../../services/modal-stack.service';
 import { DialogComponent } from '../dialog/dialog.component';
@@ -25,14 +25,14 @@ export class ErrorDialogComponent {
   readonly openCliConfig = output<void>();
 
   constructor() {
-    // The error dialog is rendered only while open (`@if (errorDialog.activeError())`),
-    // so a push-on-construct / dispose-on-destroy keeps the stack honest.
-    // The previous implementation had no Escape handling at all - now Escape
-    // routes through the central stack like every other modal.
-    inject(ModalStackService).pushUntilDestroyed(
-      'error-dialog',
-      () => this.closeRequest.emit(),
-      inject(DestroyRef),
-    );
+    const modalStack = inject(ModalStackService);
+    const destroyRef = inject(DestroyRef);
+    // Restoring the refused task can remount its detail after this component
+    // is constructed. Register after that render so Escape reaches the error
+    // dialog before the detail's own close handler.
+    afterNextRender(() => {
+      modalStack.pushUntilDestroyed('error-dialog', () => this.closeRequest.emit(), destroyRef);
+      document.querySelector<HTMLElement>('[data-testid="error-dialog"]')?.focus();
+    });
   }
 }
