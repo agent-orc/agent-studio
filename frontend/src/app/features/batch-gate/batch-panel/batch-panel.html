@@ -90,10 +90,10 @@
         </section>
       }
       <section aria-labelledby="batch-pending-title">
-        <h3 id="batch-pending-title">Waiting cards ({{ data.pending.length }})</h3>
-        @if (data.pending.length) {
-          <ul>@for (item of data.pending; track item.taskKey) {
-            <li class="batch-panel__row"><span><strong>{{ item.taskKey }}</strong> · {{ item.waitMinutes }} min · {{ riskLabel(item.risk) }} risk
+        <h3 id="batch-pending-title">Waiting cards ({{ waitingCards().length }})</h3>
+        @if (waitingCards().length) {
+          <ul>@for (item of waitingCards(); track item.taskKey) {
+            <li class="batch-panel__row"><span><strong>{{ item.taskKey }}</strong> · {{ formatDurationMinutes(item.waitMinutes) }} · {{ riskLabel(item.risk) }} risk
               @if (item.preCheck; as check) { · pre-check {{ check.outcome }} }
               @if (item.exclusion) { · {{ item.exclusion }} }</span>
               <button type="button" [attr.aria-label]="'Eject ' + item.taskKey" (click)="showConfirm(item.taskKey)">Eject</button>
@@ -101,6 +101,14 @@
           }</ul>
         } @else { <p>No cards are waiting for a batch.</p> }
       </section>
+      @if (data.detachedFlights?.length) {
+        <section aria-label="Detached flights" data-testid="batch-detached-flights">
+          <h3>Detached flights</h3>
+          <ul>@for (flight of data.detachedFlights; track flight.batchId) {
+            <li>Batch {{ flight.batchId }} · detached {{ date(flight.detachedAtUtc) }} · deadline {{ date(flightDeadline(flight.startedAtUtc, flight.deadlineMinutes)) }} ({{ formatDurationMinutes(flight.deadlineMinutes) }}) · {{ flight.reason }}</li>
+          }</ul>
+        </section>
+      }
       @if (data.reviewFixWaits?.length) {
         <section aria-labelledby="batch-review-fix-title" data-testid="batch-review-fix-waits">
           <h3 id="batch-review-fix-title">Waiting for review fixes</h3>
@@ -135,8 +143,8 @@
               </p>
               @if (batch.runs.length) {
                 <ul>@for (run of batch.runs; track run.batchRunId) {
-                  <li>{{ run.host }} · {{ run.outcome ?? 'running' }} @if (run.classification) { · {{ run.classification }} }
-                    · {{ duration(run.startedAtUtc, run.finishedAtUtc) }}</li>
+                  <li>{{ run.host }} · {{ runOutcome(batch, run) }} @if (run.classification) { · {{ run.classification }} }
+                    · {{ runDuration(batch, run) }}</li>
                 }</ul>
               }
             </article>

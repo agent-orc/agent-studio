@@ -24,6 +24,18 @@ public sealed class BatchGateStoreTests : IDisposable
     }
 
     [Fact]
+    public void State_exposes_batch_phase_time_for_interrupted_run_duration()
+    {
+        var manifest = Close();
+        var phase = _store.LatestState(manifest.BatchId);
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var batch = Assert.Single(state.GetProperty("batches").EnumerateArray());
+        Assert.Equal(phase.RecordedAtUtc, batch.GetProperty("phaseAtUtc").GetDateTimeOffset());
+    }
+
+    [Fact]
     public void State_names_review_fix_wait_before_batch_admission()
     {
         var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
