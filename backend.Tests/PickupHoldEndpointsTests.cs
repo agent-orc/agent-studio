@@ -293,8 +293,8 @@ public sealed class PickupHoldLocalCodingDenialTests : IClassFixture<PickupHoldL
         Assert.Equal(PickupHoldResolutionKinds.RouteToRemoteRunner, resolution.GetProperty("kind").GetString());
         Assert.DoesNotContain("/api/", resolution.GetProperty("detail").GetString());
         var action = resolution.GetProperty("action");
-        Assert.Equal(RemedyActionKinds.Api, action.GetProperty("kind").GetString());
-        Assert.Equal(RemedyApiActions.SetExecutionRunner, action.GetProperty("target").GetString());
+        Assert.Equal(RemedyActionKinds.Setting, action.GetProperty("kind").GetString());
+        Assert.Equal(ProjectSettingKeys.ExecutionRunner, action.GetProperty("target").GetString());
         Assert.Equal("hold-app", action.GetProperty("project").GetString());
 
         using var grouped = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/grouped"));

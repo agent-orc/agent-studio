@@ -7,8 +7,12 @@ by adding `key`. New managed commits carry an operation trailer; legacy
 commits require the Agent Studio author and committer identity. Acceptance
 records the inspected commit SHA in the card's
 completion evidence. Every other later commit still needs a passed gate.
+Batch candidates and direct integration merges assign keys to descriptors
+changed by the delivery before the gate tests the resulting tree. Catalogue
+discovery keeps its managed key mutation for descriptors outside a gated
+delivery.
 
-Version: 2026-11-05
+Version: 2026-11-09
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 ## Aspect prompt cache

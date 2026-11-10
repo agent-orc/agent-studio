@@ -1385,6 +1385,11 @@ public static class TaskServerEndpoints
             TaskServerStore store,
             CancellationToken ct)
             => await InvokeAsync(() => store.ListProviderRejectionCountsAsync(days ?? 14, ct)));
+        management.MapGet("/claim-gate-events", async (
+            int? days,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.ListClaimGateEventsAsync(days ?? 14, ct)));
         management.MapPost("/remote-hosts/{hostId}/operator-drain", async (
             HttpContext context,
             string hostId,

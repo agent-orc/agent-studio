@@ -1,0 +1,54 @@
+<button #trigger type="button" class="attention-control__trigger" data-testid="studio-attention-trigger"
+        aria-haspopup="dialog" [class.attention-control__trigger--active]="count() > 0"
+        [attr.aria-label]="triggerLabel()" [appTooltip]="triggerLabel()" (click)="toggle()">
+  <app-studio-icon name="bell" [size]="14" />
+  <span class="attention-control__label">Needs you</span>
+  <strong class="attention-control__count" data-testid="studio-attention-count">{{ count() }}</strong>
+</button>
+
+@if (open()) {
+  <app-dialog eyebrow="Operator" title="Needs you" widthTier="lg" testid="studio-attention-list"
+              (closeRequest)="close()" (backdropClick)="close()">
+    <div class="attention-list" data-testid="attention-list-body">
+      @if (attention.error() && count() === 0) {
+        <p class="attention-list__empty" data-testid="attention-list-error">The attention list could not be read. It retries every 15 seconds.</p>
+      } @else if (attention.loaded() && count() === 0) {
+        <p class="attention-list__empty" data-testid="attention-list-empty">Nothing needs you right now.</p>
+      }
+      @for (group of groups(); track group.spec.key) {
+        <section class="attention-list__group" [attr.data-testid]="'attention-group-' + group.spec.key">
+          <h3 class="attention-list__head">
+            <span>{{ group.spec.label }}</span>
+            <span class="attention-list__group-count" data-testid="attention-count-in-group">{{ group.items.length }}</span>
+          </h3>
+          <ul class="attention-list__rows">
+            @for (item of group.items; track item.id) {
+              <li class="attention-list__row" data-testid="attention-row" [attr.data-attention-type]="item.type">
+                <div class="attention-list__text">
+                  <div class="attention-list__meta">
+                    @if (card(item); as key) { <span class="attention-list__key" data-testid="attention-row-card">{{ key }}</span> }
+                    @if (item.project) { <span class="attention-list__project">{{ item.project }}</span> }
+                    <span class="attention-list__age">{{ age(item) }}</span>
+                  </div>
+                  <p class="attention-list__reason" data-testid="attention-row-reason">{{ item.reason }}</p>
+                </div>
+                <button type="button" class="attention-list__action" data-testid="attention-row-action"
+                        (click)="act(item, group.spec)">{{ actionLabel(item, group.spec) }}</button>
+              </li>
+            }
+          </ul>
+        </section>
+      }
+    </div>
+    <div footer class="attention-list__footer">
+      <button type="button" class="attention-list__link" data-testid="attention-open-activity"
+              (click)="openActivity()">Open Activity feed</button>
+    </div>
+  </app-dialog>
+}
+
+@if (batchProject(); as project) {
+  @defer (on immediate) {
+    <app-batch-panel [project]="project" [closed]="closeBatch" />
+  }
+}
