@@ -309,8 +309,10 @@ public sealed class StudioBackupService
             try { target = _targets(options); }
             catch (BackupException ex)
             {
-                // The archive is good; the overview reports the misconfigured target.
                 _logger?.LogError("backup-target-invalid {Reason}", ex.Message);
+                record = record with { Upload = new BackupUploadRecord(options.Target.Kind, "failed", null,
+                    _clock.GetUtcNow().ToString("O"), ex.Message, 0) };
+                catalog.Save(record);
             }
             if (target is not null)
             {
@@ -332,6 +334,8 @@ public sealed class StudioBackupService
                 catalog.WriteState(catalog.ReadState() with { LastRetentionAt = _clock.GetUtcNow().ToString("O") });
                 AuditRetention(trigger, options.RetentionCount, options.RetentionCount, surplus);
             }
+            if (target is not null)
+                record = await UploadOneLockedAsync(catalog, record, target, trigger, cancellationToken).ConfigureAwait(false);
             return record;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -430,36 +434,45 @@ public sealed class StudioBackupService
         {
             if (record.Upload?.State == "uploaded") continue;
             if (!force && !BackupSchedulePolicy.UploadDue(_clock.GetUtcNow(), record.Upload)) continue;
-            var attempt = _clock.GetUtcNow().ToString("O");
-            var attempts = (record.Upload?.Attempts ?? 0) + 1;
-            try
-            {
-                await target.UploadAsync(catalog.ArchivePath(record.Id), record.FileName, cancellationToken).ConfigureAwait(false);
-                await target.UploadAsync(catalog.ChecksumPath(record.Id), record.FileName + ".sha256", cancellationToken)
-                    .ConfigureAwait(false);
-                catalog.Save(record with
-                {
-                    Upload = new BackupUploadRecord(target.Description, "uploaded", _clock.GetUtcNow().ToString("O"), attempt, null, attempts),
-                });
-                uploaded++;
-                _logger?.LogInformation("backup-uploaded {BackupId} {Target}", record.Id, target.Kind);
-                Audit(BackupAudit.Record(trigger, BackupAudit.Upload, BackupAudit.Succeeded, record.Id,
-                    $"Copied {record.Id} to the {target.Kind} target {target.Description}.",
-                    new { target = target.Kind, attempts }));
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                catalog.Save(record with
-                {
-                    Upload = new BackupUploadRecord(target.Description, "failed", null, attempt, ex.Message, attempts),
-                });
-                _logger?.LogError("backup-upload-failed {BackupId} {Reason}", record.Id, ex.Message);
-                Audit(BackupAudit.Record(trigger, BackupAudit.Upload, BackupAudit.Failed, record.Id,
-                    $"Copy of {record.Id} to the {target.Kind} target failed: {ex.Message}",
-                    new { target = target.Kind, attempts }));
-            }
+            var result = await UploadOneLockedAsync(catalog, record, target, trigger, cancellationToken).ConfigureAwait(false);
+            if (result.Upload?.State == "uploaded") uploaded++;
         }
         return uploaded;
+    }
+
+    private async Task<BackupRecord> UploadOneLockedAsync(BackupCatalog catalog, BackupRecord record,
+        IBackupTarget target, string trigger, CancellationToken cancellationToken)
+    {
+        var attempt = _clock.GetUtcNow().ToString("O");
+        var attempts = (record.Upload?.Attempts ?? 0) + 1;
+        try
+        {
+            await target.UploadAsync(catalog.ArchivePath(record.Id), record.FileName, cancellationToken).ConfigureAwait(false);
+            await target.UploadAsync(catalog.ChecksumPath(record.Id), record.FileName + ".sha256", cancellationToken)
+                .ConfigureAwait(false);
+            record = record with
+            {
+                Upload = new BackupUploadRecord(target.Description, "uploaded", _clock.GetUtcNow().ToString("O"), attempt, null, attempts),
+            };
+            catalog.Save(record);
+            _logger?.LogInformation("backup-uploaded {BackupId} {Target}", record.Id, target.Kind);
+            Audit(BackupAudit.Record(trigger, BackupAudit.Upload, BackupAudit.Succeeded, record.Id,
+                $"Copied {record.Id} to the {target.Kind} target {target.Description}.",
+                new { target = target.Kind, attempts }));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            record = record with
+            {
+                Upload = new BackupUploadRecord(target.Description, "failed", null, attempt, ex.Message, attempts),
+            };
+            catalog.Save(record);
+            _logger?.LogError("backup-upload-failed {BackupId} {Reason}", record.Id, ex.Message);
+            Audit(BackupAudit.Record(trigger, BackupAudit.Upload, BackupAudit.Failed, record.Id,
+                $"Copy of {record.Id} to the {target.Kind} target failed: {ex.Message}",
+                new { target = target.Kind, attempts }));
+        }
+        return record;
     }
 
     /// <summary>
