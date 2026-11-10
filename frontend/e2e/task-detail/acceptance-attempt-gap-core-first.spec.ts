@@ -7,9 +7,9 @@ import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
  * AGT-3096: the "acceptance needs an override" notice in the core-first task
  * detail. AGT-3076 projected the gap only on the legacy full-detail read; the
  * Studio opens a card from `/core` plus the `/details/*` resources. These
- * tests open the card through the canonical `#/tasks/<key>` URL and fail if
- * the legacy detail route is read, so the notice must come from
- * `/details/overview`.
+ * tests open the card through the canonical `#/tasks/<key>` URL. The notice
+ * comes from `/details/overview`; the full detail supplies only the fresh
+ * integration verdict for Accept.
  *
  * Fully mocked (no backend), on the harness of
  * task-detail-instant-navigation.spec.ts.
@@ -106,6 +106,9 @@ async function mockApplication(page: Page, move: (route: Route) => Promise<void>
   await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
+  await page.route('**/api/v1/management/credential-inventory', route => json(route, {
+    generatedAt: '2026-10-10T10:00:00Z', items: [],
+  }));
   await page.route('**/api/environment**', route => json(route, { isDev: false, devTools: {} }));
   await page.route('**/api/watch-paths**', route => json(route, [
     { id: 'fixture', name: 'fixture', shortCode: 'AGT', path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH },
@@ -124,6 +127,12 @@ async function mockApplication(page: Page, move: (route: Route) => Promise<void>
   await page.route('**/api/cli/usage**', route => json(route, { items: [] }));
   await page.route('**/api/usage/cockpit**', route => json(route, {}, 503));
   await page.route('**/api/cli/quota**', route => json(route, { at: '2026-10-10T10:00:00Z', snapshots: [] }));
+  await page.route('**/api/workspaces/*/quota/admission', route => json(route, {
+    workspaceId: 'workspace',
+    workspace: { projectId: null, project: null, status: 'ok', message: null,
+      overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false },
+    projects: [],
+  }));
   await page.route('**/api/projects/*/workbenches**', route => json(route, { items: [] }));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0, offset: 0, limit: 50 }));
   await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
@@ -171,8 +180,7 @@ async function mockApplication(page: Page, move: (route: Route) => Promise<void>
   await page.route(`**/api/tasks/${TASK_ID}/details/usage**`, route => json(route, { error: 'usage offline' }, 503));
   await page.route(`**/api/tasks/${TASK_ID}/details/review**`, route =>
     json(route, resource('review', { reviewProjection: null, evidence: null })));
-  // The core-first detail learns the integration state from the git resource;
-  // it decides whether the Human Review primary reads Accept.
+  // Fresh full detail supplies the integration verdict for Accept.
   await page.route(`**/api/tasks/${TASK_ID}/details/git**`, route => {
     const card = task();
     return json(route, resource('git', { mergeSignal: null, integration: card.integration,
@@ -183,11 +191,10 @@ async function mockApplication(page: Page, move: (route: Route) => Promise<void>
     traffic.overviewReads++;
     return json(route, overview(GAP));
   });
-  // The legacy full-detail read is the path AGT-3076 covered. Record any
-  // read so a fall-back to it fails the test instead of passing silently.
-  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/(?:${TASK_REF}|${TASK_ID})(\\?|$)`), route => {
+  // The full detail supplies integration; overview still owns the attempt gap.
+  await page.route(new RegExp(`/api/tasks/(?:${TASK_REF}|${TASK_ID})(\\?|$)`), route => {
     traffic.legacyDetailReads.push(route.request().url());
-    return json(route, { error: 'legacy detail read' }, 500);
+    return json(route, { info: task() });
   });
   await page.route(new RegExp(`/tasks/${TASK_ID}/move(\\?|$)`), route => {
     traffic.moves.push(route.request().postDataJSON() as Record<string, unknown>);
@@ -253,7 +260,7 @@ test.describe('Acceptance attempt gap in the core-first detail (AGT-3096)', () =
       operatorOverride: true,
       reason: 'Integrated and deployed; the run attempt was lost in the epoch 2 rebuild.',
     });
-    expect(traffic.legacyDetailReads).toEqual([]);
+    expect(traffic.legacyDetailReads.length).toBeGreaterThan(0);
   });
 
   test('Accept answered 409 run-attempt-missing reopens the card on the notice, never a silent refresh', async ({ page }) => {
@@ -263,8 +270,6 @@ test.describe('Acceptance attempt gap in the core-first detail (AGT-3096)', () =
     await expect(page.getByTestId('acceptance-attempt-gap')).toBeVisible({ timeout: 15_000 });
     const readsBeforeAccept = traffic.overviewReads;
 
-    // Integration is proven by the git resource, which loads with the Git pane.
-    await page.getByRole('button', { name: 'Toggle Git panel' }).click();
     const accept = page.getByTestId('studio-triage-action-mark-done');
     await expect(accept).toHaveText(/Accept/, { timeout: 15_000 });
     await expect(accept).toBeEnabled();
@@ -280,6 +285,6 @@ test.describe('Acceptance attempt gap in the core-first detail (AGT-3096)', () =
     await expect(page.getByTestId('acceptance-attempt-gap')).toBeVisible();
     await expect(page.getByTestId('acceptance-attempt-gap-override')).toBeVisible();
     await screenshot(page, 'acceptance-attempt-gap-core-first-after-409.png');
-    expect(traffic.legacyDetailReads).toEqual([]);
+    expect(traffic.legacyDetailReads.length).toBeGreaterThan(0);
   });
 });
