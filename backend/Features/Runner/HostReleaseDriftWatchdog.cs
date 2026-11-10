@@ -15,7 +15,8 @@ public sealed record HostReleaseDriftEntry(
     bool AlarmDue,
     string Reason,
     DateTime LastSeenAt,
-    bool HeartbeatStale);
+    bool HeartbeatStale,
+    string? ExpectedImageRef = null);
 
 /// <summary>
 /// What Execution Hosts renders: the Stable release every row is measured
@@ -25,12 +26,14 @@ public sealed record HostReleaseDriftSnapshot(
     DateTime ObservedAt,
     StableReleaseIdentity Stable,
     int BehindCount,
-    IReadOnlyList<HostReleaseDriftEntry> Hosts);
+    IReadOnlyList<HostReleaseDriftEntry> Hosts,
+    int DiffersCount = 0);
 
 /// <summary>
 /// Periodically compares every registered runner role against the release this
 /// server runs and raises one operator-feed alarm per host release that has
-/// been behind for longer than the grace window (AGT-2826).
+/// been behind, or a different build (AGT-3689), for longer than the grace
+/// window (AGT-2826).
 /// </summary>
 /// <remarks>
 /// The incident this closes (2026-09-15): Stable and the Task Server ran v0.3.0
@@ -125,7 +128,7 @@ public sealed class HostReleaseDriftWatchdog : BackgroundService
                     behindSince,
                     grace);
 
-                if (verdict.State == HostReleaseDriftStates.Behind)
+                if (verdict.State is HostReleaseDriftStates.Behind or HostReleaseDriftStates.Differs)
                 {
                     _behindSince[key] = behindSince;
                 }
@@ -138,11 +141,12 @@ public sealed class HostReleaseDriftWatchdog : BackgroundService
                 }
 
                 var stale = now - snapshot.LastSeenAt.ToUniversalTime() > HeartbeatStaleAfter;
+                var entryRole = RoleOf(snapshot);
                 var entry = new HostReleaseDriftEntry(
                     snapshot.RunnerId,
                     snapshot.Name,
                     snapshot.HostId,
-                    RoleOf(snapshot),
+                    entryRole,
                     snapshot.Release,
                     verdict.State,
                     verdict.BehindBy?.TotalHours,
@@ -150,7 +154,8 @@ public sealed class HostReleaseDriftWatchdog : BackgroundService
                     verdict.AlarmDue && !stale,
                     verdict.Reason,
                     snapshot.LastSeenAt,
-                    stale);
+                    stale,
+                    entryRole == "review" ? ExpectedReviewImage(snapshot.HostId) : null);
                 entries.Add(entry);
                 if (entry.AlarmDue && !_alarmed.Contains(key)
                     && (!_pending.TryGetValue(key, out var pending) || now >= pending.RetryAt))
@@ -169,7 +174,8 @@ public sealed class HostReleaseDriftWatchdog : BackgroundService
                 now,
                 stable,
                 entries.Count(entry => entry.State == HostReleaseDriftStates.Behind),
-                entries);
+                entries,
+                entries.Count(entry => entry.State == HostReleaseDriftStates.Differs));
         }
 
         var failures = 0;
@@ -182,7 +188,8 @@ public sealed class HostReleaseDriftWatchdog : BackgroundService
                 await _bus.EmitHostReleaseDriftAsync(
                     alarm.HostId, alarm.RunnerId, alarm.Role,
                     alarm.Release?.ReleaseId ?? "unknown", stable.Version,
-                    alarm.BehindForHours ?? 0, alarm.Reason, ct);
+                    alarm.BehindForHours ?? 0, alarm.Reason, ct,
+                    differs: alarm.State == HostReleaseDriftStates.Differs);
                 _alarmed.Add(key);
                 _pending.Remove(key);
             }
@@ -240,6 +247,18 @@ public sealed class HostReleaseDriftWatchdog : BackgroundService
         {
             _logger.LogWarning(ex, "host-release-drift-watchdog-failed");
         }
+    }
+
+    /// <summary>
+    /// The digest-pinned review image the deploy plan selected for a host,
+    /// configured as <c>Release:ReviewImages:&lt;hostId&gt;</c>. Execution Hosts
+    /// shows it next to the image the review role reports running (AGT-3689);
+    /// null when this server was not told.
+    /// </summary>
+    private string? ExpectedReviewImage(string hostId)
+    {
+        var value = _configuration[$"Release:ReviewImages:{hostId}"]?.Trim();
+        return string.IsNullOrEmpty(value) ? null : value;
     }
 
     private static string DriftKey(string runnerId, Contract.RunnerReleaseIdentityDto? release)

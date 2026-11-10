@@ -51,8 +51,8 @@
       }
     </p>
   } @else if (!gateReady()) {
-    <p class="decision-panel__notice">
-      Move this Dossier to decision-ready before recording a decision.
+    <p class="decision-panel__notice" role="status" data-testid="workbench-decision-gate">
+      Decisions open when this Dossier's descriptor sets status decision-pending or phase decision-ready.
     </p>
   } @else if (persistedDecision(); as decision) {
     <div class="decision-panel__receipt" data-testid="workbench-decision-receipt">

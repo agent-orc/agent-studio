@@ -4,6 +4,23 @@ import * as path from 'node:path';
 
 const screenshotDir = path.join(process.env.JOB_RESULTS_DIR ?? path.resolve(__dirname, '..', '..', '..', 'results'), 'security');
 
+test('auth gate follows saved light and dark themes at phone width', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: false, user: null }),
+  }));
+  for (const theme of ['light', 'dark'] as const) {
+    await page.addInitScript(value => localStorage.setItem('atp.studio.theme', value), theme);
+    await page.goto('/');
+    await expect(page.getByTestId('auth-gate')).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('data-studio-theme', theme);
+    const background = await page.getByTestId('auth-gate').evaluate(element => getComputedStyle(element).backgroundColor);
+    expect(background).toBe(theme === 'light' ? 'rgb(255, 255, 255)' : 'rgb(15, 15, 26)');
+    await page.screenshot({ path: path.join(process.env.JOB_RESULTS_DIR ?? screenshotDir, `auth-390-${theme}.png`), animations: 'disabled' });
+  }
+});
+
 test('networked Studio gates the workspace behind same-origin login', async ({ page }) => {
   mkdirSync(screenshotDir, { recursive: true });
   await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({

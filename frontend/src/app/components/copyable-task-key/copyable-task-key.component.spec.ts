@@ -1,10 +1,12 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CopyableTaskKeyComponent } from './copyable-task-key.component';
+import { preserveOwnProperty } from '../../../testing/preserve-own-property';
 
 describe('CopyableTaskKeyComponent', () => {
   let fixture: ComponentFixture<CopyableTaskKeyComponent>;
   let writeText: ReturnType<typeof vi.fn>;
+  preserveOwnProperty(navigator, 'clipboard');
 
   beforeEach(async () => {
     vi.useFakeTimers();

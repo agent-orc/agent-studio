@@ -98,6 +98,7 @@
 }
 
 .ws-settings__rail app-tree-row { display: block; }
+.ws-settings__picker { display: none; }
 
 .ws-settings__panel {
   background: var(--studio-bg-editor);
@@ -219,11 +220,24 @@
 @media (max-width: 760px) {
   .ws-settings__body,
   .ws-settings--inline .ws-settings__body { grid-template-columns: minmax(0, 1fr); overflow: auto; }
+  .ws-settings__picker {
+    display: grid;
+    gap: var(--studio-spacing-2);
+    padding: var(--studio-spacing-3);
+    color: var(--studio-fg);
+    background: var(--studio-bg-sidebar);
+  }
+  .ws-settings__picker select {
+    width: 100%;
+    min-height: var(--studio-target-coarse-min);
+    color: var(--studio-fg-strong);
+    background: var(--studio-bg-surface);
+    border: 1px solid var(--studio-border-strong);
+    border-radius: var(--studio-card-compact-radius);
+  }
   .ws-settings__rail,
   .ws-settings--inline .ws-settings__rail {
-    max-height: 18rem;
-    border-right: 0;
-    border-bottom: 1px solid var(--studio-border);
+    display: none;
   }
   .ws-settings--inline .ws-settings__panel { overflow: visible; }
 }

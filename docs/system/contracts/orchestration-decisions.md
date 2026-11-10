@@ -86,7 +86,15 @@ automatic fix round, so the monolith's escalation and the engine's decision
 compare on the same facts. In Engine mode the red outcome waits for the engine
 like a release; the applier then moves the card and, for a decision that does
 not release the member, resolves its queue entry and removes its batch
-ownership, as the monolith's escalation does.
+ownership, as the monolith's escalation does. The wait is bounded (AGT-3694):
+`PerTaskFallbackWaitPolicy` marks such a decision stalled after 30 minutes
+open, or two minutes after an unrenewed lease expired, unless it is applying
+in this process. The batch pilot then supersedes it with the reason
+`batch-fallback-engine-stall` and escalates the card as `GateInfra` without a
+new occurrence. This parks the card for an operator; it is not a monolith
+decision on the gate outcome, so a stalled release is never released by the
+monolith. A later tick that finds the superseded occurrence escalates again
+rather than waiting.
 
 The review worker rechecks the current owner after long gate work and before
 each lane move. A monolith-owned resume checks again at integration dequeue,

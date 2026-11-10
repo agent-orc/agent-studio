@@ -323,6 +323,36 @@ class HostAdapterTests(unittest.TestCase):
                     remote.main(request)
             self.assertEqual(remote.env_read(env)["REVIEW_IMAGE_REF"], "old")
 
+    def test_review_build_stamps_the_release_identity_into_the_image(self):
+        commit = "3d61e8b0c4ab" + "0" * 28
+        agent_sha = "b" * 64
+        base = "registry.example/review-base@sha256:" + "c" * 64
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            release = root / "releases" / agent_sha
+            release.mkdir(parents=True)
+            (release / "COMMIT").write_text(commit + "\n")
+            (release / "agent-host").write_text("binary")
+            host = {"id": "review", "runnerReleaseRoot": str(root / "releases"), "reviewBaseImage": base,
+                    "reviewImageRepository": "registry.example/review"}
+            seen = {}
+
+            def fake_run(argv, cwd=None):
+                seen["dockerfile"] = (Path(cwd) / "Dockerfile").read_text()
+                (Path(cwd) / "metadata.json").write_text(json.dumps({"containerimage.digest": "sha256:" + "d" * 64}))
+                return ""
+
+            request = {"action": "review_build", "host": host, "settings": {},
+                       "fields": [commit, agent_sha, "2026-11-09T10:12:03.456789Z"]}
+            with patch.object(remote, "run", fake_run):
+                result = remote.main(request)
+        self.assertEqual(result["releaseId"], "20261109T101203Z-review-3d61e8b0c4ab")
+        self.assertEqual(result["builtAt"], "2026-11-09T10:12:03Z")
+        self.assertIn("RUNNER_RELEASE_ID=20261109T101203Z-review-3d61e8b0c4ab", seen["dockerfile"])
+        self.assertIn(f"RUNNER_RELEASE_COMMIT={commit}", seen["dockerfile"])
+        self.assertIn("RUNNER_RELEASE_BUILT_AT=2026-11-09T10:12:03Z", seen["dockerfile"])
+        self.assertIn(f"org.agent-studio.review-plan={result['planDigest']}", seen["dockerfile"])
+
 
 if __name__ == "__main__":
     unittest.main()

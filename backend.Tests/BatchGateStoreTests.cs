@@ -294,6 +294,15 @@ public sealed class BatchGateStoreTests : IDisposable
     }
 
     [Fact]
+    public void Missing_manifest_and_state_report_unknown()
+    {
+        var state = _store.LatestState("missing-batch");
+        Assert.Equal(BatchPhase.Unknown, state.Phase);
+        Assert.Equal(string.Empty, state.MembershipDigest);
+        Assert.Empty(_store.ListRecoverableManifests());
+    }
+
+    [Fact]
     public void ConflictDoesNotMoveTipAndCascadeDefersTail()
     {
         var manifest = Close(8);
