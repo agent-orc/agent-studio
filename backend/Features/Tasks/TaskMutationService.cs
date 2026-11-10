@@ -237,14 +237,23 @@ public class TaskMutationService
         using var span = TaskSwitchTrace.Span("mutation.read-current");
         // The preceding routing writer publishes before releasing this same
         // file lock. Its resident fact is therefore the newest routing input
-        // without a second folder scan on the common path.
+        // without a second folder scan on the common path. A fact whose
+        // task.json stamp no longer matches the disk missed a write (an
+        // external writer, or a publication that has not landed yet) and
+        // would normalize the new value against the old CLI (AGT-3723).
         var published = _scanner.FindPublishedJob(known.Id, known.WatchPath);
         if (published is not null && FileSystemPathComparer.Instance.Equals(
-                published.FolderPath, known.FolderPath)) return published;
+                published.FolderPath, known.FolderPath)
+            && MatchesTaskJson(published)) return published;
         return _scanner.ScanJobFolder(known.FolderPath,
             new WatchPathEntry { Name = known.ProjectName, Path = known.WatchPath },
             known.State, bypassMemo: true);
     }
+
+    private static bool MatchesTaskJson(TaskInfo info) =>
+        info.TaskJsonLength >= 0
+        && TaskCoreSourceStamp.Read(Path.Combine(info.FolderPath, "task.json"))
+            == new TaskCoreSourceStamp(info.TaskJsonLength, info.TaskJsonWriteTicks);
 
     private static IDisposable AcquireRoutingLock(string folder)
     {

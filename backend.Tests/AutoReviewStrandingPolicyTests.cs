@@ -57,6 +57,35 @@ public sealed class AutoReviewStrandingPolicyTests
             AutoReviewStrandingPolicy.Decide(Stranded()));
 
     [Fact]
+    public void Current_delivery_infrastructure_failure_restarts_until_retry_limit()
+    {
+        var failed = Stranded() with { HasReview = true, InfrastructureFailure = true,
+            InfrastructureRetryAvailable = true, StartedStepBefore = true };
+        Assert.Equal(AutoReviewStrandingAction.Leave,
+            AutoReviewStrandingPolicy.Decide(failed with { InfrastructureRetryScheduled = true }));
+        Assert.Equal(AutoReviewStrandingAction.StartStep, AutoReviewStrandingPolicy.Decide(failed));
+        Assert.Equal(AutoReviewStrandingAction.Escalate,
+            AutoReviewStrandingPolicy.Decide(failed with { InfrastructureRetryAvailable = false }));
+    }
+
+    [Fact]
+    public void Terminal_review_starts_a_new_ownerless_interval()
+    {
+        var now = new DateTime(2026, 11, 9, 12, 0, 0, DateTimeKind.Utc);
+        var subject = new ReviewSubjectDto("subject", "repo", new string('a', 40), "run",
+            "requirements", "policy", [], now.AddHours(-2));
+        var review = new ReviewAttemptDto("review", "AGT-1", "repo", "run", null,
+            subject, AttemptLifecycleState.Completed, null, 1, 1,
+            now.AddHours(-2), now.AddSeconds(-30), ReviewTerminalOutcome.Pass,
+            null, subject.ExpectedResultSha, "Review passed.", []);
+        var elapsed = AutoReviewStrandingWatchdog.TimeWithoutOwner(now, now.AddHours(-2),
+            null, review, null, null);
+        Assert.Equal(TimeSpan.FromSeconds(30), elapsed);
+        Assert.Equal(AutoReviewStrandingAction.Leave,
+            AutoReviewStrandingPolicy.Decide(Stranded() with { WithoutOwner = elapsed }));
+    }
+
+    [Fact]
     public void Report_only_summary_failure_restarts_post_processing()
         => Assert.Equal(AutoReviewStrandingAction.StartStep,
             AutoReviewStrandingPolicy.Decide(Stranded() with { ReportOnly = true, HasCompletedRun = false }));
@@ -235,7 +264,7 @@ public sealed class AutoReviewStrandingPolicyTests
             "pending-batch" or "formed-batch" or "gating-batch" => Stranded() with { BatchMember = true },
             "queued-round" => Stranded() with { QueuedRound = true },
             "queued-step" => Stranded() with { QueuedStep = true },
-            _ => Stranded() with { InLane = TimeSpan.FromMinutes(30) },
+            _ => Stranded() with { WithoutOwner = TimeSpan.FromMinutes(30) },
         };
         Assert.Equal(AutoReviewStrandingAction.Leave, AutoReviewStrandingPolicy.Decide(facts));
     }

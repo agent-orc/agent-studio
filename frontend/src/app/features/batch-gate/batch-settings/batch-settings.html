@@ -5,6 +5,7 @@
   @if (loading()) { <p>Loading batch settings…</p> }
   @if (error()) { <p role="alert" data-testid="batch-settings-error">{{ error() }} @if (fieldError()) { ({{ fieldError() }}) }</p> }
   @if (settings(); as form) {
+    <app-batch-phase-metrics [summary]="state()?.dailySummary" />
     <form (ngSubmit)="save()">
       <fieldset><legend>Enable and scope</legend>
         <label><input type="checkbox" name="enabled" data-testid="batch-settings-enabled" [ngModel]="form.enabled" (ngModelChange)="setEnabled($event)"> Enable batch verification</label>
@@ -49,6 +50,11 @@
       <fieldset><legend>Review test level</legend>
         <label>Before batch <select name="reviewTestLevel" [ngModel]="form.reviewTestLevel" (ngModelChange)="update('reviewTestLevel', $event)" [attr.aria-invalid]="invalid('reviewTestLevel')"><option value="work-package">Work package</option><option value="build-only">Build only</option></select></label>
         <label><input type="checkbox" name="preCheckEnabled" [ngModel]="form.preCheckEnabled" (ngModelChange)="update('preCheckEnabled', $event)"> Pre-check reviewed deliveries in spare gate slots</label>
+        @if (state()?.dailySummary?.preCheckYield; as yield) {
+          <p data-testid="batch-pre-check-yield">Today: {{ yield.runs }} runs, {{ yield.red }} red, {{ yield.cardsKeptOut }} cards kept out of a red batch. Cost: {{ yield.costMinutes.toFixed(1) }} gate minutes.
+            @if (yield.cardsKeptOut === 0) { Pre-check yield is 0 today. }
+          </p>
+        }
         @if (invalid('reviewTestLevel')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
       </fieldset>
       <fieldset><legend>Gate timeout</legend>
