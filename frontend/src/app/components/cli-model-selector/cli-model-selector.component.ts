@@ -123,11 +123,11 @@ export class CliModelSelectorComponent {
     () => this.draftSelectedModel()?.thinkingLevels ?? [],
   );
   readonly levelMappingNote = computed(() => levelMappingNote(this.draftSelectedModel(), this.thinkingLevel()));
-  readonly effectiveDisabledReason = computed(() => {
-    if (!this.disabled()) return null;
-    return this.disabledReason() ?? 'Stop the run first to change the model.';
-  });
-  readonly displayName = computed(() => shortModelLabel(this.model()));
+  readonly effectiveDisabledReason = computed(() =>
+    this.disabled() ? this.disabledReason() ?? 'Stop the run first to change the model.' : null);
+  /** Trigger text while no model is set; `null` keeps the shared "No model" label. */
+  readonly emptyModelLabel = input<string | null>(null);
+  readonly displayName = computed(() => (!this.model()?.trim() && this.emptyModelLabel()) || shortModelLabel(this.model()));
   readonly cliIcon = computed(() => {
     const cli = this.cliType();
     return cli ? this.cliOptions().find((option) => option.id === cli)?.icon ?? '·' : '·';

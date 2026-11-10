@@ -4,7 +4,7 @@ import { TaskState } from '../../models/task.model';
 import { NowTickService } from '../../services/now-tick.service';
 import { deriveActiveTaskRun, isTaskRunActive, resolveRunActivityKind } from '../../services/run-activity.util';
 import { PickupHoldComponent } from '../pickup-hold/pickup-hold.component';
-import { runnerWaitCode, runnerWaitHeadline } from '../../models/ready-wait-reason';
+import { hostCapabilityWait, runnerWaitCode, runnerWaitHeadline } from '../../models/ready-wait-reason';
 import { TaskReferenceNavigationService } from '../../services/task-reference-navigation.service';
 import { TaskService } from '../../services/task.service';
 import { ErrorDialogService } from '../../services/error-dialog.service';
@@ -144,7 +144,7 @@ export class TaskLiveStatusComponent {
     if (hold) {
       return {
         tone: hold.unsatisfiable ? 'stalled' : 'waiting',
-        headline: holdHeadline(hold.mechanism),
+        headline: holdHeadline(hold.mechanism, hold.reason),
         detail: activityDetail(task, status.latestEventAt, this.now()),
         next,
         attempt: status.attempt,
@@ -326,9 +326,10 @@ function dependencyWaitHeadline(task: TaskInfo): string | null {
 }
 
 /** Short name for the non-dependency holds; the hold block states the detail. */
-function holdHeadline(mechanism: string): string {
+function holdHeadline(mechanism: string, reason: string): string {
   switch (mechanism) {
     case 'dispatch-rejection': return 'Queued, but the runner refused it';
+    case 'host-capability-missing': return hostCapabilityWait(reason).status;
     case 'crash-backoff': return 'Crash cooldown before the next attempt';
     default: return 'Queued, but not pickable';
   }

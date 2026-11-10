@@ -19,6 +19,7 @@ const HOLD_LABELS: Record<string, string> = {
   'pickup-policy': 'Pickup policy',
   'execution-placement': 'Execution placement',
   'claim-load-gate': 'Host load',
+  'host-capability-missing': 'Host capability',
 };
 
 interface RunnerReasonText {
@@ -57,6 +58,49 @@ export interface ReadyWaitBucket extends ReadyWaitReason {
   count: number;
   /** Display keys of the cards in this bucket, in lane order. */
   keys: string[];
+}
+
+/**
+ * AGT-3709: what a `host-capability-missing` hold waits for, read from the
+ * refusal sentence the backend records (`ModelAcceptanceAdmissionPolicy.Refusal`).
+ * A fresh host verifies each model for its first minutes; after that the card
+ * waits until the host accepts the model or the project routes elsewhere.
+ */
+export interface HostCapabilityWait {
+  /** Capability key, e.g. `model-acceptance:claude:claude-opus-5`, when named. */
+  key: string | null;
+  /** Model the host has not accepted, for a `model-acceptance` key. */
+  model: string | null;
+  /** True while the host's startup probe is still verifying the model. */
+  verifying: boolean;
+  /** Live status line on the card. */
+  status: string;
+  /** Hold block headline. */
+  headline: string;
+}
+
+export function hostCapabilityWait(reason: string | null | undefined): HostCapabilityWait {
+  const text = reason ?? '';
+  const sentence = text.replace(/^.*?\):\s*/, '');
+  const key = (/\b(model-acceptance:[^\s;]+?)(?=[.;,]?(?:\s|$))/i.exec(sentence)
+    ?? /\b([a-z][a-z0-9-]*:[^\s;]+?)(?=[.;,]?(?:\s|$))/i.exec(sentence))?.[1] ?? null;
+  const model = key?.startsWith('model-acceptance:') ? key.split(':').slice(2).join(':') || null : null;
+  const verifying = /\bis verifying\b/i.test(text);
+  const subject = model ?? key;
+  if (verifying) {
+    return {
+      key, model, verifying,
+      status: 'Not picked · host verifying model',
+      headline: subject ? `Held: the host is still verifying ${subject}` : 'Held: the host is still verifying its models',
+    };
+  }
+  return {
+    key, model, verifying,
+    status: model ? 'Not picked · host lacks the model' : 'Not picked · host capability missing',
+    headline: model
+      ? `Held: the host has not accepted ${model}`
+      : subject ? `Held: the host lacks ${subject}` : 'Held: the host lacks a required capability',
+  };
 }
 
 const KIND_ORDER: Record<ReadyWaitKind, number> = { hold: 0, runner: 1, queued: 2 };

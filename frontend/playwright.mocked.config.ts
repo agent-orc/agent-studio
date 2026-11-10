@@ -20,6 +20,7 @@ export default defineConfig({
       '**/board/stalled-progress-card.spec.ts',
       '**/board/escalation-bursts.spec.ts',
       '**/board/ready-runner-wait-reasons.spec.ts',
+      '**/board/card-host-capability-and-dossier-chip.spec.ts',
       '**/task-detail/pipeline-column-headers.spec.ts',
       '**/system/semantic-contrast.spec.ts',
       '**/project/project-deploy-area.spec.ts',

@@ -81,6 +81,18 @@ and the creation-only `mutation.key`,
 process count. The spans are stage costs; their sum can be below wall time
 because validation and response coordination are outside them.
 
+When a create request leaves the model or thinking level to policy, the create
+path previews the routing policy over the CLI model catalogue. It waits at most
+250 ms for that catalogue (`RequestPathModelCatalogue`) and otherwise uses the
+registry catalogue, because a cold Claude or Codex catalogue starts the CLI in
+a PTY and made `POST /api/tasks` take about 9 s (AGT-3709). The discovery
+continues in the background and warms the cache. The Create dialog's
+`GET /api/cli/model-routing/recommendation` uses the same bound. A failed
+Claude or Codex PTY discovery is not retried for five minutes; reads answer
+from the cached or registry catalogue meanwhile. `mutation.key` splits into
+`mutation.key.floor` (highest resident key) and `mutation.key.registry` (the
+`projects.json` counter write, which waits on the registry lock and fsync).
+
 `GET /api/tasks` and `GET /api/tasks/grouped` return compact card summaries.
 They include identity, lane, sort and filter fields, card badges, a commit
 count and latest short commit label, and the branch facts needed for the Git

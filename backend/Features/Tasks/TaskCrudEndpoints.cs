@@ -1066,17 +1066,9 @@ public static class TaskCrudEndpoints
             {
                 try
                 {
-                    CliModelCatalog catalogue;
-                    try
-                    {
-                        catalogue = await cliRouter.Get(requestedCli).GetModelCatalogAsync(false, ct);
-                    }
-                    catch when (requestedCli is CliTypes.Claude or CliTypes.Codex)
-                    {
-                        catalogue = requestedCli == CliTypes.Claude
-                            ? ClaudeModelDiscovery.FallbackCatalog("creation-registry-fallback")
-                            : CodexModelDiscovery.FallbackCatalog("creation-registry-fallback");
-                    }
+                    // AGT-3709: a cold catalogue starts the CLI in a PTY; create
+                    // never waits for that and answers from the registry instead.
+                    var catalogue = await RequestPathModelCatalogue.GetAsync(cliRouter, requestedCli, ct);
                     var recommendation = modelRouting.Recommend(
                         req.TaskType,
                         catalogue,

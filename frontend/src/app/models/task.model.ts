@@ -493,7 +493,7 @@ export interface PickupHoldStatus {
   classification?: 'satisfiable-soon' | 'stalled' | 'unsatisfiable' | string;
   /**
    * `dependency-gate` | `dispatch-rejection` |
-   * `crash-backoff` | `pickup-policy`.
+   * `crash-backoff` | `pickup-policy` | `host-capability-missing`.
    */
   mechanism: string;
   /** The specific reason, in one operator-facing sentence. */

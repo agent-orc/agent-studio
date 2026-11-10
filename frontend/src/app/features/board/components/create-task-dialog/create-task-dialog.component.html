@@ -72,6 +72,7 @@
           [model]="newModel()"
           [thinkingLevel]="newThinkingLevel()"
           [availableModels]="availableModels()"
+          [emptyModelLabel]="defaultsPending() ? 'Resolving model…' : 'Policy default'"
           eyebrow="Agent for new task"
           triggerTestid="create-agent"
           pickerTestidPrefix="create-agent-picker"
