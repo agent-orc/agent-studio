@@ -203,6 +203,20 @@ public sealed class TaskIntegrationStatusService
                 publications.Add(new(gate.TreeSha, parent, gate.Describe()));
             }
             var batches = _batchGates;
+            var currentProfile = BatchGatePilotService.GateProfile(
+                _settings.Get(job.ProjectName).BuildProfile, root);
+            foreach (var verdict in batches.ListBaseVerdicts(job.ProjectName))
+            {
+                if (verdict.Outcome != "pass" || verdict.Provisional
+                    || verdict.Source is not (BatchGateBaseCheckSources.FullSuite or null)
+                    || verdict.VerifiedSha is not null
+                        && !string.Equals(verdict.VerifiedSha, verdict.BaseSha, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(verdict.GateProfileDigest, currentProfile, StringComparison.Ordinal)
+                    || !laterBySha.TryGetValue(verdict.BaseSha, out var parent)
+                    || !File.Exists(verdict.EvidencePath)) continue;
+                publications.Add(new(verdict.BaseSha, parent,
+                    $"full-suite batch base gate on {verdict.BaseSha}"));
+            }
             IntegrationPublicationGatePolicy.Publication? mappedBatchGate = null;
             foreach (var manifest in batches.ListManifests()
                 .Where(item => string.Equals(item.Scope.Project, job.ProjectName, StringComparison.Ordinal)
@@ -250,7 +264,9 @@ public sealed class TaskIntegrationStatusService
             }
             if (!decision.Verified)
                 return status with { Verification = UnverifiedAcceptance(tip,
-                    $"The later publication {decision.MissingTree} has no passed gate on the first-parent integration line.") };
+                    $"The later publication {decision.MissingTree} has no passed gate on the first-parent integration line. "
+                    + "A passed per-task gate on that published tree or a full-suite batch base verdict "
+                    + "for the current gate profile with its evidence would cover it.") };
             var neutralEvidence = neutralCommits.Count == 0 ? string.Empty
                 : $" Gate-neutral document-key commits: {string.Join(", ", neutralCommits.Order(StringComparer.OrdinalIgnoreCase))}.";
             if (mappedBatchGate is not null)

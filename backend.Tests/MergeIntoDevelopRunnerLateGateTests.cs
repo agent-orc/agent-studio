@@ -12,6 +12,24 @@ namespace AgentStudio.Tests;
 public sealed partial class MergeIntoDevelopRunnerTests
 {
     [Fact]
+    public async Task Inline_push_records_gate_after_fresh_merge_verification()
+    {
+        var fixture = SeedLateGateFixture("inline-published-gate", "inline", publishDelivery: false);
+        var gate = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 10, "", "green", true, false));
+        var runner = PublicationRunner(fixture, gate);
+
+        var result = await runner.RunAsync("Fixture", "inline", fixture.Folder,
+            fixture.WatchPath, "develop", CancellationToken.None);
+
+        Assert.True(result.Outcome.IsSuccessfulIntegration(), result.Error);
+        var publication = Assert.Single(PublishedGateEvidenceStore.Read(fixture.WatchPath));
+        Assert.Equal(result.MergedSha, publication.TreeSha);
+        Assert.Equal(result.MergedSha, publication.PublishedSha);
+        Assert.Equal(result.MergedSha, IntegrationVerificationStore.Read(fixture.Folder)?.Sha);
+    }
+
+    [Fact]
     public async Task Rejected_push_on_disjoint_origin_replays_under_the_green_gate()
     {
         var fixture = SeedLateGateFixture("rejected-push-disjoint", "replay", publishDelivery: false);
