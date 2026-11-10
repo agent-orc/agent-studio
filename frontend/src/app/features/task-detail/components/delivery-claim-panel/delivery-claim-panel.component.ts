@@ -170,8 +170,12 @@ export class DeliveryClaimPanelComponent {
   });
 
   /** Acceptance settles earlier delivery warnings without erasing the facts. */
+  private settle(tone: StatusTone): StatusTone {
+    return this.settled() && (tone === 'warning' || tone === 'danger') ? 'neutral' : tone;
+  }
+
   readonly integrationTone = computed<StatusTone>(() =>
-    this.settled() ? 'neutral' : DELIVERY_INTEGRATION_TONES[this.integration()] ?? 'neutral');
+    this.settle(DELIVERY_INTEGRATION_TONES[this.integration()] ?? 'neutral'));
 
   readonly integrationTooltip = computed(() => {
     const detail = this.answer()?.detail ?? this.job().integration?.detail ?? null;
@@ -252,8 +256,7 @@ export class DeliveryClaimPanelComponent {
 
   readonly supersessionTone = computed<StatusTone>(() => {
     const state = this.supersession();
-    if (!state || this.settled()) return 'neutral';
-    return DELIVERY_SUPERSESSION_TONES[state] ?? 'neutral';
+    return state ? this.settle(DELIVERY_SUPERSESSION_TONES[state] ?? 'neutral') : 'neutral';
   });
 
   readonly supersessionTooltip = computed(() => {

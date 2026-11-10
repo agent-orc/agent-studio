@@ -198,6 +198,9 @@ describe('DeliveryClaimPanelComponent', () => {
       .toBe('not-integrated');
     expect(host.querySelector('[data-testid="delivery-claim-panel"]')?.getAttribute('data-settled'))
       .toBe('true');
+    // Acceptance settles the not-integrated warning without erasing the fact.
+    expect(host.querySelector('[data-testid="delivery-claim-integration-state"]')?.getAttribute('data-tone'))
+      .toBe('neutral');
   });
 
   it('says who accepted the card when the system accepted it automatically (AGT-3621)', async () => {
