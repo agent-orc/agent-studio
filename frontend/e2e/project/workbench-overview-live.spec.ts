@@ -334,7 +334,7 @@ test('project and central overviews receive a newly created item without reloadi
     fs.writeFileSync(path.join(probeDir, 'workbench.json'), JSON.stringify({
       schemaVersion: 1,
       id,
-      key: `AGT-W${Date.now()}`,
+      key: 'AGT-W999999',
       title: 'Live creation proof',
       summary: 'Created while the project overview and Explorer Tree are already open.',
       entrypoint: 'index.html',
