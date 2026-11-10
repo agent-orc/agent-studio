@@ -90,6 +90,18 @@ public static class MonolithTransitionAdapter
     public static int GateStartsAfterCancellation(int startsBeforeThisRun, string? reason, bool serviceStopping)
         => GateCancellationPolicy.ChargedStartsAfterCancellation(startsBeforeThisRun, reason, serviceStopping);
 
+    public static PerTaskFallbackWaitDecision PerTaskFallbackEngineWait(EngineDecisionWaitFacts facts)
+        => PerTaskFallbackWaitPolicy.EngineDecision(facts);
+
+    public static PerTaskFallbackWaitDecision PerTaskFallbackFlight(FallbackFlightFacts facts)
+        => PerTaskFallbackWaitPolicy.Flight(facts);
+
+    public static bool PerTaskFallbackCancelsStalledStage(string stage)
+        => PerTaskFallbackWaitPolicy.CancelsStalledStage(stage);
+
+    public static bool PerTaskFallbackDetachesCancelledFlight(DateTimeOffset cancelledAtUtc, DateTimeOffset nowUtc)
+        => PerTaskFallbackWaitPolicy.DetachesCancelledFlight(cancelledAtUtc, nowUtc);
+
     public static bool GateCancellationOwnsResult(string? expectedSha, string? currentSha,
         string? expectedAttempt, string? currentAttempt,
         string? expectedLane, string? currentLane, bool continuePending)
