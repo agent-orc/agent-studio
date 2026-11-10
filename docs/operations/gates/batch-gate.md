@@ -125,6 +125,15 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   `reasonDetail`. The first cause of a review generation is kept until the
   review returns to the batch queue. A member of an abandoned batch that is
   queued again shows `pending` with reason `requeued`, not `fallback`.
+  AGT-3694: the member also names what its fallback waits for: `waitKind`
+  (`engine-decision`, `per-task-slot`, `batch-slot`, `machine-gate-slot`,
+  `preparing`, `gate-running`, `integration`, `resume-pending`), `waitingFor`,
+  `waitSinceUtc`, and for an engine decision `engineRunId` and
+  `engineStatus`. An overdue plan reason appends the same text. A wait past
+  its bound is a `batch-fallback-stalled` event (state `fallbackStalls`, the
+  queue stall report, the card timeline and the operator feed); a stalled
+  engine decision or a flight that would not stop escalates the card as
+  `GateInfra`.
 - AGT-3498: when a formed batch's base moves before replay, the worker checks
   each member's current review and immutable delivery against the new base.
   Compatible members close together in one successor linked by
