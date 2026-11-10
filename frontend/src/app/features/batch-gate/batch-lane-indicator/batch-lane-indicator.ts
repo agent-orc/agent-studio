@@ -44,6 +44,6 @@ export class BatchLaneIndicatorComponent {
     return `Batch ${alert.batchId} ${alert.state === 'red' ? 'is red' : 'is isolating the red member'}${culprits}`;
   }
   runningFor(project: string): number {
-    return this.stateFor(project)?.batches.filter(batch => batch.runs.some(run => !!run.startedAtUtc && !run.finishedAtUtc)).length ?? 0;
+    return this.stateFor(project)?.batches.filter(batch => batch.phase === 'running').length ?? 0;
   }
 }

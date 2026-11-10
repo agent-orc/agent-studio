@@ -1,5 +1,16 @@
 # Batch gate delivery state
 
+## Operator state and run artifacts
+
+The batch panel derives an unverified run's displayed status from its batch
+phase: only a running batch can display a running run. An abandoned, red, or
+published batch displays an unverified run as interrupted. The board's running
+count uses the running batch phase. The state response includes recorded phase
+transitions and whether each run's evidence exists. The panel keeps this history
+behind a disclosure and links each member to its task. Run evidence and the
+output log are available through project-scoped `run-evidence` and `run-log`
+routes, keyed by batch and run ID; both serve only files inside the batch store.
+
 ## One-step speculative stacking (AGT-3546)
 
 The implemented choice is AGT-2994 D1 option C, a speculative train with ordered publication,

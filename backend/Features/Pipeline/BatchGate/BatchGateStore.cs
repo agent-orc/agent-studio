@@ -768,6 +768,15 @@ public sealed partial class BatchGateStore
             BatchPhase.Unknown, null, 0, manifest.ClosedAtUtc);
     }
 
+    public IReadOnlyList<BatchGateState> StateHistory(string batchId)
+    {
+        var folder = Path.Combine(BatchDirectory(batchId), "state");
+        return Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json").OrderBy(path => path, StringComparer.Ordinal)
+                .Select(Read<BatchGateState>).ToArray()
+            : [];
+    }
+
     public void RecordRun(BatchGateRunRecord run)
     {
         var manifest = ReadManifest(run.BatchId);

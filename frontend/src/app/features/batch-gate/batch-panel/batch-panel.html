@@ -69,7 +69,9 @@
         <p>Target {{ data.plan.targetSize }} · Closes {{ data.plan.closeAtUtc ? date(data.plan.closeAtUtc) : 'when ready' }}</p>
         <p>Proposed: {{ data.plan.proposedMembers.length ? data.plan.proposedMembers.join(', ') : 'No members yet' }}</p>
         @if (data.plan.decision !== 'disabled') {
-          <button type="button" data-testid="batch-close-now" (click)="showConfirm('close')">Close batch now</button>
+          <button type="button" data-testid="batch-close-now" [disabled]="!data.pending.length"
+            [attr.title]="data.pending.length ? null : 'No eligible cards to close.'" (click)="showConfirm('close')">Close batch now</button>
+          @if (!data.pending.length) { <p data-testid="batch-close-unavailable">No eligible cards to close.</p> }
         }
       </section>
       <section aria-labelledby="batch-upcoming-title">
@@ -115,11 +117,13 @@
           @for (batch of batches(); track batch.batchId) {
             <article class="batch-panel__batch" [id]="'batch-' + batch.batchId" [attr.data-phase]="batch.phase">
               <h4>Batch {{ batch.batchId }} @if (batch.parentBatchId) { <small>from {{ batch.parentBatchId }}</small> }</h4>
-              <p class="batch-panel__timeline" aria-label="Batch phases">@for (phase of phases; track phase) {
-                <span [class.batch-panel__phase-current]="batch.phase === phase">{{ phaseLabel(phase) }}</span>
-              }</p>
-              @if (!phases.includes(batch.phase)) { <p>Phase: {{ batch.phase }}</p> }
-              <p><strong>{{ batch.phase }}</strong>@if (batch.phaseReason) { · {{ batch.phaseReason }} }</p>
+              <p data-testid="batch-phase">Phase: <app-status-indicator [tone]="phaseTone(batch.phase)" [label]="batch.phase" [compact]="true" />@if (batch.phaseReason) { · {{ batch.phaseReason }} }</p>
+              @if (batch.phaseHistory?.length) {
+                <details class="batch-panel__history"><summary>Phase history</summary>
+                  <ol>@for (step of batch.phaseHistory; track step.atUtc + step.phase) { <li>{{ date(step.atUtc) }} · {{ step.phase }}@if (step.reason) { · {{ step.reason }} }</li> }</ol>
+                </details>
+              }
+              @if (batch.phase === 'red') { <p data-testid="batch-red-next">Next: {{ redNext(batch) }}</p> }
               @if (batch.formationReason) { <p>{{ batch.formationReason }}</p> }
               @if (batch.exclusions?.length) {
                 <ul aria-label="Cards placed in another batch">
@@ -128,15 +132,18 @@
                   }
                 </ul>
               }
-              <p>Members: @for (member of batch.members; track member.taskKey) { <span>{{ member.taskKey }} ({{ replayLabel(member.replay) }}{{ member.released ? ', released' : '' }}) </span> }</p>
+              <p>Members: @for (member of batch.members; track member.taskKey) { <span><a [href]="memberHref(member.taskKey)" (click)="openMember($event, member.taskKey)">{{ member.taskKey }}@if (memberTitle(member.taskKey); as title) { · {{ title }} }</a> ({{ replayLabel(member.replay) }}{{ member.released ? ', released' : '' }}) </span> }</p>
               @if (isolationRows(batch); as rows) { <app-batch-isolation [project]="project()" [batchId]="batch.batchId" [rows]="rows" /> }
               <p>Base {{ batch.baseSha }} · Candidate {{ batch.candidateSha ?? 'not created' }}
                 @if (publishedSha(batch.publication); as sha) { · Published {{ sha }} }
               </p>
               @if (batch.runs.length) {
                 <ul>@for (run of batch.runs; track run.batchRunId) {
-                  <li>{{ run.host }} · {{ run.outcome ?? 'running' }} @if (run.classification) { · {{ run.classification }} }
-                    · {{ duration(run.startedAtUtc, run.finishedAtUtc) }}</li>
+                  <li>{{ run.host }} · <app-status-indicator [tone]="runTone(runStatus(batch, run))" [label]="runStatus(batch, run)" [compact]="true" /> @if (run.classification) { · {{ run.classification }} }
+                    · {{ runStatus(batch, run) === 'running' ? duration(run.startedAtUtc, run.finishedAtUtc) : run.finishedAtUtc ? duration(run.startedAtUtc, run.finishedAtUtc) : 'Stopped before verdict' }}
+                    · <a [href]="runEvidenceUrl(project(), batch.batchId, run.batchRunId)" target="_blank" rel="noopener">Evidence</a>
+                    · <a [href]="runEvidenceUrl(project(), batch.batchId, run.batchRunId, 'log')" target="_blank" rel="noopener">Run log</a>
+                    @if (run.evidenceAvailable === false) { · Artifacts pending }</li>
                 }</ul>
               }
             </article>
