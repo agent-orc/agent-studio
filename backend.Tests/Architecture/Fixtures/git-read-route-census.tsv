@@ -463,6 +463,7 @@
 /api/workspace/tokens/timeline	free	-	-	-
 /api/workspace/tokens/timeline/cached	free	-	-	-
 /api/workspaces	free	-	-	-
+/api/workspaces/{id}/personas/	free	-	-	-
 /api/workspaces/{id}/settings	free	-	-	-
 /api/workspaces/{workspaceId}/decision-rules/	free	-	-	-
 /api/workspaces/{workspaceId}/decision-rules/versions/{versionId}/dry-run	free	-	-	-

@@ -1632,6 +1632,55 @@ line (observations, cases updated, proposals created, comments appended,
 contingent-blocked count, analysis calls, last-run timestamp), the same shape
 as `acceptance-rail-run`.
 
+## Persona catalogue and workspace activation (PT-1)
+
+The persona team ([Dossier](../../persona-team/index.html), AGT-3573, decisions
+PT-D1 and PT-D12) starts with a versioned catalogue and an application-owned
+activation per workspace. Nothing runs yet: principals and grants (PT-2) and
+scheduling (PT-3) read these records.
+
+- **Descriptor.** `docs/app/schemas/persona.schema.json` (`PersonaDescriptorV1`):
+  id, revision (`year.month.sequence`), title, aspect, kind
+  (`persona | presenter | manager`), a charter of at most 600 characters,
+  scope (projects, areas, excluded paths), owner-set attributes (focus weights
+  summing to 100, autonomy A0 to A2, risk appetite, thoroughness, signal
+  threshold), persona operations, model capability class and thinking, cadence,
+  triggers, weekly budget, report template and fact floors.
+  `AgentStudio.Personas.PersonaDescriptorValidator` mirrors the schema in code
+  and adds what a schema cannot state: focus weights sum to 100, A2 and the
+  manager operations belong to managers only.
+- **Catalogue.** The eleven starter descriptors live in
+  `backend/Policies/personas/<id>.persona.json` and are embedded in the
+  backend (`PersonaCatalogue`). `revisions.lock.json` beside them records the
+  digest of every published revision; `PersonaCatalogueTests` validates every
+  file against the schema and fails when a file changed without a new
+  revision. The operations warden and the cost controller carry
+  `startsActive: true`; activation still needs the Owner.
+- **Digest.** `PersonaDescriptorDigest`: `sha256:` over the descriptor as
+  compact JSON with keys sorted ordinally. Formatting never changes it.
+- **Activation store.** `PersonaActivationStore` keeps activations and forks
+  per workspace in `.metadata/personas/<workspace>.json`, written only through
+  the routes below. An activation stores a snapshot of the descriptor it runs,
+  so a new catalogue revision changes nothing until the Owner adopts it.
+- **Routes.** `GET /api/workspaces/{id}/personas` lists every catalogue entry
+  and custom persona with its activation (state `shadow`, `active`, `paused`
+  or `inactive`) and `adoptableRevision` when the catalogue has a newer one.
+  `POST .../personas/{personaId}/activate` takes optional `attributes`,
+  `allowance` and `scope` (narrowing only) and `reason`; it needs an active
+  Owner and a fresh, single-use step-up (`403 step-up-required` otherwise),
+  records `descriptorRevision`, `descriptorDigest` and the operations its
+  autonomy grants, and starts in `shadow` until one report period has passed.
+  `.../pause`, `.../resume` and `.../deactivate` need the Owner and no
+  step-up. `.../fork` copies a catalogue persona into a custom persona
+  (`id`, optional `title`, `charter`, `attributes`, `budget`, `scope`) with its
+  own revision chain. `.../adopt` builds the next fork revision from the
+  current catalogue revision plus the fork's own changes, or moves a live
+  catalogue activation to the current revision; adopting into a live
+  activation needs a step-up. Refusals answer `{ error, message }`.
+- **Audit.** Every change appends `persona.activate`, `persona.pause`,
+  `persona.resume`, `persona.deactivate`, `persona.fork` or `persona.adopt` to
+  the IAM audit with target `persona:<workspace>/<personaId>`.
+
 ## Dossier links and retired parent fields
 
 Tasks use `task` or `decision` kind. Dossier membership is the card's
@@ -1713,6 +1762,9 @@ from completion backfill, cycle time, throughput, and environment flow metrics.
   Git ancestry, Remote Review build-tests grades, and deterministic gate logs.
 - `backend/Services/Tasks/ReviewEvidenceLog.cs` and
   `ScreenshotIndexService.cs`: review evidence and visual proof.
+- `backend/Features/Personas/`: persona descriptor, catalogue, workspace
+  activation store and routes (PT-1); `backend/Policies/personas/` holds the
+  starter descriptors and `revisions.lock.json`.
 - `backend/Features/Registry/WorkspaceSettingsService.cs` and
   `WorkspaceSettingsEndpoints.cs`: per-workspace default orchestrator settings
   (`WorkspaceSettings` beside `WorkspaceRecord`, persisted to

@@ -212,6 +212,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Wiki classification | [product/wiki-document-classification.md](./wiki-document-classification.md) |
 | Wiki editing flow | [product/wiki-editing-and-branch-flow.md](./wiki-editing-and-branch-flow.md) |
 | Wiki document companion schema | [schemas/wiki-document-companion.schema.json](../app/schemas/wiki-document-companion.schema.json) |
+| Persona descriptor schema, starter catalogue and workspace activation (PT-1) | [schemas/persona.schema.json](../app/schemas/persona.schema.json) · [tasks domain](../system/domains/tasks.md#persona-catalogue-and-workspace-activation-pt-1) · [Dossier](../persona-team/index.html) |
 | Wiki page lifecycle schema | [schemas/wiki-page-lifecycle.schema.json](../app/schemas/wiki-page-lifecycle.schema.json) |
 | Model qualification benchmark event schema | [schemas/model-qualification-event.schema.json](../app/schemas/model-qualification-event.schema.json) |
 | Model escalation and companion routing concept | [concepts/model-escalation-and-companion-routing.md](../concepts/model-escalation-and-companion-routing.md) |
