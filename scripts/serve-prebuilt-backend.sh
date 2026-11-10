@@ -49,9 +49,7 @@ case "${PW_E2E_PROFILE:-standard}" in
   standard) ;;
   # operator-cli: a fresh networked monolith of its own, so the studio-op spec
   # bootstraps its Owner and API token without sharing first-run state.
-  # networked-https: a fresh networked monolith behind the HTTPS test proxy,
-  # so the browser itself holds the Secure session (AGT-3614).
-  networked-monolith|operator-cli|networked-https)
+  networked-monolith|operator-cli)
     export Security__Profile=networked
     export Security__TrustedProxyAddresses=127.0.0.1
     export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
