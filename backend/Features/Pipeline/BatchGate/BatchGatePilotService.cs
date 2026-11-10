@@ -44,6 +44,7 @@ public sealed partial class BatchGatePilotService
     private readonly IConfiguration? _configuration;
     private readonly TimelineLog? _timeline;
     private readonly PostMergeModeService? _postMergeMode;
+    private readonly ProjectRegistry? _projectRegistry;
     private readonly ConcurrentDictionary<string, byte> _pushAgeAlerts =
         new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _tick = new(1, 1);
@@ -64,6 +65,8 @@ public sealed partial class BatchGatePilotService
     internal bool WaitForFlightsInTick { get; set; }
     internal Action? AfterAssemblyForTesting { get; set; }
     internal Action? BeforeFormationAdmissionForTesting { get; set; }
+    // AGT-3562: a hold before the reservation that ignores the lease deadline.
+    internal Func<BatchGateManifest, Task>? BeforeReservationForTesting { get; set; }
 
     /// <summary>Per-task gate starts per review generation before GateInfra (D8).</summary>
     internal const int FallbackGateStartBudget = 2;
@@ -86,11 +89,12 @@ public sealed partial class BatchGatePilotService
         PipelineHealthDetector? pipelineHealth = null,
         IServiceProvider? services = null, IConfiguration? configuration = null,
         TimelineLog? timeline = null, PostMergeModeService? postMergeMode = null,
-        PipelineHealthService? healthAlerts = null)
+        PipelineHealthService? healthAlerts = null, ProjectRegistry? projectRegistry = null)
     {
         _store = store;
         _timeline = timeline;
         _postMergeMode = postMergeMode;
+        _projectRegistry = projectRegistry;
         _leases = leases;
         _refLeases = refLeases;
         _git = git;
@@ -388,7 +392,7 @@ public sealed partial class BatchGatePilotService
             slotUsage,
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
             _time.GetUtcNow(), _services?.GetService<GateRunLedger>(), reviewFixWaits,
-            _services?.GetService<GateCapacitySettings>()?.Current());
+            _services?.GetService<GateCapacitySettings>()?.Current(), DetachedFlights(project));
     }
 
     private static BatchGateReviewFixWait[] ReviewFixWaits(IEnumerable<TaskInfo> tasks, string project)
@@ -793,7 +797,7 @@ public sealed partial class BatchGatePilotService
             Task[] fallbacks = [];
             Task[] preChecks;
             lock (_runningBatches)
-                batches = _runningBatches.Values.Concat(_flightExits.Values).ToArray();
+                batches = _runningBatches.Values.Concat(AwaitedFlightExits()).ToArray();
             lock (_runningStacks) stacks = _runningStacks.Values.ToArray();
             lock (_runningPreChecks) preChecks = _runningPreChecks.Values.ToArray();
             if (includeFallbacks)
@@ -801,7 +805,7 @@ public sealed partial class BatchGatePilotService
             if (batches.Length == 0 && stacks.Length == 0 && fallbacks.Length == 0 && preChecks.Length == 0) return;
             await Task.WhenAll(batches.Concat(stacks).Concat(fallbacks).Concat(preChecks)).WaitAsync(ct).ConfigureAwait(false);
             lock (_runningBatches)
-                if (_runningBatches.Values.Concat(_flightExits.Values)
+                if (_runningBatches.Values.Concat(AwaitedFlightExits())
                         .Any(task => !task.IsCompleted)) continue;
             lock (_runningStacks)
                 if (_runningStacks.Values.Any(task => !task.IsCompleted)) continue;
@@ -1045,7 +1049,7 @@ public sealed partial class BatchGatePilotService
                 && !existing.IsCompleted) return;
             // A flight cancelled at its lease deadline may still be unwinding.
             if (_detachedFlights.TryGetValue(manifest.BatchId, out var cancelled)
-                && !cancelled.IsCompleted) return;
+                && !cancelled.Task.IsCompleted) return;
             var flight = new BatchFlight(manifest, _time.GetUtcNow(),
                 CancellationTokenSource.CreateLinkedTokenSource(ct), followsCompletedFlight);
             flight.Task = Task.Run(() => ExecuteAsync(manifest, pending, repo, ct, flight), ct);
@@ -1599,6 +1603,8 @@ public sealed partial class BatchGatePilotService
         IDisposable? acquired;
         try
         {
+            if (flight is not null && BeforeReservationForTesting is { } hold)
+                await hold(manifest).ConfigureAwait(false);
             acquired = _reservations is null || manifest.StackedOnBatchId is not null ? null
                 : await _reservations.AcquireBatchAsync(manifest.Scope.Project,
                     marker => IsStalePush(manifest.Scope.Project, marker, fetchedBases, beforeLease),
@@ -1667,6 +1673,20 @@ public sealed partial class BatchGatePilotService
                 Lane(pending[member.TaskKey], "dequeued", reason: $"batch:{manifest.BatchId}");
             var assembly = new BatchGateAssembler(_store, _git, repo, _time)
                 .Assemble(manifest.BatchId, lease.Fence);
+            var keyProject = _projectRegistry?.FindByIdOrDisplayName(manifest.Scope.Project)
+                ?? throw new InvalidDataException("Batch document keys require a registered project.");
+            var keyed = _git.IncludeDocumentKeysInCandidate(repo, manifest.BaseSha,
+                assembly.CandidateSha, keyProject, _projectRegistry!);
+            if (!keyed.Success || keyed.Sha is null)
+                throw new IOException("Batch document key assignment failed: " + keyed.Error);
+            if (!string.Equals(keyed.Sha, assembly.CandidateSha, StringComparison.OrdinalIgnoreCase))
+            {
+                var updated = _git.UpdateBatchCandidateRef(repo, assembly.CandidateRef,
+                    keyed.Sha, assembly.CandidateSha);
+                if (!updated.Success) throw new IOException(updated.Error);
+                assembly = assembly with { CandidateSha = keyed.Sha };
+                State(manifest, BatchPhase.Assembled, keyed.Sha, lease.Fence);
+            }
             AfterAssemblyForTesting?.Invoke();
             if (!RouteEnabled())
             {
@@ -3474,9 +3494,24 @@ public sealed partial class BatchGatePilotService
         string? sha, long fence, string? reason = null,
         string? runId = null, long? refFence = null)
     {
+        var causingMember = phase == BatchPhase.Abandoned
+            ? manifest.Members.FirstOrDefault(member =>
+                _store.HasEject(manifest.Scope.Project, member.TaskKey)
+                || reason?.Contains(member.TaskKey, StringComparison.Ordinal) == true
+                || _store.ListPending().FirstOrDefault(item =>
+                    item.Subject.TaskKey == member.TaskKey
+                    && item.Subject.RunAttempt == member.RunAttempt) is { } pending
+                    && !Refresh(pending).Subject.CurrentGeneration)
+            : null;
+        var withdrawal = causingMember is null ? null : _store.ListWithdrawals(manifest.BatchId)
+            .Where(item => item.TaskKey == causingMember.TaskKey)
+            .OrderBy(item => item.AtUtc).LastOrDefault();
+        if (withdrawal is not null)
+            reason = $"{reason}; {withdrawal.Actor} withdrew {withdrawal.TaskKey}: {withdrawal.Reason}";
         _store.AppendState(new BatchGateState(manifest.BatchId,
             manifest.MembershipDigest, phase, sha, fence, _time.GetUtcNow(),
-            reason, runId, refFence));
+            reason, runId, refFence,
+            CausedByTaskKey: causingMember?.TaskKey));
         if ((phase is BatchPhase.Red or BatchPhase.Abandoned or BatchPhase.Paused)
             && _stackGateCancellations.TryGetValue(manifest.BatchId, out var cancellation))
         {

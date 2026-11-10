@@ -82,6 +82,18 @@ public sealed class ParkedBlockerPolicyTests
         Assert.Equal(expectedReason, record.Reason);
     }
 
+    [Fact]
+    public void Build_RecordsTheTransitionCauseForTheParkCopy()
+    {
+        var record = ParkedBlockerCatalog.Build(
+            TaskStates.Escalated, "No delivery branch was found.", Now,
+            LaneChangeCauses.AcceptanceIntegrationFailed, " missing-delivery ");
+
+        Assert.Equal(LaneChangeCauses.AcceptanceIntegrationFailed, record!.Cause);
+        Assert.Equal("missing-delivery", record.CauseDetail);
+        Assert.Null(ParkedBlockerCatalog.Build(TaskStates.Escalated, "[watchdog-kill] died", Now)!.Cause);
+    }
+
     // -- Recall policy -----------------------------------------------------
 
     [Theory]

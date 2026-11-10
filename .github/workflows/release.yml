@@ -100,6 +100,7 @@ jobs:
 
       - name: Test release shell contracts
         run: |
+          sh scripts/release/owner-bootstrap-install.test.sh
           bash scripts/release/release-scripts.test.sh
           sh scripts/release/linux-install-script.test.sh
           python3 scripts/release/installation-scenarios.test.py

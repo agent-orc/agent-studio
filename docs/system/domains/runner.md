@@ -900,6 +900,11 @@ unreported claim expires with its lease and is queued again.
   the networked profile it never executes Codex on the Studio host: an absent
   or unreachable assigned runner produces a failed turn with a clear reason.
   Changing a remotely placed project to local execution requires the Owner.
+- `runner/OneShotJobAdmission.cs`: coding and review hosts poll bounded model
+  jobs independently of task claims. The review host starts this poll after
+  client registration. A missing claim route (HTTP 404) is logged once and
+  retried every five minutes; a successful poll logs restoration and returns
+  to the normal three-second interval.
 - `backend/Features/Runner/RemoteChatWorkBroker.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteProjectChatRunner.cs`: assignment-aware remote side-sheet chat
@@ -2536,6 +2541,12 @@ card), promotes the card to the top of `2-ready` with transition detail
 `202 {"status":"queued","queued":{"reason":"lane-not-runnable"|"delivery-under-review"|"remote-execution"|"project-busy"}}`.
 A manual start carries no prompt, so nothing is persisted; the promotion alone
 carries the intent.
+
+For remote execution, Run now queues the Ready card, but the assigned runner
+claims only while project pickup is Auto. The Ready card's CURRENT line uses the
+runner-level `manual-mode` reason and offers Switch to Auto inline. A reasonless
+runner queue says "Queued for runner"; only the `slots-full` reason says it is
+waiting for a runner slot.
 
 When a follow-up is queued during a live remote run, the card enters Ready but
 the earlier attempt keeps its lease and continues working. Remote dispatch

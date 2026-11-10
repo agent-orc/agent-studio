@@ -164,7 +164,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `create-job-with-screenshot.spec.ts` | Add Task dialog - drop + paste screenshot uploads |
 | `promote-planning-to-coding.spec.ts` | Promote planning result -> coding task |
 
-### `board/` - 81 specs
+### `board/` - 82 specs
 
 | Spec | Summary |
 |------|---------|
@@ -194,6 +194,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `decision-backlog-dam.spec.ts` | transitive decision backlog dam |
 | `dnd-no-flash.spec.ts` | Drag-and-drop motion CSS contract (static harness) |
 | `done-decide-escalated-card.spec.ts` | Done & Decide - escalated cards do not look like Done |
+| `escalation-bursts.spec.ts` | AGT-3585 · escalation burst grouped by cause on the Escalated lane and in Activity; counts add up, bulk requeue lists its cards (mocked) |
 | `effective-model-on-card.spec.ts` | job-card effective model |
 | `effective-model-screenshots.spec.ts` | effective model screenshots |
 | `execution-location-badge.spec.ts` | shows each concurrent task owner and limits warnings to the stale remote run |

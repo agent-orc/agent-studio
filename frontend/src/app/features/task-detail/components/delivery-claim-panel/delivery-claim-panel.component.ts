@@ -66,6 +66,8 @@ export class DeliveryClaimPanelComponent {
 
   readonly job = input.required<TaskInfo>();
   readonly escalated = computed(() => this.job().state === TaskState.Escalated);
+  readonly settled = computed(() =>
+    this.job().state === TaskState.Completed || this.job().state === TaskState.Archive);
 
   readonly answer = signal<TaskDeliveryClaimAnswer | null>(null);
 
@@ -241,6 +243,12 @@ export class DeliveryClaimPanelComponent {
       case 'operator-override': return 'Completed by operator override';
       default: return null;
     }
+  });
+
+  /** AGT-3621: who accepted the card in a person's place, when the system did. */
+  readonly automaticAcceptance = computed(() => {
+    const by = this.claim()?.acceptedAutomaticallyBy?.trim();
+    return by ? `Accepted automatically by ${by}.` : null;
   });
 
   /** An override's written reason is shown wherever the card claims completion. */

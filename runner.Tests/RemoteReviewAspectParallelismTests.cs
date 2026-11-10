@@ -168,6 +168,49 @@ public sealed class RemoteReviewAspectParallelismTests : IDisposable
     }
 
     [Fact]
+    public async Task Codex_input_too_large_refusal_is_review_infrastructure()
+    {
+        var runner = new FakeAspectRunner(_time)
+        {
+            Reply = _ => new ProcessResult(1, string.Empty,
+                "Error: turn/start: Input exceeds the maximum length of 1048576 characters. " +
+                "(code -32602), data: {\"input_error_code\":\"input_too_large\",\"actual_chars\":1071145}"),
+        };
+        var workspace = await PreparedAsync("attempt-input-refused", [Aspect(1)], runner);
+
+        var failure = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal(ReviewCliRefusalPolicy.InputTooLarge, failure.Classification);
+        Assert.Equal("ReviewInfra", failure.Evidence!.Outcome);
+        Assert.Contains("input_too_large", failure.Message);
+        Assert.Single(failure.Evidence.Commands);
+    }
+
+    [Fact]
+    public async Task Delivery_sized_visual_prompt_is_bounded_before_the_cli_and_reports_omissions()
+    {
+        var runner = new FakeAspectRunner(_time);
+        var aspect = Aspect(1) with
+        {
+            StepId = "aspect-visual-review",
+            Aspect = "visual-review",
+            Prompt = new string('x', 1_071_145),
+        };
+        var workspace = await PreparedAsync("attempt-large-visual", [aspect], runner);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        var prompt = Assert.Single(runner.Prompts);
+        Assert.True(prompt.Length <= ReviewAspectInputBudget.MaximumCharacters);
+        Assert.Contains("Authored context:", prompt);
+        var report = Assert.Single(evidence.Artifacts, artifact =>
+            artifact.Name == "review-input-budget-aspect-visual-review.txt");
+        Assert.Contains("Authored context:", System.Text.Encoding.UTF8.GetString(
+            Convert.FromBase64String(report.ContentBase64!)));
+    }
+
+    [Fact]
     public async Task An_aspect_infrastructure_failure_cancels_the_running_aspects_and_reports_all_evidence()
     {
         var runner = new FakeAspectRunner(_time);

@@ -1,0 +1,59 @@
+@if (labelIsButton()) {
+  <button type="button" class="hold-way__button" [disabled]="pending()"
+          [attr.data-testid]="'pickup-hold-decision-' + resolution().kind"
+          (click)="apply()">{{ resolution().label }}</button>
+} @else {
+  <span class="hold-way__label" data-testid="pickup-hold-resolution-label">{{ resolution().label }}</span>
+}
+<span class="hold-way__detail" data-testid="pickup-hold-resolution-detail">{{ resolution().detail }}</span>
+
+@switch (control()) {
+  @case ('runner-picker') {
+    <div class="hold-way__controls">
+      <select class="hold-way__select" aria-label="Remote runner" data-testid="pickup-hold-runner-select"
+              [disabled]="pending()" (change)="selectedRunner.set($any($event.target).value)">
+        <option value="" [selected]="!selectedRunner()">Pick a runner…</option>
+        @for (host of runners(); track host.id) {
+          <option [value]="host.id" [selected]="host.id === selectedRunner()"
+                  [disabled]="host.status === 'offline' || host.status === 'draining'">{{ host.name }} · {{ host.status }}</option>
+        }
+      </select>
+      <button type="button" class="hold-way__button" [attr.data-testid]="'pickup-hold-decision-' + resolution().kind"
+              [disabled]="pending() || !selectedRunner()" (click)="apply()">{{ buttonText() }}</button>
+      <button type="button" class="hold-way__link" data-testid="pickup-hold-open-setting"
+              (click)="openLink(placementSetting())">Open execution placement →</button>
+    </div>
+  }
+  @case ('cli-picker') {
+    <div class="hold-way__controls">
+      <select class="hold-way__select" aria-label="CLI agent" data-testid="pickup-hold-cli-select"
+              [disabled]="pending()" (change)="selectedCli.set($any($event.target).value)">
+        @for (cli of cliOptions; track cli.id) {
+          <option [value]="cli.id" [selected]="cli.id === selectedCli()">{{ cli.label }}</option>
+        }
+      </select>
+      <button type="button" class="hold-way__button" [attr.data-testid]="'pickup-hold-decision-' + resolution().kind"
+              [disabled]="pending()" (click)="apply()">{{ buttonText() }}</button>
+    </div>
+  }
+  @case ('api') {
+    @if (!labelIsButton()) {
+      <div class="hold-way__controls">
+        <button type="button" class="hold-way__button" [attr.data-testid]="'pickup-hold-decision-' + resolution().kind"
+                [disabled]="pending()" (click)="apply()">{{ buttonText() }}</button>
+      </div>
+    }
+  }
+  @case ('link') {
+    <div class="hold-way__controls">
+      <button type="button" class="hold-way__link" [attr.data-testid]="'pickup-hold-link-' + resolution().kind"
+              (click)="openLink()">{{ linkText() }} →</button>
+    </div>
+  }
+}
+@if (error(); as message) {
+  <p class="hold-way__error" role="alert">{{ message }}</p>
+}
+@if (notice(); as message) {
+  <p class="hold-way__notice" role="status">{{ message }}</p>
+}

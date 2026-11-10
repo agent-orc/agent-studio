@@ -36,8 +36,10 @@ public class PickupHoldPolicyTests
         Assert.Contains("app", hold.Reason);
         Assert.Contains("local", hold.Reason);
         Assert.Equal(PickupHoldResolutionKinds.RouteToRemoteRunner, Assert.Single(hold.Resolutions).Kind);
-        Assert.Contains("PUT /api/projects/app/execution-runner", hold.Resolutions[0].Detail);
-        Assert.Contains("remote-01", hold.Resolutions[0].Detail);
+        Assert.DoesNotContain("/api/", hold.Resolutions[0].Detail);
+        Assert.Equal("remote-01", hold.Resolutions[0].TargetKey);
+        Assert.Contains("Project Settings", hold.Resolutions[0].Detail);
+        Assert.Equal(RemedyAction.Setting(ProjectSettingKeys.ExecutionRunner, "app"), hold.Resolutions[0].Action);
     }
 
     [Fact]
@@ -457,6 +459,76 @@ public class PickupHoldPolicyTests
         var hold = Evaluate(card, waitsOn: WaitsOn(Item(key: "LIB-1", fulfilled: false)));
 
         Assert.Equal(3 * 86400, hold!.HeldForSeconds);
+    }
+
+    /// <summary>
+    /// AGT-3580: every way out the policy can emit carries the typed action the
+    /// UI renders as a button or a link, and no detail is an HTTP request. The
+    /// expected map pins kind to action, so a new kind needs a deliberate entry.
+    /// </summary>
+    [Fact]
+    public void EveryResolutionKind_CarriesItsTypedAction_AndNoHttpDetail()
+    {
+        var rejection = new RemoteDispatchRejection
+        {
+            Code = "capability-mismatch", RunnerId = "runner-1", RunnerName = "agent-runner-01",
+            Reason = "missing", RejectedAtUtc = Now.AddHours(-1),
+        };
+        var holds = new[]
+        {
+            Evaluate(Card(agent: AgentTypes.Human)),
+            Evaluate(Card(id: TaskSlugs.HumanDecisionNeededPrefix + "pick")),
+            Evaluate(Card(), crashBackoffUntil: Now.AddMinutes(4)),
+            Evaluate(Card(phase: "intake-blocked"), intakeEnabled: true),
+            Evaluate(Card(), waitsOn: WaitsOn(Item(key: "ARCH-9", fulfilled: false, releaseGate: true,
+                waitingForRelease: true, unsatisfiable: true))),
+            Evaluate(Card(), waitsOn: WaitsOn(Item(key: "LIB-2", fulfilled: false, releaseGate: true,
+                waitingForRelease: true, targetState: TaskStates.Completed))),
+            Evaluate(Card(), waitsOn: WaitsOn(Item(key: "LIB-1", fulfilled: false, targetState: TaskStates.Progress))),
+            Evaluate(Card(), waitsOn: new WaitsOnStatus
+            {
+                Items = [Item(key: "APP-2", fulfilled: false)], Blocked = true,
+                CycleDetected = true, CyclePath = ["APP-1", "APP-2", "APP-1"],
+            }),
+            Evaluate(Card(), rejection: rejection),
+            PickupHoldPolicy.Evaluate(new PickupHoldFacts(
+                Card(), null, false, null, null, Now, ExecutionLocations.Local, false, "remote-01", true)),
+        };
+        var resolutions = holds.SelectMany(hold => hold!.Resolutions).ToArray();
+        var expected = new Dictionary<string, RemedyAction>
+        {
+            [PickupHoldResolutionKinds.AssignAgent] = RemedyAction.Api(RemedyApiActions.SetCliType, "app"),
+            [PickupHoldResolutionKinds.DecideEscalation] = RemedyAction.Api(RemedyApiActions.MoveToEscalated, "app"),
+            [PickupHoldResolutionKinds.WaitOutBackoff] = RemedyAction.Api(RemedyApiActions.StartRun, "app"),
+            [PickupHoldResolutionKinds.PassIntake] = RemedyAction.Api(RemedyApiActions.RunIntake, "app"),
+            [PickupHoldResolutionKinds.DropDependency] = RemedyAction.Api(RemedyApiActions.EditWaitsOn, "app"),
+            [PickupHoldResolutionKinds.RepointDependency] = RemedyAction.Api(RemedyApiActions.EditWaitsOn, "app"),
+            [PickupHoldResolutionKinds.ArchiveWaitingCard] = RemedyAction.Api(RemedyApiActions.ArchiveTask, "app"),
+            [PickupHoldResolutionKinds.ReleaseTarget] = RemedyAction.Api(RemedyApiActions.ReleaseTask, "app", "LIB-2"),
+            [PickupHoldResolutionKinds.DropReleaseGate] = RemedyAction.Api(RemedyApiActions.EditWaitsOn, "app"),
+            [PickupHoldResolutionKinds.AwaitTarget] = RemedyAction.Route(RemedyRoutes.Task, "app", "LIB-1"),
+            // The cycle edge's own source; the per-edge key is checked below.
+            [PickupHoldResolutionKinds.DropCycleEdge] = RemedyAction.Api(RemedyApiActions.EditWaitsOn, "app"),
+            [PickupHoldResolutionKinds.RestoreRunnerCapability] = RemedyAction.Route(RemedyRoutes.ExecutionHosts, "app"),
+            [PickupHoldResolutionKinds.RetryDispatch] = RemedyAction.Api(RemedyApiActions.ClearDispatchRejection, "app"),
+            [PickupHoldResolutionKinds.RouteToRemoteRunner] = RemedyAction.Setting(ProjectSettingKeys.ExecutionRunner, "app"),
+        };
+        var declared = typeof(PickupHoldResolutionKinds)
+            .GetFields().Select(field => (string)field.GetValue(null)!).ToHashSet();
+
+        Assert.Equal(declared.OrderBy(kind => kind), expected.Keys.OrderBy(kind => kind));
+        Assert.Equal(declared.OrderBy(kind => kind), resolutions.Select(item => item.Kind).Distinct().OrderBy(kind => kind));
+        Assert.All(resolutions, resolution =>
+        {
+            Assert.Equal(
+                resolution.Kind == PickupHoldResolutionKinds.DropCycleEdge
+                    ? expected[resolution.Kind] with { TaskKey = resolution.SourceKey }
+                    : expected[resolution.Kind],
+                resolution.Action);
+            Assert.DoesNotMatch(@"^(GET|PUT|POST|PATCH|DELETE)\b", resolution.Label);
+            Assert.DoesNotMatch(@"^(GET|PUT|POST|PATCH|DELETE)\b", resolution.Detail);
+            Assert.DoesNotContain("/api/", resolution.Detail);
+        });
     }
 
     private static PickupHoldStatus? Evaluate(

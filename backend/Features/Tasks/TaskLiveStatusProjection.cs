@@ -201,6 +201,19 @@ public sealed class TaskLiveStatusProjection(
         if (index < 0) return null;
 
         var queue = new TaskLiveQueue { Kind = "runner", Position = index + 1 };
+        // A mode change is visible before the next pickup tick records its gate.
+        // Remote claims obey the same project mode, so a just queued Run now
+        // must not look as though it is waiting for an occupied slot.
+        if (project.Mode == "manual")
+            return queue with { ReasonCode = RunnerPickupWaitCodes.ManualMode,
+                Reason = project.PickupGate is { Code: RunnerPickupWaitCodes.ManualMode } manualGate
+                    ? manualGate.Detail
+                    : "Auto-pickup is off; switch the project to auto to let its runner claim the card." };
+        if (project.Mode == "paused")
+            return queue with { ReasonCode = RunnerPickupWaitCodes.Paused,
+                Reason = project.PickupGate is { Code: RunnerPickupWaitCodes.Paused } pausedGate
+                    ? pausedGate.Detail
+                    : "The runner is paused; no card is picked until auto-pickup is enabled again." };
         if (project.PickupGate is { } gate)
             return queue with { ReasonCode = gate.Code, Reason = gate.Detail };
         var skip = project.PickupSkips.FirstOrDefault(item =>

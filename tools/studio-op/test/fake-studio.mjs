@@ -105,6 +105,12 @@ export async function startFakeStudio({ cards = {}, preflightBlockers = [] } = {
       return send(200, { generatedAtUtc: '2026-11-05T10:00:00Z', pendingPushAlertMinutes: 3, projects: [{
         project: 'Demo App', batchGateEnabled: true, plan: 'wait', flights: [], members: [],
         redMembers: [], isolatingMembers: [], pendingPushes: [] }] });
+    if (method === 'GET' && path === '/api/operator/backups')
+      return send(200, { state: 'failing', running: false, lastGoodAgeHours: 13,
+        lastGood: { id: 'studio-backup-20261105T000000Z-abc123', createdAt: '2026-11-05T00:00:00+00:00', sizeBytes: 1024 },
+        lastVerification: { at: '2026-11-05T00:05:00+00:00', outcome: 'verified' },
+        offHost: { kind: 'sftp', state: 'current' },
+        warnings: [{ code: 'backup-stale', severity: 'danger', message: 'The newest good backup is 13 hours old.' }] });
     if (method === 'GET' && path === '/api/operator/capacity')
       return send(200, { quota: [], activeFallbacks: [], waitingCards: [], modelRoutingPins: [] });
     if (method === 'GET' && path === '/api/security/posture')
