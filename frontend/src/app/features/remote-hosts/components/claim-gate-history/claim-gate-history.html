@@ -1,0 +1,13 @@
+<section class="claim-history" data-testid="claim-gate-history" aria-labelledby="claim-gate-history-title">
+  <h3 id="claim-gate-history-title">Claim stops and resumes · last 14 days</h3>
+  @for (event of events(); track event.sequence) {
+    <div class="claim-history__row" data-testid="claim-gate-event" [attr.data-event]="event.event">
+      <time [attr.datetime]="event.occurredAt">{{ event.occurredAt | date:'short' }}</time>
+      <strong>{{ hostName(event) }}</strong>
+      <app-status-indicator tone="neutral" [label]="title(event)" [compact]="true" />
+      <span class="claim-history__detail">{{ detail(event) }}</span>
+    </div>
+  } @empty {
+    <p class="claim-history__empty" data-testid="claim-gate-history-empty">No host stopped claiming in the last 14 days.</p>
+  }
+</section>

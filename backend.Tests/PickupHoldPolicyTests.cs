@@ -38,7 +38,8 @@ public class PickupHoldPolicyTests
         Assert.Equal(PickupHoldResolutionKinds.RouteToRemoteRunner, Assert.Single(hold.Resolutions).Kind);
         Assert.DoesNotContain("/api/", hold.Resolutions[0].Detail);
         Assert.Equal("remote-01", hold.Resolutions[0].TargetKey);
-        Assert.Equal(RemedyAction.Api(RemedyApiActions.SetExecutionRunner, "app"), hold.Resolutions[0].Action);
+        Assert.Contains("Project Settings", hold.Resolutions[0].Detail);
+        Assert.Equal(RemedyAction.Setting(ProjectSettingKeys.ExecutionRunner, "app"), hold.Resolutions[0].Action);
     }
 
     [Fact]
@@ -510,7 +511,7 @@ public class PickupHoldPolicyTests
             [PickupHoldResolutionKinds.DropCycleEdge] = RemedyAction.Api(RemedyApiActions.EditWaitsOn, "app"),
             [PickupHoldResolutionKinds.RestoreRunnerCapability] = RemedyAction.Route(RemedyRoutes.ExecutionHosts, "app"),
             [PickupHoldResolutionKinds.RetryDispatch] = RemedyAction.Api(RemedyApiActions.ClearDispatchRejection, "app"),
-            [PickupHoldResolutionKinds.RouteToRemoteRunner] = RemedyAction.Api(RemedyApiActions.SetExecutionRunner, "app"),
+            [PickupHoldResolutionKinds.RouteToRemoteRunner] = RemedyAction.Setting(ProjectSettingKeys.ExecutionRunner, "app"),
         };
         var declared = typeof(PickupHoldResolutionKinds)
             .GetFields().Select(field => (string)field.GetValue(null)!).ToHashSet();

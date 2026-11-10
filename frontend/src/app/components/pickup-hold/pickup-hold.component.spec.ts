@@ -166,7 +166,7 @@ describe('PickupHoldComponent', () => {
       .toContain('not claiming: load 5.5 per core above 4.0 for 12 min');
   });
 
-  it('names a local execution placement hold and its remote routing resolution', () => {
+  it('opens Project Settings at the execution location from a local coding hold', () => {
     const root = render({
       classification: 'unsatisfiable',
       mechanism: 'execution-placement',
@@ -176,33 +176,19 @@ describe('PickupHoldComponent', () => {
       unsatisfiable: true,
       resolutions: [{
         kind: 'route-to-remote-runner',
-        label: 'Route to a remote runner',
-        detail: 'Pick the remote runner that executes demo; the project setting holds the same choice.',
-        action: api('set-execution-runner'),
+        label: 'Choose an execution runner',
+        detail: 'Open Project Settings and choose an available runner under Execution location.',
+        action: { kind: 'setting', target: 'execution-runner', project: 'demo' },
       }],
     }, 'detail');
     const way = root.querySelector('[data-resolution-kind="route-to-remote-runner"]')!;
-    const route = way.querySelector<HTMLButtonElement>('[data-testid="pickup-hold-decision-route-to-remote-runner"]')!;
+    const setting = way.querySelector<HTMLButtonElement>('[data-testid="pickup-hold-link-route-to-remote-runner"]')!;
 
     expect(root.querySelector('[data-testid="pickup-hold-mechanism"]')?.textContent)
       .toContain('Execution placement');
     expect(way.textContent).not.toContain('/api/');
-    expect(route.disabled).toBe(true);
-
-    hosts.set([
-      { id: 'runner-01', name: 'agent-runner-01', role: 'remote', status: 'online' } as RemoteHost,
-      { id: 'local', name: 'This orchestrator', role: 'local', status: 'online' } as RemoteHost,
-    ]);
-    fixture.detectChanges();
-    const select = way.querySelector<HTMLSelectElement>('[data-testid="pickup-hold-runner-select"]')!;
-    expect(Array.from(select.options).map(option => option.value)).toEqual(['', 'runner-01']);
-    select.value = 'runner-01';
-    select.dispatchEvent(new Event('change'));
-    fixture.detectChanges();
-    route.click();
-
-    expect(taskService.setProjectExecutionLocation).toHaveBeenCalledWith('demo', 'runner-01');
-    way.querySelector<HTMLButtonElement>('[data-testid="pickup-hold-open-setting"]')!.click();
+    expect(setting.textContent).toContain('Open Project Settings');
+    setting.click();
     expect(navigation.open).toHaveBeenCalledWith({ kind: 'setting', target: 'execution-runner', project: 'demo' });
   });
 
@@ -263,7 +249,7 @@ describe('PickupHoldComponent', () => {
       ['drop-cycle-edge', api('edit-waits-on', 'APP-1')],
       ['restore-runner-capability', route('execution-hosts')],
       ['retry-dispatch', api('clear-dispatch-rejection')],
-      ['route-to-remote-runner', api('set-execution-runner')],
+      ['route-to-remote-runner', { kind: 'setting', target: 'execution-runner', project: 'demo' }],
     ];
     for (const [kind, action] of emitted) {
       const control = controlFor(action, { kind, label: kind, detail: '', targetKey: 'APP-2', action }, navigation);

@@ -7,13 +7,14 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { formatRunningLabel, StatusBarComponent } from './status-bar';
 import { TaskService } from '../../../../services/task.service';
 import type { TaskInfo } from '../../../../models/task.model';
+import { RemoteHostsService, type RemoteHost } from '../../../remote-hosts';
 
 describe('formatRunningLabel', () => {
   it.each([
     { local: 2, remote: 3, ceiling: 8, hosts: 1, expected: '2 local · remote 3/8' },
     { local: 2, remote: 0, ceiling: null, hosts: 0, expected: '2 local' },
     { local: 0, remote: 1, ceiling: 8, hosts: 1, expected: 'remote 1/8' },
-    { local: 0, remote: 0, ceiling: null, hosts: 0, expected: 'no runners' },
+    { local: 0, remote: 0, ceiling: null, hosts: 0, expected: 'local idle' },
     { local: 0, remote: 0, ceiling: 8, hosts: 1, expected: 'remote idle' },
   ])('renders $expected for local=$local and remote=$remote', ({ local, remote, ceiling, hosts, expected }) => {
     expect(formatRunningLabel(local, remote, ceiling, hosts)).toBe(expected);
@@ -133,6 +134,40 @@ describe('StatusBarComponent CLI repair note', () => {
     expect(note?.textContent).toContain('CLI broken since');
     expect(note?.getAttribute('data-signal-tone')).toBe('mismatch');
     expect(note?.querySelector('[aria-label="CLI broken"]')).not.toBeNull();
+  });
+
+  it('names hosts that are not claiming and opens the longest-closed one', async () => {
+    await TestBed.configureTestingModule({
+      imports: [StatusBarComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(StatusBarComponent);
+    const host = (id: string, since: string): RemoteHost => ({
+      id, name: id, role: 'remote', serviceRole: 'coding', clientId: id, address: null, status: 'online',
+      os: 'Linux', lastHeartbeatAt: null, uptimeLabel: null, capabilities: [], cliQuotas: [], stats: null,
+      claimLoadGate: { state: 'closed', loadPerCore: 5.51, threshold: 4, sustainedSeconds: 1380, since, activeSlots: 4 },
+    });
+    const hosts = TestBed.inject(RemoteHostsService);
+    hosts.hosts.set([host('runner-b', '2026-11-09T09:20:00Z'), host('runner-a', '2026-11-09T09:07:00Z')]);
+    fixture.detectChanges();
+
+    const entry = fixture.nativeElement.querySelector('[data-testid="status-bar-running"]') as HTMLButtonElement;
+    expect(entry.textContent).toContain('2 hosts not claiming');
+    expect(fixture.componentInstance.runningTooltip())
+      .toContain('Open runner-a in Execution Hosts. runner-a: Not claiming: load 5.5 per core above 4.0 for 23 min.');
+    history.replaceState(null, '', '/#/board');
+    entry.click();
+    expect(window.location.hash).toBe('#/workspace/settings/environment?host=runner-a');
+
+    hosts.hosts.set([]);
+    fixture.detectChanges();
+    expect(entry.textContent).not.toContain('not claiming');
+    fixture.destroy();
   });
 });
 

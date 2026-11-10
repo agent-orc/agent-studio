@@ -5,6 +5,10 @@ namespace AgentStudio.Pipeline;
 public sealed record BatchGateReviewFixWait(string TaskKey, string ReviewAttemptId,
     int Round, int Maximum, IReadOnlyList<string> Aspects);
 
+/// <summary>AGT-3562: a flight cancelled at its lease deadline that has not exited yet.</summary>
+public sealed record BatchGateDetachedFlight(string BatchId, string Project,
+    DateTimeOffset StartedAtUtc, DateTimeOffset DetachedAtUtc, int DeadlineMinutes, string Reason);
+
 public static class BatchGateStateSnapshotReader
 {
     public static object Read(BatchGateStore store, string project,
@@ -16,7 +20,8 @@ public static class BatchGateStateSnapshotReader
         DateTimeOffset? now = null,
         GateRunLedger? ledger = null,
         IReadOnlyList<BatchGateReviewFixWait>? reviewFixWaits = null,
-        GateCapacity? gateCapacity = null)
+        GateCapacity? gateCapacity = null,
+        IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null)
     {
         var at = now ?? DateTimeOffset.UtcNow;
         var dailySummary = ledger?.Summary(store, project, DateOnly.FromDateTime(at.UtcDateTime));
@@ -262,6 +267,7 @@ public static class BatchGateStateSnapshotReader
                 abandoned = moved.Count(state => state.BaseMoveOutcome == "abandoned") },
             members,
             reviewFixWaits = reviewFixWaits ?? [],
+            detachedFlights = detachedFlights ?? [],
             isolationFindings = store.ListIsolationFindings(project)
                 .Select(finding => IsolationFinding(store, projectManifests, finding)).ToArray(),
             pushWait,

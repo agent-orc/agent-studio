@@ -11,8 +11,8 @@ namespace AgentStudio.Operator;
 /// <summary>
 /// The operator decision stream and watcher lease (operator agent level
 /// Dossier, OP-2, decision OA-D2 option B). Human sessions, API tokens and
-/// operator agent sessions read the stream; each reader sees only events of
-/// the projects it may read. The routes publish facts; transition rules stay
+/// operator agent sessions read the stream and the attention list; each
+/// reader sees only events of the projects it may read. The routes publish facts; transition rules stay
 /// in orchestration-decisions.
 /// </summary>
 public static class OperatorEndpoints
@@ -36,6 +36,12 @@ public static class OperatorEndpoints
                 page.Oldest is { } oldest ? Format(oldest) : null, page.HasMore, page.Gap,
                 (int)log.Retention.TotalHours));
         });
+
+        // The attention list (AGT-3576): the facts the stream currently sees,
+        // in the reader's project scope, as one current list instead of events.
+        group.MapGet("/attention", async (HttpContext context, OperatorDecisionPublisher publisher,
+            ProjectRegistry projects, CancellationToken ct) =>
+            Results.Ok(OperatorAttention.Project(await publisher.CurrentFactsAsync(ct), ReaderFor(context, projects))));
 
         group.MapGet("/decisions/stream", async (HttpContext context, OperatorDecisionLog log,
             OperatorDecisionOptions options, ProjectRegistry projects, IOptions<JsonOptions> json,

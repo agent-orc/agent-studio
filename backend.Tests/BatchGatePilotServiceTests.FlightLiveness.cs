@@ -75,6 +75,67 @@ public sealed class BatchGatePilotFlightLivenessTests : BatchGatePilotServiceTes
     }
 
     [Fact]
+    public async Task Detached_hung_flight_does_not_hold_a_flight_wait_and_shows_on_the_state()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        ConfigureOneFlightPerPair(factory, flightLeaseDeadlineMinutes: 5);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.WaitForFlightsInTick = false;
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        _gate.Batch = request => Green(request.ExpectedSha);
+        // The first flight hangs before its lease and ignores the cancellation.
+        var hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        string? hungBatchId = null;
+        pilot.BeforeReservationForTesting = manifest =>
+            Interlocked.CompareExchange(ref hungBatchId, manifest.BatchId, null) is null
+                || hungBatchId == manifest.BatchId ? hang.Task : Task.CompletedTask;
+        try
+        {
+            SeedMember(factory, "CODE-DETACH-A1", "src/detach-a1.cs");
+            SeedMember(factory, "CODE-DETACH-A2", "src/detach-a2.cs");
+            pilot.RequestCloseNow(ProjectName);
+            await pilot.TickAsync(CancellationToken.None);
+            var hung = Assert.Single(store.ListRecoverableManifests());
+            SeedMember(factory, "CODE-DETACH-B1", "src/detach-b1.cs");
+            SeedMember(factory, "CODE-DETACH-B2", "src/detach-b2.cs");
+            _clock = _clock.AddSeconds(1);
+            pilot.RequestCloseNow(ProjectName);
+            await pilot.TickAsync(CancellationToken.None);
+            var next = Assert.Single(store.ListRecoverableManifests(), manifest =>
+                manifest.BatchId != hung.BatchId);
+
+            _clock = _clock.AddMinutes(6);
+            await pilot.TickAsync(CancellationToken.None);
+            await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(60));
+
+            Assert.Equal(hung.BatchId, hungBatchId);
+            Assert.Equal(BatchPhase.Published, store.LatestState(next.BatchId).Phase);
+            Assert.Equal(BatchPhase.Formed, store.LatestState(hung.BatchId).Phase);
+            using var state = System.Text.Json.JsonDocument.Parse(
+                System.Text.Json.JsonSerializer.Serialize(pilot.State(ProjectName)));
+            var detached = Assert.Single(state.RootElement.GetProperty("detachedFlights").EnumerateArray());
+            Assert.Equal(hung.BatchId, detached.GetProperty("BatchId").GetString());
+            Assert.Equal(5, detached.GetProperty("DeadlineMinutes").GetInt32());
+            Assert.Equal(BatchGateStartPolicy.LeaseDeadlineReason(5), detached.GetProperty("Reason").GetString());
+        }
+        finally
+        {
+            hang.TrySetResult();
+            for (var poll = 0; poll < 600 && DetachedShown(); poll++) await Task.Delay(50);
+            await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        }
+
+        bool DetachedShown()
+        {
+            using var state = System.Text.Json.JsonDocument.Parse(
+                System.Text.Json.JsonSerializer.Serialize(pilot.State(ProjectName)));
+            return state.RootElement.GetProperty("detachedFlights").GetArrayLength() > 0;
+        }
+    }
+
+    [Fact]
     public async Task Finished_flight_starts_the_next_formed_batch_without_a_tick()
     {
         using var factory = BuildFactory();
