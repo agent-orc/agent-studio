@@ -3445,7 +3445,8 @@ public static class LeaseEndpoints
             settings.ResolveContextMode(task.ProjectName, cliType, task.ContextMode).Mode,
             modeFraming,
             RunTimeoutSeconds: operatorLimit ?? emergency.Item1,
-            RunTimeoutSource: operatorLimit is null ? emergency.Item2 : "operator");
+            RunTimeoutSource: operatorLimit is null ? emergency.Item2 : "operator",
+            TaskTitle: task.Title);
     }
 
     internal static string? BuildModeFraming(

@@ -6,7 +6,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGatePilotBaseMoveTests : BatchGatePilotServiceTests
 {
     [Fact]
     public async Task Two_successive_base_moves_keep_compatible_members_in_one_gate()

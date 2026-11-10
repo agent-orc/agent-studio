@@ -5,7 +5,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-public sealed partial class BatchGatePilotServiceTests
+public sealed class BatchGateCancellationTests : BatchGatePilotServiceTests
 {
     [Fact]
     public async Task Operator_cancelled_fallback_returns_to_batch_planning()

@@ -1,11 +1,21 @@
 # Frontend Domain Map
 
-Version: 2026-11-05
+Version: 2026-11-09
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
+
+## Manual task creation
+
+The create dialog resolves the selected project's `cliDefault` and
+`modelDefault` from the registry before enabling Create. Changing the project
+replaces those defaults; changing the agent or model afterward is an explicit
+choice. The model displayed at submission is sent as an explicit model so the
+new card shows the same selection. The Create button uses `appPendingButton`
+until the request settles. On success the dialog closes and a short, quiet
+toast opens the new card; on failure the draft remains available.
 
 ## Modal keyboard contract
 
@@ -207,10 +217,13 @@ deploy-run and integration-verification changes; board reads do not walk git.
 Lane headers open the project's Deploy area, and board search and filters narrow
 the delivery cards.
 
-The project execution assignment card warns when automatic pickup is placed
-at `local` and the settings projection reports `localCodingAdmitted: false`.
+The project execution assignment card warns when execution is placed at
+`local` and the settings projection reports `localCodingAdmitted: false`.
 Ready cards show the corresponding `execution-placement` pickup hold and a
-copyable `PUT /api/projects/{projectName}/execution-runner` resolution.
+button that opens Project Settings at Execution location. The onboarding dialog
+reads `GET /api/projects/execution-capability` before a first project exists;
+when local coding is disabled, it requires a runner for a source-backed project
+and labels Local as board and orchestration only.
 
 ## Global Search
 
@@ -992,15 +1005,25 @@ occur. It is not a claim about tunnel transfer time.
   identity, connection, capabilities, capacity, project access, work, and load
   disclosures. The same pane carries setup, link, capacity, provider sign-in,
   drain, and lifecycle controls. Fresh runner telemetry places claim load gate
-  status beside slot counts. The Environment flow shows the same status, and a
-  Ready card routed to that runner shows a pickup hold while its gate is closed.
+  status beside slot counts. The detail pane's Slots, Capacity, and Host work
+  read one slot count, the role daemons' telemetry; board leases are only the
+  comparison source. A closed gate is one attention cause, tags its machine
+  row "Not claiming", and the footer runner entry names how many hosts are not
+  claiming and opens the longest-closed one (`?host=`). The Environment flow
+  shows the same status, and a Ready card routed to that runner shows a pickup
+  hold while its gate is closed. The summary buckets (reporting, degraded,
+  draining, offline, retired) follow the status label each machine row shows;
+  "not enrolled" counts the rows tagged "Not enrolled".
   Retired roles remain behind the Show retired
   filter. At narrow widths selection replaces the list and a Back control returns
   to it. The Topology view keeps Task Server as the hub, labels connection health
   in text as well as line style, and opens a selected machine in Hosts. The
   Installation view owns checkpoints and infrastructure facts; the Task Server
   observation is labelled as seen from the browser. History shows settled AI
-  Operator interventions and provider refusals without current-warning tint.
+  Operator interventions, claim stops and resumes with load and duration
+  (`GET /api/v1/management/claim-gate-events`, the Task Server's
+  `runner.claim-load-gate.*` audit), and provider refusals without
+  current-warning tint.
   Runner roles and the read-only management environment snapshot remain the
   underlying data sources. Unreported health, repository access, and placement
   display as unknown. Review roles require read access and provider
@@ -1146,6 +1169,15 @@ header chip, and Result header agree on word and resolved colour, both themes).
 - Destructive operations and runner side effects stay spinner-backed rather than
   optimistic.
 - Menus are text-only. Do not add leading icons to menu rows.
+- A burst of automatic escalations is grouped by cause, not shown as one row
+  per card (AGT-3585). The Escalated lane and Activity across projects both
+  group through `models/cause-burst.ts`: items with one cause whose times lie
+  at most 15 minutes apart form one burst, and every item lands in exactly one
+  group, so group counts add up (R3). Bulk actions come only from
+  `features/board/state/bulk-lane-actions.ts`. They are plain moves that are
+  valid for every member (today: Continue (reissue) and Resolve manually from
+  Escalated), always confirm with the card list, and run as one server-side
+  batch move.
 - Before adding visual variants, check the style guide and update it if a new
   pattern is truly needed.
 - Use stable `data-testid` hooks for Playwright selectors.

@@ -4,12 +4,15 @@
   @if (view() === 'list') {
     <app-environment-attention [causes]="attention()" [now]="now()" (reconnect)="reconnect($event)" />
     <div class="rh__summary" data-testid="remote-hosts-summary">
-      <span><strong>{{ machineCount() }}</strong> machines</span>
-      <span><strong>{{ reportingCount() }}</strong> reporting</span>
-      <span><strong>{{ degradedCount() }}</strong> degraded</span>
-      <span><strong>{{ offlineCount() }}</strong> offline</span>
-      <span><strong>{{ notEnrolledCount() }}</strong> not enrolled</span>
-      <span><strong>{{ roleCount() + gateWorkers().length }}</strong> roles</span>
+      @let counts = summary();
+      <span data-testid="remote-hosts-summary-machines"><strong>{{ counts.machines }}</strong> machines</span>
+      <span data-testid="remote-hosts-summary-reporting"><strong>{{ counts.reporting }}</strong> reporting</span>
+      <span data-testid="remote-hosts-summary-degraded"><strong>{{ counts.degraded }}</strong> degraded</span>
+      @if (counts.draining) { <span data-testid="remote-hosts-summary-draining"><strong>{{ counts.draining }}</strong> draining</span> }
+      <span data-testid="remote-hosts-summary-offline"><strong>{{ counts.offline }}</strong> offline</span>
+      @if (counts.retired) { <span data-testid="remote-hosts-summary-retired"><strong>{{ counts.retired }}</strong> retired</span> }
+      <span data-testid="remote-hosts-summary-not-enrolled"><strong>{{ counts.notEnrolled }}</strong> not enrolled</span>
+      <span data-testid="remote-hosts-summary-roles"><strong>{{ counts.roles }}</strong> roles</span>
       @if (stableReleaseLabel(); as stable) { <span data-testid="remote-hosts-stable-release">{{ stable }}</span> }
       @if (behindReleaseCount(); as behind) { <span data-testid="remote-hosts-release-behind">{{ behind }} behind Stable</span> }
       @if (retiredCount()) {
@@ -31,14 +34,13 @@
     @if (machineCount()) {
       <div class="rh__layout" data-testid="remote-hosts-active">
         <app-environment-host-list [groups]="orderedGroups()" [gates]="gateWorkers()"
-          [selected]="currentSelection()" [slots]="slotFn" (selectedChange)="selectHost($event)" />
+          [selected]="currentSelection()" [slots]="slotFn" [now]="now()" (selectedChange)="selectHost($event)" />
         <main class="rh__detail" [class.rh__detail--mobile]="selectedId()" aria-label="Selected host detail"
           tabindex="0" (keydown)="onDetailKeydown($event)">
           <button type="button" class="rh__back" (click)="backToList()">Back to hosts</button>
           @if (selectedHost(); as host) {
             <app-remote-host-card [host]="host" [roles]="selectedRoles()"
               [repositoryAccess]="selectedRepositoryAccess()"
-              [roleActiveSlots]="selectedRoleSlots()"
               [now]="now()" [boardActiveSlots]="selectedSlots()"
               [projectSlots]="projectSlots(host)" [allChatUsage]="interactiveUsage()"
               [stableRelease]="stableRelease()" [expanded]="true"
@@ -69,6 +71,7 @@
   }
   @if (view() === 'history') {
     <app-operational-stalls [historyOnly]="true" />
+    <app-claim-gate-history [events]="claimGateEvents()" [hosts]="hosts()" />
     @if (providerRefusals().length) {
       <section class="rh__history" data-testid="provider-refusal-summary"><h3>Provider request refusals · last 14 days</h3>
         @for (refusal of providerRefusals(); track refusal.day + ':' + refusal.model) {

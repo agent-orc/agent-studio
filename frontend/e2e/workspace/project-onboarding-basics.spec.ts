@@ -116,6 +116,9 @@ async function mockBootApis(page: Page, currentProject: () => ProjectFixture): P
       executionLocation: 'agent-runner-01',
     },
   }));
+  await page.route('**/api/projects/execution-capability', (route) => fulfillJson(route, {
+    localCodingAdmitted: true,
+  }));
   await page.route('**/api/projects/*/snapshot', (route) => fulfillJson(route, {
     settings: {
       autoCommit: false,
@@ -370,6 +373,38 @@ test.describe('project onboarding and editable project basics', () => {
         path: join(results, `onboarding-large-grouped-basics-${theme}--mocked.png`),
       });
     }
+  });
+
+  test('fresh checkout requires a coding runner before the first card', async ({ page }) => {
+    let projectCreated = false;
+    await page.route('**/api/v1/projects', route => {
+      if (route.request().method() === 'POST') projectCreated = true;
+      return fulfillJson(route, [project]);
+    });
+    await page.route('**/api/projects/execution-capability', route => fulfillJson(route, {
+      localCodingAdmitted: false,
+    }));
+
+    const dialog = await openOnboarding(page);
+    const runner = dialog.getByTestId('onboard-project-runner');
+    await expect(runner).not.toHaveValue('local');
+    await dialog.getByTestId('onboard-project-display-name').fill('Fresh Checkout');
+    await dialog.getByTestId('onboard-project-repository-path').fill('C:/Projects/fresh-checkout');
+    await dialog.getByTestId('onboard-project-root-path').fill('C:/Projects/fresh-checkout');
+    await runner.selectOption('local');
+    await expect(runner.locator('option[value="local"]')).toHaveText('Local (board and orchestration only)');
+    await expect(dialog.getByTestId('onboard-project-runner-required')).toContainText(
+      'Start a runner host next to the source checkout');
+    await expect(dialog.getByTestId('onboard-project-submit')).toBeDisabled();
+    expect(projectCreated).toBe(false);
+
+    const execution = dialog.locator('section[aria-labelledby="onboard-project-execution-title"]');
+    for (const theme of ['light', 'dark'] satisfies Theme[]) {
+      await setTheme(page, theme);
+      await execution.screenshot({ path: join(results, `onboarding-runner-required-${theme}--mocked.png`) });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await execution.screenshot({ path: join(results, 'onboarding-runner-required-390px--mocked.png') });
   });
 
   test('new repository mode submits owner, visibility and template without local paths', async ({ page }) => {

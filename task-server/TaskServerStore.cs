@@ -4744,6 +4744,7 @@ public sealed partial class TaskServerStore
             CREATE INDEX IF NOT EXISTS ix_runner_outbox_backlog ON runner_outbox_status(backlog_count);
             CREATE INDEX IF NOT EXISTS ix_outbox_receipts_run ON outbox_receipts(run_id, sequence);
             CREATE INDEX IF NOT EXISTS ix_runner_inventory_observed ON runner_inventories(observed_at);
+            CREATE INDEX IF NOT EXISTS ix_audit_action_sequence ON audit(action, sequence);
             CREATE INDEX IF NOT EXISTS ix_runner_actions_owner ON runner_reconciliation_actions(runner_id, instance_id);
             CREATE INDEX IF NOT EXISTS ix_runner_capabilities_state ON runner_capabilities(runner_id, health_state, fresh_until);
             CREATE INDEX IF NOT EXISTS ix_host_allowed_projects_project

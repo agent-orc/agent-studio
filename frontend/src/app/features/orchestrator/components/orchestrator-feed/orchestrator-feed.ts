@@ -11,6 +11,7 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CredentialAlertsComponent } from '../../../credentials/credential-alerts/credential-alerts.component';
 import { BoardFiltersService } from '../../../../features/board';
@@ -22,8 +23,11 @@ import type { OrchestratorLogEntry } from '../../models/orchestrator.model';
 import { GlobalOrchestratorCardComponent } from '../global-orchestrator-card/global-orchestrator-card';
 import { LoadDistributionComponent } from '../load-distribution/load-distribution.component';
 import { OrchestratorFeedEntryComponent } from '../orchestrator-feed-entry/orchestrator-feed-entry';
+import { OrchestratorFeedBurstComponent } from '../orchestrator-feed-burst/orchestrator-feed-burst';
+import { OrchestratorFeedBurstDetailComponent } from '../orchestrator-feed-burst-detail/orchestrator-feed-burst-detail';
 import { OrchestratorFeedStore } from '../../state/orchestrator-feed.store';
 import { OrchestratorFeedWindow } from './orchestrator-feed-windowing';
+import { buildFeedRows, type FeedBurst, type FeedRow } from './feed-bursts';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
 
@@ -34,7 +38,7 @@ export const WATCHER_DECISION_TOPIC = 'watcher-decision-required';
 @Component({
   selector: 'app-orchestrator-feed',
   standalone: true,
-  imports: [SegmentedControlComponent, FormsModule, CredentialAlertsComponent, GlobalOrchestratorCardComponent, LoadDistributionComponent, OrchestratorFeedEntryComponent, TooltipDirective, WatcherDecisionPanelComponent],
+  imports: [SegmentedControlComponent, FormsModule, NgTemplateOutlet, CredentialAlertsComponent, GlobalOrchestratorCardComponent, LoadDistributionComponent, OrchestratorFeedEntryComponent, OrchestratorFeedBurstComponent, OrchestratorFeedBurstDetailComponent, TooltipDirective, WatcherDecisionPanelComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   providers: [TASK_REFERENCE_CHAT_PROVIDER],
   templateUrl: './orchestrator-feed.html',
@@ -101,18 +105,27 @@ export class OrchestratorFeedComponent {
     );
   });
   readonly windowedEntries = computed(() => this.historyWindow.slice(this.visibleEntries()));
+  /** AGT-3585: entries sharing a cause inside the burst window fold into one row. */
+  readonly rows = computed(() =>
+    buildFeedRows(this.windowedEntries(), entry => this.entryKey(entry), this.projectName()));
   readonly dayGroups = computed(() => {
-    const groups: { key: string; day: string; entries: OrchestratorLogEntry[] }[] = [];
-    for (const entry of this.windowedEntries()) {
-      const key = this.dayKey(entry.ts);
+    const groups: { key: string; day: string; rows: FeedRow[] }[] = [];
+    for (const row of this.rows()) {
+      const key = this.dayKey(row.ts);
       let group = groups[groups.length - 1];
       if (!group || group.key !== key) {
-        group = { key, day: this.formatDay(entry.ts), entries: [] };
+        group = { key, day: this.formatDay(row.ts), rows: [] };
         groups.push(group);
       }
-      group.entries.push(entry);
+      group.rows.push(row);
     }
     return groups;
+  });
+  readonly expandedBursts = signal<ReadonlySet<string>>(new Set());
+  readonly selectedBurstKey = signal<string | null>(null);
+  readonly selectedBurst = computed(() => {
+    const key = this.selectedBurstKey();
+    return key === null ? null : this.rows().find(row => row.burst?.key === key)?.burst ?? null;
   });
   readonly olderEntryCount = computed(() =>
     this.historyWindow.remaining(this.visibleEntries().length, this.windowedEntries().length)
@@ -167,7 +180,21 @@ export class OrchestratorFeedComponent {
     return entries.filter(entry => entry.kind === kind).length;
   }
 
+  /** Opening a burst lists its members and shows the group in the detail pane. */
+  toggleBurst(burst: FeedBurst): void {
+    const next = new Set(this.expandedBursts());
+    if (next.has(burst.key) && this.selectedBurstKey() === burst.key) next.delete(burst.key);
+    else next.add(burst.key);
+    this.expandedBursts.set(next);
+    this.selectedBurstKey.set(next.has(burst.key) ? burst.key : null);
+  }
+
+  isExpanded(burst: FeedBurst): boolean {
+    return this.expandedBursts().has(burst.key);
+  }
+
   selectFilter(kind: string): void {
+    this.selectedBurstKey.set(null);
     this.historyWindow.reset(this.filterScope(this.projectFilter(), kind));
     this.kindFilter.set(kind);
     const first = this.visibleEntries()[0] ?? null;
@@ -175,10 +202,12 @@ export class OrchestratorFeedComponent {
   }
 
   selectEntry(entry: OrchestratorLogEntry): void {
+    this.selectedBurstKey.set(null);
     this.selectedEntry.set(entry);
   }
 
   selectProject(project: string): void {
+    this.selectedBurstKey.set(null);
     const next = project === 'all' ? new Set<string>() : new Set([project]);
     this.historyWindow.reset(this.filterScope(next, this.kindFilter()));
     if (project === 'all') this.boardFilters.clearProjectScope();
@@ -201,7 +230,7 @@ export class OrchestratorFeedComponent {
 
   isSelected(entry: OrchestratorLogEntry): boolean {
     const selected = this.selectedEntry();
-    return !!selected && selected.ts === entry.ts && selected.summary === entry.summary;
+    return !!selected && this.selectedBurstKey() === null && selected.ts === entry.ts && selected.summary === entry.summary;
   }
 
   formatTime(iso: string): string {

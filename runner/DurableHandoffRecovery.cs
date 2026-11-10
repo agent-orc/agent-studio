@@ -121,7 +121,8 @@ public sealed class DurableHandoffRecovery
             context.RepositoryUrl,
             context.DefaultBranch,
             sourceRunAttemptId: outbox.Authority.RunId,
-            fencingToken: outbox.Authority.Fence);
+            fencingToken: outbox.Authority.Fence,
+            taskTitle: context.TaskTitle);
 
         var finalItem = outbox.Items.LastOrDefault(item => item.Kind == "final-result");
         var manifest = LatestManifest(outbox);
