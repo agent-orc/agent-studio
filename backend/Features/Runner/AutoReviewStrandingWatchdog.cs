@@ -95,11 +95,11 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     run is { State: AttemptLifecycleState.Completed, ResultEnvelope: not null },
                     currentReview is not null,
                     currentReview is { Outcome: ReviewTerminalOutcome.Pass },
+                    currentReview?.Subject.Plan?.BuildTestDeferredToBatch == true,
+                    previous.Any(item => item.Action == AutoReviewStrandingAction.IntegratePerTask.ToString()),
                     latest is null ? null : now - latest.DecidedAtUtc,
                     previous.Any(item => item.Action == AutoReviewStrandingAction.StartStep.ToString()),
-                    previous.Any(item => item.Action == AutoReviewStrandingAction.ReenterBatch.ToString()),
-                    currentReview?.Subject.Plan?.BuildTestDeferredToBatch == true,
-                    previous.Any(item => item.Action == AutoReviewStrandingAction.IntegratePerTask.ToString()));
+                    previous.Any(item => item.Action == AutoReviewStrandingAction.ReenterBatch.ToString()));
                 var action = MonolithTransitionAdapter.AutoReviewStranding(facts);
                 if (action == AutoReviewStrandingAction.Leave) continue;
                 // A batch can form after the pass snapshot. Recheck before any
@@ -107,7 +107,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 if (IsBatchMember(_batches, card.ProjectName, key, run, currentReview?.AttemptId)) continue;
                 var writeKey = NextWriteKey(writePrefix, interventions);
                 var repeated = action == AutoReviewStrandingAction.Escalate
-                    && (facts.StartedStepBefore || facts.ReenteredBatchBefore || facts.IntegratedPerTaskBefore);
+                    && (facts.StartedStepBefore || facts.ReenteredBatchBefore);
                 var (done, deferred, detail) = repeated
                     ? (false, false, "The previous automatic recovery did not keep an owner for this card.")
                     : await InterveneAsync(card, action, currentReview, run, ct);
@@ -200,6 +200,13 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         }
         if (action == AutoReviewStrandingAction.IntegratePerTask && review is not null && run is not null)
             return await RoutePerTaskAsync(card, review, run, ct);
+        // The policy escalates a non-deferred pass only after the per-task
+        // route already ran in this lane visit and left the card ownerless.
+        if (action == AutoReviewStrandingAction.Escalate && review is { Outcome: ReviewTerminalOutcome.Pass }
+            && review.Subject.Plan?.BuildTestDeferredToBatch != true)
+            return (false, false, BatchGatePolicy.ReviewRanBuildTests(
+                    review.Subject.Plan?.BuildTestDeferralDisabledReason, BatchAdmissionRoutes.PerTaskIntegration)
+                + " The previous automatic recovery did not keep an owner for this card.");
         if (action == AutoReviewStrandingAction.ReenterBatch && review is not null && run is not null)
         {
             // The projection can advance after the sweep snapshot. Never let a
@@ -234,6 +241,17 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         }
         return (false, false, "There is no completed delivery or review step to recover.");
     }
+
+    internal static bool ReviewMatchesCurrentRun(ReviewAttemptDto? review, RunAttemptDto? run)
+        => review is not null && run is not null
+            && review.SourceRunAttemptId == run.AttemptId
+            && review.Subject.SourceRunAttemptId == run.AttemptId
+            && !string.IsNullOrWhiteSpace(run.ResultSha)
+            && string.Equals(review.Subject.ExpectedResultSha, run.ResultSha,
+                StringComparison.OrdinalIgnoreCase)
+            && (review.TestedResultSha is null
+                || string.Equals(review.TestedResultSha, run.ResultSha,
+                    StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// AGT-3740: the route of a passed review that ran its own build and tests.
@@ -362,17 +380,6 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         => resumed.Reason is AutoReviewDeliveryResumeService.Reasons.IntegrationInFlight
             or AutoReviewDeliveryResumeService.Reasons.IntegrationOwnedWait
             or "delivery-resume-backoff" or AutoReviewResumePolicy.Reasons.GateRecoveryPending;
-
-    internal static bool ReviewMatchesCurrentRun(ReviewAttemptDto? review, RunAttemptDto? run)
-        => review is not null && run is not null
-            && review.SourceRunAttemptId == run.AttemptId
-            && review.Subject.SourceRunAttemptId == run.AttemptId
-            && !string.IsNullOrWhiteSpace(run.ResultSha)
-            && string.Equals(review.Subject.ExpectedResultSha, run.ResultSha,
-                StringComparison.OrdinalIgnoreCase)
-            && (review.TestedResultSha is null
-                || string.Equals(review.TestedResultSha, run.ResultSha,
-                    StringComparison.OrdinalIgnoreCase));
 
     /// <param name="replan">
     /// Seal a fresh plan instead of reusing the previous review's frozen plan

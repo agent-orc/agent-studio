@@ -4470,12 +4470,12 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         string mode = TaskModes.Coding,
         string? briefVersion = null,
         bool seedContent = true,
+        Contract.ReviewPlanDto? reviewPlan = null,
+        IReadOnlyList<Contract.ReviewVerdictDto>? reviewVerdicts = null,
         bool authorityRebuilt = false,
         bool guarded = false,
         bool engineMode = false,
-        BatchGateStore? batchGates = null,
-        Contract.ReviewPlanDto? reviewPlan = null,
-        IReadOnlyList<Contract.ReviewVerdictDto>? reviewVerdicts = null)
+        BatchGateStore? batchGates = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
