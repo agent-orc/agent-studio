@@ -32,9 +32,11 @@ public static class PipelineCatalogue
 
     /// <summary>
     /// The lightweight report pipeline for planning / research modes: qualify,
-    /// run the agent, validate the primary report, and hand it to human review.
-    /// It deliberately omits git, build, test, stylelint, aspects, quality
-    /// grading, Wiki automation, and drift checks. Chosen per run by
+    /// run the agent, validate the primary report, review its requirement fit,
+    /// and hand it to human review. The requirement-fit verdict on the report
+    /// is the content verdict completion needs (AGT-3565). It deliberately
+    /// omits git, build, test, stylelint, the code aspects, quality grading,
+    /// Wiki automation, and drift checks. Chosen per run by
     /// <see cref="ForMode"/>.
     /// </summary>
     public const string ReadOnlyPipelineId = "read-only-task-pipeline";
@@ -77,12 +79,18 @@ public static class PipelineCatalogue
     /// </summary>
     public static readonly string[] AspectStepIds =
     {
-        "aspect-requirement-fit",
+        RequirementFitStepId,
         "aspect-code-quality",
         "aspect-documentation-impact",
         "aspect-tests-and-evidence",
         "aspect-visual-review",
     };
+
+    /// <summary>
+    /// The content aspect of coding and report cards. The read-only pipeline
+    /// runs only this aspect, on the delivered report.
+    /// </summary>
+    public const string RequirementFitStepId = "aspect-requirement-fit";
 
     public const string CoreAgentRunStepId = "core-agent-run";
 
@@ -989,9 +997,16 @@ public static class PipelineCatalogue
     // explicitly because every card, document runs included, gets one.
     private static TaskPipeline BuildReadOnlyPipeline()
     {
+        // The report review runs after the summary step, also when that step
+        // failed or degraded: the review reads results/ directly (AGT-3565).
+        var requirementFit = StandardPipeline.Post.Single(s => s.Id == RequirementFitStepId) with
+        {
+            RunMode = StepRunMode.Sequential,
+            DependsOn = [SummaryAssessmentStepId],
+        };
         var review = StandardPipeline.Post.Single(s => s.Id == OrchestratorReviewStepId) with
         {
-            DependsOn = [CoreAgentRunStepId],
+            DependsOn = [RequirementFitStepId],
         };
         var decision = StandardPipeline.Post.Single(s => s.Id == OrchestratorDecisionStepId) with
         {
@@ -1004,7 +1019,7 @@ public static class PipelineCatalogue
             DisplayName = "Lightweight report pipeline",
             Pre = [.. StandardPipeline.Pre],
             Core = [.. StandardPipeline.Core],
-            Post = [SummaryAssessmentStep, review, decision],
+            Post = [SummaryAssessmentStep, requirementFit, review, decision],
         };
     }
 

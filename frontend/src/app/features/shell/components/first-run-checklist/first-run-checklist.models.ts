@@ -1,4 +1,4 @@
-import type { DeviceLoginStatusResponse } from '../../../remote-hosts/models/provider-auth.model';
+import type { DeviceLoginStatusResponse, ProviderAuthBadge } from '../../../remote-hosts/models/provider-auth.model';
 import type { StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 export interface Probe<T> { value: T | null; error: boolean }
@@ -18,6 +18,14 @@ export interface HostJoinToken { joinToken: string; runnerId: string; expiresAt:
 export interface GitSetup {
   id: string; runnerId?: string; repositoryUrl?: string; method?: 'token' | 'deploy-key';
   state: string; publicKey: string | null; fetchVerified: boolean; pushVerified: boolean;
+}
+
+export function providerBadgeWaitReason(badge: ProviderAuthBadge, hostConnected: boolean, nowMs: number): string | null {
+  if (badge.state !== 'ok') return null;
+  if (!hostConnected) return 'Host has no fresh heartbeat.';
+  if (!badge.reachable) return 'Provider probe cannot reach this host.';
+  return !badge.lastSeenAt || nowMs - Date.parse(badge.lastSeenAt) >= 5 * 60_000
+    ? 'Provider probe is stale.' : null;
 }
 
 /** Host Git setup state on the shared indicator: waiting on the operator warns, in-flight work runs. */

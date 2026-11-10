@@ -97,6 +97,14 @@ export function deriveProtocolVerdict(input: ProtocolVerdictInputs): ProtocolVer
     ], input.statusMarkdown);
   }
 
+  // Acceptance settles earlier run, review, and pipeline warnings. They remain
+  // available in their histories, but cannot be the live Result verdict.
+  if (input.laneState === TaskState.Completed || input.laneState === TaskState.Archive) {
+    const lane = lanePresentation(input.laneState);
+    const settled = signal('lane', 'succeeded', lane.name, lane.sentence, lane.state);
+    return presentation('succeeded', settled.label, settled.detail, [settled], input.statusMarkdown, lane.state);
+  }
+
   const signals = collectSignals(input);
   if (signals.length === 0) {
     signals.push(signal(

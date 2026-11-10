@@ -10,6 +10,39 @@ namespace AgentRunner.Tests;
 public sealed class OneShotJobClientTests
 {
     [Fact]
+    public async Task Missing_claim_route_logs_once_and_retries_after_five_minutes()
+    {
+        var attempts = 0;
+        using var http = new HttpClient(new SequenceHandler(() =>
+            ++attempts < 3 ? new HttpResponseMessage(HttpStatusCode.NotFound)
+                : new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = new StringContent("null", Encoding.UTF8, "application/json") }))
+        { BaseAddress = new Uri("http://task-server/") };
+        using var client = new TaskServerClient(http, "runner-a", runnerInstanceId: "instance-a");
+        using var stop = new CancellationTokenSource();
+        var delays = new List<TimeSpan>();
+        var logs = new List<string>();
+        var admission = new OneShotJobAdmission(new RunnerOptions {
+            ServerUrl = "http://task-server/", RunnerId = "runner-a", RunnerName = "runner-a",
+            Hostname = "localhost", BackendName = "test", WorkDir = Path.GetTempPath(),
+            BaseBranch = "develop",
+        },
+            client, logs.Add, (interval, _) =>
+            {
+                delays.Add(interval);
+                if (delays.Count == 3) stop.Cancel();
+                return Task.CompletedTask;
+            });
+
+        await admission.PollAsync(stop.Token);
+
+        Assert.Equal(3, attempts);
+        Assert.Equal([TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5), TimeSpan.FromSeconds(3)], delays);
+        Assert.Single(logs, line => line.StartsWith("one-shot-job-poll-failed", StringComparison.Ordinal));
+        Assert.Single(logs, line => line == "one-shot-job-poll-restored");
+    }
+
+    [Fact]
     public async Task Provider_turn_does_not_inherit_runner_edge_credentials()
     {
         if (!OperatingSystem.IsLinux()) return;
@@ -242,6 +275,16 @@ public sealed class OneShotJobClientTests
             }
             return new HttpResponseMessage(HttpStatusCode.OK)
             { Content = new StringContent(result, Encoding.UTF8, "application/json") };
+        }
+    }
+
+    private sealed class SequenceHandler(Func<HttpResponseMessage> next) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Assert.Equal("/api/v1/one-shot-jobs/claim", request.RequestUri?.AbsolutePath);
+            return Task.FromResult(next());
         }
     }
 }
