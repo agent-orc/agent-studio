@@ -84,6 +84,19 @@ cannot replace another actor's active lease.
 Operator API tokens use the single-card move route; the batch move route
 cannot carry a separate revision for each card and refuses API tokens.
 
+## Magazine
+
+`PUT /api/magazine/{scope}/{slug}` publishes an article for the installation
+(`installation`), a workspace (`workspace:<id>`) or a project
+(`project:<id>`). An existing article needs `If-Match: "<revision>"`: an
+absent header returns 428 `if-match-required`, and a stale revision returns
+409 `revision-conflict`. Operator API tokens hold `magazine.write`. A
+project-scoped token publishes only in its projects, and the installation and
+workspace magazines need a token for all projects. Operator sessions read
+the magazine but do not publish. `studio-op magazine publish` wraps the read
+and the write. Routes, limits and error codes:
+[magazine domain](../system/domains/magazine.md).
+
 ## Deploy and restart preflight
 
 `GET /api/operator/preflight/restart` and `GET /api/operator/preflight/deploy`

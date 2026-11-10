@@ -122,9 +122,17 @@ lifecycle values are:
 | Field | Values | Meaning |
 |---|---|---|
 | `lifecycleState` | `in-progress`, `review-requested`, `decided`, `done` | The durable state shared with lifecycle-aware Wiki pages. |
-| `phase` | `shaping`, `testing`, `decision-ready` | Optional progress within `active`. |
+| `phase` | `shaping`, `testing`, `decision-ready` | Optional progress within `active`. It reports progress only; it does not gate decisions (see below). |
 | `decision.outcome` | `feature-spawn`, `archive` | The explicit terminal decision. |
 | `decision.state` | `pending`, `failed`, `succeeded` | Recoverable mutation state for a feature decision. |
+
+The Studio decision panel accepts a decision when the Dossier is
+`decision-pending` (schema 2: `lifecycleState: review-requested`) or its phase
+is `decision-ready`. A concept delivery writes `status: "decision-pending"` and
+sets `phase: "decision-ready"` when it carries open decision points, otherwise
+`shaping` or `testing`; the status alone already opens the decision, so no
+manual phase edit is needed. Only an `active` Dossier outside both states shows
+the notice that decisions open once its descriptor reaches one of them.
 
 A feature decision records `decidedAt`, the source revision, an operation id,
 mutation state, the inline `responses`, and one or more `spawnedTaskKeys`. The
@@ -197,7 +205,7 @@ so unrelated commits do not invalidate an unchanged Dossier.
 | Topic appears | No Dossier yet | A user, task result, proposal, or chat identifies a question worth seeing. |
 | Shape | `active / shaping` | Create the folder, descriptor, and initial HTML representation. |
 | Iterate | `active / testing` | Change the files through normal Git-aware editing; use the project orchestrator with the Dossier pinned as context. |
-| Decide | `active / decision-ready` | The operator answers decision points inside the document, then opens the compact feature-card preview or enters an archive reason. Nothing is created yet. |
+| Decide | `active / decision-ready` or `decision-pending` | The operator answers decision points inside the document, then opens the compact feature-card preview or enters an archive reason. Nothing is created yet. |
 | Build pending | `decision-pending / feature-spawn` | Confirmation records an operation id and expected revision; failure remains visible and retryable. |
 | Build settled | `decided / feature-spawn` | The card exists and the Dossier records its task receipt. |
 | Stop | `archived / archive` | Explicit confirmation records why no feature follows. |

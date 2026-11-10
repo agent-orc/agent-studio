@@ -144,7 +144,7 @@ npm start --prefix frontend
 
 ### 2.6 Optional: the self-update service
 
-Only needed if you want the in-app Update Center to work. `./update-service.sh start` runs a small standalone process on port 5039 that survives backend restarts during an update.
+Only needed if you want the in-app Update Center to work. `./update-service.sh start` runs a small standalone process on loopback port 5039 that survives backend restarts during an update. Its first start writes the trigger token to `update-service/.update-token`; the backend hands it to the Update Center. Token, allowed origins and settings: [update-service.md](./update-service.md).
 
 ## 3. Onboard your first project
 

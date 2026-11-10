@@ -1,0 +1,7 @@
+.phase-metrics { padding-block: var(--studio-spacing-3); }
+.phase-metrics h3 { margin: 0 0 var(--studio-spacing-2); }
+.phase-metrics__scroll { overflow-x: auto; }
+.phase-metrics table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.phase-metrics th, .phase-metrics td { padding: var(--studio-spacing-2); border-bottom: 1px solid var(--studio-border); text-align: right; white-space: nowrap; }
+.phase-metrics th:first-child { text-align: left; white-space: normal; }
+.phase-metrics p { margin: var(--studio-spacing-2) 0 0; color: var(--studio-fg-muted); }

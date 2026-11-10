@@ -326,3 +326,77 @@ test('usage errors and help', async () => {
   assert.equal(help.code, 0);
   assert.match(help.stdout, /studio-op watch/);
 });
+
+function articleFile(name, { summary = '29 cards wait for you: 24 can be accepted, 4 need your decision, 1 gets rework.',
+  body = '## Waiting\n\n- AGT-1 can be accepted.\n', extra = '' } = {}) {
+  const file = path.join(path.dirname(promptFile), name);
+  fs.writeFileSync(file, [
+    '---',
+    'scope: project:PROJ-002',
+    'slug: decision-notes',
+    'title: "Decision notes: 10 November"',
+    `summary: ${summary}`,
+    'kind: decision-brief',
+    'sources:',
+    '  - card:AGT-3714',
+    '  - dossier:docs/dossiers/magazine.md',
+    '  - batch:batch-17',
+    extra,
+    '---',
+    '',
+    body,
+  ].filter(line => line !== null).join('\n'));
+  return file;
+}
+
+test('magazine publish creates an article once, then refreshes it with the revision it read (MAG-1)', async () => {
+  const home = makeHome();
+  const file = articleFile('decision-notes.md');
+  const created = await run(['magazine', 'publish', file, '--json'], { home });
+  assert.equal(created.code, 0, created.stdout + created.stderr);
+  assert.equal(created.json.created, true);
+  assert.equal(created.json.revision, 1);
+  const firstPut = studio.requests.filter(request => request.method === 'PUT' && request.path.startsWith('/api/magazine/')).at(-1);
+  assert.equal(firstPut.path, '/api/magazine/project:PROJ-002/decision-notes');
+  assert.equal(firstPut.ifMatch, null);
+  assert.equal(firstPut.body.kind, 'decision-brief');
+  assert.equal(firstPut.body.title, 'Decision notes: 10 November');
+  assert.deepEqual(firstPut.body.sources, [
+    { kind: 'card', ref: 'AGT-3714' }, { kind: 'dossier', ref: 'docs/dossiers/magazine.md' }, { kind: 'batch', ref: 'batch-17' }]);
+  assert.equal(firstPut.body.body, '## Waiting\n\n- AGT-1 can be accepted.\n');
+
+  const refreshed = await run(['magazine', 'publish', articleFile('decision-notes.md', { body: '## Waiting\n\nAll accepted.\n' })], { home });
+  assert.equal(refreshed.code, 0, refreshed.stderr);
+  assert.match(refreshed.stdout, /Refreshed project:PROJ-002\/decision-notes at revision 2\./);
+  const secondPut = studio.requests.filter(request => request.method === 'PUT' && request.path.startsWith('/api/magazine/')).at(-1);
+  assert.equal(secondPut.ifMatch, '"1"');
+  assert.equal(studio.articles.get('project:PROJ-002/decision-notes').length, 2);
+});
+
+test('magazine publish reports a stale revision as a conflict and refuses what Studio would refuse', async () => {
+  const home = makeHome();
+  const file = articleFile('race.md', { extra: 'persona: Editor' });
+  assert.equal((await run(['magazine', 'publish', file, '--slug', 'race-notes'], { home })).code, 0);
+  // A writer that lands between the read and the write makes Studio answer 409.
+  studio.articleRaces.add('project:PROJ-002/race-notes');
+  const conflict = await run(['magazine', 'publish', file, '--slug', 'race-notes', '--json'], { home });
+  assert.equal(conflict.code, 6);
+  assert.equal(conflict.json.error, 'revision-conflict');
+  assert.equal(conflict.json.status, 409);
+  assert.equal(studio.articles.get('project:PROJ-002/race-notes').length, 2);
+
+  const oversized = await run(['magazine', 'publish', articleFile('big.md', { body: 'x'.repeat(256 * 1024 + 1) }), '--json'], { home });
+  assert.equal(oversized.code, 2);
+  assert.equal(oversized.json.error, 'magazine-body-too-large');
+
+  const leaking = await run(['magazine', 'publish', articleFile('leak.md', { body: `Token ${fakeToken('api')}\n` }), '--json'], { home });
+  assert.equal(leaking.code, 2);
+  assert.equal(leaking.json.error, 'token-in-content');
+
+  const unknownKey = await run(['magazine', 'publish', articleFile('typo.md', { extra: 'tittle: Oops' }), '--json'], { home });
+  assert.equal(unknownKey.code, 2);
+  assert.equal(unknownKey.json.error, 'front-matter-invalid');
+
+  const foreign = await run(['magazine', 'publish', file, '--scope', 'project:FOREIGN', '--json'], { home });
+  assert.equal(foreign.code, 4);
+});

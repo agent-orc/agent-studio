@@ -99,6 +99,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Card detail deferred loading: interleaved DEMO-9 fixture and live seeded API comparisons (AGT-3536) | [measurement](../operations/performance/card-detail-deferred-loading-2026-11-05.md) |
 | Tokens | [domains/tokens.md](../system/domains/tokens.md) |
 | Areas and tags (classification vocabulary, glossaries, tag filters; AGT-2803) | [domains/areas-and-tags.md](../system/domains/areas-and-tags.md) |
+| Magazine (agent-maintained articles per installation, workspace and project, revisions, API and permissions; MAG-1, AGT-3714) | [domains/magazine.md](../system/domains/magazine.md) |
 | Proposed tagging golden set: 60 cards, 20 Dossiers, item rationales and area glossaries (AGT-2804) | [quality/tagging-golden-set/index.html](../quality/tagging-golden-set/index.html) |
 | Operator decision on the proposed tagging golden set and glossaries (AGT-2804) | [operations/tagging-golden-set-approval/index.html](../operations/tagging-golden-set-approval/index.html) |
 | Remote execution outcome and recovery | [contracts/run-outcome.md](../system/contracts/run-outcome.md#remote-execution-outcome-adapter) |
@@ -228,6 +229,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | studio-op operator CLI: installation, Owner token file setup, commands and their routes, watcher lock and lease, accept check, stable exit codes (AGT-3462 OP-8) | [operations/setup/studio-op.md](../operations/setup/studio-op.md) |
 | Installation connectivity manifest, resolved ports and single RunnerLinks owner (I04) | [operations/setup/connectivity-manifest.md](../operations/setup/connectivity-manifest.md) |
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
+| Update Service operations: loopback bind, owner-only trigger token file, allowed Studio origins, forced triggers (AGT-3713) | [operations/setup/update-service.md](../operations/setup/update-service.md) |
 | Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |
 | Application telemetry intake: OTLP metrics and logs per project environment, ingest tokens, retention, query API (IP-15) | [operations/setup/app-telemetry-intake.md](../operations/setup/app-telemetry-intake.md) |
 | Project definition v2 proposal (inactive; shared AGT/QS/Voice properties, quality applicability and rollout) | [plan](../operations/docker-ausfuehrungswelt-migration/project-definition-v2-plan.md) · [draft schema](../operations/docker-ausfuehrungswelt-migration/project-execution.v2.draft.schema.json) |
