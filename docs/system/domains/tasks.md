@@ -200,9 +200,14 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   `acceptanceScope`. Promotion rejects an open-ended entry such as `implement
   all recommendations`; use one entry per slice.
 - `POST /api/tasks/{id}/continue` on a `concept` or `planning` card refuses
-  (`409`) a follow-up prompt that reads as a code-change request, naming the
-  card's mode and the matching promotion path (`promote-concept` or
-  `promote-to-coding`) in the message. This is `ContinueModeGuardPolicy`
+  (`409`, `error: "continue-mode-guard"`) a follow-up prompt that reads as a
+  code-change request. The `message` names the card's mode and the two ways
+  forward in words, never as API paths, because the continue panel shows it:
+  the panel offers "Keep in <mode> mode and send" (the same round with
+  `modeOverride`) and "Promote to implementation" (`promote-concept` from the
+  Dossier proposals, or the `promote-to-coding` form) as buttons (AGT-3700).
+  A follow-up that names a Dossier section, decision (`D3`), option, or open
+  question is a Dossier edit and is never refused. This is `ContinueModeGuardPolicy`
   (`backend/Shared/Runner/ContinueModeGuardPolicy.cs`): a card repurposed into
   a concept card must not silently re-run in concept mode against an
   implementation prompt, do no implementation, and escalate with no useful
