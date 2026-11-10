@@ -219,6 +219,7 @@
 /api/projects/{projectName}/environments/{environmentId}/telemetry/tokens	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/{environmentId}/volumes/	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/execution	free	-	-	-
+/api/projects/{projectName}/execution/proposal-preview	free	-	-	-
 /api/projects/{projectName}/gate-result-cache	free	-	-	-
 /api/projects/{projectName}/graph	free	-	-	-
 /api/projects/{projectName}/lane-sort-strategies	free	-	-	-

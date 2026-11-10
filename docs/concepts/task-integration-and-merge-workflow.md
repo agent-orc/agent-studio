@@ -95,7 +95,12 @@ If all three stages fail, the merge step persists one structured conflict report
 - Deterministic acceptance rail: `AcceptanceRailHostedService` repeats the
   post-integration acceptance and conflict-recovery decisions without depending
   on a live orchestrator session. On its bounded timer it accepts only
-  Git-derived `integrated` coding cards, honors explicit hold tags and the
+  Git-derived `integrated` coding cards, and only when the project's
+  ADR-0026 autonomy level is Balanced or higher (AGT-3621): at Manual and
+  Cautious the Human Review verdict stays with a person. The guarded delivery
+  chain still holds the rail's acceptance. An automatic acceptance writes
+  "Accepted automatically by the acceptance rail (project autonomy …)" to the
+  lane change, the timeline, and the card's completion claim. The rail honors explicit hold tags and the
   `orchestrator-hold` list, and sends recoverable `conflict-skipped` cards
   from Human Review or Escalated through the same recovery service used by
   the operator endpoint even when a generic park marker says a decision card is
