@@ -1,7 +1,7 @@
 <section class="quality-panel" data-testid="quality-studio-panel" aria-label="Quality Studio">
   <header class="quality-panel__header">
     <h2>Quality Studio</h2>
-    @if (status(); as current) { <app-status-indicator [attr.data-state]="current.state" [tone]="stateTone(current.state)" [label]="stateLabel(current.state)" testId="quality-studio-state" /> }
+    @if (status(); as current) { <app-status-indicator [attr.data-state]="current.state" [tone]="stateTone(current.state)" [label]="stateLabel(current.state)" testId="quality-studio-connection-state" /> }
   </header>
   @if (status(); as current) {
     @switch (current.state) {
