@@ -680,6 +680,28 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     }
 
     [Fact]
+    public void ZeroFileLifecycleMarker_RecognizesTrailerAndLegacySubjectOnly()
+    {
+        var commit = Commit("1111111111111111111111111111111111111111") with
+        {
+            FilesChanged = 0,
+            Files = [],
+        };
+        Assert.True(TaskIntegrationStatusService.IsZeroFileLifecycleMarker(commit with
+        {
+            Message = "AGT-2302: Deliver work\n\nAgent-Studio-Salvage: teardown",
+        }));
+        Assert.True(TaskIntegrationStatusService.IsZeroFileLifecycleMarker(commit with
+        {
+            Message = "wip(runner): salvage before teardown - outcome Unknown",
+        }));
+        Assert.False(TaskIntegrationStatusService.IsZeroFileLifecycleMarker(commit with
+        {
+            Message = "AGT-2302: discuss salvage recovery",
+        }));
+    }
+
+    [Fact]
     public void BuildLookup_MissingZeroFileLifecycleMarkers_DoNotMakeDeliveredWorkPartial()
     {
         var repo = SeedDevelopMainRepo();

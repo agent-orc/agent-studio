@@ -7,6 +7,8 @@
       <strong data-testid="remote-host-name">{{ group.name }}</strong>
       <app-status-indicator [tone]="statusTone(group.machine.status)" [label]="statusLabel(group.machine.status)" [compact]="true" />
       @if (group.machine.releaseDrift?.state === 'behind') { <span title="Behind Stable">Update due</span> }
+      @if (notEnrolled(group)) { <span data-testid="remote-host-not-enrolled" title="No Task Server host identity and daemon instance reported">Not enrolled</span> }
+      @if (notClaiming(group)) { <span data-testid="remote-host-not-claiming" title="Claim gate closed: host load per core is above the claim threshold">Not claiming</span> }
       @if (group.machine.stats; as stats) { <span>{{ stats.cpuLoadPct }}%</span> }
       <span class="host-list__slots" data-testid="remote-host-machine-slots">{{ groupSlots(group) }} / {{ groupCapacity(group) ?? 'Unknown' }}</span>
     </button>
@@ -32,7 +34,8 @@
   @for (gate of gates(); track gate.id) {
     @if (!hasGroup(gate.name)) {
     <button class="host-list__row host-list__row--machine" type="button" [attr.data-host-row]="'gate:' + gate.id"
-      [attr.aria-current]="selected() === 'gate:' + gate.id ? 'true' : null" (click)="selectedChange.emit('gate:' + gate.id)">
+      [attr.aria-current]="selected() === 'gate:' + gate.id ? 'true' : null" data-testid="remote-host-primary-row"
+      (click)="selectedChange.emit('gate:' + gate.id)">
       <strong>{{ gate.name }}</strong><span>Gate worker</span><app-status-indicator tone="success" label="Online" [compact]="true" />
       <span class="host-list__slots">{{ gate.busy }} / {{ gate.slots }}</span>
     </button>

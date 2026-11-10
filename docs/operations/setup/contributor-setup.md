@@ -151,8 +151,9 @@ Only needed if you want the in-app Update Center to work. `./update-service.sh s
 **Recommended: the in-app "Onboard Project" dialog**, not hand-editing config files.
 
 1. In the board, use the workspace "+" in the sidebar to create a workspace if you don't have one yet (`+ Workspace`, name it anything).
-2. Click "+" next to that workspace to open **Onboard Project**. Fill in a display name (a short code is auto-derived and editable), pick a default CLI + model, and - important - set **CLI working directory** (`rootPath`) to the target project's folder on disk. Without it the project has no auto-pickup runner and the mode toggle won't work later.
-3. Submit. This calls `POST /api/projects` and provisions the project's lane folders immediately - **no backend restart needed.**
+2. Click "+" next to that workspace to open **Onboard Project**. Fill in a display name (a short code is auto-derived and editable), pick a default CLI + model, and set **CLI working directory** (`rootPath`) to the target project's checkout. The checkout tells the agent where the source is; it does not provide a coding executor.
+3. Under **Execution location**, select a connected runner host. If local coding is disabled and no host is available, start a runner host next to the source checkout using **Workspace Settings → Execution Hosts → Set up agent host** ([host walkthrough](./linux-runner-host.md#product-onboarding-from-execution-hosts)). Give it access to the project's Git origin and Task Server, then return to the dialog and select the host. **Local** on this orchestrator is for the board and orchestration only.
+4. Submit. This calls `POST /api/projects` and provisions the project's lane folders immediately - **no backend restart needed.**
 
 This is the current, working path (`RegistryEndpoints.cs`, ADR-0042/ADR-0046). Note on scope: the persistent **Orchestrator Chat** side panel (the chat window docked to a project) is great for asking the orchestrator questions about a project once it's onboarded, but it cannot create a project registration for you today - that capability is still on the roadmap (see [orchestrator-chat.md](../../concepts/orchestrator-chat.md)). Use the dialog above for the actual creation step.
 
@@ -167,8 +168,8 @@ That's the whole onboarding step: **register the project, and (if you want the p
 
 Three things describe one project and should be decided in the same sitting. Skipping the third is the trap that broke a real onboarding (a fresh repo escalated its review because the gate ran a Studio-specific build command that did not exist there - AGT-1919 / TE-2):
 
-1. **Registry entry** - the project registration itself (`POST /api/projects`). Without it there is no board column and no runner.
-2. **Working directory** (`rootPath`, and `RepositoryPath` when the repo root differs from the CLI working dir) - where the CLI runs and where Git status/diff resolve. Without it the project has no auto-pickup runner and the mode toggle won't work.
+1. **Registry entry** - the project registration itself (`POST /api/projects`). Without it there is no board column.
+2. **Working directory** (`rootPath`, and `RepositoryPath` when the repo root differs from the CLI working dir) - where the source is. A coding runner needs its own checkout or access to the Git origin.
 3. **Build profile / verify gate** - *how this project is verified*. You usually get this for free: the deterministic build/test gate (`post-build-test-gate`) **derives** its verify commands from the repo layout, so there is nothing to configure for a conventional stack:
    - a `.sln`, `.slnx`, or `.csproj` at the **repo root** -> bare `dotnet build` + `dotnet test` (auto-discovery, no hardcoded project path);
    - a `package.json` (repo root or one level down, e.g. `frontend/`) -> `npm run build` / `npm test` / `npm run lint`, but only for the scripts that manifest actually declares;
@@ -215,10 +216,11 @@ Three things describe one project and should be decided in the same sitting. Ski
 
 Full walkthrough, including what to queue and what to watch for: [your-first-task.md](./your-first-task.md). Short version:
 
-1. Create a small, scoped, read-then-write task (the "Project Overview Doc" pattern in that doc works well) in `2-ready`, targeting the CLI you configured.
-2. Set the project's runner mode. Modes are `manual` (you click Start), `auto-single` (picks up one job, then stops), `auto-continuous` (keeps draining `2-ready` on its own), and `paused`. Set it from the project switcher / header pause toggle, or `PUT /api/runner/<project>/mode`.
-3. Watch the card move `2-ready -> 3-progress -> 4-auto-review -> 5-human-review`. The Activity Log streams the CLI's tool calls live; the detail panel shows a live `git diff` once the agent starts writing.
-4. Logs and evidence live in the job folder: `logs/cli-output.log` (raw CLI stdout/stderr) and `results/` (screenshots and other evidence the run produced).
+1. In **Project Settings → Execution location**, confirm that the project uses a connected runner host with a checkout of the source. If none is listed, start one from **Workspace Settings → Execution Hosts → Set up agent host** next to the checkout ([host walkthrough](./linux-runner-host.md#product-onboarding-from-execution-hosts)). A local path on the orchestrator alone cannot run coding tasks when local coding is disabled.
+2. Create a small, scoped, read-then-write task (the "Project Overview Doc" pattern in that doc works well) in `2-ready`, targeting the CLI you configured.
+3. Set **Pickup mode** in Project Settings to **Auto** for automatic pickup, **Manual** to start tasks yourself, or **Paused** to stop automatic pickup. Execution location is a separate setting.
+4. Watch the card move `2-ready -> 3-progress -> 4-auto-review -> 5-human-review`. The Activity Log streams the CLI's tool calls live; the detail panel shows a live `git diff` once the agent starts writing.
+5. Logs and evidence live in the job folder: `logs/cli-output.log` (raw CLI stdout/stderr) and `results/` (screenshots and other evidence the run produced).
 
 Scripting task creation instead of clicking through the dialog: the Task API skill ([.agents/skills/task-api/SKILL.md](../../../.agents/skills/task-api/SKILL.md)) is the canonical, agent-neutral reference - read it before writing any script that creates or moves tasks; it covers the `watchPath` vs `rootPath` mixup that trips up everyone once.
 

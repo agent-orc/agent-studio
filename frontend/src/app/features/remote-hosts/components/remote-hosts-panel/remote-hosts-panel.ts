@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, effect, inject, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
 import { RemoteHostsService } from '../../services/remote-hosts.service';
 import { ReviewQueueService } from '../../services/review-queue.service';
@@ -12,6 +12,7 @@ import {
   boardProjectSlotsForHost,
   boardRemoteSlotsForHost,
   deriveBoardRunningTruth,
+  latestHostTelemetry,
 } from '../../models/running-truth';
 import { AddHostWizardComponent, type ProvisionedHostDraft } from '../add-host-wizard/add-host-wizard';
 import { PurgeRetiredHostsDialogComponent } from '../purge-retired-hosts-dialog/purge-retired-hosts-dialog';
@@ -38,7 +39,8 @@ import { EnvironmentHostListComponent } from '../environment-host-list/environme
 import { EnvironmentAttentionComponent } from '../environment-attention/environment-attention';
 import { buildEnvironmentAttention } from '../../models/environment-attention';
 import { OrchestratorFeedStore } from '../../../orchestrator/state/orchestrator-feed.store';
-import { hostReadiness } from '../../models/host-readiness';
+import { summarizeHostRows } from '../../models/host-summary';
+import { ClaimGateHistoryComponent } from '../claim-gate-history/claim-gate-history';
 import { CredentialInventoryService } from '../../../credentials/credential-inventory.service';
 import { buildEnvironmentMap, type EnvironmentSnapshot } from '../../models/environment-map';
 
@@ -65,6 +67,7 @@ import { buildEnvironmentMap, type EnvironmentSnapshot } from '../../models/envi
     OperationalStallsComponent,
     EnvironmentHostListComponent,
     EnvironmentAttentionComponent,
+    ClaimGateHistoryComponent,
   ],
   templateUrl: './remote-hosts-panel.html',
   styleUrl: './remote-hosts-panel.scss',
@@ -85,6 +88,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   readonly error = this.service.error;
   readonly identityDiagnostics = this.service.identityDiagnostics;
   readonly providerRefusals = this.service.providerRefusals;
+  readonly claimGateEvents = this.service.claimGateEvents;
   readonly interactiveUsage = this.service.interactiveUsage;
   readonly wizardOpen = signal(false);
   readonly purgeRetiredOpen = signal(false);
@@ -118,11 +122,17 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   /** Header tallies reconcile to visible physical machines and role sub-rows. */
   readonly hostGroups = computed(() => groupPhysicalHosts(this.hosts(), this.showRetired()));
   private handledHostLink = '';
+  /** The hash as a signal, so a host link from the footer also works while this page is open. */
+  private readonly hash = signal(window.location.hash);
+  private readonly onHashChange = () => this.hash.set(window.location.hash);
+  private readonly loadHistory = effect(() => {
+    if (this.view() === 'history') untracked(() => this.service.loadClaimGateEvents());
+  });
   readonly linkedHostId = signal<string | null>(null);
   readonly linkedSection = signal<'load' | 'connection' | null>(null);
   private readonly hostLink = effect(() => {
     const groups = this.hostGroups();
-    const params = new URLSearchParams(window.location.hash.split('?')[1] ?? '');
+    const params = new URLSearchParams(this.hash().split('?')[1] ?? '');
     const raw = params.get('host');
     if (!raw || raw === this.handledHostLink || !groups.length) return;
     const id = raw.replace(/^machine:/, '');
@@ -138,19 +148,9 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
 
   readonly retiredCount = computed(() => this.hosts().filter(host => host.status === 'retired').length);
   readonly total = computed(() => this.hostGroups().length);
-  readonly roleCount = computed(() => this.hostGroups()
-    .reduce((total, group) => total + group.roles.length, 0));
   readonly gateWorkers = computed(() => this.environment()?.gateWorkers ?? []);
-  readonly machineCount = computed(() => this.hostGroups().length + this.gateWorkers()
-    .filter(gate => !this.hostGroups().some(group => group.name === gate.name)).length);
-  readonly reportingCount = computed(() => this.machineCount() - this.degradedCount()
-    - this.offlineCount() - this.notEnrolledCount());
-  readonly degradedCount = computed(() => this.hostGroups().filter(group =>
-    !this.groupNotEnrolled(group) && (group.machine.status === 'degraded' || group.machine.status === 'draining')).length);
-  readonly offlineCount = computed(() => this.hostGroups().filter(group =>
-    !this.groupNotEnrolled(group) && group.machine.status === 'offline').length);
-  readonly notEnrolledCount = computed(() => this.hostGroups().filter(group => group.roles.every(role =>
-    hostReadiness(role, this.now()).state === 'not-enrolled')).length);
+  readonly summary = computed(() => summarizeHostRows(this.hostGroups(), this.gateWorkers(), this.now()));
+  readonly machineCount = computed(() => this.summary().machines);
   readonly attention = computed(() => buildEnvironmentAttention({ hosts: this.hosts(),
     stalls: this.feed.openStalls(), identities: this.identityDiagnostics(),
     failures: this.service.runnerInfrastructureFailures(), review: this.reviewQueueSnapshot(), now: this.now() }));
@@ -212,15 +212,18 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     this.service.refreshInteractiveUsage();
     this.reviewQueue.refresh();
     this.tickHandle = setInterval(() => this.now.set(Date.now()), 30_000);
+    window.addEventListener('hashchange', this.onHashChange);
     this.usageHandle = setInterval(() => this.service.refreshInteractiveUsage(), 5_000);
   }
 
   ngOnDestroy(): void {
+    window.removeEventListener('hashchange', this.onHashChange);
     if (this.tickHandle) clearInterval(this.tickHandle);
     if (this.usageHandle) clearInterval(this.usageHandle);
   }
   reload(): void {
     this.service.reload();
+    if (this.view() === 'history') this.service.loadClaimGateEvents();
     this.infrastructureReload.update(value => value + 1);
     this.loadEnvironment();
     this.credentials.load();
@@ -266,19 +269,15 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   }
   groupNeedsAttention(group: PhysicalHostGroup): boolean {
     return group.roles.some(role => role.status === 'degraded' || role.status === 'offline'
-      || role.taskServerConnection?.status === 'unreachable' || role.runnerLink?.state === 'down');
+      || role.taskServerConnection?.status === 'unreachable' || role.runnerLink?.state === 'down'
+      || role.claimLoadGate?.state === 'closed');
   }
-  groupNotEnrolled(group: PhysicalHostGroup): boolean {
-    return group.roles.every(role => hostReadiness(role, this.now()).state === 'not-enrolled');
-  }
-  slotFn = (host: RemoteHost): number => this.boardSlots(host);
+  /** List rows read the daemon's slot telemetry, the count the detail pane shows; board leases fill in without a sample. */
+  slotFn = (host: RemoteHost): number => latestHostTelemetry(host)?.activeSlots ?? this.boardSlots(host);
   selectedRoles(): readonly RemoteHost[] {
     const group = this.selectedGroup();
     const host = this.selectedHost();
     return group ? group.roles : host ? [host] : [];
-  }
-  selectedRoleSlots(): Readonly<Record<string, number>> {
-    return Object.fromEntries(this.selectedRoles().map(role => [role.id, this.boardSlots(role)]));
   }
   selectedSlots(): number { return this.selectedRoles().reduce((sum, role) => sum + this.boardSlots(role), 0); }
   linkFailureMessage(host: RemoteHost): string { return host.runnerLink?.lastError ?? 'The runner heartbeat is late and recovery is active.'; }

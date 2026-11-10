@@ -145,7 +145,8 @@ public sealed class RemoteTaskRunner
             fencingToken: lease.FencingToken,
             continuationBaseRef: continuationBaseRef,
             continuationBaseSha: continuationBaseSha,
-            continuationBaseReason: continuationBaseReason);
+            continuationBaseReason: continuationBaseReason,
+            taskTitle: runSpec?.TaskTitle);
         var slot = _state.Create(
             taskKey, lease, workspace.RepoPath, runId, leaseInstanceId,
             projectId, repositoryUrl, defaultBranch, taskKind, runSpec);
@@ -331,7 +332,8 @@ public sealed class RemoteTaskRunner
             _options, slot.TaskKey, _log, slot.ProjectId, slot.RepositoryUrl, slot.DefaultBranch,
             restoredBaseSha: slot.BaseSha,
             sourceRunAttemptId: slot.RunId ?? slot.Lease.AttemptId ?? slot.AttemptId,
-            fencingToken: slot.Lease.FencingToken);
+            fencingToken: slot.Lease.FencingToken,
+            taskTitle: slot.RunSpec?.TaskTitle);
 
     /// <summary>
     /// Preserve and describe what a lost detached worker left behind: the crash
@@ -1269,7 +1271,8 @@ public sealed class RemoteTaskRunner
                         slot.DefaultBranch,
                         workspace.BaseSha
                         ?? throw new InvalidOperationException(
-                            "Durable coding execution has no base SHA.")),
+                            "Durable coding execution has no base SHA."),
+                        slot.RunSpec?.TaskTitle),
                     new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         }
         if (workspace.PickupReconciliation is { } recovery)

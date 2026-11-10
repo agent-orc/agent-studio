@@ -14,7 +14,11 @@
  *   1. a string literal equal to a canonical lane name or role sentence
  *      (parsed live out of the presentation module, so the two cannot drift);
  *   2. a string literal matching a RETIRED wording — a phrasing that caused a
- *      reported defect and must not come back.
+ *      reported defect and must not come back;
+ *   3. a template interpolation that prints a lane key as-is, such as
+ *      `{{ item.lane }}` — that renders the slug `5-human-review` instead of
+ *      the lane's name (AGT-3591, the global-search result badge). Wrap it in
+ *      `laneName(...)` and bind `laneTone(...)` to `data-lane-tone`.
  *
  * Genuine non-lane uses of a word like "Review" (a runner plane role, a
  * code-review grade chip) are listed in `lane-string-allowlist.json` with a
@@ -89,6 +93,30 @@ function isAllowed(file, literal) {
   return allowlist.some((e) => e.file === file && e.literal === literal);
 }
 
+/**
+ * `{{ lane }}`, `{{ item.lane }}`, `{{ row?.lane }}` — an interpolation whose
+ * whole expression is a property path ending in `lane`. Calls such as
+ * `{{ laneName(item.lane) }}` and longer paths such as `{{ lane.label }}` do
+ * not match.
+ */
+const RAW_LANE_BINDING = /\{\{\s*((?:[\w$]+\s*[?!]?\.\s*)*lane)\s*\}\}/g;
+
+// Guard against a vacuous pass: the rule must still flag the raw badge that
+// shipped in global-search (AGT-3591) and must leave the laneName() form
+// alone. The fuller fixture run lives in check-lane-strings.test.mjs.
+for (const [sample, flagged] of [
+  ['{{ item.lane }}', true],
+  ['{{ lane }}', true],
+  ['{{ row?.lane }}', true],
+  ['{{ laneName(item.lane) }}', false],
+  ['{{ lane.label }}', false],
+]) {
+  if ([...sample.matchAll(RAW_LANE_BINDING)].length > 0 !== flagged) {
+    console.error(`Raw lane binding rule misjudges ${sample}; update RAW_LANE_BINDING.`);
+    process.exit(1);
+  }
+}
+
 const violations = [];
 
 for (const file of files) {
@@ -104,6 +132,17 @@ for (const file of files) {
         violations.push({
           file, line: index + 1, literal: retired,
           reason: `retired wording "${retired}" — a lane is named only by lane-presentation.ts`,
+        });
+      }
+    }
+
+    if (file.endsWith('.html')) {
+      for (const m of line.matchAll(RAW_LANE_BINDING)) {
+        const expression = m[1].replace(/\s+/g, '');
+        if (isAllowed(file, expression)) continue;
+        violations.push({
+          file, line: index + 1, literal: expression,
+          reason: `raw lane key "{{ ${expression} }}" renders the slug — use laneName(${expression}) and bind laneTone() to data-lane-tone`,
         });
       }
     }
