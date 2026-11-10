@@ -377,6 +377,7 @@ public sealed class TaskIntegrationStatusService
                 Verification = IntegrationStatuses.IsMerged(classified.Status)
                     ? ResolveVerification(
                         job,
+                        classified,
                         CurrentIntegrationSha(classified, card, reaches),
                         classified.IntegrationBranch,
                         CurrentReviewSubject(job)?.ResultSha ?? classified.Sha,
@@ -621,6 +622,7 @@ public sealed class TaskIntegrationStatusService
 
     private TaskIntegrationVerification? ResolveVerification(
         TaskInfo job,
+        TaskIntegrationStatus classified,
         string? currentIntegrationSha,
         string currentIntegrationBranch,
         string? currentDeliverySha,
@@ -629,9 +631,10 @@ public sealed class TaskIntegrationStatusService
     {
         try
         {
+            var ownRecord = memoizeVerification ? ReadVerificationRecord(job.FolderPath)
+                : IntegrationVerificationStore.Read(job.FolderPath);
             var projected = IntegrationVerificationProjection.Resolve(
-                memoizeVerification ? ReadVerificationRecord(job.FolderPath)
-                    : IntegrationVerificationStore.Read(job.FolderPath),
+                ownRecord,
                 ReadLatestMergeStep(job),
                 job.IntegrationRecords,
                 currentIntegrationSha,
@@ -643,6 +646,33 @@ public sealed class TaskIntegrationStatusService
                 || !ReviewSubjectStore.IsValidResultSha(currentDeliverySha)) return projected;
             var root = _git.ResolveRepoRootForWatchPath(job.WatchPath);
             if (root is null) return projected;
+            bool TreeContainsDelivery(string tree)
+            {
+                if (_git.IsAncestor(root, currentDeliverySha!, tree)) return true;
+                // Use the commit memberships that produced the card's integrated
+                // and superseded detail. The review result can be a later fence
+                // snapshot while its effective delivery commits are in a merge.
+                var current = classified.Repositories.SelectMany(repository => repository.Commits)
+                    .Where(commit => commit.IntegrationRule is not
+                        (CommitIntegrationRules.Superseded or CommitIntegrationRules.LifecycleMarker))
+                    .ToArray();
+                return current.Length > 0 && current.All(commit =>
+                    ReviewSubjectStore.IsValidResultSha(commit.Sha)
+                    && (commit.OnIntegrationBranch && _git.IsAncestor(root, commit.Sha, tree)
+                        || ReviewSubjectStore.IsValidResultSha(commit.SupersededBySha)
+                            && _git.IsAncestor(root, commit.SupersededBySha!, tree)));
+            }
+
+            if (ownRecord is { State: IntegrationVerificationStates.Verified }
+                && IntegrationVerificationProjection.SameBranch(ownRecord.IntegrationBranch, currentIntegrationBranch)
+                && ReviewSubjectStore.IsValidResultSha(ownRecord.Sha)
+                && branchHistory(ownRecord.Sha!)
+                && TreeContainsDelivery(ownRecord.Sha!))
+                return ownRecord.ToProjection() with
+                {
+                    Reason = $"{ownRecord.Reason} The current delivery's effective commits are contained in "
+                        + $"verified tree {ownRecord.Sha}, which {currentIntegrationBranch} still carries at {currentIntegrationSha}.",
+                };
             var external = ExternalPublishedVerificationStore.Read(job.WatchPath)
                 .FirstOrDefault(record => IntegrationVerificationProjection.SameBranch(record.IntegrationBranch, currentIntegrationBranch)
                     && branchHistory(record.CandidateSha)
@@ -662,9 +692,19 @@ public sealed class TaskIntegrationStatusService
                 currentIntegrationBranch,
                 branchHistory,
                 tree => _git.IsAncestor(root, currentDeliverySha!, tree));
-            return publishedGate is null
-                ? projected
-                : IntegrationVerificationProjection.FromPublishedGate(publishedGate, currentIntegrationBranch, currentIntegrationSha);
+            if (publishedGate is not null)
+                return IntegrationVerificationProjection.FromPublishedGate(
+                    publishedGate, currentIntegrationBranch, currentIntegrationSha);
+            if (ownRecord is null || ownRecord.State != IntegrationVerificationStates.Verified
+                && !ownRecord.GateFailed)
+            {
+                var batch = IntegrationVerificationProjection.FindPublishedBatchBaseVerdict(
+                    _batchGates.ListBaseVerdicts(job.ProjectName), branchHistory, TreeContainsDelivery);
+                if (batch is not null)
+                    return IntegrationVerificationProjection.FromPublishedBatchBaseVerdict(
+                        batch, currentIntegrationBranch, currentIntegrationSha);
+            }
+            return projected;
         }
         catch (Exception ex)
         {

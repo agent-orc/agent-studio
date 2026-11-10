@@ -17,8 +17,8 @@
         <button type="button" class="dead-end__primary" (click)="recheck()">Re-check integration</button>
       } @else if (deadEnd.replay) {
         <button type="button" class="dead-end__primary" data-testid="dead-end-retry" (click)="retry()">Retry integration</button>
-      } @else if (continueAvailable()) {
-        <button type="button" data-testid="dead-end-continue" [class.dead-end__primary]="!escalated()" [disabled]="busy()" (click)="continueTask()">Continue with delivery context</button>
+      } @else if (continueAvailable() || isolationActive()) {
+        <button type="button" data-testid="dead-end-continue" [class.dead-end__primary]="!escalated()" [disabled]="busy() || isolationActive()" [attr.title]="isolationActive() ? continueCheck()?.reason : null" (click)="continueTask()">Continue with delivery context</button>
       }
       @if (deadEnd.retry && !deadEnd.replay) {
         <button type="button" (click)="retry()">Retry integration</button>

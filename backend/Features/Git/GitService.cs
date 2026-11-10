@@ -2411,6 +2411,39 @@ public partial class GitService
         return null;
     }
 
+    /// <summary>Path to two-letter status code, from <c>status --porcelain=v1</c>.</summary>
+    private static Dictionary<string, string> ParsePorcelainStatus(string statusOut)
+    {
+        var statusByPath = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var line in statusOut.Split('\n'))
+        {
+            if (string.IsNullOrEmpty(line) || line.Length < 3) continue;
+            var code = line[..2];
+            var path = line[3..].TrimEnd('\r', '\n').Trim();
+            if (path.StartsWith("\"") && path.EndsWith("\"") && path.Length >= 2)
+                path = path[1..^1]; // strip git's quoting for non-ASCII
+            statusByPath[path] = code;
+        }
+        return statusByPath;
+    }
+
+    /// <summary>
+    /// <see cref="GetStatusForRepoRoot"/>'s <c>IsRepo</c> and file paths, from
+    /// one porcelain status read. Callers that only ask whether a checkout is
+    /// clean need neither the branch nor the line counts, which cost three more
+    /// processes per call (AGT-3567). As there, a status read that fails is a
+    /// repository with no listed files.
+    /// </summary>
+    private static (bool IsRepo, IReadOnlyList<string> Paths) ReadChangedPathsAtRoot(string repoRoot)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)) return (false, []);
+        var root = ResolveGitToplevel(repoRoot);
+        if (root == null) return (false, []);
+        var (statusOut, _, statusCode) = RunGitReadonly(root, "status --porcelain=v1");
+        if (statusCode != 0) return (true, []);
+        return (true, ParsePorcelainStatus(statusOut).Keys.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToList());
+    }
+
     private GitStatusResult ReadStatusAtRoot(string root, bool isWorktree = false)
     {
         // These four reads are independent: the porcelain status, the current
@@ -2431,16 +2464,7 @@ public partial class GitService
         var (branchOut, _, _) = reads[1];
         var branch = branchOut.Trim();
 
-        var statusByPath = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var line in statusOut.Split('\n'))
-        {
-            if (string.IsNullOrEmpty(line) || line.Length < 3) continue;
-            var code = line[..2];
-            var path = line[3..].TrimEnd('\r', '\n').Trim();
-            if (path.StartsWith("\"") && path.EndsWith("\"") && path.Length >= 2)
-                path = path[1..^1]; // strip git's quoting for non-ASCII
-            statusByPath[path] = code;
-        }
+        var statusByPath = ParsePorcelainStatus(statusOut);
 
         // numstat - combine staged + unstaged so we get a useful per-file count
         // even for files only changed unstaged. Untracked files won't appear in
@@ -4053,13 +4077,17 @@ public partial class GitService
     {
         if (string.IsNullOrWhiteSpace(worktreePath) || !Directory.Exists(worktreePath))
             return false;
-        var (gitDirRaw, _, code) = RunGitArgs(worktreePath, "rev-parse", "--git-dir");
-        if (code != 0 || string.IsNullOrWhiteSpace(gitDirRaw))
-            return false;
+        var gitDir = GitRefFiles.GitDirectory(worktreePath);
+        if (gitDir is null)
+        {
+            var (gitDirRaw, _, code) = RunGitArgs(worktreePath, "rev-parse", "--git-dir");
+            if (code != 0 || string.IsNullOrWhiteSpace(gitDirRaw))
+                return false;
 
-        var gitDir = gitDirRaw.Trim();
-        if (!Path.IsPathRooted(gitDir))
-            gitDir = Path.GetFullPath(Path.Combine(worktreePath, gitDir));
+            gitDir = gitDirRaw.Trim();
+            if (!Path.IsPathRooted(gitDir))
+                gitDir = Path.GetFullPath(Path.Combine(worktreePath, gitDir));
+        }
 
         return Directory.Exists(Path.Combine(gitDir, "rebase-merge"))
             || Directory.Exists(Path.Combine(gitDir, "rebase-apply"));
@@ -4458,7 +4486,10 @@ public partial class GitService
     {
         if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)) return false;
         if (!IsLikelyBranchName(branch)) return false;
-        var (_, _, code) = RunGitArgs(repoRoot, "rev-parse", "--verify", "--quiet", $"refs/heads/{branch}");
+        var full = $"refs/heads/{branch}";
+        var answer = GitRefFiles.TryResolve(repoRoot, full, out _);
+        if (answer != GitRefFileAnswer.Unknown) return answer == GitRefFileAnswer.Found;
+        var (_, _, code) = RunGitArgs(repoRoot, "rev-parse", "--verify", "--quiet", full);
         return code == 0;
     }
 
@@ -4543,12 +4574,15 @@ public partial class GitService
     {
         if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)) return false;
         if (!IsLikelyBranchName(branch)) return false;
+        var full = $"refs/remotes/origin/{branch}";
+        var answer = GitRefFiles.TryResolve(repoRoot, full, out _);
+        if (answer != GitRefFileAnswer.Unknown) return answer == GitRefFileAnswer.Found;
         var (_, _, code) = RunGitArgs(
             repoRoot,
             "rev-parse",
             "--verify",
             "--quiet",
-            $"refs/remotes/origin/{branch}");
+            full);
         return code == 0;
     }
 
@@ -4690,6 +4724,12 @@ public partial class GitService
     {
         if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)) return null;
         if (!IsLikelyBranchName(branch)) return null;
+        // AGT-3567: the ref files answer when they settle it.
+        switch (GitRefFiles.TryResolve(repoRoot, branch, out var fromFiles))
+        {
+            case GitRefFileAnswer.Found: return fromFiles;
+            case GitRefFileAnswer.Absent: return null;
+        }
         var (output, _, code) = RunGitArgs(repoRoot, "rev-parse", "--verify", "--quiet", branch);
         if (code != 0) return null;
         var sha = output.Trim();
@@ -5518,9 +5558,9 @@ public partial class GitService
 
     private string? DirtyTreeRefusal(string repoRoot, string refusal)
     {
-        var status = GetStatusForRepoRoot(repoRoot);
-        if (!status.IsRepo || status.Files.Count == 0) return null;
-        return $"{refusal} Dirty files: {string.Join(", ", status.Files.Select(file => file.Path))}.";
+        var (isRepo, changed) = ReadChangedPathsAtRoot(repoRoot);
+        if (!isRepo || changed.Count == 0) return null;
+        return $"{refusal} Dirty files: {string.Join(", ", changed)}.";
     }
 
     /// <summary>
@@ -5532,8 +5572,10 @@ public partial class GitService
     /// </summary>
     private static bool IsLinkedWorktree(string root)
     {
-        // One process answers both, one line each (AGT-3567: the merge path
-        // asks several times per integration).
+        // The repository files answer it for a work tree root; otherwise one
+        // process answers both, one line each (AGT-3567: the merge path asks
+        // several times per integration).
+        if (GitRefFiles.IsLinkedWorktree(root) is { } linked) return linked;
         var (output, _, code) = RunGitArgs(root, "rev-parse", "--git-dir", "--git-common-dir");
         if (code != 0) return false;
         var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -5542,6 +5584,11 @@ public partial class GitService
 
     private static bool IsIntegrationHeadAttached(string root, string integrationBranch)
     {
+        switch (GitRefFiles.TryReadAbbreviatedHead(root, out var fromFiles))
+        {
+            case GitRefFileAnswer.Found: return string.Equals(fromFiles, integrationBranch, StringComparison.Ordinal);
+            case GitRefFileAnswer.Absent: return false;
+        }
         var (currentRaw, _, headCode) = RunGitArgs(root, "rev-parse", "--abbrev-ref", "HEAD");
         return headCode == 0
             && string.Equals(currentRaw.Trim(), integrationBranch, StringComparison.Ordinal);
@@ -6061,8 +6108,7 @@ public partial class GitService
         if (!_fastForwardedCheckouts.TryGetValue(LagKey(holder, integrationBranch), out var forwardedSha)
             || !string.Equals(forwardedSha, rolledBackFrom, StringComparison.OrdinalIgnoreCase)) return null;
 
-        var status = GetStatusForRepoRoot(holder);
-        if (status.IsRepo && status.Files.Count == 0) return holder;
+        if (ReadChangedPathsAtRoot(holder) is (true, { Count: 0 })) return holder;
 
         _logger.LogInformation(
             "Checkout {Path} is left untouched by the {Branch} rollback because it has uncommitted changes",
@@ -7470,8 +7516,10 @@ public partial class GitService
             RunGitArgs(worktreePath, "rebase", "--abort");
         }
 
-        var (_, _, mergeHeadCode) = RunGitArgs(worktreePath, "rev-parse", "--verify", "--quiet", "MERGE_HEAD");
-        if (mergeHeadCode == 0)
+        var mergeHead = GitRefFiles.TryResolvePseudoRef(worktreePath, "MERGE_HEAD", out _);
+        if (mergeHead == GitRefFileAnswer.Found
+            || (mergeHead == GitRefFileAnswer.Unknown
+                && RunGitArgs(worktreePath, "rev-parse", "--verify", "--quiet", "MERGE_HEAD").Code == 0))
         {
             _logger.LogInformation("Aborting an interrupted merge at {Path}", worktreePath);
             RunGitArgs(worktreePath, "merge", "--abort");
@@ -7693,6 +7741,11 @@ public partial class GitService
     public string? ReadHeadShaAt(string root)
     {
         if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return null;
+        switch (GitRefFiles.TryResolveHead(root, out var fromFiles))
+        {
+            case GitRefFileAnswer.Found: return fromFiles;
+            case GitRefFileAnswer.Absent: return null;
+        }
         var (output, _, code) = RunGit(root, "rev-parse HEAD");
         if (code != 0) return null;
         var sha = output.Trim();
@@ -7707,6 +7760,11 @@ public partial class GitService
     public string? ReadBranchAt(string root)
     {
         if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return null;
+        switch (GitRefFiles.TryReadAbbreviatedHead(root, out var fromFiles))
+        {
+            case GitRefFileAnswer.Found: return fromFiles;
+            case GitRefFileAnswer.Absent: return null;
+        }
         var (output, _, code) = RunGit(root, "rev-parse --abbrev-ref HEAD");
         if (code != 0) return null;
         var branch = output.Trim();
@@ -8168,6 +8226,7 @@ public partial class GitService
 
     private static bool HasRemote(string repoRoot, string remote)
     {
+        if (GitRefFiles.DefinesRemote(repoRoot, remote) == true) return true;
         var (remotesOut, _, remotesCode) = RunGitArgs(repoRoot, "remote");
         if (remotesCode != 0 || string.IsNullOrWhiteSpace(remotesOut)) return false;
         return remotesOut
@@ -8927,9 +8986,24 @@ public partial class GitService
     private static GitCommitResult CommitPathspecs(string root, string message, IReadOnlyCollection<string> pathspecs)
     {
         if (string.IsNullOrWhiteSpace(message)) return new GitCommitResult(false, null, "Commit message is required.");
-        var commitArgs = new List<string> { "commit", "-F", "-", "--" };
+        // These are Studio-owned document commits. Supply both identities for
+        // this invocation so native services do not need a global git config.
+        const string name = "Agent Studio";
+        const string email = "studio@agent-studio.invalid";
+        var commitArgs = new List<string>
+        {
+            "-c", $"user.name={name}", "-c", $"user.email={email}",
+            "commit", "-F", "-", "--"
+        };
         commitArgs.AddRange(pathspecs);
-        var (_, commitErr, commitCode) = RunGitArgs(root, commitArgs.ToArray(), stdin: message);
+        var (_, commitErr, commitCode) = RunGitArgs(root, commitArgs.ToArray(), message,
+            new Dictionary<string, string?>
+            {
+                ["GIT_AUTHOR_NAME"] = name,
+                ["GIT_AUTHOR_EMAIL"] = email,
+                ["GIT_COMMITTER_NAME"] = name,
+                ["GIT_COMMITTER_EMAIL"] = email,
+            });
         if (commitCode != 0)
         {
             if (commitErr.Contains("nothing to commit", StringComparison.OrdinalIgnoreCase))
@@ -9103,6 +9177,7 @@ public partial class GitService
     {
         if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) return null;
         if (_toplevelCache.TryGetValue(path, out var cachedRoot)) return cachedRoot;
+        if (GitRefFiles.WorkTreeRoot(path) is { } root) return _toplevelCache[path] = root;
         var (output, _, code) = RunGit(path, "rev-parse --show-toplevel");
         if (code != 0) return null;
         var toplevel = output.Trim();
@@ -9275,10 +9350,14 @@ public partial class GitService
     private static IDisposable EnterIntegrationRemoteGate(string cwd, CancellationToken ct)
     {
         // Linked worktrees have different git dirs but one common ref store.
-        var (commonDir, _, code) = RunGitArgs(cwd, "rev-parse", "--git-common-dir");
-        var key = code == 0
-            ? Path.GetFullPath(commonDir.Trim(), cwd)
-            : Path.GetFullPath(cwd);
+        var key = GitRefFiles.CommonDirectory(cwd);
+        if (key is null)
+        {
+            var (commonDir, _, code) = RunGitArgs(cwd, "rev-parse", "--git-common-dir");
+            key = code == 0
+                ? Path.GetFullPath(commonDir.Trim(), cwd)
+                : Path.GetFullPath(cwd);
+        }
         var gate = IntegrationRemoteGates.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         gate.Wait(ct);
         return new IntegrationRemoteGate(gate);

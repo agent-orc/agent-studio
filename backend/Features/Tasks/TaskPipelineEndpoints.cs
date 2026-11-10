@@ -37,7 +37,8 @@ public static class TaskPipelineEndpoints
             TimelineLog timeline,
             ITokenAggregator tokens,
             OnDemandPostStepService onDemand,
-            BatchGateStore batchGates) =>
+            BatchGateStore batchGates,
+            ReportContentReviewService reportReview) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var info = scanner.FindJob(jobId, watchPath);
@@ -170,6 +171,10 @@ public static class TaskPipelineEndpoints
                 {
                     plannedStepIds = onDemand.ReadPlan(info.FolderPath),
                     attempts = onDemand.ReadAttempts(info.FolderPath),
+                    // AGT-3565: the missing report review, run by Review results.
+                    runnableStepIds = reportReview.LateReviewRefusal(info) is null
+                        ? new[] { PipelineCatalogue.RequirementFitStepId }
+                        : [],
                 },
             });
         });
@@ -201,6 +206,36 @@ public static class TaskPipelineEndpoints
             var result = await onDemand.RunAsync(
                 info, context.Entry, context.Project.Id, stepId, body?.AddToCard ?? true, ct);
             return Results.Ok(result);
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
+        // AGT-3565: Review results runs only the missing requirement-fit
+        // review of a report card whose run finished without one. The
+        // research is not repeated and the card stays in its lane.
+        group.MapPost("/{jobId}/review-results", async (
+            string jobId,
+            string? project,
+            string? watchPath,
+            RunPostStepRequest? body,
+            TaskScannerService scanner,
+            AgentStudio.Registry.ProjectRegistry projects,
+            ReportContentReviewService reportReview,
+            CancellationToken ct) =>
+        {
+            watchPath = body?.WatchPath ?? watchPath;
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var info = scanner.FindJob(jobId, watchPath);
+            if (info == null) return Results.NotFound(new { error = "Job not found" });
+            if (reportReview.LateReviewRefusal(info) is { } refusal)
+                return Results.Conflict(new { error = refusal });
+
+            var result = await reportReview.RunLateAsync(info, info.ProjectName, ct);
+            return Results.Ok(new
+            {
+                stepId = PipelineCatalogue.RequirementFitStepId,
+                ran = result.Ran,
+                status = result.Status,
+                summary = result.Reason,
+            });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
         // Read-model for the raw step-call prompts captured at central

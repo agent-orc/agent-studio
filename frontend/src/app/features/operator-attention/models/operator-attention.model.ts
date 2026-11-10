@@ -8,6 +8,8 @@ export interface OperatorAttentionItem {
   type: string;
   project: string | null;
   cardKey: string | null;
+  title?: string | null;
+  dossierId?: string | null;
   cards: string[];
   reason: string;
   observedAt: string;
@@ -21,10 +23,10 @@ export interface OperatorAttentionResponse {
 
 /** The decision-event classes of the operator stream, in the order the list shows them. */
 export type AttentionClass =
-  | 'decision' | 'escalation' | 'human-review' | 'push-blocked' | 'batch' | 'push' | 'quota' | 'host' | 'other';
+  | 'decision' | 'dossier' | 'escalation' | 'human-review' | 'push-blocked' | 'batch' | 'push' | 'quota' | 'host' | 'installation' | 'other';
 
 /** Where a row's primary action leads. */
-export type AttentionTarget = 'card' | 'batch-gate' | 'cli-usage' | 'hosts' | 'activity';
+export type AttentionTarget = 'card' | 'dossiers' | 'backups' | 'credentials' | 'batch-gate' | 'cli-usage' | 'hosts' | 'activity';
 
 export interface AttentionClassSpec {
   readonly key: AttentionClass;
@@ -35,6 +37,7 @@ export interface AttentionClassSpec {
 
 const CLASSES: readonly AttentionClassSpec[] = [
   { key: 'decision', label: 'Decision cards', action: 'Decide', target: 'card' },
+  { key: 'dossier', label: 'Dossiers', action: 'Open Dossiers', target: 'dossiers' },
   { key: 'escalation', label: laneName(TaskState.Escalated), action: 'Open card', target: 'card' },
   { key: 'human-review', label: laneName(TaskState.HumanReview), action: 'Review', target: 'card' },
   { key: 'push-blocked', label: 'Push blocked', action: 'Open card', target: 'card' },
@@ -42,11 +45,15 @@ const CLASSES: readonly AttentionClassSpec[] = [
   { key: 'push', label: 'Overdue pending push', action: 'Open batch gate', target: 'batch-gate' },
   { key: 'quota', label: 'Quota exhausted or fallback active', action: 'Open CLI usage', target: 'cli-usage' },
   { key: 'host', label: 'Host not claiming', action: 'Open hosts', target: 'hosts' },
+  { key: 'installation', label: 'Installation', action: 'Open settings', target: 'backups' },
   { key: 'other', label: 'Other', action: 'Open Activity', target: 'activity' },
 ];
 
 const CLASS_OF_TYPE: Readonly<Record<string, AttentionClass>> = {
   'decision-card.opened': 'decision',
+  'dossier.decision-open': 'dossier',
+  'installation.backups': 'installation',
+  'installation.credential': 'installation',
   'escalation.opened': 'escalation',
   'human-review.ready': 'human-review',
   'batch.red': 'batch',
@@ -94,13 +101,17 @@ export function attentionCard(item: OperatorAttentionItem): string | null {
  * without a project cannot open a batch gate; both still offer one action.
  */
 export function attentionTarget(item: OperatorAttentionItem, spec: AttentionClassSpec): AttentionTarget {
+  if (item.type === 'installation.credential') return 'credentials';
   if (spec.target === 'card' && !attentionCard(item)) return 'activity';
   if (spec.target === 'batch-gate' && !item.project) return 'activity';
   return spec.target;
 }
 
 export function attentionActionLabel(item: OperatorAttentionItem, spec: AttentionClassSpec): string {
-  return attentionTarget(item, spec) === spec.target ? spec.action : 'Open Activity';
+  const target = attentionTarget(item, spec);
+  if (target === 'credentials') return 'Open credentials';
+  if (target === 'backups') return 'Open operations';
+  return target === spec.target ? spec.action : 'Open Activity';
 }
 
 /** Compact age of a fact: "just now", "12 min", "3 h", "2 d". */

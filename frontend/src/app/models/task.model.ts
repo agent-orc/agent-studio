@@ -689,6 +689,8 @@ export interface TaskInfo {
     failureClass: string;
     since: string;
     reason: string;
+    /** AGT-3617: the cause in plain words, e.g. "review cannot read the test report". */
+    summary?: string | null;
   } | null;
   /**
    * Card kind. `task` is the default. See backend `TaskKinds`.
@@ -1272,6 +1274,7 @@ export interface ContinueRoundBase {
 export interface FailureContinuationCheck {
   available: boolean;
   reason: string | null;
+  isolationActive?: boolean;
 }
 
 export interface ContinueTaskQueuedInfo {
