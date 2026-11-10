@@ -140,7 +140,18 @@
                 </main>
               } @else {
               @if (singleGroupBoard()) {
-                <app-board-group-switcher [groups]="laneGroups()" [delivery]="visibleDeliveryGroup()" [value]="studioBoardFocus()" (valueChange)="selectBoardGroup($event)" />
+                @if (singleLaneBoard()) {
+                  <label class="mobile-lane-picker" data-testid="mobile-lane-picker">
+                    <span>Board lane</span>
+                    <select [value]="mobileLane().id" (change)="selectMobileLane($any($event.target).value)" aria-label="Board lane">
+                      @for (option of mobileLaneOptions(); track option.id) {
+                        <option [value]="option.id">{{ option.label }}</option>
+                      }
+                    </select>
+                  </label>
+                } @else {
+                  <app-board-group-switcher [groups]="laneGroups()" [delivery]="visibleDeliveryGroup()" [value]="studioBoardFocus()" (valueChange)="selectBoardGroup($event)" />
+                }
               }
               <main class="dashboard dashboard--studio" data-testid="studio-board" [appScrollMemory]="'board:' + (boardProjectScope() ?? '*')"
                     [class.dashboard--has-focus]="studioBoardFocus() !== null" [class.dashboard--single-group]="singleGroupBoard()">
@@ -157,6 +168,7 @@
                     <div class="lane-group__lanes" [attr.data-testid]="'lane-group-lanes-' + g.id" [appScrollMemory]="'board:' + (boardProjectScope() ?? '*') + ':group:' + g.id">
                       @for (lane of g.lanes; track lane.state) {
                         <app-job-column
+                          [class.mobile-lane-hidden]="singleLaneBoard() && mobileLane().id !== lane.state"
                           [title]="lane.title"
                           [icon]="lane.icon"
                           [state]="lane.state"
@@ -187,6 +199,7 @@
                   </section>
                 }
                 <app-delivery-section class="lane-group" data-testid="lane-group-delivery"
+                  [mobileColumnId]="singleLaneBoard() ? mobileLane().id : null"
                   [class.lane-group--hidden-by-focus]="studioBoardFocus() !== null && studioBoardFocus() !== deliveryGroupId" [tasks]="dossierBoardTasks()"
                   [projects]="boardProjectScope() ? [boardProjectScope()!] : projectNames()"
                   [mutationsBlocked]="updateClient.mutationsBlocked()" (jobClick)="openDetail($event)" />

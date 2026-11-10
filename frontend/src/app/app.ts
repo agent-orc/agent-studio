@@ -97,6 +97,7 @@ import {
   ProjectHubUrlService,
   StudioTabStateService,
   StudioPanelStateService,
+  ThemeService,
   studioTabKey,
   parseStudioRoute,
   navigateStudioRoute,
@@ -430,6 +431,8 @@ export class App implements OnInit, OnDestroy {
    * working unchanged. Methods further down delegate to the service.
    */
   private readonly laneCollapse = inject(LaneCollapseService);
+  // Initialize document theme before the auth gate can render.
+  readonly theme = inject(ThemeService).theme;
   readonly collapsedLanes = this.laneCollapse.collapsedLanes;
   readonly focusedContainer = this.laneCollapse.focusedContainer;
   readonly taskNavCollapsed = this.uiPrefs.taskNavCollapsed;
@@ -575,16 +578,35 @@ export class App implements OnInit, OnDestroy {
    * shown alone (null: all of them); on wide boards it is the container focus.
    */
   readonly singleGroupBoard = this.laneCollapse.singleGroupLayout;
+  readonly singleLaneBoard = this.laneCollapse.singleLaneLayout;
+  readonly mobileLaneChoice = signal<string | null>(null);
+  readonly mobileLaneOptions = computed(() => [
+    ...this.laneGroups().flatMap(group => group.lanes.map(lane => ({
+      id: lane.state, label: lane.title, groupId: group.id,
+    }))),
+    ...(this.visibleDeliveryGroup()?.columns.map(column => ({
+      id: `delivery:${column.id}`, label: column.title, groupId: DELIVERY_GROUP_ID,
+    })) ?? []),
+  ]);
+  readonly mobileLane = computed(() => {
+    const options = this.mobileLaneOptions();
+    return options.find(option => option.id === this.mobileLaneChoice()) ?? options[0] ?? { id: '', label: '', groupId: '' };
+  });
+  selectMobileLane(id: string): void {
+    this.mobileLaneChoice.set(id);
+  }
   readonly deliveryGroupId = DELIVERY_GROUP_ID;
   private readonly deliverySection = viewChild(DeliverySectionComponent);
   readonly visibleDeliveryGroup = computed(() => {
     const section = this.deliverySection();
     return section?.visible() ? section.group() : null;
   });
-  readonly studioBoardFocus = computed(() => this.laneCollapse.boardFocus([
-    ...this.laneGroups().map((g) => g.id),
-    ...(this.visibleDeliveryGroup() ? [DELIVERY_GROUP_ID] : []),
-  ]));
+  readonly studioBoardFocus = computed(() => this.singleLaneBoard()
+    ? this.mobileLane()?.groupId ?? null
+    : this.laneCollapse.boardFocus([
+      ...this.laneGroups().map((g) => g.id),
+      ...(this.visibleDeliveryGroup() ? [DELIVERY_GROUP_ID] : []),
+    ]));
   selectBoardGroup(id: string): void {
     this.laneCollapse.selectSingleGroup(id);
   }

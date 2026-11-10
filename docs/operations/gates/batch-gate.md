@@ -50,6 +50,23 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
 
 ## Delivered
 
+- The Agent Studio project definition runs `bash scripts/check-release-build.sh`
+  as a build step after the Debug solution build. It builds the published API,
+  runner, and Task Server projects with `--configuration Release --no-restore`.
+  It disables shared compilation so a busy compiler server cannot hold the
+  gate behind unrelated builds.
+  Batch pre-checks, batch and per-task gates, and package-reference delivery
+  reviews inherit this command from the same project definition. It does not
+  repeat the test suites. A failing command makes the gate red; the durable
+  reason prefers a compiler or MSBuild diagnostic from bounded output windows
+  over a generic error line. The Release build shares the existing gate run
+  budget and is measured separately from the
+  Debug build in the gate process evidence.
+  On the shared runner on 2026-11-04, the new step reached the existing
+  Six Labors Release license error in 97.3 seconds (1.6 minutes). This is
+  the measured time to a red verdict; the successful three-project build
+  time remains unmeasured until AGT-3361 resolves the license decision.
+
 - A reviewed, batch-deferred delivery gets an opportunistic pre-check on its
   result SHA: project build commands, `.NET` guards, and touched frontend lint
   and format scripts. Regular batches retain the first gate slot; the pre-check
@@ -125,6 +142,15 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   `reasonDetail`. The first cause of a review generation is kept until the
   review returns to the batch queue. A member of an abandoned batch that is
   queued again shows `pending` with reason `requeued`, not `fallback`.
+  AGT-3694: the member also names what its fallback waits for: `waitKind`
+  (`engine-decision`, `per-task-slot`, `batch-slot`, `machine-gate-slot`,
+  `preparing`, `gate-running`, `integration`, `resume-pending`), `waitingFor`,
+  `waitSinceUtc`, and for an engine decision `engineRunId` and
+  `engineStatus`. An overdue plan reason appends the same text. A wait past
+  its bound is a `batch-fallback-stalled` event (state `fallbackStalls`, the
+  queue stall report, the card timeline and the operator feed); a stalled
+  engine decision or a flight that would not stop escalates the card as
+  `GateInfra`.
 - AGT-3498: when a formed batch's base moves before replay, the worker checks
   each member's current review and immutable delivery against the new base.
   Compatible members close together in one successor linked by
@@ -216,6 +242,9 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   The initial `Formed` state is durable before its manifest becomes visible.
   A manifest found without state rows is `Unknown`; recovery skips it and logs
   the missing state once per manifest per store instance.
+  A missing manifest and missing state also reads as `Unknown`. The auto-review
+  watchdog keeps ownership with a visible manifest whose state is `Unknown`,
+  avoiding a second review pass while state visibility is unresolved.
   A queued code push keeps its project batch reservation pending until origin
   verifies the merged SHA. The pending marker is a durable recovery job, so a
   startup sweep re-drives it even if the card remains in Auto Review and the

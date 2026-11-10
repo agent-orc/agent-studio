@@ -41,6 +41,13 @@
     @if (h.restartedAt) { <div><dt>Restarted</dt><dd data-testid="remote-host-role-restart" [title]="h.restartedAt">{{ h.restartedAt | date:'short' }} · {{ h.reviewsLost ?? 0 }} reviews lost</dd></div> }
     <div><dt>Repository access</dt><dd data-testid="environment-repository-access">{{ repositoryAccess() }}</dd></div>
     <div><dt>Release</dt><dd data-testid="remote-host-release"><app-host-release-identity [host]="h" [stableRelease]="stableRelease()" [now]="now()" testIdPrefix="remote-host-release" [showIdentity]="true" /></dd></div>
+    @if (reviewImage(); as image) {
+      <div><dt>Review image</dt><dd class="host__image" data-testid="remote-host-review-image">
+        <span>Running <code data-testid="remote-host-review-image-running" [attr.title]="image.running">{{ shortImageDigest(image.running) ?? 'not reported' }}</code></span>
+        <span>Expected <code data-testid="remote-host-review-image-expected" [attr.title]="image.expected">{{ shortImageDigest(image.expected) ?? 'not pinned' }}</code></span>
+        <app-status-indicator [tone]="reviewImageTone(image)" [label]="reviewImageLabel(image)" [compact]="true" testId="remote-host-review-image-state" />
+      </dd></div>
+    }
     @if (h.reviewPlane; as plane) {
       <div><dt>Review quota</dt><dd data-testid="remote-host-review-plane">CPU quota {{ plane.cpuQuotaPercent === null ? 'unlimited' : plane.cpuQuotaPercent / 100 + ' cores' }} · {{ plane.currentCeiling }} slot ceiling · throttled {{ plane.throttledShare === null ? 'Unknown' : (plane.throttledShare * 100).toFixed(0) + '%' }}</dd></div>
       @if (plane.sustainedThrottling) { <div><dt>Throttling</dt><dd data-testid="remote-host-review-plane-alarm"><app-status-indicator tone="warning" label="CPU throttling sustained" [detail]="plane.alarmSuggestion" [compact]="true" /> {{ plane.alarmSuggestion }}</dd></div> }

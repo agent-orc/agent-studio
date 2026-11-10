@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "description": "Append-only record of every published persona descriptor revision and its digest (PersonaDescriptorDigest). PersonaCatalogueTests fails when a descriptor's content changes without a new revision. To change a descriptor: raise its revision, then add the new revision with the digest the failing test prints. Never edit or remove a recorded digest.",
+  "revisions": {
+    "budget-steward": {
+      "2026.11.1": "sha256:fec2c4e5334a82eba1303426c832fbd3112ceab2aad31759c70521cb711833fa"
+    },
+    "chief-of-staff": {
+      "2026.11.1": "sha256:ff80500e023035a7ba2746218c5c4c26b157a0dd69f01625e7627e3c4c1c56f4"
+    },
+    "cost-controller": {
+      "2026.11.1": "sha256:caf74987d24cfa5b2d4903031408d723467d533ed670a09c90d7adcb2d2732e4"
+    },
+    "design-lead": {
+      "2026.11.1": "sha256:758275addb37668035ff7cdd3240ae17bc196d96c0e1c0ba6818b7d4954db0fc"
+    },
+    "documentation-editor": {
+      "2026.11.1": "sha256:761765453deb9b67a8bd535f34db923bb5bcbb8dccb89853432b26791b3cb107"
+    },
+    "operations-warden": {
+      "2026.11.1": "sha256:9ea32cb16a12a54c19e7a6b2501bcd292cde5df4d89b79f96bcde1e5ae9b8d6b"
+    },
+    "presenter": {
+      "2026.11.1": "sha256:f145e145900ef74887fa72c7754fa8c6a680456131305ff4efb7b5cf29a43beb"
+    },
+    "product-manager": {
+      "2026.11.1": "sha256:ff1a4b6a1f979aea3cf3864c1125ece8b6a8e353db6e765bd27e1728a7afa2d6"
+    },
+    "quality-lead": {
+      "2026.11.1": "sha256:60140e27059474a9e2ace3aad2dc41ba4f113fd9c7f0cf08f6b0dff054f0f66c"
+    },
+    "reliability-engineer": {
+      "2026.11.1": "sha256:e5257be9ceb33daa69c1ed54e07931be7db198728f90b15a90e6b23eb834f97e"
+    },
+    "security-officer": {
+      "2026.11.1": "sha256:09ccd4923d36f254d646ee0e090eb642e62a6357c30ac466c8824fff5099ca0c"
+    }
+  }
+}
