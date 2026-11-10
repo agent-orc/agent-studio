@@ -47,6 +47,8 @@ import {
   TaskSelectionService,
   TriageController,
   LanePagerService,
+  AcceptanceRefusalStore,
+  acceptanceRefusalFor,
   overflowActionsFor,
   primaryActionFor,
   mergeAcceptViewFor,
@@ -349,6 +351,7 @@ export class App implements OnInit, OnDestroy {
   readonly archivingInProgress = this.boardMutations.archiving;
   /** Cycle 10c: triage panel + j/k navigation + auto-advance live here. */
   private readonly triage = inject(TriageController);
+  private readonly acceptanceRefusals = inject(AcceptanceRefusalStore);
   readonly showCreate = this.createJobForm.visible;
   readonly availableModels = this.createJobForm.availableModels;
   /**
@@ -1252,6 +1255,16 @@ export class App implements OnInit, OnDestroy {
     const status = this.selectedJob()?.info.integration?.status;
     return status !== 'integrated' && status !== 'not-applicable';
   });
+  /**
+   * AGT-3704: the reason a Human Review Accept is held or was refused, with
+   * the one action that resolves it, rendered before the Accept button.
+   */
+  readonly studioAcceptanceRefusal = computed(() => {
+    const info = this.selectedJob()?.info;
+    if (!info || this.studioTriagePrimary()?.id !== 'mark-done' || this.studioPrimaryDecisionRefusal()) return null;
+    return acceptanceRefusalFor(info, this.acceptanceRefusals.forTask(info.taskKey),
+      this.studioPrimaryAwaitingGit());
+  });
   /** AGT-2795: the decision lane guard's refusal for the studio primary move. */
   readonly studioPrimaryDecisionRefusal = computed(() => {
     const sel = this.selectedJob();
@@ -1293,6 +1306,7 @@ export class App implements OnInit, OnDestroy {
       blockedByDecision: !!this.studioPrimaryDecisionRefusal(),
       actingId: this.studioTriageActingId(),
       menuItems: this.studioTriageMenuItems(),
+      refusal: this.studioAcceptanceRefusal(),
     };
   });
 

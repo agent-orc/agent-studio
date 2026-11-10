@@ -733,6 +733,9 @@ export class TaskSelectionService {
         // cards in review, escalated, completed or waiting for input. Other
         // lanes load review only when its tab opens.
         if (reviewFactsShownUpfront(info, core)) this.loadResource('review');
+        // AGT-3704: the Human Review Accept reads its integration verdict from
+        // the Git resource, and the Git pane is closed by default.
+        if (core.lane === TaskState.HumanReview) this.loadResource('git');
         this.loadResourcesForTab(this.expandedTab);
       });
     };
@@ -1037,7 +1040,9 @@ export class TaskSelectionService {
   navigateToLane(state: string): void {
     const peers = this.peersForLane(state);
     if (peers.length === 0) {
-      this.showTriageToast(`No tasks in ${laneLabelFor(state)}.`);
+      // AGT-3704: an owner picking a lane here may expect a move. Say how to move.
+      this.showTriageToast(`No tasks in ${laneLabelFor(state)}. This list pages through lanes; `
+        + 'it does not move this task. Use the lane action or the ⋯ menu to move it.', 6000);
       return;
     }
     const sel = this.selected();

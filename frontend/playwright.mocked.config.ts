@@ -30,6 +30,7 @@ export default defineConfig({
       '**/studio-shell/activity-bar-single-active.spec.ts',
       '**/cli/consumer-model-policy.spec.ts',
       '**/task-detail/task-detail-instant-navigation.spec.ts',
+      '**/task-detail/concept-accept-refusal.spec.ts',
       '**/perf/board-bundle-lazy.spec.ts',
       '**/perf/board-window-benchmark.spec.ts',
     ],

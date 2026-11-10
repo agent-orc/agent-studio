@@ -51,7 +51,7 @@ public static class TaskDetailResources
         group.MapGet("/{jobId}/details/git", (string jobId, string? project, long? generation,
             HttpContext context, ProjectRegistry projects, TaskIndexCache index,
             ITaskCoreRuntime runtime, TaskListGitProjectionCache snapshots,
-            TaskScannerService scanner, ILoggerFactory loggerFactory) =>
+            TaskScannerService scanner, ProjectSettingsService projectSettings, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = AgentStudio.Git.GitProcessTelemetry.BeginRequest("tasks/detail/git",
                 loggerFactory.CreateLogger("TaskGitResource"), includeNested: true);
@@ -59,13 +59,24 @@ public static class TaskDetailResources
             if (lookup.Error is not null) return lookup.Error;
             var core = lookup.Core!;
             var key = core.TaskKey;
-            var task = new TaskInfo { TaskKey = key, WatchPath = core.WatchPath };
+            // AGT-3704: the projection is signed per task, so only the resident
+            // task facts match it. A key-only stub never matched and dropped
+            // every Git fact, which read as integration null on every card.
+            var resident = index.GetDetailFacts(core.Id, core.WatchPath).Info;
+            var task = resident is not null && resident.TaskKey == key
+                ? resident : new TaskInfo { TaskKey = key, WatchPath = core.WatchPath };
             var snapshot = snapshots.ReadCacheOnly([task]);
             var freshness = snapshots.ReadFreshness([task]);
+            var integration = snapshot.Integration.GetValueOrDefault(key);
+            // Same contract fallback as the full detail read (AGT-3621): a
+            // code-free card is not-applicable before its first Git fact.
+            if (ReferenceEquals(task, resident))
+                integration = TaskEndpointHelpers.WithContractIntegration(task with { Integration = integration },
+                    projectSettings.Get(task.ProjectName).IntegrationBranch).Integration;
             var data = new TaskGitResource(
-                snapshot.Merge.GetValueOrDefault(key), snapshot.Integration.GetValueOrDefault(key),
+                snapshot.Merge.GetValueOrDefault(key), integration,
                 snapshot.Publish.GetValueOrDefault(key), snapshot.TestRuns.GetValueOrDefault(key),
-                core.Commit, core.Commits, index.GetDetailFacts(core.Id, core.WatchPath).Info?.Provenance);
+                core.Commit, core.Commits, resident?.Provenance);
             var state = freshness.GitStateAt is null ? "unavailable" : freshness.Stale ? "stale" : "ready";
             var reason = state == "unavailable" ? "git-snapshot-pending" :
                 state == "stale" ? freshness.Restored ? "git-snapshot-restored" : "git-snapshot-refreshing" : null;

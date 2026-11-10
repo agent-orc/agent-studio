@@ -9,6 +9,7 @@ import { UndoController } from '../../../services/undo.service';
 import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
 import { TaskSelectionService } from './task-selection.service';
 import { LanePagerService, LANE_LABELS } from './lane-pager.service';
+import { AcceptanceRefusalStore, serverAcceptanceRefusal } from './acceptance-refusal.model';
 import {
   archiveIntegrationVerdict,
   deliveryClaimVerdict,
@@ -42,6 +43,7 @@ export class TriageController {
   private readonly lanePager = inject(LanePagerService);
   private readonly prefetch = inject(TaskDetailPrefetchService);
   private readonly undo = inject(UndoController);
+  private readonly acceptanceRefusals = inject(AcceptanceRefusalStore);
 
   /**
    * Invoked at every triage decision so the TaskDetailComponent's
@@ -241,6 +243,7 @@ export class TriageController {
       next: () => {
         this.jobService.endOptimisticPersist();
         persistResolve();
+        this.acceptanceRefusals.clear(info.taskKey);
         if (keepTaskOpen) {
           this.jobService.getDetail(info.id, info.watchPath).subscribe({
             next: detail => {
@@ -277,8 +280,14 @@ export class TriageController {
         if (ev.targetState === '6-completed'
             && err?.status === 409
             && (err?.error?.code === 'integration-dead-end'
+              || err?.error?.code === 'batch-gate-evidence-missing'
               || (typeof err?.error?.error === 'string'
                 && /integrat|delivery|containment/i.test(err.error.error)))) {
+          // AGT-3704: never a silent refusal. The toolbar shows the reason
+          // next to Accept with the action that resolves it.
+          const refusal = serverAcceptanceRefusal(info, err);
+          this.acceptanceRefusals.record(refusal);
+          this.notifications.warning(refusal.message, 'Accept refused');
           this.jobService.refresh(true);
           return;
         }

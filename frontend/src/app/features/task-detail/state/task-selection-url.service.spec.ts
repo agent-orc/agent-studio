@@ -125,6 +125,16 @@ describe('TaskSelectionService · stable task URLs', () => {
       state: 'ready', reason: null, data: { reviewProjection: null, evidence: null },
     });
   };
+  /** AGT-3704: a Human Review card reads its integration verdict upfront. */
+  const flushUpfrontGit = (task: TaskInfo, coreVersion = '1') => {
+    if (task.state !== '5-human-review') return;
+    http.expectOne(req => req.url.endsWith(`/${task.id}/details/git`)).flush({
+      id: task.id, taskKey: task.taskKey, projectId: 'Agent Studio', attemptId: null,
+      coreVersion, resource: 'git', version: 'g1', computedAt: null,
+      state: 'ready', reason: null, data: { mergeSignal: null, integration: null, publishSignal: null,
+        testEvidence: null, commit: null, commits: [], provenance: null },
+    });
+  };
   /**
    * Hold `core` as a visited core that a board-store event marked stale: the
    * next open paints it at once and revalidates it with the server.
@@ -149,6 +159,7 @@ describe('TaskSelectionService · stable task URLs', () => {
     http.expectOne(req => req.url.endsWith(`/${task.id}/details/usage`))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
     flushOverview(task, opts.coreVersion, opts.overview);
+    flushUpfrontGit(task, opts.coreVersion);
     if (opts.flushReview !== false) flushUpfrontReview(task, opts.coreVersion);
     if (opts.history) {
       const request = http.expectOne(req => req.url.endsWith(`/${task.id}/details/history`));
@@ -159,6 +170,11 @@ describe('TaskSelectionService · stable task URLs', () => {
 
   afterEach(() => {
     try {
+      // AGT-3704: every paint of a Human Review card reads Git upfront. The
+      // repaint and conflict tests below are not about that read; the test
+      // "reads the Git verdict upfront only for a Human Review card" is.
+      for (const request of http.match(req => req.url.endsWith('/details/git')))
+        if (!request.cancelled) request.flush({}, { status: 503, statusText: 'Unavailable' });
       http.verify();
     } finally {
       history.replaceState(null, '', '/');
@@ -537,6 +553,20 @@ describe('TaskSelectionService · stable task URLs', () => {
       coreVersion: '1', resource: 'review', version: 'r1', computedAt: null,
       state: 'ready', reason: null, data: { reviewProjection: null, evidence: null },
     });
+  });
+
+  it('reads the Git verdict upfront only for a Human Review card (AGT-3704)', async () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core')).flush(coreFor(info, 'Agent Studio'));
+    await paintRich(info);
+    http.verify();
+  });
+
+  it('reads no Git resource upfront outside Human Review (AGT-3704)', async () => {
+    selection.openDetail(readyInfo);
+    http.expectOne(req => req.url.endsWith(`/${readyInfo.id}/core`)).flush(coreFor(readyInfo, 'Agent Studio'));
+    await paintRich(readyInfo);
+    expect(http.match(req => req.url.endsWith('/details/git'))).toHaveLength(0);
   });
 
   it.each([

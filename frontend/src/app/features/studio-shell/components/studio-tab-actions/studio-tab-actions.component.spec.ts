@@ -309,6 +309,27 @@ describe('StudioTabActionsComponent - triage cluster', () => {
     expect(primary?.getAttribute('data-action-id')).toBe('mark-done');
   });
 
+  it('shows an acceptance refusal and its action directly before the primary (AGT-3704)', async () => {
+    const fixture = await build({
+      task: detail(),
+      triage: { ...withPrimary, blockedByIntegration: true, refusal: {
+        reason: 'The delivery is not in develop yet.', action: 'override',
+        actionLabel: 'Accept with override…', source: 'hold',
+      } },
+    });
+    const refusal = query(fixture, 'acceptance-refusal');
+    const primary = query(fixture, 'studio-triage-action-mark-done') as HTMLButtonElement;
+    expect(refusal?.textContent).toContain('The delivery is not in develop yet.');
+    expect(query(fixture, 'acceptance-refusal-action')?.textContent?.trim()).toBe('Accept with override…');
+    expect(primary.disabled).toBe(true);
+    expect(refusal!.compareDocumentPosition(primary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('shows no refusal for an Accept that may act', async () => {
+    const fixture = await build({ task: detail(), triage: withPrimary });
+    expect(query(fixture, 'acceptance-refusal')).toBeNull();
+  });
+
   it('disables and skeletons the primary while git provenance is still loading', async () => {
     const fixture = await build({
       task: detail(),

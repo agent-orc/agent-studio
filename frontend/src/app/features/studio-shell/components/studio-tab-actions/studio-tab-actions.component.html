@@ -127,6 +127,9 @@
     @if (triageView.hasActions) {
       <span class="studio-tab-actions-sep" aria-hidden="true"></span>
       <div class="studio-tab-action__triage" data-testid="studio-triage-panel" data-triage-root>
+        @if (triageView.refusal; as refusal) {
+          <app-acceptance-refusal [refusal]="refusal" [job]="detail.info" [disabled]="mutationsBlocked()" />
+        }
         @if (triageView.primaryId; as primaryId) {
           <button type="button"
                   class="studio-tab-action studio-tab-action--primary"

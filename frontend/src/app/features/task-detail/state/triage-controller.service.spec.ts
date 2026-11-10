@@ -9,6 +9,7 @@ import { TriageController } from './triage-controller.service';
 import { TaskSelectionService } from './task-selection.service';
 import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
 import { LanePagerService } from './lane-pager.service';
+import { AcceptanceRefusalStore } from './acceptance-refusal.model';
 import { TaskService } from '../../../services/task.service';
 import { ErrorDialogService } from '../../../services/error-dialog.service';
 import { NotificationService } from '../../../services/notification.service';
@@ -311,6 +312,36 @@ describe('TriageController · optimistic navigation on Accept', () => {
     expect(openSpy).toHaveBeenCalledWith(taskA);
     expect(warning).toHaveBeenCalledWith(refusal, 'Acceptance needs an operator override');
     expect(refresh).not.toHaveBeenCalled();
+    expect(errorDialog).not.toHaveBeenCalled();
+  });
+
+  /**
+   * AGT-3704: an integration refusal of Accept used to refresh the board and
+   * say nothing. It now names the refusal and keeps it for the toolbar, which
+   * shows it next to Accept with the action that resolves it.
+   */
+  it('names an integration refusal of Accept and records it for the card', () => {
+    const taskA = makeJob('task-a', '5-human-review');
+    vi.spyOn(jobService, 'getDetail').mockImplementation((id: string) =>
+      of(makeDetail(id, '5-human-review')));
+    TestBed.inject(LanePagerService).capture('5-human-review', [taskA], taskA.taskKey);
+    selection.triageLaneState = '5-human-review';
+    vi.spyOn(jobService, 'revertOptimisticMove').mockImplementation(noop);
+    vi.spyOn(jobService, 'applyOptimisticMove').mockReturnValue({} as never);
+    const refusal = 'Acceptance refused: the delivery is not integrated into develop.';
+    vi.spyOn(jobService, 'moveJob').mockReturnValue(throwError(() => ({
+      status: 409, error: { error: refusal, code: 'integration-dead-end' },
+    })));
+    vi.spyOn(jobService, 'refresh').mockImplementation(noop);
+    const errorDialog = vi.spyOn(TestBed.inject(ErrorDialogService), 'show').mockImplementation(noop);
+    const warning = vi.spyOn(TestBed.inject(NotificationService), 'warning');
+    vi.spyOn(selection, 'openDetail').mockImplementation(noop);
+
+    ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
+
+    expect(warning).toHaveBeenCalledWith(refusal, 'Accept refused');
+    expect(TestBed.inject(AcceptanceRefusalStore).forTask(taskA.taskKey))
+      .toEqual({ taskKey: taskA.taskKey, code: 'integration-dead-end', message: refusal });
     expect(errorDialog).not.toHaveBeenCalled();
   });
 });

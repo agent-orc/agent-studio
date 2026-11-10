@@ -17,7 +17,7 @@ actions; the global alert is projected from `app.html` before `app-task-detail`.
 | App 4 | Task defaults, Environment, Project Chat | Defaults and workspace tools | Capabilities available | Shared header buttons; defaults `7fb0177069`, Environment `958fbf2411`, chat `8e1228f292`. |
 | App 5 | Theme, Needs you, Settings, account | User actions and the operator attention count | Needs you always; its count takes the warning tint only when nonzero | Icon or text buttons plus account control; theme `d6b11df5d`, settings/account `7fb0177069`, AGT-3356 moved usage to footer, AGT-3576 replaced the stall bell with `app-attention-control`. |
 | Task 1 | Tab strip | Open tabs and active task identity | Editor open | One row; `d6b11df5d`, AGT-2963 responsive fix. |
-| Task 2 | Task toolbar | Run activity, execution host, pane toggles, lane pager, paging lane, primary action, menu | Task tab active; individual controls follow their capability | One action row; `ccc0039eb` (AGT-2819 extraction). Host belongs here and nowhere in the Overview title. |
+| Task 2 | Task toolbar | Run activity, execution host, pane toggles, lane pager, paging lane, acceptance refusal, primary action, menu | Task tab active; individual controls follow their capability | One action row; `ccc0039eb` (AGT-2819 extraction). Host belongs here and nowhere in the Overview title. |
 | Task 3 | Global alert banner | Cross-task integration alert | Alert threshold reached | Single alert banner in `app-workspace-banner`; `5d496e73e`. |
 | Task 4 | `app-task-resource-status` | Resource limitation affecting this task | Resource finding exists | Notice; `2b1436acc`. |
 | Task 5 | `app-detail-header` | Legacy task identity and actions | Legacy focused view; hidden in Studio | Header row; original detail extraction `839f3c9801`. |
@@ -51,9 +51,17 @@ belong in the footer (AGT-3356), not this row.
 
 Within task slot 2, the order is run activity (active or relevant run only),
 execution host (a concrete execution location), pane toggles (task tab),
-previous task, pager position, next task, paging lane select, primary lane
-action (only when available), and text-only overflow menu. `studio-tab-actions`
-owns these controls (`ccc0039eb`, AGT-2819). The primary action can be Run now
+previous task, pager position, next task, paging lane select, acceptance
+refusal, primary lane action (only when available), and text-only overflow
+menu. `studio-tab-actions` owns these controls (`ccc0039eb`, AGT-2819).
+The acceptance refusal (`app-acceptance-refusal`, AGT-3704) renders only for a
+Human Review Accept that is held by its integration verdict or was refused by
+the server. It shows the reason as a compact warning indicator and exactly one
+action: Retry integration for a failed integration, otherwise Accept with
+override, which asks for a written reason. It is omitted during the bounded
+Git wait (the primary's skeleton is that progress) and when the attempt-gap
+notice owns the refusal. The reason truncates first at narrow widths; its
+tooltip keeps the full sentence. The primary action can be Run now
 or the current lane's decision; its label comes from triage policy. The host
 chip is a factual badge, the pager is a compact action group, and the lane
 select is a navigation control. The menu owns secondary task actions.
