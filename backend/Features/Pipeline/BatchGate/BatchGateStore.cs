@@ -796,10 +796,10 @@ public sealed partial class BatchGateStore
                 return state;
             // The newest row decides the phase; an older readable row could
             // name a phase the batch already left, so the batch reads Unknown.
-            var manifestPath = Path.Combine(BatchDirectory(batchId), "manifest.json");
-            var digest = File.Exists(manifestPath)
-                && TryReadRecord<BatchGateManifest>(manifestPath, BatchGateRecordKinds.Manifest, batchId, out var owner)
-                ? owner.MembershipDigest : string.Empty;
+            var stateManifestPath = Path.Combine(BatchDirectory(batchId), "manifest.json");
+            var digest = File.Exists(stateManifestPath)
+                && TryReadRecord<BatchGateManifest>(stateManifestPath, BatchGateRecordKinds.Manifest, batchId, out var stateOwner)
+                ? stateOwner.MembershipDigest : string.Empty;
             return new BatchGateState(batchId, digest, BatchPhase.Unknown, null, 0,
                 new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero), StateUnreadableReason);
         }
