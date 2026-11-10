@@ -900,6 +900,11 @@ unreported claim expires with its lease and is queued again.
   the networked profile it never executes Codex on the Studio host: an absent
   or unreachable assigned runner produces a failed turn with a clear reason.
   Changing a remotely placed project to local execution requires the Owner.
+- `runner/OneShotJobAdmission.cs`: coding and review hosts poll bounded model
+  jobs independently of task claims. The review host starts this poll after
+  client registration. A missing claim route (HTTP 404) is logged once and
+  retried every five minutes; a successful poll logs restoration and returns
+  to the normal three-second interval.
 - `backend/Features/Runner/RemoteChatWorkBroker.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteProjectChatRunner.cs`: assignment-aware remote side-sheet chat

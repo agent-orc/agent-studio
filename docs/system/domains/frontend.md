@@ -72,6 +72,10 @@ renderers outside the board startup graph.
 
 ## Environment flow
 
+Environment > Installation shows a single one shot claim route status for the
+local monolith, where that Task Server route is unavailable. The runner retries
+the route every five minutes without filling its log with repeated 404 entries.
+
 DP-S6 renders canary attempt rows beneath their physical host using
 `GET /api/v1/management/attempt-visibility`. Active occupancy follows the
 Task Server lease and host executor receipt; a verified cleanup releases
@@ -583,7 +587,9 @@ occur. It is not a claim about tunnel transfer time.
   Ordinary task selection reads the bounded `/core` projection first and paints
   identity, lane, pins, execution, status, prompt, and recent events before
   independent detail resources begin. Two documents load after core paint;
-  usage follows the rich view, Git waits for its pane, and Activity loads its
+  usage follows the rich view, Git waits for its pane (except the provenance
+  read a Human Review card's Accept needs, which Accept awaits for at most
+  8 s, AGT-3621), and Activity loads its
   plan and output on selection. Review evidence and history wait for explicit
   tabs. Neighbor core lookahead starts after the first 1.6 seconds. The event
   ledger starts when Timeline first

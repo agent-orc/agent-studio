@@ -9,7 +9,7 @@ describe('SettingsJumpLinksComponent', () => {
   it('scrolls to and focuses the target section without changing the route', async () => {
     const target = document.createElement('section');
     target.id = 'jump-target';
-    target.scrollIntoView = vi.fn();
+    Object.defineProperty(target, 'scrollIntoView', { configurable: true, writable: true, value: vi.fn() });
     document.body.appendChild(target);
     const hash = location.hash;
     TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection()] });

@@ -134,7 +134,7 @@ while true; do
   if (( failures < 5 )); then
     continue
   fi
-  backend_pid="$(cat "${REPO_ROOT}/.api.pid" 2>/dev/null || true)"
+  backend_pid="$(cat "${REPO_ROOT}/.api.${PORT}.pid" 2>/dev/null || true)"
   if [[ "${backend_pid}" =~ ^[0-9]+$ ]] && kill -0 "${backend_pid}" 2>/dev/null; then
     failures=0
     continue

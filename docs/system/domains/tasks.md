@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-11-05
+Version: 2026-11-09
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -962,7 +962,12 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
 - The guarded delivery chain is workspace-wide by default. `DeliveryChain:Guarded`
   can be set to `false` only during migration to the former badge-only behavior.
   A coding card stays in `4-auto-review` with phase `integrating` until the
-  published result is integrated, then enters Human Review. Missing code
+  published result is integrated, then enters Human Review. The promotion is
+  recorded as cause `promoted` with detail `delivery-integrated`, and no lane
+  change carries the `integrating` phase into the next lane (AGT-3621). The
+  accepted-integration backstop finishes only an interrupted operator
+  acceptance; it clears a promotion's leftover phase instead of accepting the
+  card, and a stale-verdict park on an integrated card is not shown. Missing code
   delivery, conflict, gate failure, and unrecoverable error go to escalation
   with a category and recovery action. A pull-request project's approval stays
   on the pull request while the card waits in Auto Review; Human Review starts
@@ -1405,10 +1410,14 @@ before changing lanes if no generated Result is available. If that write fails,
 the card remains in its source lane. Admission refusals and no-op moves do not write
 `status.md`, `current-result.json`, or Result history. An engine decision
 refreshes its scaffold at most once during the accepted move. The service never
-replaces a real Result. Backend startup runs
-the same idempotent repair over missing Results in `5-human-review`,
-`6-completed`, and `7-archive`; repaired files are marked as operator
-backfills.
+replaces a real Result.
+When an accepted move finds a scaffold and Result history contains a generated
+summary, it restores the latest real summary instead of refreshing lane-only
+scaffold prose. The displaced scaffold remains in Result history.
+Backend startup runs the same idempotent repair over missing Results in
+`5-human-review`, `6-completed`, and `7-archive`; repaired missing files are
+marked as operator backfills. It also restores the last generated Result for
+an already Accepted card whose current file is still a scaffold.
 
 ## Completion contract (AGT-2817)
 

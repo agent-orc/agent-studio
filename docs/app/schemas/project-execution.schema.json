@@ -8,12 +8,7 @@
   "required": [
     "schemaVersion",
     "stack",
-    "toolVersions",
-    "commands",
-    "testSuites",
-    "cachePaths",
-    "capabilities",
-    "environment"
+    "commands"
   ],
   "properties": {
     "schemaVersion": {
@@ -35,6 +30,7 @@
     "toolVersions": {
       "description": "Tool names mapped to repository-relative version manifests such as .nvmrc or global.json.",
       "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$" },
       "additionalProperties": {
         "$ref": "#/$defs/relativePath"
       }
@@ -44,10 +40,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "prepare",
-        "build",
-        "test",
-        "lint"
+        "prepare"
       ],
       "properties": {
         "prepare": {
@@ -107,6 +100,12 @@
           "command": {
             "type": "string",
             "minLength": 1
+          },
+          "shards": {
+            "oneOf": [
+              { "const": "auto" },
+              { "type": "integer", "minimum": 1, "maximum": 16 }
+            ]
           }
         }
       }
@@ -132,7 +131,7 @@
       "description": "Non-secret preparation environment values. Executor profiles supply secrets.",
       "type": "object",
       "propertyNames": {
-        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        "pattern": "^(?!.*(?:TOKEN|PASSWORD|SECRET|PRIVATE_KEY|API_KEY)$)[A-Za-z_][A-Za-z0-9_]*$"
       },
       "additionalProperties": {
         "type": "string"
@@ -1065,7 +1064,7 @@
     "relativePath": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^(?![~/\\\\])(?!.*(?:^|/|\\\\)\\.\\.(?:/|\\\\|$)).+$"
+      "pattern": "^(?![~/\\\\])(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$))(?!.*[/\\\\]{2})(?!.*[/\\\\]$).+$"
     },
     "commands": {
       "type": "array",
@@ -1238,10 +1237,13 @@
               ]
             },
             {
-              "required": [
-                "tenants",
-                "channels"
-              ]
+              "required": ["tenants"]
+            },
+            {
+              "required": ["channels"]
+            },
+            {
+              "required": ["runbooks"]
             },
             {
               "required": [
