@@ -902,9 +902,13 @@ unreported claim expires with its lease and is queued again.
   Changing a remotely placed project to local execution requires the Owner.
 - `runner/OneShotJobAdmission.cs`: coding and review hosts poll bounded model
   jobs independently of task claims. The review host starts this poll after
-  client registration. A missing claim route (HTTP 404) is logged once and
-  retried every five minutes; a successful poll logs restoration and returns
-  to the normal three-second interval.
+  client registration. A missing claim route (HTTP 404) or a refusal saying
+  networked one-shot execution requires the standalone Task Server is logged
+  once and retried every five minutes. `OneShotClaimRouteObservation` keeps the
+  condition with first and last seen time and the backoff, and the daemon sends
+  it as `HostTelemetrySnapshotDto.OneShotClaimRoute` with its minutely
+  capability advertisement. A successful poll clears it, logs restoration and
+  returns to the normal three-second interval.
 - `backend/Features/Runner/RemoteChatWorkBroker.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteProjectChatRunner.cs`: assignment-aware remote side-sheet chat

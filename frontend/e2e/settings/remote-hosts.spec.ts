@@ -116,7 +116,7 @@ async function stubOnlineJobsHub(page: Page) {
   });
 }
 
-async function stubGroupedHostApis(page: Page, claimGate = false) {
+async function stubGroupedHostApis(page: Page, claimGate = false, oneShotRoute = false) {
   const now = new Date();
   const observed = now.toISOString();
   const codingObserved = new Date(now.getTime() - 1_000).toISOString();
@@ -232,6 +232,11 @@ async function stubGroupedHostApis(page: Page, claimGate = false) {
           ...(claimGate ? { activeSlots: 7, claimLoadGate: {
             state: 'closed', loadPerCore: 5.51, threshold: 4,
             sustainedSeconds: 702, since: new Date(now.getTime() - 702_000).toISOString(), activeSlots: 7,
+          } } : {}),
+          ...(oneShotRoute ? { oneShotClaimRoute: {
+            condition: 'claim-route-missing', statusCode: 404, backoffSeconds: 300,
+            firstSeenAt: new Date(now.getTime() - 1_500_000).toISOString(), lastSeenAt: codingObserved,
+            detail: 'POST /api/v1/one-shot-jobs/claim is not mapped on this server.',
           } } : {}),
         },
         roleMaxParallelism: claimGate ? 10 : 2,
@@ -720,22 +725,36 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('crash-recovery-prompt')).toBeVisible();
   });
 
-  test('local one shot claim route is shown once in installation status', async ({ page }) => {
+  const localInfrastructure = (route: Route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({
+      gate: { host: null, busy: 0, total: 0, reachability: 'not-configured', workers: [],
+        capacity: { slots: 1, processorsPerGate: 1, hostCores: null, allowOversubscription: false },
+        capacitySource: 'configuration' },
+      taskServer: 'local monolith', workstation: 'local',
+      engine: { state: 'not-required', required: false, lastContact: null, lastEngineId: null },
+    }),
+  });
+
+  test('local monolith without a runner report shows no one shot route status', async ({ page }) => {
     await stubGroupedHostApis(page);
-    await page.route('**/api/system/execution-infrastructure', route => route.fulfill({
-      status: 200, contentType: 'application/json', body: JSON.stringify({
-        gate: { host: null, busy: 0, total: 0, reachability: 'not-configured', workers: [],
-          capacity: { slots: 1, processorsPerGate: 1, hostCores: null, allowOversubscription: false },
-          capacitySource: 'configuration' },
-        taskServer: 'local monolith', workstation: 'local',
-        engine: { state: 'not-required', required: false, lastContact: null, lastEngineId: null },
-      }),
-    }));
+    await page.route('**/api/system/execution-infrastructure', localInfrastructure);
+    await page.goto('/#/workspace/settings/execution-hosts');
+    await page.getByTestId('remote-hosts-panel').getByTestId('environment-installation-toggle').click();
+    await expect(page.getByTestId('execution-infrastructure')).toContainText('local monolith');
+    await expect(page.getByTestId('one-shot-route-status')).toHaveCount(0);
+  });
+
+  test('reported one shot claim route condition is shown once with host, time and action', async ({ page }) => {
+    await stubGroupedHostApis(page, false, true);
+    await page.route('**/api/system/execution-infrastructure', localInfrastructure);
     await page.goto('/#/workspace/settings/execution-hosts');
     await page.getByTestId('remote-hosts-panel').getByTestId('environment-installation-toggle').click();
     const status = page.getByTestId('one-shot-route-status');
     await expect(status).toHaveCount(1);
-    await expect(status).toContainText('Claim route unavailable on the local monolith');
+    await expect(status).toContainText('agent-runner-01 reports the claim route answers 404 since');
+    await expect(status).toContainText('retrying every 5 min');
+    await expect(status).toContainText('connect them to a standalone Task Server');
+    const surface = page.getByTestId('execution-infrastructure-status');
     const directory = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
     mkdirSync(directory, { recursive: true });
     for (const width of [1280, 390]) {
@@ -743,8 +762,8 @@ test.describe('Execution Hosts settings section', () => {
       for (const theme of ['light', 'dark'] as const) {
         await setTheme(page, theme);
         await expect(status).toBeVisible();
-        await status.scrollIntoViewIfNeeded();
-        await page.screenshot({ path: join(directory, `one-shot-route-${width}-${theme}.png`),
+        await surface.scrollIntoViewIfNeeded();
+        await surface.screenshot({ path: join(directory, `one-shot-route-${width}-${theme}.png`),
           animations: 'disabled' });
       }
     }

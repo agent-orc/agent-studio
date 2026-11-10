@@ -62,7 +62,7 @@
   }
   @if (view() === 'installation') {
     <app-deployment-checkpoints [hosts]="hosts()" [stableRelease]="stableRelease()" [now]="now()" />
-    <app-execution-infrastructure [reloadToken]="infrastructureReload()" />
+    <app-execution-infrastructure [reloadToken]="infrastructureReload()" [oneShotRouteReports]="oneShotRouteReports()" />
     @if (reviewQueueSnapshot(); as review) {
       @if (!review.queueDepth && !review.isStagnant) {
         <p class="rh__quiet" data-testid="auto-review-queue-summary">Review queue: {{ review.queueDepth }} waiting · {{ review.activeJobs }} processing</p>
