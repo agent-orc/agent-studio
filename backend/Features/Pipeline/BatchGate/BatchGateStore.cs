@@ -268,6 +268,18 @@ public sealed partial class BatchGateStore
         return File.Exists(path) ? Read<BatchGateBaseVerdict>(path) : null;
     }
 
+    public IReadOnlyList<BatchGateBaseVerdict> ListBaseVerdicts(string project)
+    {
+        var folder = Path.Combine(_root, "base-verdicts", SafeName(project));
+        if (!Directory.Exists(folder)) return [];
+        return Directory.EnumerateFiles(folder, "*.json")
+            .Select(path => Read<BatchGateBaseVerdict>(path))
+            .Where(verdict => verdict is not null
+                && string.Equals(verdict.Project, project, StringComparison.Ordinal))
+            .Select(verdict => verdict!)
+            .ToArray();
+    }
+
     public void RecordBaseVerdict(BatchGateBaseVerdict verdict)
     {
         var path = BaseVerdictPath(verdict.Project, verdict.BaseSha, verdict.GateProfileDigest);

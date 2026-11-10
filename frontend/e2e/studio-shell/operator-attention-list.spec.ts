@@ -62,6 +62,104 @@ async function screenshot(page: Page, name: string): Promise<void> {
 }
 
 test.describe('Operator attention list', () => {
+  test('accepts three Human Review cards from Needs you and auto-advance with a stale board projection', async ({ page }) => {
+    test.setTimeout(240_000);
+    const [watch] = await api<WatchPath[]>('/api/watch-paths?includeFixtures=true');
+    expect(watch).toBeTruthy();
+    const suffix = Date.now().toString(36);
+    const cards: { id: string; title: string }[] = [];
+    try {
+      for (let index = 0; index < 3; index++) {
+        const title = `Acceptance queue ${suffix} ${index}`;
+        cards.push({ ...await plantReviewCard(watch.path, title), title });
+      }
+      const cardDetails = await Promise.all(cards.map(card => getJob(card.id, watch.path)));
+      const coreUrl = (id: string) => `/api/tasks/${encodeURIComponent(id)}/core?project=${encodeURIComponent(cardDetails[0].projectName)}`;
+      await expect.poll(async () => Promise.all(cards.map(async card => {
+        try { return (await api<{ state: string }>(coreUrl(card.id))).state; }
+        catch (error) { return String(error); }
+      })), { timeout: 60_000 }).toEqual(['ready', 'ready', 'ready']);
+      const coreKeys = await Promise.all(cards.map(card => api<{ taskKey: string }>(coreUrl(card.id))));
+      expect(coreKeys.map(core => core.taskKey)).toEqual(cardDetails.map(card =>
+        (card as unknown as { taskKey: string }).taskKey));
+      const ids = new Set(cards.map(card => card.id));
+      // Reproduce the owner route: the board snapshot is behind the fresh
+      // detail endpoint, even though all three cards need no integration.
+      await page.route('**/api/v1/studio/board**', async route => {
+        const headers = route.request().headers();
+        delete headers['if-none-match'];
+        delete headers['if-modified-since'];
+        const response = await route.fetch({ headers });
+        const body = await response.json() as { humanReview?: { id: string; integration?: unknown }[] };
+        body.humanReview = [
+          ...(body.humanReview ?? []).filter(card => !ids.has(card.id)),
+          ...[...cardDetails].reverse().map(card => ({
+            ...card, integration: { status: 'pending', integrationBranch: 'develop' },
+          })),
+        ];
+        await route.fulfill({ response, json: body });
+      });
+      // These planted concept cards have no settled content review. Keep
+      // the UI's normal Accept request, then give the backend a fixture-only
+      // content override so the test can exercise three persisted moves.
+      await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/[^/]+\/move(\?|$)/, async route => {
+        const id = new URL(route.request().url()).pathname.split('/').at(-2);
+        const body = route.request().postDataJSON() as { targetState: string };
+        if (!id || !ids.has(id) || body.targetState !== '6-completed') return route.continue();
+        const response = await route.fetch({ postData: JSON.stringify({ ...body,
+          operatorOverride: true,
+          reason: 'Browser fixture has no settled content review; its integration verdict is under test.',
+        }) });
+        await route.fulfill({ response });
+      });
+      await gotoStudio(page);
+      await expect(page.getByRole('region', { name: 'Human review cards' }))
+        .toContainText(cards[2].title, { timeout: 20_000 });
+
+      const newest = cards[2];
+      const newestDetail = await getJob(newest.id, watch.path) as unknown as { id: string; key?: string };
+      const key = newestDetail.key || newest.id;
+      await expect.poll(async () => {
+        const attention = await api<{ items: { cardKey: string | null }[] }>('/api/operator/attention');
+        return attention.items.map(item => item.cardKey);
+      }, { timeout: 30_000 }).toContain(key);
+      await page.getByTestId('studio-attention-trigger').click();
+      const row = page.getByTestId('attention-group-human-review').getByTestId('attention-row')
+        .filter({ has: page.getByTestId('attention-row-card').getByText(key, { exact: true }) });
+      await expect(row).toBeVisible({ timeout: 30_000 });
+      await row.getByTestId('attention-row-action').click();
+
+      const primary = page.getByTestId('studio-triage-action-mark-done');
+      for (const [index, card] of [cards[2], cards[1], cards[0]].entries()) {
+        await expect(page.locator('[data-tab-kind="task"]').filter({ hasText: card.title }))
+          .toBeVisible({ timeout: 15_000 });
+        await expect(primary).toHaveText(/Accept/, { timeout: 2_000 });
+        await expect(primary).toBeEnabled({ timeout: 2_000 });
+        if (index === 0) {
+          await expect(page.getByTestId('studio-task')).toContainText(card.title, { timeout: 15_000 });
+          await setTheme(page, 'light');
+          await screenshot(page, 'accept-queue-light');
+          await setTheme(page, 'dark');
+          await screenshot(page, 'accept-queue-dark');
+          await page.setViewportSize({ width: 390, height: 844 });
+          await screenshot(page, 'accept-queue-390px');
+          await page.setViewportSize({ width: 1280, height: 800 });
+        }
+        const moveResponse = page.waitForResponse(response => response.request().method() === 'POST'
+          && response.url().includes(`/tasks/${card.id}/move`));
+        await primary.click();
+        const persisted = await moveResponse;
+        expect(persisted.status(), await persisted.text()).toBeLessThan(300);
+        await expect.poll(() => getJob(card.id, watch.path).then(job => job.state),
+          { timeout: 30_000 }).toBe('6-completed');
+      }
+    } finally {
+      for (const card of cards)
+        await api(`/api/tasks/${encodeURIComponent(card.id)}?watchPath=${encodeURIComponent(watch.path)}`,
+          { method: 'DELETE' }).catch(() => undefined);
+    }
+  });
+
   test('lists real escalated and human review cards and opens the review card', async ({ page }) => {
     test.setTimeout(180_000);
     const [watch] = await api<WatchPath[]>('/api/watch-paths');

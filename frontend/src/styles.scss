@@ -747,6 +747,29 @@ input, textarea, [contenteditable]:not([contenteditable="false"]),
 
 /* Dark-mode form controls — ensures select option lists render with readable contrast */
 html { color-scheme: dark; }
+@media (max-width: 480px) {
+  .mobile-lane-picker {
+    display: grid;
+    gap: var(--studio-spacing-2);
+    padding: var(--studio-spacing-3);
+    background: var(--studio-bg-editor);
+    color: var(--studio-fg);
+  }
+  .mobile-lane-picker select {
+    min-width: 0;
+    width: 100%;
+    min-height: var(--studio-target-coarse-min);
+    background: var(--studio-bg-surface);
+    color: var(--studio-fg-strong);
+    border: 1px solid var(--studio-border-strong);
+    border-radius: var(--studio-card-compact-radius);
+  }
+  .studio .dashboard--studio { grid-template-columns: minmax(0, 1fr); }
+  .studio .dashboard--studio .lane-group { min-width: 0; }
+  .studio .dashboard--studio .lane-group + .lane-group { border-left: 0; }
+  .studio .dashboard--studio .lane-group__lanes > app-job-column.mobile-lane-hidden,
+  .studio .dashboard--studio .delivery-column--mobile-hidden { display: none; }
+}
 select, input, textarea { color-scheme: dark; }
 select option,
 select optgroup {
