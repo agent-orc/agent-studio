@@ -6,8 +6,8 @@ describe('resolveUpdateServiceUrl', () => {
     expect(resolveUpdateServiceUrl('https://studio.example/board')).toBeNull();
   });
 
-  it('keeps the local Update Service for an HTTP installation', () => {
-    expect(resolveUpdateServiceUrl('http://localhost:4010/board')).toBe('http://localhost:5039');
+  it('does not poll an optional service on a local installation without configuration', () => {
+    expect(resolveUpdateServiceUrl('http://localhost:4010/board')).toBeNull();
   });
 
   it('uses an explicit service endpoint on HTTPS', () => {

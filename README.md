@@ -22,7 +22,7 @@
 - A management layer over autonomous agent runs: assign, gate, review, account.
 - Works with your existing CLI subscriptions, or bring your own API keys.
 - Runs fully local or distributed, your choice per project. Project chat follows
-  the project's execution runner and shows its host, repository checkout,
+  the project's execution location and shows its host, repository checkout,
   branch, and revision.
 - Keeps the Task Server as the durable control plane while separately fenced
   Remote Review Executors inspect immutable result revisions.

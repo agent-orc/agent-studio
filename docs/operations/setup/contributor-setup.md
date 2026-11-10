@@ -144,7 +144,7 @@ npm start --prefix frontend
 
 ### 2.6 Optional: the self-update service
 
-Only needed if you want the in-app Update Center to work. `./update-service.sh start` runs a small standalone process on port 5039 that survives backend restarts during an update.
+Only needed if you want the in-app Update Center to work. `./update-service.sh start` runs a small standalone process on port 5039 that survives backend restarts during an update. Set `window.__AGENT_STUDIO_UPDATE_SERVICE_URL__` to its reachable URL in the frontend configuration to enable polling. An installation without this setting makes no update-service requests.
 
 ## 3. Onboard your first project
 

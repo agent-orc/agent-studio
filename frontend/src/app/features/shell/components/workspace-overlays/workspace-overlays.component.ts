@@ -1,6 +1,7 @@
 ﻿import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, DestroyRef, Injector, afterNextRender, effect, inject, input, output, signal } from '@angular/core';
 import { WorkspaceOverlaysService } from '../../state/workspace-overlays.service';
+import { AuthSessionState } from '../../../../services/auth.service';
 import type { WorkspaceSettingsSection } from '../../state/workspace-overlays.service';
 import { WorkspaceScreenshotsComponent } from '../../../screenshots';
 import { TokenUsageSectionComponent } from '../../../tokens/lazy';
@@ -99,6 +100,7 @@ interface SettingsRailItem {
 })
 export class WorkspaceOverlaysComponent {
   readonly overlays = inject(WorkspaceOverlaysService);
+  readonly auth = inject(AuthSessionState);
   /** Render inside the Studio editor tab instead of as a modal dialog. */
   readonly inline = input(false);
   readonly watchPaths = input<readonly WatchPathEntry[]>([]);

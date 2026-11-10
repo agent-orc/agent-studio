@@ -108,7 +108,9 @@ that is already allowed to edit that project's checkout.
   sessions, and force a change at the next login.
 - Human sessions use a random opaque token stored only as a SHA-256 hash on the
   server. The cookie is `Secure`, `HttpOnly`, `SameSite=Strict`, host-only, and
-  has idle plus absolute expiry. Browser mutations require the matching CSRF
+  has an 8-hour idle limit and a 7-day absolute limit by default. The cookie's
+  maximum age is the absolute limit; the server enforces idle expiry on every
+  request. Browser mutations require the matching CSRF
   header. Because SameSite does not separate sibling hosts of one site, every
   unsafe request that carries a session cookie, and every sign-in, bootstrap,
   or invitation acceptance, must also carry a matching `Origin` or

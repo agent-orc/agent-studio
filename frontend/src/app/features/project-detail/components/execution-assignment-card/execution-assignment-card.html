@@ -75,6 +75,9 @@
   @if (saveError()) {
     <p class="execution-card__error" role="alert">{{ saveError() }}</p>
   }
+  @if (saveConfirmation()) {
+    <p role="status" data-testid="project-execution-save-confirmation">{{ saveConfirmation() }}</p>
+  }
 
   <div class="execution-card__probe">
     <div class="execution-card__probe-head">

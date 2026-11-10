@@ -50,6 +50,9 @@ describe('ExecutionAssignmentCardComponent', () => {
     request.flush({ pickupMode: 'manual', executionLocation: 'agent-runner-01' });
 
     expect(fixture.componentInstance.selectedHostId()).toBe('agent-runner-01');
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="project-execution-save-confirmation"]')?.textContent)
+      .toContain('Execution location saved.');
     flushRunnerInfrastructureFailures(http);
     http.verify();
   });

@@ -77,13 +77,13 @@
           </div>
         </header>
         <label class="opd__field">
-          <span class="opd__label">Execution runner</span>
+          <span class="opd__label">Execution location</span>
           <select class="opd__input"
                   data-testid="onboard-project-runner"
                   [disabled]="submitting()"
                   [ngModel]="executionRunner()"
                   (ngModelChange)="executionRunner.set($event)">
-            <option value="" disabled>Select an execution runner</option>
+            <option value="" disabled>Select an execution location</option>
             <option value="local">{{ localCodingAdmitted() ? 'Local host' : 'Local (board and orchestration only)' }}</option>
             @for (host of hostRegistry.hosts(); track host.id) {
               @if (codingRunner(host) && host.status !== 'retired') {

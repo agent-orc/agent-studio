@@ -5,7 +5,7 @@ Project onboarding is a product workflow. It registers identity, creates the cen
 Project onboarding and [remote runner host onboarding](./linux-runner-host.md) are the two independent onboarding axes:
 
 - Onboard a project to define what work exists, where its repository is, and where its tasks are stored.
-- Onboard a host to define where work can execute. Then select that host as the project's execution runner.
+- Onboard a host to define where work can execute. Then select that host as the project's execution location.
 
 ## Before you start
 
@@ -17,7 +17,7 @@ Choose:
 - An optional local Git checkout path, CLI working directory, repository URL,
   or any useful combination of them.
 - A default coding CLI/model and project colour. Both can be changed later.
-- An execution runner for coding. Onboard the host first if it is not listed yet.
+- An execution location for coding. Onboard the host first if it is not listed yet.
 
 The repository path must be an existing absolute Git checkout on the backend
 host when supplied. The working directory must also exist and may be the
@@ -139,7 +139,7 @@ Creation is not the only chance to enter these values. Open the project, choose
 **Settings**, and edit the **Project basics** section. It exposes the same
 identity, repository, and coding-default groups as onboarding. The existing
 **Execution assignment** card on the same Settings page remains the place to
-change the execution runner:
+change the execution location:
 
 | Group | Editable values |
 |---|---|

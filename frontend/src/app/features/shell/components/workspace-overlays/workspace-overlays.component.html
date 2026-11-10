@@ -179,7 +179,11 @@
         }
         @case ('retention') {
           @defer (on immediate) {
-          <app-retention-admin />
+          @if (auth.status()?.profile === 'networked') {
+            <app-retention-admin />
+          } @else {
+            <p>Retention management is available on a networked installation.</p>
+          }
           }
         }
         @case ('tokens') {

@@ -3,7 +3,7 @@
     [collapsible]="true"
     [collapsed]="isCollapsed('workspace')"
     title="Workspaces"
-    [count]="totalProjectCount()"
+    [count]="registryWorkspaces().length"
     testid="studio-explorer-workspace-head"
     (collapsedChange)="setCollapsed('workspace', $event)">
     @if (isCollapsed('workspace') && allAutoPickupAggregate().state !== 'off') {
@@ -170,7 +170,7 @@
               <!-- Project destinations stay nested below the project row. -->
               <div class="studio-tree-children">
                 <app-tree-row level="child" glyph="grid"
-                              label="Board"
+                              label="Board · active work" [tooltip]="boardActiveWorkTooltip"
                               [ariaLabel]="'Board, ' + boardLaneCountsLabel(p)"
                               [active]="p.isActive && activeProjectSurface() === 'board'"
                               [ariaCurrent]="p.isActive && activeProjectSurface() === 'board' ? 'page' : null"

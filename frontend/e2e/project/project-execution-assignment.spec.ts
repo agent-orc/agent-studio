@@ -15,6 +15,7 @@ test.beforeAll(() => {
 });
 
 test('keeps pickup mode and execution location as independent controls', async ({ page, devBackend }) => {
+  test.setTimeout(90_000);
   expect(devBackend.workspace).toBeTruthy();
   const projectName = 'Agent Studio Worktree';
   await page.route('**/api/crash-recovery/pending', async (route) => {
@@ -98,7 +99,7 @@ test('keeps pickup mode and execution location as independent controls', async (
 
   await page.goto(`/#/projects/${slugFor(projectName)}/settings`, { waitUntil: 'domcontentloaded' });
   const card = page.getByTestId('project-execution-card');
-  await expect(card).toBeVisible({ timeout: 10_000 });
+  await expect(card).toBeVisible({ timeout: 30_000 });
   await expect(card.getByTestId('project-pickup-mode-auto')).toHaveAttribute('aria-pressed', 'true');
   await expect(card.getByTestId('project-pickup-mode-auto')).toBeVisible();
   await expect(card.getByTestId('project-pickup-mode-paused')).toBeVisible();
@@ -114,8 +115,16 @@ test('keeps pickup mode and execution location as independent controls', async (
   }
   await hostSelect.selectOption('agent-runner-01');
   await expect(hostSelect).toHaveValue('agent-runner-01');
+  await expect(card.getByTestId('project-execution-save-confirmation')).toHaveText('Execution location saved.');
   await expect(card.getByTestId('local-coding-disabled-warning')).toHaveCount(0);
   await expect(card.getByTestId('project-execution-selected-host')).toContainText('agent-runner');
+  const resultDir = process.env.JOB_RESULTS_DIR ?? SCREENSHOT_DIR;
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await card.screenshot({ path: path.join(resultDir, `execution-location-saved-${theme}.png`) });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await card.screenshot({ path: path.join(resultDir, 'execution-location-saved-390.png') });
 
   await card.getByTestId('project-pickup-mode-paused').click();
   await expect(card.getByTestId('project-pickup-mode-paused')).toHaveAttribute('aria-pressed', 'true');

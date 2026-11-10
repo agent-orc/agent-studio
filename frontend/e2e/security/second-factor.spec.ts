@@ -10,6 +10,7 @@ test('Owner enrollment requires a verified authenticator and shows recovery code
   const secret = Array.from({ length: 32 }, (_, index) => String.fromCharCode(65 + index % 26)).join('');
   const recovery = Array.from({ length: 2 }, (_, index) => `recovery-${index}-${Date.now()}`);
   let confirmed = false;
+  let attempts = 0;
   await page.route('**/api/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
   await page.route('**/api/auth/status', route => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify({
@@ -24,6 +25,8 @@ test('Owner enrollment requires a verified authenticator and shows recovery code
   }));
   await page.route('**/api/auth/totp/confirm', route => {
     expect(route.request().postDataJSON()).toEqual({ code: '123456' });
+    if (++attempts === 1) return route.fulfill({ status: 400, contentType: 'application/json',
+      body: JSON.stringify({ message: 'Different server wording' }) });
     confirmed = true;
     return route.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify({ recoveryCodes: recovery }) });
@@ -32,13 +35,19 @@ test('Owner enrollment requires a verified authenticator and shows recovery code
   await expect(page.getByRole('heading', { name: 'Set up a second factor' })).toBeVisible();
   await page.getByRole('button', { name: 'Set up authenticator' }).click();
   await expect(page.getByTestId('totp-secret')).toHaveText(secret);
+  await expect(page.locator('output[data-testid="totp-secret"] + p')).toContainText('Add this secret');
   await setTheme(page, 'light');
   await page.screenshot({ path: join(resultDir, 'second-factor-light--mocked.png'), fullPage: true });
   await setTheme(page, 'dark');
   await page.screenshot({ path: join(resultDir, 'second-factor-dark--mocked.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: join(resultDir, 'second-factor-390--mocked.png'), fullPage: true });
   await page.getByLabel('Authenticator code').fill('123456');
   await page.getByRole('button', { name: 'Verify authenticator' }).click();
+  await expect(page.getByRole('alert')).toHaveText('The authenticator code is invalid.');
+  await page.getByRole('button', { name: 'Verify authenticator' }).click();
   await expect(page.getByTestId('factor-recovery-codes')).toContainText(recovery[0]);
+  await expect(page.getByRole('alert')).toHaveCount(0);
   expect(confirmed).toBe(true);
   await page.getByRole('button', { name: 'I stored the codes' }).click();
   await expect(page.getByTestId('factor-recovery-codes')).toHaveCount(0);

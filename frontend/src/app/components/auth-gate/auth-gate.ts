@@ -48,7 +48,8 @@ export class AuthGateComponent {
         this.password = ''; this.newPassword = ''; this.bootstrapCode = ''; this.secondFactorCode = ''; this.submitting.set(false);
       },
       error: (error: HttpErrorResponse) => {
-        this.error.set(error?.error?.message ?? 'Sign-in failed.');
+        this.error.set(error?.error?.code === 'invalid-second-factor'
+          ? 'The authenticator code is invalid.' : error?.error?.message ?? 'Sign-in failed.');
         this.submitting.set(false);
       },
     });
@@ -56,6 +57,7 @@ export class AuthGateComponent {
 
   beginTotp(): void {
     this.submitting.set(true);
+    this.error.set('');
     this.auth.beginTotp().subscribe({
       next: result => { this.totpSecret.set(result.secret); this.submitting.set(false); },
       error: (error: HttpErrorResponse) => { this.error.set(error?.error?.message ?? 'Authenticator setup failed.'); this.submitting.set(false); },
@@ -64,9 +66,10 @@ export class AuthGateComponent {
 
   private confirmTotp(): void {
     this.submitting.set(true);
+    this.error.set('');
     this.auth.confirmTotp(this.secondFactorCode).subscribe({
       next: result => { this.recoveryCodes.set(result.recoveryCodes); this.secondFactorCode = ''; this.submitting.set(false); },
-      error: (error: HttpErrorResponse) => { this.error.set(error?.error?.message ?? 'Authenticator code is invalid.'); this.submitting.set(false); },
+      error: () => { this.error.set('The authenticator code is invalid.'); this.submitting.set(false); },
     });
   }
 
