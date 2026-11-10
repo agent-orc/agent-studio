@@ -36,6 +36,9 @@ export interface BatchGateConfiguration {
 }
 
 export interface BatchGateState {
+  perTaskGates?: { taskKey: string; reviewAttemptId: string; position: number; total: number;
+    batchId?: string | null; reason: string; running: boolean; host?: string | null;
+    startedAtUtc?: string | null }[];
   reviewFixWaits?: { taskKey: string; reviewAttemptId: string; round: number; maximum: number; aspects: string[] }[];
   preChecksRun?: number;
   preChecksRed?: number;
@@ -128,6 +131,8 @@ export interface BatchMemberState {
   size?: number | null;
   reason?: string | null;
   reasonDetail?: string | null;
+  fallbackRule?: string | null;
+  fallbackEvent?: string | null;
   preCheck?: BatchPreCheck | null;
 }
 
@@ -169,7 +174,17 @@ export function batchEjectionLabel(reason: string | null | undefined): string | 
   switch (reason) {
     case 'conflict': return 'replay conflict';
     case 'unattributable': return 'unattributable history';
-    default: return reason || null;
+    case 'planner-per-task': return 'planner selected a per-task gate';
+    case 'documentation-scope': return 'code delivery outside documentation batch scope';
+    case 'batch-disabled': return 'batch gate unavailable';
+    case 'batch-paused': return 'batch paused';
+    case 'batch-ejected': return 'ejected from batch';
+    case 'unattributable-replay': return 'unattributable replay';
+    case 'operator-eject': return 'operator ejected card';
+    case 'already-integrated': return 'already integrated';
+    case 'emergency-admission': return 'batch admission failed';
+    case 'interrupted-gate': return 'gate resumed after interruption';
+    default: return reason ? reason.replace(/[-_]/g, ' ').replace(/\b\w/g, char => char.toUpperCase()) : null;
   }
 }
 

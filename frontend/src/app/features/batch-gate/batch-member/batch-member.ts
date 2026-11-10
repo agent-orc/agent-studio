@@ -23,7 +23,7 @@ export class BatchMemberComponent {
     return state.pushWaits?.find(wait => wait.jobId === this.taskId())
       ?? (state.pushWait?.jobId === this.taskId() ? state.pushWait : null);
   });
-  readonly ejection = computed(() => batchEjectionLabel(this.member()?.reason));
+  readonly ejection = computed(() => batchEjectionLabel(this.member()?.fallbackRule ?? this.member()?.reason));
   constructor() {
     effect(onCleanup => {
       const project = this.project();

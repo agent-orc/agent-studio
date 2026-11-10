@@ -21,7 +21,8 @@ public static class BatchGateStateSnapshotReader
         GateRunLedger? ledger = null,
         IReadOnlyList<BatchGateReviewFixWait>? reviewFixWaits = null,
         GateCapacity? gateCapacity = null,
-        IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null)
+        IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null,
+        IReadOnlySet<string>? activePerTaskFlights = null)
     {
         var at = now ?? DateTimeOffset.UtcNow;
         var dailySummary = ledger?.Summary(store, project, DateOnly.FromDateTime(at.UtcDateTime));
@@ -161,6 +162,29 @@ public static class BatchGateStateSnapshotReader
             .Concat(manifests.Select(manifest => manifest.Scope.Project)).Append(project)
             .Distinct(StringComparer.Ordinal)
             .SelectMany(store.ListFallbackCauses).ToArray();
+        var fallbackItems = pending.Select(item => new
+            {
+                item.Subject.TaskKey,
+                item.ReviewAttemptId,
+                Cause = causes.LastOrDefault(entry => entry.ReviewAttemptId == item.ReviewAttemptId),
+                Ownership = BatchGateOwnershipStore.Read(item.JobFolderPath),
+            })
+            .Where(item => item.Cause is not null).ToArray();
+        var perTaskGates = fallbackItems
+            .Select((item, index) => new
+            {
+                item.TaskKey,
+                item.ReviewAttemptId,
+                position = index + 1,
+                total = fallbackItems.Length,
+                batchId = item.Cause!.BatchId,
+                reason = item.Cause.Event,
+                running = activePerTaskFlights?.Contains(item.ReviewAttemptId) == true
+                    && item.Ownership?.ReviewAttemptId == item.ReviewAttemptId
+                    && item.Ownership.FallbackGateActive && item.Ownership.FallbackGateStartedAtUtc is not null,
+                host = item.Ownership?.FallbackGateHost,
+                startedAtUtc = item.Ownership?.FallbackGateStartedAtUtc,
+            }).ToArray();
         var members = new Dictionary<string, object>(StringComparer.Ordinal);
         foreach (var wait in reviewFixWaits ?? [])
             members[wait.TaskKey] = new { status = "review-fix", batchId = (string?)null,
@@ -256,6 +280,7 @@ public static class BatchGateStateSnapshotReader
                 };
             }).ToArray(),
             batches,
+            perTaskGates,
             stacking = new
             {
                 started = stacked.Count(item => store.ListRuns(item.BatchId).Count > 0),

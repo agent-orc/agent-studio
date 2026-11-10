@@ -11,7 +11,8 @@
             [compact]="true" testId="batch-lane-alert" />
           @if (alert.culprits.length) { {{ alert.culprits.join(', ') }} proven red · }
         }
-        Batch: {{ batch.pending.length }} waiting · @if (batch.plan.closeAtUtc) { ~{{ batch.plan.closeAtUtc | date:'shortTime' }} } @else { when ready } · {{ runningFor(project) }} running
+        Batch: {{ batch.pending.length - (batch.perTaskGates?.length ?? 0) }} waiting · @if (batch.plan.closeAtUtc) { ~{{ batch.plan.closeAtUtc | date:'shortTime' }} } @else { when ready } · {{ runningFor(project) }} running
+        @if (batch.perTaskGates?.length) { · Per-task gates: {{ perTaskFor(project).queued }} queued · {{ perTaskFor(project).running }} running }
       </button>
     }
   }

@@ -1,4 +1,4 @@
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import type { TaskInfo } from '../../models/task.model';
@@ -6,6 +6,8 @@ import { TaskLiveStatusComponent } from './task-live-status.component';
 import { RemoteHostsService } from '../../features/remote-hosts';
 import { TaskService } from '../../services/task.service';
 import { of } from 'rxjs';
+import { BatchGateService } from '../../services/batch-gate.service';
+import type { BatchGateState } from '../../models/batch-gate.model';
 
 function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
   const now = Date.now();
@@ -35,11 +37,13 @@ function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
 describe('TaskLiveStatusComponent', () => {
   let fixture: ComponentFixture<TaskLiveStatusComponent>;
   const modeCalls: [string, string][] = [];
+  const batchState = signal<BatchGateState | null>(null);
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [TaskLiveStatusComponent],
       providers: [provideZonelessChangeDetection(),
+        { provide: BatchGateService, useValue: { state: () => batchState.asReadonly(), watch: () => vi.fn() } },
         { provide: TaskService, useValue: {
           setRunnerMode: (project: string, mode: string) => {
             modeCalls.push([project, mode]);
@@ -51,6 +55,24 @@ describe('TaskLiveStatusComponent', () => {
     }).compileComponents();
     fixture = TestBed.createComponent(TaskLiveStatusComponent);
     modeCalls.length = 0;
+    batchState.set(null);
+  });
+
+  it('shows the queued and running state of a paused batch member', () => {
+    const liveStatus = { attempt: 1, activeStep: null, nextSteps: [], queue: { kind: 'review' } };
+    fixture.componentRef.setInput('task', task({ liveStatus }));
+    batchState.set({ perTaskGates: [{ taskKey: 'demo::AGT-2315', reviewAttemptId: 'r1',
+      position: 2, total: 4, batchId: 'batch-1', reason: 'batch batch-1 paused: fresh gate verdict required',
+      running: false }] } as BatchGateState);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="task-live-current"]').textContent)
+      .toContain('Per-task gate queued (2 of 4) after batch batch-1 paused: fresh gate verdict required');
+    batchState.set({ perTaskGates: [{ taskKey: 'demo::AGT-2315', reviewAttemptId: 'r1',
+      position: 2, total: 4, batchId: 'batch-1', reason: 'batch batch-1 paused: fresh gate verdict required',
+      running: true, host: 'gate-01', startedAtUtc: '2026-11-10T12:00:00Z' }] } as BatchGateState);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="task-live-current"]').textContent)
+      .toContain('Per-task gate running on gate-01 since');
   });
 
   it('shows a Ready pickup hold without a previous live run', () => {

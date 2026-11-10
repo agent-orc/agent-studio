@@ -31,4 +31,5 @@
 .batch-panel__links { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }
 .batch-panel__links a { color: var(--studio-accent); }
 .batch-panel__failure-runs { font-variant-numeric: tabular-nums; color: var(--studio-fg-muted); }
+.batch-panel__per-task-gates { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .batch-panel__failure-runs strong { color: var(--studio-fg); }

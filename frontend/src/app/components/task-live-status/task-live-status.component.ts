@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import type { TaskInfo } from '../../models/task.model';
 import { TaskState } from '../../models/task.model';
 import { NowTickService } from '../../services/now-tick.service';
@@ -7,6 +7,7 @@ import { PickupHoldComponent } from '../pickup-hold/pickup-hold.component';
 import { runnerWaitCode, runnerWaitHeadline } from '../../models/ready-wait-reason';
 import { TaskService } from '../../services/task.service';
 import { ErrorDialogService } from '../../services/error-dialog.service';
+import { BatchGateService } from '../../services/batch-gate.service';
 
 export type TaskLiveStatusVariant = 'card' | 'detail';
 type LiveTone = 'active' | 'waiting' | 'idle' | 'stalled';
@@ -17,6 +18,7 @@ interface LiveStatusView {
   detail: string | null;
   next: string[];
   attempt: number;
+  perTaskGate?: boolean;
   /** AGT-3579: runner reason code when the runner is not picking this card. */
   waitReason?: string;
 }
@@ -39,7 +41,15 @@ export class TaskLiveStatusComponent {
   private readonly now = inject(NowTickService).now;
   private readonly tasks = inject(TaskService);
   private readonly errors = inject(ErrorDialogService);
+  private readonly batchGate = inject(BatchGateService);
   readonly switchingToAuto = signal(false);
+
+  constructor() {
+    effect(onCleanup => {
+      const task = this.task();
+      if (task.state === TaskState.AutoReview) onCleanup(this.batchGate.watch(task.projectName));
+    });
+  }
 
   switchToAuto(event: MouseEvent): void {
     event.stopPropagation();
@@ -68,6 +78,21 @@ export class TaskLiveStatusComponent {
     if (!status) return null;
 
     const next = (status.nextSteps ?? []).slice(0, 3).map(step => step.displayName);
+    const perTask = this.batchGate.state(task.projectName)()?.perTaskGates?.find(gate =>
+      gate.taskKey === task.taskKey || gate.taskKey === task.key || gate.taskKey === task.id);
+    if (perTask && task.state === TaskState.AutoReview) {
+      const started = timestamp(perTask.startedAtUtc);
+      return {
+        tone: perTask.running ? 'active' : 'waiting',
+        headline: perTask.running
+          ? `Per-task gate running on ${perTask.host || 'gate host'}${started === null ? '' : ` since ${clock(started)}`}`
+          : `Per-task gate queued (${perTask.position} of ${perTask.total}) after ${perTask.reason}`,
+        detail: perTask.running ? 'Red escalates; green integrates.' : 'One full suite per member. Red escalates; green integrates.',
+        next: [],
+        attempt: status.attempt,
+        perTaskGate: true,
+      };
+    }
     const active = status.activeStep;
     if (active) {
       const startedAt = timestamp(active.startedAt);

@@ -4,6 +4,7 @@
            [class.task-live--detail]="variant() === 'detail'"
            [class.task-live--manual-remote]="live.waitReason === 'manual-mode' && !!task().executionLocation?.configuredRunnerId"
            [class.task-live--dense]="dense()"
+           [class.task-live--per-task]="live.perTaskGate"
            data-testid="task-live-status"
            [attr.data-live-tone]="live.tone"
            [attr.data-attempt]="live.attempt"

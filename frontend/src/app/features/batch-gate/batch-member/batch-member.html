@@ -11,6 +11,12 @@
     }
     @if (item.preCheck; as check) { @if (item.status !== 'pre-check-red') { · pre-check {{ check.outcome }} } }
   </span>
+  @if (item.status === 'fallback' && (item.fallbackEvent || item.reasonDetail)) {
+    <span class="batch-member__event" data-testid="batch-member-event">
+      {{ item.fallbackEvent || item.reasonDetail }}
+      <span class="batch-member__outcome">Red escalates; green integrates.</span>
+    </span>
+  }
 }
 @if (pushWait(); as wait) {
   <span class="batch-member" data-testid="task-card-integration-push-wait" role="status"

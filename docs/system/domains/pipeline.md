@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-05
+Version: 2026-11-10
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -35,6 +35,16 @@ abandonment. Explicit operator withdrawals are retained as batch withdrawal
 records with the actor, card, reason, and time. The existing eject path returns
 the remaining members to planning; the operator move requests a close on the
 next planner tick.
+
+When a paused batch hands its members to per-task verification, the state read
+reports `perTaskGates` in queue order. Each row names the review generation,
+one-based position, total handoffs, batch, cause, and current gate host and
+start time while its flight is active. The board uses this projection for the
+card CURRENT line and lane counts. Each member receives a full suite as a gate
+slot opens; a red gate escalates that card, and a green gate integrates it. The
+batch panel lists the queue in order and excludes its members from cards waiting
+for another batch. The handoff writes one operator-feed event per paused batch
+with its members.
 
 ### Gate run ledger (AGT-3500)
 

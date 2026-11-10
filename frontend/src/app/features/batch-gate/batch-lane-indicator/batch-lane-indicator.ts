@@ -46,4 +46,8 @@ export class BatchLaneIndicatorComponent {
   runningFor(project: string): number {
     return this.stateFor(project)?.batches.filter(batch => batch.runs.some(run => !!run.startedAtUtc && !run.finishedAtUtc)).length ?? 0;
   }
+  perTaskFor(project: string): { queued: number; running: number } {
+    const gates = this.stateFor(project)?.perTaskGates ?? [];
+    return { queued: gates.filter(gate => !gate.running).length, running: gates.filter(gate => gate.running).length };
+  }
 }

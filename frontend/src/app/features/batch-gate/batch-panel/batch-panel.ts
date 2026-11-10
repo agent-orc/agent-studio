@@ -22,6 +22,11 @@ export class BatchPanelComponent implements OnDestroy {
   readonly closed = input.required<() => void>();
   readonly gate = inject(BatchGateService);
   readonly state = computed(() => this.gate.state(this.project())());
+  readonly batchPending = computed(() => {
+    const state = this.state();
+    const fallback = new Set((state?.perTaskGates ?? []).map(gate => gate.reviewAttemptId));
+    return (state?.pending ?? []).filter(item => !fallback.has(item.reviewAttemptId));
+  });
   readonly history = signal<BatchGateState | null>(null);
   readonly batches = computed(() => {
     const current = this.state()?.batches ?? [];
@@ -39,6 +44,12 @@ export class BatchPanelComponent implements OnDestroy {
   readonly riskLabel = batchRiskLabel;
   readonly replayLabel = batchReplayLabel;
   readonly publishedSha = batchPublishedSha;
+  phaseReasonLabel(reason: string | null | undefined): string | null {
+    if (!reason) return null;
+    const pause = 'paused-to-per-task-gate: ';
+    return reason.startsWith(pause)
+      ? `Moved to per-task gates after pause: ${reason.slice(pause.length)}` : reason;
+  }
   readonly phases = ['formed', 'assembling', 'assembled', 'running', 'green', 'publishing', 'published', 'red', 'paused', 'abandoned'];
   private readonly body = viewChild<ElementRef<HTMLDivElement>>('body');
   private readonly closeButton = viewChild<ElementRef<HTMLButtonElement>>('closeButton');
