@@ -16,22 +16,32 @@ public enum AutoReviewStrandingAction
     IntegratePerTask,
 }
 
-/// <param name="BuildTestDeferredToBatch">
-/// The passed review's frozen plan deferred build and tests to the batch gate.
-/// False when the review ran them itself; such a card has no batch route.
-/// </param>
-/// <param name="IntegratedPerTaskBefore">An earlier intervention in this lane visit chose the per-task route.</param>
 public sealed record AutoReviewStrandingFacts(
     TimeSpan InLane, TimeSpan Threshold, bool RunningStep, bool ActiveReview,
     bool BatchMember, bool QueuedRound, bool QueuedStep, bool ReportOnly,
     bool HasCompletedRun, bool HasReview, bool PassedReview,
     TimeSpan? SinceLastIntervention = null, bool StartedStepBefore = false,
-    bool ReenteredBatchBefore = false, bool BuildTestDeferredToBatch = true,
-    bool IntegratedPerTaskBefore = false);
+    bool ReenteredBatchBefore = false);
 
 /// <summary>Per-card liveness decision for Auto Review. All ownership facts are read before acting.</summary>
 public static class AutoReviewStrandingPolicy
 {
+    /// <summary>
+    /// AGT-3740: the batch route of a passed review, applied to the action
+    /// <see cref="Decide"/> returned. Batch admission refuses a review that ran
+    /// its own build and tests (<c>BuildTestNotDeferred</c>), so re-entering the
+    /// batch was a dead end that escalated the card on every lane visit. Such a
+    /// card takes the per-task route instead, once per lane visit, even after an
+    /// earlier batch re-entry of the same visit.
+    /// </summary>
+    public static AutoReviewStrandingAction RouteBatch(AutoReviewStrandingAction decided,
+        AutoReviewStrandingFacts facts, AutoReviewBatchRouteFacts route)
+        => decided is AutoReviewStrandingAction.ReenterBatch or AutoReviewStrandingAction.Escalate
+            && facts is { PassedReview: true, HasReview: true, ReportOnly: false }
+            && !route.BuildTestDeferredToBatch
+                ? route.IntegratedPerTaskBefore ? AutoReviewStrandingAction.Escalate : AutoReviewStrandingAction.IntegratePerTask
+                : decided;
+
     public static AutoReviewStrandingAction Decide(AutoReviewStrandingFacts facts)
     {
         if (facts.InLane <= facts.Threshold
@@ -41,13 +51,15 @@ public static class AutoReviewStrandingPolicy
             return AutoReviewStrandingAction.Leave;
         if (facts.ReportOnly || facts.HasCompletedRun && !facts.HasReview)
             return facts.StartedStepBefore ? AutoReviewStrandingAction.Escalate : AutoReviewStrandingAction.StartStep;
-        // AGT-3740: batch admission refuses a review that ran its own build and
-        // tests (BuildTestNotDeferred). Re-entering the batch was a dead end
-        // that escalated the card on every lane visit.
-        if (facts.PassedReview && !facts.BuildTestDeferredToBatch)
-            return facts.IntegratedPerTaskBefore ? AutoReviewStrandingAction.Escalate : AutoReviewStrandingAction.IntegratePerTask;
         if (facts.PassedReview)
             return facts.ReenteredBatchBefore ? AutoReviewStrandingAction.Escalate : AutoReviewStrandingAction.ReenterBatch;
         return AutoReviewStrandingAction.Escalate;
     }
 }
+
+/// <param name="BuildTestDeferredToBatch">
+/// The passed review's frozen plan deferred build and tests to the batch gate.
+/// False when the review ran them itself; such a card has no batch route.
+/// </param>
+/// <param name="IntegratedPerTaskBefore">An earlier intervention in this lane visit chose the per-task route.</param>
+public sealed record AutoReviewBatchRouteFacts(bool BuildTestDeferredToBatch, bool IntegratedPerTaskBefore = false);

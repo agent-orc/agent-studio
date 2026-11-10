@@ -74,32 +74,45 @@ public sealed class AutoReviewStrandingPolicyTests
     [Fact]
     public void Passed_review_that_ran_its_own_build_tests_takes_the_per_task_route()
         => Assert.Equal(AutoReviewStrandingAction.IntegratePerTask,
-            AutoReviewStrandingPolicy.Decide(Stranded() with
-            {
-                HasReview = true, PassedReview = true, BuildTestDeferredToBatch = false,
-            }));
+            Route(Stranded() with { HasReview = true, PassedReview = true }, OwnBuildTests));
+
+    [Fact]
+    public void Passed_review_that_deferred_build_tests_keeps_the_batch_route()
+        => Assert.Equal(AutoReviewStrandingAction.ReenterBatch,
+            Route(Stranded() with { HasReview = true, PassedReview = true },
+                new AutoReviewBatchRouteFacts(BuildTestDeferredToBatch: true)));
 
     [Fact]
     public void Per_task_route_is_not_reset_by_an_earlier_batch_reentry_of_the_same_visit()
         => Assert.Equal(AutoReviewStrandingAction.IntegratePerTask,
-            AutoReviewStrandingPolicy.Decide(Stranded() with
+            Route(Stranded() with
             {
-                HasReview = true, PassedReview = true, BuildTestDeferredToBatch = false,
+                HasReview = true, PassedReview = true,
                 SinceLastIntervention = TimeSpan.FromMinutes(31), ReenteredBatchBefore = true,
-            }));
+            }, OwnBuildTests));
 
     [Fact]
     public void Per_task_route_that_did_not_hold_waits_a_threshold_then_escalates()
     {
         var facts = Stranded() with
         {
-            HasReview = true, PassedReview = true, BuildTestDeferredToBatch = false,
-            IntegratedPerTaskBefore = true, SinceLastIntervention = TimeSpan.FromMinutes(29),
+            HasReview = true, PassedReview = true, SinceLastIntervention = TimeSpan.FromMinutes(29),
         };
+        var route = OwnBuildTests with { IntegratedPerTaskBefore = true };
 
-        Assert.Equal(AutoReviewStrandingAction.Leave, AutoReviewStrandingPolicy.Decide(facts));
+        Assert.Equal(AutoReviewStrandingAction.Leave, Route(facts, route));
         Assert.Equal(AutoReviewStrandingAction.Escalate,
-            AutoReviewStrandingPolicy.Decide(facts with { SinceLastIntervention = TimeSpan.FromMinutes(31) }));
+            Route(facts with { SinceLastIntervention = TimeSpan.FromMinutes(31) }, route));
+    }
+
+    [Fact]
+    public void Batch_route_does_not_touch_a_card_without_a_passed_review()
+    {
+        Assert.Equal(AutoReviewStrandingAction.StartStep, Route(Stranded(), OwnBuildTests));
+        Assert.Equal(AutoReviewStrandingAction.Escalate,
+            Route(Stranded() with { HasReview = true }, OwnBuildTests));
+        Assert.Equal(AutoReviewStrandingAction.StartStep,
+            Route(Stranded() with { HasReview = true, PassedReview = true, ReportOnly = true }, OwnBuildTests));
     }
 
     [Theory]
@@ -109,7 +122,7 @@ public sealed class AutoReviewStrandingPolicyTests
     [InlineData("queued-step")]
     public void Card_with_a_defined_next_step_is_left_alone_whatever_its_review_plan(string owner)
     {
-        var passed = Stranded() with { HasReview = true, PassedReview = true, BuildTestDeferredToBatch = false };
+        var passed = Stranded() with { HasReview = true, PassedReview = true };
         var facts = owner switch
         {
             "running-step" => passed with { RunningStep = true },
@@ -118,8 +131,13 @@ public sealed class AutoReviewStrandingPolicyTests
             _ => passed with { QueuedStep = true },
         };
 
-        Assert.Equal(AutoReviewStrandingAction.Leave, AutoReviewStrandingPolicy.Decide(facts));
+        Assert.Equal(AutoReviewStrandingAction.Leave, Route(facts, OwnBuildTests));
     }
+
+    private static readonly AutoReviewBatchRouteFacts OwnBuildTests = new(BuildTestDeferredToBatch: false);
+
+    private static AutoReviewStrandingAction Route(AutoReviewStrandingFacts facts, AutoReviewBatchRouteFacts route)
+        => AutoReviewStrandingPolicy.RouteBatch(AutoReviewStrandingPolicy.Decide(facts), facts, route);
 
     [Theory]
     [InlineData(AutoReviewResumePolicy.Reasons.NoSettlementRecord, true)]

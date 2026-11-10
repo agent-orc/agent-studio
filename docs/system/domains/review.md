@@ -412,7 +412,9 @@ ownerless again, it escalates the card with the reason.
 
 A passed review that ran its own build and tests (its frozen plan has
 `BuildTestDeferredToBatch: false`) never re-enters the batch gate: batch
-admission refuses it with `BuildTestNotDeferred` (AGT-3740). The watchdog
+admission refuses it with `BuildTestNotDeferred` (AGT-3740).
+`AutoReviewStrandingPolicy.RouteBatch` turns the stranding decision for such a
+card into the per-task route, once per lane visit. The watchdog
 integrates it through the per-task path with the review's own verdicts. It
 uses the delivery settlement record, or rebuilds a missing one from the
 journaled report with the same `RemoteDeliveryIntegrationPolicy` as settlement.

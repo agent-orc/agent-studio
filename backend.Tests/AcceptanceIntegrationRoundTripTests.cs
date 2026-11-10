@@ -883,8 +883,10 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     public async Task Stranding_watchdog_integrates_a_passed_review_that_ran_its_own_build_tests()
     {
         var deliverySha = PublishDelivery("own-build-tests.txt", "delivered work\n");
+        var clock = VerificationFixtureAtUtc;
         var deps = Build(deliverySha, initialState: TaskStates.AutoReview,
-            reviewPlan: OwnBuildTestPlan(), reviewVerdicts: OwnBuildTestVerdicts());
+            reviewPlan: OwnBuildTestPlan(), reviewVerdicts: OwnBuildTestVerdicts(),
+            authorityClock: () => clock);
         var stranding = StrandingFixture(deps);
         Assert.Null(RemoteDeliverySettlementStore.Read(deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath));
 
@@ -916,8 +918,10 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     public async Task Stranding_watchdog_replans_a_passed_review_without_a_recorded_verdict()
     {
         var deliverySha = PublishDelivery("own-build-tests-replan.txt", "delivered work\n");
+        var clock = VerificationFixtureAtUtc;
         var deps = Build(deliverySha, initialState: TaskStates.AutoReview,
-            reviewPlan: OwnBuildTestPlan(), reviewVerdicts: OwnBuildTestVerdicts());
+            reviewPlan: OwnBuildTestPlan(), reviewVerdicts: OwnBuildTestVerdicts(),
+            authorityClock: () => clock);
         var passed = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt!;
         var folder = deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath;
         File.Delete(RemoteReviewSettlementJournal.PathFor(folder, passed.AttemptId));
@@ -4470,12 +4474,13 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         string mode = TaskModes.Coding,
         string? briefVersion = null,
         bool seedContent = true,
+        Contract.ReviewPlanDto? reviewPlan = null,
+        IReadOnlyList<Contract.ReviewVerdictDto>? reviewVerdicts = null,
         bool authorityRebuilt = false,
         bool guarded = false,
         bool engineMode = false,
-        BatchGateStore? batchGates = null,
-        Contract.ReviewPlanDto? reviewPlan = null,
-        IReadOnlyList<Contract.ReviewVerdictDto>? reviewVerdicts = null)
+        Func<DateTime>? authorityClock = null,
+        BatchGateStore? batchGates = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -4514,7 +4519,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var authority = new AttemptAuthorityService(
             config,
-            NullLogger<AttemptAuthorityService>.Instance);
+            NullLogger<AttemptAuthorityService>.Instance,
+            authorityClock);
         var deliveryBriefVersion = briefVersion ?? RunDispositionPolicy.BriefVersion("Fixture brief");
         var sourceRun = authority.AcquireRun(
             TaskKey,
