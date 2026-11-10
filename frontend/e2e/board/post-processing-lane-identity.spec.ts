@@ -177,6 +177,15 @@ async function installRoutes(
       return route.fulfill({ status: 200, contentType: 'application/json',
         body: JSON.stringify([{ id: PROJECT, displayName: PROJECT, shortCode: 'PP', workspaceId: 'default', color: null, cliDefault: null, modelDefault: null, sortOrder: 0, storageLocation: WATCH_PATH, archived: false, createdAt: '2026-06-09T08:00:00Z' }]) });
     }
+    // Deployment badges map the list; a null body raises the error dialog over the board.
+    if (p === '/api/deploy/cards') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    }
+    // Quota admission reads the workspace verdict; a null body raises the same dialog.
+    if (p.endsWith('/quota/admission')) {
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ workspaceId: 'default', workspace: { projectId: null, project: null, status: 'ok', message: null, overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false }, projects: [] }) });
+    }
     if (p === '/api/v1/studio/auth/status') {
       return route.fulfill({
         status: 200,
@@ -255,6 +264,11 @@ async function installRoutes(
           }],
         }]),
       });
+    }
+    // Host telemetry reads its points; the client list below is the wrong shape for it.
+    if (/^\/api\/clients\/[^/]+\/telemetry$/.test(p)) {
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ points: [], findings: [], window: '14d' }) });
     }
     if (p.startsWith('/api/clients')) {
       return route.fulfill({
