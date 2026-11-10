@@ -9,8 +9,12 @@ export class ErrorDialogService {
   readonly cliConfigRequest = signal(0);
 
   private copyResetTimer: ReturnType<typeof setTimeout> | null = null;
+  private returnFocus: HTMLElement | null = null;
+  private returnFocusSelector: string | null = null;
 
   show(error: unknown, options: ErrorDialogOptions = {}): void {
+    this.returnFocus = typeof document === 'undefined' ? null : document.activeElement as HTMLElement | null;
+    this.returnFocusSelector = options.returnFocusSelector ?? null;
     const normalizedError = normalizeError(error, options);
     this.activeError.set({
       ...normalizedError,
@@ -25,6 +29,17 @@ export class ErrorDialogService {
   close(): void {
     this.activeError.set(null);
     this.copyState.set('idle');
+    const previous = this.returnFocus;
+    const selector = this.returnFocusSelector;
+    this.returnFocus = null;
+    this.returnFocusSelector = null;
+    setTimeout(() => {
+      if (this.activeError()) return;
+      const match = selector && typeof document !== 'undefined'
+        ? [...document.querySelectorAll<HTMLElement>(selector)].find(el => el.getClientRects().length > 0)
+        : null;
+      (match ?? (previous?.isConnected ? previous : null))?.focus();
+    }, 0);
   }
 
   requestCliConfig(): void {

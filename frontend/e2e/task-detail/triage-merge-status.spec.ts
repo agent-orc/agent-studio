@@ -5,7 +5,7 @@ import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 
 /**
  * Human Review acceptance reads "Accept" in every integration state.
- * Live Git membership supplies the landing evidence and action gate.
+ * Fresh task detail supplies the integration verdict and action gate.
  *
  * UI-feedback 2026-07-09: the redundant landed-status pill that used to sit
  * beside the primary (`studio-triage-merge-status`) was removed. The task's
@@ -121,6 +121,15 @@ async function installBaseRoutes(page: Page): Promise<void> {
   await page.route('**/api/v1/studio/auth/status', (route) => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
+  await page.route('**/api/v1/management/credential-inventory', route => json(route, {
+    generatedAt: '2026-06-09T12:00:00Z', items: [],
+  }));
+  await page.route('**/api/workspaces/*/quota/admission', route => json(route, {
+    workspaceId: 'workspace',
+    workspace: { projectId: null, project: null, status: 'ok', message: null,
+      overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false },
+    projects: [],
+  }));
   await page.route('**/api/tasks/*/runs**', (route) =>
     json(route, { runs: [], runnerEvents: [], hasActiveRun: false }));
   await page.route('**/api/tasks', (route) => json(route, []));
@@ -140,6 +149,7 @@ async function installBaseRoutes(page: Page): Promise<void> {
   await page.route('**/api/agent-rules**', (route) => json(route, []));
   await page.route('**/api/cli/usage**', (route) => json(route, { items: [] }));
   await page.route('**/api/cli/quota**', (route) => json(route, { at: '2026-06-09T00:00:00Z', snapshots: [] }));
+  await page.route('**/api/usage/cockpit**', route => route.fulfill({ status: 503, body: '{}' }));
   await page.route(/\/api\/projects\/[^/]+\/workbenches(\?|$)/, (route) => json(route, { items: [] }));
   await page.route(/\/api\/tasks\/[^/]+\/pipeline(\?|$)/, (route) => json(route, null));
   await page.route(/\/api\/tasks\/[^/]+\/session-events(\?|$)/, (route) => json(route, {
@@ -167,6 +177,10 @@ async function installJobRoutes(
     json(route, { runs: [], runnerEvents: [], hasActiveRun: false }));
   await page.route(new RegExp(`/api/tasks/${idEsc}/provenance(\\?|$)`), (route) =>
     json(route, provenanceView(opts.landedState, opts.viewMerge ?? opts.detailMerge)));
+  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) => json(route,
+    detail(opts.detailMerge, opts.hasDeliverable ?? true,
+      opts.hasDeliverable === false ? 'not-applicable'
+        : opts.landedState === 'on-branch-only' ? 'pending' : 'integrated')));
   await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) => json(route,
     detail(opts.detailMerge, opts.hasDeliverable ?? true,
       opts.hasDeliverable === false ? 'not-applicable'
@@ -187,6 +201,34 @@ async function openJob(page: Page): Promise<void> {
 
 test.describe('Human Review acceptance primary is landed-state aware', () => {
   test.use({ serviceWorkers: 'block' });
+  test('isolating batch disables failure continuation with its reason in both themes and at 390 px', async ({ page }) => {
+    await installBaseRoutes(page);
+    await installJobRoutes(page, { detailMerge: null, landedState: 'on-branch-only' });
+    await page.route('**/api/usage/cockpit**', (route) => route.fulfill({ status: 503, body: '{}' }));
+    const reason = `${JOB_ID} is a member of batch flight flight-1, which is isolating a red result. Continue, steer and requeue wait until isolation ends; eject the member to act on it now.`;
+    await page.route(new RegExp(`/api/tasks/${JOB_ID}/failure/continue(\\?|$)`), (route) =>
+      json(route, { available: false, reason, isolationActive: true }));
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), (route) => {
+      const current = detail(null);
+      return json(route, { ...current, info: {
+        ...current.info,
+        integration: { status: 'pending', integrationBranch: 'develop', deliveryRef: 'task/fixture', detail: 'Delivery pending.' },
+      } });
+    });
+    await openJob(page);
+    const action = page.getByTestId('dead-end-continue');
+    await expect(action).toBeVisible();
+    await expect(action).toBeDisabled();
+    await expect(action).toHaveAttribute('title', reason);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await dismissDevErrorDialog(page);
+      if (RESULTS_DIR) await page.getByTestId('integration-dead-end').screenshot({ path: path.join(RESULTS_DIR, `failure-continuation-isolation-${theme}.png`) });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(action).toBeDisabled();
+    if (RESULTS_DIR) await page.screenshot({ path: path.join(RESULTS_DIR, 'failure-continuation-isolation-390px.png'), fullPage: true });
+  });
   test('shows brief and concept-fit grounds before acceptance in both themes', async ({ page }) => {
     await installBaseRoutes(page);
     await installJobRoutes(page, { detailMerge: null, landedState: 'on-branch-only', hasDeliverable: false });
@@ -282,6 +324,8 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
     await expect(primary).toBeVisible();
     await expect(primary).toHaveText(/Await integration/);
     await expect(primary).toBeDisabled();
+    await primary.hover();
+    await expect(page.getByTestId('cac-tooltip')).toContainText('Waiting for the delivery to reach develop.');
     await expect(page.getByTestId('studio-triage-merge-status')).toHaveCount(0);
     await saveEvidence(page, 'merge-action-with-deliverable--mocked.png');
   });
@@ -332,13 +376,9 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
     });
   });
 
-  // AGT-2006: the git-dependent acceptance primary must not be actionable (nor
-  // show a guessed label) while the live git status is still loading. Detail
-  // says "not landed"; the delayed provenance resolves to merged-to-develop.
-  // Pre-fix the button rendered an actionable "Merge into Develop" during the
-  // load and then flipped to "Accept" — the race Robert reported. Post-fix it
-  // is disabled + skeletoned until provenance settles, then switches atomically.
-  test('holds the acceptance primary until git status loads, then switches atomically', async ({ page }) => {
+  // The fresh integration verdict already proves Accept is safe. Optional
+  // provenance may arrive later without delaying the owner action.
+  test('offers Accept while optional provenance is still loading', async ({ page }) => {
     await installBaseRoutes(page);
 
     let releaseProvenance!: () => void;
@@ -349,23 +389,21 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
       await json(route, provenanceView('merged-to-develop', { mergeCommit: MERGE_SHA }));
     });
     await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail(null, true, 'integrated')));
+    await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail(null, true, 'integrated')));
 
     await openJob(page);
 
     const primary = page.getByTestId('studio-triage-action-mark-done');
     await expect(primary).toBeVisible();
-    // Held while the branch/merge status is unknown.
-    await expect(primary).toBeDisabled();
-    await expect(primary).toHaveAttribute('data-git-loading', 'true');
-    await expect(primary.locator('.studio-tab-action__skeleton')).toBeVisible();
+    await expect(primary).toHaveText(/Accept/);
+    await expect(primary).toBeEnabled();
+    await expect(primary).not.toHaveAttribute('data-git-loading', 'true');
 
-    await test.info().attach('git-action-loading-gate--mocked', {
+    await test.info().attach('accept-with-provenance-loading--mocked', {
       body: await page.getByTestId('studio-triage-panel').screenshot(),
       contentType: 'image/png',
     });
 
-    // Resolve the git status -> the true "Accept" label appears and the button
-    // becomes actionable, with no intermediate wrong "Merge into Develop" click.
     releaseProvenance();
     await expect(primary).toHaveText(/Accept/);
     await expect(primary).toBeEnabled();
