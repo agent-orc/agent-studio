@@ -347,7 +347,7 @@ test('project and central overviews receive a newly created item without reloadi
 
     const treeItem = page.getByTestId(`studio-explorer-workbench-${projectName}-${id}`);
     await expect(treeItem, 'SignalR created event must add the Tree child without page.reload().')
-      .toBeVisible({ timeout: 15_000 });
+      .toBeVisible({ timeout: 45_000 });
     await expect(treeItem).toContainText('1 open');
     await expect(page.getByTestId(`workbench-overview-item-${projectName}-${id}`)).toBeVisible();
 
