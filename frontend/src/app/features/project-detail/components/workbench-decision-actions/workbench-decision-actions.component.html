@@ -79,4 +79,4 @@
 
 @if (validationError(); as error) { <p class="decision-actions__error" role="alert">{{ error }}</p> }
 @if (actionError(); as error) { <p class="decision-actions__error" role="alert">{{ error }}</p> }
-@if (requestState().error; as error) { <p class="decision-actions__error" role="alert">{{ error }}</p> }
+@if (!actionError() && requestState().error; as error) { <p class="decision-actions__error" role="alert">{{ error }}</p> }

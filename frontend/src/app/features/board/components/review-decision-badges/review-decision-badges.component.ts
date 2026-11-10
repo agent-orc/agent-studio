@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
-import type { TaskInfo } from '../../../../models/task.model';
+import { TaskState, type TaskInfo } from '../../../../models/task.model';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { buildDecisionDamBadge, buildHumanReviewBadge } from '../task-card/task-card-view-model';
 import { buildParkedBadge } from '../../../../models/parked-blocker-presentation';
@@ -24,7 +24,11 @@ export class ReviewDecisionBadgesComponent {
    * wherever a park marker exists rather than stacking a second chip.
    */
   private readonly now = inject(NowTickService).now;
-  readonly parkedBadge = computed(() => buildParkedBadge(this.job(), this.now()));
+  readonly parkedBadge = computed(() => {
+    const state = this.job().state;
+    return state === TaskState.Completed || state === TaskState.Archive
+      ? null : buildParkedBadge(this.job(), this.now());
+  });
   readonly humanReviewBadge = computed(() =>
     this.parkedBadge() ? null : buildHumanReviewBadge(this.job()));
 }

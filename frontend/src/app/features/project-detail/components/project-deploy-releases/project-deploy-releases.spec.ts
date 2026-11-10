@@ -82,8 +82,8 @@ describe('ProjectDeployReleasesComponent', () => {
 
   it('reconciles Quality counts with card rows and opens the release range', async () => {
     const releases = deployReleasesFixture();
-    const release = releases[0];
-    release.cardKeys = ['WEB-35', 'WEB-36', 'WEB-37'];
+    const release = { ...releases[0], cardKeys: ['WEB-35', 'WEB-36', 'WEB-37'] };
+    releases[0] = release;
     release.quality = {
       cards: [{ key: 'WEB-35', verdict: 'pass' }, { key: 'WEB-36', verdict: 'concerns' },
         { key: 'WEB-37', verdict: 'block' }],

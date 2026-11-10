@@ -70,8 +70,8 @@ public sealed class BatchGatePilotOrphanRecoveryTests : BatchGatePilotServiceTes
             SeedMember(factory, "CODE-OLD-B", "src/old-b.cs"),
         };
         var older = ClosePendingBatch(factory);
-        // AGT-3562: within the maximum wait the larger batch starts first; past
-        // it the older batch starts regardless of size.
+        // AGT-3710: formed batches start first in, first out, so the older
+        // batch starts before the later, larger one.
         _clock = _clock.AddMinutes(Settings(factory).MaximumWaitMinutes + 1);
         var newerMembers = new[]
         {
