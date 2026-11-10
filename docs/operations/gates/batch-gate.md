@@ -225,6 +225,9 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   member records its exact source-to-published-SHA mapping before lane release.
   A deferred `IntegrationBranchDefect` review releases on verified batch evidence.
   Recovery failures are logged per manifest, allowing later batches to proceed.
+  The initial `Formed` state is durable before its manifest becomes visible.
+  A manifest found without state rows is `Unknown`; recovery skips it and logs
+  the missing state once per manifest per store instance.
   A queued code push keeps its project batch reservation pending until origin
   verifies the merged SHA. The pending marker is a durable recovery job, so a
   startup sweep re-drives it even if the card remains in Auto Review and the
