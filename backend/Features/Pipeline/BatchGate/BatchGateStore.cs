@@ -784,9 +784,10 @@ public sealed partial class BatchGateStore
                 .OrderBy(x => x, StringComparer.Ordinal).LastOrDefault()
             : null;
         if (path is not null) return Read<BatchGateState>(path);
-        var manifest = ReadManifest(batchId);
-        return new BatchGateState(batchId, manifest.MembershipDigest,
-            BatchPhase.Unknown, null, 0, manifest.ClosedAtUtc);
+        var manifestPath = Path.Combine(BatchDirectory(batchId), "manifest.json");
+        var manifest = File.Exists(manifestPath) ? Read<BatchGateManifest>(manifestPath) : null;
+        return new BatchGateState(batchId, manifest?.MembershipDigest ?? string.Empty,
+            BatchPhase.Unknown, null, 0, manifest?.ClosedAtUtc ?? DateTimeOffset.MinValue);
     }
 
     public void RecordRun(BatchGateRunRecord run)
