@@ -225,6 +225,9 @@ test('a Product user without a project reads one sentence instead of an empty pi
   }
   await page.setViewportSize({ width: 390, height: 844 });
   // The narrow layout folds the picker into More navigation; it offers no Switch project.
+  // Sign-in can leave an informational toast over the narrow navigation button.
+  while (await page.getByTestId('notification-info').count())
+    await page.getByTestId('notification-info').first().getByTestId('notification-close').click();
   await page.getByRole('button', { name: 'More navigation' }).click();
   await expect(page.getByRole('menuitem', { name: 'Project chat' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Switch project' })).toHaveCount(0);
