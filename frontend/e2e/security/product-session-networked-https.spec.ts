@@ -147,8 +147,7 @@ test('a Product user sees only the bound project and files a card from the Add t
 
   // Add task dialog: the bound project is the only option and the default.
   await setTheme(page, 'light');
-  await page.getByTestId('studio-project-picker-trigger').click();
-  await page.getByTestId(`studio-project-picker-item-${granted}`).click();
+  await expect(page.getByTestId(`studio-explorer-project-row-${granted}`)).toBeVisible();
   await page.getByTestId('studio-board-add-task').click();
   await expect(page.getByTestId('create-title')).toBeVisible();
   // The Product role files into Backlog or Ready; the server refuses other lanes.
