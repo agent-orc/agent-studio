@@ -110,7 +110,11 @@ The **Operations** page of every project shows an **Installation backups** panel
 | `verification-failed`, `verification-overdue` | The last restore verification failed, or none ran within two verification intervals. |
 | `offhost-not-configured`, `offhost-invalid`, `offhost-pending`, `offhost-failed` | The newest backup is not, or not yet, off the host. |
 
-Owners and operators read the same state from `GET /api/v1/management/backups` (`no-store`). Operator agents, whose credentials never reach `/api/v1`, read it from `GET /api/operator/backups` or `studio-op backups`; a caller without installation-wide operate permission does not see the target. The management commands of `POST /api/v1/management/commands` run the same engine: `backup-create`, `restore-verify` (optional `backupId`), `backup-retention` (optional `retentionCount`) and `backup-upload`. Each needs `dryRun: false` and `confirmation` equal to the kind for a real run; `backup-create` no longer needs maintenance mode.
+Owners and operators read the same state from `GET /api/v1/management/backups` (`no-store`). Operator agents, whose credentials never reach `/api/v1`, read it from `GET /api/operator/backups` or `studio-op backups`; a caller without installation-wide operate permission does not see the target or the key fingerprints, and host paths in its error text read `<path>`. The management commands of `POST /api/v1/management/commands` run the same engine: `backup-create`, `restore-verify` (optional `backupId`), `backup-retention` (optional `retentionCount`) and `backup-upload`. Each needs `dryRun: false` and `confirmation` equal to the kind for a real run; `backup-create` no longer needs maintenance mode. A `backup-retention` run that keeps fewer archives than `Backup__RetentionCount` needs the Owner role; operators may preview it and may apply the configured count.
+
+### Backup audit
+
+Every backup create, off-host copy, restore verification and retention, scheduled or manual, writes a record to the control plane audit chain (stream `backup`, operations `backup.create`, `backup.upload`, `backup.verify`, `backup.retention`) with the actor and the outcome `succeeded`, `failed` or `denied`. Scheduled runs show the actor `schedule`; manual commands the principal, and an operator session the session with the Owner who delegated it. The offline `decrypt` and `restore` tools record `backup.decrypt` and `backup.restore` with the actor `offline:<account>` (`restore-backup.sh` passes `offline:<user>@<host>`). The Owner reads the records under **Settings > Access > Backup activity** or from `GET /api/auth/audit/backups`. The management command ledger `workspace/.audit/management.jsonl` stays the idempotency record of the commands.
 
 ## Restore onto a new host
 
@@ -138,6 +142,8 @@ dotnet OrchestratorApi.dll --studio-backup restore --key backup.key --archive <a
 dotnet OrchestratorApi.dll --studio-backup key-create <file> | key-id <file>
 ```
 
+`decrypt` and `restore` take `--actor <name>` and `--audit-workspace <dir>`. A successful restore records into the restored `workspace` target, otherwise the record goes to `--audit-workspace` or to the configured `TaskRepository` when that exists. A failed restore never writes into one of its targets, which must stay empty for the next attempt; it then only prints that the run was not recorded.
+
 A decrypted `tar.gz` holds credential material; delete it when done.
 
 ### Tested restore
@@ -152,6 +158,7 @@ AGT-3574 implemented these options:
 - **Consistency:** a bounded hold of HTTP mutations during the read, the SQLite online backup API, per-file stable reads and journal prefixes, instead of pausing the container, which only the host can do.
 - **Encryption:** a symmetric backup key file outside the data directory, escrowed by the owner, with AES-256-GCM chunks. A key the API can read lets the product verify every day by a real restore; a public-key recipient would have made the daily restore verification impossible on the host.
 - **Targets:** SFTP through the OpenSSH client in the image, S3-compatible storage through a signed PUT without a new package, and a mounted directory. All need only write access.
+- **Backup audit (AGT-3737):** backup operations write to the existing hash-chained control plane audit trail instead of a second, unread ledger, and the Owner reads them in the Access area next to operator activity. Retention below the configured count needs the Owner; a preview stays open to operators, because it deletes nothing.
 - **Coverage:** the data home, host certificates, stack configuration and Caddy data join the workspace and task storage; checkouts still come back from their remotes; the secret store key, the backup key and the host CA key stay with the owner.
 
 ## Host-level backup with the systemd timer
