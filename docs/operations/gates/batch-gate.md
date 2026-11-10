@@ -1,5 +1,124 @@
 # Batch gate delivery state
 
+## Batch phase record and invariants (AGT-3563)
+
+Step 01 of the AGT-3552 split. Each closed manifest has one versioned phase
+and claim record, `phase.json` in its batch folder. It holds the latest
+`BatchGateState`, a version, and the disposition of every claimed member
+(`Claimed`, `Released`, `Published`, `Ejected`) keyed by the member's
+immutable review attempt. Every phase change is a compare-and-swap of that
+record under an exclusive cross-process file lock (`phase.lock`).
+`BatchPhaseTransitionPolicy` in the decision library checks that the requested
+phase is a legal successor, that the coordinator fence does not go back, and,
+when the caller passes one, that the version it read is still current. The
+record is the commit point. The numbered `state/*.json` history entry with the
+same number follows it, so two writers can no longer allocate one sequence
+number. A refused change writes nothing and throws
+`BatchPhaseTransitionRefusedException`. A batch closed before AGT-3563 reads
+its history until its next change creates the record.
+
+| From | Legal next phases |
+|---|---|
+| none or `Unknown` (closed manifest) | `Formed` |
+| `Formed` | `Formed` (annotation), `Assembling`, `Paused`, `Abandoned` |
+| `Assembling` | `Assembling`, `Assembled`, `Paused`, `Abandoned` |
+| `Assembled` | `Assembled` (document-keyed candidate), `Running`, `Paused`, `Abandoned` |
+| `Running` | `Green`, `Red`, `Paused`, `Abandoned` |
+| `Green` | `Publishing`, `Paused`, `Abandoned` |
+| `Publishing` | `Published`, `Paused`, `Abandoned` |
+| `Red` | `Paused`, `Abandoned` |
+| `Paused` | `Paused`, `Abandoned` |
+| `Published`, `Abandoned` | none (terminal) |
+
+A terminal change settles the claims. A published batch publishes its
+admitted members, an abandoned batch releases its members, and a replay
+ejection is left to the route that settles it.
+
+Each pilot tick starts by giving a manifest without a record its first formed
+record, and by writing a history entry that a crash left out. After the
+interrupted-flight recovery, `BatchGateInvariantPolicy` names the findings
+below, and the pilot applies the named repair under the batch's coordinator
+lease:
+
+- `orphaned-formed-batch`: a manifest without a record (`initialize-formed`),
+  or a formed batch that no flight runs and whose member ownership does not
+  name it. A member still on its queued marker is claimed (`claim-member`). A
+  member that is no longer queued or that another route owns retires the batch
+  (`abandon-batch`). A formed diagnostic child outside its isolation flight is
+  retired too.
+- `terminal-batch-owns-member`: an abandoned batch whose member ownership still
+  names it returns that member to the queue (`release-member`). A red parent
+  that no isolation flight holds is paused (`pause-batch`), so the paused-batch
+  route hands its cohort to the per-task gate.
+- `published-batch-unresolved-member`: a published batch whose admitted member
+  is still queued. This finding is only reported (`none`); the published-batch
+  recovery of each tick releases the member.
+
+A green batch whose flight died before the publication fence now publishes
+from its recorded passing run on the next tick, as isolation children already
+did. A live batch (a flight of this host, or a held coordinator lease on its
+scope) has no findings.
+
+The tick ends with the check. `GET /api/projects/{project}/batch-gate/state`
+shows the last one under `invariants` (`checkedAtUtc` and `findings` with
+`kind`, `batchId`, `phase`, `taskKey`, `reviewAttemptId`, `detail` and
+`repair`); it is null before the first tick.
+`GET /api/projects/{project}/batch-gate/invariants` runs the check on demand,
+after any running tick. Fault-injection tests stop the host after each durable
+write of a publication, of an abandon with re-formation on a moved base, and of
+a red isolation. A restarted host reaches the same valid outcome on its next
+ticks. Later steps of AGT-3552 extract the planner, the flight runner, the
+publication coordinator and the reconciler on top of this record.
+
+## Formation planner and intents (AGT-3568)
+
+Step 02 of the AGT-3552 split. `BatchFormationPolicy` in the decision library
+owns the planner's decisions: repack membership (which formed batches of one
+scope and base merge, which members a successor takes, why the others wait),
+the commit check of each formation or replacement, and how an interrupted
+one completes. The pilot collects facts and applies the result. Formation
+snapshots (`BatchGateSnapshotBuilder`), admission (`AdmitFormationAsync`) and
+the close rule (`BatchGatePolicy.Close`) feed it unchanged; moving those three
+into the library is left to a later step.
+
+Every formation and every replacement of formed batches (repack, re-formation
+on a moved base, documentation successor, stacked successor) is one durable
+intent in `planner/<project>/intents/<id>.json` of the batch store. The planner
+writes and applies it under the project's exclusive planner lock
+(`planner.lock`):
+
+1. The commit check refuses the intent when another non-terminal batch or open
+   intent owns one of its pending generations (`generation-owned`), when a
+   predecessor is no longer formed (`predecessor-not-formed`), or when a flight
+   assembles it (`predecessor-assembling`). A flight may replace its own batch
+   in any unsettled phase. A refused formation records the plan decision
+   `formation intent refused: <reason>` and closes nothing.
+2. The intent is written with the phase record version of each predecessor.
+3. The successor manifest closes. Its first phase record (AGT-3563) is the
+   commit point.
+4. The successor's members get ownership markers that name it.
+5. Each predecessor retires by compare-and-swap on the recorded version, and
+   only its members that did not move return to the queue. A refused
+   retirement means the predecessor moved on first. The successor is then
+   rolled back and each member's marker names the predecessor again.
+6. The outcome file (`applied`, `discarded` or `rolled-back`) closes the intent.
+
+A predecessor therefore never retires before its successor is durable. Each
+tick starts, after the phase record repair, by completing the intents a dead
+host left open. An intent without a successor manifest retired nothing and is
+discarded, so the next repack plans again. An intent with a durable successor
+rolls forward. If a predecessor started its flight first, the successor rolls
+back. Restart tests stop the host after each durable write of a repack, and
+concurrency tests run two planners on one store. Both end with each pending
+generation owned by exactly one non-terminal batch, whose ownership marker
+names it.
+
+The request to tick when a replaced batch's waiting flight exits is durable
+too (`planner/<project>/successor-ticks/<batchId>.json`). The flight's exit
+consumes it, and after a restart the first tick serves a request whose flight
+is gone. The start order is first in, first out with a maximum wait; see
+[the pipeline domain map](../../system/domains/pipeline.md#flight-queue-order-agt-3710-agt-3568).
+
 ## One-step speculative stacking (AGT-3546)
 
 The implemented choice is AGT-2994 D1 option C, a speculative train with ordered publication,
@@ -152,18 +271,18 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   reports `baseMoves` by new base SHA and `baseMoveTotals`, each counting formed
   batches kept and abandoned. A replay probe infrastructure failure pauses
   the batch rather than classifying a member as conflicting.
-- AGT-3562, AGT-3710: one flight per project starts, so the start order
-  decides who waits (`BatchGateStartPolicy`). A stacked successor starts
-  first, then a child batch, and a batch deferred after a lease deadline goes
-  last. All other formed batches start first in, first out: the oldest
-  formation time first (a re-formed or repacked batch keeps its place), then
-  the lowest member enqueue sequence, then the batch ID. Size does not reorder
-  the queue. The state reports `flightQueue` and each formed batch's
+- AGT-3562, AGT-3710, AGT-3568: one flight per project starts, so the start
+  order decides who waits (`BatchGateStartPolicy`). A stacked successor starts
+  first. An ordinary batch past `maximumWaitMinutes` comes next, then a child
+  batch, and a batch deferred after a lease deadline goes last. All other
+  formed batches start first in, first out: the oldest formation time first
+  (a re-formed or repacked batch keeps its place), then the lowest member
+  enqueue sequence, then the batch ID. Size does not reorder the queue. The state reports `flightQueue` and each formed batch's
   `queuePosition`. On 5 November 2026 batches 24991efe (12:59 UTC) and
   baddb7f9 (15:11 UTC) stayed formed for hours while later, larger batches
   ran; on 10 November 2026 four batches formed from 03:47 UTC waited behind
   batches formed at 04:50 and 05:11 UTC. The full rule is in
-  [the pipeline domain map](../../system/domains/pipeline.md#flight-queue-order-agt-3710).
+  [the pipeline domain map](../../system/domains/pipeline.md#flight-queue-order-agt-3710-agt-3568).
 - AGT-3562: a flight can wait on the project reservation before it acquires
   its coordinator lease, so lease expiry cannot free its project slot. A
   flight that has not claimed its lease within `flightLeaseDeadlineMinutes`
@@ -230,9 +349,10 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   member records its exact source-to-published-SHA mapping before lane release.
   A deferred `IntegrationBranchDefect` review releases on verified batch evidence.
   Recovery failures are logged per manifest, allowing later batches to proceed.
-  The initial `Formed` state is durable before its manifest becomes visible.
-  A manifest found without state rows is `Unknown`; recovery skips it and logs
-  the missing state once per manifest per store instance.
+  A manifest found without a phase record or state rows reads as `Unknown`
+  (the phase is never stored); recovery skips it and logs the missing state
+  once per manifest per store instance until the next tick writes its first
+  `Formed` record (AGT-3563).
   A queued code push keeps its project batch reservation pending until origin
   verifies the merged SHA. The pending marker is a durable recovery job, so a
   startup sweep re-drives it even if the card remains in Auto Review and the
@@ -280,7 +400,8 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   batch state and isolation findings and does not change isolation itself; see
   [tasks](../../system/domains/tasks.md).
 - `GET /api/projects/{project}/batch-gate/state` exposes plan, pending, batches,
-  and member state. The existing report includes observed batch green rate.
+  member state and the last invariant check (AGT-3563). The existing report
+  includes observed batch green rate.
 - `GET /api/operator/batch-triage` (OP-4, AGT-3462) reads the same state for
   every project the caller may read. It lists open flights, open members with
   red and isolating markers, pending pushes with age and the

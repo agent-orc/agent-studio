@@ -202,7 +202,7 @@ public sealed class AutoReviewStrandingPolicyTests
             Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1",
                 run with { ResultSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }, "review-1"));
             Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "other-project", "card-1", run, "review-1"));
-            store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchGateStates.Reach(store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
                 BatchPhase.Published, null, 0, now.AddMinutes(21)));
             Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", run, "review-1"));
         }

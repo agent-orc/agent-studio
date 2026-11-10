@@ -56,7 +56,6 @@ public sealed partial class BatchGatePilotService
         new(StringComparer.Ordinal);
     private readonly HashSet<string> _startedBatchIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _assemblingBatchIds = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, byte> _replanAfterBatch = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Task> _runningPreChecks = new(StringComparer.Ordinal);
     private readonly GateQueueStallMonitor _queueStalls;
 
@@ -393,7 +392,7 @@ public sealed partial class BatchGatePilotService
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
             _time.GetUtcNow(), _services?.GetService<GateRunLedger>(), reviewFixWaits,
             _services?.GetService<GateCapacitySettings>()?.Current(), DetachedFlights(project),
-            LeaseDeadlineDeferred()(project));
+            LeaseDeadlineDeferred()(project), LastInvariantReport(project));
     }
 
     private static BatchGateReviewFixWait[] ReviewFixWaits(IEnumerable<TaskInfo> tasks, string project)
@@ -425,6 +424,11 @@ public sealed partial class BatchGatePilotService
         await _tick.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // AGT-3563: every later step reads each manifest's phase record.
+            ReconcilePhaseRecords();
+            // AGT-3568: an intent a dead host left open owns its generations
+            // until it completes; nothing may read batch ownership before.
+            RecoverFormationIntents();
             CancelFlightsPastLeaseDeadline();
             var fetchedBases = new Dictionary<(string Repo, string Branch), string?>();
             if (_reservations is not null)
@@ -451,8 +455,9 @@ public sealed partial class BatchGatePilotService
                             "batch-gate push wait exceeded age limit project={Project} job={JobId} approvedSha={ApprovedSha} since={SinceUtc}",
                             project, wait.JobId, wait.ApprovedSha, wait.SinceUtc);
                 }
-            await RecoverGreenIsolationChildrenAsync(ct).ConfigureAwait(false);
+            await RecoverGreenBatchesAsync(ct).ConfigureAwait(false);
             RecoverInterrupted();
+            RepairBatchInvariants();
             foreach (var project in _store.ListPending().Select(item => item.Subject.Project)
                          .Distinct(StringComparer.Ordinal))
                 await HandOffProvenRedsAsync(project, ct).ConfigureAwait(false);
@@ -754,25 +759,25 @@ public sealed partial class BatchGatePilotService
                                 BatchGateRiskModel.Unknown(false, false, false), [], []);
                     }).ToArray(),
                 } };
-                _store.CloseManifest(formed.Manifest);
+                // AGT-3568: the formation is one intent that owns its members.
+                var refused = CommitIntent(FormationIntent(BatchIntentKind.Formation, "planner",
+                    formed.Manifest, current));
+                if (refused is not null)
+                {
+                    _store.AppendPlanDecision(first.Subject.Project,
+                        new BatchPlanDecision("wait", "formation intent refused: " + refused,
+                            null, [], options.CloseSize, []));
+                    continue;
+                }
                 if (options.Planner == "look-ahead"
                     && _store.LatestPlanDecision(first.Subject.Project)?.Advisor is { } advice)
                     _store.RecordAdvice(formed.Manifest.BatchId, advice);
-                foreach (var member in formed.Manifest.Members)
-                {
-                    var item = current.Single(candidate =>
-                        candidate.Subject.TaskKey == member.TaskKey);
-                    var task = _scanner.FindJob(member.TaskKey, item.WatchPath);
-                    if (task is null) throw new InvalidDataException("Batch member disappeared after close.");
-                    BatchGateOwnershipStore.Write(task.FolderPath,
-                        new BatchGateOwnership(item.ReviewAttemptId, member,
-                            formed.Manifest.BatchId));
-                }
             }
             await RepackFormedBatchesAsync(ct).ConfigureAwait(false);
             StartClosedBatches(ct);
             if (WaitForFlightsInTick)
                 await WaitForFlightsAsync(includeFallbacks: true, ct).ConfigureAwait(false);
+            RecordInvariants();
         }
         finally
         {
@@ -872,8 +877,11 @@ public sealed partial class BatchGatePilotService
         if (rollback is null) return false;
         try
         {
-            State(manifest, BatchPhase.Abandoned, null, rollback.Fence,
-                "abandoned-by-rollback");
+            // An abandoned batch never changes phase again; it only returns
+            // the member its ownership still names.
+            if (_store.LatestState(batchId).Phase != BatchPhase.Abandoned)
+                State(manifest, BatchPhase.Abandoned, null, rollback.Fence,
+                    "abandoned-by-rollback");
             ReturnToPending(manifest);
             return true;
         }
@@ -1116,17 +1124,10 @@ public sealed partial class BatchGatePilotService
             MembershipDigest = BatchGatePolicy.MembershipDigest(predicted, formed.Scope, formed.Members),
             ReformedFromBatchId = formed.BatchId, StackedOnBatchId = predecessor.BatchId,
         };
-        _store.CloseManifest(stacked);
-        foreach (var member in stacked.Members)
-        {
-            var item = pending[member.TaskKey];
-            var task = _scanner.FindJob(member.TaskKey, item.WatchPath)
-                ?? throw new InvalidDataException("Stacked member disappeared after close.");
-            BatchGateOwnershipStore.Write(task.FolderPath,
-                new BatchGateOwnership(item.ReviewAttemptId, member, stacked.BatchId));
-        }
-        State(formed, BatchPhase.Abandoned, null, 0,
-            $"stacked as {stacked.BatchId} on {predecessor.BatchId}");
+        // AGT-3568: the stacked successor owns the members before the formed batch retires.
+        if (CommitIntent(FormationIntent(BatchIntentKind.Replacement, "stack", stacked, pending.Values,
+                Retirement(formed, $"stacked as {stacked.BatchId} on {predecessor.BatchId}"))) is not null)
+            return false;
         StartStack(stacked, pending, repo, ct);
         return true;
     }
@@ -1934,7 +1935,8 @@ public sealed partial class BatchGatePilotService
                     is BatchPhase.Abandoned or BatchPhase.Published)
             {
                 _store.RequestCloseNow(manifest.Scope.Project);
-                _replanAfterBatch.TryAdd(manifest.BatchId, 0);
+                _store.RequestSuccessorTick(manifest.Scope.Project, manifest.BatchId,
+                    "cascade-deferred members return to the queue", _time.GetUtcNow());
             }
             var publishedBases = new Dictionary<(string Repo, string Branch), string?>();
             foreach (var key in fallbackKeys.Except(conflictKeys))
@@ -1969,7 +1971,7 @@ public sealed partial class BatchGatePilotService
         {
             State(manifest, BatchPhase.Abandoned, null, lease.Fence, reason);
             ReturnToPending(manifest);
-            _replanAfterBatch.TryAdd(manifest.BatchId, 0);
+            _store.RequestSuccessorTick(manifest.Scope.Project, manifest.BatchId, reason, _time.GetUtcNow());
         }
     }
 
@@ -2153,12 +2155,9 @@ public sealed partial class BatchGatePilotService
             || !_git.IsAncestor(repo, manifest.BaseSha, newBase)
             || !DocsOnlyDeliveryPolicy.IsDocsOnly(
                 _git.ChangedPathsAgainstMergeBase(repo, manifest.BaseSha, newBase))
-            || manifest.Members.Any(member =>
-                !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
+            || manifest.Members.Any(member => !pending.TryGetValue(member.TaskKey, out var item)
+                || !Refresh(item).Subject.CurrentGeneration))
             return false;
-        State(manifest, BatchPhase.Abandoned, null, fence,
-            "documentation-only base movement; successor replay queued");
-        ReturnToPending(manifest);
         var members = manifest.Members.Select(member =>
             Refresh(pending[member.TaskKey]).Subject).ToArray();
         var successor = manifest with
@@ -2180,17 +2179,12 @@ public sealed partial class BatchGatePilotService
                         BatchGateRiskModel.UnknownDiff, [], []);
             }).ToArray(),
         };
-        _store.CloseManifest(successor);
-        foreach (var member in members)
-        {
-            var item = pending[member.TaskKey];
-            var task = _scanner.FindJob(member.TaskKey, item.WatchPath);
-            if (task is not null)
-                BatchGateOwnershipStore.Write(task.FolderPath,
-                    new BatchGateOwnership(item.ReviewAttemptId, member,
-                        successor.BatchId));
-        }
-        return true;
+        // AGT-3568: the successor is durable before the gated batch retires.
+        return CommitIntent(FormationIntent(BatchIntentKind.Replacement, "documentation-base-move",
+            successor, pending.Values, new BatchGateIntentRetirement(new BatchGateState(manifest.BatchId,
+                manifest.MembershipDigest, BatchPhase.Abandoned, null, fence, _time.GetUtcNow(),
+                "documentation-only base movement; successor replay queued"), 0, RetiredByOwnFlight: true)))
+            is null;
     }
 
     private async Task IsolateAsync(BatchGateManifest failedManifest,

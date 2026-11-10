@@ -310,8 +310,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
 
     private static bool IsActiveManifest(BatchGateStore batches, BatchGateManifest manifest)
     {
-        var stateFolder = Path.Combine(batches.BatchDirectory(manifest.BatchId), "state");
-        return !Directory.Exists(stateFolder)
+        return !batches.HasState(manifest.BatchId)
             || IsActiveBatchPhase(batches.LatestState(manifest.BatchId).Phase);
     }
 

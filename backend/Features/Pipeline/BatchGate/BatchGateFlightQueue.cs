@@ -14,10 +14,12 @@ public static class BatchGateFlightQueue
     /// <summary>
     /// Formed batches in start order (<see cref="BatchGateStartPolicy.Order"/>).
     /// <paramref name="deferred"/> names the batch of a project whose flight was
-    /// cancelled at its lease deadline, or null.
+    /// cancelled at its lease deadline, or null; <paramref name="maximumWait"/>
+    /// is the project's maximum wait in minutes (AGT-3568).
     /// </summary>
     public static IReadOnlyList<BatchGateManifest> Order(BatchGateStore store,
-        IEnumerable<BatchGateManifest> formed, Func<string, string?> deferred)
+        IEnumerable<BatchGateManifest> formed, Func<string, string?> deferred,
+        DateTimeOffset nowUtc, Func<string, int> maximumWait)
     {
         var byId = formed.DistinctBy(manifest => manifest.BatchId, StringComparer.Ordinal)
             .ToDictionary(manifest => manifest.BatchId, StringComparer.Ordinal);
@@ -27,7 +29,8 @@ public static class BatchGateFlightQueue
                     : manifest.Members.Min(member => member.EnqueueSequence),
                 manifest.StackedOnBatchId is not null,
                 manifest.ParentBatchId is not null,
-                deferred(manifest.Scope.Project) == manifest.BatchId)));
+                deferred(manifest.Scope.Project) == manifest.BatchId,
+                maximumWait(manifest.Scope.Project))), nowUtc);
         return order.Select(id => byId[id]).ToArray();
     }
 
@@ -35,10 +38,11 @@ public static class BatchGateFlightQueue
     /// One-based flight queue position of each formed batch within its project.
     /// </summary>
     public static IReadOnlyDictionary<string, int> Positions(BatchGateStore store,
-        IEnumerable<BatchGateManifest> formed, Func<string, string?> deferred)
+        IEnumerable<BatchGateManifest> formed, Func<string, string?> deferred,
+        DateTimeOffset nowUtc, Func<string, int> maximumWait)
     {
         var positions = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var project in Order(store, formed, deferred)
+        foreach (var project in Order(store, formed, deferred, nowUtc, maximumWait)
                      .GroupBy(manifest => manifest.Scope.Project, StringComparer.OrdinalIgnoreCase))
         {
             var position = 0;

@@ -286,6 +286,8 @@ public sealed class BatchGateStoreTests : IDisposable
         var stateFolder = Path.Combine(_store.BatchDirectory(manifest.BatchId), "state");
         Directory.Delete(stateFolder, recursive: true);
         if (keepEmptyStateFolder) Directory.CreateDirectory(stateFolder);
+        // AGT-3563: the phase record is the commit point, so "without state" means neither.
+        File.Delete(Path.Combine(_store.BatchDirectory(manifest.BatchId), "phase.json"));
 
         Assert.Equal(BatchPhase.Unknown, _store.LatestState(manifest.BatchId).Phase);
         Assert.DoesNotContain(_store.ListRecoverableManifests(),
@@ -430,7 +432,7 @@ public sealed class BatchGateStoreTests : IDisposable
         var run = new BatchGateRunRecord("run-1", manifest.BatchId,
             manifest.MembershipDigest, Base, Next, "full", "digest", "host", 1,
             ["dotnet test"], Now, evidence);
-        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+        BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Assembled, Next, 1, Now));
         _store.RecordRun(run);
         Assert.False(_store.CanRelease(member, manifest.BatchId, run.BatchRunId));

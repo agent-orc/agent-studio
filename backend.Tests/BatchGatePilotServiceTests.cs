@@ -109,7 +109,7 @@ public sealed class BatchGatePilotOperatorMoveTests : BatchGatePilotServiceTests
         var other = SeedMember(factory, "DOC-MOVE-GUARD-B", "docs/move-guard-b.md");
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         var batch = ClosePendingBatch(factory);
-        store.AppendState(new BatchGateState(batch.BatchId, batch.MembershipDigest,
+        BatchGateStates.Reach(store, new BatchGateState(batch.BatchId, batch.MembershipDigest,
             BatchPhase.Running, member.ResultSha, 1, _clock));
 
         var request = new MoveJobRequest { TargetState = TaskStates.Backlog };
@@ -1857,7 +1857,7 @@ public sealed class BatchGatePilotPublicationTests : BatchGatePilotServiceTests
         var c = SeedMember(factory, "DOC-RECOVER-C", "docs/recover-c.md");
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         var parent = ClosePendingBatch(factory);
-        store.AppendState(new BatchGateState(parent.BatchId, parent.MembershipDigest,
+        BatchGateStates.Reach(store, new BatchGateState(parent.BatchId, parent.MembershipDigest,
             BatchPhase.Running, null, 1, _clock));
         CloseChild([a.Key, b.Key], BatchPhase.Red);
         CloseChild([a.Key], BatchPhase.Green);
@@ -1886,7 +1886,7 @@ public sealed class BatchGatePilotPublicationTests : BatchGatePilotServiceTests
                 ParentBatchId = parent.BatchId,
             };
             store.CloseManifest(child);
-            store.AppendState(new BatchGateState(child.BatchId, digest, phase, null, 1, _clock));
+            BatchGateStates.Reach(store, new BatchGateState(child.BatchId, digest, phase, null, 1, _clock));
         }
     }
 
@@ -3402,7 +3402,7 @@ public sealed class BatchGatePilotRecoveryTests : BatchGatePilotServiceTests
         var manifest = ClosePendingBatch(factory);
         var running = new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Running, member.ResultSha, 1, _clock);
-        store.AppendState(running);
+        BatchGateStates.Reach(store, running);
         if (supersededReview) ReplaceDelivery(factory, member);
         else SaveContinuation(factory, member);
 
