@@ -320,6 +320,64 @@ test.describe('Project Deploy area (mocked)', () => {
     await capture(page, 'operations-older-release');
   });
 
+  test('Operations shows installation backups with the stale warning and the off-host copy in both themes (AGT-3574)', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z', environments: [],
+      dora: { successfulProductionDeploys: 0, deploysPerWeek: null, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: null, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    }));
+    const backup = (id: string, createdAt: string, verification: string, offHost: string) => ({
+      id, createdAt, sizeBytes: 412 * 1024 * 1024, sha256: 'a'.repeat(64), fileCount: 18_240,
+      verification, offHost, unsettledFiles: 0,
+    });
+    const newest = backup('studio-backup-20261019T060000Z-a1b2c3', '2026-10-19T06:00:00+00:00', 'verified', 'failed');
+    let stale = true;
+    await page.route('**/api/v1/management/backups', route => answer(route, {
+      state: stale ? 'failing' : 'ok', configured: true, running: false, keyId: '3f2a9c0d11e4b7a8', secretKeyId: '0b1c2d3e4f5a6b7c',
+      intervalHours: 6, verifyIntervalHours: 24, staleAfterHours: 12, retentionCount: 12,
+      nextBackupAt: '2026-10-20T06:00:00+00:00',
+      lastGood: newest, lastGoodAgeHours: stale ? 26 : 2, stale,
+      lastRun: { at: '2026-10-20T06:00:00+00:00', trigger: 'schedule', outcome: stale ? 'failed' : 'succeeded',
+        backupId: null, error: stale ? 'Backup source workspace is not readable.' : null, durationMilliseconds: 900 },
+      lastVerification: { at: '2026-10-19T06:10:00+00:00', backupId: newest.id, outcome: 'verified',
+        detail: 'Restored 18240 files and 3 checkout records into an empty staging host; every hash matched.' },
+      offHost: { kind: 'sftp', target: 'sftp://studio@backup.example:22/srv/studio-backups', state: stale ? 'failed' : 'current',
+        lastUploadedId: 'studio-backup-20261019T000000Z-9f8e7d', lastUploadedAt: '2026-10-19T00:01:00+00:00',
+        lastError: stale ? 'sftp exited with 255: Connection timed out' : null },
+      warnings: stale ? [
+        { code: 'backup-stale', severity: 'danger', message: 'The newest good backup is 26 hours old; the threshold is 12 hours.' },
+        { code: 'backup-failed', severity: 'danger', message: 'The last backup run failed: Backup source workspace is not readable.' },
+        { code: 'offhost-failed', severity: 'danger', message: 'The off-host copy failed: sftp exited with 255: Connection timed out' },
+      ] : [],
+      backups: [newest, backup('studio-backup-20261019T000000Z-9f8e7d', '2026-10-19T00:00:00+00:00', 'unverified', 'uploaded')],
+      generatedAt: '2026-10-20T08:00:00+00:00',
+    }));
+    await page.getByTestId('deploy-tab-operations').click();
+    const backups = page.getByTestId('operations-backups');
+    await expect(backups.getByTestId('operations-backups-state')).toHaveAttribute('data-state', 'failing');
+    await expect(backups.getByTestId('operations-backups-warnings').locator('[data-code="backup-stale"]')).toContainText('26 hours old');
+    await expect(backups.getByTestId('operations-backups-age')).toHaveAttribute('data-stale', 'true');
+    await expect(backups.getByTestId('operations-backups-age')).toContainText('26 h');
+    await expect(backups.getByTestId('operations-backups-size')).toContainText('412.0 MB');
+    await expect(backups.getByTestId('operations-backups-verification')).toContainText('Verified');
+    await expect(backups.getByTestId('operations-backups-offhost')).toContainText('Copy failed');
+    await expect(backups.getByTestId('operations-backups-offhost')).toContainText('sftp://studio@backup.example');
+    await expect(backups.getByTestId('operations-backups-list').locator('tbody tr')).toHaveCount(2);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      fs.mkdirSync(results, { recursive: true });
+      await backups.screenshot({ path: path.join(results, `operations-backups-stale-${theme}--mocked.png`) });
+    }
+
+    stale = false;
+    await backups.getByTestId('operations-backups-refresh').click();
+    await expect(backups.getByTestId('operations-backups-state')).toHaveAttribute('data-state', 'ok');
+    await expect(backups.getByTestId('operations-backups-warnings')).toHaveCount(0);
+    await expect(backups.getByTestId('operations-backups-offhost')).toContainText('Copied');
+    await backups.screenshot({ path: path.join(results, 'operations-backups-current-dark--mocked.png') });
+  });
+
   test('Operations shows deploy markers, DORA and telemetry empty state in both themes', async ({ page }) => {
     await openDeploy(page, fullMocks());
     const release = deployReleasesFixture()[0];

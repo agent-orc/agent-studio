@@ -761,6 +761,43 @@ function makeStatus(overrides: Partial<ProjectRunnerStatus> = {}): ProjectRunner
   };
 }
 
+describe('TaskColumnComponent · escalation bursts (AGT-3585)', () => {
+  it('groups an Escalated burst by cause with counts that add up to the lane and bulk actions per group', async () => {
+    await TestBed.configureTestingModule({
+      imports: [TaskColumnComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const park = (blockerType: string) =>
+      ({ blockerType, parkedAt: '2026-11-09T09:23:00Z' }) as TaskInfo['parkedBlocker'];
+    const jobs = [
+      makeJob({ id: 'a', taskKey: 'demo::a', state: '5e-escalated', parkedBlocker: park('stall-intervention') }),
+      makeJob({ id: 'b', taskKey: 'demo::b', state: '5e-escalated', parkedBlocker: park('missing-delivery') }),
+      makeJob({ id: 'c', taskKey: 'demo::c', state: '5e-escalated', parkedBlocker: park('stall-intervention') }),
+      makeJob({ id: 'd', taskKey: 'demo::d', state: '5e-escalated', parkedBlocker: park('missing-delivery') }),
+      makeJob({ id: 'e', taskKey: 'demo::e', state: '5e-escalated', parkedBlocker: null }),
+    ];
+    const fixture = TestBed.createComponent(TaskColumnComponent);
+    fixture.componentRef.setInput('title', 'Escalated');
+    fixture.componentRef.setInput('state', '5e-escalated');
+    fixture.componentRef.setInput('jobs', jobs);
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    const heads = [...root.querySelectorAll<HTMLElement>('[data-testid="lane-group-head"]')];
+    expect(heads.map(head => head.querySelector('[data-testid="lane-group-label"]')?.textContent?.trim()))
+      .toEqual(['Stall Intervention', 'Missing Delivery', 'Other escalations']);
+    const counts = heads.map(head => Number(head.querySelector('[data-testid="lane-group-count"]')?.textContent));
+    expect(counts).toEqual([2, 2, 1]);
+    expect(counts.reduce((sum, count) => sum + count, 0)).toBe(jobs.length);
+    const sections = [...root.querySelectorAll<HTMLElement>('[data-testid="escalation-burst"]')];
+    expect(sections.map(section => section.querySelectorAll('app-job-card').length)).toEqual([2, 2]);
+    expect(root.querySelectorAll('[data-testid="escalation-burst"] [data-testid="bulk-action-reissue-escalated"]'))
+      .toHaveLength(2);
+    expect(root.querySelector('[data-testid="escalation-rest"] [data-testid="bulk-lane-actions"]')).toBeNull();
+    expect(root.querySelector('[data-testid="lane-drop-slot-end"]')).toBeNull();
+  });
+});
+
 function makeJob(overrides: Partial<TaskInfo> = {}): TaskInfo {
   return {
     id: 'task-1',

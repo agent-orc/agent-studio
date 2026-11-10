@@ -26,7 +26,6 @@ public sealed class RemoteReviewWorkspace
     private readonly Action<string> _log;
     private readonly Func<string, Task<FailureFingerprintHistoryDto?>>? _historyReader;
     private readonly IReviewAgentCommandRunner _agentCommands;
-    private readonly Lock _cacheSaveLock = new();
     private readonly Func<DateTime> _utcNow;
     private readonly ISourceFactsClient? _sourceFacts;
     private string? _initialTree;
@@ -491,15 +490,21 @@ public sealed class RemoteReviewWorkspace
             var command = plannedCommand;
             if (ReviewCommandKinds.IsAgent(command.ExecutionKind))
             {
-                var prompt = AppendReviewMaterial(
+                var screenshots = string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase)
+                    ? VisualReviewScreenshotBundle.PromptSection(_visualScreenshotEvidence, RepositoryPath)
+                    : string.Empty;
+                var input = ReviewAspectInputBudget.Compose(
                     command.Prompt!,
                     reviewMaterial ??= await BuildReviewMaterialAsync(
-                        ReviewMaterialMaximumFiles,
-                        ReviewMaterialMaximumLines,
-                        ct));
-                if (string.Equals(command.Aspect, "visual-review", StringComparison.OrdinalIgnoreCase))
-                    prompt += VisualReviewScreenshotBundle.PromptSection(
-                        _visualScreenshotEvidence, RepositoryPath);
+                        ReviewMaterialMaximumFiles, ReviewMaterialMaximumLines, ct),
+                    screenshots);
+                var prompt = input.Prompt;
+                if (input.Report != "No review input omitted.")
+                    artifacts.Add(await WriteArtifactAsync(
+                        $"review-input-budget-{SafeSegment(command.StepId)}.txt",
+                        input.Report, includeContent: true, ct));
+                _log($"review-aspect-input step={command.StepId} characters={prompt.Length} " +
+                     $"limit={ReviewAspectInputBudget.MaximumCharacters} omissions={input.Report != "No review input omitted."}");
                 var budget = ReviewAspectBudgetPolicy.Derive(
                     command.CliType,
                     command.Model,
@@ -520,7 +525,6 @@ public sealed class RemoteReviewWorkspace
                 var disk = ComposeScenarioDiskGate(command.StepId);
                 if (!disk.Admit)
                 {
-                    SaveCaches(candidateCache);
                     throw await InfrastructureFailureAsync(
                         ComposeScenarioDiskAdmission.DiskLowClassification,
                         disk.RefusalSummary(command.StepId, CommandLine(command) ?? command.FileName),
@@ -570,7 +574,6 @@ public sealed class RemoteReviewWorkspace
                     ct,
                     command,
                     execution.AgentUsage));
-                SaveCaches(candidateCache);
                 throw await InfrastructureFailureAsync(
                     "AspectTimeout",
                     $"Review aspect '{command.StepId}' violated review-command budget on " +
@@ -608,7 +611,6 @@ public sealed class RemoteReviewWorkspace
                     ct,
                     command,
                     execution.AgentUsage));
-                SaveCaches(candidateCache);
                 throw await InfrastructureFailureAsync(
                     "CommandStalled",
                     $"Review command '{command.StepId}' produced no output for its whole silence " +
@@ -645,7 +647,6 @@ public sealed class RemoteReviewWorkspace
                     ct,
                     command,
                     execution.AgentUsage));
-                SaveCaches(candidateCache);
                 throw await InfrastructureFailureAsync(
                     NoCpuProgressClassification,
                     NoProgressSummary("Review command", command.StepId, CommandLine(command), execution),
@@ -654,8 +655,10 @@ public sealed class RemoteReviewWorkspace
                     ct);
             }
 
+            var cliRefusal = ReviewCliRefusalPolicy.Classify(command, execution.Process);
             if (MissingToolchain(execution.Process)
-                || AgentCommandUnavailable(command, execution.Process))
+                || AgentCommandUnavailable(command, execution.Process)
+                || cliRefusal is not null)
             {
                 commands.Add(await AddCommandEvidenceAsync(
                     command.StepId,
@@ -683,10 +686,9 @@ public sealed class RemoteReviewWorkspace
                 var lostScope = MissingCandidateScopes().FirstOrDefault(scope =>
                     scope.Reason is "deps-dir-missing" or "install-root-missing");
                 var remover = lostScope is null ? null : candidateDependencyRemovers.GetValueOrDefault(lostScope.Scope);
-                SaveCaches(candidateCache);
                 // AGT-3420: a CLI that refuses its model failed on the
                 // project's review setting, not on this host's toolchain.
-                if (AgentModelUnknownToCli(command, execution.Process))
+                if (cliRefusal is null && AgentModelUnknownToCli(command, execution.Process))
                     throw await InfrastructureFailureAsync(
                         ReviewModelConfigurationPolicy.Classification,
                         ReviewModelConfigurationPolicy.Summary(command.StepId, command.CliType, command.Model) +
@@ -695,10 +697,11 @@ public sealed class RemoteReviewWorkspace
                         artifacts,
                         ct);
                 throw await InfrastructureFailureAsync(
-                    lostScope is null ? "ToolUnavailable" : "DependencyDirectoryMissing",
+                    cliRefusal ?? (lostScope is null ? "ToolUnavailable" : "DependencyDirectoryMissing"),
                     lostScope is null
                         ? $"Review command '{command.StepId}' could not use its declared toolchain: " +
                           $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
+                          $"cause={cliRefusal ?? "tool unavailable"}; detail={FailureDetail(execution.Process)}; " +
                           $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}."
                         : $"Candidate dependency scope '{lostScope.Scope}' disappeared after step " +
                           $"'{remover ?? command.StepId}' while '{command.StepId}' ran; " +
@@ -731,7 +734,6 @@ public sealed class RemoteReviewWorkspace
                     ct,
                     command,
                     execution.AgentUsage));
-                SaveCaches(candidateCache);
                 throw await InfrastructureFailureAsync(
                     ReviewInfraAttributionPolicy.TmpMountTornDownClassification,
                     $"Review command '{command.StepId}' failed with a torn-down-/tmp signature " +
@@ -765,7 +767,8 @@ public sealed class RemoteReviewWorkspace
 
             if (!ReviewCommandKinds.IsAgent(command.ExecutionKind)
                 && execution.Signal is null
-                && execution.Process.ExitCode == 0
+                && (execution.Process.ExitCode == 0
+                    || ReviewTestReportPolicy.HasExplicitMissingReport(execution.Process))
                 && ReviewTestReportPolicy.Missing(command, execution.Process))
             {
                 commands.Add(await AddCommandEvidenceAsync(
@@ -775,8 +778,12 @@ public sealed class RemoteReviewWorkspace
                     "verification", "candidate-report-first", null, null, false, false, null,
                     artifacts, ct, command));
                 _log($"review candidate step={command.StepId} produced no test report; retrying once");
+                await EnsureRetryDependenciesAsync(
+                    RepositoryPath, "candidate", command.StepId, commands, artifacts, ct);
                 execution = await RunCommandAsync(command, RepositoryPath, ct);
                 retryPerformed = true;
+                await EnsureRetryDependenciesAsync(
+                    RepositoryPath, "candidate", command.StepId, commands, artifacts, ct);
                 if (execution.Signal is null && ReviewTestReportPolicy.Missing(command, execution.Process))
                 {
                     commands.Add(await AddCommandEvidenceAsync(
@@ -793,13 +800,14 @@ public sealed class RemoteReviewWorkspace
                         ? ReviewTestReportPolicy.SetupChangeReason(diff.StdOut.Split(
                             ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
                         : null;
-                    var reportPath = Path.Combine(ArtifactPath, ArtifactName("candidate", command.StepId, "stdout"));
+                    var reportPath = ReviewTestReportPolicy.MissingReportPath(
+                        execution.Process,
+                        Path.Combine(ArtifactPath, ArtifactName("candidate", command.StepId, "stdout")));
                     var summary = $"Review test step '{command.StepId}' exited {execution.Process.ExitCode} " +
                         $"without a parseable test report after one retry; " +
                         $"{ReviewTestReportPolicy.MissingPhase(execution.Process)}; report path: {reportPath}.";
                     if (reason is null)
                     {
-                        SaveCaches(candidateCache);
                         throw await InfrastructureFailureAsync(
                             ReviewTestReportPolicy.MissingReportClassification,
                             summary, commands, artifacts, ct);
@@ -837,7 +845,6 @@ public sealed class RemoteReviewWorkspace
                         "verification", "candidate", comparison.BaselineSha, comparison,
                         retryPerformed: false, dependencyCacheHit: false, dependencyCache: null,
                         artifacts, ct, command));
-                    SaveCaches(candidateCache);
                     throw await InfrastructureFailureAsync(
                         execution.Signal == "timeout" || execution.Process.ExitCode == 124
                             ? "CommandTimeout" : "CommandInterrupted",
@@ -884,7 +891,6 @@ public sealed class RemoteReviewWorkspace
                             dependencyCache: null,
                             artifacts,
                             ct));
-                        SaveCaches(candidateCache);
                         throw await InfrastructureFailureAsync(
                             "ToolUnavailable",
                             $"Review retry '{command.StepId}' lost its declared toolchain; " +
@@ -904,7 +910,6 @@ public sealed class RemoteReviewWorkspace
                             "verification", "candidate", comparison.BaselineSha, comparison,
                             retryPerformed: true, dependencyCacheHit: false, dependencyCache: null,
                             artifacts, ct, command));
-                        SaveCaches(candidateCache);
                         throw await InfrastructureFailureAsync(
                             cleanRepeat.Signal == "timeout" || cleanRepeat.Process.ExitCode == 124
                                 || execution.Signal == "timeout" || execution.Process.ExitCode == 124
@@ -937,7 +942,6 @@ public sealed class RemoteReviewWorkspace
                             dependencyCache: null,
                             artifacts,
                             ct));
-                        SaveCaches(candidateCache);
                         throw await InfrastructureFailureAsync(
                             NoCpuProgressClassification,
                             NoProgressSummary(
@@ -972,7 +976,6 @@ public sealed class RemoteReviewWorkspace
                             dependencyCache: null,
                             artifacts,
                             ct));
-                        SaveCaches(candidateCache);
                         throw await InfrastructureFailureAsync(
                             ReviewInfraAttributionPolicy.TmpMountTornDownClassification,
                             $"Review retry '{command.StepId}' failed with a torn-down-/tmp signature " +
@@ -1743,8 +1746,7 @@ public sealed class RemoteReviewWorkspace
 
             if (StalledWithoutCpuProgress(execution))
             {
-                foreach (var message in cache.Save()) _log(message);
-                throw await InfrastructureFailureAsync(
+                var failure = await InfrastructureFailureAsync(
                     NoCpuProgressClassification,
                     NoProgressSummary(
                         "Dependency preparation",
@@ -1754,11 +1756,12 @@ public sealed class RemoteReviewWorkspace
                     commands,
                     artifacts,
                     ct);
+                foreach (var message in cache.Save()) _log(message);
+                throw failure;
             }
 
             if (!execution.Process.Success || execution.Signal is not null)
             {
-                foreach (var message in cache.Save()) _log(message);
                 var summary =
                     $"Dependency preparation '{command.StepId}' failed: " +
                     $"command={CommandLine(command)}; exit={execution.Process.ExitCode}; " +
@@ -1766,12 +1769,14 @@ public sealed class RemoteReviewWorkspace
                     $"budget={BudgetSummary(command.TimeoutSeconds, execution)}; " +
                     $"stdout={ArtifactName(workspaceRole, command.StepId, "stdout")}; " +
                     $"stderr={ArtifactName(workspaceRole, command.StepId, "stderr")}.";
-                throw await InfrastructureFailureAsync(
+                var failure = await InfrastructureFailureAsync(
                     "PreparationFailed",
                     summary,
                     commands,
                     artifacts,
                     ct);
+                foreach (var message in cache.Save()) _log(message);
+                throw failure;
             }
         }
 
@@ -1925,10 +1930,30 @@ public sealed class RemoteReviewWorkspace
         var finalHead = await GitValueAsync("rev-parse", "HEAD", ct);
         var finalTree = await GitValueAsync("rev-parse", "HEAD^{tree}", ct);
         var status = await GitValueAsync("status", "--porcelain", "--untracked-files=all", ct);
+        var cacheDirectories = (_subject.Plan.Preparation ?? [])
+            .SelectMany(command => command.DependencyScopes ?? [])
+            .SelectMany(scope => new[]
+            {
+                Path.Combine(scope.WorkingSubdir, DependencyPreparationState.DependencyDirectoryName),
+                Path.Combine(scope.WorkingSubdir, ".angular"),
+            })
+            .Concat(_subject.Plan.PreserveGlobs ?? [])
+            .Where(path => !path.Contains('*') && !path.Contains('?'))
+            .Select(path => path.Replace('\\', '/').Trim('/'))
+            .Where(path => path.Length > 0)
+            .ToArray();
         var productChanges = status.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-            .Where(line => !line.Trim().EndsWith(
-                DependencyPreparationState.MarkerFileName,
-                StringComparison.Ordinal))
+            .Where(line =>
+            {
+                var path = line.Length > 3 ? line[3..].Replace('\\', '/') : line.Trim();
+                if (path.EndsWith(DependencyPreparationState.MarkerFileName, StringComparison.Ordinal))
+                    return false;
+                // Evidence can be captured before the final cache save. These
+                // generated directories do not make the product tree dirty.
+                return !cacheDirectories.Any(directory =>
+                    path.Equals(directory, StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith(directory + '/', StringComparison.OrdinalIgnoreCase));
+            })
             .ToArray();
         var dirtyAfter = productChanges.Length > 0
                          || !string.Equals(finalHead, _subject.ExpectedResultSha, StringComparison.OrdinalIgnoreCase)
@@ -2224,7 +2249,6 @@ public sealed class RemoteReviewWorkspace
                 ct));
             if (MissingToolchain(execution.Process))
             {
-                SaveCaches(baselineCache);
                 throw await InfrastructureFailureAsync(
                     "ToolUnavailable",
                     $"Baseline review command '{command.StepId}' could not use its declared toolchain: " +
@@ -2236,7 +2260,6 @@ public sealed class RemoteReviewWorkspace
             }
             if (StalledWithoutCpuProgress(execution))
             {
-                SaveCaches(baselineCache);
                 throw await InfrastructureFailureAsync(
                     NoCpuProgressClassification,
                     NoProgressSummary(
@@ -2254,7 +2277,6 @@ public sealed class RemoteReviewWorkspace
                     $"Baseline command '{command.StepId}' did not complete normally.",
                     baselineSha,
                     command);
-                SaveCaches(baselineCache);
                 throw await InfrastructureFailureAsync(
                     unavailable.Classification,
                     unavailable.Message,
@@ -2262,22 +2284,28 @@ public sealed class RemoteReviewWorkspace
                     artifacts,
                     ct);
             }
+            if (ReviewTestReportPolicy.Missing(command, execution.Process))
+            {
+                _log($"review baseline step={command.StepId} produced no test report; retrying once");
+                await EnsureRetryDependenciesAsync(
+                    baselinePath, "baseline", command.StepId, commands, artifacts, ct);
+                execution = await RunCommandAsync(command, baselinePath, ct, environment);
+                commands.Add(await AddCommandEvidenceAsync(
+                    command.StepId, command.Aspect, command.FileName, command.Arguments,
+                    baselineHead, baselineTree, execution.Process, execution.StartedAt,
+                    execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
+                    "verification", workspaceRole + "-report-retry", baselineSha, null, true, false, null,
+                    artifacts, ct));
+                await EnsureRetryDependenciesAsync(
+                    baselinePath, "baseline", command.StepId, commands, artifacts, ct);
+            }
         }
         finally
         {
+            // The report retry must finish before this move removes the
+            // baseline's dependency directories from its workspace.
             if (baselineCache is not null)
                 foreach (var message in baselineCache.Save()) _log(message);
-        }
-        if (ReviewTestReportPolicy.Missing(command, execution.Process))
-        {
-            _log($"review baseline step={command.StepId} produced no test report; retrying once");
-            execution = await RunCommandAsync(command, baselinePath, ct, environment);
-            commands.Add(await AddCommandEvidenceAsync(
-                command.StepId, command.Aspect, command.FileName, command.Arguments,
-                baselineHead, baselineTree, execution.Process, execution.StartedAt,
-                execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
-                "verification", workspaceRole + "-report-retry", baselineSha, null, true, false, null,
-                artifacts, ct));
         }
         var failures = BaselineFailures(command, execution.Process);
         if (ReviewTestReportPolicy.Missing(command, execution.Process))
@@ -2289,7 +2317,7 @@ public sealed class RemoteReviewWorkspace
             var unavailable = BaselineUnavailable(
                 UnrunBaselineSummary(command, execution.Process) +
                 $"; {ReviewTestReportPolicy.MissingPhase(execution.Process)}" +
-                $"; report path: {Path.Combine(ArtifactPath, ArtifactName(workspaceRole + "-report-retry", command.StepId, "stdout"))}",
+                $"; report path: {ReviewTestReportPolicy.MissingReportPath(execution.Process, Path.Combine(ArtifactPath, ArtifactName(workspaceRole + "-report-retry", command.StepId, "stdout")))}",
                 baselineSha,
                 command);
             throw await InfrastructureFailureAsync(
@@ -2937,12 +2965,28 @@ public sealed class RemoteReviewWorkspace
         return HashText(text.ToString());
     }
 
-    private void SaveCaches(params DependencyCacheSession?[] sessions)
+    private async Task EnsureRetryDependenciesAsync(
+        string workspacePath,
+        string workspaceRole,
+        string stepId,
+        ICollection<ReviewCommandEvidenceDto> commands,
+        ICollection<ReviewArtifactEvidenceDto> artifacts,
+        CancellationToken ct)
     {
-        // Two aspects that fail at the same time both save the candidate cache.
-        lock (_cacheSaveLock)
-            foreach (var session in sessions.Where(item => item is not null).Cast<DependencyCacheSession>())
-                foreach (var message in session.Save()) _log(message);
+        foreach (var scope in (_subject.Plan.Preparation ?? [])
+                     .SelectMany(command => command.DependencyScopes ?? []))
+        {
+            var installRoot = ResolveWorkingDirectory(workspacePath, scope.WorkingSubdir);
+            if (Directory.Exists(Path.Combine(
+                    installRoot, DependencyPreparationState.DependencyDirectoryName)))
+                continue;
+            var name = string.IsNullOrWhiteSpace(scope.WorkingSubdir) ? "." : scope.WorkingSubdir;
+            throw await InfrastructureFailureAsync(
+                "DependencyDirectoryMissing",
+                $"Review harness defect: declared dependency scope '{name}' is missing " +
+                $"during the {workspaceRole} report retry of '{stepId}'.",
+                commands, artifacts, ct);
+        }
     }
 
     /// <summary>
@@ -3189,15 +3233,6 @@ public sealed class RemoteReviewWorkspace
     /// <c>ReviewAspectCachePrompt</c>; the review material replaces it.
     /// </summary>
     internal const string SharedMaterialMarker = "<!-- remote-review-shared-material-v1 -->";
-
-    private static string AppendReviewMaterial(string prompt, string reviewMaterial)
-    {
-        var markerAt = prompt.IndexOf(SharedMaterialMarker, StringComparison.Ordinal);
-        if (markerAt < 0)
-            return prompt.TrimEnd() + PromptText.NewLine + PromptText.NewLine + reviewMaterial;
-        return prompt[..markerAt] + reviewMaterial + PromptText.NewLine + PromptText.NewLine
-               + prompt[(markerAt + SharedMaterialMarker.Length)..].TrimStart();
-    }
 
     /// <summary>
     /// Renders the prompt section from a diff object. The text depends only on

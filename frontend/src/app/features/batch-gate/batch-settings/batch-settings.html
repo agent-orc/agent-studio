@@ -1,4 +1,4 @@
-<section class="batch-settings" aria-labelledby="batch-settings-title" data-testid="batch-settings">
+<section class="batch-settings" id="batch-settings" aria-labelledby="batch-settings-title" data-testid="batch-settings">
   <header><h3 id="batch-settings-title">Batch verification</h3>
     <p>Cards keep their own model review. After review, eligible cards wait while a planner groups them. One full suite tests the combined candidate before publication.</p>
   </header>
@@ -7,9 +7,13 @@
   @if (settings(); as form) {
     <form (ngSubmit)="save()">
       <fieldset><legend>Enable and scope</legend>
-        <label><input type="checkbox" name="enabled" [ngModel]="form.enabled" (ngModelChange)="update('enabled', $event)"> Enable batch verification</label>
-        <label>Scope <select name="scope" [ngModel]="form.scope" (ngModelChange)="update('scope', $event)" [attr.aria-invalid]="invalid('scope')"><option value="documentation">Documentation</option><option value="code">Code</option></select></label>
+        <label><input type="checkbox" name="enabled" data-testid="batch-settings-enabled" [ngModel]="form.enabled" (ngModelChange)="setEnabled($event)"> Enable batch verification</label>
+        <label>Scope <select name="scope" data-testid="batch-settings-scope" [ngModel]="form.scope" (ngModelChange)="setScope($event)" [attr.aria-invalid]="invalid('scope')" aria-describedby="batch-scope-help"><option value="documentation">Documentation</option><option value="code">Code</option></select></label>
         @if (invalid('scope')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+        @if (scopeDefaulted()) {
+          <p class="batch-settings__scope-note" role="status" data-testid="batch-settings-scope-defaulted">Scope set to Code. Choose Documentation to batch only documentation cards.</p>
+        }
+        <p id="batch-scope-help">Code batches every reviewed card. Documentation batches only cards that change documentation.</p>
       </fieldset>
       <fieldset><legend>Planner and bounds</legend>
         <p>The planner waits for enough cards or a deadline. Look ahead also considers cards likely to finish soon.</p>
@@ -31,8 +35,16 @@
       <fieldset><legend>Risk and overlap</legend>
         <label>Risk policy <select name="riskPolicy" [ngModel]="form.riskPolicy" (ngModelChange)="update('riskPolicy', $event)" [attr.aria-invalid]="invalid('riskPolicy')"><option value="conservative">Conservative</option><option value="balanced">Balanced</option><option value="aggressive">Aggressive</option></select></label>
         @if (invalid('riskPolicy')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+        <label>Calibration <select name="calibration" data-testid="batch-settings-calibration" [ngModel]="form.calibration" (ngModelChange)="update('calibration', $event)" [attr.aria-invalid]="invalid('calibration')" aria-describedby="batch-calibration-help"><option value="empirical">Empirical</option><option value="legacy">Legacy</option></select></label>
+        @if (invalid('calibration')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+        <p id="batch-calibration-help">Empirical adjusts batch size and the risk limit from recorded batch verdicts. Legacy keeps the fixed rule.</p>
         <label>Overlapping work <select name="overlap" [ngModel]="form.overlap" (ngModelChange)="update('overlap', $event)" [attr.aria-invalid]="invalid('overlap')"><option value="adjacent">Keep adjacent</option><option value="separate">Separate</option></select></label>
         @if (invalid('overlap')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+      </fieldset>
+      <fieldset><legend>Stacking</legend>
+        <p id="batch-stacking-help">One successor lets the next formed batch test on the running batch's candidate in a spare gate slot. It publishes only after that batch. Keep at least two gate slots.</p>
+        <label>Stacked batches <select name="stacking" data-testid="batch-settings-stacking" [ngModel]="form.stacking" (ngModelChange)="update('stacking', $event)" [attr.aria-invalid]="invalid('stacking')" aria-describedby="batch-stacking-help"><option value="off">Off</option><option value="1">One successor</option></select></label>
+        @if (invalid('stacking')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
       </fieldset>
       <fieldset><legend>Review test level</legend>
         <label>Before batch <select name="reviewTestLevel" [ngModel]="form.reviewTestLevel" (ngModelChange)="update('reviewTestLevel', $event)" [attr.aria-invalid]="invalid('reviewTestLevel')"><option value="work-package">Work package</option><option value="build-only">Build only</option></select></label>

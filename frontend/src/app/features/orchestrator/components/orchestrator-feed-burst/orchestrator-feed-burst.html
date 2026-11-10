@@ -1,0 +1,27 @@
+@if (burst(); as burst) {
+  <button type="button"
+          class="feed-burst"
+          data-testid="orchestrator-feed-burst"
+          [attr.data-entry-kind]="burst.kind"
+          [attr.data-count]="burst.entries.length"
+          [attr.aria-expanded]="expanded()"
+          [class.feed-burst--selected]="selected()"
+          [class.feed-burst--alert]="burst.kind === 'alert'"
+          [class.feed-burst--intervention]="burst.kind === 'intervention'"
+          [class.feed-burst--action]="burst.kind === 'action'"
+          (click)="toggleRequest.emit(burst)">
+    <app-disclosure-marker [open]="expanded()" />
+    <time class="feed-burst__time" [attr.datetime]="burst.newestTs">{{ formatClock(burst.newestTs) }}</time>
+    <span class="feed-burst__projects" [cacTooltip]="burst.projects.join(', ')">
+      @for (project of burst.projects; track project) {
+        <i [style.background]="projectColor(project)" aria-hidden="true"></i>
+      }
+    </span>
+    <span class="feed-burst__kind">{{ kindLabel(burst.kind) }}</span>
+    <span class="feed-burst__summary">
+      <strong class="feed-burst__count" data-testid="orchestrator-feed-burst-count">{{ countLabel(burst) }}</strong>
+      <span class="feed-burst__label" data-testid="orchestrator-feed-burst-label">{{ burst.label }}</span>
+    </span>
+    <span class="feed-burst__span">{{ span(burst) }}</span>
+  </button>
+}

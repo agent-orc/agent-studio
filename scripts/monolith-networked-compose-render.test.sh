@@ -150,6 +150,24 @@ for name, (caddyfile, allow_direct, public_edge, restart_policy) in expected.ite
     assert api['environment']['Security__PublicCloudflareEdge'] == public_edge, api['environment']
     assert 'ports' not in api and 'ports' not in frontend, 'only the edge may publish ports'
     assert env['STUDIO_BACKUP_DESTINATION'] == '', (name, env)
+    # AGT-3574: scheduled backups with a key outside the data directory and read-only sources.
+    backup_key_dir = os.path.join(work, name, 'stack', 'keys', 'backup')
+    assert env['STUDIO_BACKUP_KEY_DIR'] == backup_key_dir, (name, env)
+    assert env['STUDIO_BACKUP_TARGET'] == 'none', (name, env)
+    backup_key = os.path.join(backup_key_dir, 'backup.key')
+    assert os.stat(backup_key).st_mode & 0o777 == 0o600, oct(os.stat(backup_key).st_mode)
+    with open(backup_key, encoding='ascii') as handle:
+        assert len(base64.b64decode(handle.read().strip(), validate=True)) == 32
+    api_mounts = {volume['target']: volume for volume in api['volumes']}
+    assert api_mounts['/run/secrets/studio-backup']['source'] == backup_key_dir, api_mounts
+    assert api_mounts['/run/secrets/studio-backup'].get('read_only') is True, api_mounts
+    for target in ('/run/backup-sources/stack', '/run/backup-sources/caddy-data', '/run/backup-sources/origin-pull', '/run/backup-target'):
+        assert api_mounts[target].get('read_only') is True, (target, api_mounts)
+    assert api_mounts['/data/backups']['source'] == os.path.join(data_dir, 'backups'), api_mounts
+    assert os.stat(os.path.join(data_dir, 'backups')).st_mode & 0o777 == 0o700
+    assert api['environment']['Backup__KeyFile'] == '/run/secrets/studio-backup/backup.key', api['environment']
+    assert api['environment']['Backup__Sources__stack__Exclude__0'] == 'keys', api['environment']
+    assert api['environment']['Backup__Target__Kind'] == 'none', api['environment']
 print('Compose render passed for public, Cloudflare, direct-access and private modes.')
 PY
 

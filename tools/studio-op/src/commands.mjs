@@ -345,6 +345,24 @@ export const COMMANDS = {
     },
   },
 
+  backups: {
+    summary: 'Installation backups: last good backup, age, restore verification, off-host copy and warnings.',
+    spec: {},
+    async run(ctx) {
+      const backups = await ctx.client.request('GET', '/api/operator/backups');
+      const good = backups.lastGood;
+      return { data: backups, text: lines(
+        `backups ${backups.state}${backups.running ? ' (running)' : ''}`,
+        good ? `last good ${good.id} at ${good.createdAt}, ${backups.lastGoodAgeHours} h old, ${good.sizeBytes} bytes`
+          : 'last good: none',
+        backups.lastVerification
+          ? `restore verification ${backups.lastVerification.outcome} at ${backups.lastVerification.at}`
+          : 'restore verification: not run yet',
+        `off-host ${backups.offHost?.kind ?? 'none'}: ${backups.offHost?.state ?? 'unknown'}`,
+        (backups.warnings ?? []).map(warning => `warning ${warning.code}: ${warning.message}`)) };
+    },
+  },
+
   security: {
     summary: 'The installation security view, read only: entries ranked by severity, what needs action soon, and their facts.',
     spec: { soon: 'boolean' },

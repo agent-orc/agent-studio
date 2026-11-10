@@ -1,6 +1,7 @@
 /** Execution Hosts feature public API (AGT-1921). ADR-0034 barrel. */
 export { RemoteHostsService } from './services/remote-hosts.service';
-export { claimLoadGateLabel } from './models/claim-load-gate';
+export { claimLoadGateLabel, hostsNotClaiming, notClaimingLabel } from './models/claim-load-gate';
+export type { ClaimGateEvent } from './models/claim-load-gate';
 export { ReviewQueueService } from './services/review-queue.service';
 export type { ReviewQueueSnapshot } from './services/review-queue.service';
 export { ProviderAuthStatusService } from './services/provider-auth-status.service';

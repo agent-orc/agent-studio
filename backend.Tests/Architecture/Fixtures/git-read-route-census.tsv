@@ -117,6 +117,8 @@
 /api/integrations/quality-studio/connection	free	-	-	-
 /api/integrations/quality-studio/open	free	-	-	-
 /api/integrations/quality-studio/status	free	-	-	-
+/api/operator/attention	free	-	-	-
+/api/operator/backups	free	-	-	-
 /api/operator/batch-triage	free	-	-	-
 /api/operator/capacity	free	-	-	-
 /api/operator/decisions	free	-	-	-
@@ -147,6 +149,7 @@
 /api/pipeline/accepted-integration-alert	free	-	-	-
 /api/pipeline/integration-bounce/metrics	free	-	-	-
 /api/projects	free	-	-	-
+/api/projects/execution-capability	free	-	-	-
 /api/projects/pipeline-catalogue	reachable	frozen	Pipeline	Pipeline reads from the Git fact store
 /api/projects/settings	free	-	-	-
 /api/projects/{projId:regex(^PROJ-\d{{3,}}$)}	free	-	-	-
@@ -216,6 +219,7 @@
 /api/projects/{projectName}/environments/{environmentId}/telemetry/tokens	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/environments/{environmentId}/volumes/	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/execution	free	-	-	-
+/api/projects/{projectName}/execution/proposal-preview	free	-	-	-
 /api/projects/{projectName}/gate-result-cache	free	-	-	-
 /api/projects/{projectName}/graph	free	-	-	-
 /api/projects/{projectName}/lane-sort-strategies	free	-	-	-
@@ -414,6 +418,8 @@
 /api/token-pricing/unpriced-models	free	-	-	-
 /api/usage/cockpit	free	-	-	-
 /api/v1/gates/subjects/{subjectId}	free	-	-	-
+/api/v1/management/backups	free	-	-	-
+/api/v1/management/claim-gate-events	free	-	-	-
 /api/v1/management/credential-inventory	free	-	-	-
 /api/v1/management/device-logins/{handle}	free	-	-	-
 /api/v1/management/diagnostics	free	-	-	-
