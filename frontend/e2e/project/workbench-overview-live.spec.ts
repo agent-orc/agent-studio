@@ -351,9 +351,8 @@ test('project and central overviews receive a newly created item without reloadi
     await expect(treeItem).toContainText('1 open');
     await expect(page.getByTestId(`workbench-overview-item-${projectName}-${id}`)).toBeVisible();
 
-    const overviewUrl = page.url();
     await page.getByTestId(`workbench-overview-open-${projectName}-${id}`).click();
-    await expect(page).toHaveURL(overviewUrl);
+    await expect(page).toHaveURL(new RegExp(`/workbenches/${id}$`));
     await expect(page.getByTestId('workbench-viewer')).toBeVisible();
     await expect(page.frameLocator('[data-testid="workbench-viewer-frame"]')
       .locator('[data-studio-decision-control]')).toHaveCount(2);
