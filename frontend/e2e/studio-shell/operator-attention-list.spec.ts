@@ -122,6 +122,7 @@ test.describe('Operator attention list', () => {
       row('3', 'human-review.ready', 'AGT-9003', 'AGT-9003 is ready for human review.'),
       row('4', 'batch.red', null, 'Batch b-17 is red: 3 tests failed.'),
       row('5', 'batch.isolating', null, 'Batch b-17 isolates its red members in 2 diagnostic batches.'),
+      row('10', 'batch-gate.stuck', null, 'Batch b-18 is running for 151 min with 4 pending members. No automatic next step is recorded.'),
       row('6', 'push.pending-overdue', 'AGT-9004', 'Push of AGT-9004 has been pending for 14 minutes: remote rejected.'),
       row('7', 'quota.exhausted', null, 'claude reached its provider limit until 12:00: rate limited', null),
       row('8', 'quota.fallback-active', 'AGT-9005', 'AGT-9005 runs on the codex fallback.'),
@@ -147,6 +148,8 @@ test.describe('Operator attention list', () => {
         ]);
         for (const reason of await list.getByTestId('attention-row-reason').allTextContents())
           expect(reason.trim().length).toBeGreaterThan(0);
+        await expect(list.locator('[data-attention-type="batch-gate.stuck"] [data-testid="attention-row-action"]'))
+          .toHaveText('Open batch panel');
         await expect(list.getByTestId('attention-row-action')).toHaveCount(items.length);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         await screenshot(page, `attention-classes-${viewport.width}-${theme}`);
@@ -156,6 +159,12 @@ test.describe('Operator attention list', () => {
     }
 
     await page.setViewportSize({ width: 1280, height: 800 });
+    await openAndReconcile(page);
+    await page.locator('[data-attention-type="batch-gate.stuck"] [data-testid="attention-row-action"]').click();
+    await expect(page.getByTestId('studio-attention-list')).toBeHidden();
+    await expect(page.getByTestId('batch-panel')).toBeVisible();
+    await expect(page.getByTestId('batch-panel').getByText('alpha', { exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
     await openAndReconcile(page);
     await page.getByTestId('attention-group-host').getByTestId('attention-row-action').click();
     // The hosts section lives in the Environment settings surface.
