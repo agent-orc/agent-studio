@@ -328,11 +328,9 @@ test.describe('Human Review acceptance readiness', () => {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
       if (width === 1280) await openBoard(page);
       if (width === 390) {
-        // On a phone the group switcher selects the one visible container.
-        const decide = page.getByTestId('board-group-switch-decide');
-        await decide.click();
-        await expect(decide).toHaveAttribute('aria-pressed', 'true');
-        await expect(page.getByTestId('lane-group-decide')).toBeVisible();
+        // On a phone the board shows one lane chosen by its lane selector.
+        await page.getByRole('combobox', { name: 'Board lane' }).selectOption({ label: 'Human review' });
+        await expect(page.getByTestId('lane-5-human-review')).toBeVisible();
         await expect(page.getByTestId('acceptance-accept-ready')).toBeInViewport();
       }
       for (const theme of ['light', 'dark'] as const) {
