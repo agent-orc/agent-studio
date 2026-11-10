@@ -23,6 +23,7 @@ import {
   TriageButton,
   laneLabelFor,
   mergeAcceptViewFor,
+  acceptanceHoldReason,
   overflowActionsFor,
   primaryActionFor,
   triageDecisionRefusal,
@@ -243,21 +244,14 @@ export class DetailHeaderComponent {
     return this.mergeAcceptView()?.acceptLabel ?? p.label;
   });
 
-  /**
-   * Primary-action ids whose label and effect depend on the live git landed
-   * status. The Human Review acceptance (`mark-done`) is the sole one today: it
-   * must not act while the git status is still loading (AGT-2006).
-   */
+  /** Primary-action ids held while their integration verdict is unknown. */
   private readonly GIT_DEPENDENT_PRIMARY_IDS: ReadonlySet<string> = new Set(['mark-done']);
-
-  /**
-   * True when the current primary depends on git status that is still loading.
-   * Drives the button's disabled + skeleton state so the acceptance action is
-   * held back until the branch/merge truth resolves, then switches atomically.
-   */
+  /** A fresh verdict releases Accept even if provenance is still loading. */
   readonly primaryAwaitingGit = computed(() => {
     const p = this.triagePrimary();
-    return !!p && this.GIT_DEPENDENT_PRIMARY_IDS.has(p.id) && this.gitInfoLoading();
+    const status = this.info().integration?.status;
+    return !!p && this.GIT_DEPENDENT_PRIMARY_IDS.has(p.id) && this.gitInfoLoading()
+      && status !== 'integrated' && status !== 'not-applicable';
   });
   readonly primaryBlockedByIntegration = computed(() => {
     const status = this.info().integration?.status;
@@ -324,10 +318,10 @@ export class DetailHeaderComponent {
   primaryTooltip(): string {
     const p = this.triagePrimary();
     if (!p) return '';
-    if (this.primaryAwaitingGit()) return 'Checking git status — action available once loaded.';
     if (this.mutationsBlocked()) return 'Update in progress — actions paused.';
     const refusal = this.primaryDecisionRefusal();
     if (refusal) return refusal;
+    if (this.primaryBlockedByIntegration()) return acceptanceHoldReason(this.info());
     const label = this.primaryLabel();
     if (this.triageActingId() === p.id) return `${label}…`;
     const merge = this.mergeAcceptView();

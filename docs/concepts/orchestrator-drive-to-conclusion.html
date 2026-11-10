@@ -3156,6 +3156,13 @@
           <td>The control plane had no provider login by design. Its short completion paths still used local process execution instead of the accepted coding or review host.</td>
           <td>The observed terminal was a degraded Result summary; other short completions failed. Networked one-shots now travel as bounded Task Server jobs. A host claims only with fresh <code>model-acceptance:&lt;cli&gt;:&lt;model&gt;</code> evidence. With no host, the Result reports <code>waiting for a host with &lt;capability&gt;</code> and defers without spending the summary retry budget. A later accepted host lets the retry complete.</td>
         </tr>
+        <tr id="case-cause-breaker-recheck-newest-delivery">
+          <td>2026-11-09</td>
+          <td><code>AGT-3617</code><br><span class="small">cause-breaker-recheck-newest-delivery</span></td>
+          <td>Newcomer playthrough AGT-3560 (H1): with the breaker open, held cards read "Waiting for review slot &middot; position 1" while the review host was idle. "Move to Accepted" on intervention card DEMO-2 returned 409 for a missing delivery brief and content verdict. The probe always released the oldest card, whose delivery still carried the broken test, so it failed twice.</td>
+          <td>The probe ordered waiting cards by park time, no UI read <code>/api/cause-breakers</code>, the CURRENT line ignored the cause-wait marker, and a plain move of a code-free intervention card hit the content check meant for deliveries.</td>
+          <td>The breaker cleared only after the first card was deleted. The CURRENT line now says "Held behind &lt;key&gt;: &lt;cause&gt;" with a link, the intervention card offers "Re-check now", the probe takes the newest waiting delivery or the card the owner chose, and the owner's Accepted move on a code-free intervention completes as a recorded decision that closes the breaker.</td>
+        </tr>
       </tbody>
     </table>
 

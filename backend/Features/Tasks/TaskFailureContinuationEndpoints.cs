@@ -16,11 +16,14 @@ public static class TaskFailureContinuationEndpoints
             TaskScannerService scanner,
             AgentStudio.Registry.ProjectRegistry projects,
             TaskListGitProjectionCache gitProjection,
+            AgentStudio.Pipeline.BatchIsolationGuard isolation,
             TaskFailureContinuationService continuations) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var job = scanner.FindJob(jobId, watchPath);
             if (job is null) return Results.NotFound(new { error = "Task not found." });
+            if (isolation.Find(job) is { } isolating)
+                return Results.Ok(new { available = false, reason = AgentStudio.Pipeline.BatchIsolationGuardPolicy.Message(isolating), isolationActive = true });
             // The published status the task detail renders, not a live git read.
             var refusal = continuations.Check(job, gitProjection.ReadTask(job).Data?.Integration);
             return Results.Ok(new { available = refusal is null, reason = refusal });
@@ -32,12 +35,16 @@ public static class TaskFailureContinuationEndpoints
             string? watchPath,
             TaskScannerService scanner,
             AgentStudio.Registry.ProjectRegistry projects,
+            AgentStudio.Pipeline.BatchIsolationGuard isolation,
             TaskFailureContinuationService continuations,
             CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var job = scanner.FindJob(jobId, watchPath);
             if (job is null) return Results.NotFound(new { error = "Task not found." });
+            if (isolation.Find(job) is { } isolating)
+                return Results.Json(AgentStudio.Pipeline.BatchIsolationGuardPolicy.Body(isolating),
+                    statusCode: StatusCodes.Status409Conflict);
 
             var result = await continuations.ContinueAsync(job, "operator-failure-panel", automatic: false, ct);
             if (!result.Accepted)

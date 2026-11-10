@@ -43,15 +43,17 @@ async function gotoStudio(page: Page): Promise<void> {
 
 /** Opens the list and checks the header count against the visible rows and group counts. */
 async function openAndReconcile(page: Page): Promise<number> {
-  const count = Number((await page.getByTestId('studio-attention-count').textContent())?.trim());
   await page.getByTestId('studio-attention-trigger').click();
   const list = page.getByTestId('studio-attention-list');
   await expect(list).toBeVisible();
-  await expect(list.getByTestId('attention-row')).toHaveCount(count);
-  const groupCounts = await list.getByTestId('attention-count-in-group').allTextContents();
-  expect(groupCounts.reduce((sum, value) => sum + Number(value.trim()), 0)).toBe(count);
-  await expect(page.getByTestId('studio-attention-count')).toHaveText(String(count));
-  return count;
+  await expect.poll(async () => {
+    const count = Number((await page.getByTestId('studio-attention-count').textContent())?.trim());
+    const rows = await list.getByTestId('attention-row').count();
+    const groups = (await list.getByTestId('attention-count-in-group').allTextContents())
+      .reduce((sum, value) => sum + Number(value.trim()), 0);
+    return count > 0 && count === rows && count === groups;
+  }).toBe(true);
+  return Number((await page.getByTestId('studio-attention-count').textContent())?.trim());
 }
 
 async function screenshot(page: Page, name: string): Promise<void> {
@@ -60,7 +62,106 @@ async function screenshot(page: Page, name: string): Promise<void> {
 }
 
 test.describe('Operator attention list', () => {
+  test('accepts three Human Review cards from Needs you and auto-advance with a stale board projection', async ({ page }) => {
+    test.setTimeout(240_000);
+    const [watch] = await api<WatchPath[]>('/api/watch-paths?includeFixtures=true');
+    expect(watch).toBeTruthy();
+    const suffix = Date.now().toString(36);
+    const cards: { id: string; title: string }[] = [];
+    try {
+      for (let index = 0; index < 3; index++) {
+        const title = `Acceptance queue ${suffix} ${index}`;
+        cards.push({ ...await plantReviewCard(watch.path, title), title });
+      }
+      const cardDetails = await Promise.all(cards.map(card => getJob(card.id, watch.path)));
+      const coreUrl = (id: string) => `/api/tasks/${encodeURIComponent(id)}/core?project=${encodeURIComponent(cardDetails[0].projectName)}`;
+      await expect.poll(async () => Promise.all(cards.map(async card => {
+        try { return (await api<{ state: string }>(coreUrl(card.id))).state; }
+        catch (error) { return String(error); }
+      })), { timeout: 60_000 }).toEqual(['ready', 'ready', 'ready']);
+      const coreKeys = await Promise.all(cards.map(card => api<{ taskKey: string }>(coreUrl(card.id))));
+      expect(coreKeys.map(core => core.taskKey)).toEqual(cardDetails.map(card =>
+        (card as unknown as { taskKey: string }).taskKey));
+      const ids = new Set(cards.map(card => card.id));
+      // Reproduce the owner route: the board snapshot is behind the fresh
+      // detail endpoint, even though all three cards need no integration.
+      await page.route('**/api/v1/studio/board**', async route => {
+        const headers = route.request().headers();
+        delete headers['if-none-match'];
+        delete headers['if-modified-since'];
+        const response = await route.fetch({ headers });
+        const body = await response.json() as { humanReview?: { id: string; integration?: unknown }[] };
+        body.humanReview = [
+          ...(body.humanReview ?? []).filter(card => !ids.has(card.id)),
+          ...[...cardDetails].reverse().map(card => ({
+            ...card, integration: { status: 'pending', integrationBranch: 'develop' },
+          })),
+        ];
+        await route.fulfill({ response, json: body });
+      });
+      // These planted concept cards have no settled content review. Keep
+      // the UI's normal Accept request, then give the backend a fixture-only
+      // content override so the test can exercise three persisted moves.
+      await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/[^/]+\/move(\?|$)/, async route => {
+        const id = new URL(route.request().url()).pathname.split('/').at(-2);
+        const body = route.request().postDataJSON() as { targetState: string };
+        if (!id || !ids.has(id) || body.targetState !== '6-completed') return route.continue();
+        const response = await route.fetch({ postData: JSON.stringify({ ...body,
+          operatorOverride: true,
+          reason: 'Browser fixture has no settled content review; its integration verdict is under test.',
+        }) });
+        await route.fulfill({ response });
+      });
+      await gotoStudio(page);
+      await expect(page.getByRole('region', { name: 'Human review cards' }))
+        .toContainText(cards[2].title, { timeout: 20_000 });
+
+      const newest = cards[2];
+      const newestDetail = await getJob(newest.id, watch.path) as unknown as { id: string; key?: string };
+      const key = newestDetail.key || newest.id;
+      await expect.poll(async () => {
+        const attention = await api<{ items: { cardKey: string | null }[] }>('/api/operator/attention');
+        return attention.items.map(item => item.cardKey);
+      }, { timeout: 30_000 }).toContain(key);
+      await page.getByTestId('studio-attention-trigger').click();
+      const row = page.getByTestId('attention-group-human-review').getByTestId('attention-row')
+        .filter({ has: page.getByTestId('attention-row-card').getByText(key, { exact: true }) });
+      await expect(row).toBeVisible({ timeout: 30_000 });
+      await row.getByTestId('attention-row-action').click();
+
+      const primary = page.getByTestId('studio-triage-action-mark-done');
+      for (const [index, card] of [cards[2], cards[1], cards[0]].entries()) {
+        await expect(page.locator('[data-tab-kind="task"]').filter({ hasText: card.title }))
+          .toBeVisible({ timeout: 15_000 });
+        await expect(primary).toHaveText(/Accept/, { timeout: 2_000 });
+        await expect(primary).toBeEnabled({ timeout: 2_000 });
+        if (index === 0) {
+          await expect(page.getByTestId('studio-task')).toContainText(card.title, { timeout: 15_000 });
+          await setTheme(page, 'light');
+          await screenshot(page, 'accept-queue-light');
+          await setTheme(page, 'dark');
+          await screenshot(page, 'accept-queue-dark');
+          await page.setViewportSize({ width: 390, height: 844 });
+          await screenshot(page, 'accept-queue-390px');
+          await page.setViewportSize({ width: 1280, height: 800 });
+        }
+        const moveResponse = page.waitForResponse(response => response.request().method() === 'POST'
+          && response.url().includes(`/tasks/${card.id}/move`));
+        await primary.click();
+        const persisted = await moveResponse;
+        expect(persisted.status(), await persisted.text()).toBeLessThan(300);
+        await expect.poll(() => getJob(card.id, watch.path).then(job => job.state),
+          { timeout: 30_000 }).toBe('6-completed');
+      }
+    } finally {
+      for (const card of cards)
+        await api(`/api/tasks/${encodeURIComponent(card.id)}?watchPath=${encodeURIComponent(watch.path)}`,
+          { method: 'DELETE' }).catch(() => undefined);
+    }
+  });
+
   test('lists real escalated and human review cards and opens the review card', async ({ page }) => {
+    test.setTimeout(180_000);
     const [watch] = await api<WatchPath[]>('/api/watch-paths');
     expect(watch, 'the isolated stack has a project').toBeTruthy();
     const suffix = Date.now().toString(36);
@@ -113,6 +214,17 @@ test.describe('Operator attention list', () => {
   });
 
   test('groups every decision-event class and counts exactly the visible rows', async ({ page }) => {
+    await page.route('**/api/workbenches', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }),
+    }));
+    await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ generatedAt: new Date().toISOString(), items: [] }),
+    }));
+    await page.route('**/api/operator/backups', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ state: 'ok', warnings: [], backups: [], offHost: {} }),
+    }));
     const observedAt = new Date(Date.now() - 42 * 60_000).toISOString();
     const row = (id: string, type: string, cardKey: string | null, reason: string, project: string | null = 'alpha') =>
       ({ id, type, project, cardKey, cards: cardKey ? [cardKey] : [], reason, observedAt, suggestedOperations: [] });
@@ -160,5 +272,58 @@ test.describe('Operator attention list', () => {
     await page.getByTestId('attention-group-host').getByTestId('attention-row-action').click();
     // The hosts section lives in the Environment settings surface.
     await expect(page).toHaveURL(/workspace\/settings\/environment/);
+  });
+
+  test('owner day shows titles, decisions, installation warnings and reconciled counts', async ({ page }) => {
+    const observedAt = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
+    const row = (id: string, type: string, cardKey: string | null, title: string, reason: string) => ({
+      id, type, project: 'Owner day', cardKey, cards: cardKey ? [cardKey] : [], title, reason,
+      observedAt, suggestedOperations: [],
+    });
+    const items = [
+      row('e9', 'escalation.opened', 'DEMO-9', 'Blocked deployment', 'Gate failed twice.'),
+      ...Array.from({ length: 8 }, (_, i) => row(`r${i}`, 'human-review.ready', `DEMO-${i + 1}`,
+        `Review card ${i + 1}`, i === 5 ? 'Cannot be accepted: brief changed.' :
+          `Grade ${i === 4 ? 'B' : i === 7 ? 'C' : 'A'} · ${i === 4 ? 2 : 0} concerns.`)),
+      row('batch', 'batch.red', null, 'Batch gate', 'Three tests failed.'),
+    ];
+    await page.route('**/api/workbenches', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{
+        projectName: 'Owner day', workbench: { id: 'concept', key: 'DOC-17',
+          title: 'Concept Dossier', status: 'decision-pending', openDecisionCount: 2,
+          updatedAtUtc: observedAt },
+      }] }),
+    }));
+    await page.route('**/api/operator/attention', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ items, count: items.length }),
+    }));
+    await page.route('**/api/operator/backups', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ state: 'disabled', stale: false, generatedAt: observedAt,
+        warnings: [], backups: [], offHost: {} }),
+    }));
+    await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ generatedAt: observedAt, items: [{ id: 'cred-1', label: 'Provider token',
+        state: 'expiring', detail: 'Expires soon.' }] }),
+    }));
+    await gotoStudio(page);
+    await expect(page.getByTestId('studio-attention-count')).toHaveText(/1[23]/);
+    for (const viewport of VIEWPORTS) {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await openAndReconcile(page);
+        const list = page.getByTestId('studio-attention-list');
+        await expect(list.getByTestId('attention-group-dossier')).toContainText('2 open decisions');
+        await expect(list.getByTestId('attention-group-installation')).toContainText('Backups off');
+        await expect(list.getByTestId('attention-row-title').filter({ hasText: 'Blocked deployment' })).toBeVisible();
+        await expect(list.getByTestId('attention-row-reason').filter({ hasText: 'brief changed' })).toBeVisible();
+        await screenshot(page, `owner-day-${viewport.width}-${theme}`);
+        await list.getByTestId('attention-group-installation').scrollIntoViewIfNeeded();
+        await screenshot(page, `owner-day-installation-${viewport.width}-${theme}`);
+        await page.keyboard.press('Escape');
+      }
+    }
   });
 });

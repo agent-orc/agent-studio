@@ -1684,45 +1684,81 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task ResearchDone_WithPrimaryHtml_UsesLightweightFlow_AndSkipsAspects()
+    public async Task ResearchDone_WithPrimaryHtml_ReviewsOnlyRequirementFit_AndCompletesOnPass()
     {
         const string slug = "research-report";
         SeedReviewJobWithDone(slug, mode: TaskModes.Research);
-        var results = Path.Combine(_watchPath, TaskStates.AutoReview, slug, "results");
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, slug);
+        CompletionContentEvidence.StampLocalRun(folder);
+        var results = Path.Combine(folder, "results");
         Directory.CreateDirectory(results);
         File.WriteAllText(
             Path.Combine(results, "report.html"),
             "<!doctype html><html lang=\"en\"><title>Research report</title><body>Ready.</body></html>");
-        var aspectCalls = 0;
-        var orchestrator = BuildOrchestratorWithAspects(_ =>
+        var aspectCalls = new List<string>();
+        var orchestrator = BuildOrchestratorWithAspects(aspect =>
         {
-            aspectCalls++;
-            return "[[ASPECT_VERDICT: status=pass; summary=should not run]]\n[[TASK_DONE]]";
+            aspectCalls.Add(aspect);
+            return "[[ASPECT_VERDICT: status=pass; summary=The report answers the brief; "
+                + "evidence_checked=results/report.html; missing=none]]\n[[TASK_DONE]]";
         });
 
         await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
 
         var moved = Path.Combine(_watchPath, TaskStates.HumanReview, slug);
         Assert.True(Directory.Exists(moved));
-        Assert.Equal(0, aspectCalls);
-        Assert.Empty(Directory.EnumerateFiles(moved, "aspect-*.md"));
+        Assert.Equal(["requirement-fit"], aspectCalls);
+        Assert.Equal(["aspect-requirement-fit.md"],
+            Directory.EnumerateFiles(moved, "aspect-*.md").Select(Path.GetFileName));
         var record = ReadOnlyDecisionRecord();
         Assert.Equal(ReviewDecisionKind.AcceptAsDone, record.Kind);
         Assert.Contains("results/report.html", record.Reason);
+        Assert.Contains("Requirement fit of the report: pass", record.Reason);
+
+        // AGT-3565: the pass is the content verdict completion reads.
+        var card = new TaskInfo { Id = slug, Mode = TaskModes.Research, FolderPath = moved };
+        var decision = CompletionContentPolicy.Decide(CompletionContentEvidence.Read(card, null));
+        Assert.True(decision.Accepted, decision.Message);
+    }
+
+    [Fact]
+    public async Task ResearchDone_RequirementFitConcerns_StillHandsOff_ButCompletionRefuses()
+    {
+        const string slug = "research-concerns";
+        SeedReviewJobWithDone(slug, mode: TaskModes.Research);
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, slug);
+        CompletionContentEvidence.StampLocalRun(folder);
+        Directory.CreateDirectory(Path.Combine(folder, "results"));
+        File.WriteAllText(Path.Combine(folder, "results", "report.html"),
+            "<html><body>Half of the research.</body></html>");
+        var orchestrator = BuildOrchestratorWithAspects(_ =>
+            "[[ASPECT_VERDICT: status=concerns; summary=One question is open; "
+            + "evidence_checked=results/report.html; missing=the second question]]\n[[TASK_DONE]]");
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        var moved = Path.Combine(_watchPath, TaskStates.HumanReview, slug);
+        Assert.True(Directory.Exists(moved));
+        var card = new TaskInfo { Id = slug, Mode = TaskModes.Research, FolderPath = moved };
+        var decision = CompletionContentPolicy.Decide(CompletionContentEvidence.Read(card, null));
+        Assert.False(decision.Accepted);
+        Assert.Contains("requirement-fit verdict was concerns", decision.Message);
     }
 
     [Theory]
-    [InlineData(true, TaskStates.HumanReview)]
-    [InlineData(false, TaskStates.Escalated)]
-    public async Task ResearchDone_FailedSummary_ContinuesWithAgentStatusOrEscalates(
-        bool hasAgentStatus, string expectedLane)
+    [InlineData(true, true, TaskStates.HumanReview)]
+    [InlineData(false, true, TaskStates.HumanReview)]
+    [InlineData(false, false, TaskStates.Escalated)]
+    public async Task ResearchDone_FailedSummary_ReviewsTheReportOrEscalates(
+        bool hasAgentStatus, bool hasReport, string expectedLane)
     {
         const string slug = "research-failed-summary";
         SeedReviewJobWithDone(slug, mode: TaskModes.Research);
         var folder = Path.Combine(_watchPath, TaskStates.AutoReview, slug);
         Directory.CreateDirectory(Path.Combine(folder, "results"));
-        File.WriteAllText(Path.Combine(folder, "results", "report.html"),
-            "<html><body>Agent research result</body></html>");
+        if (hasReport)
+            File.WriteAllText(Path.Combine(folder, "results", "report.html"),
+                "<html><body>Agent research result</body></html>");
         if (hasAgentStatus)
             File.WriteAllText(Path.Combine(folder, "results", "status.md"),
                 "# Agent status\n\nResearch is complete.\n");
@@ -1737,8 +1773,14 @@ public class ReviewDecisionOrchestratorTests : IDisposable
             Reason = "one-shot exited with code 1",
             CompletedAt = DateTime.UnixEpoch,
         });
+        var aspectCalls = new List<string>();
         var orchestrator = BuildOrchestratorWithAspects(
-            _ => throw new InvalidOperationException("Research must skip aspects"),
+            aspect =>
+            {
+                aspectCalls.Add(aspect);
+                return "[[ASPECT_VERDICT: status=pass; summary=The report answers the brief; "
+                    + "evidence_checked=results/report.html; missing=none]]\n[[TASK_DONE]]";
+            },
             pipelineLog: pipelineLog);
 
         await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
@@ -1748,15 +1790,20 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         if (hasAgentStatus)
             Assert.Contains("Research is complete", File.ReadAllText(Path.Combine(moved, "status.md")));
         var record = ReadOnlyDecisionRecord();
-        Assert.Equal(hasAgentStatus ? ReviewDecisionKind.AcceptAsDone : ReviewDecisionKind.Escalate,
+        Assert.Equal(hasReport ? ReviewDecisionKind.AcceptAsDone : ReviewDecisionKind.Escalate,
             record.Kind);
         Assert.Contains(_timeline.ReadAll(moved), evt =>
-            evt.Kind == (hasAgentStatus ? TimelineEventKinds.ResultSummaryPending
+            evt.Kind == (hasReport ? TimelineEventKinds.ResultSummaryPending
                 : TimelineEventKinds.OrchestratorEscalated));
+        // AGT-3565: the report review runs after a failed summary step too.
+        Assert.Equal(hasReport ? ["requirement-fit"] : [], aspectCalls);
         var steps = pipelineLog.Read(moved)!.Steps;
         Assert.Equal(PipelineStepStatus.Failed,
             steps.Single(step => step.StepId == PipelineCatalogue.SummaryAssessmentStepId).Status);
-        Assert.Equal(hasAgentStatus ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
+        if (hasReport)
+            Assert.Equal(PipelineStepStatus.Passed,
+                steps.Single(step => step.StepId == PipelineCatalogue.RequirementFitStepId).Status);
+        Assert.Equal(hasReport ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
             steps.Single(step => step.StepId == PipelineCatalogue.OrchestratorDecisionStepId).Status);
     }
 
@@ -2763,7 +2810,8 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         var stateMachine = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);
         var chatLog = new OrchestratorChatLog(NullLogger<OrchestratorChatLog>.Instance);
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
-        var aspectRunner = new AspectRunnerService(prompts, NullLogger<AspectRunnerService>.Instance);
+        var aspectRunner = new AspectRunnerService(prompts, NullLogger<AspectRunnerService>.Instance,
+            pipelineLog: pipelineLog);
         aspectRunner.CliRunner = (aspectId, _, _, _, _, _) => Task.FromResult(aspectStub(aspectId));
         // No real wall-clock wait on the AGT-2021 environmental retry path.
         aspectRunner.VerdictRetryBackoff = _ => TimeSpan.Zero;

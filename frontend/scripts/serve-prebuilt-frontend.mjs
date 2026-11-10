@@ -11,15 +11,16 @@ import { pathToFileURL } from 'node:url';
 
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json' };
 const isProxy = url => /^\/(api|hubs)(?:[/?]|$)/.test(url);
-// These profiles serve the browser over TLS and keep its Host, so the
-// backend's same-origin check sees the page's own https origin.
-const tlsProfile = () => ['public-demo', 'networked-https'].includes(process.env.PW_E2E_PROFILE ?? '');
+// Profiles whose proxy terminates TLS and keeps the browser's Host, so the
+// backend sees the page origin and issues a Secure cookie the browser keeps.
+const tlsProfiles = ['public-demo', 'networked-https'];
+const isTlsProfile = () => tlsProfiles.includes(process.env.PW_E2E_PROFILE ?? '');
 const proxyOptions = (backend, request) => ({
   hostname: backend.hostname.replace(/^\[|\]$/g, ''), port: backend.port || 80,
   path: request.url, method: request.method,
   headers: { ...request.headers,
-    host: tlsProfile() ? request.headers.host : backend.host,
-    ...(['networked-monolith', 'networked-https', 'operator-cli', 'public-demo'].includes(process.env.PW_E2E_PROFILE ?? '') ? { 'x-forwarded-proto': 'https' } : {}) },
+    host: isTlsProfile() ? request.headers.host : backend.host,
+    ...(['networked-monolith', 'operator-cli', 'networked-https', 'public-demo'].includes(process.env.PW_E2E_PROFILE ?? '') ? { 'x-forwarded-proto': 'https' } : {}) },
 });
 
 async function createFrontendHandlers(directory, backendUrl) {
@@ -124,7 +125,7 @@ const ipv6Unavailable = new Set(['EADDRNOTAVAIL', 'EAFNOSUPPORT']);
 // stays IPv4-only on purpose: the connector owns [::1]:5031.
 export async function startFrontendServer(directory, port, backendUrl, { listen = listenOn } = {}) {
   const { handleRequest, handleUpgrade } = await createFrontendHandlers(directory, backendUrl);
-  const tls = tlsProfile();
+  const tls = isTlsProfile();
   const create = () => (tls
     ? https.createServer({ key: readFileSync(process.env.PW_E2E_TLS_KEY), cert: readFileSync(process.env.PW_E2E_TLS_CERT) }, handleRequest)
     : http.createServer(handleRequest)).on('upgrade', handleUpgrade);
@@ -153,7 +154,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const port = Number(portText);
   if (!directory || !backend || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Usage: node serve-prebuilt-frontend.mjs <directory> <port> <loopback-backend-url>');
   const server = await startFrontendServer(directory, port, backend);
-  const scheme = tlsProfile() ? 'https://' : 'http://';
+  const scheme = isTlsProfile() ? 'https://' : 'http://';
   console.log('Prebuilt frontend listening on ' + server.addresses.map(host => scheme + (host.includes(':') ? '[' + host + ']' : host) + ':' + server.port).join(' and '));
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => server.close().finally(() => process.exit(0)));
 }
