@@ -53,6 +53,7 @@ function operatorState() {
   return {
     agents,
     entries,
+    backupEntries: backupEntries(),
     integrity: { state: 'verified', checkedAt: '2026-11-02T08:00:00Z', verifiedThrough: 45, message: null as string | null, alert: false },
     forwarding: {
       sinkKind: 'syslog', configured: true, headSequence: 46, forwardedSequence: 44, pending: 2,
@@ -68,6 +69,31 @@ function operatorState() {
       outOfBandRequestPending: false,
     },
   };
+}
+
+/** AGT-3737: backup records of the audit chain, by the scheduler, an operator, the Owner, and the offline restore. */
+function backupEntries() {
+  const backup = (sequence: number, at: string, actor: string, operation: string, target: string | null, outcome: string, summary: string,
+    extra: { session?: string; delegatedBy?: string } = {}) => ({
+    sequence, at, actor, session: extra.session ?? null, delegatedBy: extra.delegatedBy ?? null, operation, target, outcome,
+    trigger: actor === 'schedule' ? 'schedule' : actor.startsWith('offline:') ? 'offline' : `manual:${actor}`, summary, hash: `b${sequence}`,
+  });
+  const id = 'studio-backup-20261109T060000Z-a1b2c3';
+  return [
+    backup(58, '2026-11-10T07:30:00Z', 'offline:ops@restore-host', 'backup.restore', `${id}.studio-backup`, 'succeeded',
+      `Restored backup ${id}: 412 files, 3 checkouts cloned, skipped sources: none.`),
+    backup(57, '2026-11-09T09:02:00Z', 'usr_owner', 'backup.retention', null, 'succeeded',
+      'Removed 11 local backups; newest 1 retained (configured 12).'),
+    backup(56, '2026-11-09T09:00:00Z', 'usr_operator', 'backup.retention', null, 'denied',
+      'Retention down to 1 archive refused: below the configured 12 needs the Owner role.'),
+    backup(55, '2026-11-09T08:41:00Z', 'operator-agent:opa_release/session:ses_morning', 'backup.verify', id, 'succeeded',
+      `Restore verification of ${id}: Restored 412 files and 3 checkout records into an empty staging host; every hash matched.`,
+      { session: 'ses_morning', delegatedBy: 'usr_owner' }),
+    backup(54, '2026-11-09T06:00:09Z', 'schedule', 'backup.upload', id, 'failed',
+      `Copy of ${id} to the s3 target failed: connection refused`),
+    backup(53, '2026-11-09T06:00:04Z', 'schedule', 'backup.create', id, 'succeeded',
+      `Created encrypted backup ${id} (412 files, 1048576 bytes).`),
+  ];
 }
 
 function drill(id: string, trigger: string, startedAt: string, durationMs: number, passed: boolean, failure: string | null) {
@@ -194,6 +220,7 @@ async function stubOperatorRoutes(page: Page, state: ReturnType<typeof operatorS
       forwarding: state.forwarding,
     });
   });
+  await page.route(url => url.pathname === '/api/auth/audit/backups', route => json(route, { entries: state.backupEntries, integrity: state.integrity }));
   await page.route(url => url.pathname === '/api/auth/audit/verify', route => {
     state.integrity = { ...state.integrity, state: 'verified', checkedAt: '2026-11-02T09:06:00Z', verifiedThrough: state.entries[0].sequence };
     return json(route, state.integrity);
@@ -269,6 +296,42 @@ test('owner creates an operator agent, starts a session once, and reads the audi
   await activity.getByTestId('access-activity-session-all').click();
   await expect(activity.getByTestId('access-audit-entry-43')).toBeVisible();
   await shoot(page, 'section[aria-labelledby="access-operator-activity-title"]', 'operator-activity');
+});
+
+test('owner reads who created, copied, verified, pruned, and restored backups, with each outcome', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1400 });
+  await stubNetworkedOwner(page);
+  const access = await openAccess(page);
+
+  await expect(access.getByRole('heading', { name: 'Backup activity' })).toBeVisible();
+  const backups = access.getByTestId('access-backup-activity');
+  await expect(backups.getByTestId('access-backup-activity-caption')).toContainText('Newest 6 records');
+  await expect(backups.getByTestId('access-backup-entry-53')).toContainText('Create');
+  await expect(backups.getByTestId('access-backup-entry-53')).toContainText('schedule');
+  await expect(backups.getByTestId('access-backup-outcome-54')).toHaveAttribute('data-tone', 'danger');
+  await expect(backups.getByTestId('access-backup-entry-55')).toContainText('for usr_owner');
+  await expect(backups.getByTestId('access-backup-entry-56')).toContainText('Refused');
+  await expect(backups.getByTestId('access-backup-outcome-56')).toHaveAttribute('data-tone', 'warning');
+  await expect(backups.getByTestId('access-backup-entry-57')).toContainText('usr_owner');
+  await expect(backups.getByTestId('access-backup-entry-58')).toContainText('Offline restore');
+  await expect(backups.getByTestId('access-backup-entry-58')).toContainText('offline:ops@restore-host');
+  await shoot(page, 'section[aria-labelledby="access-backup-activity-title"]', 'backup-activity');
+
+  await page.setViewportSize({ width: 390, height: 1200 });
+  const section = page.locator('section[aria-labelledby="access-backup-activity-title"]');
+  await section.scrollIntoViewIfNeeded();
+  // The table scrolls inside its own frame; the page itself does not widen.
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  await shoot(page, 'section[aria-labelledby="access-backup-activity-title"]', 'backup-activity-390');
+});
+
+test('backup activity stays hidden when the server refuses the read', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await stubNetworkedOwner(page);
+  await page.route(url => url.pathname === '/api/auth/audit/backups', route => json(route, { error: 'forbidden' }, 403));
+  const access = await openAccess(page);
+  await expect(access.getByRole('heading', { name: 'Runner enrollments and runners' })).toBeVisible();
+  await expect(access.getByTestId('access-backup-activity')).toHaveCount(0);
 });
 
 test('the activity status strip turns acute only for a server alert', async ({ page }) => {

@@ -399,6 +399,13 @@
           <td>The read-only pipeline did not recover the agent's own status when summary assessment failed. Post-processing errors and blocked preconditions could close the worker pass without a lane transition.</td>
           <td>A failed summary keeps its failed step row. The report path uses the agent's status or final message and continues through the lightweight review and decision. If recovery or post-processing fails, it moves the card to Escalated with the concrete reason and a timeline event.</td>
         </tr>
+        <tr id="case-review-infrastructure-stranding">
+          <td>2026-11-09</td>
+          <td><code>AGT-3178</code>, <code>AGT-3183</code>, <code>AGT-3403</code>, <code>AGT-3501</code>, <code>AGT-3533</code>, <code>AGT-3558</code><br><span class="small">review-infrastructure-stranding (fix <code>AGT-3608</code>)</span></td>
+          <td>Reviews ran for about 1.5 to 2.5 hours, then ended with infrastructure failure. The next watchdog sweep moved each card from Auto Review to Escalated. Terminal at discovery: Escalated, with a misleading claim that no delivery or review existed.</td>
+          <td>The watchdog measured age from lane entry and treated a failed current review as unrecoverable. The normal retry was scheduled later in report handling, so an interrupted settlement could leave no scheduled successor.</td>
+          <td>The review terminal starts a fresh ownerless interval. After its threshold, an unscheduled current-delivery infrastructure failure receives a bounded retry through the authority scheduler. The third failed attempt escalates with its classification and summary.</td>
+        </tr>
         <tr id="case-refused-salvage-push-retained">
           <td>2026-11-01</td>
           <td>four finished deliveries<br><span class="small">refused-salvage-push-retained (fix <code>AGT-3406</code>)</span></td>
