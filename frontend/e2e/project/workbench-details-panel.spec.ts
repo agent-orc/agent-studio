@@ -392,15 +392,18 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
   }));
 });
 
-test('failed Dossier confirmation removes its new task and explains the outcome', async ({ page, devBackend }) => {
+test('failed Dossier confirmation reports the card the server removed', async ({ page, devBackend }) => {
   expect(devBackend.port).toBeGreaterThan(0);
   const captured = await installMocks(page);
   await page.route(
     `**/api/projects/${encodeURIComponent(PROJECT)}/workbenches/${WORKBENCH_ID}/decisions/confirm`,
-    route => json(route, {
-      success: false, errorCode: 'write-failed',
-      error: 'Managed repository commit failed: Author identity unknown. Run git config --global user.email',
-    }, 500),
+    route => {
+      captured.decisionBodies.push(JSON.parse(route.request().postData() ?? '{}') as Record<string, unknown>);
+      return json(route, {
+        success: false, errorCode: 'write-failed', removedTaskIds: ['naming-feature-1'], retainedTaskIds: [],
+        error: 'The Dossier decision could not be saved. No decision was recorded. Try again or ask a Studio operator to check the project repository. Nothing was created: task AGT-2611 was removed again.',
+      }, 500);
+    },
   );
   await seedWorkbench(page);
   await page.goto('/');
@@ -409,12 +412,64 @@ test('failed Dossier confirmation removes its new task and explains the outcome'
   const inline = page.getByTestId('workbench-inline-decision-action');
   await inline.getByTestId('workbench-decision-start').click();
   await inline.getByTestId('workbench-decision-confirm').click();
-  await expect.poll(() => captured.deletedTaskIds).toEqual(['naming-feature-1']);
-  await expect(inline.getByRole('alert')).toContainText('The new task was removed');
+  await expect(inline.getByRole('alert')).toContainText('task AGT-2611 was removed again');
   await expect(inline.getByRole('alert')).not.toContainText('git config');
-  const board = await page.evaluate(async () =>
-    (await fetch('/api/v1/studio/board')).json() as Promise<{ ready: unknown[] }>);
-  expect(board.ready).toHaveLength(0);
+  expect(captured.decisionBodies.at(-1)).toEqual(expect.objectContaining({
+    spawnedTaskKeys: ['AGT-2611'], spawnedTaskIds: ['naming-feature-1'],
+  }));
+  expect(captured.deletedTaskIds).toEqual([]);
+  await expect(inline.getByTestId('workbench-decision-created-tasks')).toHaveCount(0);
+});
+
+test('a restored draft card without an id is never removed by its display key', async ({ page, devBackend }) => {
+  expect(devBackend.port).toBeGreaterThan(0);
+  const captured = await installMocks(page);
+  await page.route(
+    `**/api/projects/${encodeURIComponent(PROJECT)}/workbenches/${WORKBENCH_ID}/decisions/confirm`,
+    route => {
+      captured.decisionBodies.push(JSON.parse(route.request().postData() ?? '{}') as Record<string, unknown>);
+      return json(route, {
+        success: false, errorCode: 'write-failed', removedTaskIds: [], retainedTaskIds: [],
+        error: 'The Dossier decision could not be saved. No decision was recorded.',
+      }, 500);
+    },
+  );
+  await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/[^/?]+(?:\?.*)?$/, route => {
+    if (route.request().method() !== 'DELETE') return route.fallback();
+    captured.deletedTaskIds.push(new URL(route.request().url()).pathname.split('/').pop() ?? '');
+    return json(route, {});
+  });
+  await seedWorkbench(page);
+  await page.addInitScript(({ project, workbenchId }) => {
+    if (sessionStorage.getItem('agt3654-draft-seeded')) return;
+    sessionStorage.setItem('agt3654-draft-seeded', '1');
+    sessionStorage.setItem('atp.workbench-decision-drafts.v1', JSON.stringify({
+      version: 1,
+      entries: {
+        [`${encodeURIComponent(project)}:${encodeURIComponent(workbenchId)}`]: {
+          mode: 'feature-spawn', actor: 'Robert', title: 'Implement the stable naming contract',
+          goal: 'Apply the selected stable key.', operationId: 'workbench-ui-restored',
+          responses: [], updatedAt: '2026-11-10T10:00:00Z',
+          createdCard: {
+            key: 'AGT-2699', taskKey: `${project}::AGT-2699`,
+            title: 'Implement the stable naming contract', lane: '2-ready',
+          },
+        },
+      },
+    }));
+  }, { project: PROJECT, workbenchId: WORKBENCH_ID });
+  await page.goto('/');
+  const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
+  await frame.locator('[data-option-id="option-a"] input').check();
+  const inline = page.getByTestId('workbench-inline-decision-action');
+  await inline.getByTestId('workbench-decision-confirm').click();
+  await expect(inline.getByRole('alert')).toContainText(
+    'Task AGT-2699 could not be checked, so it was not removed');
+  expect(captured.decisionBodies.at(-1)).toEqual(expect.objectContaining({
+    spawnedTaskKeys: ['AGT-2699'], spawnedTaskIds: [],
+  }));
+  expect(captured.taskBodies).toEqual([]);
+  expect(captured.deletedTaskIds).toEqual([]);
 });
 
 test('inline Dossier decision requests rework through its orchestrator session', async ({ page, devBackend }) => {

@@ -21,6 +21,7 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
       *owner-second-factor-human-pace.spec.ts*) PW_E2E_PROFILE=networked-https ;;
       *studio-op-operator-cli.spec.ts*) PW_E2E_PROFILE=operator-cli ;;
       *cockpit-integration-matrix.spec.ts*) PW_E2E_PROFILE=demo ;;
+      *dossier-decision-live.spec.ts*) PW_E2E_PROFILE=demo ;;
       *public-demo-shell.spec.ts*) PW_E2E_PROFILE=public-demo ;;
     esac
   done
