@@ -35,7 +35,7 @@
     "docs:visual": "playwright test e2e/visual-evidence/readme-screenshots.spec.ts --project=chromium",
     "docs:visual:headed": "playwright test e2e/visual-evidence/readme-screenshots.spec.ts --project=chromium --headed",
     "docs:presentation": "bash ../scripts/presentation-capture/generate.sh",
-    "lint": "ng lint && npm run lint:scss && npm run lint:components && npm run lint:structure && npm run lint:process-spawns && npm run lint:skill-scripts && npm run lint:studio-op",
+    "lint": "ng lint && npm run lint:scss && npm run lint:components && npm run lint:structure && npm run lint:process-spawns && npm run lint:skill-scripts && npm run lint:studio-op && npm run lint:product-scenario",
     "lint:ci": "npm run lint",
     "lint:css": "stylelint \"src/**/*.scss\"",
     "lint:scss": "stylelint \"src/**/*.scss\"",
@@ -45,6 +45,7 @@
     "lint:process-spawns": "node --test ../scripts/process-spawn-guard.test.mjs",
     "lint:skill-scripts": "node --test ../.agents/skills/task-api/scripts/access.test.mjs",
     "lint:studio-op": "node --test --test-timeout=60000 ../tools/studio-op/test/accept-policy.test.mjs ../tools/studio-op/test/credential.test.mjs ../tools/studio-op/test/watch-policy.test.mjs ../tools/studio-op/test/cli.test.mjs",
+    "lint:product-scenario": "node --test ../scripts/release/product-scenario/test/product-scenario.test.mjs",
     "lint:structure": "node scripts/check-component-folders.mjs && node scripts/check-lane-strings.mjs && node scripts/check-disclosure-markers.mjs && node scripts/check-segmented-controls.mjs && node --test scripts/check-explicit-locales.test.mjs scripts/check-disclosure-markers.test.mjs scripts/check-segmented-controls.test.mjs scripts/serve-prebuilt-frontend.test.mjs scripts/task-header-slots.test.mjs",
     "audit:components": "node scripts/audit-components.mjs --md",
     "audit:orphan-css": "node scripts/find-orphan-css-classes.mjs"

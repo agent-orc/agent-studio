@@ -201,6 +201,34 @@ async function openJob(page: Page): Promise<void> {
 
 test.describe('Human Review acceptance primary is landed-state aware', () => {
   test.use({ serviceWorkers: 'block' });
+  test('isolating batch disables failure continuation with its reason in both themes and at 390 px', async ({ page }) => {
+    await installBaseRoutes(page);
+    await installJobRoutes(page, { detailMerge: null, landedState: 'on-branch-only' });
+    await page.route('**/api/usage/cockpit**', (route) => route.fulfill({ status: 503, body: '{}' }));
+    const reason = `${JOB_ID} is a member of batch flight flight-1, which is isolating a red result. Continue, steer and requeue wait until isolation ends; eject the member to act on it now.`;
+    await page.route(new RegExp(`/api/tasks/${JOB_ID}/failure/continue(\\?|$)`), (route) =>
+      json(route, { available: false, reason, isolationActive: true }));
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), (route) => {
+      const current = detail(null);
+      return json(route, { ...current, info: {
+        ...current.info,
+        integration: { status: 'pending', integrationBranch: 'develop', deliveryRef: 'task/fixture', detail: 'Delivery pending.' },
+      } });
+    });
+    await openJob(page);
+    const action = page.getByTestId('dead-end-continue');
+    await expect(action).toBeVisible();
+    await expect(action).toBeDisabled();
+    await expect(action).toHaveAttribute('title', reason);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await dismissDevErrorDialog(page);
+      if (RESULTS_DIR) await page.getByTestId('integration-dead-end').screenshot({ path: path.join(RESULTS_DIR, `failure-continuation-isolation-${theme}.png`) });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(action).toBeDisabled();
+    if (RESULTS_DIR) await page.screenshot({ path: path.join(RESULTS_DIR, 'failure-continuation-isolation-390px.png'), fullPage: true });
+  });
   test('shows brief and concept-fit grounds before acceptance in both themes', async ({ page }) => {
     await installBaseRoutes(page);
     await installJobRoutes(page, { detailMerge: null, landedState: 'on-branch-only', hasDeliverable: false });

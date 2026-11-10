@@ -1653,6 +1653,25 @@ public static class TaskCrudEndpoints
                 && card.PendingIntent?.RunIntent != "steer")
                 return Results.BadRequest(new { error = "Steer requires a queued follow-up." });
 
+            // AGT-3617: the owner accepting a code-free intervention card is
+            // the decision that its shared cause is resolved; the claim records
+            // it instead of refusing the move for a delivery it never had.
+            if (InterventionOwnerDecisionPolicy.Applies(new InterventionOwnerDecisionFacts(
+                    request.TargetState,
+                    request.OperatorOverride,
+                    ProjectAccessAuthorization.HasOperatorAuthority(context),
+                    context.RequestServices.GetService<AgentStudio.Pipeline.FailureInterventionService>()
+                        ?.IsInterventionFollowUp(card) == true,
+                    HasAttributedCommits: card.Commits is { Count: > 0 },
+                    HasRunAttempt: new[] { card.Key, card.TaskKey, card.Id }
+                        .Where(key => !string.IsNullOrWhiteSpace(key))
+                        .Any(key => authority.GetTaskProjection(key!).CurrentRunAttempt is not null))))
+                request = request with
+                {
+                    OperatorOverride = true,
+                    Reason = InterventionOwnerDecisionPolicy.Reason(request.Reason),
+                };
+
             if (activeBatch is not null)
                 batchStore!.RequestEject(batchMember!.Subject.Project, batchMember.Subject.TaskKey);
             var moved = await transitions.MoveAsync(
