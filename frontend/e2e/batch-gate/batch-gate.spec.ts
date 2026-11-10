@@ -319,7 +319,7 @@ test('paused batch shows its ordered per-task handoff on the board', async ({ pa
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addStyleTag({ content: '.dialog__overlay { display: none !important; }' });
-  await page.getByTestId('board-group-switch-active').click();
+  await page.getByRole('combobox', { name: 'Board lane' }).selectOption({ label: 'Post Processing' });
   await card.scrollIntoViewIfNeeded();
   if (evidence) await page.screenshot({ path: nodePath.join(evidence, 'paused-batch-board-390.png') });
 });
@@ -409,7 +409,7 @@ test('paused batch handoff is read from the real backend store', async ({ page, 
       }
       await page.setViewportSize({ width: 390, height: 844 });
       await page.addStyleTag({ content: '.dialog__overlay { display: none !important; }' });
-      await page.getByTestId('board-group-switch-active').click();
+      await page.getByRole('combobox', { name: 'Board lane' }).selectOption({ label: 'Post Processing' });
       await card.scrollIntoViewIfNeeded();
       await page.screenshot({ path: nodePath.join(evidence, 'paused-batch-real-390.png') });
     }

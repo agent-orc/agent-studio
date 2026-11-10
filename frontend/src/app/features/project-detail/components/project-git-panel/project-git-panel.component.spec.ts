@@ -2,7 +2,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { GitGraphCommit, GitProjectInventory } from '../../../git';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import { loadDiff2Html } from '../../../../utils/diff2html-lazy';
@@ -13,6 +13,18 @@ beforeAll(async () => {
 });
 
 const COMMIT_SHA = 'c'.repeat(40);
+let originalScrollIntoView: PropertyDescriptor | undefined;
+let replacedScrollIntoView = false;
+
+afterEach(() => {
+  if (!replacedScrollIntoView) return;
+  if (originalScrollIntoView === undefined) {
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+  } else {
+    Object.defineProperty(Element.prototype, 'scrollIntoView', originalScrollIntoView);
+  }
+  replacedScrollIntoView = false;
+});
 
 function graphCommit(overrides: Partial<GitGraphCommit> = {}): GitGraphCommit {
   return {
@@ -189,7 +201,9 @@ describe('ProjectGitPanelComponent', () => {
 
   it('hydrates a deep-linked commit and scrolls its graph row into view', async () => {
     const scrollIntoView = vi.fn();
-    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    originalScrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView');
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, writable: true, value: scrollIntoView });
+    replacedScrollIntoView = true;
     const { fixture, http, root } = setup(`/#/projects/demo/git?commit=${COMMIT_SHA}`);
     http.expectOne(request => request.url === '/api/git/inventory').flush(inventoryFixture());
     fixture.detectChanges();

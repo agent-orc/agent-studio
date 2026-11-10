@@ -61,14 +61,22 @@ public sealed class BatchGateStoreTests : IDisposable
                     FallbackGateActive: true, FallbackGateStartedAtUtc: Now.AddMinutes(23),
                     FallbackGateHost: "gate-01"));
         }
+        var unrelated = Subject("other-task", 4);
+        _store.Enqueue(new BatchGatePendingRecord("other-review", unrelated,
+            _root, _root, Path.Combine(_root, "other-task"), "direct-merge", "task", Now.AddMinutes(4)));
+        _store.RecordFallbackCause(new BatchGateFallbackCause("project", "other-task",
+            "other-review", unrelated.RunAttempt, PerTaskFallbackRules.BatchPaused,
+            "another batch paused", "another-batch", Now.AddMinutes(22)));
         var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
             _store, "project", new BatchGateFormationOptions(Enabled: true),
             activePerTaskFlights: new HashSet<string> { "review-1" }),
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
         var gates = state.GetProperty("perTaskGates").EnumerateArray().ToArray();
-        Assert.Equal(4, gates.Length);
+        Assert.Equal(5, gates.Length);
         Assert.Equal(2, gates[1].GetProperty("position").GetInt32());
         Assert.Equal(4, gates[1].GetProperty("total").GetInt32());
+        Assert.Equal(1, gates[4].GetProperty("position").GetInt32());
+        Assert.Equal(1, gates[4].GetProperty("total").GetInt32());
         Assert.True(gates[1].GetProperty("running").GetBoolean());
         Assert.Equal("gate-01", gates[1].GetProperty("host").GetString());
         Assert.Contains("flaky quarantine", gates[1].GetProperty("reason").GetString());

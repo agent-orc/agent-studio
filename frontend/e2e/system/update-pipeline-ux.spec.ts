@@ -12,6 +12,8 @@ import { test, expect, Page, Route } from '@playwright/test';
  *   2. Green "done" toast with a Reload button when HEAD changed.
  *   3. Red "failed" banner with the verification-failure list and the
  *      "Other runs…" picker that hits /update/history.
+ *   4. The failed-update toast's rollback carries the trigger token the
+ *      Studio backend hands out.
  */
 
 interface MockStatus {
@@ -66,10 +68,15 @@ const baseStatus: MockStatus = {
   autoRollbackEnabled: false,
 };
 
+// A generated fixture value, never a real token.
+const FIXTURE_UPDATE_TOKEN = `fixture-${Date.now().toString(36)}`;
+
 async function installUpdateMock(page: Page, getStatus: () => MockStatus, opts?: {
   history?: () => Array<Record<string, unknown>>;
-  onRollback?: (runId: string) => void;
+  onRollback?: (runId: string, token: string | null) => void;
 }) {
+  await page.route('**/api/update-service/token', (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ token: FIXTURE_UPDATE_TOKEN }) }));
   await page.route('**://*:5039/**', async (route: Route) => {
     const url = route.request().url();
     if (url.endsWith('/healthz') || url.endsWith('/update/health')) {
@@ -86,7 +93,7 @@ async function installUpdateMock(page: Page, getStatus: () => MockStatus, opts?:
     }
     if (url.includes('/update/rollback')) {
       const body = route.request().postDataJSON() as { runId?: string } | null;
-      opts?.onRollback?.(body?.runId ?? '');
+      opts?.onRollback?.(body?.runId ?? '', route.request().headers()['x-update-token'] ?? null);
       await route.fulfill({
         status: 202,
         contentType: 'application/json',
@@ -245,5 +252,32 @@ test.describe('Update Service pipeline UX (mocked)', () => {
     // delayed-rollback path that the picker exists to enable.
     await page.locator('[data-testid="update-banner-picker-rollback-older1"]').click();
     await expect.poll(() => rollbackTarget).toBe('older1');
+  });
+
+  test('failed-update toast rolls back with the trigger token from the Studio backend', async ({ page }) => {
+    const status: MockStatus = {
+      ...baseStatus,
+      phase: 'failed',
+      phaseLabel: 'Failed',
+      message: 'verification failed: db-touch',
+      currentRunId: 'r4',
+      finishedAt: new Date().toISOString(),
+      lastRunFinishedAt: new Date().toISOString(),
+      lastRunHeadBefore: 'aaaaaaa',
+      lastRunHeadAfter: 'bbbbbbb',
+      headLocal: 'bbbbbbb',
+      verificationFailures: [{ step: 'db-touch', observed: 'http=503', expected: 'http=200' }],
+    };
+    const rollbacks: Array<{ runId: string; token: string | null }> = [];
+    await installUpdateMock(page, () => status, { onRollback: (runId, token) => rollbacks.push({ runId, token }) });
+
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    const rollback = page.locator('[data-testid="toast-update-rollback"]');
+    await expect(rollback).toBeVisible({ timeout: 10_000 });
+    await page.screenshot({ path: `${EVIDENCE_DIR}/05-failed-toast-rollback.png`, fullPage: false });
+    await rollback.click();
+
+    await expect.poll(() => rollbacks.length).toBe(1);
+    expect(rollbacks[0]).toEqual({ runId: 'r4', token: FIXTURE_UPDATE_TOKEN });
   });
 });

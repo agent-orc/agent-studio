@@ -16,9 +16,16 @@ namespace AgentStudio.TaskServer.Contracts;
 /// optional: a host built outside the release pipeline reports what it knows and
 /// the comparison degrades to a version ordering rather than refusing to answer.
 /// </para>
+/// <para>
+/// <see cref="ImageRef"/> is the digest-pinned container image a review role runs
+/// in (<c>repository@sha256:...</c>), as handed to the container by the deploy
+/// plan. Execution Hosts shows it next to the image the server expects for that
+/// host (AGT-3689). Null outside a container.
+/// </para>
 /// </summary>
 public sealed record RunnerReleaseIdentityDto(
     string ReleaseId,
     string Version,
     string? Commit = null,
-    DateTime? BuiltAt = null);
+    DateTime? BuiltAt = null,
+    string? ImageRef = null);

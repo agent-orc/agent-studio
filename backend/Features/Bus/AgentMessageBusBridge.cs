@@ -915,11 +915,15 @@ public sealed class AgentMessageBusBridge
         string stableVersion,
         double behindHours,
         string reason,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool differs = false)
     {
         var age = behindHours >= 48
             ? $"{Math.Round(behindHours / 24)} days"
             : $"{Math.Round(behindHours)} hours";
+        var summary = differs
+            ? $"{hostId} ({role}) runs release {releaseId}, a different build than Stable {stableVersion}, for {age}."
+            : $"{hostId} ({role}) runs release {releaseId}, {age} behind Stable {stableVersion}.";
         var msg = NewMessage(
             participantId: ParticipantRuntime,
             role: "system",
@@ -928,10 +932,9 @@ public sealed class AgentMessageBusBridge
             project: null,
             jobId: null,
             topic: "host_release_drift",
-            summary: TruncateSummary(
-                $"{hostId} ({role}) runs release {releaseId}, {age} behind Stable {stableVersion}."),
+            summary: TruncateSummary(summary),
             body: reason,
-            payload: new { hostId, runnerId, role, releaseId, stableVersion, behindHours },
+            payload: new { hostId, runnerId, role, releaseId, stableVersion, behindHours, differs },
             tags: new[] { "host-release-drift", $"host:{hostId}", $"runner:{runnerId}" });
         // This producer retries failed alarms, so it must observe append failures.
         var workspace = Workspace();

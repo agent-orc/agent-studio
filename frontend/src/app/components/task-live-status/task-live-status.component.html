@@ -14,7 +14,16 @@
       <span class="task-live__label">Current</span>
       <span class="task-live__signal" aria-hidden="true"></span>
       <span class="task-live__summary">
-        <span class="task-live__headline">{{ live.headline }}</span>
+        @if (live.hold; as hold) {
+          <span class="task-live__headline task-live__headline--hold" data-testid="task-live-hold" [attr.title]="live.headline">Held behind
+            <button type="button"
+                    class="task-live__link"
+                    data-testid="task-live-hold-link"
+                    [attr.aria-label]="'Open ' + hold.causeKey"
+                    (click)="openCause($event, hold.causeKey)">{{ hold.causeKey }}</button>: {{ hold.summary }}</span>
+        } @else {
+          <span class="task-live__headline">{{ live.headline }}</span>
+        }
         @if (live.waitReason === 'manual-mode' && task().executionLocation?.configuredRunnerId) {
           <button type="button" class="task-live__auto-action" data-testid="task-live-switch-auto"
                   [disabled]="switchingToAuto()" (click)="switchToAuto($event)">
@@ -26,7 +35,7 @@
                 data-testid="task-live-detail-inline">· {{ live.detail }}</span>
         }
       </span>
-      @if (variant() === 'detail') {
+      @if (variant() === 'detail' && live.attempt !== null) {
         <span class="task-live__attempt">Attempt {{ live.attempt }}</span>
       }
     </div>

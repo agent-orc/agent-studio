@@ -1,10 +1,11 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Injector, computed, effect, inject, input, signal } from '@angular/core';
 import type { TaskInfo } from '../../models/task.model';
 import { TaskState } from '../../models/task.model';
 import { NowTickService } from '../../services/now-tick.service';
 import { deriveActiveTaskRun, isTaskRunActive, resolveRunActivityKind } from '../../services/run-activity.util';
 import { PickupHoldComponent } from '../pickup-hold/pickup-hold.component';
 import { runnerWaitCode, runnerWaitHeadline } from '../../models/ready-wait-reason';
+import { TaskReferenceNavigationService } from '../../services/task-reference-navigation.service';
 import { TaskService } from '../../services/task.service';
 import { ErrorDialogService } from '../../services/error-dialog.service';
 import { BatchGateService } from '../../services/batch-gate.service';
@@ -17,10 +18,18 @@ interface LiveStatusView {
   headline: string;
   detail: string | null;
   next: string[];
-  attempt: number;
   perTaskGate?: boolean;
+  /** Null when the card has no live status yet, so no attempt is claimed. */
+  attempt: number | null;
   /** AGT-3579: runner reason code when the runner is not picking this card. */
   waitReason?: string;
+  /** AGT-3617: the cause card this card is held behind, linked from the headline. */
+  hold?: CauseHold;
+}
+
+interface CauseHold {
+  causeKey: string;
+  summary: string;
 }
 
 const STALE_AFTER_MS = 10 * 60 * 1000;
@@ -39,6 +48,7 @@ export class TaskLiveStatusComponent {
   readonly variant = input<TaskLiveStatusVariant>('card');
   readonly dense = input(false);
   private readonly now = inject(NowTickService).now;
+  private readonly injector = inject(Injector);
   private readonly tasks = inject(TaskService);
   private readonly errors = inject(ErrorDialogService);
   private readonly batchGate = inject(BatchGateService);
@@ -75,24 +85,28 @@ export class TaskLiveStatusComponent {
   readonly view = computed<LiveStatusView | null>(() => {
     const task = this.task();
     const status = task.liveStatus;
-    if (!status) return null;
-
-    const next = (status.nextSteps ?? []).slice(0, 3).map(step => step.displayName);
+    const causeHeld = causeHold(task);
     const perTask = this.batchGate.state(task.projectName)()?.perTaskGates?.find(gate =>
       gate.taskKey === task.taskKey || gate.taskKey === task.key || gate.taskKey === task.id);
     if (perTask && task.state === TaskState.AutoReview) {
       const started = timestamp(perTask.startedAtUtc);
+      const handoff = perTask.batchId
+        ? `batch ${perTask.batchId} paused: ${perTask.reason.replace(/^batch [^ ]+ paused:\s*/, '')}`
+        : perTask.reason;
       return {
         tone: perTask.running ? 'active' : 'waiting',
         headline: perTask.running
           ? `Per-task gate running on ${perTask.host || 'gate host'}${started === null ? '' : ` since ${clock(started)}`}`
-          : `Per-task gate queued (${perTask.position} of ${perTask.total}) after ${perTask.reason}`,
+          : `Per-task gate queued (${perTask.position} of ${perTask.total}) after ${handoff}`,
         detail: perTask.running ? 'Red escalates; green integrates.' : 'One full suite per member. Red escalates; green integrates.',
         next: [],
-        attempt: status.attempt,
+        attempt: status?.attempt ?? null,
         perTaskGate: true,
       };
     }
+    if (!status) return causeHeld ? holdView(task, causeHeld, null, [], this.now()) : null;
+
+    const next = (status.nextSteps ?? []).slice(0, 3).map(step => step.displayName);
     const active = status.activeStep;
     if (active) {
       const startedAt = timestamp(active.startedAt);
@@ -133,6 +147,11 @@ export class TaskLiveStatusComponent {
         attempt: status.attempt,
       };
     }
+
+    // AGT-3617: a card held behind an open cause breaker is skipped by the
+    // review claim, so the review queue position it still carries says
+    // nothing. The hold, and the card that owns it, is the CURRENT state.
+    if (causeHeld) return holdView(task, causeHeld, status.attempt, next, this.now());
 
     const dependencyWait = dependencyWaitHeadline(task);
     if (dependencyWait) {
@@ -274,6 +293,36 @@ export class TaskLiveStatusComponent {
       attempt: status.attempt,
     };
   });
+
+  /** Opens the cause card; on a board card the click must not open this card too. */
+  openCause(event: Event, causeKey: string): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.injector.get(TaskReferenceNavigationService).openReferenceOrNotify(causeKey);
+  }
+}
+
+/** The cause-breaker hold of a Post Processing card, from its durable wait marker. */
+function causeHold(task: TaskInfo): CauseHold | null {
+  const wait = task.causeWait;
+  if (task.state !== TaskState.AutoReview || !wait?.causeKey) return null;
+  return {
+    causeKey: wait.causeKey,
+    summary: wait.summary?.trim() || 'review keeps failing for the same cause',
+  };
+}
+
+function holdView(task: TaskInfo, hold: CauseHold, attempt: number | null, next: string[], now: number): LiveStatusView {
+  const since = timestamp(task.causeWait?.since);
+  return {
+    tone: 'waiting',
+    headline: `Held behind ${hold.causeKey}: ${hold.summary}`,
+    detail: `Review skips this card until ${hold.causeKey} is resolved or a re-check passes`
+      + (since === null ? '' : ` · held for ${elapsed(Math.max(0, now - since))}`),
+    next,
+    attempt,
+    hold,
+  };
 }
 
 /**
