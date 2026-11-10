@@ -344,6 +344,8 @@ public static class BatchGateStateSnapshotReader
             fallbackWaits = fallbackWaits ?? [],
             fallbackStalls = store.ListFallbackStalls(project, 20),
             isolationFindings = store.ListIsolationFindings(project)
+                .Where(finding => finding.Status != "proven-red"
+                    || DeterministicIsolationFinding(store, projectManifests, finding))
                 .Select(finding => IsolationFinding(store, projectManifests, finding)).ToArray(),
             pushWait,
             pushWaits = pushWaits ?? (pushWait is null
@@ -385,6 +387,16 @@ public static class BatchGateStateSnapshotReader
             evidenceAvailable = finding.Status == "proven-red"
                 && store.StoredEvidenceFile(finding.EvidencePath) is not null,
         };
+    }
+
+    private static bool DeterministicIsolationFinding(BatchGateStore store,
+        IReadOnlyList<BatchGateManifest> manifests, BatchGateIsolationFinding finding)
+    {
+        var proving = ProvingRun(store, manifests, finding);
+        var batchId = finding.ProvingBatchId ?? proving?.BatchId;
+        var runId = finding.ProvingRunId ?? proving?.RunId;
+        return batchId is not null && runId is not null
+            && store.ReadVerdict(batchId, runId)?.Classification == "DeterministicSuiteRed";
     }
 
     // Findings written before AGT-3577 name only the evidence path: the proving

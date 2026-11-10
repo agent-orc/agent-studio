@@ -385,6 +385,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-cancelled-isolation-proved-red">
+          <td>2026-11-10</td>
+          <td><code>AGT-3584</code><br><span class="small">cancelled-isolation-proved-red (fix <code>AGT-3742</code>)</span></td>
+          <td>Batch <code>5ee5c2dd</code> went red. The solo isolation flight in <code>ada8a151</code> was cancelled while the API disk was full. It had no start time, exit code or test verdict, yet AGT-3584 reached Escalated with a claim that isolation proved it red. Other members had abandoned per-task pull jobs. No CLI crashed. Terminal at discovery: Escalated with a false delivery verdict, or Auto Review without a live gate.</td>
+          <td>The isolation finding reader treated every red child phase as proof, including InfrastructureRed. A per-task fallback treated a pull job without a verdict as a terminal red gate.</td>
+          <td>A proven-red finding now requires a deterministic child verdict. An interrupted isolation flight returns the review to the pending pool and retries the isolation step twice on later ticks; exhaustion parks it with GateInfra and the retry count. An interrupted per-task flight keeps its active marker for the next tick and parks with an infrastructure cause after its bounded retry.</td>
+        </tr>
         <tr id="case-per-task-fallback-silent-engine-wait">
           <td>2026-11-10</td>
           <td><code>AGT-3563</code>, <code>AGT-3183</code><br><span class="small">per-task-fallback-silent-engine-wait (fix <code>AGT-3694</code>)</span></td>
@@ -3098,7 +3105,7 @@
           <td><code>AGT-3120</code><br><span class="small">cancelled-gate-subject-ownership</span></td>
           <td>AGT-3044 escalated when a gate for its older delivery was cancelled after a fix round. AGT-3106 escalated while review daemons restarted.</td>
           <td>The per-task, batch fallback, and merge callers treated Cancellation as failed verification without checking current delivery ownership or shutdown.</td>
-          <td>The observed terminal was Escalated. Superseded cancellations now retain evidence and leave the current card alone; shutdown cancellations consume one durable infrastructure retry after restart. Operator stops still park the card. The timeline records superseded, shutdown, or operator.</td>
+          <td>The observed terminal was Escalated. Superseded cancellations retain evidence and leave the current card alone; shutdown cancellations consume one durable infrastructure retry after restart. A current per-task fallback cancellation without a test verdict keeps its active marker for a bounded retry, including an operator-classified cancellation; exhaustion parks it with GateInfra. The timeline records superseded, shutdown, or operator.</td>
         </tr>
         <tr id="case-completed-gate-superseded-delivery">
           <td>2026-10-15</td>
