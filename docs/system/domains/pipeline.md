@@ -2736,7 +2736,10 @@ operator changes cause the step to fail before its writer runs.
   `workbench.json.implementationTasks` entry carries, or is normalized to, a
   `bounded-slice` acceptance scope. Promotion rejects a single open-ended
   `implement all recommendations` entry. Multi-slice work uses separate entries
-  in the Dossier with one card per slice; see
+  in the Dossier with one card per slice. An entry names the slice ids it
+  depends on in `dependsOn`; concept review accepts only ids of earlier
+  entries, and promotion writes them as `dependsOn` edges between the cards;
+  see
   [workflow-sized task cutting](../../operations/workflow-sized-task-cutting.md).
 - `PipelineHealthService` is the visibility-only sensor for pipeline-wide
   failure modes. `BuildTestGateRunner` reports acquired/completed pairs into

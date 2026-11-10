@@ -20,6 +20,30 @@ bounded acceptance scope. Legacy entries without the field are treated as one
 slice using that entry's title and prompt. Promotion rejects one open-ended
 entry that asks for all recommendations.
 
+### Slice dependencies
+
+Give every entry a slice `id` that is unique within the Dossier. When a slice
+needs another slice delivered first, name that slice's id in its `dependsOn`
+array. List the slices in delivery order: concept review rejects a `dependsOn`
+id that is unknown, duplicated, the entry's own id, or a later entry.
+
+```json
+[
+  { "id": "slice-1", "title": "Build the note store", "promptMarkdown": "...", "dependsOn": [] },
+  { "id": "slice-2", "title": "Expose the note API", "promptMarkdown": "...", "dependsOn": ["slice-1"] },
+  { "id": "slice-3", "title": "Show notes on the board", "promptMarkdown": "...", "dependsOn": ["slice-1", "slice-2"] }
+]
+```
+
+Promotion turns each id into a plain `dependsOn` edge between the
+implementation cards, so the scheduler holds a slice until each predecessor is
+completed or its delivery is integrated. The concept card stays a `relatedTo`
+link; it is not a completion gate. Promoting one slice also promotes the slices
+it depends on, predecessors first. Each card records its zero-based slice index
+and the slice count in `task.json.dossier`, and the board card and detail view
+show `Slice n of m · Dossier <key>` as a link to the Dossier. A dependency
+written only in `promptMarkdown` prose is not enforced.
+
 ### Decision items
 
 An entry whose slice depends on a fork the Dossier cannot settle carries a

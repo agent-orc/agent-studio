@@ -10,6 +10,7 @@ import { DeliveryClaimPanelComponent } from '../../../delivery-claim-panel/deliv
 import { ContinueRoundPanelComponent } from '../../../continue-round-panel/continue-round-panel.component';
 import { CopyableTaskKeyComponent } from '../../../../../../components/copyable-task-key/copyable-task-key.component';
 import { TaskPromptPopoverComponent } from '../../task-prompt-popover/task-prompt-popover.component';
+import { DossierSliceLinkComponent } from '../../../../../../components/dossier-slice-link/dossier-slice-link';
 import { laneTone } from '../../../../../../models/lane-presentation';
 import { copyTextToClipboard } from '../../../../../../services/clipboard.util';
 import { lifecyclePhaseLabel } from '../../../../../../services/lifecycle-phase.util';
@@ -29,7 +30,7 @@ function makeAttachmentId(): string {
 
 /**
  * The Overview tab's hero block: the inline-editable title, the identity
- * sub-line (key, lane, phase, project, prompt popover), and
+ * sub-line (key, lane, phase, project, Dossier slice, prompt popover), and
  * the promote-to-coding affordance for a finished planning task.
  *
  * Split out of `overview-pane.component.ts` in AGT-2819. It owns one coherent
@@ -48,6 +49,7 @@ function makeAttachmentId(): string {
     ContinueRoundPanelComponent,
     CopyableTaskKeyComponent,
     TaskPromptPopoverComponent,
+    DossierSliceLinkComponent,
   ],
   templateUrl: './overview-title-block.component.html',
   styleUrl: './overview-title-block.component.scss',

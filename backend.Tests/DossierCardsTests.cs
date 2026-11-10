@@ -12,12 +12,13 @@ public sealed class DossierCardsTests
     public void ImplementationProvenance_UsesSectionFromPromptOrSliceId()
     {
         var parsed = TaskDossierProvenance.FromImplementation("docs/operations/one/index.html",
-            new ConceptImplementationTask { Id = "NV-2", PromptMarkdown = "Implement section 4: the card list." }, 1);
+            new ConceptImplementationTask { Id = "NV-2", PromptMarkdown = "Implement section 4: the card list." }, 1, 3);
         Assert.Equal("§4", parsed.Section);
         Assert.Equal(1, parsed.ImplementationIndex);
+        Assert.Equal(3, parsed.ImplementationCount);
 
         var fallback = TaskDossierProvenance.FromImplementation("docs/operations/one/index.html",
-            new ConceptImplementationTask { Id = "NV-3", PromptMarkdown = "Remove old workflow code." }, 2);
+            new ConceptImplementationTask { Id = "NV-3", PromptMarkdown = "Remove old workflow code." }, 2, 3);
         Assert.Equal("NV-3", fallback.Section);
     }
 

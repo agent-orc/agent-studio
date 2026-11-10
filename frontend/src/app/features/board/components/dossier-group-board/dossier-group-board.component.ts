@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
 import type { TaskInfo } from '../../../../models/task.model';
 import { laneName } from '../../../../models/lane-presentation';
+import { dossierSlicePosition } from '../../../../models/dossier-presentation';
 import { DossierCatalogueService } from '../../../../services/dossier-catalogue.service';
 import { groupCardsByDossier } from './dossier-grouping.util';
 
@@ -16,6 +17,7 @@ export class DossierGroupBoardComponent {
   private readonly catalogue = inject(DossierCatalogueService);
   readonly groups = computed(() => groupCardsByDossier(this.tasks()));
   readonly laneName = laneName;
+  readonly slicePosition = dossierSlicePosition;
 
   constructor() { this.catalogue.ensureLoaded().subscribe(); }
 

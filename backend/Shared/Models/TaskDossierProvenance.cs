@@ -5,12 +5,13 @@ namespace AgentStudio.Shared;
 public static partial class TaskDossierProvenance
 {
     public static TaskDossier FromImplementation(
-        string path, ConceptImplementationTask item, int index) => new()
+        string path, ConceptImplementationTask item, int index, int count) => new()
     {
         Path = path,
         Section = item.Section ?? SectionFromPrompt(item.PromptMarkdown) ?? item.Id,
         Decision = item.DecisionId ?? item.Decision?.Question,
         ImplementationIndex = index,
+        ImplementationCount = count,
         Environments = item.Environments,
     };
 

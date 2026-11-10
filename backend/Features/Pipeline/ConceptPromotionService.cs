@@ -29,14 +29,17 @@ public sealed class ConceptPromotionService
         PromoteConceptResponse plan,
         PromoteConceptRequest request)
     {
-        var requested = request.ItemIndexes is { Count: > 0 }
-            ? request.ItemIndexes.Distinct().OrderBy(index => index).ToList()
+        var selected = request.ItemIndexes is { Count: > 0 }
+            ? request.ItemIndexes.Distinct().ToList()
             : Enumerable.Range(0, plan.Items.Count).ToList();
-        if (requested.Any(index => index < 0 || index >= plan.Items.Count))
+        if (selected.Any(index => index < 0 || index >= plan.Items.Count))
             throw new ArgumentOutOfRangeException(
                 nameof(request.ItemIndexes), "A selected implementation item does not exist.");
 
-        var spawns = requested.Select(index =>
+        var predecessors = Enumerable.Range(0, plan.Items.Count)
+            .Select(index => DossierImplementationCardPolicy.PredecessorIndexes(plan.Items, index))
+            .ToList();
+        var spawns = WithPredecessors(selected, predecessors).Select(index =>
         {
             var item = plan.Items[index];
             return new ConceptCardSpawn(
@@ -44,8 +47,9 @@ public sealed class ConceptPromotionService
                 (item.Decision is null ? CodingRequest(plan.Source, item) : DecisionRequest(plan.Source, item)) with
                 {
                     Dossier = TaskDossierProvenance.FromImplementation(
-                        plan.Source.RepoRelativePath, item, index),
-                });
+                        plan.Source.RepoRelativePath, item, index, plan.Items.Count),
+                },
+                predecessors[index].Select(predecessor => ReasonFor(plan.Source.RepoRelativePath, predecessor)).ToList());
         }).ToList();
 
         return new PromoteConceptTasksResponse
@@ -56,9 +60,28 @@ public sealed class ConceptPromotionService
     }
 
     /// <summary>
+    /// A slice cannot start before the slices it depends on exist, so selecting
+    /// a slice also promotes its predecessors. Predecessors are earlier items,
+    /// so ascending descriptor order creates every predecessor first.
+    /// </summary>
+    private static IEnumerable<int> WithPredecessors(IEnumerable<int> selected, IReadOnlyList<IReadOnlyList<int>> predecessors)
+    {
+        var included = new SortedSet<int>();
+        var pending = new Stack<int>(selected);
+        while (pending.TryPop(out var index))
+        {
+            if (!included.Add(index)) continue;
+            foreach (var predecessor in predecessors[index]) pending.Push(predecessor);
+        }
+        return included;
+    }
+
+    /// <summary>
     /// The promotion mechanism: creates one card per spawn, links it to the
     /// source card, and records it in the source's spawn ledger so a repeated
     /// request returns the existing card instead of creating a second one.
+    /// A spawn's predecessor reasons become plain <c>dependsOn</c> edges to the
+    /// cards the ledger recorded for them, so spawns must list predecessors first.
     /// Concept promotion and the decision apply step both create cards here.
     /// </summary>
     public IReadOnlyList<PromotedConceptTask> CreateCards(TaskInfo source, IReadOnlyList<ConceptCardSpawn> spawns)
@@ -69,7 +92,8 @@ public sealed class ConceptPromotionService
             foreach (var (spawn, position) in spawns.Select((spawn, position) => (spawn, position)))
             {
                 var title = spawn.Request.Title?.Trim() ?? "";
-                var existing = SpawnedTaskLedger.Read(source.FolderPath, _logger)
+                var ledger = SpawnedTaskLedger.Read(source.FolderPath, _logger);
+                var existing = ledger
                     .FirstOrDefault(record => string.Equals(record.Reason, spawn.Reason, StringComparison.Ordinal));
                 if (existing != null)
                 {
@@ -99,11 +123,16 @@ public sealed class ConceptPromotionService
                         $"Could not create implementation card {position + 1}.");
 
                 var created = _scanner.FindJob(jobId, source.WatchPath);
-                if (!string.IsNullOrWhiteSpace(source.Key) && created != null)
+                var dependsOn = PredecessorKeys(ledger, spawn);
+                if (created != null && (!string.IsNullOrWhiteSpace(source.Key) || dependsOn.Count > 0))
                 {
                     _mutations.SetTaskReferences(
                         jobId,
-                        new TaskReferences { RelatedTo = [source.Key!] },
+                        new TaskReferences
+                        {
+                            DependsOn = dependsOn,
+                            RelatedTo = string.IsNullOrWhiteSpace(source.Key) ? [] : [source.Key!],
+                        },
                         created.WatchPath);
                     created = _scanner.FindJob(jobId, source.WatchPath) ?? created;
                 }
@@ -132,6 +161,23 @@ public sealed class ConceptPromotionService
             }
         }
         return promoted;
+    }
+
+    /// <summary>
+    /// Plain delivery edges to the predecessor cards: a predecessor releases its
+    /// dependents once its delivery is integrated, not only when it completes.
+    /// </summary>
+    private List<TaskDependencyReference> PredecessorKeys(
+        IReadOnlyList<SpawnedTaskRecord> ledger, ConceptCardSpawn spawn)
+    {
+        var keys = new List<TaskDependencyReference>();
+        foreach (var reason in spawn.DependsOnReasons ?? [])
+        {
+            var record = ledger.FirstOrDefault(entry => string.Equals(entry.Reason, reason, StringComparison.Ordinal));
+            if (record?.TargetKey is { Length: > 0 } key) keys.Add(new TaskDependencyReference(key));
+            else _logger.LogWarning("concept-promotion-predecessor-missing reason={Reason} for={Spawn}", reason, spawn.Reason);
+        }
+        return keys;
     }
 
     private static CreateTaskRequest CodingRequest(ConceptSourceDocument source, ConceptImplementationTask item) => new()
@@ -194,5 +240,9 @@ public sealed class ConceptPromotionService
     }
 }
 
-/// <summary>One card to create through <see cref="ConceptPromotionService.CreateCards"/>, keyed by its ledger reason.</summary>
-public sealed record ConceptCardSpawn(string Reason, CreateTaskRequest Request);
+/// <summary>
+/// One card to create through <see cref="ConceptPromotionService.CreateCards"/>, keyed by its ledger reason.
+/// <paramref name="DependsOnReasons"/> names the ledger reasons of the cards this one depends on.
+/// </summary>
+public sealed record ConceptCardSpawn(
+    string Reason, CreateTaskRequest Request, IReadOnlyList<string>? DependsOnReasons = null);

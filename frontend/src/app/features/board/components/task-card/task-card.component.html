@@ -67,7 +67,7 @@
             [attr.data-open]="db.open" [cacTooltip]="db.tooltip">{{ db.label }}</span>
     }
     @if (job().dossier; as dossier) {
-      <span class="task-card__subtask-chip" data-testid="task-card-dossier" [cacTooltip]="dossier.path">Dossier · {{ dossier.path.split('/').slice(-2, -1)[0] }} @if (dossier.section) { · {{ dossier.section }} } @if (dossier.decision) { · {{ dossier.decision }} }</span>
+      <span class="task-card__subtask-chip" data-testid="task-card-dossier"><app-dossier-slice-link [dossier]="dossier" [projectName]="job().projectName" testId="task-card-dossier-link" /></span>
     }
     <span class="task-card__title-text" data-truncatable>{{ job().title || job().id }}</span>
     @if (compact()) {

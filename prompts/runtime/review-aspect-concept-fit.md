@@ -17,6 +17,10 @@ Check each requirement the brief actually makes:
 - Implementation cards exist in the delivered workbench source data and cover
   independently reviewable slices. Check the `implementationTasks` entries or
   another explicit card source named by the brief.
+- Each implementation card has a unique slice `id`. When a card's prose says it
+  depends on or builds on another slice, its `dependsOn` array names that
+  slice's id, and the named slice comes earlier in `implementationTasks`. A
+  dependency stated only in prose is a `concerns`: promotion cannot enforce it.
 
 Use `pass` only when these checks are supported by the delivered content. Use
 `concerns` for a narrow, named weakness. Use `block` when a required section,

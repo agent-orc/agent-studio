@@ -108,7 +108,8 @@ public static class DossierBackfillPolicy
                         || (spawn.TargetKey != null && task.Key == spawn.TargetKey)).Take(2).ToArray();
                     if (matches.Length != 1) continue;
                     var implementation = item.ImplementationTasks[index];
-                    Claim(matches[0], TaskDossierProvenance.FromImplementation(item.EntryPath, implementation, index));
+                    Claim(matches[0], TaskDossierProvenance.FromImplementation(
+                        item.EntryPath, implementation, index, item.ImplementationTasks.Count));
                 }
             }
 
@@ -117,7 +118,8 @@ public static class DossierBackfillPolicy
                 var matches = tasks.Where(task => string.Equals(task.Title.Trim(), implementation.Title.Trim(),
                     StringComparison.OrdinalIgnoreCase)).ToArray();
                 if (matches.Length != 1) continue;
-                Claim(matches[0], TaskDossierProvenance.FromImplementation(item.EntryPath, implementation, index));
+                Claim(matches[0], TaskDossierProvenance.FromImplementation(
+                    item.EntryPath, implementation, index, item.ImplementationTasks.Count));
             }
         }
 

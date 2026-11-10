@@ -10,3 +10,4 @@ li span { color: var(--studio-fg-dim); }
 button { border: 0; background: none; color: var(--studio-fg); font: inherit; cursor: pointer; text-align: left; }
 button:hover { color: var(--studio-accent-4-strong); }
 button:focus-visible { outline: 2px solid var(--studio-accent-4-strong); }
+.dossier-board__slice { display: block; color: var(--studio-fg-dim); font-size: 0.78rem; font-variant-numeric: tabular-nums; }

@@ -1,0 +1,15 @@
+@if (route(); as href) {
+  <a class="dossier-slice dossier-slice--link"
+     [attr.data-testid]="testId()"
+     [href]="href"
+     (click)="open($event)"
+     [appTooltip]="tooltip()"
+     [appTooltipTestId]="testId() + '-tooltip'"
+     [appTooltipDelay]="300">{{ label() }}</a>
+} @else {
+  <span class="dossier-slice"
+        [attr.data-testid]="testId()"
+        [appTooltip]="tooltip()"
+        [appTooltipTestId]="testId() + '-tooltip'"
+        [appTooltipDelay]="300">{{ label() }}</span>
+}

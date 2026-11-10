@@ -290,6 +290,123 @@ public sealed class ConceptPipelineTests : IDisposable
     }
 
     [Fact]
+    public void Review_RejectsSliceDependenciesThatAreUnknownForwardOrDuplicated()
+    {
+        var directory = ConceptWorkbenchContract.CreateScaffold(
+            _root, "slices", "Slices", "Three slices.", "AGT-2358");
+        WriteImplementationTasks(directory,
+        [
+            Slice("slice-1", "Build store"),
+            Slice("slice-2", "Build API", "slice-3"),
+            Slice("slice-3", "Build UI", "slice-9"),
+            Slice("slice-1", "Build docs", "slice-1"),
+        ]);
+
+        var review = ConceptWorkbenchContract.ReviewDirectory(_root, "docs/slices", "AGT-2358");
+
+        Assert.False(review.IsComplete);
+        Assert.Contains("implementationTasks[1].dependsOn names the later slice 'slice-3'. List every slice after the slices it depends on.", review.Findings);
+        Assert.Contains("implementationTasks[2].dependsOn names unknown slice id 'slice-9'.", review.Findings);
+        Assert.Contains("implementationTasks[3] id 'slice-1' is already used by implementationTasks[0].", review.Findings);
+    }
+
+    [Fact]
+    public void Review_AcceptsSlicesThatDependOnEarlierSlices()
+    {
+        var directory = ConceptWorkbenchContract.CreateScaffold(
+            _root, "ordered-slices", "Ordered slices", "Three slices.", "AGT-2358");
+        WriteImplementationTasks(directory,
+        [
+            Slice("slice-1", "Build store"),
+            Slice("slice-2", "Build API", "slice-1"),
+            Slice("slice-3", "Build UI", "SLICE-1", "slice-2"),
+        ]);
+
+        var review = ConceptWorkbenchContract.ReviewDirectory(_root, "docs/ordered-slices", "AGT-2358");
+
+        Assert.True(review.IsComplete, review.Summary);
+        // Slice ids match case-insensitively; the descriptor keeps them as written.
+        Assert.Equal(["SLICE-1", "slice-2"], review.Descriptor!.ImplementationTasks[2].DependsOn);
+    }
+
+    [Fact]
+    public void Promotion_CreatesDependsOnEdgesBetweenSlicesAndPromotesPredecessorsFirst()
+    {
+        var repository = Path.Combine(_root, "repository");
+        var taskStore = Path.Combine(_root, "tasks");
+        Directory.CreateDirectory(repository);
+        Directory.CreateDirectory(taskStore);
+        var (_, scanner, _, mutations) = BuildServices(repository, taskStore);
+        var source = CreateConceptSource(scanner, mutations, taskStore);
+        var directory = ConceptWorkbenchContract.CreateScaffold(
+            repository, "sliced-flow", "Sliced flow", "Three dependent slices.", source.Key ?? source.Id);
+        WriteImplementationTasks(directory,
+        [
+            Slice("slice-1", "Build store"),
+            Slice("slice-2", "Build API", "slice-1"),
+            Slice("slice-3", "Build UI", "slice-1", "slice-2"),
+        ]);
+        PublishDossier(source, "docs/sliced-flow");
+        var plan = scanner.BuildPromoteConceptPlan(source.Id, taskStore);
+        Assert.NotNull(plan);
+        var service = new ConceptPromotionService(
+            scanner, mutations, NullLogger<ConceptPromotionService>.Instance);
+
+        // Selecting only the last slice still creates its predecessors, first.
+        var result = service.Promote(source, plan!, new PromoteConceptRequest { ItemIndexes = [2] });
+
+        Assert.Equal(["Build store", "Build API", "Build UI"], result.Created.Select(card => card.Title));
+        var cards = result.Created.Select(card => scanner.FindJob(card.JobId, taskStore)!).ToList();
+        var keys = cards.Select(card => card.Key ?? card.Id).ToList();
+        Assert.Empty(cards[0].References.DependsOn);
+        Assert.Equal([keys[0]], cards[1].References.DependsOn.Select(edge => edge.Key));
+        Assert.Equal([keys[0], keys[1]], cards[2].References.DependsOn.Select(edge => edge.Key));
+        Assert.All(cards.SelectMany(card => card.References.DependsOn), edge =>
+        {
+            Assert.False(edge.RequiresCompletion);
+            Assert.False(edge.ReleaseGate);
+        });
+        Assert.All(cards, card =>
+        {
+            if (source.Key is { } sourceKey) Assert.Equal([sourceKey], card.References.RelatedTo);
+            Assert.DoesNotContain(card.References.DependsOn, edge => edge.Key == (source.Key ?? source.Id));
+            Assert.Equal(3, card.Dossier?.ImplementationCount);
+        });
+        Assert.Equal([0, 1, 2], cards.Select(card => card.Dossier?.ImplementationIndex ?? -1));
+        Assert.True(cards[0].Order < cards[1].Order && cards[1].Order < cards[2].Order);
+
+        // A repeated request reuses the ledger and creates no second set.
+        var repeated = service.Promote(source, plan!, new PromoteConceptRequest());
+        Assert.Equal(result.Created.Select(card => card.JobId), repeated.Created.Select(card => card.JobId));
+    }
+
+    [Fact]
+    public void Promotion_LinksALaterSliceToThePredecessorCardPromotedEarlier()
+    {
+        var repository = Path.Combine(_root, "repository");
+        var taskStore = Path.Combine(_root, "tasks");
+        Directory.CreateDirectory(repository);
+        Directory.CreateDirectory(taskStore);
+        var (_, scanner, _, mutations) = BuildServices(repository, taskStore);
+        var source = CreateConceptSource(scanner, mutations, taskStore);
+        var directory = ConceptWorkbenchContract.CreateScaffold(
+            repository, "two-step", "Two step", "Two dependent slices.", source.Key ?? source.Id);
+        WriteImplementationTasks(directory, [Slice("store", "Build store"), Slice("api", "Build API", "store")]);
+        PublishDossier(source, "docs/two-step");
+        var plan = scanner.BuildPromoteConceptPlan(source.Id, taskStore)!;
+        var service = new ConceptPromotionService(
+            scanner, mutations, NullLogger<ConceptPromotionService>.Instance);
+
+        var first = service.Promote(source, plan, new PromoteConceptRequest { ItemIndexes = [0] });
+        var second = service.Promote(source, plan, new PromoteConceptRequest { ItemIndexes = [1] });
+
+        Assert.Single(first.Created);
+        Assert.Equal(first.Created[0].JobId, second.Created[0].JobId);
+        var api = scanner.FindJob(second.Created[1].JobId, taskStore)!;
+        Assert.Equal([first.Created[0].TaskKey], api.References.DependsOn.Select(edge => edge.Key));
+    }
+
+    [Fact]
     public void Promotion_RecordedOperatorDecision_OverridesRecommendation()
     {
         Directory.CreateDirectory(_root);
@@ -411,6 +528,50 @@ public sealed class ConceptPipelineTests : IDisposable
             PipelineStepStatus.Skipped,
             execution.Steps.Single(step =>
                 step.StepId == PipelineCatalogue.ConceptPromotionStepId).Status);
+    }
+
+    private static ConceptImplementationTask Slice(string id, string title, params string[] dependsOn) => new()
+    {
+        Id = id,
+        Title = title,
+        PromptMarkdown = $"Deliver the {title.ToLowerInvariant()} slice.",
+        DependsOn = [.. dependsOn],
+    };
+
+    private static void WriteImplementationTasks(string directory, List<ConceptImplementationTask> items)
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
+        var path = Path.Combine(directory, "workbench.json");
+        var descriptor = JsonSerializer.Deserialize<ConceptWorkbenchDescriptor>(File.ReadAllText(path), options)!;
+        File.WriteAllText(path, JsonSerializer.Serialize(descriptor with { ImplementationTasks = items }, options));
+    }
+
+    private static TaskInfo CreateConceptSource(
+        TaskScannerService scanner, TaskMutationService mutations, string taskStore)
+    {
+        var sourceId = mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "concept-source",
+            Title = "Concept source",
+            Mode = TaskModes.Concept,
+            RequiresIntegration = false,
+            WatchPath = taskStore,
+            TargetState = TaskStates.HumanReview,
+        });
+        Assert.NotNull(sourceId);
+        return scanner.FindJob(sourceId!, taskStore)!;
+    }
+
+    private static void PublishDossier(TaskInfo source, string directory)
+    {
+        Assert.True(ConceptWorkbenchStore.Write(source.FolderPath, new ConceptWorkbenchRecord
+        {
+            RepoRelativeDirectory = directory,
+            RepoRelativeEntrypoint = directory + "/index.html",
+            Title = directory,
+            // clock-independent: the publication time is fixture data; promotion never compares it with now.
+            PublishedAt = new DateTime(2026, 11, 9, 10, 0, 0, DateTimeKind.Utc),
+        }));
     }
 
     private (

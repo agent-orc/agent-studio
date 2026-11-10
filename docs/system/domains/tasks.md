@@ -167,7 +167,10 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
 - `references.workbenches` carries typed card-to-Dossier links.
   `task.json.dossier` now identifies the one primary Dossier for board grouping
   and implementation progress. It stores the repository entry path and optional
-  source section, decision, and zero-based implementation slice index. Other
+  source section, decision, zero-based implementation slice index, and the
+  slice count when the card was cut. The board card and the detail title line
+  render that as one `Slice n of m · Dossier <key>` link to the Dossier view,
+  and the Dossier board lists cards in slice order. Other
   `references.workbenches` entries remain links. Concept promotion and decision
   apply inherit this primary association. Writable Dossier catalogue discovery
   backfills unassigned cards only when descriptor keys, legacy
@@ -198,7 +201,10 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   relates them to the source concept. Each `implementationTasks` entry is one
   independently reviewable slice and becomes one card with a bounded
   `acceptanceScope`. Promotion rejects an open-ended entry such as `implement
-  all recommendations`; use one entry per slice.
+  all recommendations`; use one entry per slice. An entry's `dependsOn` slice
+  ids become plain `dependsOn` edges to the predecessor slice cards (not
+  `requiresCompletion` edges on the concept), and promoting a slice also
+  promotes its predecessors first.
 - `POST /api/tasks/{id}/continue` on a `concept` or `planning` card refuses
   (`409`) a follow-up prompt that reads as a code-change request, naming the
   card's mode and the matching promotion path (`promote-concept` or

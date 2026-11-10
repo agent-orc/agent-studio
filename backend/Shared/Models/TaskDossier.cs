@@ -7,6 +7,8 @@ public sealed record TaskDossier
     public string? Section { get; init; }
     public string? Decision { get; init; }
     public int? ImplementationIndex { get; init; }
+    /// <summary>Slices the Dossier proposed when this card was cut, for the "slice n of m" position.</summary>
+    public int? ImplementationCount { get; init; }
     /// <summary>Deployment environments named by this implementation slice.</summary>
     public string[] Environments { get; init; } = [];
 }

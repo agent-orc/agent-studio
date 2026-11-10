@@ -211,6 +211,7 @@ public static class ConceptWorkbenchContract
                 else if (DossierImplementationCardPolicy.Validate(item) is { } scopeFinding)
                     findings.Add($"implementationTasks[{i}] is not workflow-sized: {scopeFinding}");
             }
+            findings.AddRange(DossierImplementationCardPolicy.ValidateDependencies(descriptor.ImplementationTasks));
         }
 
         if (!File.Exists(entryPath))
