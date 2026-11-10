@@ -673,7 +673,8 @@ describe('StudioShellComponent active-tab scroll-into-view (AGT-2135)', () => {
     const active = Array.from(list.querySelectorAll<HTMLElement>('.studio-tab'))
       .find(el => el.getAttribute('data-tab-key') === activeTabKey)!;
     const spy = vi.fn();
-    active.scrollIntoView = spy as unknown as HTMLElement['scrollIntoView'];
+    // Stub the instance: plain assignment throws if a prototype slot is non-writable.
+    Object.defineProperty(active, 'scrollIntoView', { configurable: true, writable: true, value: spy });
     // Visible strip spans x ∈ [0, 200].
     list.getBoundingClientRect = (() => ({ left: 0, right: 200, top: 0, bottom: 30, width: 200, height: 30, x: 0, y: 0, toJSON() { return {}; } }) as DOMRect);
     active.getBoundingClientRect = (() => ({ left: tabRect.left, right: tabRect.right, top: 0, bottom: 30, width: tabRect.right - tabRect.left, height: 30, x: tabRect.left, y: 0, toJSON() { return {}; } }) as DOMRect);
