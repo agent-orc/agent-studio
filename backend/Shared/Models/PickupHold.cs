@@ -269,10 +269,10 @@ public static class PickupHoldPolicy
                 laneEntry, facts.NowUtc, unsatisfiable: true,
                 new PickupHoldResolution(
                     PickupHoldResolutionKinds.RouteToRemoteRunner,
-                    "Route to a remote runner",
-                    $"Pick the remote runner that executes {task.ProjectName}; the project's execution placement setting holds the same choice.",
+                    "Choose an execution runner",
+                    "Open Project Settings and choose an available runner under Execution location.",
                     TargetKey: string.IsNullOrWhiteSpace(facts.SuggestedRemoteRunnerId) ? null : facts.SuggestedRemoteRunnerId,
-                    Action: RemedyAction.Api(RemedyApiActions.SetExecutionRunner, task.ProjectName)));
+                    Action: RemedyAction.Setting(ProjectSettingKeys.ExecutionRunner, task.ProjectName)));
         }
 
         // Dated from the refusal, not from the lane entry: that is the moment the

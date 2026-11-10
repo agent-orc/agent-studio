@@ -225,3 +225,45 @@ test('palette groups Dossier and Wiki results and keyboard navigation opens the 
   await expect(page.frameLocator('[data-testid="workbench-viewer-frame"]')
     .getByRole('heading', { name: DOSSIER_MATCH.title })).toBeVisible({ timeout: 30_000 });
 });
+
+// AGT-3591: a task result's lane badge is the lane's one name and one tone
+// from lane-presentation, never the raw `5-human-review` slug.
+for (const theme of ['dark', 'light'] as const) {
+  test(`task result lane badge shows the lane name and tone (${theme})`, async ({ page }) => {
+    const reviewTask = { ...BOARD_TASK, id: 'agt-3591-proof', taskKey: 'demo::agt-3591-proof', key: 'AGT-3591',
+      title: 'Lane badge proof', state: '5-human-review', folderPath: '/tmp/demo/agt-3591-proof' };
+    await page.route('**/api/v1/studio/board**', route => route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
+        failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [reviewTask], escalated: [],
+        review: [], completed: [], archive: [],
+      }),
+    }));
+    await page.route('**/api/search/stream?**', route => route.fulfill({
+      contentType: 'text/event-stream',
+      body: [frame('tasks', { items: [], durationMs: 1, error: null }), frame('progress', { completed: 0, total: 0 }),
+        frame('done', { durationMs: 1, tasksMs: 1, repositoriesMs: 0, repositories: 0 })].join(''),
+    }));
+    await page.addInitScript(t => localStorage.setItem('atp.studio.theme', t), theme);
+    await page.goto('/');
+    await page.getByTestId('studio-global-search-trigger').dispatchEvent('click');
+    await page.getByTestId('global-search-input').fill('Lane badge proof');
+
+    const badge = page.getByTestId('global-search-group-tasks').getByTestId('global-search-lane-badge');
+    await expect(badge).toHaveText('Human review');
+    await expect(badge).toHaveAttribute('data-lane-tone', 'human-review');
+    const colours = await badge.evaluate(el => {
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--studio-lane-human-review-fg)';
+      document.body.appendChild(probe);
+      const expected = getComputedStyle(probe).color;
+      probe.remove();
+      return { actual: getComputedStyle(el).color, expected };
+    });
+    expect(colours.actual).toBe(colours.expected);
+    if (process.env.JOB_RESULTS_DIR) {
+      await page.screenshot({ path: join(process.env.JOB_RESULTS_DIR, `global-search-lane-badge-${theme}.png`) });
+    }
+  });
+}

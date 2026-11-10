@@ -26,6 +26,27 @@ describe('environment attention', () => {
     expect(causes).toHaveLength(1);
     expect(causes[0]).toMatchObject({ id: 'task-server:connectivity:524', count: 5 });
   });
+  it('lists closed claim gates as one cause that names the host, load and duration', () => {
+    const gate = (since: string) => ({ state: 'closed' as const, loadPerCore: 5.51, threshold: 4,
+      sustainedSeconds: 1380, since, activeSlots: 4 });
+    const healthy = (id: string): RemoteHost => ({ ...host(id, ''), status: 'online', taskServerConnection: null,
+      capabilityHealth: [] });
+    const now = Date.parse('2026-11-02T10:30:00Z');
+    const single = buildEnvironmentAttention({ hosts: [{ ...healthy('runner-a'), claimLoadGate: gate('2026-11-02T10:07:00Z') }],
+      stalls: [], identities: [], failures: [], review: null, now })
+      .find(cause => cause.id === 'claim-load-gate:closed');
+    expect(single).toMatchObject({ count: 1, hostId: 'runner-a', since: '2026-11-02T10:07:00Z',
+      statement: 'runner-a: Not claiming: load 5.5 per core above 4.0 for 23 min. Running work continues.' });
+
+    const both = buildEnvironmentAttention({ hosts: [
+      { ...healthy('runner-b'), claimLoadGate: gate('2026-11-02T10:20:00Z') },
+      { ...healthy('runner-a'), claimLoadGate: gate('2026-11-02T10:07:00Z') },
+      { ...healthy('runner-c'), status: 'retired', claimLoadGate: gate('2026-11-02T10:00:00Z') },
+    ], stalls: [], identities: [], failures: [], review: null, now })
+      .find(cause => cause.id === 'claim-load-gate:closed');
+    expect(both).toMatchObject({ count: 2, hostId: 'runner-a' });
+    expect(both?.statement).toContain('2 hosts not claiming');
+  });
   it('keeps unrecognised causes separate', () => {
     const causes = buildEnvironmentAttention({ hosts: [], stalls: [
       { id: 'a', project: 'p', subject: 'host:a', severity: 'warn', lastSummary: 'Unusual failure', affectedCards: [] },

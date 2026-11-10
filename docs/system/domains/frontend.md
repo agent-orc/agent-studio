@@ -207,10 +207,13 @@ deploy-run and integration-verification changes; board reads do not walk git.
 Lane headers open the project's Deploy area, and board search and filters narrow
 the delivery cards.
 
-The project execution assignment card warns when automatic pickup is placed
-at `local` and the settings projection reports `localCodingAdmitted: false`.
+The project execution assignment card warns when execution is placed at
+`local` and the settings projection reports `localCodingAdmitted: false`.
 Ready cards show the corresponding `execution-placement` pickup hold and a
-copyable `PUT /api/projects/{projectName}/execution-runner` resolution.
+button that opens Project Settings at Execution location. The onboarding dialog
+reads `GET /api/projects/execution-capability` before a first project exists;
+when local coding is disabled, it requires a runner for a source-backed project
+and labels Local as board and orchestration only.
 
 ## Global Search
 
@@ -992,15 +995,25 @@ occur. It is not a claim about tunnel transfer time.
   identity, connection, capabilities, capacity, project access, work, and load
   disclosures. The same pane carries setup, link, capacity, provider sign-in,
   drain, and lifecycle controls. Fresh runner telemetry places claim load gate
-  status beside slot counts. The Environment flow shows the same status, and a
-  Ready card routed to that runner shows a pickup hold while its gate is closed.
+  status beside slot counts. The detail pane's Slots, Capacity, and Host work
+  read one slot count, the role daemons' telemetry; board leases are only the
+  comparison source. A closed gate is one attention cause, tags its machine
+  row "Not claiming", and the footer runner entry names how many hosts are not
+  claiming and opens the longest-closed one (`?host=`). The Environment flow
+  shows the same status, and a Ready card routed to that runner shows a pickup
+  hold while its gate is closed. The summary buckets (reporting, degraded,
+  draining, offline, retired) follow the status label each machine row shows;
+  "not enrolled" counts the rows tagged "Not enrolled".
   Retired roles remain behind the Show retired
   filter. At narrow widths selection replaces the list and a Back control returns
   to it. The Topology view keeps Task Server as the hub, labels connection health
   in text as well as line style, and opens a selected machine in Hosts. The
   Installation view owns checkpoints and infrastructure facts; the Task Server
   observation is labelled as seen from the browser. History shows settled AI
-  Operator interventions and provider refusals without current-warning tint.
+  Operator interventions, claim stops and resumes with load and duration
+  (`GET /api/v1/management/claim-gate-events`, the Task Server's
+  `runner.claim-load-gate.*` audit), and provider refusals without
+  current-warning tint.
   Runner roles and the read-only management environment snapshot remain the
   underlying data sources. Unreported health, repository access, and placement
   display as unknown. Review roles require read access and provider

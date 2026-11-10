@@ -9,7 +9,7 @@
       [tooltip]="runningTooltip()"
       [warning]="runningSourcesDiverge()"
       testid="status-bar-running"
-      (activated)="navigateToExecutionHosts()" />
+      (activated)="openRunnerEntry()" />
     <app-statusbar-item class="statusbar__review"
       bullet="◎"
       [signalTone]="reviewAttention() ? 'mismatch' : (reviewActiveSlots() > 0 ? 'working' : null)"
