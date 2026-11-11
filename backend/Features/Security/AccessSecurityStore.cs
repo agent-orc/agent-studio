@@ -258,9 +258,9 @@ public sealed partial class AccessSecurityStore
                     throw new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
                 }
 
-                var needsEnrollment = requireSecondFactor && (current.Role is StudioRoles.Owner or StudioRoles.Operator)
-                    && string.IsNullOrEmpty(current.TotpSecret) && current.Passkeys.Count == 0;
-                if (requireSecondFactor && (current.Role is StudioRoles.Owner or StudioRoles.Operator) && !needsEnrollment)
+                var hasFactor = !string.IsNullOrEmpty(current.TotpSecret) || current.Passkeys.Count > 0;
+                var needsEnrollment = requireSecondFactor && RequiresSecondFactor(state, current.Id) && !hasFactor;
+                if (hasFactor)
                 {
                     try
                     {
@@ -740,7 +740,7 @@ public sealed partial class AccessSecurityStore
             state.Users[state.Users.IndexOf(user)] = updated;
             state.Invitations[state.Invitations.IndexOf(invitation)] = invitation with { UsedAt = Now };
             var session = CreateSessionLocked(state, updated,
-                enrollmentOnly: publicEntry && (updated.Role is StudioRoles.Owner or StudioRoles.Operator));
+                enrollmentOnly: publicEntry && RequiresSecondFactor(state, updated.Id));
             SaveLocked(state);
             return (updated, session.Token, session.Csrf);
         }

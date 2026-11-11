@@ -550,6 +550,10 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             Assert.Contains("no run attempt in the current authority epoch",
                 body.RootElement.GetProperty("error").GetString());
         }
+        var refusedCard = factory.Services.GetRequiredService<TaskScannerService>().FindJob(Slug, _watchPath)!;
+        Assert.Contains(factory.Services.GetRequiredService<TimelineLog>().ReadAll(refusedCard.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.OwnerMoveRefused
+                && entry.Summary.Contains("no run attempt in the current authority epoch"));
 
         using var accepted = await client.PostAsJsonAsync(route, new
         {
@@ -927,6 +931,159 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(deliverySha, currentReview.Subject.ExpectedResultSha);
         Assert.Contains(records.All(), record => record.Action == AutoReviewStrandingAction.StartStep.ToString());
     }
+
+    /// <summary>
+    /// AGT-3740 - AGT-3243 on 10.11.2026: a passed review that ran its own
+    /// build and tests sat in Auto Review without a delivery settlement record.
+    /// The watchdog re-entered the batch, batch admission refused it with
+    /// BuildTestNotDeferred, and the card escalated after 70 minutes on every
+    /// lane visit. Its journaled verdicts admit per-task integration, so the
+    /// watchdog integrates it with that evidence and never tries the batch.
+    /// </summary>
+    [Fact]
+    public async Task Stranding_watchdog_integrates_a_passed_review_that_ran_its_own_build_tests()
+    {
+        var deliverySha = PublishDelivery("own-build-tests.txt", "delivered work\n");
+        var clock = VerificationFixtureAtUtc;
+        var deps = Build(deliverySha, initialState: TaskStates.AutoReview,
+            reviewPlan: OwnBuildTestPlan(), reviewVerdicts: OwnBuildTestVerdicts(),
+            authorityClock: () => clock);
+        var stranding = StrandingFixture(deps);
+        Assert.Null(RemoteDeliverySettlementStore.Read(deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath));
+
+        Assert.Equal(1, await stranding.Watchdog.RunOnceAsync());
+
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.NotEqual(TaskStates.AutoReview, card.State);
+        Assert.NotEqual(TaskStates.Escalated, card.State);
+        Assert.Equal(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha,
+            GitService.IntegrationLaneRef("develop")).Code);
+        var record = Assert.Single(stranding.Records.All());
+        Assert.Equal(AutoReviewStrandingAction.IntegratePerTask.ToString(), record.Action);
+        Assert.Equal(StallInterventionStatuses.Verified, record.Status);
+        Assert.StartsWith("Review ran its own build and tests (Test selection requires the full suite); "
+            + "this card goes to per-task integration.", record.Done);
+        Assert.DoesNotContain("BuildTestNotDeferred", record.Done);
+        Assert.Empty(stranding.Batches.ListPending());
+        var route = Assert.Single(stranding.Batches.ListFallbackCauses(Project));
+        Assert.Equal(PerTaskFallbackRules.ReviewRanBuildTests, route.Rule);
+        Assert.Contains("this card goes to per-task integration", route.Event);
+    }
+
+    /// <summary>
+    /// AGT-3740: without a journaled report no recorded verdict can admit the
+    /// delivery per task. The card gets a re-planned review instead of an
+    /// escalation, and the next sweep leaves the card to that review.
+    /// </summary>
+    [Fact]
+    public async Task Stranding_watchdog_replans_a_passed_review_without_a_recorded_verdict()
+    {
+        var deliverySha = PublishDelivery("own-build-tests-replan.txt", "delivered work\n");
+        var clock = VerificationFixtureAtUtc;
+        var deps = Build(deliverySha, initialState: TaskStates.AutoReview,
+            reviewPlan: OwnBuildTestPlan(), reviewVerdicts: OwnBuildTestVerdicts(),
+            authorityClock: () => clock);
+        var passed = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt!;
+        var folder = deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath;
+        File.Delete(RemoteReviewSettlementJournal.PathFor(folder, passed.AttemptId));
+        var stranding = StrandingFixture(deps);
+
+        Assert.Equal(1, await stranding.Watchdog.RunOnceAsync());
+
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.AutoReview, card.State);
+        var replanned = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt!;
+        Assert.NotEqual(passed.AttemptId, replanned.AttemptId);
+        Assert.Equal(AttemptLifecycleState.Pending, replanned.State);
+        Assert.Equal(deliverySha, replanned.Subject.ExpectedResultSha);
+        // A fresh plan is sealed for the new review; the old one never deferred.
+        Assert.Null(replanned.Subject.Plan);
+        var record = Assert.Single(stranding.Records.All());
+        Assert.Equal(AutoReviewStrandingAction.IntegratePerTask.ToString(), record.Action);
+        Assert.Equal(StallInterventionStatuses.Verified, record.Status);
+        Assert.StartsWith("Review ran its own build and tests (Test selection requires the full suite); "
+            + "this card goes to a re-planned review.", record.Done);
+        Assert.Contains("this card goes to a re-planned review",
+            Assert.Single(stranding.Batches.ListFallbackCauses(Project)).Event);
+
+        // The re-planned review owns the card now: no second intervention.
+        Assert.Equal(0, await stranding.Watchdog.RunOnceAsync());
+        Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        Assert.Single(stranding.Records.All());
+    }
+
+    /// <summary>
+    /// AGT-3740: the batch queue's own refusal names the rule and the route
+    /// instead of an empty "Batch admission failed: BuildTestNotDeferred."
+    /// </summary>
+    [Fact]
+    public void Batch_admission_refusal_of_a_review_that_ran_its_own_build_tests_names_the_route()
+    {
+        Assert.Equal("Review ran its own build and tests (Test selection requires the full suite); "
+                + "this card goes to per-task integration.",
+            BatchGatePolicy.AdmissionRefusal(BatchExclusionReason.BuildTestNotDeferred,
+                OwnBuildTestPlan().BuildTestDeferralDisabledReason));
+        Assert.Equal("Review ran its own build and tests (the review plan recorded no batch deferral rule); "
+                + "this card goes to per-task integration.",
+            BatchGatePolicy.AdmissionRefusal(BatchExclusionReason.BuildTestNotDeferred, null));
+        Assert.Equal("Batch admission failed: ReviewNotPassed.",
+            BatchGatePolicy.AdmissionRefusal(BatchExclusionReason.ReviewNotPassed, null));
+    }
+
+    /// <summary>A sealed plan that kept build and tests in the review, as AGT-3243's did.</summary>
+    private static Contract.ReviewPlanDto OwnBuildTestPlan() => new(
+        [
+            new Contract.ReviewCommandDto("build-tests-1", "build-tests", "dotnet",
+                ["build", "agent-taskboard.sln", "--no-restore"]),
+            new Contract.ReviewCommandDto("requirement-fit", "requirement-fit", "codex", [],
+                ExecutionKind: Contract.ReviewCommandKinds.AgentAspect),
+        ],
+        ["build-tests", "requirement-fit"],
+        BuildTestDeferredToBatch: false,
+        BuildTestDeferralDisabledReason: "Test selection requires the full suite.");
+
+    private static Contract.ReviewVerdictDto[] OwnBuildTestVerdicts() =>
+    [
+        new("build-tests", "pass", "Product", "The six build and test commands passed."),
+        new("requirement-fit", "pass", "Product", "The fixture delivery answers its brief."),
+    ];
+
+    private StrandingStack StrandingFixture(Deps deps)
+    {
+        deps.Settings.SetBatchGate(Project, new BatchGateFormationOptions(
+            Enabled: true, DocumentationOnly: false, Scope: "code"));
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.True(TaskJsonFile.UpdateField(card.FolderPath, "enteredLaneAt",
+            VerificationFixtureAtUtc, NullLogger.Instance));
+        deps.Scanner.InvalidateCache();
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(deps.Merge, deps.Scanner,
+            deps.Provenance, deps.Pipeline, deps.Timeline, AgentRounds(deps),
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance, deps.Authority);
+        var escalation = new HumanReviewEscalation(deps.States, deps.Transitions, deps.Configuration,
+            NullLogger<HumanReviewEscalation>.Instance, deps.Scanner);
+        var resume = new AutoReviewDeliveryResumeService(deps.Scanner, deps.Authority, deps.Integration,
+            deps.Settings, coordinator, deps.Transitions, escalation,
+            NullLogger<AutoReviewDeliveryResumeService>.Instance, configuration: deps.Configuration);
+        var batches = new BatchGateStore(Path.Combine(_tempDir, "batch-gate"));
+        var records = new StallInterventionStore(() => _tempDir);
+        var log = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
+        var projector = new WatcherActivityProjector(log, deps.Scanner, deps.Configuration,
+            NullLogger<WatcherActivityProjector>.Instance);
+        var receipts = new StallInterventionReceipts(log, projector, deps.Scanner, deps.Timeline,
+            NullLogger<StallInterventionReceipts>.Instance);
+        var reviewLifecycle = new ReviewAttemptTaskLifecycleService(deps.Authority,
+            deps.Scanner, deps.Timeline, NullLogger<ReviewAttemptTaskLifecycleService>.Instance);
+        // No batch pilot: a review that ran its own build and tests must never reach it.
+        var watchdog = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
+            reviewLifecycle, batches, null!, deps.Settings, deps.Pipeline,
+            new AutoReviewPostProcessingQueue(), deps.Transitions, resume, escalation,
+            records, receipts, deps.Configuration, NullLogger<AutoReviewStrandingWatchdog>.Instance,
+            coordinator);
+        return new StrandingStack(watchdog, records, batches);
+    }
+
+    private sealed record StrandingStack(
+        AutoReviewStrandingWatchdog Watchdog, StallInterventionStore Records, BatchGateStore Batches);
 
     /// <summary>
     /// AGT-3098 - AGT-2882: accepted with an override against its delivery
@@ -4378,6 +4535,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         string mode = TaskModes.Coding,
         string? briefVersion = null,
         bool seedContent = true,
+        Contract.ReviewPlanDto? reviewPlan = null,
+        IReadOnlyList<Contract.ReviewVerdictDto>? reviewVerdicts = null,
         bool authorityRebuilt = false,
         bool guarded = false,
         bool engineMode = false,
@@ -4519,7 +4678,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             });
         }
         if (seedContent)
-            SeedPassedContentReview(authority, sourceRun, jobFolder, deliverySha, deliveryBriefVersion);
+            SeedPassedContentReview(authority, sourceRun, jobFolder, deliverySha, deliveryBriefVersion,
+                reviewPlan, reviewVerdicts);
         pipeline.Begin(jobFolder, PipelineCatalogue.Standard, Project, Slug);
         Assert.NotNull(scanner.FindJob(Slug, _watchPath));
         // AGT-3076: the 11.10. crash rebuilt the attempt authority store into
@@ -4586,12 +4746,13 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 
     private void SeedPassedContentReview(
         AttemptAuthorityService authority, RunAttemptDto sourceRun,
-        string folder, string deliverySha, string briefVersion)
+        string folder, string deliverySha, string briefVersion,
+        Contract.ReviewPlanDto? plan = null, IReadOnlyList<Contract.ReviewVerdictDto>? verdicts = null)
     {
         var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
             TaskKey, "PROJ-FIXTURE", deliverySha, sourceRun.AttemptId,
             briefVersion, AttemptAuthorityService.Hash("fixture-review-policy"), [],
-            "content-fixture", RepositoryUrl: _origin, ResultRef: DeliveryRef));
+            "content-fixture", RepositoryUrl: _origin, ResultRef: DeliveryRef, Plan: plan));
         Assert.True(created.Accepted, created.Message);
         var claimed = authority.ClaimReview(created.AttemptId, "fixture-reviewer", "fixture-host",
             60, "claim-content-fixture");
@@ -4605,7 +4766,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             new Contract.ReviewEnvironmentDto("fixture-host", "fixture-reviewer", "fixture-instance",
                 "fixture-os", "fixture-arch", "fixture-runtime",
                 new Dictionary<string, string>(), new Dictionary<string, string>()),
-            [], [], [new Contract.ReviewVerdictDto("requirement-fit", "pass", "Product",
+            [], [], verdicts ?? [new Contract.ReviewVerdictDto("requirement-fit", "pass", "Product",
                 "The fixture delivery answers its brief.")],
             AuthorityEpoch: review.AuthorityEpoch, BriefSha256: briefVersion);
         var entry = new RemoteReviewSettlementEntry

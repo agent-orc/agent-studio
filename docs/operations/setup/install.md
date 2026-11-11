@@ -1,6 +1,14 @@
 # Install Agent Studio
 
-No GitHub Release is published yet, so the release installer is unavailable.
+> **Status (2026-11-09): no release is published yet.** The download URLs on
+> this page (`releases/latest/download/...`) return 404, and the
+> `ghcr.io/agent-orc` images are not anonymously pullable. Until the first
+> GitHub Release exists, use the
+> [source-built Docker one-box](./docker.md#install-from-this-checkout); the
+> [setup guide](./README.md#choose-your-path) names the path for each
+> situation. This page describes the installer for that first release and
+> later ones.
+
 The working installation path is a source checkout with the one-box Compose dev
 profile. Install Docker Engine with Compose v2, then run these commands from the
 repository root:
