@@ -308,6 +308,16 @@ public static class BatchGateStateSnapshotReader
                 };
             }
         }
+        // AGT-3740: a passed review that ran its own build and tests never
+        // enters the queue. The state still names the route it took instead.
+        foreach (var route in causes.Where(entry => entry.Rule == PerTaskFallbackRules.ReviewRanBuildTests)
+                     .GroupBy(entry => entry.TaskKey, StringComparer.Ordinal)
+                     .Select(group => group.MaxBy(entry => entry.RecordedAtUtc)!))
+            members.TryAdd(route.TaskKey, new { status = "fallback", batchId = (string?)null,
+                phase = (string?)null, position = (int?)null, size = (int?)null,
+                reason = route.Rule, reasonDetail = route.Event,
+                fallbackRule = route.Rule, fallbackEvent = route.Event,
+                preCheck = (BatchGatePreCheckVerdict?)null });
         return new
         {
             plan,

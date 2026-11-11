@@ -54,16 +54,18 @@ Fix: use the Node template in `../scripts/create-task.js`. Backslashes in JS
 string literals are escaped at compile time (`\\`); the resulting JSON has
 proper `\\` escapes and the server parses it cleanly.
 
-## 4. `PUT /api/runner/{project}/mode` returns 400 "Invalid project or mode"
+## 4. `PUT /api/runner/{project}/mode` is refused
 
-The project has no runner registered. Happens when a watch-path is added to
-`appsettings.Local.json` after backend boot. The config hot-reloads (the new
-project shows up in `/api/watch-paths`), but `TaskRunnerService.ExecuteAsync`
-only creates runners once at startup.
+The old `400 "Invalid project or mode"` for a newly added project no longer
+exists: projects created through `POST /api/projects` get their runner
+immediately. Current refusals:
 
-Fix: restart the backend (`stop-stable.sh && start-stable.sh`). Tracked as
-`fix-runner-mode-rejects-newly-added-projects` for the durable fix that
-creates runners on watch-path change.
+- `409` "Project '<name>' has no RootPath configured, so its runner was never
+  started." Set the project's working directory (Project Settings or
+  `PUT /api/projects/{id}`), or assign a remote execution host.
+- `404` "Unknown project '<name>'". Use the exact project name.
+- `400` "Invalid mode ...". Allowed: `manual`, `auto-single`,
+  `auto-continuous`, `paused`.
 
 ## 5. Auto-review reissue race
 
