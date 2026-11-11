@@ -337,6 +337,13 @@ offers confirmed close and eject actions. `BatchGateService` owns all calls and
 shares one 15-second state poll per visible project. Unsupported or malformed
 responses hide the feature and back off to a five-minute retry while visible.
 
+The task card's CURRENT and NEXT rows use the same lane, hold, review queue,
+and batch member facts. A Ready card names runner pickup before its pipeline
+preview. Post Processing names review, a batch verdict, or delivery integration
+from the active wait; a stalled review names the operator decision. Human Review
+names the owner decision or delivery integration even when it has no pipeline
+record. Pipeline previews describe a running step, not a completed attempt.
+
 ## Studio route restoration
 
 The active Studio surface is described by one canonical hash path. Board and

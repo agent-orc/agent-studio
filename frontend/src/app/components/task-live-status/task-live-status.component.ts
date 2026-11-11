@@ -8,6 +8,10 @@ import { runnerWaitCode, runnerWaitHeadline } from '../../models/ready-wait-reas
 import { TaskReferenceNavigationService } from '../../services/task-reference-navigation.service';
 import { TaskService } from '../../services/task.service';
 import { ErrorDialogService } from '../../services/error-dialog.service';
+import { BatchGateService } from '../../services/batch-gate.service';
+import { batchMemberFor } from '../../models/batch-gate.model';
+import { batchAction, humanReviewAction, nextForHold, nextForTask, postProcessingAction,
+  type CauseHold } from './task-live-next';
 
 export type TaskLiveStatusVariant = 'card' | 'detail';
 type LiveTone = 'active' | 'waiting' | 'idle' | 'stalled';
@@ -23,11 +27,6 @@ interface LiveStatusView {
   waitReason?: string;
   /** AGT-3617: the cause card this card is held behind, linked from the headline. */
   hold?: CauseHold;
-}
-
-interface CauseHold {
-  causeKey: string;
-  summary: string;
 }
 
 const STALE_AFTER_MS = 10 * 60 * 1000;
@@ -49,7 +48,14 @@ export class TaskLiveStatusComponent {
   private readonly injector = inject(Injector);
   private readonly tasks = inject(TaskService);
   private readonly errors = inject(ErrorDialogService);
+  private readonly batchGate = inject(BatchGateService);
   readonly switchingToAuto = signal(false);
+  private readonly batchMember = computed(() => {
+    const task = this.task();
+    if (task.state !== TaskState.AutoReview) return null;
+    return batchMemberFor(this.batchGate.state(task.projectName)(),
+      task.taskKey, task.key, task.displayKey, task.id);
+  });
 
   switchToAuto(event: MouseEvent): void {
     event.stopPropagation();
@@ -76,9 +82,15 @@ export class TaskLiveStatusComponent {
     const task = this.task();
     const status = task.liveStatus;
     const causeHeld = causeHold(task);
-    if (!status) return causeHeld ? holdView(task, causeHeld, null, [], this.now()) : null;
+    if (!status) {
+      if (causeHeld) return holdView(task, causeHeld, null, nextForHold(causeHeld), this.now());
+      return task.state === TaskState.HumanReview || task.state === TaskState.Escalated
+        ? humanReviewView(task)
+        : null;
+    }
 
-    const next = (status.nextSteps ?? []).slice(0, 3).map(step => step.displayName);
+    const batchWorkflow = batchAction(this.batchMember());
+    const next = nextForTask(task, status, causeHeld, batchWorkflow);
     const active = status.activeStep;
     if (active) {
       const startedAt = timestamp(active.startedAt);
@@ -178,6 +190,16 @@ export class TaskLiveStatusComponent {
       };
     }
 
+    if (batchWorkflow) {
+      return {
+        tone: 'waiting',
+        headline: `Waiting for ${batchWorkflow.toLowerCase()}`,
+        detail: activityDetail(task, status.latestEventAt, this.now()),
+        next: [batchWorkflow],
+        attempt: status.attempt,
+      };
+    }
+
     // AGT-3579: the runner recorded why it is not picking this card (mode,
     // slots, quota defer, load throttle, provider limit). The sentence is the
     // runner's own; the headline names the reason the lane header counts.
@@ -204,11 +226,12 @@ export class TaskLiveStatusComponent {
     if (status.queue) {
       const queueName = status.queue.kind === 'review' ? 'review slot' : 'runner slot';
       const queuedHeadline = status.queue.kind === 'runner' ? 'Queued for runner' : `Waiting for ${queueName}`;
-      const headline = status.queue.position != null
+      const workflowWait = task.state === TaskState.AutoReview ? postProcessingAction(status.queue.reason) : null;
+      const headline = workflowWait ? `Waiting for ${workflowWait.toLowerCase()}` : (status.queue.position != null
         ? `${queuedHeadline} · position ${status.queue.position}`
         : status.queue.reason
           ? `${queuedHeadline} · ${status.queue.reason}`
-          : queuedHeadline;
+          : queuedHeadline);
       return {
         tone: 'waiting',
         headline,
@@ -294,6 +317,17 @@ function holdView(task: TaskInfo, hold: CauseHold, attempt: number | null, next:
     next,
     attempt,
     hold,
+  };
+}
+
+function humanReviewView(task: TaskInfo): LiveStatusView {
+  const action = humanReviewAction(task);
+  return {
+    tone: 'waiting',
+    headline: action === 'Delivery integration' ? 'Waiting for delivery integration' : 'Waiting for owner review',
+    detail: null,
+    next: [action],
+    attempt: null,
   };
 }
 
