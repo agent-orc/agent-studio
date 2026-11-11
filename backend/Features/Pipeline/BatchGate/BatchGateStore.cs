@@ -16,7 +16,9 @@ public sealed record BatchGateState(
     string? BaseMoveToSha = null, string? BaseMoveOutcome = null,
     string? SuccessorBatchId = null,
     IReadOnlyDictionary<string, string>? BaseMoveMemberReasons = null,
-    string? CausedByTaskKey = null);
+    string? CausedByTaskKey = null,
+    string? FlightClaimId = null,
+    AgentStudio.OrchestrationDecisions.BatchFlightClaimExpiry? FlightClaimExpiry = null);
 
 public sealed record BatchGateWithdrawal(string BatchId, string TaskKey,
     string Actor, string Reason, DateTimeOffset AtUtc);

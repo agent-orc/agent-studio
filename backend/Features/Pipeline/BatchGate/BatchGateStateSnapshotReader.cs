@@ -26,6 +26,8 @@ public static class BatchGateStateSnapshotReader
         IReadOnlyList<BatchGateFallbackWait>? fallbackWaits = null,
         BatchGateInvariantReport? invariants = null)
     {
+        // AGT-3569: the durable claim on the project's flight slot, live or last ended.
+        var flightClaim = store.ReadFlightClaim(project);
         // AGT-3694: what each per-task fallback waits for, so an overdue member
         // never shows only its rule.
         var waits = (fallbackWaits ?? []).GroupBy(wait => wait.ReviewAttemptId, StringComparer.Ordinal)
@@ -353,6 +355,7 @@ public static class BatchGateStateSnapshotReader
             members,
             reviewFixWaits = reviewFixWaits ?? [],
             detachedFlights = detachedFlights ?? [],
+            flightClaim,
             fallbackWaits = fallbackWaits ?? [],
             fallbackStalls = store.ListFallbackStalls(project, 20),
             isolationFindings = store.ListIsolationFindings(project)

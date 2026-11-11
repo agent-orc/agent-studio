@@ -202,10 +202,16 @@ public sealed partial class BatchGateStore
     /// One writer per batch across processes. FileShare.None takes an
     /// exclusive lock on the lock file, so a contended open fails and retries.
     /// </summary>
-    private static FileStream PhaseGuard(string directory)
+    private static FileStream PhaseGuard(string directory) => FileGuard(directory, "phase.lock");
+
+    /// <summary>
+    /// One writer per record across processes: an exclusive open of
+    /// <paramref name="name"/> in <paramref name="directory"/>, retried while contended.
+    /// </summary>
+    private static FileStream FileGuard(string directory, string name)
     {
         Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, "phase.lock");
+        var path = Path.Combine(directory, name);
         for (var attempt = 1; ; attempt++)
         {
             try

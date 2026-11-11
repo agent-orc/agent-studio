@@ -243,18 +243,44 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   ran; on 10 November 2026 four batches formed from 03:47 UTC waited behind
   batches formed at 04:50 and 05:11 UTC. The full rule is in
   [the pipeline domain map](../../system/domains/pipeline.md#flight-queue-order-agt-3710).
-- AGT-3562: a flight can wait on the project reservation before it acquires
-  its coordinator lease, so lease expiry cannot free its project slot. A
-  flight that has not claimed its lease within `flightLeaseDeadlineMinutes`
-  (default 40, above the 27-minute integration gate lease cap) is cancelled
-  and loses the slot even if it ignores the cancellation. The batch stays
-  formed with the phase reason `flight cancelled: no coordinator lease within
-  <n> minutes`, each member's timeline records
-  `batch-flight-lease-deadline`, and the next formed batch starts first. The
-  cancelled batch is retried after it. On 2 November 2026 only an API
-  restart freed such a slot. Until the detached flight exits, the batch gate
-  state lists it under `detachedFlights` (batch, start, detach time, deadline,
-  reason), and a flight wait does not wait for it.
+- AGT-3562, AGT-3569: a flight can wait on the project reservation before it
+  acquires its coordinator lease, so lease expiry cannot free its project
+  slot. Since AGT-3569 the right to run a batch is a durable flight claim, not
+  a process task: before the reservation wait the flight claims the project's
+  flight slot in the batch store (`flight-claims/`, one record per project
+  under a cross-process lock) and writes a formed journal entry naming the
+  claim (`flightClaimId`). Exactly one live claim exists per project across
+  processes; a second host never flies a claimed batch. The claim carries a
+  step (`Reserving`, `Assembling`, `Gating`, `Publishing`), a heartbeat the
+  flight renews every 30 seconds (two-minute lifetime) and a progress
+  deadline per step: `flightLeaseDeadlineMinutes` (default 40, above the
+  27-minute integration gate lease cap) for the reservation, 30 minutes for
+  assembly, `gateTimeoutMinutes` plus 15 for each gate step, 15 minutes for
+  publication. A heartbeat never extends a step past its deadline.
+- AGT-3569: every tick, in any process, expires a claim whose step missed its
+  deadline or whose owner stopped renewing it (or, on the same machine, whose
+  owner process exited, so a restart frees the slot at once). The flight that
+  held it is cancelled, gives back the project reservation, and is detached
+  even if it ignores the cancellation; until it exits, the batch gate state
+  lists it under `detachedFlights` and a flight wait does not wait for it.
+  The outcome is `BatchFlightClaimPolicy`: a missed deadline before
+  publication retries once per member, then pauses to a visible gate (the
+  pause hands the members to the per-task gate with the cause `batch <id> paused:
+  flight claim expired ...`). A retried reservation keeps the batch formed
+  with the phase reason `flight cancelled: no coordinator lease within <n>
+  minutes`, each member's timeline records `batch-flight-lease-deadline`, and
+  the next formed batch starts first. A retried later step retires the batch
+  and returns its members to the queue (timeline `batch-flight-claim-expired`).
+  A lost heartbeat, and any expiry during publication, leave the batch to
+  restart recovery. Phase entries written by an expiry carry
+  `flightClaimExpiry`. The scope is claimable again only once the outcome
+  reached the batch; an outcome that needs the stale flight's coordinator
+  lease waits until that lease lapses. A flight whose claim is no longer live
+  writes no candidate ref, records no verdict and never publishes: it checks
+  the claim before replay, before each candidate ref update, before each gate,
+  after each gate, and at the publication decision and the push. The state
+  reports the project's current or last claim as `flightClaim`. On 2 November
+  2026 only an API restart freed a hung flight's slot.
 - AGT-3562: a flight that completes or fails (its batch ran a gate, or left
   the formed phase other than by retirement before replay) starts the next
   eligible formed batch of its project at once, instead of on the next hosted

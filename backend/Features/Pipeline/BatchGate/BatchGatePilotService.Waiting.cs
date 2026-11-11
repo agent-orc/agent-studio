@@ -4,9 +4,7 @@ public sealed partial class BatchGatePilotService
 {
     private bool ProjectGateBusy(BatchGateScope scope)
     {
-        lock (_runningBatches)
-            if (_runningBatches.TryGetValue(scope.Project, out var flight)
-                && !flight.IsCompleted) return true;
+        if (FlightSlotBusy(scope.Project)) return true;
         string[] fallbackAttempts;
         lock (_fallbackFlights)
             fallbackAttempts = _fallbackFlights.Where(pair => !pair.Value.Task.IsCompleted)
@@ -209,9 +207,14 @@ public sealed partial class BatchGatePilotService
                 Exclusions = exclusions,
                 QueuedSinceUtc = moving.Min(manifest => BatchGateFlightQueue.QueuedSince(_store, manifest)),
             };
-            lock (_runningBatches)
+            // AGT-3569: a batch whose flight claim passed the reservation is
+            // being assembled, in this process or another.
+            var flying = _store.LiveFlightClaim(close.Manifest.Scope.Project, _time.GetUtcNow());
+            lock (_flights)
             {
                 if (moving.Any(old => _assemblingBatchIds.Contains(old.BatchId)
+                    || flying is { Stage: not AgentStudio.OrchestrationDecisions.BatchFlightStage.Reserving }
+                        && flying.BatchId == old.BatchId
                     || _store.LatestState(old.BatchId).Phase != BatchPhase.Formed))
                     continue;
                 foreach (var old in moving)
