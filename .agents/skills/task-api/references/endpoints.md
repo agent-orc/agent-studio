@@ -318,10 +318,12 @@ Switch a project's runner mode. Body:
 
 Valid modes: `manual` | `auto-single` | `auto-continuous` | `paused`.
 
-Note: returns `400 "Invalid project or mode"` when the project has no
-registered runner. This currently happens when a watch-path is added after
-backend start; restart picks it up. See
-`fix-runner-mode-rejects-newly-added-projects` if you hit this.
+Errors: `400` "Invalid mode '<mode>'. Allowed: manual, auto-single,
+auto-continuous, paused." for an unknown mode; `409` "has no RootPath
+configured" when the project has no working directory and therefore no local
+runner; `404` "Unknown project" for an unknown name. Project Settings uses
+`PUT /api/projects/{project}/execution-runner` with `pickupMode` `auto`,
+`manual` or `paused` instead; `auto` maps to `auto-continuous`.
 
 ## Bus / observability (read-only)
 
