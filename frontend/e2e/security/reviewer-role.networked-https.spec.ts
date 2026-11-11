@@ -221,7 +221,7 @@ test('a Reviewer is invited, sends a Human Review card back with a note, and acc
     await panel.getByTestId('human-review-accept').click();
     await expect(reviewer.getByText('Accepted. The card moved to Accepted.')).toBeVisible();
     await expect.poll(async () => (await ownerRead(acceptCard.id)).state, { timeout: 15_000 }).toBe('6-completed');
-    await shoot(reviewer, 'reviewer-accepted-1440-light');
+    await shootThemes(reviewer, 'reviewer-accepted');
   });
 
   await test.step('Both decisions are audited with the reviewer as actor', async () => {
