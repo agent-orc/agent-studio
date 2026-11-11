@@ -1652,6 +1652,16 @@ public static class TaskCrudEndpoints
                 batchWithdrawalId: activeBatch?.BatchId);
             var moved = activeBatch is null ? await Move()
                 : await batchGuard.WithdrawAsync(activeBatch, Move);
+            if (moved.Status != MoveJobStatus.Success
+                && TimelineActors.IsHuman(OperatorActor(context)))
+                timeline.Append(card.FolderPath, TimelineEventKinds.OwnerMoveRefused,
+                    OperatorActor(context),
+                    $"Move to {request.TargetState} refused: {moved.Message ?? moved.Status.ToString()}",
+                    details: new Dictionary<string, string>
+                    {
+                        ["target"] = request.TargetState,
+                        ["reason"] = moved.Message ?? moved.Status.ToString(),
+                    });
             if (activeBatch is not null && moved.Status == MoveJobStatus.Success)
             {
                 var actorName = OperatorActor(context);
