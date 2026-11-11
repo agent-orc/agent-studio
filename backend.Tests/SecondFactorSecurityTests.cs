@@ -59,7 +59,7 @@ public sealed class SecondFactorSecurityTests
             Assert.Equal("invalid-second-factor", wrong.Code);
             Assert.Equal("The second factor is invalid.", wrong.Message);
             var signedIn = store.Login(username, password, username + "-valid",
-                SecondFactorCodes.CurrentTotp(secret, TestUtcNow), requireSecondFactor: true);
+                SecondFactorCodes.CurrentTotp(secret, TestUtcNow.AddSeconds(30)), requireSecondFactor: true);
             Assert.False(store.AuthenticateSession(signedIn.SessionToken)!.Session.SecondFactorEnrollmentOnly);
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
