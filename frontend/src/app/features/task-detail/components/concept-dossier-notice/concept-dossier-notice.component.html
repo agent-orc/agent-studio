@@ -5,9 +5,14 @@
            [attr.data-state]="missing() ? 'missing' : 'satisfied'">
     @if (dossierPath(); as path) {
       <span class="dossier__label">Dossier</span>
-      <a class="dossier__link"
-         data-testid="concept-dossier-link"
-         [href]="wikiHref()">{{ path }}</a>
+      @if (published()) {
+        <a class="dossier__link"
+           data-testid="concept-dossier-link"
+           [href]="wikiHref()">{{ path }}</a>
+      } @else {
+        <span class="dossier__path" data-testid="concept-dossier-path">{{ path }}</span>
+        <span class="dossier__publication" data-testid="concept-dossier-publication">Not published yet · {{ publicationStage() }}</span>
+      }
     } @else if (summary()?.noDossierNeeded) {
       <span class="dossier__label">No dossier needed</span>
       <span class="dossier__reason" data-testid="concept-dossier-no-need-reason">
