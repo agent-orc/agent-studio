@@ -98,6 +98,7 @@ import type {
 import type { TaskPlanView } from '../features/plan-strip/plan.model';
 import type { RegressionRadarResult } from '../features/regression-radar';
 import { ErrorDialogService } from './error-dialog.service';
+import { AuthSessionState } from './auth.service';
 import { JobsHubClient } from './jobs-hub-client.service';
 import type {
   ProjectDeploymentSummary,
@@ -384,6 +385,7 @@ function invalidOrchestratorContextKey<T>(): Observable<T> {
 @Injectable({ providedIn: 'root' })
 export class TaskService {
   private http = inject(HttpClient);
+  private readonly authSession = inject(AuthSessionState);
   private errorDialog = inject(ErrorDialogService);
   private jobsHub = inject(JobsHubClient);
 
@@ -1757,10 +1759,13 @@ export class TaskService {
     ).pipe(this.afterRemoval(jobId, watchPath));
   }
 
-  deleteJob(jobId: string, watchPath?: string) {
+  /** `reason` (AGT-3624) is the written reason for deleting unintegrated work. */
+  deleteJob(jobId: string, watchPath?: string, reason?: string | null) {
+    const options = this.withWatchPath(watchPath);
+    const params = reason ? (options.params ?? new HttpParams()).set('reason', reason) : options.params;
     return this.http.delete(
       this.taskV1Url(jobId),
-      this.withWatchPath(watchPath),
+      params ? { params } : {},
     ).pipe(this.afterRemoval(jobId, watchPath));
   }
 
@@ -3103,6 +3108,8 @@ export class TaskService {
   }
 
   refreshRunnerStatus(silent = false): void {
+    // AGT-3668: runner status is installation-wide; the Product role never reads it.
+    if (this.authSession.productSession()) return;
     if (this.runnerRefreshInFlight) {
       this.runnerRefreshQueued = true;
       this.runnerRefreshQueuedSilent &&= silent;

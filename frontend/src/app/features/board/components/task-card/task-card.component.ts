@@ -162,11 +162,12 @@ export class TaskCardComponent implements OnInit, OnDestroy {
 
   /** AGT-3587: the one Ready card per project the runner takes next. */
   readonly isPickupNext = computed(() => isReadyQueueHead(this.job(), this.jobs.runnerStatus()));
-  /** True for queued Ready cards that "Move to top" can promote; the head card is already next. */
+  /** Queue edge moves are available only when the Ready lane uses manual order. */
   readonly canReorderReady = computed(() => {
     const strategy = this.jobs.laneSortStrategies()[this.job().projectName]?.['2-ready'];
     return !strategy || allowsDragReorder(strategy);
   });
+  /** True for queued Ready cards that "Move to top" can promote; the head card is already next. */
   readonly canPickNext = computed(() => this.job().state === TaskState.Ready && !this.isPickupNext() && !this.mutationsBlocked());
 
   onPickNextClick(event: Event) {

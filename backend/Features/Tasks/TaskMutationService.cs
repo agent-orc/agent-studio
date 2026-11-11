@@ -2508,7 +2508,7 @@ public class TaskMutationService
                 Encoding.UTF8);
             // PendingIntent appears on TaskInfo (kanban card shows the intent),
             // so the snapshot must be invalidated for the next read to see it.
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: path);
             _scanner.PublishCoreFromKnownFolder(info.FolderPath);
             return intent;
         }
@@ -2548,7 +2548,7 @@ public class TaskMutationService
             if (File.Exists(stash)) File.Delete(stash);
             File.Move(path, stash);
             // pending-intent.json gone → TaskInfo.PendingIntent should be null.
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: path);
             _scanner.PublishCoreFromKnownFolder(jobFolder);
             return intent;
         }
@@ -2607,7 +2607,7 @@ public class TaskMutationService
                 return PendingIntentAcknowledgeResult.HistoryWriteFailed;
 
             File.Delete(stash);
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: Path.Combine(jobFolder, "pending-intent.json"));
             _scanner.PublishCoreFromKnownFolder(jobFolder);
             return PendingIntentAcknowledgeResult.Consumed;
         }
@@ -2650,7 +2650,7 @@ public class TaskMutationService
             }
             if (File.Exists(canonical)) File.Delete(canonical);
             if (File.Exists(stash)) File.Delete(stash);
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: canonical);
             _scanner.PublishCoreFromKnownFolder(jobFolder);
             return true;
         }
@@ -2689,7 +2689,7 @@ public class TaskMutationService
             var stash = Path.Combine(jobFolder, "pending-intent.consumed.json");
             if (File.Exists(canonical)) File.Delete(canonical);
             if (File.Exists(stash)) File.Delete(stash);
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: canonical);
             _scanner.PublishCoreFromKnownFolder(jobFolder);
             return true;
         }
@@ -2721,7 +2721,7 @@ public class TaskMutationService
             {
                 File.Move(stash, canonical);
             }
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: canonical);
             _scanner.PublishCoreFromKnownFolder(jobFolder);
         }
         catch (Exception ex)

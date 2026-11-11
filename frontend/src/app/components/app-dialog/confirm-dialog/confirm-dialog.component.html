@@ -35,6 +35,21 @@
                (input)="typedDraft.set($any($event.target).value)" />
       </label>
     }
+    @if (confirm.requireReason; as gate) {
+      <label class="app-dialog__typed">
+        <span class="app-dialog__typed-label"
+              data-testid="confirm-dialog-reason-prompt">{{ gate.prompt }}</span>
+        <textarea #reasonInput
+                  class="app-dialog__typed-input app-dialog__typed-input--prose"
+                  rows="3"
+                  data-testid="confirm-dialog-reason-input"
+                  aria-describedby="confirm-dialog-reason-hint"
+                  [value]="reasonDraft()"
+                  (input)="reasonDraft.set($any($event.target).value)"></textarea>
+        <span class="app-dialog__typed-label" id="confirm-dialog-reason-hint"
+              data-testid="confirm-dialog-reason-hint">At least {{ gate.minLength }} characters.</span>
+      </label>
+    }
     <div footer>
       <button class="btn btn--ghost"
               type="button"
@@ -45,7 +60,7 @@
               [class.btn--danger]="confirm.kind === 'danger'"
               [class.btn--primary]="confirm.kind === 'primary'"
               type="button"
-              [disabled]="!typedConfirmSatisfied()"
+              [disabled]="!canConfirm()"
               data-testid="confirm-dialog-confirm"
               (click)="onAccept()">{{ confirm.confirmLabel }}</button>
     </div>
