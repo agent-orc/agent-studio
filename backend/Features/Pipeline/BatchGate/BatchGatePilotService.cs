@@ -3170,6 +3170,9 @@ public sealed partial class BatchGatePilotService
                     pending.Subject.TaskKey, pending.ReviewAttemptId, "gate-interrupted");
                 return false;
             }
+            // The policy defaults an unreported cancellation to operator. Only a
+            // reported operator cancel returns to planning; the rest is infra.
+            var reportedOperatorCancel = gate.CancellationReason == GateCancellationReasons.Operator;
             if (gate.FailureKind == BuildTestGateFailureKind.Cancellation)
             {
                 var live = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath);
@@ -3194,7 +3197,19 @@ public sealed partial class BatchGatePilotService
                 SupersedeFallbackResult(task, pending, recordInStore);
                 return true;
             }
-            if (gate.IsInfrastructureFailure && !stopping.IsCancellationRequested
+            if (reportedOperatorCancel && recordInStore)
+            {
+                BatchGateOwnershipStore.Write(task.FolderPath,
+                    new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject));
+                _store.ClearFallbackCause(pending.Subject.Project, pending.ReviewAttemptId);
+                if (_store.HasEject(pending.Subject.Project, pending.Subject.TaskKey))
+                    _store.ClearEject(pending.Subject.Project, pending.Subject.TaskKey);
+                return false;
+            }
+            // Only a cancelled (abandoned) pull job lacks a verdict. A budget
+            // overrun of the execution phase is a real outcome and escalates.
+            if (gate.FailureKind == BuildTestGateFailureKind.Cancellation
+                && !stopping.IsCancellationRequested
                 && starts + 1 < FallbackGateStartBudget)
             {
                 // An abandoned pull job has no test verdict. Keep the review
@@ -3229,7 +3244,7 @@ public sealed partial class BatchGatePilotService
                 || !string.Equals(gate.TestedSha, subject.TestedSha,
                     StringComparison.OrdinalIgnoreCase))
             {
-                if (gate.IsInfrastructureFailure)
+                if (gate.FailureKind == BuildTestGateFailureKind.Cancellation)
                 {
                     await EscalateFallbackAsync(task, pending,
                         $"GateInfra: per-task flight could not run: {gate.Reason}; retried {FallbackGateStartBudget - 1} times",
