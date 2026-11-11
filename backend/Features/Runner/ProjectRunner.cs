@@ -1709,7 +1709,7 @@ public class ProjectRunner
     {
         if (_globalBreakerCooldownUntil is { } until)
             return new RunnerPickupWait(RunnerPickupWaitCodes.BreakerCooldown,
-                $"Auto-pickup is cooling down after a circuit-breaker trip and resumes at {until:O}.");
+                $"Auto-pickup is cooling down after a circuit-breaker trip ({_globalBreakerReason ?? "unknown cause"}) and resumes at {until:O}.");
         return _mode == "paused"
             ? new RunnerPickupWait(RunnerPickupWaitCodes.Paused,
                 "The runner is paused; no card is picked until auto-pickup is enabled again.")
@@ -2769,7 +2769,10 @@ public class ProjectRunner
                     jobId, info.WatchPath, ProjectName,
                     HumanReviewEscalationCategories.UiIterationCap, reason, ct);
                 if (escalation.Status == MoveJobStatus.Success && !string.IsNullOrWhiteSpace(escalation.NewFolderPath))
+                {
                     SteerPendingMarker.Clear(escalation.NewFolderPath!, _logger);
+                    _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(escalation.NewFolderPath!));
+                }
                 _logger.LogWarning(
                     "ui_pipeline_cap project={Project} job={JobId} iteration={Iteration}/{MaxIterations} action=escalate status={Status}",
                     ProjectName, jobId, ui.Iteration, ui.MaxIterations, escalation.Status);
@@ -3726,6 +3729,7 @@ public class ProjectRunner
             // Only a confirmed process start ends a visible no-slot wait. Early
             // admission/quota/spawn failures intentionally leave the wait visible.
             SteerPendingMarker.Clear(info.FolderPath, _logger);
+            _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(info.FolderPath));
             _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.ExecutionRunning);
             PostProcessingLifecycleStore.ResetForExecution(
                 info.FolderPath,
@@ -5266,6 +5270,7 @@ public class ProjectRunner
                 Ask = string.IsNullOrWhiteSpace(ask) ? null : Truncate(ask, 2000),
                 CliType = info.CliType,
             }, _logger);
+            _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(info.FolderPath));
             _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.SteerPending);
             _timeline?.Append(
                 info.FolderPath,
@@ -7725,6 +7730,7 @@ public class ProjectRunner
                 CliType = info.CliType,
                 UiIterationReview = contract,
             }, _logger);
+            _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(info.FolderPath));
             _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.AwaitingReview);
             _pipelineLog?.RecordStep(info.FolderPath, new PipelineStepExecution
             {

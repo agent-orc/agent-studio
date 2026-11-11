@@ -18,6 +18,8 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
       *crash-recovery-prompt.spec.ts*|*first-run-checklist.spec.ts*) PW_E2E_PROFILE=recovery ;;
       *first-run-journey.spec.ts*) PW_E2E_PROFILE=first-run ;;
       *first-run-networked-monolith.spec.ts*) PW_E2E_PROFILE=networked-monolith ;;
+      *product-session-networked-https.spec.ts*) PW_E2E_PROFILE=networked-https ;;
+      *reviewer-role.networked-https.spec.ts*) PW_E2E_PROFILE=networked-https ;;
       *owner-second-factor-human-pace.spec.ts*) PW_E2E_PROFILE=networked-https ;;
       *product-card-detail.spec.ts*) PW_E2E_PROFILE=networked-https-demo ;;
       *studio-op-operator-cli.spec.ts*) PW_E2E_PROFILE=operator-cli ;;
@@ -69,6 +71,8 @@ PW_E2E_CHECKOUT="${PW_E2E_WORKSPACE}/checkout"
 cleanup() { rm -rf "${PW_E2E_WORKSPACE}"; }
 trap cleanup EXIT
 export PW_E2E_BACKEND_PORT PW_E2E_FRONTEND_PORT PW_E2E_WORKSPACE PW_E2E_CHECKOUT PW_E2E_PROFILE
+# public-demo and networked-https serve the browser over real TLS, so Secure
+# session cookies behave as on a deployed Studio.
 if [[ "${PW_E2E_PROFILE}" == public-demo || "${PW_E2E_PROFILE}" == networked-https || "${PW_E2E_PROFILE}" == networked-https-demo ]]; then
   PW_E2E_TLS_CERT="${PW_E2E_WORKSPACE}/localhost.crt"
   PW_E2E_TLS_KEY="${PW_E2E_WORKSPACE}/localhost.key"

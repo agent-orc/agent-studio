@@ -326,9 +326,11 @@ Keep the CA private key and the operator's ephemeral private key separate.
 The CA private key is a Studio host secret and is absent from host agents.
 The operator account has no Owner SSH agent, keys, or credential files.
 The website backup archive does not include the Operations Server named
-volumes or the CA directory outside `STUDIO_DATA_DIR`. Preserve those volumes
-and an offline CA key copy as part of host recovery; restore the matching
-principal and token volumes together before starting Operations Server.
+volumes or the CA directory outside `STUDIO_DATA_DIR`. Preserve the volumes
+and an offline CA key copy during an in-place host recovery. On a new host,
+the scheduled backup restore re-bootstraps Operations Server and requires
+remote host agents to be re-enrolled; see the
+[restore runbook](./studio-backup-restore.md#restore-onto-a-new-host).
 
 ## Off-host audit sink
 
@@ -381,7 +383,9 @@ named sessions with the kill switch if any action must stop sooner.
 
 While Studio remains stopped, record each host action with its operation,
 target, and outcome. The command requires the current authenticator code on
-hidden input and confirms the host journal and sink acknowledgement:
+hidden input and confirms the host journal and sink acknowledgement. Each
+opening and recorded action needs a code from a later 30-second step than the
+last accepted code:
 
 ```sh
 dotnet OrchestratorApi.dll --record-break-glass \

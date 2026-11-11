@@ -2,7 +2,8 @@ import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, O
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { ModalStackService } from '../../../services/modal-stack.service';
-import { batchIsolationRows, batchPublishedSha, batchReplayLabel, batchRiskLabel } from '../../../models/batch-gate.model';
+import { batchIsolationRows, batchPublishedSha, batchReplayLabel, batchRiskLabel, batchRunIsRunning, batchWaitingCards } from '../../../models/batch-gate.model';
+import { formatDurationMinutes } from '../../../models/duration-format';
 import type { BatchGateBatch, BatchTestFailureRank, BatchTestFailureReport, BatchGateState } from '../../../models/batch-gate.model';
 import { CreateTaskFormService } from '../../board';
 import { TaskService } from '../../../services/task.service';
@@ -23,6 +24,7 @@ export class BatchPanelComponent implements OnDestroy {
   readonly closed = input.required<() => void>();
   readonly gate = inject(BatchGateService);
   readonly state = computed(() => this.gate.state(this.project())());
+  readonly waitingCards = computed(() => batchWaitingCards(this.state()));
   readonly history = signal<BatchGateState | null>(null);
   readonly batches = computed(() => {
     const current = this.state()?.batches ?? [];
@@ -52,6 +54,21 @@ export class BatchPanelComponent implements OnDestroy {
   readonly riskLabel = batchRiskLabel;
   readonly replayLabel = batchReplayLabel;
   readonly publishedSha = batchPublishedSha;
+  readonly formatDurationMinutes = formatDurationMinutes;
+  runOutcome(batch: BatchGateBatch, run: BatchGateBatch['runs'][number]): string {
+    if (run.startedAtUtc && !run.finishedAtUtc) return batchRunIsRunning(batch, run) ? 'running' : 'interrupted';
+    return run.outcome ?? 'waiting';
+  }
+  runDuration(batch: BatchGateBatch, run: BatchGateBatch['runs'][number]): string {
+    if (batchRunIsRunning(batch, run)) return 'Running';
+    const detached = this.state()?.detachedFlights?.find(flight => flight.batchId === batch.batchId);
+    return this.duration(run.startedAtUtc, run.finishedAtUtc ?? detached?.detachedAtUtc ?? batch.phaseAtUtc);
+  }
+  flightDeadline(startedAtUtc: string, deadlineMinutes: number): string | null {
+    const started = Date.parse(startedAtUtc);
+    return Number.isFinite(started) && Number.isFinite(deadlineMinutes)
+      ? new Date(started + deadlineMinutes * 60_000).toISOString() : null;
+  }
   readonly phases = ['formed', 'assembling', 'assembled', 'running', 'green', 'publishing', 'published', 'red', 'paused', 'abandoned'];
   private readonly body = viewChild<ElementRef<HTMLDivElement>>('body');
   private readonly closeButton = viewChild<ElementRef<HTMLButtonElement>>('closeButton');
@@ -104,11 +121,10 @@ export class BatchPanelComponent implements OnDestroy {
   }
   duration(start?: string | null, end?: string | null): string {
     if (!start) return 'Waiting';
-    if (!end) return 'Running';
+    if (!end) return 'Interrupted';
     const elapsed = Date.parse(end) - Date.parse(start);
     if (!Number.isFinite(elapsed)) return 'Unknown';
-    const minutes = Math.max(0, Math.round(elapsed / 60_000));
-    return `${minutes} min`;
+    return formatDurationMinutes(elapsed / 60_000);
   }
   phaseLabel(phase: string): string { return phase; }
   isolationRows(batch: BatchGateBatch) { return batchIsolationRows(this.state(), batch); }

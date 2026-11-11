@@ -121,7 +121,7 @@ for (const width of [1280, 390]) {
     await routeBoard(page, state);
     await page.goto('/?includeFixtures=true');
     await page.getByRole('tab', { name: 'All projects · Board' }).click();
-    if (width === 390) await page.getByRole('button', { name: 'Active 1' }).click();
+    if (width === 390) await page.getByRole('combobox', { name: 'Board lane' }).selectOption({ label: 'Post Processing' });
     const opener = page.getByTestId('batch-lane-indicator').first();
     await opener.click();
     const dialog = page.getByTestId('batch-panel');
@@ -150,6 +150,34 @@ for (const width of [1280, 390]) {
     await expect(opener).toBeFocused();
   });
 }
+
+test('recovered batch shows members, interrupted run and detached deadline in both themes and at 390px', async ({ page }) => {
+  const evidence = process.env.JOB_RESULTS_DIR;
+  const members = [1, 2, 3, 4].map(index => ({ taskKey: `AGT-${index}`, replay: 'applied', released: false }));
+  const pending = members.map((member, index) => ({ taskKey: member.taskKey, reviewAttemptId: `review-${index}`,
+    resultSha: 'a'.repeat(40), waitMinutes: 229.234388035, risk: 0.2 }));
+  const batch = { ...state.batches[1], batchId: 'gate-host-01', phase: 'abandoned',
+    phaseAtUtc: '2026-11-10T12:49:00Z', members,
+    runs: [{ batchRunId: 'run-1', host: 'gate-host-01', startedAtUtc: '2026-11-10T09:00:00Z' }] };
+  await routeBoard(page, { ...state, pending, batches: [batch], members: {},
+    detachedFlights: [{ batchId: batch.batchId, project, startedAtUtc: '2026-11-10T09:00:00Z',
+      detachedAtUtc: '2026-11-10T12:49:00Z', deadlineMinutes: 90, reason: 'lease deadline' }] });
+  await page.goto('/?includeFixtures=true');
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
+  const chip = page.getByTestId('batch-lane-indicator').first();
+  await expect(chip).toContainText('0 running');
+  await chip.click();
+  const panel = page.getByTestId('batch-panel');
+  await expect(panel).toContainText('Waiting cards (4)');
+  await expect(panel).toContainText('AGT-1 · 3 h 49 min');
+  await expect(panel.locator('#batch-gate-host-01')).toContainText('gate-host-01 · interrupted · 3 h 49 min');
+  await expect(panel.getByTestId('batch-detached-flights')).toContainText('(1 h 30 min)');
+  await panel.getByTestId('batch-detached-flights').scrollIntoViewIfNeeded();
+  await captureThemes(page, evidence, 'batch-recovered');
+  await page.setViewportSize({ width: 390, height: 800 });
+  await expect(panel).toBeVisible();
+  if (evidence) await page.screenshot({ path: nodePath.join(evidence, 'batch-recovered-390.png') });
+});
 
 test('board badge, batch panel and project settings save use batch contract', async ({ page }) => {
   const evidence = process.env.JOB_RESULTS_DIR;

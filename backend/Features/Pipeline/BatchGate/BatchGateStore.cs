@@ -151,7 +151,9 @@ public sealed record BatchIsolationCostFact(
 /// <summary>
 /// Durable batch authority. A closed manifest is written once before assembly;
 /// all later facts are append-only files carrying its digest. CreateNew and
-/// durable flush prevent retries from silently changing an existing fact.
+/// durable flush prevent retries from silently changing an existing fact. The
+/// one replaced file is the batch phase record, which changes only by
+/// compare-and-swap (AGT-3563).
 /// </summary>
 public sealed partial class BatchGateStore
 {
@@ -780,7 +782,7 @@ public sealed partial class BatchGateStore
             lock (_missingStateWarnings)
             {
                 if (_missingStateWarnings.Add(manifest.BatchId))
-                    Log.Warning("Batch gate manifest {BatchId} has no state rows; recovery will skip it", manifest.BatchId);
+                    Log.Warning("Batch gate manifest {BatchId} has no state rows; recovery skips it until the tick writes its first record", manifest.BatchId);
             }
             return false;
         }
@@ -801,7 +803,14 @@ public sealed partial class BatchGateStore
         var path = Path.Combine(_root, "pending", SafeName(reviewAttemptId) + ".json");
         if (!File.Exists(path)) throw new FileNotFoundException("Pending batch member is missing.", path);
         var resolved = path + ".resolved";
-        if (!File.Exists(resolved)) WriteOnce(resolved, new { outcome, atUtc = DateTimeOffset.UtcNow });
+        if (File.Exists(resolved)) return;
+        try { WriteOnce(resolved, new { outcome, atUtc = DateTimeOffset.UtcNow }); }
+        catch (IOException exception) when (File.Exists(resolved))
+        {
+            // A per-task gate flight and the tick can settle the same review
+            // attempt at once; the first resolution stands.
+            SilentCatch.Note(exception, "A concurrent settlement resolved the pending batch member first");
+        }
     }
 
     public string? ReadPendingOutcome(string reviewAttemptId)
@@ -820,45 +829,45 @@ public sealed partial class BatchGateStore
             throw new InvalidDataException("The closed batch manifest has an invalid membership digest.");
         var dir = BatchDirectory(manifest.BatchId);
         Directory.CreateDirectory(dir);
-        var stateFolder = Path.Combine(dir, "state");
-        Directory.CreateDirectory(stateFolder);
-        var firstStatePath = Path.Combine(stateFolder, "00000001.json");
-        if (!File.Exists(firstStatePath))
-            WriteOnce(firstStatePath, new BatchGateState(
-                manifest.BatchId, manifest.MembershipDigest, BatchPhase.Formed,
-                null, 0, DateTimeOffset.UtcNow));
-        else if (!File.Exists(Path.Combine(dir, "manifest.json")))
-        {
-            var existing = Read<BatchGateState>(firstStatePath);
-            if (existing.BatchId != manifest.BatchId
-                || existing.MembershipDigest != manifest.MembershipDigest
-                || existing.Phase != BatchPhase.Formed)
-                throw new InvalidDataException("The initial batch state does not match its manifest.");
-        }
         WriteOnce(Path.Combine(dir, "manifest.json"), manifest);
         lock (_deliveryIndexLock)
         {
             if (_deliveryIndex is not null) AddToDeliveryIndex(manifest);
         }
+        // The first record claims every member by its queued review attempt.
+        // The tick's reconciliation may have written it between the two writes
+        // and even advanced the batch since; formation still succeeded.
+        var formed = TryTransition(new BatchGateState(
+            manifest.BatchId, manifest.MembershipDigest, BatchPhase.Formed,
+            null, 0, DateTimeOffset.UtcNow), expectedVersion: 0);
+        if (!formed.Accepted && !WasFormed(manifest.BatchId))
+            throw new BatchPhaseTransitionRefusedException(manifest.BatchId,
+                formed.Record?.State.Phase, BatchPhase.Formed, formed.Refusal);
     }
 
     public BatchGateManifest ReadManifest(string batchId)
         => Read<BatchGateManifest>(Path.Combine(BatchDirectory(batchId), "manifest.json"));
 
-    public void AppendState(BatchGateState state)
+    /// <summary>
+    /// Changes the batch phase through <see cref="TryTransition"/>; a change
+    /// the transition rule refuses throws and writes nothing.
+    /// </summary>
+    public BatchPhaseRecord AppendState(BatchGateState state)
     {
-        var manifest = ReadManifest(state.BatchId);
-        if (state.MembershipDigest != manifest.MembershipDigest
-            || state.CandidateSha is { } sha && !IsSha(sha))
-            throw new InvalidDataException("Batch state does not match its closed manifest.");
-        var folder = Path.Combine(BatchDirectory(state.BatchId), "state");
-        Directory.CreateDirectory(folder);
-        var number = Directory.EnumerateFiles(folder, "*.json").Count() + 1;
-        WriteOnce(Path.Combine(folder, $"{number:D8}.json"), state);
+        var result = TryTransition(state);
+        return result.Accepted ? result.Record!
+            : throw new BatchPhaseTransitionRefusedException(state.BatchId,
+                result.Record?.State.Phase, state.Phase, result.Refusal);
     }
 
+    /// <summary>
+    /// The state of the phase record; a batch closed before AGT-3563 reads its
+    /// history. A manifest without either is <see cref="BatchPhase.Unknown"/>
+    /// until the next tick writes its first record.
+    /// </summary>
     public BatchGateState LatestState(string batchId)
     {
+        if (ReadPhaseRecord(batchId) is { } record) return record.State;
         var folder = Path.Combine(BatchDirectory(batchId), "state");
         var path = Directory.Exists(folder)
             ? Directory.EnumerateFiles(folder, "*.json")
@@ -1048,6 +1057,7 @@ public sealed partial class BatchGateStore
 
     private static void WriteOnce<T>(string path, T value)
     {
+        BatchGateDurableWrites.Starting(path);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(value, Json);
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
@@ -1064,6 +1074,7 @@ public sealed partial class BatchGateStore
         {
             if (File.Exists(temporary)) File.Delete(temporary);
         }
+        BatchGateDurableWrites.Completed(path);
     }
 
     private static T Read<T>(string path)

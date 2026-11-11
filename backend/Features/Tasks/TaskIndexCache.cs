@@ -997,6 +997,13 @@ public sealed class TaskIndexCache
                 var info = read();
                 if (info is null) RemoveCoreByFolder(folder);
                 else PublishCore(info);
+                // A later incremental refresh must read this folder even when
+                // task.json and the directory stamp have not changed.
+                lock (_lock)
+                {
+                    if (_incremental) _pendingFolderPaths.Add(Path.Combine(folder, "task.json"));
+                    if (_refreshCompletion is not null) ++_invalidationGen;
+                }
             }
         }
         finally { EndCorePublication(pending); }
@@ -1735,7 +1742,10 @@ public sealed class TaskIndexCache
             }
             if (!forced.Contains(folder) && _scanner.FolderStampIsSettled(folder)
                 && _folderStamps.TryGetValue(folder, out var prior) && Equals(prior, stamp))
+            {
+                RefreshVolatileMarkers(folder);
                 continue;
+            }
             var task = _scanner.ScanJobFolder(folder, source.Entry, source.State,
                 bypassMemo: forced.Contains(folder));
             Interlocked.Increment(ref FolderReloads);
@@ -1750,7 +1760,24 @@ public sealed class TaskIndexCache
                 _folderStamps[folder] = stamp;
             }
         }
+        // A changed path may refresh only one card. Every other resident card
+        // still needs its in-place marker files read for this publication.
+        foreach (var folder in _folderFacts.Keys.ToArray())
+            if (!candidates.ContainsKey(folder)) RefreshVolatileMarkers(folder);
         return _folderFacts.Values.ToList();
+
+        void RefreshVolatileMarkers(string folder)
+        {
+            // Direct core publications can be newer than the last board scan.
+            // Use that fact as the base so a marker-only read never rolls it back.
+            TaskInfo baseFact;
+            lock (_lock)
+                baseFact = _coreFactsByFolder.GetValueOrDefault(folder) ?? _folderFacts[folder];
+            // Archive facts have no volatile live markers and retain their
+            // slim-hydrated instance across unchanged refreshes.
+            _folderFacts[folder] = baseFact.State == TaskStates.Archive
+                ? baseFact : _scanner.ApplyVolatileMarkers(baseFact, folder);
+        }
 
         static bool IsWithin(string root, string path)
         {

@@ -130,6 +130,9 @@ public sealed class BatchGatePilotEjectTests : BatchGatePilotServiceTests
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var batch = ClosePendingBatch(factory);
+        foreach (var phase in new[] { BatchPhase.Assembling, BatchPhase.Assembled, BatchPhase.Running })
+            store.AppendState(new BatchGateState(batch.BatchId, batch.MembershipDigest,
+                phase, null, 1, _clock));
         store.AppendState(new BatchGateState(batch.BatchId, batch.MembershipDigest,
             BatchPhase.Red, member.ResultSha, 1, _clock, "deterministic suite red"));
 
@@ -172,7 +175,7 @@ public sealed class BatchGatePilotOperatorMoveTests : BatchGatePilotServiceTests
         var other = SeedMember(factory, "DOC-MOVE-GUARD-B", "docs/move-guard-b.md");
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         var batch = ClosePendingBatch(factory);
-        store.AppendState(new BatchGateState(batch.BatchId, batch.MembershipDigest,
+        BatchGateStates.Reach(store, new BatchGateState(batch.BatchId, batch.MembershipDigest,
             BatchPhase.Running, member.ResultSha, 1, _clock));
 
         var request = new MoveJobRequest { TargetState = TaskStates.Backlog };
@@ -239,7 +242,7 @@ public sealed class BatchGatePilotOperatorMoveTests : BatchGatePilotServiceTests
         var other = SeedMember(factory, "DOC-BATCH-MOVE-B", "docs/batch-move-b.md");
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         var batch = ClosePendingBatch(factory);
-        store.AppendState(new BatchGateState(batch.BatchId, batch.MembershipDigest,
+        BatchGateStates.Reach(store, new BatchGateState(batch.BatchId, batch.MembershipDigest,
             BatchPhase.Running, member.ResultSha, 1, _clock));
 
         // The fixture removes hosted services; run the batch-move worker here.
@@ -289,7 +292,7 @@ public sealed class BatchGatePilotOperatorMoveTests : BatchGatePilotServiceTests
         SeedMember(factory, "DOC-WITHDRAW-THROW-B", "docs/withdraw-throw-b.md");
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         var batch = ClosePendingBatch(factory);
-        store.AppendState(new BatchGateState(batch.BatchId, batch.MembershipDigest,
+        BatchGateStates.Reach(store, new BatchGateState(batch.BatchId, batch.MembershipDigest,
             BatchPhase.Running, member.ResultSha, 1, _clock));
         var guard = new ActiveBatchMemberGuard(store);
         var membership = Assert.IsType<ActiveBatchMembership>(
@@ -2001,7 +2004,7 @@ public sealed class BatchGatePilotPublicationTests : BatchGatePilotServiceTests
         var c = SeedMember(factory, "DOC-RECOVER-C", "docs/recover-c.md");
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         var parent = ClosePendingBatch(factory);
-        store.AppendState(new BatchGateState(parent.BatchId, parent.MembershipDigest,
+        BatchGateStates.Reach(store, new BatchGateState(parent.BatchId, parent.MembershipDigest,
             BatchPhase.Running, null, 1, _clock));
         CloseChild([a.Key, b.Key], BatchPhase.Red);
         CloseChild([a.Key], BatchPhase.Green);
@@ -2030,7 +2033,7 @@ public sealed class BatchGatePilotPublicationTests : BatchGatePilotServiceTests
                 ParentBatchId = parent.BatchId,
             };
             store.CloseManifest(child);
-            store.AppendState(new BatchGateState(child.BatchId, digest, phase, null, 1, _clock));
+            BatchGateStates.Reach(store, new BatchGateState(child.BatchId, digest, phase, null, 1, _clock));
         }
     }
 
@@ -3546,7 +3549,7 @@ public sealed class BatchGatePilotRecoveryTests : BatchGatePilotServiceTests
         var manifest = ClosePendingBatch(factory);
         var running = new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Running, member.ResultSha, 1, _clock);
-        store.AppendState(running);
+        BatchGateStates.Reach(store, running);
         if (supersededReview) ReplaceDelivery(factory, member);
         else SaveContinuation(factory, member);
 
@@ -3667,7 +3670,7 @@ public abstract partial class BatchGatePilotServiceTests
         bool deferredPlan = true, string? taskId = null,
         Contract.ReviewCommandDto? verificationCommand = null, string? content = null,
         string? mergeFrom = null, string generation = "",
-        string initialState = TaskStates.AutoReview)
+        string initialState = TaskStates.AutoReview, string? commitMessage = null)
     {
         var tips = Git(_repo, "rev-parse", "origin/develop", "HEAD").Split('\n');
         var baseSha = tips[0].Trim();
@@ -3677,7 +3680,8 @@ public abstract partial class BatchGatePilotServiceTests
         {
             // One fast-import writes the commit and the remote-tracking ref a
             // fetch of the pushed result would write (AGT-3566).
-            resultSha = ImportCommit(parentSha ?? baseSha, changedFile, content ?? key + "\n", key,
+            resultSha = ImportCommit(parentSha ?? baseSha, changedFile, content ?? key + "\n",
+                commitMessage ?? key,
                 $"refs/remotes/origin/agent-studio/results/{key}");
             Git(_repo, "push", "-q", "origin", $"{resultSha}:{resultRef}");
             Assert.Empty(Git(_repo, "for-each-ref", resultRef));
