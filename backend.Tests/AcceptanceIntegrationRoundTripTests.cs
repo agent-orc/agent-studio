@@ -3426,6 +3426,56 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
     }
 
     [Theory]
+    [InlineData("pass", true, true, true)]
+    [InlineData("fail", true, true, false)]
+    [InlineData("pass", false, true, false)]
+    [InlineData("pass", true, false, false)]
+    public void Acceptance_NetChangePublication_UsesExactFullSuiteBatchBaseVerdict(
+        string outcome, bool currentProfile, bool evidenceExists, bool accepted)
+    {
+        var deliverySha = PublishDelivery("base-verdict-delivery.txt", "verified delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin", "develop");
+        var deps = Build(deliverySha);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var netChangeSha = PublishLaterCommit("net-change-publication.txt", deliverySha);
+        var laterSha = PublishLaterCommit("after-net-change.txt");
+        Assert.True(PublishedGateEvidenceStore.Append(_watchPath,
+            PassedPublishedGate(laterSha, "AGT-LATER")));
+        var batches = new BatchGateStore(Path.Combine(_tempDir, "net-change-base-gates"));
+        var evidencePath = Path.Combine(_tempDir, "net-change-base-gate.json");
+        if (evidenceExists) File.WriteAllText(evidencePath, "passed");
+        var digest = BatchGatePilotService.GateProfile(deps.Settings.Get(Project).BuildProfile, _repo);
+        batches.RecordBaseVerdict(new BatchGateBaseVerdict(Project, netChangeSha,
+            currentProfile ? digest : "obsolete-profile", outcome, null,
+            "verify gate passed; test-level=full; full-suite=required-and-run",
+            evidencePath, DateTimeOffset.UnixEpoch.AddDays(1), BatchGateBaseCheckSources.FullSuite));
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        var service = new TaskIntegrationStatusService(git, deps.Settings, deps.Pipeline,
+            NullLogger<TaskIntegrationStatusService>.Instance, batchGates: batches)
+        {
+            TestStatusOverride = _ => VerifiedStatus(deliverySha, deliverySha),
+        };
+
+        var status = service.BuildForAcceptance(card);
+
+        Assert.Equal(accepted ? IntegrationVerificationStates.Verified
+            : IntegrationVerificationStates.Unverified, status.Verification?.State);
+        if (!accepted)
+        {
+            Assert.Contains(netChangeSha, status.Verification?.Reason);
+            Assert.Contains("full-suite batch base verdict", status.Verification?.Reason);
+            if (outcome == "pass")
+                Assert.Contains(evidenceExists
+                        ? "is not counted: its gate profile digest is not the current profile"
+                        : "is not counted: its evidence file is missing",
+                    status.Verification?.Reason);
+            else
+                Assert.DoesNotContain("is not counted", status.Verification?.Reason);
+        }
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Acceptance_BatchPublicationFollowedByManagedDocumentKeyCommit_IsAccepted(
@@ -3866,12 +3916,14 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
                 "pass", "pass", evidence, at), options));
     }
 
-    private string PublishLaterCommit(string name)
+    private string PublishLaterCommit(string name, string? netChangeOf = null)
     {
         RunGit(_repo, "checkout", "-q", "-B", "later-publications", "origin/develop");
         File.WriteAllText(Path.Combine(_repo, name), name + "\n");
         RunGit(_repo, "add", "-A");
-        RunGit(_repo, "commit", "-q", "-m", "later published delivery");
+        RunGit(_repo, "commit", "-q", "-m", netChangeOf is null
+            ? "later published delivery"
+            : $"Integrate net change from {netChangeOf[..8]}\n\nAgent-Studio-Net-Change-Of: {netChangeOf}");
         var sha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
         RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
         RunGit(_repo, "fetch", "-q", "origin", "develop");
