@@ -46,10 +46,21 @@ The board move (`POST /api/tasks/{id}/move`) and state update
 tries to move a card out of Auto Review while a formed, running, or publishing
 batch still owns it. The response names the batch, phase, and other members.
 An operator can confirm the move with `withdrawFromBatch: true` and a written
-`reason`. The move requests an eject before changing the lane, records the
-operator and reason on the card timeline and in the batch withdrawal journal,
-and requests a fresh planner pass. A card that is pending but has no batch
-continues to move normally.
+`reason`. The move requests an eject before changing the lane. When the move
+succeeds, it records the operator and reason on the card timeline and in the
+batch withdrawal journal, and requests a fresh planner pass. A refused or
+interrupted move clears the eject again, so the batch keeps running. A card
+that is pending but has no batch continues to move normally.
+
+The rule lives in one shared guard (`ActiveBatchMemberGuard`) that
+`TaskTransitionService.MoveAsync` applies to every operator cause (a person,
+an operator agent session, or a service account). Other routes that move a
+card therefore refuse the same move: `POST /api/tasks/batch-move` reports the
+item as `refused` with a message naming the batch, its phase, and its other
+members, and the other move routes answer `409 active-batch-member`. Batch
+move has no withdrawal option; withdraw a member with the single move. The
+runner, the batch gate, and the orchestrator own their own Auto Review
+transitions and are not refused by this guard.
 
 ### Routing mutation publication
 
@@ -58,8 +69,13 @@ continues to move normally.
 resident core and board generations. `POST /api/tasks` publishes the new card
 after its task file, derived layout index, and timeline have been written.
 Routing writes hold the card's file lock through publication and use the
-latest published card under that lock before deriving related fields. Publication reads
-the written card under the index publication lock. This keeps concurrent
+latest published card under that lock before deriving related fields, unless
+its `task.json` stamp no longer matches the disk; then they read the folder.
+Publication reads the written card outside the index publication lock. When the
+folder version moved during that read (a newer publication, the watcher echo
+of the write, or a refresh prune), it re-reads the card under the lock and
+publishes it; a routing write that cannot publish invalidates the index
+(AGT-3723). This keeps concurrent
 routing writes in durable order across board, core, and detail readers; the
 new board generation also changes board validators and deploy projections.
 Git projections retain their snapshot because routing fields do not enter the
@@ -230,7 +246,7 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   A queued round also returns `base` when it starts from a result ref
   (AGT-3483); `BaseRef` on the request selects another ref of the same card,
   see the [runner domain](runner.md) for the rule and its error codes.
-- Continue (every mode), preview feedback, the orchestrator-log steer override,
+- Continue (every mode), failure continuation, preview feedback, the orchestrator-log steer override,
   and an operator requeue (a move or batch move into Backlog, Preparation,
   Ready or In Progress) refuse a card that is a member of a batch under
   isolation with `409 batch-isolation-active`, naming the flight
@@ -240,6 +256,9 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   active and no isolation finding released it. Eject
   (`POST /api/projects/{project}/batch-gate/members/{taskKey}/eject`) stays
   allowed (AGT-3483, `BatchIsolationGuard`).
+  The read-only failure continuation check reports the same isolation reason
+  and marks the action unavailable, so task detail disables it with that reason
+  as its tooltip (AGT-3687).
 
 ## Entry Points
 
@@ -1313,7 +1332,24 @@ Product sessions are also denied every task route segment that exposes run
 internals: `session-events`, `agent-work-detail`, `conversation`, `output`,
 `trace`, `logs`, and `raw-logs` in the backend, and `session-events`,
 `agent-work-detail`, `history`, `files`, `output`, `trace`, `logs`, and
-`raw-logs` in Task Server. Segment matching is case-insensitive.
+`raw-logs` in Task Server. Segment matching is case-insensitive. The backend
+also denies `usage`, so `GET /api/tasks/{id}/details/usage` is refused.
+
+A Product session still opens the card (AGT-3669). The browser does not send
+the reads it knows are refused: `TaskSectionAccessService`
+(`frontend/src/app/services/task-section-access.service.ts`) lists them in
+`PRODUCT_DENIED_TASK_SECTIONS`, and the detail skips usage, CLI output, the
+session-event log and the agent-work call breakdown for a contributor session.
+A skipped or refused optional section takes the `restricted` resource phase and
+stays hidden. A refused prompt or status document is marked and the card paints
+from its core. Each section 403 or 404 triggers one core revalidation, and only
+a refused core read clears the selection, with the message "This card is not
+available to this account." The guard
+`ContributorAccessTests.Frontend_product_task_sections_match_the_refused_task_reads`
+fails when that frontend list and the backend policy drift apart. The
+`networked-https-demo` Playwright profile, the `networked-https` stack seeded
+with the demo workspace, covers the flow end to end
+(`frontend/e2e/security/product-card-detail.spec.ts`).
 
 Task Server reads a Product request body as the binder does. It rejects
 duplicate JSON property names, including case variants, and denies a lane field
@@ -1639,6 +1675,55 @@ line (observations, cases updated, proposals created, comments appended,
 contingent-blocked count, analysis calls, last-run timestamp), the same shape
 as `acceptance-rail-run`.
 
+## Persona catalogue and workspace activation (PT-1)
+
+The persona team ([Dossier](../../persona-team/index.html), AGT-3573, decisions
+PT-D1 and PT-D12) starts with a versioned catalogue and an application-owned
+activation per workspace. Nothing runs yet: principals and grants (PT-2) and
+scheduling (PT-3) read these records.
+
+- **Descriptor.** `docs/app/schemas/persona.schema.json` (`PersonaDescriptorV1`):
+  id, revision (`year.month.sequence`), title, aspect, kind
+  (`persona | presenter | manager`), a charter of at most 600 characters,
+  scope (projects, areas, excluded paths), owner-set attributes (focus weights
+  summing to 100, autonomy A0 to A2, risk appetite, thoroughness, signal
+  threshold), persona operations, model capability class and thinking, cadence,
+  triggers, weekly budget, report template and fact floors.
+  `AgentStudio.Personas.PersonaDescriptorValidator` mirrors the schema in code
+  and adds what a schema cannot state: focus weights sum to 100, A2 and the
+  manager operations belong to managers only.
+- **Catalogue.** The eleven starter descriptors live in
+  `backend/Policies/personas/<id>.persona.json` and are embedded in the
+  backend (`PersonaCatalogue`). `revisions.lock.json` beside them records the
+  digest of every published revision; `PersonaCatalogueTests` validates every
+  file against the schema and fails when a file changed without a new
+  revision. The operations warden and the cost controller carry
+  `startsActive: true`; activation still needs the Owner.
+- **Digest.** `PersonaDescriptorDigest`: `sha256:` over the descriptor as
+  compact JSON with keys sorted ordinally. Formatting never changes it.
+- **Activation store.** `PersonaActivationStore` keeps activations and forks
+  per workspace in `.metadata/personas/<workspace>.json`, written only through
+  the routes below. An activation stores a snapshot of the descriptor it runs,
+  so a new catalogue revision changes nothing until the Owner adopts it.
+- **Routes.** `GET /api/workspaces/{id}/personas` lists every catalogue entry
+  and custom persona with its activation (state `shadow`, `active`, `paused`
+  or `inactive`) and `adoptableRevision` when the catalogue has a newer one.
+  `POST .../personas/{personaId}/activate` takes optional `attributes`,
+  `allowance` and `scope` (narrowing only) and `reason`; it needs an active
+  Owner and a fresh, single-use step-up (`403 step-up-required` otherwise),
+  records `descriptorRevision`, `descriptorDigest` and the operations its
+  autonomy grants, and starts in `shadow` until one report period has passed.
+  `.../pause`, `.../resume` and `.../deactivate` need the Owner and no
+  step-up. `.../fork` copies a catalogue persona into a custom persona
+  (`id`, optional `title`, `charter`, `attributes`, `budget`, `scope`) with its
+  own revision chain. `.../adopt` builds the next fork revision from the
+  current catalogue revision plus the fork's own changes, or moves a live
+  catalogue activation to the current revision; adopting into a live
+  activation needs a step-up. Refusals answer `{ error, message }`.
+- **Audit.** Every change appends `persona.activate`, `persona.pause`,
+  `persona.resume`, `persona.deactivate`, `persona.fork` or `persona.adopt` to
+  the IAM audit with target `persona:<workspace>/<personaId>`.
+
 ## Dossier links and retired parent fields
 
 Tasks use `task` or `decision` kind. Dossier membership is the card's
@@ -1720,6 +1805,9 @@ from completion backfill, cycle time, throughput, and environment flow metrics.
   Git ancestry, Remote Review build-tests grades, and deterministic gate logs.
 - `backend/Services/Tasks/ReviewEvidenceLog.cs` and
   `ScreenshotIndexService.cs`: review evidence and visual proof.
+- `backend/Features/Personas/`: persona descriptor, catalogue, workspace
+  activation store and routes (PT-1); `backend/Policies/personas/` holds the
+  starter descriptors and `revisions.lock.json`.
 - `backend/Features/Registry/WorkspaceSettingsService.cs` and
   `WorkspaceSettingsEndpoints.cs`: per-workspace default orchestrator settings
   (`WorkspaceSettings` beside `WorkspaceRecord`, persisted to

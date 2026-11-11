@@ -828,18 +828,30 @@ public sealed class TaskIndexCache
         long observedVersion;
         lock (_lock) observedVersion = _coreFolderVersions.GetValueOrDefault(folder);
         var info = read();
-        lock (_corePublicationLock)
+        var published = false;
+        try
         {
-            // A later publication may have completed while this folder was
-            // being read. Do not replace it with the older result.
-            lock (_lock)
-                if (_coreFolderVersions.GetValueOrDefault(folder) != observedVersion) return;
-            if (info is null)
+            lock (_corePublicationLock)
             {
-                Invalidate(InvalidationSource.Mutation, changedPath: Path.Combine(folder, "task.json"));
-                return;
+                // A later publication, a watcher marker (often the echo of
+                // this very write) or a refresh prune may have moved the
+                // version while this folder was being read. The durable
+                // write has already landed, so skipping would leave the old
+                // routing in the core fact and the board (AGT-3723). Re-read
+                // under the lock: no older result can replace a newer card.
+                bool moved;
+                lock (_lock) moved = _coreFolderVersions.GetValueOrDefault(folder) != observedVersion;
+                if (moved) info = read();
+                if (info is null) return;
+                PublishRoutingMutation(info);
+                published = true;
             }
-            PublishRoutingMutation(info);
+        }
+        finally
+        {
+            // Every routing write ends in a publication or an invalidation.
+            if (!published)
+                Invalidate(InvalidationSource.Mutation, changedPath: Path.Combine(folder, "task.json"));
         }
     }
 
