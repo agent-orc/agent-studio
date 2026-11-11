@@ -265,6 +265,13 @@ test.describe('Operator attention list', () => {
         await expect(list.getByTestId('attention-row-action')).toHaveCount(items.length);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         await screenshot(page, `attention-classes-${viewport.width}-${theme}`);
+        if (viewport.width === 390) {
+          const stuck = list.locator('[data-attention-type="batch-gate.stuck"]');
+          await stuck.scrollIntoViewIfNeeded();
+          expect(await stuck.getByTestId('attention-row-reason').evaluate(element =>
+            element.scrollHeight <= element.clientHeight + 1)).toBe(true);
+          await screenshot(page, `attention-batch-stuck-390-${theme}`);
+        }
         await page.keyboard.press('Escape');
         await expect(list).toBeHidden();
       }
