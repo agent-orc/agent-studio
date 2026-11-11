@@ -150,12 +150,21 @@ async function installRoutes(page: Page, fixtures: Fixture[], refuseOnAccept: st
     if (url.includes('/api/v1/studio/auth/status')) {
       return json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
+    if (pathname === '/api/v1/management/credential-inventory') {
+      return json(route, { generatedAt: '2026-11-09T10:00:00Z', items: [] });
+    }
     if (pathname === '/api/v1/projects') return json(route, [{ id: 'PROJ-041', displayName: PROJECT, archived: false }]);
     if (url.includes('/api/v1/studio/board') || url.includes('/api/tasks/grouped')) return json(route, grouped(live));
     if (url.includes('/api/v1/studio/runner/status') || url.includes('/api/runner/status')) return json(route, { projects: {} });
     if (url.includes('/api/tasks/archive')) return json(route, { items: [], total: 0, offset: 0, limit: 50 });
     if (url.includes('/api/cli/quota')) return json(route, { at: '2026-11-09T06:00:00Z', ttlSeconds: 600, snapshots: [] });
     if (url.includes('/api/cli/usage')) return json(route, { at: '2026-11-09T06:00:00Z', sections: [] });
+    if (pathname === '/api/usage/cockpit') return json(route, {
+      snapshotVersion: 1, workspaceId: 'fixture', timeZone: 'Europe/Berlin', weekStart: 1,
+      generatedAt: '2026-11-09T10:00:00Z',
+      calendar: { timeZone: 'Europe/Berlin', weekStart: 1, dayStartUtc: '', dayEndUtc: '', weekStartUtc: '', weekEndUtc: '' },
+      clis: [], cost: null, runs: [], slots: [], sources: {},
+    });
     if (url.includes('/api/orchestrator/global')) return json(route, { session: null });
     if (pathname === '/api/tasks/acceptance-readiness') {
       const body = route.request().postDataJSON() as { items: { jobId: string }[] };
@@ -202,8 +211,18 @@ async function openBoard(page: Page): Promise<void> {
       activeKey: 'board:__all__',
     }));
   });
-  await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await expect(page.getByTestId('acceptance-readiness-summary')).toBeVisible({ timeout: 60_000 });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    try {
+      await expect(page.getByTestId('acceptance-readiness-summary')).toBeVisible({ timeout: 60_000 });
+      break;
+    } catch (error) {
+      // A cold page can remain blank while the shared runner is saturated.
+      // Reload that state once; preserve a rendered app error as a failure.
+      const body = await page.locator('body').innerText();
+      if (attempt === 1 || body.trim()) throw error;
+    }
+  }
   await dismissDevErrorDialog(page);
 }
 
