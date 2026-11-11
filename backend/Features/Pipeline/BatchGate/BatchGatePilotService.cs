@@ -394,7 +394,7 @@ public sealed partial class BatchGatePilotService
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
             _time.GetUtcNow(), _services?.GetService<GateRunLedger>(), reviewFixWaits,
             _services?.GetService<GateCapacitySettings>()?.Current(), DetachedFlights(project),
-            LeaseDeadlineDeferred()(project), FallbackWaits(project));
+            LeaseDeadlineDeferred()(project), FallbackWaits(project), LastInvariantReport(project));
     }
 
     private static BatchGateReviewFixWait[] ReviewFixWaits(IEnumerable<TaskInfo> tasks, string project)
@@ -426,6 +426,8 @@ public sealed partial class BatchGatePilotService
         await _tick.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // AGT-3563: every later step reads each manifest's phase record.
+            ReconcilePhaseRecords();
             CancelFlightsPastLeaseDeadline();
             ObserveFallbackFlights();
             var fetchedBases = new Dictionary<(string Repo, string Branch), string?>();
@@ -453,8 +455,9 @@ public sealed partial class BatchGatePilotService
                             "batch-gate push wait exceeded age limit project={Project} job={JobId} approvedSha={ApprovedSha} since={SinceUtc}",
                             project, wait.JobId, wait.ApprovedSha, wait.SinceUtc);
                 }
-            await RecoverGreenIsolationChildrenAsync(ct).ConfigureAwait(false);
+            await RecoverGreenBatchesAsync(ct).ConfigureAwait(false);
             RecoverInterrupted();
+            RepairBatchInvariants();
             foreach (var project in _store.ListPending().Select(item => item.Subject.Project)
                          .Distinct(StringComparer.Ordinal))
                 await HandOffProvenRedsAsync(project, ct).ConfigureAwait(false);
@@ -775,6 +778,7 @@ public sealed partial class BatchGatePilotService
             StartClosedBatches(ct);
             if (WaitForFlightsInTick)
                 await WaitForFlightsAsync(includeFallbacks: true, ct).ConfigureAwait(false);
+            RecordInvariants();
         }
         finally
         {
@@ -874,8 +878,11 @@ public sealed partial class BatchGatePilotService
         if (rollback is null) return false;
         try
         {
-            State(manifest, BatchPhase.Abandoned, null, rollback.Fence,
-                "abandoned-by-rollback");
+            // An abandoned batch never changes phase again; it only returns
+            // the member its ownership still names.
+            if (_store.LatestState(batchId).Phase != BatchPhase.Abandoned)
+                State(manifest, BatchPhase.Abandoned, null, rollback.Fence,
+                    "abandoned-by-rollback");
             ReturnToPending(manifest);
             return true;
         }
@@ -2160,8 +2167,8 @@ public sealed partial class BatchGatePilotService
             || !_git.IsAncestor(repo, manifest.BaseSha, newBase)
             || !DocsOnlyDeliveryPolicy.IsDocsOnly(
                 _git.ChangedPathsAgainstMergeBase(repo, manifest.BaseSha, newBase))
-            || manifest.Members.Any(member =>
-                !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
+            || manifest.Members.Any(member => !pending.TryGetValue(member.TaskKey, out var item)
+                || !Refresh(item).Subject.CurrentGeneration))
             return false;
         State(manifest, BatchPhase.Abandoned, null, fence,
             "documentation-only base movement; successor replay queued");
@@ -3633,18 +3640,21 @@ public sealed partial class BatchGatePilotService
         string? sha, long fence, string? reason = null,
         string? runId = null, long? refFence = null)
     {
+        var withdrawal = phase == BatchPhase.Abandoned
+            ? _store.ListWithdrawals(manifest.BatchId)
+                .Where(item => manifest.Members.Any(member => member.TaskKey == item.TaskKey))
+                .OrderBy(item => item.AtUtc).LastOrDefault()
+            : null;
         var causingMember = phase == BatchPhase.Abandoned
             ? manifest.Members.FirstOrDefault(member =>
-                _store.HasEject(manifest.Scope.Project, member.TaskKey)
+                member.TaskKey == withdrawal?.TaskKey
+                || _store.HasEject(manifest.Scope.Project, member.TaskKey)
                 || reason?.Contains(member.TaskKey, StringComparison.Ordinal) == true
                 || _store.ListPending().FirstOrDefault(item =>
                     item.Subject.TaskKey == member.TaskKey
                     && item.Subject.RunAttempt == member.RunAttempt) is { } pending
                     && !Refresh(pending).Subject.CurrentGeneration)
             : null;
-        var withdrawal = causingMember is null ? null : _store.ListWithdrawals(manifest.BatchId)
-            .Where(item => item.TaskKey == causingMember.TaskKey)
-            .OrderBy(item => item.AtUtc).LastOrDefault();
         if (withdrawal is not null)
             reason = $"{reason}; {withdrawal.Actor} withdrew {withdrawal.TaskKey}: {withdrawal.Reason}";
         _store.AppendState(new BatchGateState(manifest.BatchId,
@@ -3667,7 +3677,7 @@ public sealed partial class BatchGatePilotService
             subject.IntegrationBranch, subject.GateProfile,
             subject.GateProfileDigest, subject.PlatformVersion);
 
-    private static string GateProfile(BuildProfile? profile, string repo)
+    internal static string GateProfile(BuildProfile? profile, string repo)
     {
         var commands = VerifyCommandPlanner.Plan(repo, profile).Commands
             .Select(command => new { command.Command, command.WorkingSubdir,

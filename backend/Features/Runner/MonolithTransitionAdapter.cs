@@ -1,4 +1,5 @@
 using AgentStudio.TaskServer.Contracts.BatchGate;
+using AgentStudio.Pipeline;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Runner;
 using AgentStudio.TaskServer.Contracts;
@@ -110,6 +111,17 @@ public static class MonolithTransitionAdapter
 
     public static BatchPlanStep BatchPlan(BatchPlanFacts facts)
         => BatchPlanDecisionPolicy.Decide(facts);
+
+    /// <summary>AGT-3563: every batch phase change is a compare-and-swap through this rule.</summary>
+    public static BatchPhaseTransitionDecision BatchPhaseTransition(BatchPhaseTransitionFacts facts)
+        => BatchPhaseTransitionPolicy.Decide(facts);
+
+    public static IReadOnlyList<BatchMemberClaim> BatchMemberDispositions(BatchPhase phase,
+        IReadOnlyList<BatchMemberClaim> members, IReadOnlyDictionary<string, string> replayOutcomes)
+        => BatchPhaseTransitionPolicy.Dispositions(phase, members, replayOutcomes);
+
+    public static IReadOnlyList<BatchInvariantFinding> BatchGateInvariants(BatchInvariantFacts facts)
+        => BatchGateInvariantPolicy.Assess(facts);
 
     public static GateQueueOverrunAction GateQueueOverrun(string? budgetName, string? budgetPhase,
         string? lane, bool currentGeneration, TimeSpan totalQueueWait = default, TimeSpan? queueWaitCap = null)

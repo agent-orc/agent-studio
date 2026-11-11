@@ -1,5 +1,8 @@
+:host { display: block; min-width: 0; }
+
 .backup-status {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   gap: var(--studio-spacing-3);
   padding-block: var(--studio-spacing-4);
@@ -72,6 +75,7 @@
 
 .backup-status__head {
   display: flex;
+  flex-wrap: wrap;
   align-items: start;
   justify-content: space-between;
   gap: var(--studio-spacing-4);
@@ -79,6 +83,7 @@
 
 .backup-status__head > div {
   display: grid;
+  min-width: 0;
   gap: var(--studio-spacing-1);
 }
 
@@ -143,6 +148,7 @@
 
 .backup-status__table-wrap {
   overflow-x: auto;
+  min-width: 0;
 }
 
 .backup-status__block th[scope='row'] {

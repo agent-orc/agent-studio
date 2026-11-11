@@ -35,6 +35,7 @@ function mockScrollMetrics(
 })
 class SurfaceHostComponent {
   initialFocus = true;
+  hideProtocol = false;
 }
 
 describe('DetailKeyboardSurfaceDirective', () => {
@@ -66,6 +67,23 @@ describe('DetailKeyboardSurfaceDirective', () => {
 
     expect(document.activeElement).toBe(
       fixture.nativeElement.querySelector('[data-testid="pane-protocol-body"]'),
+    );
+    fixture.nativeElement.remove();
+    board.remove();
+  });
+
+  it('focuses the visible pane when the phone layout hides Result', async () => {
+    const board = document.createElement('button');
+    document.body.appendChild(board);
+    board.focus();
+    const fixture = TestBed.createComponent(SurfaceHostComponent);
+    document.body.appendChild(fixture.nativeElement);
+    fixture.componentInstance.hideProtocol = true;
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(document.activeElement).toBe(
+      fixture.nativeElement.querySelector('[data-testid="pane-prompt-body"]'),
     );
     fixture.nativeElement.remove();
     board.remove();

@@ -8,7 +8,7 @@ An older, host-level backup with a systemd timer and age encryption (AGT-3365) i
 
 | Data | In the archive | Comes back from |
 |---|---|---|
-| Workspace (`/data/workspace`): cards, `.metadata` (registries, batch gate and engine state, management audit), the workspace Git repository, `.security` (users and IAM, sessions, API tokens, runner credentials) and the sealed secret store | Yes, as source `workspace` | The archive |
+| Workspace (`/data/workspace`): cards, `.metadata` (registries, batch gate and engine state, management audit), the workspace Git repository, `.security` (users and IAM, sessions, API tokens, runner credentials) and the sealed secret store | Yes, as source `workspace`; Git repositories are staged with Git under the repository gate before their files enter the archive | The archive |
 | Data home (`/data/home`): CLI logins, SSH keys and known hosts, `.local/share` (batch gate store and leases, gate cache, model routing, prompt overrides, project settings) | Yes, as source `home`, without package caches (`node_modules`, `.cache`, `.npm`, `.nuget`) and `cache` folders | The archive |
 | Task storage under `/data/projects` outside checkouts, and registered task storage inside a checkout | Yes, as source `projects` | The archive |
 | `refs/agent-studio/*` of each project checkout; all refs of a checkout without `origin` | Yes, as a Git bundle per checkout | The archive |
@@ -19,11 +19,11 @@ An older, host-level backup with a systemd timer and age encryption (AGT-3365) i
 | Caddy data (`caddy-data`: certificates and ACME account) and the origin-pull CA (`origin-pull`) | Yes, as sources `caddy-data` and `origin-pull` | The archive |
 | Secret store key (`STUDIO_SECRETS_KEY_FILE`) | Never; the manifest records only its fingerprint | The owner's escrowed copy |
 | Backup key (`keys/backup/backup.key`) | Never | The owner's escrowed copy |
-| Host CA private key (`STUDIO_HOST_CA_DIR`) | No | The owner's escrowed copy, or a new CA and re-issued host certificates |
+| Host CA private and public keys (`STUDIO_HOST_CA_DIR`) | No | The owner's escrowed copy, installed with `restore-backup.sh --host-ca` |
 | `api-tmp`, `caddy-config`, `frontend-data`, `frontend-config` | No | Recreated at start |
 | Control plane lock (`workspace/.security/control-plane.lock`) | No; the running API holds it exclusively | Recreated at start |
 
-With the archive, the two escrowed keys and the Git remotes, a new host comes back to the state of the backup. URL passwords and tokens are removed from recorded `origin` URLs. A file whose content is the secret store key or the backup key, or whose name ends in `.kek`, is left out of every source whatever its path; the archive's content list counts such files.
+With the archive, the backup and secret store keys, the escrowed host CA and the Git remotes, a new host comes back to the state of the backup. URL passwords and tokens are removed from recorded `origin` URLs. A file whose content is the secret store key or the backup key, or whose name ends in `.kek`, is left out of every source whatever its path; the archive's content list counts such files.
 
 ## Schedule, retention and verification
 
@@ -32,11 +32,12 @@ The API's `BackupHostedService` checks once a minute, five minutes after start:
 - **Backup** every 6 hours (`Backup__IntervalHours`, `.env` `STUDIO_BACKUP_INTERVAL_HOURS`). A failed run is retried after 30 minutes.
 - **Retention** after every backup: the newest 12 local archives stay (`Backup__RetentionCount`, `STUDIO_BACKUP_RETENTION`). Retention at the off-host target is configured there, because the host has no right to delete there.
 - **Off-host copy** of every archive and its `.sha256` file before creation completes when a target is configured. A failed copy is reported as failed and retried after 15 minutes, doubling up to six hours.
-- **Restore verification** of the newest good backup once a day (`Backup__VerifyIntervalHours`), and at once when the last verification failed and a newer backup exists. It checks the archive against the checksum recorded at creation, decrypts it, restores every source into an empty staging host below the backup directory with the real restore code, checks every file against the SHA-256 list in the archive, and deletes the staging host again.
+- **Restore verification** of the newest good backup once a day (`Backup__VerifyIntervalHours`), and at once when the last verification failed and a newer backup exists. It checks the archive against the checksum recorded at creation, decrypts it, restores every source into an empty staging host below the backup directory with the real restore code, checks every file against the SHA-256 list in the archive, runs `git fsck --connectivity-only` on restored repositories, and deletes the staging host again.
 
-A **Verified** result proves three things: the archive matches its recorded checksum, the backup key on this host opens and authenticates it, and every restored file matches its hash. It does not prove that the project checkouts can be cloned from their origins (the staging restore skips the clone), and it does not check the owner's escrowed copies of the backup key and the secret store key. The Operations page lists both halves under **What the last verification shows**; the [periodic owner check](#periodic-owner-check-of-the-escrowed-keys) covers the escrowed copies.
+A **Verified** result proves four things: the archive matches its recorded checksum, the backup key on this host opens and authenticates it, every restored file matches its hash, and restored repositories pass the Git connectivity check. It does not prove that the project checkouts can be cloned from their origins (the staging restore skips the clone), and it does not check the owner's escrowed copies of the backup key and the secret store key. The Operations page lists both halves under **What the last verification shows**; the [periodic owner check](#periodic-owner-check-of-the-escrowed-keys) covers the escrowed copies.
 
 Local archives live in `$STUDIO_DATA_DIR/backups` (`Backup__Directory`) as `studio-backup-<UTC time>-<id>.tar.gz.sbk` with a `.sha256` file and a non-secret `.json` record (size, hash, key fingerprints, consistency figures, verification and copy state). The backup directory must lie outside every source; the API refuses to back up otherwise.
+Default machine-local state folders use distinct archive source names. A folder that resolves to a source already listed is skipped, and duplicate configured source names are rejected.
 
 ### Consistency
 
@@ -115,7 +116,7 @@ Set the target in `.env` and recreate the API container (`docker compose up -d a
 |---|---|---|
 | `none` (default) | | Archives stay on the host; the Operations page warns `offhost-not-configured`. |
 | `sftp` | `STUDIO_BACKUP_SFTP_HOST`, `STUDIO_BACKUP_SFTP_PORT` (22), `STUDIO_BACKUP_SFTP_USER`, `STUDIO_BACKUP_REMOTE_PATH`; `backup-target/ssh.key` and `backup-target/known_hosts` | OpenSSH `sftp` in batch mode with the pinned host key; there is no trust on first use. Uploads go to `<name>.partial` and are renamed. |
-| `s3` | `STUDIO_BACKUP_S3_ENDPOINT` (`https://...`), `STUDIO_BACKUP_S3_REGION`, `STUDIO_BACKUP_S3_BUCKET`, `STUDIO_BACKUP_S3_PREFIX`, `STUDIO_BACKUP_S3_PATH_STYLE` (`true`); `backup-target/s3-access-key-id` and `backup-target/s3-secret-access-key` | Any S3-compatible store through one signed PUT (Signature Version 4), up to 5 GiB per archive. |
+| `s3` | `STUDIO_BACKUP_S3_ENDPOINT` (`https://...`), `STUDIO_BACKUP_S3_REGION`, `STUDIO_BACKUP_S3_BUCKET`, `STUDIO_BACKUP_S3_PREFIX`, `STUDIO_BACKUP_S3_PATH_STYLE` (`true`); `backup-target/s3-access-key-id` and `backup-target/s3-secret-access-key` | Any S3-compatible store through one signed PUT (Signature Version 4), up to 5 GiB per archive. Upload time is bounded by archive size and response headers have a 30-second deadline after the body is sent. |
 | `directory` | `STUDIO_BACKUP_MOUNT`, and start with `-f compose.yaml -f compose.backup-mount.yaml` | A mounted remote file system (NFS, SMB, sshfs) writable by UID 10001. A missing mount point fails the copy instead of writing locally. |
 
 For SFTP, create the key with `ssh-keygen -t ed25519 -N '' -f backup-target/ssh.key`, verify the server's host key fingerprint out of band, pin it with `ssh-keyscan -p <port> <host> > backup-target/known_hosts`, and restrict the account on the server, for example with `ForceCommand internal-sftp -d /backups -P remove,rmdir,readdir` in a `Match User` block and a chroot. For S3, grant the access key `s3:PutObject` on the prefix only and enable bucket versioning or object lock, plus an expiry rule for retention. Alert at the target too when no new archive arrived for a day.
@@ -134,6 +135,7 @@ The **Operations** page of every project shows an **Installation backups** panel
 | `backup-key-missing`, `backup-not-configured`, `backup-disabled` | No backup can run. |
 | `verification-failed`, `verification-overdue` | The last restore verification failed, or none ran within two verification intervals. |
 | `offhost-not-configured`, `offhost-invalid`, `offhost-pending`, `offhost-failed` | The newest backup is not, or not yet, off the host. |
+| `host-ca-mismatch` | The configured host CA differs from the fingerprint in host certificate state, its public key is unreadable, or older issued state has no recorded fingerprint. Install the escrowed CA before issuing certificates. |
 
 The panel also shows (AGT-3734):
 
@@ -141,7 +143,7 @@ The panel also shows (AGT-3734):
 - **Archives at the off-host target that this host does not know**, for example those of a lost host. A `directory` target is listed (complete `studio-backup-*.tar.gz.sbk` files only, bounded at 5 seconds). An `sftp` or `s3` target is write-only for the host by design, so the panel says that it cannot list the target; list it there with an account that may read it.
 - **What the last verification shows**: what a verified run proved and what it did not (see [Schedule, retention and verification](#schedule-retention-and-verification)).
 
-Owners and operators read the same state from `GET /api/v1/management/backups` (`no-store`). Operator agents, whose credentials never reach `/api/v1`, read it from `GET /api/operator/backups` or `studio-op backups`; a caller without installation-wide operate permission does not see the target or the key fingerprints, and host paths in its error text read `<path>`. The management commands of `POST /api/v1/management/commands` run the same engine: `backup-create`, `restore-verify` (optional `backupId`), `backup-retention` (optional `retentionCount`) and `backup-upload`. Each needs `dryRun: false` and `confirmation` equal to the kind for a real run; `backup-create` no longer needs maintenance mode. A `backup-retention` run that keeps fewer archives than `Backup__RetentionCount` needs the Owner role; operators may preview it and may apply the configured count.
+Owners and operators read the same state from `GET /api/v1/management/backups` (`no-store`). Operator agents, whose credentials never reach `/api/v1`, read it from `GET /api/operator/backups` or `studio-op backups`; a caller without installation-wide operate permission does not see the target or the key fingerprints, and host paths in its error text read `<path>`. Off-host errors and warning text in that scoped view contain no target detail. The management commands of `POST /api/v1/management/commands` run the same engine: `backup-create`, `restore-verify` (optional `backupId`), `backup-retention` (optional `retentionCount`) and `backup-upload`. Each needs `dryRun: false` and `confirmation` equal to the kind for a real run; `backup-create` no longer needs maintenance mode. A `backup-retention` run that keeps fewer archives than `Backup__RetentionCount` needs the Owner role; operators may preview it and may apply the configured count.
 
 Before retiring or moving a host, run `backup-create` and wait until the newest backup shows **Copied** in the Installation backups panel. The command result reports whether that archive was copied, whether its copy failed, or whether no target is configured. If the copy failed, keep the host available and retry with `backup-upload`; a locally created archive is not yet safe from host loss.
 
@@ -151,19 +153,27 @@ Every backup create, off-host copy, restore verification and retention, schedule
 
 ## Restore onto a new host
 
-Restore needs the archive with its `.sha256` file, the backup key copy, the secret store key copy and read access to the project remotes. It writes into a fresh stack from `setup.sh` that has not been started.
+Restore needs the archive with its `.sha256` file, the backup key copy, the secret store key copy, the escrowed host CA private key and matching `.pub` file, and read access to the project remotes. It writes into a fresh stack from `setup.sh` that has not been started. Keep the host CA copy separate from data backups: certificates already enrolled on hosts trust this CA.
 
 1. On the new host, extract the matching release's `deploy/compose/monolith-networked` directory and run `bash setup.sh [--cloudflare | --private] <version> <hostname> <data-directory>`. Do not start the stack. Use the version that made the backup or a newer one.
-2. Fetch the archive and its `.sha256` file from the off-host target with an account that may read it. Bring both key copies to the host temporarily.
+2. Fetch the archive and its `.sha256` file from the off-host target with an account that may read it. Bring both key copies and the escrowed host CA private key with its `.pub` file to the host temporarily.
 3. Load an SSH agent with a key that can clone each project remote (`ssh-add`), or use HTTPS remotes that need no credentials.
-4. Run `bash restore-backup.sh --key <backup-key-copy> --secret-key <secret-key-copy> <archive>` in the stack directory. A one-shot container of the stack's API image checks the checksum and both key fingerprints, clones every checkout from its recorded origin and branch, and only then writes the workspace, home, task storage, host certificates, Caddy data and origin-pull CA, fetches the Studio refs from the bundles, and checks every file against its hash. It refuses a running stack and any target that already holds a file; the only exception is the workspace repository that `setup.sh` initialized (its single installer commit of `.gitignore` and a clean working tree), which the archived workspace and its repository replace. It installs both key copies and writes the archived stack configuration into `restored-stack/`. Last, it writes a restore receipt into the workspace (archive id and checksum, archive time and host, restore time, the operator as `user@host`, the key fingerprints, files restored and checkouts cloned) and a `backup-restore` row into the management audit; the Operations page shows it after the start.
-5. Delete the key copies from the host again.
+4. Run `bash restore-backup.sh --key <backup-key-copy> --secret-key <secret-key-copy> --host-ca <escrowed-ca-private-key> <archive>` in the stack directory. Place the matching public key at `<escrowed-ca-private-key>.pub`. A one-shot container of the stack's API image checks the checksum and both key fingerprints, clones every checkout from its recorded origin and branch, and only then writes the workspace, home, task storage, host certificates, Caddy data and origin-pull CA, fetches the Studio refs from the bundles, and checks every file against its hash. It refuses a running stack and any target that already holds a file; the only exception is the workspace repository that `setup.sh` initialized (its single installer commit of `.gitignore` and a clean working tree), which the archived workspace and its repository replace. It installs both key copies and the host CA, checks the CA fingerprint against restored certificate state when recorded, and writes the archived stack configuration into `restored-stack/`. Last, it writes a restore receipt into the workspace (archive id and checksum, archive time and host, restore time, the operator as `user@host`, the key fingerprints, files restored and checkouts cloned) and a `backup-restore` row into the management audit; the Operations page shows it after the start.
+5. Delete the temporary key and CA copies from the host again. Keep the installed CA in `STUDIO_HOST_CA_DIR`.
 6. Compare `restored-stack/.env` with the new `.env`: carry over the backup target settings and `backup-target/` credentials; keep the new installer code, which is not needed because the restored access state already has an owner.
 7. For a public installation, install the Docker firewall as in the [install steps](./studio-website.md#install). Point DNS at the host.
 8. Run `docker compose up -d` (with `-f compose.yaml -f compose.runner-host.yaml` on a runner host) and sign in with an existing account. All browser sessions from the archive have been ended, so every person signs in again with their existing second factor. The first Owner sign-in shows the archive id and creation time with a security review notice. Check that runners reconnect, that the Operations page shows a new good backup after the first schedule tick, and that it reaches the off-host target, before retiring the old host.
 9. Compare the archive creation time in that notice with the security changes made since then. In [Access](/#/workspace/settings/access), revoke or rotate **every** API or service account token and runner credential changed after the archive; reapply user disables, password resets, role reductions and other access changes. In [Secrets](/#/workspace/settings/secrets), rotate secrets changed after the archive and update their external copies. A token revoked after the backup can become valid again on the restored host until you revoke it again. Review the affected Access and Secrets records before retiring the old host.
 
 If the archive does not open, a clone fails or a later step fails, the restore empties its targets again, puts the workspace repository from `setup.sh` back and stops. Fix the cause and run it again on the same data directory.
+
+Backups made before the CA fingerprint was recorded can restore issued certificates without `host-certificates/ca-fingerprint`. The Operations page warns and issuance stays paused. After verifying that the restored `ca.pub` matches the `TrustedUserCAKeys` entry on every enrolled host, record its fingerprint as the API account:
+
+```sh
+ssh-keygen -lf "$STUDIO_HOST_CA_DIR/ca.pub" -E sha256 | awk '{print $2}' | sudo -u '#10001' tee "$STUDIO_DATA_DIR/host-certificates/ca-fingerprint" > /dev/null
+```
+
+Refresh the Operations page and confirm the warning clears before issuing certificates.
 
 ### Offline tools
 
