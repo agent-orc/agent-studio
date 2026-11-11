@@ -425,7 +425,27 @@ public sealed record ReviewCommandEvidenceDto(
     /// (AGT-3430). The full logs are deleted with the attempt; this tail is
     /// what survives in the settled report. Null for a passed command.
     /// </summary>
-    ReviewCommandOutputTailDto? OutputTail = null);
+    ReviewCommandOutputTailDto? OutputTail = null,
+    /// <summary>
+    /// How a clean repeat that exited zero showed it ran the previously failed
+    /// tests (AGT-3650), one of <see cref="ReviewRepeatObservation"/>. Null when
+    /// the failure names had no shape the repeat output could be checked for.
+    /// </summary>
+    string? RepeatObservation = null);
+
+/// <summary>
+/// Evidence levels for a passing clean repeat (AGT-3650). A test-name proof
+/// saw each previously failed test reported as passed. A test-file proof saw
+/// only the test files that held them reported as passed, which is what a
+/// reporter that names failing tests alone (Vitest's default) leaves.
+/// </summary>
+public static class ReviewRepeatObservation
+{
+    public const string TestNames = "test-names";
+    public const string TestFiles = "test-files";
+
+    public static bool IsKnown(string? value) => value is TestNames or TestFiles;
+}
 
 /// <summary>
 /// The last <see cref="MaximumCharacters"/> characters of one failed

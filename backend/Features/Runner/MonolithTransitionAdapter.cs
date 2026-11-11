@@ -10,6 +10,9 @@ public static class MonolithTransitionAdapter
 {
     public static AutoReviewStrandingAction AutoReviewStranding(AutoReviewStrandingFacts facts)
         => AutoReviewStrandingPolicy.Decide(facts);
+    public static AutoReviewStrandingAction AutoReviewBatchRoute(AutoReviewStrandingAction decided,
+        AutoReviewStrandingFacts facts, AutoReviewBatchRouteFacts route)
+        => AutoReviewStrandingPolicy.RouteBatch(decided, facts, route);
 
     public static TransitionDecision Decide(TransitionFacts facts) => TransitionDecisionPolicy.Decide(facts);
     public static RedDevelopRepairDecision RedDevelopRepair(RedDevelopRepairFacts facts)

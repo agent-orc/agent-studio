@@ -1,0 +1,36 @@
+<div class="backups" data-testid="access-backup-activity">
+  @if (backups.error(); as message) { <p class="access-error" role="alert" data-testid="access-backup-activity-error">{{ message }}</p> }
+  <p class="access-hint access-numeric" data-testid="access-backup-activity-caption">
+    Newest {{ entries().length }} {{ entries().length === 1 ? 'record' : 'records' }}. Scheduled runs show the actor <code>schedule</code>; the offline tools show the account that ran them.
+  </p>
+  <div class="backups__scroll">
+    <table data-testid="access-backup-entries">
+      <thead>
+        <tr>
+          <th scope="col" class="access-numeric">#</th><th scope="col">Time</th><th scope="col">Operation and backup</th><th scope="col">Actor</th>
+          <th scope="col">Outcome</th><th scope="col">Summary</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (entry of entries(); track entry.sequence) {
+          <tr [attr.data-testid]="'access-backup-entry-' + entry.sequence">
+            <td class="access-numeric">{{ entry.sequence }}</td>
+            <td class="access-numeric backups__nowrap">{{ time(entry.at) }}</td>
+            <td>
+              <span class="backups__nowrap">{{ operation(entry.operation) }}</span>
+              @if (entry.target) { <code class="backups__code backups__meta">{{ entry.target }}</code> }
+            </td>
+            <td>
+              <code class="backups__code">{{ entry.actor }}</code>
+              @if (entry.delegatedBy) { <span class="backups__meta">for {{ entry.delegatedBy }}</span> }
+            </td>
+            <td><app-status-indicator [tone]="tone(entry.outcome)" [label]="outcome(entry.outcome)" [compact]="true" [testId]="'access-backup-outcome-' + entry.sequence" /></td>
+            <td class="backups__summary">@if (entry.summary) { {{ entry.summary }} } @else { <span class="backups__none">–</span> }</td>
+          </tr>
+        } @empty {
+          <tr><td colspan="6" class="access-hint" data-testid="access-backup-entries-empty">No backup has been created, copied, verified, pruned, or restored yet.</td></tr>
+        }
+      </tbody>
+    </table>
+  </div>
+</div>

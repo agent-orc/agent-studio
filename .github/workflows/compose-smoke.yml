@@ -51,6 +51,7 @@ jobs:
           bash scripts/monolith-networked-edge.test.sh
           bash scripts/monolith-networked-ca.test.sh
           bash scripts/monolith-networked-firewall.test.sh
+          bash scripts/monolith-networked-key-escrow.test.sh
 
       - name: Build, start, and verify onboarding stack
         run: scripts/compose-smoke-test.sh

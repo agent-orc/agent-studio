@@ -4,7 +4,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { describe, expect, it } from 'vitest';
 import { BatchSettingsComponent } from './batch-settings';
-import { batchSettings } from '../testing/batch-fixtures';
+import { batchSettings, redHalvingState } from '../testing/batch-fixtures';
 
 describe('BatchSettingsComponent', () => {
   it('shows field validation from a 400 response', async () => {
@@ -14,12 +14,24 @@ describe('BatchSettingsComponent', () => {
     await fixture.whenStable();
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/projects/Demo/batch-gate').flush(batchSettings);
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush({ ...redHalvingState,
+      dailySummary: { phaseMinutes: {
+        reviewToPreCheck: { p50: 8, p90: 12, cards: 4 },
+        formationWait: { p50: 22, p90: 34, cards: 4 },
+        batchRun: { p50: 10, p90: 20, cards: 4 },
+        publish: { p50: 5, p90: 7, cards: 4 },
+      }, diagnosticRerunShare: .25,
+      preCheckYield: { runs: 3, red: 0, cardsKeptOut: 0, costMinutes: 158 } },
+    });
     await fixture.whenStable();
     fixture.componentInstance.save();
     http.expectOne('/api/projects/Demo/batch-gate').flush({ error: 'Maximum exceeds limit', field: 'maximumSize' }, { status: 400, statusText: 'Bad Request' });
     await fixture.whenStable();
     expect(fixture.nativeElement.querySelector('[name="maximumSize"]').getAttribute('aria-invalid')).toBe('true');
     expect(fixture.nativeElement.textContent).toContain('Maximum exceeds limit');
+    expect(fixture.nativeElement.querySelector('[data-testid="batch-phase-metrics"]')?.textContent).toContain('22.0 min');
+    expect(fixture.nativeElement.querySelector('[data-testid="batch-pre-check-yield"]')?.textContent)
+      .toContain('Pre-check yield is 0 today.');
     http.verify();
   });
 
@@ -33,6 +45,7 @@ describe('BatchSettingsComponent', () => {
       ...batchSettings,
       advisorEffective: { effectiveMode: 'off', carrier: 'none', reason: 'The networked profile does not start the advisor CLI.' },
     });
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
     await fixture.whenStable();
     const note = fixture.nativeElement.querySelector('[data-testid="batch-settings-advisor-off"]');
     expect(note?.textContent).toContain('Advisor is off on this server.');
@@ -50,6 +63,7 @@ describe('BatchSettingsComponent', () => {
       ...batchSettings,
       advisorEffective: { effectiveMode: 'enforce', carrier: 'engine', reason: null },
     });
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
     await fixture.whenStable();
     expect(fixture.nativeElement.querySelector('[data-testid="batch-settings-advisor-off"]')).toBeNull();
     http.verify();
@@ -62,6 +76,7 @@ describe('BatchSettingsComponent', () => {
     await fixture.whenStable();
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/projects/Demo/batch-gate').flush({ ...batchSettings, settings: { ...batchSettings.settings, enabled: false, scope: 'documentation' } });
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
     await fixture.whenStable();
     fixture.componentInstance.setEnabled(true);
     await fixture.whenStable();
@@ -81,6 +96,7 @@ describe('BatchSettingsComponent', () => {
     await fixture.whenStable();
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/projects/Demo/batch-gate').flush({ ...batchSettings, settings: { ...batchSettings.settings, enabled: true, scope: 'documentation' } });
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
     await fixture.whenStable();
     fixture.componentInstance.setEnabled(true);
     expect(fixture.componentInstance.settings()?.scope).toBe('documentation');
@@ -95,6 +111,7 @@ describe('BatchSettingsComponent', () => {
     await fixture.whenStable();
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/projects/Demo/batch-gate').flush({ ...batchSettings, settings: { ...batchSettings.settings, calibration: 'legacy', stacking: '1' } });
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
     await fixture.whenStable();
     await fixture.whenStable();
     const element: HTMLElement = fixture.nativeElement;
@@ -120,6 +137,7 @@ describe('BatchSettingsComponent', () => {
     delete older.calibration;
     delete older.stacking;
     http.expectOne('/api/projects/Demo/batch-gate').flush({ ...batchSettings, settings: older });
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
     await fixture.whenStable();
     expect(fixture.componentInstance.settings()?.calibration).toBe('empirical');
     expect(fixture.componentInstance.settings()?.stacking).toBe('off');

@@ -96,7 +96,7 @@ public sealed partial class AttemptAuthorityService
     /// most one archive write per hour instead of one per terminal transition.
     /// </summary>
     private static readonly TimeSpan CompactionInterval = TimeSpan.FromHours(1);
-    public const int ReviewInfrastructureRetryBudget = 3;
+    public const int ReviewInfrastructureRetryBudget = 2;
     public const string UnmaterializableReviewSubjectReason = "review-subject-unmaterialisierbar";
 
     /// <summary>
@@ -1587,7 +1587,7 @@ public sealed partial class AttemptAuthorityService
     /// <summary>
     /// Returns whether another infrastructure retry may be created for the
     /// immutable subject owned by <paramref name="attemptId"/>. The initial
-    /// ReviewAttempt is not a retry; at most three linked retry attempts may be
+    /// ReviewAttempt is not a retry; at most two linked retry attempts may be
     /// scheduled after it.
     /// </summary>
     public bool HasReviewInfrastructureRetryBudget(string attemptId)
