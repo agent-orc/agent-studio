@@ -1,5 +1,75 @@
 # Batch gate delivery state
 
+## Batch phase record and invariants (AGT-3563)
+
+Step 01 of the AGT-3552 split. Each closed manifest has one versioned phase
+and claim record, `phase.json` in its batch folder. It holds the latest
+`BatchGateState`, a version, and the disposition of every claimed member
+(`Claimed`, `Released`, `Published`, `Ejected`) keyed by the member's
+immutable review attempt. Every phase change is a compare-and-swap of that
+record under an exclusive cross-process file lock (`phase.lock`).
+`BatchPhaseTransitionPolicy` in the decision library checks that the requested
+phase is a legal successor, that the coordinator fence does not go back, and,
+when the caller passes one, that the version it read is still current. The
+record is the commit point. The numbered `state/*.json` history entry with the
+same number follows it, so two writers can no longer allocate one sequence
+number. A refused change writes nothing and throws
+`BatchPhaseTransitionRefusedException`. A batch closed before AGT-3563 reads
+its history until its next change creates the record.
+
+| From | Legal next phases |
+|---|---|
+| none or `Unknown` (closed manifest) | `Formed` |
+| `Formed` | `Formed` (annotation), `Assembling`, `Paused`, `Abandoned` |
+| `Assembling` | `Assembling`, `Assembled`, `Paused`, `Abandoned` |
+| `Assembled` | `Assembled` (document-keyed candidate), `Running`, `Paused`, `Abandoned` |
+| `Running` | `Green`, `Red`, `Paused`, `Abandoned` |
+| `Green` | `Publishing`, `Paused`, `Abandoned` |
+| `Publishing` | `Published`, `Paused`, `Abandoned` |
+| `Red` | `Paused`, `Abandoned` |
+| `Paused` | `Paused`, `Abandoned` |
+| `Published`, `Abandoned` | none (terminal) |
+
+A terminal change settles the claims. A published batch publishes its
+admitted members, an abandoned batch releases its members, and a replay
+ejection is left to the route that settles it.
+
+Each pilot tick starts by giving a manifest without a record its first formed
+record, and by writing a history entry that a crash left out. After the
+interrupted-flight recovery, `BatchGateInvariantPolicy` names the findings
+below, and the pilot applies the named repair under the batch's coordinator
+lease:
+
+- `orphaned-formed-batch`: a manifest without a record (`initialize-formed`),
+  or a formed batch that no flight runs and whose member ownership does not
+  name it. A member still on its queued marker is claimed (`claim-member`). A
+  member that is no longer queued or that another route owns retires the batch
+  (`abandon-batch`). A formed diagnostic child outside its isolation flight is
+  retired too.
+- `terminal-batch-owns-member`: an abandoned batch whose member ownership still
+  names it returns that member to the queue (`release-member`). A red parent
+  that no isolation flight holds is paused (`pause-batch`), so the paused-batch
+  route hands its cohort to the per-task gate.
+- `published-batch-unresolved-member`: a published batch whose admitted member
+  is still queued. This finding is only reported (`none`); the published-batch
+  recovery of each tick releases the member.
+
+A green batch whose flight died before the publication fence now publishes
+from its recorded passing run on the next tick, as isolation children already
+did. A live batch (a flight of this host, or a held coordinator lease on its
+scope) has no findings.
+
+The tick ends with the check. `GET /api/projects/{project}/batch-gate/state`
+shows the last one under `invariants` (`checkedAtUtc` and `findings` with
+`kind`, `batchId`, `phase`, `taskKey`, `reviewAttemptId`, `detail` and
+`repair`); it is null before the first tick.
+`GET /api/projects/{project}/batch-gate/invariants` runs the check on demand,
+after any running tick. Fault-injection tests stop the host after each durable
+write of a publication, of an abandon with re-formation on a moved base, and of
+a red isolation. A restarted host reaches the same valid outcome on its next
+ticks. Later steps of AGT-3552 extract the planner, the flight runner, the
+publication coordinator and the reconciler on top of this record.
+
 ## One-step speculative stacking (AGT-3546)
 
 The implemented choice is AGT-2994 D1 option C, a speculative train with ordered publication,
@@ -252,9 +322,10 @@ batch verification is re-enabled, and its gate is retried.
   member records its exact source-to-published-SHA mapping before lane release.
   A deferred `IntegrationBranchDefect` review releases on verified batch evidence.
   Recovery failures are logged per manifest, allowing later batches to proceed.
-  The initial `Formed` state is durable before its manifest becomes visible.
-  A manifest found without state rows is `Unknown`; recovery skips it and logs
-  the missing state once per manifest per store instance.
+  A manifest found without a phase record or state rows reads as `Unknown`
+  (the phase is never stored); recovery skips it and logs the missing state
+  once per manifest per store instance until the next tick writes its first
+  `Formed` record (AGT-3563).
   A missing manifest and missing state also reads as `Unknown`. The auto-review
   watchdog keeps ownership with a visible manifest whose state is `Unknown`,
   avoiding a second review pass while state visibility is unresolved.
@@ -305,7 +376,8 @@ batch verification is re-enabled, and its gate is retried.
   batch state and isolation findings and does not change isolation itself; see
   [tasks](../../system/domains/tasks.md).
 - `GET /api/projects/{project}/batch-gate/state` exposes plan, pending, batches,
-  and member state. The existing report includes observed batch green rate.
+  member state and the last invariant check (AGT-3563). The existing report
+  includes observed batch green rate.
 - `GET /api/operator/batch-triage` (OP-4, AGT-3462) reads the same state for
   every project the caller may read. It lists open flights, open members with
   red and isolating markers, pending pushes with age and the

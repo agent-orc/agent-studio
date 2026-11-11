@@ -169,7 +169,16 @@ public sealed partial class BatchGatePilotService
         var action = MonolithTransitionAdapter.GateQueueOverrun(gate.ViolatedBudget?.Name,
             gate.ViolatedBudget?.Phase, live?.State, current, TimeSpan.FromMilliseconds(priorWaitMs + waitedMs), cap);
         if (action == GateQueueOverrunAction.Settle)
+        {
+            // AGT-3746: a run that never reached the gate host judged nothing.
+            if (GateHostUnavailable(gate) && live is not null)
+            {
+                await HoldFallbackForGateHostAsync(live, pending, gate, ct).ConfigureAwait(false);
+                return true;
+            }
+            RecordGateHostReachable(live?.WatchPath ?? pending.WatchPath);
             return false;
+        }
         if (action == GateQueueOverrunAction.Supersede)
         {
             _logger.LogWarning(

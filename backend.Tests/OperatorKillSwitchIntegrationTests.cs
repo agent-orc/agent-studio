@@ -394,7 +394,7 @@ public sealed class OperatorKillSwitchIntegrationTests(ITestOutputHelper output)
         {
             username = "first.owner", password = Password,
             secondFactorCode = SecondFactorCodes.CurrentTotp(_ownerTotpSecret,
-                factory.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime),
+                factory.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime.AddSeconds(30)),
         });
         response.EnsureSuccessStatusCode();
         client.DefaultRequestHeaders.Add("X-CSRF-Token", (await response.Content.ReadFromJsonAsync<AuthStatusResponse>())!.CsrfToken!);
