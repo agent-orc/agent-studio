@@ -310,6 +310,15 @@ export function mergeAcceptViewFor(
   info: TaskInfo,
   landedStateHint: LandedState | null = null,
 ): MergeAcceptView {
+  if (!acceptanceRequiresIntegration(info)) {
+    return {
+      landed: false,
+      landedState: 'on-branch-only',
+      acceptLabel: 'Accept',
+      statusLabel: null,
+      statusTooltip: `Accept moves the card to ${laneName(TaskState.Completed)}.`,
+    };
+  }
   // Match the card merge-signal contract: only an attributed task commit is a
   // mergeable deliverable. A branch/base without one is a planning, docs,
   // results-only, or no-op outcome, even when its base is in the git graph.
@@ -364,6 +373,11 @@ export function mergeAcceptViewFor(
       ? `This task's work is already merged into develop at ${mergeSha}. Accept moves the card to ${laneName(TaskState.Completed)}; no merge is triggered.`
       : `This task's work is already merged into develop. Accept moves the card to ${laneName(TaskState.Completed)}; no merge is triggered.`,
   };
+}
+
+/** Concept and explicitly branch-free cards can be accepted without delivery integration. */
+export function acceptanceRequiresIntegration(info: TaskInfo): boolean {
+  return info.mode !== 'concept' && info.requiresIntegration !== false;
 }
 
 /** Owner-facing reason while the Human Review action is held. */

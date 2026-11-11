@@ -50,6 +50,7 @@ import {
   overflowActionsFor,
   primaryActionFor,
   mergeAcceptViewFor,
+  acceptanceRequiresIntegration,
   acceptanceHoldReason,
   triageDecisionRefusal,
   triageDecisionRowState,
@@ -122,6 +123,7 @@ import type { TaskDetail, TaskInfo, WatchPathEntry, CliType } from './models/tas
 import { CLI_TYPES, TaskState } from './models/task.model';
 import { laneName } from './models/lane-presentation';
 import { ErrorDialogService } from './services/error-dialog.service';
+import { ConfirmDialogService } from './services/confirm-dialog.service';
 import {
   cliTypeLabel as fmtCliTypeLabel,
   formatMultiplier as fmtMultiplier,
@@ -153,7 +155,8 @@ import { MenuComponent, MenuItem, MenuItemClickEvent } from './components/menu';
 import { CostBreakdownService, type TaskTokenSummary } from './features/tokens'; // verbose-debug overlay context types
 import { CostBreakdownDialogComponent } from './features/tokens/lazy';
 import { LoadingSurfaceComponent } from './components/async-feedback';
-import { AuthGateComponent, AuthService } from './components/auth-gate/auth-gate';
+import { AuthGateComponent } from './components/auth-gate/auth-gate';
+import { AuthService } from './services/auth.service';
 import { CodexSignInDialogService, ClaudeSignInDialogService } from './features/remote-hosts';
 import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts/lazy';
 import { ScrollMemoryDirective } from './directives/scroll-memory.directive';
@@ -241,6 +244,8 @@ export class App implements OnInit, OnDestroy {
   readonly auth = inject(AuthService); private studioInitialized = false;
   readonly jobService = inject(TaskService);
   readonly errorDialog = inject(ErrorDialogService);
+  /** Drives the deferred confirm dialog mount; both dialogs stay out of the initial bundle. */
+  readonly confirmDialog = inject(ConfirmDialogService);
   readonly devTools = inject(DevToolsService);
   readonly clientService = inject(ClientService);
   private readonly notifications = inject(NotificationService);
@@ -1265,12 +1270,14 @@ export class App implements OnInit, OnDestroy {
   readonly studioPrimaryAwaitingGit = computed(() => {
     const p = this.studioTriagePrimary();
     if (!p || p.id !== 'mark-done') return false;
+    if (!acceptanceRequiresIntegration(this.selectedJob()!.info)) return false;
     const status = this.selectedJob()?.info.integration?.status;
     if (status === 'integrated' || status === 'not-applicable') return false;
     return this.jobDetailSig()?.gitInfoLoading() ?? false;
   });
   readonly studioPrimaryBlockedByIntegration = computed(() => {
     if (this.studioTriagePrimary()?.id !== 'mark-done') return false;
+    if (!acceptanceRequiresIntegration(this.selectedJob()!.info)) return false;
     const status = this.selectedJob()?.info.integration?.status;
     return status !== 'integrated' && status !== 'not-applicable';
   });

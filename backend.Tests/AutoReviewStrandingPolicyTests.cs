@@ -217,6 +217,30 @@ public sealed class AutoReviewStrandingPolicyTests
         => Assert.Equal(AutoReviewStrandingAction.Escalate,
             AutoReviewStrandingPolicy.Decide(Stranded() with { HasReview = true }));
 
+    [Theory]
+    [InlineData(-59)]
+    [InlineData(0)]
+    [InlineData(30 * 60)]
+    public void Scheduled_infrastructure_retry_owns_the_terminal_review_until_a_threshold_past_due(int overdueSeconds)
+        => Assert.Equal(AutoReviewStrandingAction.Leave,
+            AutoReviewStrandingPolicy.Decide(Stranded() with
+            {
+                HasReview = true, ScheduledRetryOverdue = TimeSpan.FromSeconds(overdueSeconds),
+            }));
+
+    [Fact]
+    public void Scheduled_retry_that_never_fired_leaves_the_card_ownerless()
+        => Assert.Equal(AutoReviewStrandingAction.Escalate,
+            AutoReviewStrandingPolicy.Decide(Stranded() with
+            {
+                HasReview = true, ScheduledRetryOverdue = TimeSpan.FromMinutes(31),
+            }));
+
+    [Fact]
+    public void Cause_breaker_wait_owns_the_parked_card()
+        => Assert.Equal(AutoReviewStrandingAction.Leave,
+            AutoReviewStrandingPolicy.Decide(Stranded() with { HasReview = true, CauseBreakerWait = true }));
+
     [Fact]
     public void Successful_step_recovery_can_advance_to_batch_recovery_in_same_lane_visit()
     {

@@ -229,6 +229,26 @@ describe('DetailHeaderComponent (smoke)', () => {
     expect(button.disabled).toBe(true);
   });
 
+  it('keeps concept acceptance available despite a pending delivery status', async () => {
+    const fixture = await mountHeader();
+    fixture.componentRef.setInput('info', {
+      ...taskInfo,
+      mode: 'concept', requiresIntegration: false,
+      integration: {
+        status: 'pending', deliveryRef: null, sha: null,
+        integrationBranch: 'develop', detail: 'Delivery pending',
+      },
+    });
+    fixture.componentRef.setInput('gitInfoLoading', true);
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.primaryAwaitingGit()).toBe(false);
+    expect(fixture.componentInstance.primaryBlockedByIntegration()).toBe(false);
+    const button: HTMLButtonElement = fixture.nativeElement.querySelector('[data-testid="triage-action-mark-done"]');
+    expect(button.disabled).toBe(false);
+    expect(button.textContent?.trim()).toBe('Accept');
+  });
+
   it('never gates a non-git primary (Ready "Run now") on git loading', async () => {
     const fixture = await mountHeader();
     fixture.componentRef.setInput('info', { ...taskInfo, state: '2-ready' });

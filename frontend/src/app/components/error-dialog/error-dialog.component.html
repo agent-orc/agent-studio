@@ -1,34 +1,76 @@
-<app-dialog eyebrow="Error details"
-            [title]="error().title"
-            role="alertdialog"
-            kind="danger"
-            testid="error-dialog"
-            (closeRequest)="closeRequest.emit()"
-            (backdropClick)="closeRequest.emit()">
-  @if (error().source) {
-    <div class="error-dialog__source">{{ error().source }}</div>
-  }
+@if (error().refusal; as refusal) {
+  <app-dialog eyebrow="Move refused"
+              [title]="error().title"
+              role="alertdialog"
+              testid="error-dialog"
+              (closeRequest)="closeRequest.emit()"
+              (backdropClick)="closeRequest.emit()">
+    <div class="error-dialog__refusal" data-testid="error-dialog-refusal">
+      <p class="error-dialog__reason" data-testid="error-dialog-message">{{ refusal.sentence }}</p>
+      <p class="error-dialog__next" data-testid="error-dialog-next-action">{{ refusal.nextAction }}</p>
+    </div>
 
-  <div class="error-dialog__message" data-testid="error-dialog-message">{{ error().message }}</div>
-
-  <div class="error-dialog__actions">
-    <button class="btn" type="button" (click)="copyRequest.emit()">{{ copyButtonLabel() }}</button>
-    @if (canOpenCliConfig()) {
-      <button class="btn btn--primary" type="button" (click)="openCliConfig.emit()">🔧 Configure CLI</button>
+    <button type="button"
+            class="error-dialog__disclosure"
+            data-testid="error-dialog-technical-toggle"
+            aria-controls="error-dialog-technical"
+            [attr.aria-expanded]="technicalOpen()"
+            (click)="technicalOpen.set(!technicalOpen())">
+      <app-disclosure-marker [open]="technicalOpen()" />
+      <span>Technical details</span>
+    </button>
+    @if (technicalOpen()) {
+      <div class="error-dialog__technical" id="error-dialog-technical" data-testid="error-dialog-technical">
+        @if (error().source) {
+          <div class="error-dialog__source">{{ error().source }}</div>
+        }
+        <pre class="error-dialog__code" data-testid="error-dialog-server-message">{{ error().message }}</pre>
+        <pre class="error-dialog__code" data-testid="error-dialog-output">{{ error().output }}</pre>
+        @if (error().stackTrace) {
+          <pre class="error-dialog__code">{{ error().stackTrace }}</pre>
+        }
+        <div class="error-dialog__technical-actions">
+          <button class="btn btn--ghost" type="button" (click)="copyRequest.emit()">{{ copyButtonLabel() }}</button>
+        </div>
+      </div>
     }
-  </div>
 
-  <section class="error-dialog__section">
-    <div class="error-dialog__section-title">Output</div>
-    <pre class="error-dialog__code">{{ error().output }}</pre>
-  </section>
+    <div footer>
+      <button class="btn btn--primary" type="button" data-testid="error-dialog-dismiss"
+              (click)="closeRequest.emit()">Close</button>
+    </div>
+  </app-dialog>
+} @else {
+  <app-dialog eyebrow="Error details"
+              [title]="error().title"
+              role="alertdialog"
+              kind="danger"
+              testid="error-dialog"
+              (closeRequest)="closeRequest.emit()"
+              (backdropClick)="closeRequest.emit()">
+    @if (error().source) {
+      <div class="error-dialog__source">{{ error().source }}</div>
+    }
 
-  <section class="error-dialog__section">
-    <div class="error-dialog__section-title">Stack trace</div>
+    <div class="error-dialog__message" data-testid="error-dialog-message">{{ error().message }}</div>
+
+    <div class="error-dialog__actions">
+      <button class="btn" type="button" (click)="copyRequest.emit()">{{ copyButtonLabel() }}</button>
+      @if (canOpenCliConfig()) {
+        <button class="btn btn--primary" type="button" (click)="openCliConfig.emit()">🔧 Configure CLI</button>
+      }
+    </div>
+
+    <section class="error-dialog__section">
+      <div class="error-dialog__section-title">Output</div>
+      <pre class="error-dialog__code">{{ error().output }}</pre>
+    </section>
+
     @if (error().stackTrace) {
-      <pre class="error-dialog__code">{{ error().stackTrace }}</pre>
-    } @else {
-      <div class="error-dialog__empty">No stack trace available for this error.</div>
+      <section class="error-dialog__section">
+        <div class="error-dialog__section-title">Stack trace</div>
+        <pre class="error-dialog__code">{{ error().stackTrace }}</pre>
+      </section>
     }
-  </section>
-</app-dialog>
+  </app-dialog>
+}
