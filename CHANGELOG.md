@@ -20,6 +20,8 @@ release yet.
 
 ### Fixed
 
+- **Accept** on a Human review card is available without opening the git pane. The button waited for commit provenance, which a hidden git pane never requests since the 2026-11-05 lazy-loading change, so it stayed on "Checking git status" (AGT-3625).
+- **Create a project** opens again on a running installation. Opening the dialog reloaded the execution host list, which re-ran the dialog's open step on every load; the page looped and the dialog never appeared (AGT-3625).
 - A card integrated through a curated mapping reads `released: true` once the mapped integration commit is on `main`; the answer was taken from the source commit, which never reaches `main`. The delivery-claim sweep no longer reports a card whose containment status is `integrated` as `unintegrated-delivery` when one of its commit lines misses containment (a second commit of a curated-mapped attempt, or a repository-key mismatch) (AGT-3097).
 - The runner's slot attempt id is the lease's attempt id, so no consumer of the slot can drift from the attempt the server fenced; on the legacy runner plane it was the lease id (AGT-2985).
 - Integration lookups read the Git origin from one process-wide store that the Git state index refreshes, and post-processing one Auto Review card classifies only that card; `board/integration-status` no longer spawns one `git config` per single-card lookup (about 140 per minute measured on Stable) (AGT-3083).

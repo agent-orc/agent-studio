@@ -141,8 +141,9 @@ public sealed partial class BatchGatePilotService
         var scope = Scope(candidate.Subject);
         var reason = BatchGatePolicy.Exclusion(candidate.Subject with { EnqueueSequence = 1 },
             scope, project.BatchGate);
-        if (reason is not null)
-            throw new InvalidDataException($"Batch admission failed: {reason}.");
+        if (reason is { } refused)
+            throw new BatchAdmissionRefusedException(refused, BatchGatePolicy.AdmissionRefusal(
+                refused, review.Subject.Plan?.BuildTestDeferralDisabledReason));
         // The card must fail closed before it becomes visible to the queue.
         await BatchGateOwnershipStore.WriteAsync(task.FolderPath,
             new BatchGateOwnership(review.AttemptId, candidate.Subject), ct).ConfigureAwait(false);
@@ -1609,7 +1610,7 @@ public sealed partial class BatchGatePilotService
                     ResolveSuperseded(pending, "superseded-after-publication");
                     continue;
                 }
-                await ReleaseMemberAsync(manifest, run, pending, ct).ConfigureAwait(false);
+                await ReleaseMemberIsolatedAsync(manifest, run, pending, ct).ConfigureAwait(false);
             }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -2190,7 +2191,7 @@ public sealed partial class BatchGatePilotService
                      _store.ReadReplay(manifest.BatchId, key).Outcome != "conflict"))
             fallbackKeys.Add(key);
         foreach (var key in assembly.AdmittedKeys)
-            await ReleaseMemberAsync(manifest, run, pending[key], ct)
+            await ReleaseMemberIsolatedAsync(manifest, run, pending[key], ct)
                 .ConfigureAwait(false);
     }
 
@@ -2687,6 +2688,24 @@ public sealed partial class BatchGatePilotService
         }
     }
 
+    // AGT-3717: the published candidate holds every admitted member. One
+    // member that cannot leave Auto Review must not hold the members after it;
+    // the next tick's publication recovery retries the one that failed.
+    private async Task ReleaseMemberIsolatedAsync(BatchGateManifest manifest,
+        BatchGateRunRecord run, BatchGatePendingRecord pending, CancellationToken ct)
+    {
+        try
+        {
+            await ReleaseMemberAsync(manifest, run, pending, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogError(ex,
+                "batch-member-release-failed batch={BatchId} task={TaskKey}",
+                manifest.BatchId, pending.Subject.TaskKey);
+        }
+    }
+
     private async Task ReleaseMemberAsync(BatchGateManifest manifest,
         BatchGateRunRecord run, BatchGatePendingRecord pending, CancellationToken ct)
     {
@@ -2739,7 +2758,26 @@ public sealed partial class BatchGatePilotService
                     StringComparison.OrdinalIgnoreCase)).ToArray();
         if (rewritten.Length > 0 && !_mutations.RecordMechanicalRebaseOnFolder(
                 task.FolderPath, rewritten))
-            throw new InvalidDataException("Batch replacement SHA mapping could not be attributed.");
+        {
+            // AGT-3717: the candidate is already published, so the code of
+            // this member is on the integration branch. A card without an
+            // attributed chain for its rebased commits cannot pass the lane
+            // guard; escalate it with the reason instead of failing the batch.
+            _logger.LogWarning(
+                "batch-member-replacement-unattributed batch={BatchId} task={TaskKey} rewritten={Rewritten}",
+                manifest.BatchId, subject.TaskKey, rewritten.Length);
+            await EscalateFallbackAsync(task, pending,
+                $"Batch {Short(manifest.BatchId)} published this delivery on "
+                + $"{manifest.Scope.IntegrationBranch} at {Short(run.CandidateSha)}, but the "
+                + $"replacement mapping of its {rewritten.Length} rebased commit(s) could not be "
+                + "recorded: the card has no attributed commit for this delivery. Repair the "
+                + "commit attribution, then move the card to Human Review.",
+                infrastructure: false, recordInStore: true, ct,
+                occurrenceKey: $"batch-release-unattributed:{pending.ReviewAttemptId}:{subject.ResultSha}",
+                laneOutcome: "Unattributable",
+                resolution: "release-unattributed").ConfigureAwait(false);
+            return;
+        }
         BatchGateOwnershipStore.Write(task.FolderPath,
             new BatchGateOwnership(pending.ReviewAttemptId, subject,
                 manifest.BatchId, run.BatchRunId));
@@ -3568,7 +3606,8 @@ public sealed partial class BatchGatePilotService
     /// </summary>
     private async Task EscalateFallbackAsync(TaskInfo task, BatchGatePendingRecord pending,
         string reason, bool infrastructure, bool recordInStore, CancellationToken ct,
-        string category = HumanReviewEscalationCategories.AutoReviewEscalation, bool engineStalled = false)
+        string category = HumanReviewEscalationCategories.AutoReviewEscalation, bool engineStalled = false,
+        string? occurrenceKey = null, string? laneOutcome = null, string? resolution = null)
     {
         var capacity = category == GateQueueStallPolicy.GateCapacityCategory;
         var review = _authority.GetTaskProjection(pending.Subject.TaskKey).CurrentReviewAttempt;
@@ -3580,7 +3619,7 @@ public sealed partial class BatchGatePilotService
             SupersedeFallbackResult(task, pending, recordInStore);
             return;
         }
-        var red = new BatchGateOutcome(FallbackRedKey(pending), reason, Failed: true,
+        var red = new BatchGateOutcome(occurrenceKey ?? FallbackRedKey(pending), reason, Failed: true,
             Infrastructure: infrastructure);
         // AGT-3694: after a stalled engine decision was superseded the card is
         // parked for an operator; no new occurrence waits for the same engine.
@@ -3606,13 +3645,14 @@ public sealed partial class BatchGatePilotService
             return;
         }
         RecordBatchShadowOutcome(task, pending.ReviewAttemptId, red);
-        Lane(pending, "ejected", outcome: capacity ? "GateCapacity"
+        Lane(pending, "ejected", outcome: laneOutcome ?? (capacity ? "GateCapacity"
             : reason.StartsWith("GateInfra", StringComparison.Ordinal)
-            ? "GateInfra" : "GateFailed", reason: reason);
+            ? "GateInfra" : "GateFailed"), reason: reason);
         BatchGateOwnershipStore.ClearIfReviewAttempt(
             movedRed.NewFolderPath ?? task.FolderPath, pending.ReviewAttemptId);
         if (recordInStore)
-            _store.ResolvePending(pending.ReviewAttemptId, capacity ? category : "per-task-gate-red");
+            _store.ResolvePending(pending.ReviewAttemptId,
+                resolution ?? (capacity ? category : "per-task-gate-red"));
         // The escalation ends the generation's wait; a release grants a fresh cap.
         _store.ClearQueueWait(pending.ReviewAttemptId);
     }
@@ -3746,7 +3786,7 @@ public sealed partial class BatchGatePilotService
             subject.IntegrationBranch, subject.GateProfile,
             subject.GateProfileDigest, subject.PlatformVersion);
 
-    private static string GateProfile(BuildProfile? profile, string repo)
+    internal static string GateProfile(BuildProfile? profile, string repo)
     {
         var commands = VerifyCommandPlanner.Plan(repo, profile).Commands
             .Select(command => new { command.Command, command.WorkingSubdir,
