@@ -512,7 +512,8 @@ public sealed class TaskFileHistoryOwnHostTests : TaskFileHistoryTestBase, IDisp
         Assert.Equal("feat: update app", entries[0].GetProperty("message").GetString());
         Assert.Equal(JsonValueKind.Null, entries[0].GetProperty("runIndex").ValueKind);
 
-        using var contentResponse = await client.GetAsync($"/api/tasks/ASS-900/files/src/app.cs?watchPath={watchPath}&scope=code&at={firstSha}");
+        using var contentResponse = await GetReadyHistoryAsync(client,
+            $"/api/tasks/ASS-900/files/src/app.cs?watchPath={watchPath}&scope=code&at={firstSha}");
         contentResponse.EnsureSuccessStatusCode();
         Assert.Equal("class App { }\n", await contentResponse.Content.ReadAsStringAsync());
     }
@@ -1128,7 +1129,7 @@ public abstract class TaskFileHistoryTestBase
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested)
         {
-            throw new Xunit.Sdk.XunitException("The repository fact producer did not publish file history before the client deadline.");
+            throw new Xunit.Sdk.XunitException("The repository fact producer did not publish file facts before the client deadline.");
         }
     }
 
