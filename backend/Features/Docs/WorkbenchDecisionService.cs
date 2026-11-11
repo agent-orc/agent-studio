@@ -318,7 +318,7 @@ public sealed class WorkbenchDecisionService
         if (!mutation.Success)
         {
             return Failure(id, body.OperationId, "write-failed",
-                $"The Dossier decision could not be persisted: {mutation.Error}");
+                "The Dossier decision could not be saved. No decision was recorded. Try again or ask a Studio operator to check the project repository.");
         }
 
         var revision = mutation.CommitSha ?? snapshot.Revision;

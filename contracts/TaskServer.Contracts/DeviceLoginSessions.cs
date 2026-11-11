@@ -170,7 +170,8 @@ public sealed class DeviceLoginSessions
 
     /// <summary>
     /// The shape Claude prints on its callback page: <c>code#state</c> in URL-safe characters.
-    /// Whitespace and control characters are refused, so a code cannot inject a second stdin line.
+    /// Whitespace and control characters are refused, so a code cannot add a second line or a
+    /// key press to the CLI terminal.
     /// </summary>
     public static bool IsAuthorizationCode(string? value)
     {

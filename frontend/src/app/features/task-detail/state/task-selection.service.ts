@@ -16,6 +16,7 @@ import {
   type TaskUrlHistoryMode,
 } from './task-url';
 import { ProjectLookupService } from '../../../services/project-lookup.service';
+import { TaskSectionAccessService } from '../../../services/task-section-access.service';
 import { parseStudioRoute } from '../../studio-shell/services/studio-route';
 import { taskCoreKey, type TaskCore, type TaskCoreResult, type TaskDocumentData, type TaskResource,
   type ResourceName, type TaskUsageData, type TaskReviewData, type TaskHistoryData,
@@ -28,6 +29,9 @@ export interface TaskDetailLoadError {
 }
 
 const TASK_PAGER_HISTORY_STATE = 'studioTaskPager';
+
+/** A refused core read: the card is gone or this session may not open it. */
+const CARD_NOT_AVAILABLE_MESSAGE = 'This card is not available to this account.';
 
 interface CoreOpenOptions {
   /** Reuse the current task tab once the core is accepted. */
@@ -106,6 +110,7 @@ export class TaskSelectionService {
   private readonly prefetch = inject(TaskDetailPrefetchService);
   private readonly boardFilters = inject(BoardFiltersService);
   private readonly projectLookup = inject(ProjectLookupService);
+  private readonly sectionAccess = inject(TaskSectionAccessService);
   private readonly destroyRef = inject(DestroyRef);
 
   /** How many slots ahead of the current pager index to warm. */
@@ -279,6 +284,9 @@ export class TaskSelectionService {
   private documentRequests: Subscription[] = [];
   private activeProject: string | null = null;
   private activeAttempt: string | null = null;
+  /** The full detail read is the acceptance authority for the current core. */
+  private acceptanceDetail: { taskKey: string; integration: TaskInfo['integration'] } | null = null;
+  private acceptanceReadVersion = 0;
   private expandedTab: string | null = null;
 
   /** Monotonic event consumed by the studio shell when Back returns to a non-task URL. */
@@ -412,6 +420,20 @@ export class TaskSelectionService {
     this.setSelectedFromAdvance(detail, token);
   }
 
+  /** Restore the task and lane iteration after an optimistic lane move is refused. */
+  restoreFailedMove(detail: TaskDetail, pagerSnapshot: LanePagerSnapshot | null): void {
+    ++this.openDetailToken;
+    this.cancelRequests();
+    this.dismissTriageToast();
+    if (pagerSnapshot) this.pager.restore(pagerSnapshot);
+    else this.pager.clear();
+    this.triageLaneState = detail.info.state;
+    this.browserHistoryTaskKey = null;
+    this.pendingTaskTabReplacement = detail.info.taskKey;
+    this.syncTaskUrl(detail.info, 'replace');
+    this.showFullDetail(detail);
+  }
+
   private projectFor(info: TaskInfo): string {
     const project = this.projectLookup.getProjectDisplay(info.projectName, info.watchPath);
     return project.id ?? project.shortCode ?? project.displayName;
@@ -439,6 +461,11 @@ export class TaskSelectionService {
       && current.runtime.attemptId === core.runtime.attemptId;
   }
 
+  /**
+   * Only a refused core read lands here: the card itself is gone or no
+   * longer readable for this session. Section reads go through
+   * `sectionRefused`, which never clears the selection on its own.
+   */
   private revokeSelection(error: unknown, id: string): boolean {
     const status = httpStatus(error);
     if (status !== 403 && status !== 404) return false;
@@ -448,7 +475,25 @@ export class TaskSelectionService {
     this.detailPreview.set(null);
     this.selected.set(null);
     this.detailLoading.set(false);
-    this.failDetailLoad(error, id, () => this.restoreFromUrl());
+    this.failDetailLoad(error, id, () => this.restoreFromUrl(), CARD_NOT_AVAILABLE_MESSAGE);
+    return true;
+  }
+
+  /**
+   * A 403 or 404 on one detail section answers for that section only
+   * (AGT-3669): a Product session is refused run internals such as usage,
+   * yet may read the card. The section is hidden or marked and one core
+   * revalidation decides whether the card itself is still readable; only a
+   * refused core read revokes the selection.
+   */
+  private sectionRefused(name: ResourceName, error: unknown, token: number, core: TaskCore): boolean {
+    const status = httpStatus(error);
+    if (status !== 403 && status !== 404) return false;
+    if (status === 404) this.setResourceState(name, 'unavailable', 'section-not-found');
+    // The prompt and status documents are the card itself: mark them, never hide them.
+    else if (name === 'documents') this.setResourceState(name, 'unavailable', 'document-access-denied');
+    else this.setResourceState(name, 'restricted', 'section-access-denied');
+    this.refreshCore(token, core, false);
     return true;
   }
 
@@ -475,9 +520,10 @@ export class TaskSelectionService {
       useOwnSession: core.pins.useOwnSession ?? null,
       allowWebAccess: core.pins.allowWebAccess,
       noBranchExpected: core.pins.noBranchExpected,
-      // Detail-only facts must come from /details/overview, never from the
-      // clicked card or a previous list snapshot.
+      // Detail-only facts come from enrichment reads, never from the clicked
+      // card. Human Review integration comes from the fresh full-detail read.
       ...(preserveDetails ? {} : {
+        ...(core.lane === TaskState.HumanReview ? { integration: null } : {}),
         decision: null, planningSpawn: null, conceptDossier: null,
         olderBriefDelivery: null, relatedWikiPages: [], creationSource: undefined,
         completionClaim: null, parkedBlocker: null, needsInput: null,
@@ -496,6 +542,7 @@ export class TaskSelectionService {
   private startCore(info: TaskInfo, project: string, token: number, retry: () => void,
     opts: CoreOpenOptions = {}): void {
     this.cancelRequests();
+    this.acceptanceDetail = null;
     this.selectedCore.set(null);
     this.selected.set(null);
     this.detailPreview.set(info);
@@ -589,7 +636,10 @@ export class TaskSelectionService {
     const generationChanged = !previous || previous.coreVersion !== core.coreVersion
       || previous.runtime.attemptId !== core.runtime.attemptId;
     // A new generation invalidates every enrichment reply still in flight.
-    if (previous && generationChanged) this.cancelRequests();
+    if (previous && generationChanged) {
+      this.cancelRequests();
+      this.acceptanceDetail = null;
+    }
     this.activeProject = core.projectId;
     this.activeAttempt = core.runtime.attemptId ?? null;
     this.selectedCore.set(core);
@@ -605,12 +655,41 @@ export class TaskSelectionService {
       perfMark('job-select-rendered');
       perfMeasure('job-select-to-rendered', 'job-select-click', 'job-select-rendered');
     }
+    // A board card and the Git resource carry cache-only integration. The
+    // acceptance action needs the freshly computed fact from full task detail.
+    if (core.lane === TaskState.HumanReview) this.loadAcceptanceDetail(core, project, token);
     if (!generationChanged) return;
     this.conflictReloads = 0;
     this.resourceStates.set(idleResources());
     this.reviewWithEvidence = false;
     // Give the bounded core a paint opportunity before requesting documents.
     afterNextPaint(() => { if (this.isCurrent(token, core)) this.loadInitialDocuments(token); });
+  }
+
+  private loadAcceptanceDetail(core: TaskCore, project: string, token: number): void {
+    const readVersion = ++this.acceptanceReadVersion;
+    const request = this.withDetailTimeout(this.jobService.getFreshDetail(core.id, project)).subscribe({
+      next: detail => {
+        if (!detail?.info || readVersion !== this.acceptanceReadVersion || !this.isCurrent(token, core)
+          || detail.info.taskKey !== core.taskKey) return;
+        this.acceptanceDetail = { taskKey: core.taskKey, integration: detail.info.integration };
+        const selected = this.selected();
+        if (selected) {
+          this.selected.set({ ...selected, info: { ...selected.info,
+            integration: detail.info.integration,
+            commit: detail.info.commit, commits: detail.info.commits } });
+        } else {
+          const preview = this.detailPreview();
+          if (preview) this.detailPreview.set({ ...preview,
+            integration: detail.info.integration,
+            commit: detail.info.commit, commits: detail.info.commits });
+        }
+      },
+      error: () => {
+        // Keep acceptance held. A later core refresh retries the authority read.
+      },
+    });
+    this.activeRequests.push(request);
   }
 
   /** Re-read every section a generation conflict left stale, for the current core. */
@@ -754,7 +833,7 @@ export class TaskSelectionService {
           finish();
         },
         error: error => {
-          if (current() && !this.revokeSelection(error, core.id)) {
+          if (current() && !this.sectionRefused('documents', error, token, core)) {
             if (httpStatus(error) === 409) {
               this.setResourceState('documents', 'stale', 'core-generation-changed');
               this.refreshCore(token, core);
@@ -785,6 +864,11 @@ export class TaskSelectionService {
       const review = this.reviewRequest;
       if (name !== 'review' || !evidence || !review || review.evidence || review.subscription.closed) return;
       review.subscription.unsubscribe();
+    }
+    if (this.resourceStates()[name].phase === 'restricted') return;
+    if (!this.sectionAccess.canRead(name)) {
+      this.setResourceState(name, 'restricted', 'section-access-denied');
+      return;
     }
     const token = this.openDetailToken;
     this.setResourceState(name, 'loading', null);
@@ -825,7 +909,9 @@ export class TaskSelectionService {
         if (name === 'git') {
           const data = reply.data as TaskGitData;
           this.selected.set({ ...detail, info: reply.state === 'ready'
-            ? { ...detail.info, ...data }
+            ? { ...detail.info, ...data,
+              integration: core.lane === TaskState.HumanReview
+                ? this.acceptanceDetail?.integration ?? null : data.integration }
             : { ...detail.info, commit: data.commit, commits: data.commits } });
           return;
         }
@@ -844,7 +930,7 @@ export class TaskSelectionService {
         }
       },
       error: error => {
-        if (!this.isCurrent(token, core) || this.revokeSelection(error, core.id)) return;
+        if (!this.isCurrent(token, core) || this.sectionRefused(name, error, token, core)) return;
         const stale = httpStatus(error) === 409;
         this.setResourceState(name, stale ? 'stale' : 'error',
           stale ? 'core-generation-changed' : `${name} request failed`);
@@ -1432,7 +1518,7 @@ export class TaskSelectionService {
     this.detailLoadError.set(null);
   }
 
-  private failDetailLoad(error: unknown, taskLabel: string, retry: () => void): void {
+  private failDetailLoad(error: unknown, taskLabel: string, retry: () => void, message?: string): void {
     const status = typeof error === 'object' && error !== null && 'status' in error
       ? Number((error as { status?: unknown }).status)
       : 0;
@@ -1441,11 +1527,11 @@ export class TaskSelectionService {
       && 'name' in error && (error as { name?: unknown }).name === 'TimeoutError';
     this.detailLoadError.set({
       taskLabel,
-      message: timedOut
+      message: message ?? (timedOut
         ? 'The detail request timed out. Retry to request the sections again.'
         : status === 404
         ? 'The task reference is no longer current. Retry to resolve its latest location.'
-        : 'The detail request failed. Check the connection and try again.',
+        : 'The detail request failed. Check the connection and try again.'),
     });
   }
 
@@ -1476,5 +1562,15 @@ export class TaskSelectionService {
       kind: 'info',
       durationMs,
     });
+  }
+
+  private dismissTriageToast(): void {
+    if (this.triageToastTimer) clearTimeout(this.triageToastTimer);
+    this.triageToastTimer = null;
+    this.triageToast.set(null);
+    if (this.lastTriageNotificationId != null) {
+      this.notifications.dismiss(this.lastTriageNotificationId);
+      this.lastTriageNotificationId = null;
+    }
   }
 }
