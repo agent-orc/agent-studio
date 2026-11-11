@@ -159,6 +159,7 @@ public static class BatchGateStateSnapshotReader
                 manifest.ReformedFromBatchId,
                 manifest.StackedOnBatchId,
                 phase = phase.Phase.ToString().ToLowerInvariant(),
+                phaseAtUtc = phase.RecordedAtUtc,
                 phaseReason = phase.Reason,
                 phaseAtUtc = phase.RecordedAtUtc,
                 isolationActive = phase.Phase == BatchPhase.Red

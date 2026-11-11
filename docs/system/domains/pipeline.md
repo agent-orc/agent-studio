@@ -42,12 +42,17 @@ The batch state response exposes `phaseAtUtc`, `isolationActive`, and
 name the active or interrupted wait without treating a stored red child as a
 live process.
 
-The batch gate state read reports `phaseReason` for a stopped batch and
+The batch gate state read reports `phaseReason` and `phaseAtUtc` for a stopped batch and
 `causedByTaskKey` when a member eject or lost review generation caused
 abandonment. Explicit operator withdrawals are retained as batch withdrawal
 records with the actor, card, reason, and time. The existing eject path returns
 the remaining members to planning; the operator move requests a close on the
 next planner tick.
+The batch panel lists pending cards that have not joined a formed or running
+batch. A run without a finish event counts as running only while its batch is
+in the running phase; after interruption, the panel uses `phaseAtUtc` to show
+the elapsed run time. Detached flights include their batch, detach time, and
+lease deadline in the state response and panel.
 
 ### Gate run ledger (AGT-3500)
 
