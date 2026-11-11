@@ -1186,6 +1186,9 @@ public sealed class ManagementApiOwnHostTests : IDisposable
             || relativeToTemp == ".."
             || relativeToTemp.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal));
         client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        // AGT-3729: the test host removes hosted services, so hold the kill switch lock as the running API does.
+        using var hostLock = AgentStudio.Security.OperatorKillSwitchHostLock.TryAcquire(Path.Combine(_root, ".security"));
+        Assert.NotNull(hostLock);
         // AGT-3574: backups no longer need maintenance; writes are held while the stores are read.
         var response = await client.PostAsJsonAsync("/api/v1/management/commands", new
         {
@@ -1194,6 +1197,7 @@ public sealed class ManagementApiOwnHostTests : IDisposable
         Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(1, body.GetProperty("affected").GetInt32());
+        Assert.Contains("No off-host target is configured", body.GetProperty("summary").GetString());
         var backups = Directory.GetFiles(_backups, "studio-backup-*" + BackupCatalog.ArchiveSuffix);
         Assert.Single(backups);
         Assert.True(File.Exists(backups[0] + ".sha256"));

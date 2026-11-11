@@ -376,16 +376,19 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
     });
   });
 
-  // The fresh integration verdict already proves Accept is safe. Optional
-  // provenance may arrive later without delaying the owner action.
-  test('offers Accept while optional provenance is still loading', async ({ page }) => {
+  // AGT-2006 held the primary while commit provenance loaded, so a guessed
+  // "Merge into Develop" could not flip to "Accept". The label now comes from
+  // the task's integration field, and a hidden git pane defers provenance;
+  // waiting for that deferred request left the primary on "Checking git
+  // status" forever (AGT-3625). The hold applies only to an in-flight request
+  // (GitPaneService unit test).
+  test('does not wait for provenance that the hidden git pane never requests', async ({ page }) => {
     await installBaseRoutes(page);
 
-    let releaseProvenance!: () => void;
-    const provenanceGate = new Promise<void>((resolve) => { releaseProvenance = resolve; });
+    let provenanceRequests = 0;
     const idEsc = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     await page.route(new RegExp(`/api/tasks/${idEsc}/provenance(\\?|$)`), async (route) => {
-      await provenanceGate;
+      provenanceRequests++;
       await json(route, provenanceView('merged-to-develop', { mergeCommit: MERGE_SHA }));
     });
     await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail(null, true, 'integrated')));
@@ -394,19 +397,10 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
     await openJob(page);
 
     const primary = page.getByTestId('studio-triage-action-mark-done');
-    await expect(primary).toBeVisible();
     await expect(primary).toHaveText(/Accept/);
     await expect(primary).toBeEnabled();
     await expect(primary).not.toHaveAttribute('data-git-loading', 'true');
-
-    await test.info().attach('accept-with-provenance-loading--mocked', {
-      body: await page.getByTestId('studio-triage-panel').screenshot(),
-      contentType: 'image/png',
-    });
-
-    releaseProvenance();
-    await expect(primary).toHaveText(/Accept/);
-    await expect(primary).toBeEnabled();
-    await expect(primary).not.toHaveAttribute('data-git-loading', 'true');
+    expect(provenanceRequests).toBe(0);
+    await saveEvidence(page, 'git-pane-hidden-accept--mocked.png');
   });
 });

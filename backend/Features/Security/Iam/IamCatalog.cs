@@ -98,6 +98,13 @@ public static class IamPermissions
     /// <summary>Permissions that need no role binding at all.</summary>
     public static bool IsUnbound(string name) => name is Anonymous or SelfSession;
 
+    /// <summary>Permissions that require a human to enroll a second factor before normal sign-in.</summary>
+    public static bool RequiresSecondFactor(string permission)
+        => permission is ProjectRunsOperate or EnvironmentDeploy or EnvironmentProductionDeploy
+            or EnvironmentProductionDeployApprove
+            || permission.StartsWith("secrets.", StringComparison.Ordinal)
+            || permission.StartsWith("access.", StringComparison.Ordinal);
+
     /// <summary>
     /// Permissions an environment binding contributes outside its own
     /// environment, so an Approver of production can open the project's board.
