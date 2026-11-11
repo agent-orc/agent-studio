@@ -83,6 +83,13 @@ public sealed class TaskArtifactsSourceIntegrationTests : IDisposable
         // The mirror starts off, so its hosted first cycle is a no-op and every cycle below is explicit.
         await using var backend = BuildBackend(taskServer, _workspace, _watchPath, BoardSourceSetting.TaskServerShadow);
         var configuration = backend.Services.GetRequiredService<IConfiguration>();
+        // The board mirror must import this fixture's cards before the file
+        // mirror sends their content. An initial restored board publication can
+        // precede the fixture's first full scanner publication under load.
+        var index = backend.Services.GetRequiredService<TaskIndexCache>();
+        index.Invalidate();
+        using (var publicationTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(60)))
+            await index.WaitForCurrentMutationPublicationAsync(publicationTimeout.Token);
         await backend.Services.GetRequiredService<BoardShadowWorker>().RunCycleAsync(default);
         var mirror = backend.Services.GetRequiredService<TaskFileMirrorWorker>();
         configuration[TaskArtifactsSourceSetting.SectionKey] = TaskArtifactsSourceSetting.TaskServerShadow;

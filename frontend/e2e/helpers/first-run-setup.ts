@@ -5,6 +5,7 @@ import { expect, type Page } from '@playwright/test';
 
 /** The demo origin the first-run Git shim maps onto its scratch bare repository. */
 export const FIRST_RUN_ORIGIN = 'https://github.com/agent-studio/first-run-e2e.git';
+const apiTimeout = 60_000;
 
 /**
  * Signs in the first-run Owner (bootstrapping it on a fresh stack), waits for
@@ -18,11 +19,12 @@ export async function prepareFirstRunProject(page: Page, workspace: string, pref
     ? readFileSync(passwordFile, 'utf8')
     : randomBytes(24).toString('base64url') + 'Aa1!';
   if (!existsSync(passwordFile)) writeFileSync(passwordFile, ownerPassword, { mode: 0o600 });
-  const auth = await page.request.get('/api/auth/status');
+  const auth = await page.request.get('/api/auth/status', { timeout: apiTimeout });
   expect(auth.ok()).toBeTruthy();
   const current = await auth.json() as { bootstrapRequired: boolean };
   const signedIn = await page.request.post(current.bootstrapRequired
     ? '/api/auth/bootstrap' : '/api/auth/login', {
+    timeout: apiTimeout,
     headers: { 'X-Client-Id': 'local-default' },
     data: current.bootstrapRequired
       ? { username: 'first-run-owner', displayName: 'First Run Owner', password: ownerPassword }
@@ -30,22 +32,24 @@ export async function prepareFirstRunProject(page: Page, workspace: string, pref
   });
   expect(signedIn.ok(), `${signedIn.status()}: ${await signedIn.text()}`).toBeTruthy();
   await expect.poll(async () => {
-    const clients = await page.request.get('/api/clients');
+    const clients = await page.request.get('/api/clients', { timeout: apiTimeout });
     if (!clients.ok()) return false;
     const entries = await clients.json() as { id: string }[];
     return entries.some(entry => entry.id === 'first-run-coding');
   }, { timeout: 120_000 }).toBe(true);
-  const projects = await page.request.get('/api/projects');
+  const projects = await page.request.get('/api/projects', { timeout: apiTimeout });
   expect(projects.ok()).toBeTruthy();
   const existing = await projects.json() as { id: string; workspaceId: string; archived: boolean }[];
   for (const project of existing.filter(entry => !entry.archived)) {
     const archived = await page.request.put(`/api/projects/${encodeURIComponent(project.id)}`, {
+      timeout: apiTimeout,
       headers: { 'X-Client-Id': 'local-default' }, data: { archived: true },
     });
     expect(archived.ok()).toBeTruthy();
   }
   const projectName = `${prefix} ${randomBytes(4).toString('hex')}`;
   const registered = await page.request.post('/api/projects', {
+    timeout: apiTimeout,
     headers: { 'X-Client-Id': 'local-default' },
     data: { workspaceId: existing[0]?.workspaceId ?? 'ws-default',
       displayName: projectName, repositoryUrl: FIRST_RUN_ORIGIN, executionRunner: 'first-run-coding' },

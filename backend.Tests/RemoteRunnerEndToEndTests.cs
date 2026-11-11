@@ -3935,6 +3935,9 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal("develop", projectFailure.TargetBranch);
         Assert.Contains("repository URL is not configured", projectFailure.Detail, StringComparison.OrdinalIgnoreCase);
 
+        using var rejectionPublication = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await factory.Services.GetRequiredService<TaskIndexCache>()
+            .WaitForCurrentMutationPublicationAsync(rejectionPublication.Token);
         using var grouped = await http.GetAsync("/api/tasks/grouped");
         grouped.EnsureSuccessStatusCode();
         using var groupedJson = JsonDocument.Parse(await grouped.Content.ReadAsStringAsync());
@@ -3967,6 +3970,9 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
 
         Assert.Equal(RClaimStatus.Empty, claim.Status);
         Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, TaskKey)));
+        using var rejectionPublication = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await factory.Services.GetRequiredService<TaskIndexCache>()
+            .WaitForCurrentMutationPublicationAsync(rejectionPublication.Token);
         using var grouped = await http.GetAsync("/api/tasks/grouped");
         grouped.EnsureSuccessStatusCode();
         using var groupedJson = JsonDocument.Parse(await grouped.Content.ReadAsStringAsync());
@@ -5351,7 +5357,8 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
             TaskStates.Progress,
             TaskKey,
             "Coding survives backend restart",
-            "Complete after authority is re-adopted.");
+            "Complete after authority is re-adopted.",
+            publicKey: TaskKey);
 
         RunAttemptDto run;
         using (var firstFactory = BuildFactory(authorityNow: () => now))
@@ -8195,6 +8202,15 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
         using var reviewClient = new RClient(http, reviewRunnerId, usesDurableTaskServer: true);
 
         var last = AttemptAuthorityService.ReviewInfrastructureRetryBudget + 1;
+        // Keep the first failures in the same class for the divergent-chain
+        // assertion, while giving each a distinct cause. Repeating one cause
+        // opens the fleet breaker before the retry budget is spent.
+        string[] snapshotFailures =
+        [
+            "The immutable snapshot was unavailable while fetching the remote ref.",
+            "The immutable snapshot was unavailable while opening the workspace.",
+            "The immutable snapshot was unavailable while reading the result tree.",
+        ];
         for (var attemptNumber = 1; attemptNumber <= last; attemptNumber++)
         {
             var claim = await reviewClient.ClaimReviewAsync(
@@ -8209,7 +8225,9 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
                     claim, reviewRunnerId, reviewInstance, $"review-infra-{attemptNumber}",
                     "ShaMismatch",
                     "Materialized HEAD '744deb892' does not match expected Result-SHA 'f538f896'.")
-                : InfrastructureReport(claim, reviewRunnerId, reviewInstance, $"review-infra-{attemptNumber}");
+                : InfrastructureReport(
+                    claim, reviewRunnerId, reviewInstance, $"review-infra-{attemptNumber}",
+                    "SnapshotUnavailable", snapshotFailures[attemptNumber - 1]);
             await reviewClient.ReportReviewAsync(claim.Attempt!.AttemptId, report, CancellationToken.None);
 
             if (attemptNumber < last)
