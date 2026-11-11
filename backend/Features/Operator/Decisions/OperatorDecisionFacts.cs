@@ -1,6 +1,7 @@
 using System.Globalization;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
+using AgentStudio.Review;
 using AgentStudio.Shared;
 using AgentStudio.Watcher;
 
@@ -47,12 +48,12 @@ public static class OperatorDecisionFacts
                     task.ProjectName, card,
                     FirstText(task.ParkedBlocker?.Reason, task.ParkedBlocker?.ConditionDescription)
                         ?? $"{card} entered the escalated lane.",
-                    Utc(task.EnteredLaneAt), evidence));
+                    Utc(task.EnteredLaneAt), evidence, Title: task.Title));
             if (task.State == TaskStates.HumanReview)
                 facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.HumanReviewReady,
                     Key(OperatorDecisionTypes.HumanReviewReady, task.ProjectName, card, Stamp(task.EnteredLaneAt)),
-                    task.ProjectName, card, $"{card} is ready for human review.",
-                    Utc(task.EnteredLaneAt), evidence));
+                    task.ProjectName, card, ReviewReason(task),
+                    Utc(task.EnteredLaneAt), evidence, Title: task.Title));
             if (TaskKinds.IsDecision(task.Kind) && task.Decision is { } decision
                 && DecisionStatuses.IsOpen(decision.Status)
                 && task.State is not (TaskStates.Completed or TaskStates.Archive))
@@ -61,7 +62,7 @@ public static class OperatorDecisionFacts
                         decision.History.Count.ToString(CultureInfo.InvariantCulture)),
                     task.ProjectName, card,
                     FirstText(decision.Question) ?? $"Decision card {card} is open.",
-                    Utc(task.CreatedAt), evidence));
+                    Utc(task.CreatedAt), evidence, Title: task.Title));
             if (task.QuotaWait is { } wait)
                 facts.Add(new OperatorDecisionFact(OperatorDecisionTypes.QuotaExhausted,
                     Key(OperatorDecisionTypes.QuotaExhausted, "card", task.ProjectName, card, Stamp(wait.StartedAt)),
@@ -180,6 +181,35 @@ public static class OperatorDecisionFacts
 
     public static string CardKey(TaskInfo task)
         => FirstText(task.Key, task.TaskKey) ?? task.Id;
+
+    private static string ReviewReason(TaskInfo task)
+    {
+        if (task.OlderBriefDelivery is { Status: "pending" })
+            return "Cannot be accepted: brief changed.";
+        var grade = task.Tags.FirstOrDefault(tag => tag.StartsWith("code-review:grade-", StringComparison.OrdinalIgnoreCase));
+        var letter = grade is null ? null : grade["code-review:grade-".Length..].ToUpperInvariant();
+        if (letter is null) return "Ready for human review.";
+        var concerns = GradeFindings(task.FolderPath);
+        return concerns is { } count
+            ? $"Grade {letter} · {count} {(count == 1 ? "concern" : "concerns")}."
+            : $"Grade {letter} · review concerns unavailable.";
+    }
+
+    private static int? GradeFindings(string folder)
+    {
+        if (string.IsNullOrWhiteSpace(folder)) return null;
+        try
+        {
+            if (!Directory.Exists(folder)) return null;
+            var latest = Directory.EnumerateFiles(folder, "code-review-grade-*.md")
+                .OrderByDescending(Path.GetFileName, StringComparer.Ordinal).FirstOrDefault();
+            return latest is null ? null : CodeReviewFindingParsing.Parse(File.ReadAllText(latest)).Count;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
 
     private static string TaskHref(TaskInfo task) => "/api/tasks/" + Uri.EscapeDataString(task.Id);
 

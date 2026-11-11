@@ -9,7 +9,7 @@ import {
   output,
   signal,
 } from '@angular/core';
-import { EMPTY, Observable, catchError, map, of, switchMap, tap } from 'rxjs';
+import { EMPTY, Observable, catchError, map, of, switchMap, tap, throwError } from 'rxjs';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
 import {
@@ -65,6 +65,7 @@ export class WorkbenchDecisionActionsComponent {
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private restoredDraftKey = '';
   private readonly operationId = signal('');
+  private readonly cleanupPending = signal(false);
 
   readonly mode = signal<ActionMode>(null);
   readonly title = signal('');
@@ -78,7 +79,7 @@ export class WorkbenchDecisionActionsComponent {
 
   readonly requestState = computed(() =>
     this.store.state(this.projectName(), this.document().workbench.id));
-  readonly pending = computed(() => this.requestState().pending !== null);
+  readonly pending = computed(() => this.requestState().pending !== null || this.cleanupPending());
   readonly answersComplete = computed(() => {
     if (this.decisionPoints().length === 0) return true;
     const responses = new Map(this.responses().map(response => [response.decisionId, response]));
@@ -188,7 +189,9 @@ export class WorkbenchDecisionActionsComponent {
     this.store.prepare(this.projectName(), this.document().workbench.id, request).pipe(
       switchMap(prepared => this.createCard(prepared.taskDraft ?? request.task!).pipe(
         map(card => ({ prepared, card })))),
-      switchMap(({ prepared, card }) => this.confirmFeature(request, card, prepared)),
+      switchMap(({ prepared, card }) => this.confirmFeature(request, card, prepared).pipe(
+        catchError(() => this.removeUnlinkedCard(card)),
+      )),
       catchError(error => this.fail(error)),
     ).subscribe(() => this.finish());
   }
@@ -246,9 +249,18 @@ export class WorkbenchDecisionActionsComponent {
         thinkingLevelExplicit: true,
         taskType: draft.taskType,
         mode: draft.mode,
-      })),
-      switchMap(created => this.tasks.getDetailByProject(created.id, this.projectName())),
-      map(detail => ({
+        dossier: { path: this.document().workbench.entryPath },
+      }).pipe(switchMap(created => this.tasks.getDetailByProject(created.id, this.projectName()).pipe(
+        map(detail => ({ detail, id: created.id, watchPath })),
+        catchError(() => this.tasks.deleteJob(created.id, watchPath).pipe(
+          catchError(() => throwError(() => new Error(
+            `The task was created, but its details could not be read. The task may remain on the board. Ask a Studio operator to remove task ${created.id}.`))),
+          switchMap(() => throwError(() => new Error('The task was created, but its details could not be read. The task was removed. Try again.'))),
+        )),
+      )))),
+      map(({ detail, id, watchPath }) => ({
+        id,
+        watchPath,
         key: detail.info.key || detail.info.displayKey || taskKeyTail(detail.info.taskKey),
         taskKey: detail.info.taskKey,
         title: detail.info.title,
@@ -258,6 +270,25 @@ export class WorkbenchDecisionActionsComponent {
         this.createdCard.set(card);
         this.drafts.rememberCreatedCard(this.projectName(), this.document().workbench.id, card);
         this.tasks.refresh();
+      }),
+    );
+  }
+
+  private removeUnlinkedCard(card: WorkbenchDecisionDraftCard): Observable<never> {
+    this.cleanupPending.set(true);
+    const id = card.id ?? card.key;
+    return this.tasks.deleteJob(id, card.watchPath).pipe(
+      catchError(() => {
+        this.cleanupPending.set(false);
+        return throwError(() => new Error(
+          `The Dossier decision could not be saved. Task ${card.key} may remain on the board without a Dossier link. Ask a Studio operator to remove it before retrying.`));
+      }),
+      switchMap(() => {
+        this.createdCard.set(null);
+        this.drafts.clearCreatedCard(this.projectName(), this.document().workbench.id);
+        this.cleanupPending.set(false);
+        return throwError(() => new Error(
+          'The Dossier decision could not be saved. The new task was removed. Try again or ask a Studio operator to check the project repository.'));
       }),
     );
   }

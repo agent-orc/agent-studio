@@ -9,12 +9,50 @@ internal static partial class ReviewTestReportPolicy
 {
     internal const string MissingReportClassification = "TestReportUnavailable";
 
-    internal static bool Missing(ReviewCommandDto command, ProcessResult result)
+    internal static bool Missing(ReviewCommandDto command, ProcessResult result, bool setupChanged = false)
     {
         if (!command.CompareToBaseline || ReviewBaselineModes.IsExitStatus(command.BaselineMode)) return false;
+        // A successful custom command can prove its exit status without using
+        // one of the test reporters we parse. Keep incomplete known runners
+        // visible as infrastructure failures rather than treating them as green.
+        if (result.Success && !HasExplicitMissingReport(result)
+            && !LooksLikeIncompleteRunner(result)
+            && !RecognizedRunner(command, result)
+            && !setupChanged) return false;
         var failures = RemoteReviewWorkspace.ParsedTestFailures(result);
         return (result.ExitCode != 0 && failures.Count == 0)
                || !ReviewBaselineTestResultPolicy.HasResult(failures, result.StdOut, result.StdErr);
+    }
+
+    internal static bool NeedsSetupCheck(ReviewCommandDto command, ProcessResult result)
+        => command.CompareToBaseline
+           && !ReviewBaselineModes.IsExitStatus(command.BaselineMode)
+           && result.Success
+           && !Missing(command, result)
+           && !ReviewBaselineTestResultPolicy.HasResult(
+               RemoteReviewWorkspace.ParsedTestFailures(result), result.StdOut, result.StdErr);
+
+    private static bool RecognizedRunner(ReviewCommandDto command, ProcessResult result)
+    {
+        var invocation = Path.GetFileNameWithoutExtension(command.FileName) + " "
+                         + string.Join(' ', command.Arguments);
+        var output = result.StdOut + "\n" + result.StdErr;
+        return RunnerInvocation().IsMatch(invocation) || EmptyRunnerOutput().IsMatch(output);
+    }
+
+    [GeneratedRegex(@"\b(?:dotnet\s+test|node\s+--test|(?:jest|vitest)\b)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex RunnerInvocation();
+
+    [GeneratedRegex(@"(?im)\b(?:No test is available|No tests? found|No test files found|Total(?: tests)?:\s*0\b|Passed:\s*0\b|Tests:?\s+0\b|Test Files\s+0\b)|^\s*#\s*tests\s+0\b",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex EmptyRunnerOutput();
+
+    private static bool LooksLikeIncompleteRunner(ProcessResult result)
+    {
+        var output = result.StdOut + "\n" + result.StdErr;
+        return output.Contains("Application bundle generation complete", StringComparison.Ordinal)
+               && !ReviewBaselineTestResultPolicy.HasResult([], result.StdOut, result.StdErr);
     }
 
     internal static string MissingPhase(ProcessResult result)

@@ -19,6 +19,8 @@ if (!builder.Environment.IsEnvironment("Testing"))
     options.HistoryFile     = Environment.GetEnvironmentVariable("ATP_UPDATE_HISTORY")      ?? options.HistoryFile;
     options.RunsDirectory   = Environment.GetEnvironmentVariable("ATP_UPDATE_RUNS_DIR")     ?? options.RunsDirectory;
     options.TriggerToken    = Environment.GetEnvironmentVariable("ATP_UPDATE_TOKEN")        ?? options.TriggerToken;
+    options.TriggerTokenFile = Environment.GetEnvironmentVariable("ATP_UPDATE_TOKEN_FILE")  ?? options.TriggerTokenFile;
+    options.AllowedOrigins  = Environment.GetEnvironmentVariable("ATP_UPDATE_ALLOWED_ORIGINS") ?? options.AllowedOrigins;
     options.BashPath        = Environment.GetEnvironmentVariable("ATP_BASH_PATH")           ?? options.BashPath;
     options.VersionFile     = Environment.GetEnvironmentVariable("ATP_VERSION_FILE")        ?? options.VersionFile;
     options.Mode            = Environment.GetEnvironmentVariable("ATP_UPDATE_MODE")          ?? options.Mode;
@@ -73,15 +75,29 @@ builder.Services.AddSingleton(sp =>
     return new UpdateStatusStore(options.HistoryFile, git.HeadShort(), readVersion, logger, options.Mode);
 });
 
+builder.Services.AddSingleton<TriggerToken>();
 builder.Services.AddSingleton<UpdateOrchestrator>();
 builder.Services.AddHostedService<PeriodicProbeService>();
 
-builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
-    p.SetIsOriginAllowed(_ => true).AllowAnyHeader().AllowAnyMethod().AllowCredentials()));
+// Only the configured Studio origins get a CORS grant, and never with
+// credentials: the Update Center authenticates with the trigger token header.
+builder.Services.AddCors();
+builder.Services.AddOptions<Microsoft.AspNetCore.Cors.Infrastructure.CorsOptions>()
+    .Configure<UpdateServiceOptions>((cors, opt) =>
+    {
+        var origins = opt.AllowedOriginList();
+        if (origins.Count == 0) return;
+        cors.AddDefaultPolicy(p => p.WithOrigins([.. origins])
+            .WithMethods(HttpMethods.Get, HttpMethods.Post)
+            .WithHeaders("Content-Type", TriggerToken.HeaderName));
+    });
 
 builder.WebHost.UseUrls(options.ListenUrl.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 
 var app = builder.Build();
+// Resolve the token at start so a missing one is generated before the first request.
+var triggerToken = app.Services.GetRequiredService<TriggerToken>();
+app.Logger.LogInformation("Update trigger token source: {TokenSource} ({TokenFile})", triggerToken.Source, triggerToken.FilePath);
 app.UseCors();
 
 // --- endpoints ---------------------------------------------------------------
@@ -101,33 +117,22 @@ app.MapGet("/update/history", (UpdateStatusStore store, int? max) =>
 app.MapGet("/update/preflight", async (ReleasePreflightService preflight, CancellationToken ct) =>
     Results.Json(await preflight.EvaluateAsync(allowDowngrade: false, ct), jsonOpts));
 
-app.MapPost("/update/trigger", async (HttpContext ctx, UpdateOrchestrator orch, UpdateServiceOptions opt, IHostApplicationLifetime lifetime, CancellationToken ct) =>
+// Every state-changing route carries RequireTriggerToken; the endpoint guard
+// test refuses a mutating route without it.
+app.MapPost("/update/trigger", async (HttpContext ctx, UpdateOrchestrator orch, IHostApplicationLifetime lifetime, CancellationToken ct) =>
 {
-    if (!string.IsNullOrEmpty(opt.TriggerToken))
-    {
-        var sent = ctx.Request.Headers["X-Update-Token"].FirstOrDefault();
-        if (sent != opt.TriggerToken)
-            return Results.Json(new { error = "unauthorized" }, statusCode: 401);
-    }
-
     TriggerRequest? body = null;
     try { body = await ctx.Request.ReadFromJsonAsync<TriggerRequest>(ct); } catch { /* empty body OK */ }
     var force = body?.Force ?? false;
     var trigger = string.IsNullOrWhiteSpace(body?.Reason) ? "manual" : body.Reason.Trim();
-    var (runId, phase, message) = orch.StartTrigger(trigger: trigger, force: force, lifetime.ApplicationStopping);
+    var caller = TriggerTokenEndpoints.CallerDescription(ctx);
+    var (runId, phase, message) = orch.StartTrigger(trigger: trigger, force: force, caller: caller, lifetime.ApplicationStopping);
     return Results.Json(new TriggerResponse(runId, phase, message), statusCode: 202);
-});
+}).RequireTriggerToken();
 
-// ADR-0031 manual-rollback endpoint. Same auth/token gating as /update/trigger.
-app.MapPost("/update/rollback", async (HttpContext ctx, UpdateOrchestrator orch, UpdateServiceOptions opt, IHostApplicationLifetime lifetime, CancellationToken ct) =>
+// ADR-0031 manual-rollback endpoint. Same token gating as /update/trigger.
+app.MapPost("/update/rollback", async (HttpContext ctx, UpdateOrchestrator orch, IHostApplicationLifetime lifetime, CancellationToken ct) =>
 {
-    if (!string.IsNullOrEmpty(opt.TriggerToken))
-    {
-        var sent = ctx.Request.Headers["X-Update-Token"].FirstOrDefault();
-        if (sent != opt.TriggerToken)
-            return Results.Json(new { error = "unauthorized" }, statusCode: 401);
-    }
-
     RollbackRequest? body = null;
     try { body = await ctx.Request.ReadFromJsonAsync<RollbackRequest>(ct); } catch { /* fall through */ }
     if (body == null || string.IsNullOrWhiteSpace(body.RunId))
@@ -135,7 +140,7 @@ app.MapPost("/update/rollback", async (HttpContext ctx, UpdateOrchestrator orch,
 
     var (runId, phase, message) = orch.StartManualRollback(body.RunId, lifetime.ApplicationStopping);
     return Results.Json(new RollbackResponse(runId, phase, message), statusCode: 202);
-});
+}).RequireTriggerToken();
 
 app.Run();
 

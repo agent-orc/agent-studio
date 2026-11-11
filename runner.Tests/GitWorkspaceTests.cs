@@ -538,6 +538,33 @@ public sealed class GitWorkspaceTests : IDisposable
         Assert.DoesNotContain("retain", subject);
     }
 
+    /// <summary>
+    /// AGT-3717: the server rejects a delivery range whose commit subject names
+    /// another card. Playthrough slices and follow-up cards name keys in their
+    /// title, so the subject drops them and the body keeps the full title.
+    /// </summary>
+    [Theory]
+    [InlineData("CP-9 · Guided playthrough slice", "AGT-2147: Guided playthrough slice")]
+    [InlineData("Follow-up: review findings in AGT-3591", "AGT-2147: Follow-up: review findings in")]
+    [InlineData("Fix the badge (MAG-1) and np-10 layout", "AGT-2147: Fix the badge and layout")]
+    [InlineData("AGT-2147 · Own key in the title", "AGT-2147: Own key in the title")]
+    [InlineData("SU-4", "AGT-2147: salvaged work (outcome Done)")]
+    public void Salvage_commit_subject_names_no_other_task_key(string title, string expected)
+    {
+        var workspace = CreateWorkspace(taskTitle: title);
+        var message = workspace.SalvageCommitMessage("Done", "run_title");
+        var subject = message.Split('\n')[0];
+
+        Assert.Equal(expected, subject);
+        Assert.Equal(["AGT-2147"], System.Text.RegularExpressions.Regex.Matches(subject,
+                @"\b[A-Z][A-Z0-9]{1,15}-\d+\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Select(match => match.Value));
+        Assert.Contains($"\n\nCard: {title}\n\n", message);
+        Assert.Contains("Agent-Studio-Task: AGT-2147\n", message);
+        Assert.Contains("Agent-Studio-Salvage: teardown\n", message);
+    }
+
     [Fact]
     public async Task Teardown_preserves_root_status_as_card_artifact_without_committing_it()
     {

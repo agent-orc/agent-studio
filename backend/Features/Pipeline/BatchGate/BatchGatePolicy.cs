@@ -70,6 +70,24 @@ public sealed record BatchGateSubject(
 public sealed record BatchGateExclusion(string TaskKey, BatchExclusionReason Reason,
     string? Detail = null);
 
+/// <summary>
+/// A settled review the batch queue refused, with the operator text that
+/// names the card's route (AGT-3740). Callers catch any exception and report
+/// its message, so the message is the operator text.
+/// </summary>
+public sealed class BatchAdmissionRefusedException(BatchExclusionReason reason, string message)
+    : InvalidOperationException(message)
+{
+    public BatchExclusionReason Reason { get; } = reason;
+}
+
+/// <summary>Where a card goes when the batch gate is not its route (AGT-3740).</summary>
+public static class BatchAdmissionRoutes
+{
+    public const string PerTaskIntegration = "per-task integration";
+    public const string ReplannedReview = "a re-planned review";
+}
+
 public sealed record BatchGateFormationOptions(
     bool Enabled = false, int CloseSize = 4, int MaximumSize = 8,
     int DeadlineMinutes = 15, int PressureSize = 2, int ReviewQueuePressure = 12,
@@ -131,7 +149,8 @@ public sealed record BatchGateManifest(
     IReadOnlyList<BatchPlanCard>? PlanningCards = null,
     bool Diagnostic = false,
     string? ReformedFromBatchId = null,
-    string? StackedOnBatchId = null);
+    string? StackedOnBatchId = null,
+    DateTimeOffset? QueuedSinceUtc = null);
 
 public sealed record BatchGateFormation(
     BatchGateManifest? Manifest, IReadOnlyList<BatchGateExclusion> Exclusions,
@@ -301,6 +320,26 @@ public static class BatchGatePolicy
             return BatchExclusionReason.NotDocumentationOnly;
         return null;
     }
+
+    /// <summary>
+    /// AGT-3740: the operator text for a refused admission. A review that ran
+    /// its own build and tests names the plan rule that kept them in the
+    /// review and the route the card takes instead of an empty
+    /// <c>BuildTestNotDeferred</c>.
+    /// </summary>
+    public static string AdmissionRefusal(BatchExclusionReason reason, string? deferralRule,
+        string route = BatchAdmissionRoutes.PerTaskIntegration)
+        => reason == BatchExclusionReason.BuildTestNotDeferred
+            ? ReviewRanBuildTests(deferralRule, route)
+            : $"Batch admission failed: {reason}.";
+
+    /// <summary>"Review ran its own build and tests (rule); this card goes to route."</summary>
+    public static string ReviewRanBuildTests(string? deferralRule, string route)
+        => "Review ran its own build and tests ("
+           + (string.IsNullOrWhiteSpace(deferralRule)
+               ? "the review plan recorded no batch deferral rule"
+               : deferralRule.Trim().TrimEnd('.'))
+           + $"); this card goes to {route}.";
 
     public static string MembershipDigest(
         string baseSha, BatchGateScope scope, IReadOnlyList<BatchGateSubject> orderedMembers)

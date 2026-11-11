@@ -15,9 +15,40 @@ public sealed class ReviewTestReportPolicyTests
             new ProcessResult(0, "Test Files  1 passed (1)", string.Empty)));
         Assert.True(ReviewTestReportPolicy.Missing(command,
             new ProcessResult(0, "Application bundle generation complete.", string.Empty)));
+        Assert.False(ReviewTestReportPolicy.NeedsSetupCheck(command,
+            new ProcessResult(0, "Application bundle generation complete.", string.Empty)));
         Assert.Equal("Angular bundle completed but Vitest did not report a run",
             ReviewTestReportPolicy.MissingPhase(new ProcessResult(
                 0, "Application bundle generation complete.", string.Empty)));
+        Assert.False(ReviewTestReportPolicy.Missing(command,
+            new ProcessResult(0, "custom check passed", string.Empty)));
+    }
+
+    [Theory]
+    [InlineData("dotnet", "test backend.Tests.csproj", "No test is available in backend.Tests.dll")]
+    [InlineData("node", "--test", "# tests 0")]
+    [InlineData("npx", "jest --passWithNoTests", "No tests found, exiting with code 0")]
+    [InlineData("npx", "vitest run", "Test Files  0 passed (0)")]
+    [InlineData("sh", "-c printf", "No test is available in backend.Tests.dll")]
+    [InlineData("sh", "-c printf", "# tests 0")]
+    [InlineData("sh", "-c printf", "No tests found, exiting with code 0")]
+    [InlineData("sh", "-c printf", "Test Files  0 passed (0)")]
+    public void Zero_tests_from_recognized_runner_is_missing(string fileName, string arguments, string output)
+    {
+        var command = new ReviewCommandDto("verify-9", "build-tests", fileName,
+            arguments.Split(' '), CompareToBaseline: true);
+        Assert.True(ReviewTestReportPolicy.Missing(command, new ProcessResult(0, output, string.Empty)));
+    }
+
+    [Fact]
+    public void Changed_test_setup_requires_a_report_even_for_an_unrecognized_command()
+    {
+        var command = new ReviewCommandDto("verify-9", "build-tests", "sh",
+            ["-c", "./scripts/check.sh"], CompareToBaseline: true);
+        var result = new ProcessResult(0, "custom check passed", string.Empty);
+        Assert.True(ReviewTestReportPolicy.NeedsSetupCheck(command, result));
+        Assert.False(ReviewTestReportPolicy.Missing(command, result));
+        Assert.True(ReviewTestReportPolicy.Missing(command, result, setupChanged: true));
     }
 
     [Fact]

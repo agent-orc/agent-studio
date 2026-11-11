@@ -98,6 +98,7 @@ import type {
 import type { TaskPlanView } from '../features/plan-strip/plan.model';
 import type { RegressionRadarResult } from '../features/regression-radar';
 import { ErrorDialogService } from './error-dialog.service';
+import { AuthSessionState } from './auth.service';
 import { JobsHubClient } from './jobs-hub-client.service';
 import type {
   ProjectDeploymentSummary,
@@ -384,6 +385,7 @@ function invalidOrchestratorContextKey<T>(): Observable<T> {
 @Injectable({ providedIn: 'root' })
 export class TaskService {
   private http = inject(HttpClient);
+  private readonly authSession = inject(AuthSessionState);
   private errorDialog = inject(ErrorDialogService);
   private jobsHub = inject(JobsHubClient);
 
@@ -869,6 +871,17 @@ export class TaskService {
           .pipe(switchMap(() => this.getDetail(jobId, watchPath, project, attempt + 1)))
         : throwError(() => new Error('Task still warming'))
       : [response.body!]));
+  }
+
+  /** Fresh task facts, including the integration verdict used by Human Review. */
+  getFreshDetail(jobId: string, project: string, attempt = 0): Observable<TaskDetail> {
+    const params = new HttpParams().set('project', project);
+    return this.http.get<TaskDetail>(`${this.baseUrl}/tasks/${encodeURIComponent(jobId)}`,
+      { params, observe: 'response' }).pipe(switchMap(response => response.status === 202
+        ? attempt < 20
+          ? timer(100 + 50 * attempt).pipe(switchMap(() => this.getFreshDetail(jobId, project, attempt + 1)))
+          : throwError(() => new Error('Task still warming'))
+        : [response.body!]));
   }
 
   /**
@@ -1516,6 +1529,19 @@ export class TaskService {
     );
   }
 
+  /** Run only the missing requirement-fit review of a report card's delivered results. */
+  reviewTaskResults(jobId: string, watchPath?: string) {
+    return this.http.post<{
+      stepId: string;
+      ran: boolean;
+      status: string | null;
+      summary: string;
+    }>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/review-results`,
+      { watchPath },
+    );
+  }
+
   /**
    * Read one code-review MD body. Used by the panel to expand a row inline.
    */
@@ -1733,10 +1759,13 @@ export class TaskService {
     ).pipe(this.afterRemoval(jobId, watchPath));
   }
 
-  deleteJob(jobId: string, watchPath?: string) {
+  /** `reason` (AGT-3624) is the written reason for deleting unintegrated work. */
+  deleteJob(jobId: string, watchPath?: string, reason?: string | null) {
+    const options = this.withWatchPath(watchPath);
+    const params = reason ? (options.params ?? new HttpParams()).set('reason', reason) : options.params;
     return this.http.delete(
       this.taskV1Url(jobId),
-      this.withWatchPath(watchPath),
+      params ? { params } : {},
     ).pipe(this.afterRemoval(jobId, watchPath));
   }
 
@@ -3079,6 +3108,8 @@ export class TaskService {
   }
 
   refreshRunnerStatus(silent = false): void {
+    // AGT-3668: runner status is installation-wide; the Product role never reads it.
+    if (this.authSession.productSession()) return;
     if (this.runnerRefreshInFlight) {
       this.runnerRefreshQueued = true;
       this.runnerRefreshQueuedSilent &&= silent;

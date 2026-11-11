@@ -162,6 +162,11 @@ export interface TaskCompletionClaim {
   reason?: string | null;
   /** Who moved the card into the delivered lane. */
   actor?: string | null;
+  /**
+   * AGT-3621: set when the system gave the Human Review verdict in a person's
+   * place; completes "Accepted automatically by …". Null for a person's acceptance.
+   */
+  acceptedAutomaticallyBy?: string | null;
   currentBriefVersion?: string | null;
   deliveryBriefVersion?: string | null;
   reviewBriefVersion?: string | null;
@@ -553,9 +558,9 @@ export interface PlanningSpawnSummary {
 }
 
 /**
- * Interim concept-dossier projection. The path is detected from
- * results/deliverables.md or status.md until references.workbenches provides
- * the structured carrier.
+ * Concept Dossier projection from the same primary task.dossier link used by
+ * the board and the Dossier card list. A deliberate no-Dossier choice is
+ * carried separately.
  */
 export interface ConceptDossierSummary {
   repoRelativePath?: string | null;
@@ -684,6 +689,8 @@ export interface TaskInfo {
     failureClass: string;
     since: string;
     reason: string;
+    /** AGT-3617: the cause in plain words, e.g. "review cannot read the test report". */
+    summary?: string | null;
   } | null;
   /**
    * Card kind. `task` is the default. See backend `TaskKinds`.
@@ -1267,6 +1274,7 @@ export interface ContinueRoundBase {
 export interface FailureContinuationCheck {
   available: boolean;
   reason: string | null;
+  isolationActive?: boolean;
 }
 
 export interface ContinueTaskQueuedInfo {
@@ -1782,6 +1790,7 @@ export interface CreateTaskRequest {
   /** Ownership-routing input. The backend resolves and validates the destination. */
   routing?: ComponentRoutingRequest;
   requestedTaskPrefix?: string;
+  dossier?: { path: string; section?: string | null; decision?: string | null; implementationIndex?: number | null };
 }
 
 /**
@@ -2549,6 +2558,12 @@ export interface ReviewAttempt {
    * produced this verdict; null otherwise. Reporting only - the verdict stands.
    */
   workerReleaseSuperseded?: string | null;
+  /**
+   * `graded by release <id> (commit <sha>), which differs from Stable <version>
+   * (<sha>)` when the grading host did not run the Stable build when the report
+   * arrived (AGT-3689); null otherwise. Reporting only - the verdict stands.
+   */
+  workerReleaseStable?: string | null;
 }
 
 /** A blocking aspect on the latest review attempt, with its quoted reason. */

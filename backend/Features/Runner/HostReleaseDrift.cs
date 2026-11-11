@@ -11,6 +11,14 @@ public static class HostReleaseDriftStates
     /// <summary>The host provably runs an older release than Stable.</summary>
     public const string Behind = "behind";
 
+    /// <summary>
+    /// The host reports the Stable version but another commit, and no build
+    /// stamp orders the two (AGT-3689). Not current: a review host built from
+    /// an older develop commit kept the same VERSION and graded cards as if it
+    /// ran Stable.
+    /// </summary>
+    public const string Differs = "differs";
+
     /// <summary>Nothing comparable was reported. Never an alarm, never "current".</summary>
     public const string Unknown = "unknown";
 }
@@ -55,7 +63,10 @@ public sealed record HostReleaseDriftVerdict(
 /// Ordering is established from the strongest available evidence, in order:
 /// an identical commit means identical code; two build timestamps give both an
 /// order and an age; otherwise a semantic version ordering says which side is
-/// older without saying by how much. When none of that applies the verdict is
+/// older without saying by how much. An equal version with two different
+/// commits is <see cref="HostReleaseDriftStates.Differs"/>, and a host that
+/// names no commit is never <see cref="HostReleaseDriftStates.Current"/>
+/// (AGT-3689). When none of that applies the verdict is
 /// <see cref="HostReleaseDriftStates.Unknown"/> rather than a guess.
 /// </para>
 /// <para>
@@ -63,8 +74,9 @@ public sealed record HostReleaseDriftVerdict(
 /// <see cref="DefaultGrace"/>. "For longer than" reads from the release-age gap
 /// when both build stamps are known, so a host three weeks behind alarms on the
 /// first observation instead of waiting a day after a server restart. When only
-/// the version ordering is known there is no gap to read, so the fallback is how
-/// long this process has continuously observed the drift.
+/// the version ordering is known, or the build only differs, there is no gap to
+/// read, so the fallback is how long this process has continuously observed the
+/// drift.
 /// </para>
 /// </remarks>
 public static class HostReleaseDriftPolicy
@@ -87,38 +99,97 @@ public static class HostReleaseDriftPolicy
         if (CommitsMatch(host.Commit, stable.Commit))
             return Current("The host runs the same commit as Stable.");
 
+        // A host that names no usable commit cannot be confirmed as Stable, so
+        // the strongest verdict it can earn is "behind" (AGT-3689).
+        var hostCommit = UsableCommit(host.Commit);
+        var stableCommit = UsableCommit(stable.Commit);
+        const string NoHostCommit = "The host reported no commit, so its release cannot be confirmed as Stable.";
+
         var behindBy = BuildAgeGap(host.BuiltAt, stable.BuiltAt);
         if (behindBy is not null)
         {
-            return behindBy <= TimeSpan.Zero
-                ? Current("The host build is not older than the Stable build.")
-                : Behind(
+            if (behindBy > TimeSpan.Zero)
+                return Behind(
                     behindBy,
                     nowUtc,
                     firstObservedBehindAtUtc,
                     grace,
                     $"The host build is {Describe(behindBy.Value)} older than the Stable build.");
+            return hostCommit is null
+                ? Unknown(NoHostCommit)
+                : Current("The host build is not older than the Stable build.");
         }
 
         var ordering = CompareVersions(host.Version, stable.Version);
         if (ordering is null)
             return Unknown($"Release '{host.ReleaseId}' cannot be ordered against Stable {stable.Version}.");
+        if (ordering < 0)
+            return Behind(
+                null,
+                nowUtc,
+                firstObservedBehindAtUtc,
+                grace,
+                $"The host runs {host.Version} while Stable runs {stable.Version}.");
+        if (hostCommit is null)
+            return Unknown(NoHostCommit);
         if (ordering > 0)
-            return Current("The host version is not older than Stable.");
-        if (ordering == 0)
-        {
-            if (CommitIsUnusable(host.Commit) || CommitIsUnusable(stable.Commit))
-                return Unknown("The reported commit is not a comparable hexadecimal identity.");
-            return Current("The host version is not older than Stable.");
-        }
+            return Current("The host version is newer than Stable.");
+        if (stableCommit is null)
+            return Unknown("Stable reports no commit, so a host on the same version cannot be compared.");
 
-        return Behind(
-            null,
+        // Same VERSION, different code, no build stamp to say which is older:
+        // that is a different build, never "current" (AGT-3689).
+        return Differs(
             nowUtc,
             firstObservedBehindAtUtc,
             grace,
-            $"The host runs {host.Version} while Stable runs {stable.Version}.");
+            $"The host runs commit {Short(hostCommit)} while Stable runs {Short(stableCommit)}, both as version {stable.Version}.");
     }
+
+    /// <summary>
+    /// The one sentence a review card shows when the release that graded it is
+    /// not the Stable build (AGT-3689), or null when it is, or when there is no
+    /// Stable commit to compare with. Recorded with the report, so a later
+    /// Stable does not rewrite what the grading host was at the time.
+    /// </summary>
+    public static string? GradedAgainstStableNotice(string? workerReleaseId, StableReleaseIdentity? stable)
+    {
+        var release = workerReleaseId?.Trim();
+        if (string.IsNullOrEmpty(release)
+            || string.Equals(release, Contract.ReviewWorkerProvenancePolicy.Unknown, StringComparison.OrdinalIgnoreCase))
+            return null;
+        if (UsableCommit(stable?.Commit) is not { } stableCommit) return null;
+        var reference = $"Stable {stable!.Version} ({Short(stableCommit)})";
+        if (ReleaseIdCommit(release) is not { } commit)
+            return $"graded by release {release}, whose commit is unknown; {reference} cannot be confirmed";
+        return CommitsMatch(commit, stableCommit)
+            ? null
+            : $"graded by release {release} (commit {Short(commit)}), which differs from {reference}";
+    }
+
+    /// <summary>
+    /// The commit a release id names: the <c>+sha.&lt;rev&gt;</c> or
+    /// <c>+&lt;rev&gt;</c> informational form, or the last segment of a
+    /// pipeline-stamped id such as <c>20261109T101203Z-review-3d61e8b0c4ab</c>.
+    /// </summary>
+    internal static string? ReleaseIdCommit(string? releaseId)
+    {
+        var value = releaseId?.Trim();
+        if (string.IsNullOrEmpty(value)) return null;
+        var plus = value.IndexOf('+');
+        if (plus >= 0)
+        {
+            var metadata = value[(plus + 1)..];
+            if (metadata.StartsWith("sha.", StringComparison.OrdinalIgnoreCase)) metadata = metadata[4..];
+            return UsableCommit(metadata.Split('.', 2)[0]);
+        }
+        return ReleaseStamp.IsMatch(value) ? UsableCommit(value.Split('-')[^1]) : null;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex ReleaseStamp = new(
+        @"(?<!\d)\d{8}T(\d{4}|\d{6})Z(?!\d)",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant
+        | System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>
     /// Two release ids describe the same code when their commits agree. Release
@@ -141,6 +212,16 @@ public static class HostReleaseDriftPolicy
         return !string.IsNullOrEmpty(commit)
             && (commit.Length < 7 || !commit.All(Uri.IsHexDigit));
     }
+
+    /// <summary>The trimmed commit when it is a comparable hex sha; otherwise null.</summary>
+    internal static string? UsableCommit(string? value)
+    {
+        var commit = value?.Trim();
+        return string.IsNullOrEmpty(commit) || CommitIsUnusable(commit) ? null : commit;
+    }
+
+    /// <summary>The seven-character form the UI shows next to "Stable 0.9.5".</summary>
+    internal static string Short(string commit) => commit.Length > 7 ? commit[..7] : commit;
 
     /// <summary>Negative when the host is newer, positive when it is older, null when unknown.</summary>
     internal static TimeSpan? BuildAgeGap(DateTime? hostBuiltAt, DateTime? stableBuiltAt)
@@ -174,6 +255,26 @@ public static class HostReleaseDriftPolicy
         DateTime? firstObservedBehindAtUtc,
         TimeSpan? grace,
         string reason)
+        => Drifted(HostReleaseDriftStates.Behind, behindBy, nowUtc, firstObservedBehindAtUtc, grace, reason);
+
+    /// <summary>
+    /// A differing build has no release-age gap, so like a version-only
+    /// "behind" it alarms on how long this process has observed it.
+    /// </summary>
+    private static HostReleaseDriftVerdict Differs(
+        DateTime nowUtc,
+        DateTime? firstObservedAtUtc,
+        TimeSpan? grace,
+        string reason)
+        => Drifted(HostReleaseDriftStates.Differs, null, nowUtc, firstObservedAtUtc, grace, reason);
+
+    private static HostReleaseDriftVerdict Drifted(
+        string state,
+        TimeSpan? behindBy,
+        DateTime nowUtc,
+        DateTime? firstObservedBehindAtUtc,
+        TimeSpan? grace,
+        string reason)
     {
         var observedFor = firstObservedBehindAtUtc is { } since
             ? nowUtc.ToUniversalTime() - since.ToUniversalTime()
@@ -181,7 +282,7 @@ public static class HostReleaseDriftPolicy
         var behindFor = behindBy ?? observedFor;
         if (behindFor < TimeSpan.Zero) behindFor = TimeSpan.Zero;
         return new HostReleaseDriftVerdict(
-            HostReleaseDriftStates.Behind,
+            state,
             behindBy,
             behindFor,
             behindFor > (grace ?? DefaultGrace),

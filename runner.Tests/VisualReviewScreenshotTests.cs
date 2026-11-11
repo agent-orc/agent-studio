@@ -25,7 +25,7 @@ public sealed class VisualReviewScreenshotTests
         {
             var evidence = await VisualReviewScreenshotBundle.CaptureAsync([artifact],
                 (_, _) => Task.FromResult<ArtifactContentDto?>(content), root, default);
-            var image = Assert.Single(Directory.GetFiles(Path.Combine(root, "visual-evidence")));
+            var image = Assert.Single(Directory.GetFiles(Path.Combine(root, "visual-evidence"), "*-image-*"));
             Assert.Equal(bytes, File.ReadAllBytes(image));
             var prompt = VisualReviewScreenshotBundle.PromptSection(evidence, root);
             Assert.Contains(artifact.Name, prompt);
@@ -51,8 +51,14 @@ public sealed class VisualReviewScreenshotTests
     public async Task Missing_screenshot_is_a_named_concern_for_frontend_styles()
     {
         var root = Path.Combine(Path.GetTempPath(), $"visual-review-{Guid.NewGuid():N}");
-        var evidence = await VisualReviewScreenshotBundle.CaptureAsync([], (_, _) =>
-            Task.FromResult<ArtifactContentDto?>(null), root, default);
+        string evidence;
+        try
+        {
+            evidence = await VisualReviewScreenshotBundle.CaptureAsync([], (_, _) =>
+                Task.FromResult<ArtifactContentDto?>(null), root, default);
+            Assert.Equal(evidence, VisualReviewScreenshotBundle.LoadEvidence(root));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
         Assert.Contains("No delivered screenshots", evidence);
         var reportedPass = new ReviewVerdictDto("visual-review", "pass", "RemoteAspectVerdict",
             "Looks fine.", "frontend/src/app/layout/footer.component.scss", "none");
@@ -88,7 +94,7 @@ public sealed class VisualReviewScreenshotTests
             Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
             Assert.True(evidence.IndexOf(after.Name, StringComparison.Ordinal)
                 < evidence.IndexOf(before.Name, StringComparison.Ordinal));
-            Assert.Equal(2, Directory.GetFiles(Path.Combine(root, "visual-evidence")).Length);
+            Assert.Equal(2, Directory.GetFiles(Path.Combine(root, "visual-evidence"), "*-image-*").Length);
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
@@ -140,7 +146,10 @@ public sealed class VisualReviewScreenshotTests
 
             Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
             Assert.StartsWith($"- \"{after.Name}\"", evidence);
-            Assert.Contains("omitted by the 100-image review limit", evidence);
+            Assert.Contains("omitted by the 12-image review limit", evidence);
+            Assert.Contains("bars/before-079.png", evidence);
+            Assert.Contains("further names omitted", evidence);
+            Assert.Equal(12, Directory.GetFiles(Path.Combine(root, "visual-evidence"), "*-image-*").Length);
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
@@ -165,7 +174,29 @@ public sealed class VisualReviewScreenshotTests
 
             Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
             Assert.Contains($"\"{valid.Name}\":", evidence);
-            Assert.Single(Directory.GetFiles(Path.Combine(root, "visual-evidence")));
+            Assert.Single(Directory.GetFiles(Path.Combine(root, "visual-evidence"), "*-image-*"));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task Oversized_screenshot_is_named_without_reading_its_content()
+    {
+        var bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory,
+            "Fixtures", "visual-review", "clean-footer.png"));
+        var oversized = Artifact("large", "bars/after-large.png", bytes) with
+        {
+            SizeBytes = 3L * 1024 * 1024,
+        };
+        var root = Path.Combine(Path.GetTempPath(), $"visual-review-{Guid.NewGuid():N}");
+        try
+        {
+            var evidence = await VisualReviewScreenshotBundle.CaptureAsync([oversized],
+                (_, _) => throw new InvalidOperationException("Oversized image must not be read."), root, default);
+
+            Assert.Contains("bars/after-large.png", evidence);
+            Assert.Contains("2 MiB per-image", evidence);
+            Assert.Empty(Directory.GetFiles(Path.Combine(root, "visual-evidence"), "*-image-*"));
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
@@ -199,7 +230,7 @@ public sealed class VisualReviewScreenshotTests
             Assert.Contains($"\"{failedRead.Name}\": unavailable", evidence);
             Assert.Contains($"\"{invalidContent.Name}\": unavailable", evidence);
             Assert.Contains($"\"{valid.Name}\":", evidence);
-            Assert.Single(Directory.GetFiles(Path.Combine(root, "visual-evidence")));
+            Assert.Single(Directory.GetFiles(Path.Combine(root, "visual-evidence"), "*-image-*"));
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
@@ -228,12 +259,99 @@ public sealed class VisualReviewScreenshotTests
             Assert.Contains("92 more failed screenshots omitted from this list", evidence);
             Assert.StartsWith($"- \"{valid.Name}\"", evidence);
             Assert.Contains($"\"{valid.Name}\":", evidence);
-            Assert.DoesNotContain("omitted by the 100-image review limit", evidence);
+            Assert.DoesNotContain("omitted by the 12-image review limit", evidence);
             Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
-            Assert.Single(Directory.GetFiles(Path.Combine(root, "visual-evidence")));
+            Assert.Single(Directory.GetFiles(Path.Combine(root, "visual-evidence"), "*-image-*"));
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
+
+    [Fact]
+    public async Task Webp_after_screenshot_uploaded_as_octet_stream_is_readable_evidence()
+    {
+        var bytes = VisualScreenshotFixture.Webp(1920, 1080);
+        var artifact = VisualScreenshotFixture.Artifact("after", "run-1", "bars/after-1920-light.webp",
+            "application/octet-stream", bytes);
+        var root = Path.Combine(Path.GetTempPath(), $"visual-review-{Guid.NewGuid():N}");
+        try
+        {
+            Assert.True(VisualReviewEvidence.IsScreenshot(artifact));
+            var evidence = await VisualReviewScreenshotBundle.CaptureAsync([artifact],
+                (_, _) => Task.FromResult<ArtifactContentDto?>(VisualScreenshotFixture.Content(artifact, bytes)),
+                root, default);
+
+            Assert.StartsWith($"- \"{artifact.Name}\"", evidence);
+            Assert.Contains("after-image-01.webp", evidence);
+            Assert.True(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
+            Assert.Equal(evidence, VisualReviewScreenshotBundle.LoadEvidence(root));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task Image_extension_without_an_image_header_is_rejected_whatever_its_media_type()
+    {
+        var bytes = "not an image"u8.ToArray();
+        var artifact = VisualScreenshotFixture.Artifact("text", "run-1", "bars/after-1920-light.png",
+            "image/png", bytes);
+        var root = Path.Combine(Path.GetTempPath(), $"visual-review-{Guid.NewGuid():N}");
+        try
+        {
+            var evidence = await VisualReviewScreenshotBundle.CaptureAsync([artifact],
+                (_, _) => Task.FromResult<ArtifactContentDto?>(VisualScreenshotFixture.Content(artifact, bytes)),
+                root, default);
+
+            Assert.Contains($"\"{artifact.Name}\": invalid image", evidence);
+            Assert.False(VisualReviewScreenshotBundle.HasReadableAfterScreenshot(root));
+            Assert.Equal(evidence, VisualReviewScreenshotBundle.LoadEvidence(root));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task Screenshot_removed_after_preparation_is_named_unavailable_on_reload()
+    {
+        var bytes = VisualScreenshotFixture.Png(320, 180);
+        var artifact = VisualScreenshotFixture.Artifact("after", "run-1", "bars/after-1920-dark.png",
+            "image/png", bytes);
+        var root = Path.Combine(Path.GetTempPath(), $"visual-review-{Guid.NewGuid():N}");
+        try
+        {
+            var evidence = await VisualReviewScreenshotBundle.CaptureAsync([artifact],
+                (_, _) => Task.FromResult<ArtifactContentDto?>(VisualScreenshotFixture.Content(artifact, bytes)),
+                root, default);
+            Assert.EndsWith(" (dark theme)", evidence);
+            File.Delete(Path.Combine(root, VisualReviewScreenshotBundle.DirectoryName, "after-image-01.png"));
+
+            Assert.Equal($"- \"{artifact.Name}\": unavailable after preparation",
+                VisualReviewScreenshotBundle.LoadEvidence(root));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Attempt_without_a_screenshot_index_has_no_delivered_screenshots()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"visual-review-{Guid.NewGuid():N}");
+        Assert.Equal(VisualReviewScreenshotBundle.NoScreenshots, VisualReviewScreenshotBundle.LoadEvidence(root));
+    }
+
+    [Theory]
+    [InlineData("results/bars/after-1920-light.webp", "image/webp")]
+    [InlineData("results/bars/after-1920-light.WEBP", "image/webp")]
+    [InlineData("results/bars/after-1920-light.png", "image/png")]
+    [InlineData("results/bars/after-1920-light.jpeg", "image/jpeg")]
+    public void Coding_runner_uploads_screenshots_with_an_image_media_type(string path, string expected)
+        => Assert.Equal(expected, TaskServerClient.MediaTypeForPath(path));
+
+    [Theory]
+    [InlineData("bars/after-1920-light.png", "light")]
+    [InlineData("bars/dark/after-1920.png", "dark")]
+    [InlineData("bars/after_1920_DARK.webp", "dark")]
+    [InlineData("bars/highlight-1920.png", null)]
+    [InlineData("bars/after-1920.png", null)]
+    public void Screenshot_theme_is_read_from_the_delivered_name(string name, string? expected)
+        => Assert.Equal(expected, VisualReviewScreenshotBundle.Theme(name));
 
     [Theory]
     [InlineData("bars/before-1920-light.png", false)]

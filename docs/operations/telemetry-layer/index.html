@@ -202,7 +202,7 @@
     <tr>
       <td><b>Git process telemetry</b></td>
       <td><code>backend/Features/Git/GitProcessTelemetry.cs</code>, namespace <code>AgentStudio.Git</code>; scopes are opened by Docs, Git, Tasks, and Publishing services.</td>
-      <td>Structured <code>ILogger</code> rollups and slow-spawn warnings. Serilog writes console plus the backend file log; <code>api.sh</code> captures <code>.api.log.out</code> and <code>.api.log.err</code>.</td>
+      <td>Structured <code>ILogger</code> rollups and slow-spawn warnings. Serilog writes console plus the backend file log; <code>api.sh</code> captures <code>.api.&lt;port&gt;.log.out</code> and <code>.api.&lt;port&gt;.log.err</code>.</td>
       <td>Per-request spawn count, summed Git time, file reads, wall time, command breakdown, and a <span class="num">1,500 ms</span> slow-spawn warning.</td>
       <td>Not a durable cross-app event and has no stable error or friction fingerprint.</td>
     </tr>

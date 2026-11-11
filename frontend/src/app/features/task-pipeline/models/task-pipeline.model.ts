@@ -535,6 +535,8 @@ export interface TaskPipelineResponse {
   onDemand?: {
     plannedStepIds: string[];
     attempts: OnDemandPostStepAttempt[];
+    /** Missing review steps the Review results action can run for this card (AGT-3565). */
+    runnableStepIds?: string[];
   };
 }
 

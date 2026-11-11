@@ -23,6 +23,7 @@ describe('ExecutionInfrastructureComponent', () => {
     await fixture.whenStable();
     fixture.detectChanges();
     const form = fixture.nativeElement.querySelector('[data-testid="gate-capacity-settings"]') as HTMLElement;
+    expect(fixture.nativeElement.querySelectorAll('[data-testid="one-shot-route-status"]')).toHaveLength(1);
     expect(form.textContent).toContain('1 of 5 reported host slots in use');
     const slots = form.querySelector('input[name="slots"]') as HTMLInputElement;
     slots.value = '4';
