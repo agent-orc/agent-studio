@@ -447,6 +447,33 @@ public sealed class DeliveryFailureDiagnosisTests
             normalized.FailureClassification);
     }
 
+    /// <summary>
+    /// AGT-3650: a passing clean repeat records how it showed the failed tests
+    /// ran. Only a known level on a passing repeat is admitted.
+    /// </summary>
+    [Theory]
+    [InlineData(ReviewRepeatObservation.TestNames, 0, true)]
+    [InlineData(ReviewRepeatObservation.TestFiles, 0, true)]
+    [InlineData("guessed", 0, false)]
+    [InlineData(ReviewRepeatObservation.TestFiles, 1, false)]
+    public void Repeat_observation_is_admitted_only_as_a_known_level_on_a_passing_repeat(
+        string observation, int exitCode, bool valid)
+    {
+        var failed = FailedCommand("tests", DeliveryFailureDiagnosis.Intermittent, false) with
+        {
+            RetryPerformed = true,
+            InitialFailures = ["src/lease.spec.ts > lease > renews"],
+        };
+        var repeat = failed with
+        {
+            Phase = "clean-repeat", WorkspaceRole = "clean-repeat", ExitCode = exitCode,
+            Diagnosis = null, RepeatObservation = observation,
+        };
+
+        Assert.Equal(valid, ReviewRepeatFilterPolicy.IsValid(repeat, [failed, repeat]));
+        Assert.False(ReviewRepeatFilterPolicy.IsValid(failed with { RepeatObservation = observation }, [failed]));
+    }
+
     [Fact]
     public void Semantic_flake_claim_without_measured_repeat_cannot_pass_the_grade()
     {
