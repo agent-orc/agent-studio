@@ -78,6 +78,7 @@ public sealed class TaskArtifactsSourceTests : IDisposable
     [Theory]
     [InlineData("task.json", 10, true)]
     [InlineData("prompt.md", 10, true)]
+    [InlineData(".metadata/brief-version", 64, true)]
     [InlineData("integration-verification.json", 10, true)]
     [InlineData("results/report.html", 10, true)]
     [InlineData("results/huge.zip", 17L * 1024 * 1024, false)]
