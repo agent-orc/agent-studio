@@ -3486,6 +3486,13 @@ public sealed class RemoteReviewWorkspace
             source = await HostSourceObjectCache.MaterializeAsync(sourceUrl,
                 resultRef, _subject.ExpectedResultSha, RepositoryPath, Run, _utcNow, ct, sparsePaths);
         }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
+            or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            throw new ReviewInfrastructureException("SourceUnavailable",
+                $"Review source materialization failed at '{RepositoryPath}' "
+                + $"using cache '{HostSourceObjectCache.Root}': {exception.Message}", exception);
+        }
         catch (ReviewInfrastructureException exception) when (credential is null
             && exception.Classification == "SnapshotUnavailable"
             && LooksLikeMissingReadAccess(exception.Message))
@@ -3706,9 +3713,21 @@ public sealed class RemoteReviewWorkspace
             bool _, CancellationToken token)
             => await ProcessRunner.RunAsync("git", ["-c", "credential.helper=", .. args], cwd,
                 environment: ProcessEnvironment(), clearEnvironment: true, ct: token);
-        var (bytes, ready) = await HostSourceObjectCache.MaterializeBundleAsync(
-            _subject.SourceBundleSha256!, _subject.ExpectedResultSha, RepositoryPath,
-            Download, Run, _utcNow, ct, sparsePaths);
+        (long bytes, TimeSpan ready) source;
+        try
+        {
+            source = await HostSourceObjectCache.MaterializeBundleAsync(
+                _subject.SourceBundleSha256!, _subject.ExpectedResultSha, RepositoryPath,
+                Download, Run, _utcNow, ct, sparsePaths);
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
+            or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            throw new ReviewInfrastructureException("SourceUnavailable",
+                $"Review source materialization failed at '{RepositoryPath}' "
+                + $"using cache '{HostSourceObjectCache.Root}': {exception.Message}", exception);
+        }
+        var (bytes, ready) = source;
         _log($"review_source_ready subject={_subject.SubjectId} bytes={bytes} ready_ms={ready.TotalMilliseconds:F0}");
     }
 

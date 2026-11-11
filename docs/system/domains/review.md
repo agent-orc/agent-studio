@@ -12,8 +12,18 @@ changed by the delivery before the gate tests the resulting tree. Catalogue
 discovery keeps its managed key mutation for descriptors outside a gated
 delivery.
 
-Version: 2026-11-09
+Version: 2026-11-11
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
+
+## Host source cache startup
+
+The review daemon creates and validates an absolute host source cache root before
+it starts background work or claims reviews. On Linux, `XDG_CACHE_HOME` selects
+the base when set; otherwise the daemon uses `HOME/.cache`. Windows uses Local
+Application Data with folder creation enabled. A missing, relative, or
+uncreatable root stops the daemon with the path and cause. Source materialization
+failures during an attempt report `ReviewInfra/SourceUnavailable` with the
+repository and cache paths, rather than being mistaken for a lost worker.
 
 ## Aspect prompt cache
 
