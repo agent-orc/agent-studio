@@ -46,6 +46,18 @@ public sealed class BatchGateStoreTests : IDisposable
     }
 
     [Fact]
+    public void State_exposes_batch_phase_time_for_interrupted_run_duration()
+    {
+        var manifest = Close();
+        var phase = _store.LatestState(manifest.BatchId);
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var batch = Assert.Single(state.GetProperty("batches").EnumerateArray());
+        Assert.Equal(phase.RecordedAtUtc, batch.GetProperty("phaseAtUtc").GetDateTimeOffset());
+    }
+
+    [Fact]
     public void State_names_review_fix_wait_before_batch_admission()
     {
         var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
@@ -233,7 +245,7 @@ public sealed class BatchGateStoreTests : IDisposable
         var run = new BatchGateRunRecord("timeline-run", manifest.BatchId,
             manifest.MembershipDigest, Base, Next, "full", "digest", "host", 1,
             ["dotnet test"], Now.AddMinutes(30), evidence);
-        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+        BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Assembled, Next, 1, Now.AddMinutes(29)));
         _store.RecordRun(run);
         _store.RecordVerdict(new BatchGateRunVerdict(run.BatchRunId, manifest.BatchId,
@@ -411,6 +423,8 @@ public sealed class BatchGateStoreTests : IDisposable
         var stateFolder = Path.Combine(_store.BatchDirectory(manifest.BatchId), "state");
         Directory.Delete(stateFolder, recursive: true);
         if (keepEmptyStateFolder) Directory.CreateDirectory(stateFolder);
+        // AGT-3563: the phase record is the commit point, so "without state" means neither.
+        File.Delete(Path.Combine(_store.BatchDirectory(manifest.BatchId), "phase.json"));
 
         Assert.Equal(BatchPhase.Unknown, _store.LatestState(manifest.BatchId).Phase);
         Assert.DoesNotContain(_store.ListRecoverableManifests(),
@@ -564,7 +578,7 @@ public sealed class BatchGateStoreTests : IDisposable
         var run = new BatchGateRunRecord("run-1", manifest.BatchId,
             manifest.MembershipDigest, Base, Next, "full", "digest", "host", 1,
             ["dotnet test"], Now, evidence);
-        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+        BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Assembled, Next, 1, Now));
         _store.RecordRun(run);
         Assert.False(_store.CanRelease(member, manifest.BatchId, run.BatchRunId));

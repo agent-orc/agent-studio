@@ -1,3 +1,5 @@
+using AgentStudio.Shared;
+
 namespace AgentStudio.Watcher;
 
 /// <summary>Facts from the existing host, attempt, gate, lane and deployment projections.</summary>
@@ -34,7 +36,8 @@ public sealed record ProviderStallFact(string Host, string Provider, string Fail
     DateTime SinceUtc, IReadOnlyList<string> Cards, string? LogExcerpt = null);
 public sealed record GateStallFact(string Project, string Plan, bool PlanIdle,
     int PendingCount, DateTime? OldestPendingUtc, IReadOnlyList<string> Cards,
-    IReadOnlyList<string> AlreadyCompletedCards);
+    IReadOnlyList<string> AlreadyCompletedCards, string Phase = "pending",
+    DateTime? PhaseStartedUtc = null, int GateTimeoutMinutes = 150);
 public sealed record LaneStallFact(string Project, string Lane, string Card,
     DateTime EnteredUtc, string? Evidence = null);
 public sealed record DeployStallFact(string Host, string Service, string? ExpectedVersion,
@@ -43,7 +46,7 @@ public sealed record DeployStallFact(string Host, string Service, string? Expect
 public sealed record OperationalStallThresholds(
     double HostTargetPercent = 85, int HostOverloadMinutes = 10,
     double MemoryUsedPercent = 90, double SwapBytesPerSecond = 65536,
-    int IdleWaitMinutes = 15, int GatePendingHours = 2,
+    int IdleWaitMinutes = 15,
     int LaneBudgetHours = 24, int HostHeartbeatMinutes = 10,
     int FleetClaimStallMinutes = 10);
 
@@ -141,22 +144,29 @@ public static class OperationalStallDetector
                 provider.LogExcerpt, cards: provider.Cards);
         foreach (var gate in facts.Gates.Where(x => x.PendingCount > 0))
         {
-            var aged = gate.OldestPendingUtc is { } since
-                && nowUtc - since >= TimeSpan.FromHours(thresholds.GatePendingHours);
-            if (!gate.PlanIdle && !aged && gate.AlreadyCompletedCards.Count == 0) continue;
-            var sinceUtc = gate.OldestPendingUtc ?? nowUtc;
+            var gateSince = gate.PhaseStartedUtc ?? gate.OldestPendingUtc;
+            var timedOut = gateSince is { } started
+                && nowUtc - started >= TimeSpan.FromMinutes(gate.GateTimeoutMinutes);
+            if (!gate.PlanIdle && !timedOut) continue;
+            var sinceUtc = gateSince ?? nowUtc;
+            var age = Math.Max(0, (int)(nowUtc - sinceUtc).TotalMinutes);
             AddScoped("batch-gate-stuck", $"gate:{gate.Project}:{gate.Plan}", "critical", sinceUtc,
-                $"Batch gate {gate.Plan} has {gate.PendingCount} pending members"
-                + (gate.PlanIdle ? " while its plan is idle" : "")
-                + (gate.AlreadyCompletedCards.Count > 0 ? $"; {gate.AlreadyCompletedCards.Count} are already completed" : "") + ".",
-                gate.PendingCount, "Reconcile completed members and restart the eligible gate plan.", null,
-                [("pendingCount", gate.PendingCount), ("completedCount", gate.AlreadyCompletedCards.Count)],
+                $"Batch {gate.Plan} is {gate.Phase} for {age} min with {gate.PendingCount} pending members"
+                + (gate.AlreadyCompletedCards.Count > 0 ? $"; {gate.AlreadyCompletedCards.Count} are already completed" : "")
+                + ". No automatic next step is recorded.",
+                gate.PendingCount, "Open the batch panel to inspect the queue and available actions.", null,
+                [("pendingCount", gate.PendingCount), ("completedCount", gate.AlreadyCompletedCards.Count),
+                 ("gateTimeoutMinutes", gate.GateTimeoutMinutes)],
                 project: gate.Project, cards: gate.Cards);
         }
         foreach (var lane in facts.Lanes.Where(x => nowUtc - x.EnteredUtc >= TimeSpan.FromHours(thresholds.LaneBudgetHours)))
             AddScoped("lane-stall", $"card:{lane.Card}:{lane.Lane}", "warning", lane.EnteredUtc,
                 $"{lane.Card} has stayed in {lane.Lane} beyond its {thresholds.LaneBudgetHours}h budget.", 1,
-                "Inspect the lane's pending action and resume or escalate it.", lane.Evidence,
+                lane.Lane == TaskStates.HumanReview
+                    ? "Open the card and decide acceptance or integration."
+                    : lane.Lane == TaskStates.AutoReview
+                        ? "Open the card and resolve its pending review gate."
+                        : "Open the card and resolve the blocked lane action.", lane.Evidence,
                 project: lane.Project, cards: [lane.Card]);
         foreach (var deploy in facts.Deployments.Where(x => x.StartError is not null
             || x.ExpectedVersion is not null && x.RunningVersion != x.ExpectedVersion))

@@ -12,10 +12,9 @@ namespace AgentStudio.Management;
 public sealed record BackupCheckout(string Path, string? Origin, string? Branch, string? Bundle);
 
 /// <summary>
-/// Project checkouts come back from their remotes; only what exists nowhere
-/// else travels in the archive: <c>refs/agent-studio/*</c> (or every ref for a
-/// checkout without <c>origin</c>) as a Git bundle. Worktrees are skipped:
-/// their branches live in the main checkout and on the remote.
+/// Project checkouts come back from their remotes. Every local ref travels in
+/// a Git bundle so branches and commits not pushed to the remote survive.
+/// Worktree directories are skipped; their refs live in the main checkout.
 /// </summary>
 public static partial class BackupCheckouts
 {
@@ -48,13 +47,10 @@ public static partial class BackupCheckouts
         if (string.IsNullOrWhiteSpace(branch)) branch = null;
 
         string? bundle = null;
-        string[] selection = origin is null ? ["--all"] : ["--glob=refs/agent-studio/*"];
-        var refs = Git(checkout, origin is null
-            ? ["for-each-ref", "--count=1"]
-            : ["for-each-ref", "--count=1", "refs/agent-studio/"]);
+        var refs = Git(checkout, ["for-each-ref", "--count=1"]);
         if (refs.Success && refs.StandardOutput.Trim().Length > 0)
         {
-            var created = Git(checkout, ["bundle", "create", "-q", bundlePath, .. selection]);
+            var created = Git(checkout, ["bundle", "create", "-q", bundlePath, "--all"]);
             if (!created.Success)
                 throw new BackupException("backup-bundle-failed",
                     $"git bundle failed for {Path.GetRelativePath(projectsRoot, checkout)}: {created.StandardError.Trim()}");
@@ -110,17 +106,19 @@ public static partial class BackupCheckouts
     }
 
     /// <summary>Restore: fetches the refs a bundle carries into the restored checkout.</summary>
-    public static void FetchBundle(string repository, string bundle, bool allRefs, string? branch)
+    public static void FetchBundle(string repository, string bundle, string? branch)
     {
-        string[] refspec = allRefs ? ["+refs/*:refs/*"] : ["+refs/agent-studio/*:refs/agent-studio/*"];
-        var fetched = Git(repository, ["fetch", "--update-head-ok", "-q", bundle, .. refspec]);
+        var fetched = Git(repository, ["fetch", "--update-head-ok", "-q", bundle, "+refs/*:refs/*"]);
         if (!fetched.Success)
             throw new BackupException("restore-bundle-failed", $"git fetch from the bundle failed: {fetched.StandardError.Trim()}");
-        if (allRefs && branch is not null)
+        if (branch is not null)
         {
             var checkout = Git(repository, ["checkout", "-q", branch]);
             if (!checkout.Success)
                 throw new BackupException("restore-bundle-failed", $"git checkout {branch} failed: {checkout.StandardError.Trim()}");
+            var reset = Git(repository, ["reset", "--hard", "-q", branch]);
+            if (!reset.Success)
+                throw new BackupException("restore-bundle-failed", $"git reset {branch} failed: {reset.StandardError.Trim()}");
         }
     }
 

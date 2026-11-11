@@ -1709,7 +1709,7 @@ public class ProjectRunner
     {
         if (_globalBreakerCooldownUntil is { } until)
             return new RunnerPickupWait(RunnerPickupWaitCodes.BreakerCooldown,
-                $"Auto-pickup is cooling down after a circuit-breaker trip and resumes at {until:O}.");
+                $"Auto-pickup is cooling down after a circuit-breaker trip ({_globalBreakerReason ?? "unknown cause"}) and resumes at {until:O}.");
         return _mode == "paused"
             ? new RunnerPickupWait(RunnerPickupWaitCodes.Paused,
                 "The runner is paused; no card is picked until auto-pickup is enabled again.")

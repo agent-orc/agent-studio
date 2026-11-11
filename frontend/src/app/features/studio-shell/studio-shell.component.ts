@@ -81,23 +81,8 @@ import { WorkspaceDeploymentDashboardComponent } from '../deployments';
 import { TaskDefaultsControlComponent } from './components/task-defaults-control/task-defaults-control';
 import { DevelopStateIndicatorComponent } from './components/develop-state-indicator/develop-state-indicator.component';
 import { AttentionControlComponent } from './components/attention-control/attention-control';
-/** Canonicalise project storage paths so titlebar workspace lookup survives
- * slash style, trailing separator, and case differences. */
-function normalizeStorage(path: string): string {
-  return path.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
-}
-
-/** Brand swatches per CLI — matches the status-bar glyph colours so the
- *  Sidebar CLI panel reads the same on first glance. */
-function cliColorFor(cli: string): string {
-  switch (cli) {
-    case 'claude':  return '#d97757';
-    case 'codex':   return '#569cd6';
-    case 'gemini':  return '#c586c0';
-    default:        return '#6e6e6e';
-  }
-}
-
+import type { MagazineChild } from '../magazine/magazine-view/magazine-view';
+import { cliColorFor, normalizeStorage } from './studio-shell.utils';
 
 /**
  * Top-level "Agent Software Studio" shell — the VS-Code-inspired chrome
@@ -166,12 +151,26 @@ export class StudioShellComponent {
   private readonly themeService = inject(ThemeService);
   readonly orchestratorFeed = inject(OrchestratorFeedStore);
   private readonly authSession = inject(AuthSessionState);
+  openInstallationMagazine(): void { this.tabState.open({ kind: 'magazine', scope: 'installation', label: 'Installation' }); }
+  openWorkspaceMagazine(id: string, label: string): void { this.tabState.open({ kind: 'magazine', scope: `workspace:${id}`, label }); }
+  magazineProjects(): MagazineChild[] { return this.registryProjects().map(project => ({ scope: `project:${project.id}`, label: project.displayName })); }
+  magazineChildren(scope: string): MagazineChild[] {
+    if (scope === 'installation') return this.registryWorkspaces().map(ws => ({ scope: `workspace:${ws.id}`, label: ws.displayName }));
+    if (scope.startsWith('workspace:')) return this.registryProjects().filter(project => project.workspaceId === scope.slice(10)).map(project => ({ scope: `project:${project.id}`, label: project.displayName }));
+    return [];
+  }
 
   /** Tab list + active selection re-exposed for the template. */
   readonly tabs = this.tabState.tabs;
   readonly activeKey = this.tabState.activeKey;
   readonly activeTab = this.tabState.activeTab;
   readonly structureComponent = signal<Type<unknown> | null>(null);
+  readonly magazineComponent = signal<Type<unknown> | null>(null);
+  private readonly magazineLoader = effect(() => {
+    if (this.activeTab()?.kind === 'magazine' && !this.magazineComponent()) {
+      void import('../magazine/magazine-view/magazine-view').then(module => this.magazineComponent.set(module.MagazineViewComponent));
+    }
+  });
   private readonly structureLoader = effect(() => {
     if (this.activeTab()?.kind === 'structure' && !this.structureComponent()) {
       void import('../structure/structure-view/structure-view.component').then(module =>
@@ -180,7 +179,6 @@ export class StudioShellComponent {
   });
   readonly tabKey = studioTabKey;
   private readonly tabElements = viewChildren<ElementRef<HTMLElement>>('studioTab');
-
   @HostListener('keydown', ['$event'])
   onDocumentHistoryShortcut(event: KeyboardEvent): void {
     if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
@@ -203,7 +201,7 @@ export class StudioShellComponent {
   private keepActiveTabVisible(behavior: ScrollBehavior): void {
     const activeKey = this.activeKey();
     const tabs = this.tabs();
-    if (!activeKey || !tabs.some(tab => studioTabKey(tab) === activeKey)) return;
+    if (tabs.length <= 1 || !activeKey || !tabs.some(tab => studioTabKey(tab) === activeKey)) return;
 
     const activeElement = this.tabElements()
       .find(ref => ref.nativeElement.dataset['tabKey'] === activeKey)
@@ -1142,6 +1140,8 @@ export class StudioShellComponent {
         return tab.projectName === '__all__' ? 'All projects · Board' : `${this.projectShortLabel(tab.projectName)} · Board`;
       case 'feed':
         return 'Activity across projects';
+      case 'magazine':
+        return `${tab.label} · Magazine`;
       case 'workbenches':
         return 'Dossiers';
       case 'task': {

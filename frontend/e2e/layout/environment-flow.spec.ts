@@ -30,7 +30,7 @@ test('environment view refreshes and fits light and dark desktop widths', async 
         deployed: null, completed: 2, readyToIntegrationMedianMinutes: 150 },
       lanes: [{ lane: '2-ready', entered: 5, left: 4, medianMinutes: 45 }],
       queues: [{ queue: 'Coding', waiting: 3, oldestWaitMinutes: 90, throughputPerHour: 0.2 }],
-      waitingReasons: [{ reason: 'Waiting for coding slot', count: 3 }],
+      waitingReasons: [{ reason: 'Execution placement', count: 9 }],
     } });
   });
   await page.route('**/api/watcher/cases', route => route.fulfill({ json: { cases: [{
@@ -73,8 +73,14 @@ test('environment view refreshes and fits light and dark desktop widths', async 
   };
   const openEnvironment = async () => {
     const inline = page.getByTestId('studio-titlebar-environment');
-    await expect(inline).toBeVisible();
-    await inline.click();
+    if ((page.viewportSize()?.width ?? 0) >= 760) {
+      await expect(inline).toBeVisible();
+      await inline.click();
+    }
+    else {
+      await page.getByRole('button', { name: 'More navigation' }).click();
+      await page.getByRole('menuitem', { name: 'Environment' }).click();
+    }
   };
   await openEnvironment();
   const view = page.getByTestId('environment-flow');
@@ -82,6 +88,8 @@ test('environment view refreshes and fits light and dark desktop widths', async 
   await expect(view.getByText('Ready to integration median: 2.5 h.')).toBeVisible();
   await expect(view.getByText('AI Operator: observe · succeeded')).toBeVisible();
   await expect(view.getByRole('cell', { name: '3', exact: true })).toBeVisible();
+  await expect(view.getByRole('rowheader', { name: 'Ready' })).toBeVisible();
+  await expect(view.getByText('Execution placement 9')).toBeVisible();
   const verified = view.locator('[data-host-id="kori-review-1"]').getByTestId('environment-host-zone-policy');
   await expect(verified).toHaveAttribute('data-zone-policy-state', 'verified');
   await expect(verified).toContainText('work · 2026-10-20.1');
@@ -92,6 +100,8 @@ test('environment view refreshes and fits light and dark desktop widths', async 
   await expect(failed).toContainText('observed connected');
   const output = process.env.JOB_RESULTS_DIR ?? join(process.cwd(), 'test-results');
   mkdirSync(output, { recursive: true });
+  await view.getByRole('heading', { name: 'Waiting reasons now' }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(output, 'environment-waits-1280-light--mocked.png') });
   await view.locator('[data-host-id="kori-review-1"]').scrollIntoViewIfNeeded();
   await expect(view.locator('[data-host-id="kori-review-1"] [data-attempt-id]')).toHaveCount(0);
   await page.screenshot({ path: join(output, 'environment-1280-light.png') });
@@ -120,6 +130,8 @@ test('environment view refreshes and fits light and dark desktop widths', async 
   await expect(page.locator('html')).toHaveAttribute('data-studio-theme', 'dark');
   await openEnvironment();
   await expect(view).toBeVisible();
+  await view.getByRole('heading', { name: 'Waiting reasons now' }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(output, 'environment-waits-1920-dark--mocked.png') });
   await page.screenshot({ path: join(output, 'environment-1920-dark.png') });
   for (const stage of ['empty', 'running', 'terminal', 'orphan'] as const) {
     attemptStage = stage;
@@ -131,4 +143,10 @@ test('environment view refreshes and fits light and dark desktop widths', async 
   }
   const box = await view.boundingBox();
   expect(box?.width).toBe(1920);
+  await view.getByRole('button', { name: 'Close environment view' }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openEnvironment();
+  await expect(view.getByText('Execution placement 9')).toBeVisible();
+  await view.getByRole('heading', { name: 'Waiting reasons now' }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(output, 'environment-390-dark--mocked.png') });
 });
