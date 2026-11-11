@@ -118,7 +118,7 @@ describe('WorkbenchDecisionPanelComponent', () => {
       '[data-testid="workbench-decision-feature-confirmation"]');
     expect(confirmation.textContent).toContain('Direct path');
     expect((confirmation.querySelector('[data-testid="workbench-decision-goal"]') as HTMLTextAreaElement).value)
-      .toContain('Recorded decisions');
+      .toBe('Implement Routing policy according to the source Dossier and its recorded decisions.');
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-draft-notice"]')
       .textContent).toContain('Draft saved');
 

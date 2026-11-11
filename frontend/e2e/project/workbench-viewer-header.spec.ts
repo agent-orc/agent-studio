@@ -692,6 +692,7 @@ test('compact viewer head centers controls and exposes honest live status with o
 }, testInfo) => {
   const capture = await installMocks(page);
   await seedWorkbench(page);
+  await page.route('**/hubs/v1/studio**', route => route.abort());
   await page.goto('/');
   await page.addStyleTag({
     content: '[data-testid="offline-banner"] { display: none !important; }',
@@ -719,7 +720,8 @@ test('compact viewer head centers controls and exposes honest live status with o
   await page.getByTestId('workbench-viewer-task-VHE-11').hover();
   const laneTooltip = page.getByTestId('workbench-viewer-task-VHE-11-tooltip');
   await expect(laneTooltip).toContainText(primaryTask.title);
-  await expect(laneTooltip).toContainText('In Progress · Viewer Header Evidence');
+  await expect(laneTooltip).toContainText('Lane: In Progress');
+  await expect(laneTooltip).toContainText('Project: Viewer Header Evidence');
   await expect(laneTooltip).toContainText('develop: merged · main: open');
   const laneTooltipBox = await laneTooltip.boundingBox();
   const initialViewport = page.viewportSize();

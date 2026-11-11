@@ -888,6 +888,16 @@ test.describe('Overview agent-run metrics fix (tokens + cumulative duration)', (
       await expect(page.getByTestId('pane-tabs-overflow-panel')).toBeVisible();
       const docsOverflowItem = page.getByTestId('pane-tabs-overflow-item-description');
       await expect(docsOverflowItem).toContainText('Docs');
+      await docsOverflowItem.click();
+      await expect(page.getByTestId('docs-index')).toBeVisible();
+      const overviewTab = page.getByTestId('prompt-tab-overview');
+      if (await overviewTab.isVisible()) {
+        await overviewTab.click();
+      } else {
+        await promptOverflow.click();
+        await page.getByTestId('pane-tabs-overflow-item-overview').click();
+      }
+      await promptOverflow.click();
       await expect(docsOverflowItem.getByText('4', { exact: true })).toBeVisible();
       await page.keyboard.press('Escape');
       await expect(page.getByTestId('pane-tabs-overflow-panel')).toBeHidden();

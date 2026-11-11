@@ -531,7 +531,10 @@ test('failed Dossier confirmation removes its new task and explains the outcome'
   await page.goto('/');
   const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
   await frame.locator('[data-option-id="option-a"] input').check();
+  await frame.locator('[data-studio-decision-host-slot]').scrollIntoViewIfNeeded();
   const inline = page.getByTestId('workbench-inline-decision-action');
+  await expect.poll(() => inline.evaluate(element => getComputedStyle(element).pointerEvents))
+    .toBe('auto');
   await inline.getByTestId('workbench-decision-start').click();
   await inline.getByTestId('workbench-decision-confirm').click();
   await expect.poll(() => captured.deletedTaskIds).toEqual(['naming-feature-1']);
