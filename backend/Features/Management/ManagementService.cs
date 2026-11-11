@@ -423,8 +423,15 @@ public sealed class ManagementService
         try
         {
             var record = Backups.CreateAsync(BackupAudit.ManualPrefix + actor, CancellationToken.None).GetAwaiter().GetResult();
+            var copyState = record.Upload?.State switch
+            {
+                "uploaded" => "Copied off-host.",
+                "failed" => "Off-host copy failed. The archive remains on this host; wait for Copied before moving it.",
+                "pending" => "Off-host copy pending. Wait for Copied before moving this host.",
+                _ => "No off-host target is configured. The archive remains on this host.",
+            };
             return Result("backup-create", false, 1, 1,
-                $"Created encrypted backup {record.Id} ({record.FileCount} files).", actor, key, record);
+                $"Created encrypted backup {record.Id} ({record.FileCount} files). {copyState}", actor, key, record);
         }
         catch (BackupException ex) { throw new ManagementException(409, ex.Code + ": " + ex.Message); }
     }

@@ -1,3 +1,5 @@
+using AgentStudio.Security;
+
 namespace AgentStudio.Management;
 
 /// <param name="Destinations">Archive source name to target directory; a source without one is skipped.</param>
@@ -130,6 +132,11 @@ public static class BackupRestore
                     Directory.CreateDirectory(relative.Length == 0 ? root : Resolve(root, relative));
                     directories++;
                 });
+            // Only an installation restore has an explicit workspace target. A
+            // scheduled verification uses EverySourceUnder and must leave the
+            // archived bytes intact while checking their hashes.
+            if (destinations.TryGetValue("workspace", out var workspace) && plan.EverySourceUnder is null)
+                RestoreSecurityNotice.MarkRestored(workspace, manifest.Id, manifest.CreatedAt);
             return new BackupRestoreResult(manifest, contents, files, directories, cloned, skipped);
         }
         catch

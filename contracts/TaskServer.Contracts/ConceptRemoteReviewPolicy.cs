@@ -33,7 +33,7 @@ public static class ConceptRemoteReviewPolicy
                 $"The frozen concept-fit prompt does not match the ReviewSubject brief version: plan {plan.BriefSha256 ?? "missing"}, subject {subjectBriefSha256}. A new review is required.");
         if (!string.Equals(subjectBriefSha256, currentBriefSha256, StringComparison.OrdinalIgnoreCase))
             return Fail(report,
-                $"The concept brief changed after the ReviewSubject was created: reviewed prompt.md SHA-256 {subjectBriefSha256}, current prompt.md SHA-256 {currentBriefSha256}. A new review against the current brief is required.");
+                $"The concept brief changed after the ReviewSubject was created: reviewed authored version {subjectBriefSha256}, current authored version {currentBriefSha256}. A new review against the current brief is required.");
         if (report.Outcome is "ReviewInfra" or "Cancellation")
             return report;
         if (!plan.RequiredAspects.Contains("concept-fit", StringComparer.OrdinalIgnoreCase)

@@ -51,15 +51,29 @@ export interface ConfirmDialogOptions {
   requireTypedValues?: string[];
   /** Label shown above the type-to-confirm input. */
   requireTypedPrompt?: string;
+  /**
+   * Written-reason gate (AGT-3624). When set, the dialog renders a text area
+   * and keeps the confirm button disabled until the trimmed reason has at
+   * least `minLength` characters. Use `ConfirmDialogService.confirmWithReason`
+   * to receive the reason. Archive overrides set the same bar.
+   */
+  requireReason?: ConfirmReasonGate;
+}
+
+export interface ConfirmReasonGate {
+  /** Label shown above the reason input. */
+  prompt: string;
+  minLength: number;
 }
 
 export interface ConfirmDialogState
-  extends Required<Omit<ConfirmDialogOptions, 'detail' | 'eyebrow' | 'items' | 'requireTypedValues' | 'requireTypedPrompt'>> {
+  extends Required<Omit<ConfirmDialogOptions, 'detail' | 'eyebrow' | 'items' | 'requireTypedValues' | 'requireTypedPrompt' | 'requireReason'>> {
   detail: string | null;
   eyebrow: string | null;
   items: string[] | null;
   requireTypedValues: string[] | null;
   requireTypedPrompt: string | null;
+  requireReason: ConfirmReasonGate | null;
 }
 
 export interface NotificationOptions {
