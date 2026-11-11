@@ -69,7 +69,6 @@ export interface BatchGateState {
     phase: string;
     phaseAtUtc?: string | null;
     phaseReason?: string | null;
-    phaseAtUtc?: string | null;
     isolationActive?: boolean;
     isolationPending?: boolean;
     /** AGT-3710: one-based place of a formed batch in its project's flight queue. */
