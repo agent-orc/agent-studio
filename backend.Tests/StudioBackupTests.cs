@@ -403,6 +403,27 @@ public sealed class StudioBackupTests : IDisposable
     }
 
     [Fact]
+    public void Overview_exposes_restored_host_ca_mismatch()
+    {
+        var ca = Path.Combine(_fixture.Root, "ca.pub");
+        var state = Path.Combine(_fixture.Root, "host-certificates");
+        Directory.CreateDirectory(state);
+        File.WriteAllText(ca, "ssh-ed25519 " + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)) + " test\n");
+        File.WriteAllText(Path.Combine(state, "ca-fingerprint"), "SHA256:old-ca\n");
+        var configuration = new ConfigurationBuilder()
+            .AddConfiguration(_fixture.Configuration())
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["HostCertificates:CaPrivateKeyFile"] = Path.Combine(_fixture.Root, "ca"),
+                ["HostCertificates:StateDirectory"] = state,
+            }).Build();
+        var service = new StudioBackupService(configuration, new BackupWritePause(), _clock, targets: _ => new FakeTarget());
+        var overview = service.Overview();
+        Assert.Equal("failing", overview.State);
+        Assert.Contains(overview.Warnings, warning => warning.Code == "host-ca-mismatch" && warning.Severity == "danger");
+    }
+
+    [Fact]
     public async Task Overview_reports_backups_off_without_a_key_and_creation_refuses()
     {
         var service = _fixture.Service(_clock, null, withKey: false);
@@ -619,6 +640,37 @@ public sealed class StudioBackupTests : IDisposable
         Assert.Equal(1, again);
         Assert.Contains("restore-target-not-empty", error.ToString());
         Assert.True(File.Exists(Path.Combine(targets["workspace"], ".security-access.json")));
+    }
+
+    [Fact]
+    public async Task Restore_ends_archived_sessions_and_flags_a_token_revoked_after_the_archive()
+    {
+        var live = new AccessSecurityStore(_fixture.Configuration(), NullLogger<AccessSecurityStore>.Instance, _clock);
+        var owner = live.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", "Owner"));
+        var token = live.CreateApiToken(new CreateApiTokenRequest("drill", StudioRoles.Viewer,
+            ["*"], Start.UtcDateTime.AddDays(1)), owner.User.Id);
+        var backup = await _fixture.Service(_clock, null).CreateAsync("test", CancellationToken.None);
+
+        live.RevokeApiToken(token.Token.Id);
+        Assert.Null(live.AuthenticateServiceAccount(token.Secret));
+
+        var restoredWorkspace = Path.Combine(_fixture.Root, "restored", "workspace");
+        var result = BackupRestore.Restore(_fixture.Catalog.ArchivePath(backup.Id), BackupKey.Load(_fixture.KeyFile),
+            new BackupRestorePlan(new Dictionary<string, string> { ["workspace"] = restoredWorkspace }, false));
+        var restoredConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["TaskRepository"] = restoredWorkspace }).Build();
+        var restored = new AccessSecurityStore(restoredConfig, NullLogger<AccessSecurityStore>.Instance, _clock);
+
+        Assert.Null(restored.AuthenticateSession(owner.SessionToken, touch: false));
+        Assert.Equal(backup.Id, result.Manifest.Id);
+        var notice = Assert.IsType<RestoreNotice>(RestoreSecurityNotice.Read(restored.SecurityFolder));
+        Assert.Equal(backup.Id, notice.ArchiveId);
+        Assert.Equal(backup.CreatedAt, notice.ArchiveCreatedAt);
+        // Revocations after the archive cannot be reconstructed. The Owner is
+        // explicitly warned while the restored token awaits re-revocation.
+        Assert.NotNull(restored.AuthenticateServiceAccount(token.Secret));
+        RestoreSecurityNotice.Acknowledge(restored.SecurityFolder, notice.ArchiveId);
+        Assert.Null(RestoreSecurityNotice.Read(restored.SecurityFolder));
     }
 
     [Theory]
