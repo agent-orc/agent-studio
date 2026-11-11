@@ -1860,6 +1860,7 @@ export function buildCardCtxMenuItems(
   mutationsBlocked = false,
   visibleLanes: readonly string[] = MANUAL_MOVE_LANES,
   queueEdge: ReadyQueueEdge | null = null,
+  canReorder = true,
 ): MenuItem[] {
   const items: MenuItem[] = [
     { kind: 'row', id: 'copy-name', label: 'Copy Name' },
@@ -1891,9 +1892,13 @@ export function buildCardCtxMenuItems(
   if (current === TaskState.Ready) {
     items.push({ kind: 'separator' }, { kind: 'header', label: 'Queue position' });
     items.push({ kind: 'row', id: MOVE_TOP_ID, label: 'Move to top',
-      disabled: mutationsBlocked || queueEdge?.first === true });
+      disabled: mutationsBlocked || !canReorder || queueEdge?.first === true,
+      hint: !canReorder ? 'Switch this lane to Manual' : undefined,
+      tooltip: !canReorder ? 'Switch this lane to Manual to change queue position.' : undefined });
     items.push({ kind: 'row', id: MOVE_BOTTOM_ID, label: 'Move to bottom',
-      disabled: mutationsBlocked || queueEdge?.last === true });
+      disabled: mutationsBlocked || !canReorder || queueEdge?.last === true,
+      hint: !canReorder ? 'Switch this lane to Manual' : undefined,
+      tooltip: !canReorder ? 'Switch this lane to Manual to change queue position.' : undefined });
   }
   if (targets.length) {
     items.push({ kind: 'separator' }, { kind: 'header', label: 'Move' });

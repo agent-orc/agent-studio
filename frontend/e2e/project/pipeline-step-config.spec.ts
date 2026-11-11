@@ -202,10 +202,9 @@ test('pipeline: pipeline-step section renders and a per-step model change persis
   // Start from a clean override so the model select begins on Inherit.
   await setStep({ stepId: STEP, enabled: null, economyModel: null, cliType: null, model: null, thinkingLevel: null, prompt: null, mode: null });
 
-  // Nav-rebuild step 2 (T5b): the pipeline-steps section moved out of Project
-  // Settings onto the Pipeline rail; identical rows/controls, new mount.
+  // The Pipeline route opens the Deploy view containing the step editor.
   await page.goto(`/#/projects/${projectSlug}/pipeline`);
-  await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 10_000 });
 
   const section = page.getByTestId('project-detail-pipeline');
   await expect(section).toBeVisible();
@@ -240,7 +239,7 @@ test('pipeline: a closed-row toggle disables a step without expanding it', async
   await setStep({ stepId: STEP, enabled: null });
 
   await page.goto(`/#/projects/${projectSlug}/pipeline`);
-  await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 10_000 });
 
   const section = page.getByTestId('project-detail-pipeline');
   await expect(section).toBeVisible();
@@ -269,7 +268,7 @@ test('pipeline: task type is first, switches catalogue, and keeps bug override i
   await setStep({ pipelineType: 'bug', stepId: STEP, enabled: null });
 
   await page.goto(`/#/projects/${projectSlug}/pipeline`);
-  await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 10_000 });
 
   const type = page.getByTestId('pipeline-type-select');
   await expect(type).toHaveValue('task');
@@ -290,10 +289,32 @@ test('pipeline: task type is first, switches catalogue, and keeps bug override i
   await page.screenshot({ path: path.join(SCREENSHOT_DIR, '04-bug-type-disabled.png'), fullPage: true });
 });
 
+test('pipeline: task type stays locked while aspect steps are being updated', async ({ page }) => {
+  await page.goto(`/#/projects/${projectSlug}/pipeline`);
+  const type = page.getByTestId('pipeline-type-select');
+  await expect(type).toBeEnabled();
+  const apply = page.getByTestId('aspect-model-apply-steps');
+  await expect(apply).toBeEnabled();
+
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route(/\/api\/projects\/[^/]+\/pipeline-step$/, async route => {
+    await held;
+    await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+  });
+  const request = page.waitForRequest(req => req.method() === 'PUT' && req.url().endsWith('/pipeline-step'));
+  await apply.click();
+  await request;
+  await expect(type).toBeDisabled();
+  await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'task-type-locked-during-bulk.png'), fullPage: true });
+  release();
+  await expect(type).toBeEnabled();
+});
+
 test('pipeline: economy recommendation opt-in persists for an aspect', async ({ page }) => {
   await setStep({ stepId: STEP, enabled: null, economyModel: null, cliType: null, model: null, thinkingLevel: null });
   await page.goto(`/#/projects/${projectSlug}/pipeline`);
-  await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 10_000 });
 
   const row = page.getByTestId(`pipeline-step-row-${STEP}`);
   await row.locator('summary').click();
@@ -310,7 +331,7 @@ test('pipeline: abort-review exposes a run-condition control that persists', asy
   await setStep({ stepId: ABORT_STEP, enabled: null, model: null, mode: null, condition: null });
 
   await page.goto(`/#/projects/${projectSlug}/pipeline`);
-  await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 10_000 });
 
   const section = page.getByTestId('project-detail-pipeline');
   await expect(section).toBeVisible();
