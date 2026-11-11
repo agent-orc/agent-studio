@@ -7,6 +7,28 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { RemoteHostsPanelComponent } from './remote-hosts-panel';
 import { RemoteHostsService } from '../../services/remote-hosts.service';
 import { ReviewQueueService, type ReviewQueueSnapshot } from '../../services/review-queue.service';
+import type { RemoteHost } from '../../models/remote-host.model';
+
+function codingHost(overrides: Partial<RemoteHost> = {}): RemoteHost {
+  return {
+    id: 'agent-runner-01',
+    name: 'agent-runner-01',
+    role: 'remote',
+    serviceRole: 'coding',
+    address: null,
+    clientId: 'agent-runner-01',
+    capacityHostId: 'agent-runner-01',
+    status: 'online',
+    os: 'Linux',
+    lastHeartbeatAt: '2026-11-09T09:30:00Z',
+    uptimeLabel: null,
+    capabilities: [],
+    cliQuotas: [],
+    stats: null,
+    liveDataState: 'ready',
+    ...overrides,
+  };
+}
 
 function reviewSnapshot(overrides: Partial<ReviewQueueSnapshot> = {}): ReviewQueueSnapshot {
   return {
@@ -24,7 +46,7 @@ function reviewSnapshot(overrides: Partial<ReviewQueueSnapshot> = {}): ReviewQue
 }
 
 /**
- * Render-path test: the panel seeds its registry on init and renders one table
+ * Render-path test: the panel loads its registry on init and renders one table
  * row per host with a summary line whose counts reconcile to the visible rows
  * (R3 sum invariant).
  */
@@ -69,8 +91,7 @@ describe('RemoteHostsPanelComponent', () => {
     const service = TestBed.inject(RemoteHostsService);
     const fixture = TestBed.createComponent(RemoteHostsPanelComponent);
     fixture.detectChanges();
-    service.hosts.update(hosts => hosts.map(host => host.clientId === 'agent-runner-01'
-      ? { ...host, name: 'Coding runner' } : host));
+    service.hosts.set([codingHost({ name: 'Coding runner' })]);
     fixture.componentInstance.setView('history');
     service.claimGateEvents.set([
       { sequence: 2, occurredAt: '2026-11-09T09:30:00Z', runnerId: 'agent-runner-01', hostId: 'agent-runner-01',
@@ -158,7 +179,10 @@ describe('RemoteHostsPanelComponent', () => {
       ],
     }).compileComponents();
 
+    const service = TestBed.inject(RemoteHostsService);
     const fixture = TestBed.createComponent(RemoteHostsPanelComponent);
+    fixture.detectChanges();
+    service.hosts.set([codingHost()]);
     fixture.detectChanges();
     const el: HTMLElement = fixture.nativeElement;
 
@@ -326,8 +350,7 @@ describe('RemoteHostsPanelComponent', () => {
     expect(el.querySelector('[data-testid="remote-hosts-purge-retired"]')).toBeNull();
 
     const service = TestBed.inject(RemoteHostsService);
-    service.hosts.update(hosts => hosts.map(host =>
-      host.id === 'agent-runner-01' ? { ...host, status: 'retired' as const } : host));
+    service.hosts.set([codingHost({ status: 'retired' })]);
     fixture.detectChanges();
 
     const purgeButton = el.querySelector('[data-testid="remote-hosts-purge-retired"]') as HTMLButtonElement;
@@ -355,7 +378,10 @@ describe('RemoteHostsPanelComponent', () => {
       ],
     }).compileComponents();
 
+    const service = TestBed.inject(RemoteHostsService);
     const fixture = TestBed.createComponent(RemoteHostsPanelComponent);
+    fixture.detectChanges();
+    service.hosts.set([codingHost()]);
     fixture.detectChanges();
 
     fixture.componentInstance.onAction({ kind: 'delete', id: 'agent-runner-01' });
