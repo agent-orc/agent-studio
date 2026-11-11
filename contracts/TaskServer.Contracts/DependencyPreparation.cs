@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace AgentStudio.TaskServer.Contracts;
 
@@ -32,7 +33,8 @@ public static class DependencyPreparationState
 
         var hash = ComputeLockHash(installRoot, present);
         var dependencyDirectory = Path.Combine(installRoot, DependencyDirectoryName);
-        if (!Directory.Exists(dependencyDirectory))
+        if (RequiresDependencyDirectory(installRoot, present)
+            && !Directory.Exists(dependencyDirectory))
             return Evidence(scope, "miss", "deps-dir-missing", hash, present, installRan);
 
         var marker = Path.Combine(installRoot, MarkerFileName);
@@ -61,6 +63,52 @@ public static class DependencyPreparationState
             || !Directory.Exists(installRoot))
             return;
         File.WriteAllText(Path.Combine(installRoot, MarkerFileName), lockHash);
+    }
+
+    /// <summary>
+    /// An empty npm lockfile may complete installation without creating
+    /// node_modules. Unknown or unreadable lockfile shapes require the directory
+    /// so a damaged install cannot be mistaken for a prepared scope.
+    /// </summary>
+    public static bool RequiresDependencyDirectory(
+        string installRoot,
+        IReadOnlyList<string> lockfiles)
+    {
+        foreach (var lockfile in lockfiles)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(installRoot, lockfile)));
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) return true;
+                if (!root.TryGetProperty("lockfileVersion", out var version)
+                    || version.ValueKind != JsonValueKind.Number) return true;
+                if (HasEntries(root, "dependencies")) return true;
+                if (!root.TryGetProperty("packages", out var packages)) continue;
+                if (packages.ValueKind != JsonValueKind.Object) return true;
+                foreach (var package in packages.EnumerateObject())
+                {
+                    if (package.Name.Length > 0) return true;
+                    if (package.Value.ValueKind != JsonValueKind.Object) return true;
+                    if (HasEntries(package.Value, "dependencies")
+                        || HasEntries(package.Value, "devDependencies")
+                        || HasEntries(package.Value, "optionalDependencies")) return true;
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool HasEntries(JsonElement value, string property)
+    {
+        if (value.ValueKind != JsonValueKind.Object
+            || !value.TryGetProperty(property, out var entries)) return false;
+        return entries.ValueKind != JsonValueKind.Object
+               || entries.EnumerateObject().MoveNext();
     }
 
     public static string ComputeLockHash(
