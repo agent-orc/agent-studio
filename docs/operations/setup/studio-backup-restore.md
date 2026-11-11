@@ -23,6 +23,8 @@ An older, host-level backup with a systemd timer and age encryption (AGT-3365) i
 | `api-tmp`, `caddy-config`, `frontend-data`, `frontend-config` | No | Recreated at start |
 | Control plane lock (`workspace/.security/control-plane.lock`) | No; the running API holds it exclusively | Recreated at start |
 
+Batch gate, review package, gate ledger, and gate capacity state under `home/.local/share/agentstudio/instances/` uses the installation id in `workspace/.metadata/batch-state-installation-id`. The API creates the id on first start and moves state from the former path-derived instance folder. On restore to different paths, it updates absolute paths inside the identified instance's JSON evidence records before opening the stores. If another instance folder still holds batch manifests, startup logs `batch-state-unmatched-instance` with both paths so an older archive or an incomplete restore cannot silently appear empty.
+
 With the archive, the backup and secret store keys, the escrowed host CA and the Git remotes, a new host comes back to the state of the backup. URL passwords and tokens are removed from recorded `origin` URLs. A file whose content is the secret store key or the backup key, or whose name ends in `.kek`, is left out of every source whatever its path; the archive's content list counts such files.
 
 ## Schedule, retention and verification
