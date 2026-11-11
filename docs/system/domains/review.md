@@ -15,6 +15,26 @@ delivery.
 Version: 2026-11-09
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
+## Concept brief and Dossier evidence
+
+Concept-fit review records the authored brief version from
+`.metadata/brief-version`, the same version completion uses. Follow-up notes
+appended to `prompt.md` do not change it. The Task Server reads the mirrored
+version and falls back to a full prompt hash for older mirrors without that
+metadata.
+The review subject's `TaskRequirementsHash` still hashes the complete prompt:
+it identifies the exact instructions for that review attempt, including
+follow-up notes, and is distinct from the authored brief version.
+
+Concept-fit receives a bounded snapshot of the published Dossier index,
+`workbench.json`, and local files linked from them. Its round diff shows what
+changed, while the snapshot supplies unchanged Dossier content. A missing,
+unreadable, or over-budget file is named in the prompt so the aspect cannot
+infer completeness from a truncated excerpt. For older settled concept reviews,
+completion accepts a whole-prompt review hash as current only while the current
+authored version equals the delivery version and the reviewed whole-prompt hash
+still matches `prompt.md`.
+
 ## Aspect prompt cache
 
 The review worker bounds every per-card and package agent aspect's final prompt to 800,000
@@ -424,6 +444,23 @@ On an unchanged parked card, `POST /api/tasks/{jobId}/review/retry` moves the
 same delivery back to Auto Review and mints a fresh ReviewAttempt. The card also
 links the intervention receipt. Its Undo restores Auto Review only while the
 park's lane entry, card write and attempt identities still match the receipt.
+A passed review that ran its own build and tests (its frozen plan has
+`BuildTestDeferredToBatch: false`) never re-enters the batch gate: batch
+admission refuses it with `BuildTestNotDeferred` (AGT-3740).
+`AutoReviewStrandingPolicy.RouteBatch` turns the stranding decision for such a
+card into the per-task route, once per lane visit. The watchdog
+integrates it through the per-task path with the review's own verdicts. It
+uses the delivery settlement record, or rebuilds a missing one from the
+journaled report with the same `RemoteDeliveryIntegrationPolicy` as settlement.
+Only when no recorded verdict admits the delivery does the card get a
+re-planned review with a freshly sealed plan, which may defer to the batch. The
+receipt and the batch gate state (member status `fallback`, rule
+`review-ran-build-tests`) say "Review ran its own build and tests (rule); this
+card goes to per-task integration" or "... to a re-planned review". Every plan
+that does not defer names its rule in `BuildTestDeferralDisabledReason`, for
+example the batch gate being off when the plan was sealed, a missing diff, or
+test selection requiring the full suite. The build-test step on the card shows
+that rule.
 
 When the delivery-chain reconciler finds a stale acceptance or integration
 verdict, it returns the card to Auto Review and requests a fresh review at
