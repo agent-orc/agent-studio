@@ -177,6 +177,7 @@
 /api/projects/{projectName}/autonomy	free	-	-	-
 /api/projects/{projectName}/batch-gate	free	-	-	-
 /api/projects/{projectName}/batch-gate/failed-tests	free	-	-	-
+/api/projects/{projectName}/batch-gate/invariants	free	-	-	-
 /api/projects/{projectName}/batch-gate/isolation-evidence	free	-	-	-
 /api/projects/{projectName}/batch-gate/ledger	free	-	-	-
 /api/projects/{projectName}/batch-gate/queue-stalls	free	-	-	-
@@ -317,7 +318,7 @@
 /api/runner/global/orchestrator-session	free	-	-	-
 /api/runner/integration-lease/{projectName}/{integrationBranch}	free	-	-	-
 /api/runner/lease/{taskKey}	free	-	-	-
-/api/runner/orchestrator-feed	free	-	-	-
+/api/runner/orchestrator-feed	reachable	gap	Docs/Wiki	Wiki ref/config-generation projection for Dossier decisions
 /api/runner/post-merge/projects/{project}	free	-	-	-
 /api/runner/release-candidates/{project}/{commit}	reachable	gap	Deploy and environments	Release candidate plan from Task Server source facts
 /api/runner/project-chat/status	free	-	-	-

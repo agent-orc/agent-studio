@@ -67,7 +67,8 @@ async function stubBackgroundApis(page: Page) {
       commandId: `cmd-${request.kind}-${request.dryRun ? 'preview' : 'apply'}`,
       kind: request.kind, dryRun: request.dryRun, state: 'completed', matched: 2,
       affected: request.dryRun ? 0 : 2,
-      summary: request.dryRun ? '2 items would be changed.' : 'Changed 2 items.',
+      summary: request.dryRun ? '2 items would be changed.' : request.kind === 'backup-create'
+        ? 'Created encrypted backup studio-backup-20261110T060000Z-abc123 (420 files). Copied off-host.' : 'Changed 2 items.',
       completedAt: '2026-07-20T10:30:00Z',
     }) });
   });
@@ -160,8 +161,19 @@ test.describe('Task Server settings section', () => {
     // A second preview so the results list shows more than one settled outcome.
     await page.getByTestId('task-server-action-orphan-sweep').click();
     await expect(page.getByTestId('task-server-result-orphan-sweep')).toBeVisible({ timeout: 3_000 });
+    await page.getByTestId('task-server-action-backup-create').click();
+    await page.getByTestId('task-server-confirm-backup-create').click();
+    await expect(page.getByTestId('task-server-result-backup-create').first()).toContainText('Copied off-host.');
     await page.getByTestId('task-server-management-section').scrollIntoViewIfNeeded();
-    await page.screenshot({ path: join(SHOT_DIR, 'task-server-management--mocked.png'), fullPage: false });
+    await setTheme(page, 'light');
+    await page.getByTestId('task-server-management-section').screenshot({ path: join(SHOT_DIR, 'task-server-backup-copied-light--mocked.png') });
+    await setTheme(page, 'dark');
+    await page.getByTestId('task-server-management-section').screenshot({ path: join(SHOT_DIR, 'task-server-backup-copied-dark--mocked.png') });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const createdResult = page.getByTestId('task-server-result-backup-create').first();
+    await createdResult.scrollIntoViewIfNeeded();
+    await expect(createdResult).toContainText('Copied off-host.');
+    await createdResult.screenshot({ path: join(SHOT_DIR, 'task-server-backup-copied-390--mocked.png') });
   });
 
   test('deep-link opens the Task Server section directly', async ({ page }) => {

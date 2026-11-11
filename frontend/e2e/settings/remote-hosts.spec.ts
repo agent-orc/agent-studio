@@ -353,6 +353,27 @@ test.describe('Execution Hosts settings section', () => {
     await page.screenshot({ path: join(SHOT_DIR, 'networked-hosts-no-phantoms.png'), fullPage: false });
   });
 
+  test('fresh local profile has no invented remote machine', async ({ page }) => {
+    await page.unroute('**/api/clients');
+    await page.route('**/api/clients', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: '[]',
+    }));
+    await page.reload();
+    await page.goto('/#/workspace/settings/execution-hosts');
+    const panel = page.getByTestId('remote-hosts-panel');
+    await expect(panel).toBeVisible();
+    await expect(panel.getByTestId('remote-host-primary-row')).toHaveCount(1);
+    await expect(panel.getByText('agent-runner-01')).toHaveCount(0);
+    const output = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
+    mkdirSync(output, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await panel.screenshot({ path: join(output, `fresh-environment--${theme}.png`) });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await panel.screenshot({ path: join(output, 'fresh-environment--390px.png') });
+  });
+
   test('hosts, topology, installation and history render at readable sizes in both themes', async ({ page }) => {
     await stubGroupedHostApis(page);
     await page.setViewportSize({ width: 1600, height: 900 });
