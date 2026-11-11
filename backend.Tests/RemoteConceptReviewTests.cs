@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using AgentStudio.Prompts;
 using AgentStudio.Runner;
 using AgentStudio.Pipeline;
@@ -240,7 +241,123 @@ public sealed class RemoteConceptReviewTests : IDisposable
         Assert.Contains("Scaffold text.", aspect.Prompt);
     }
 
-    private ReviewPlanDto BuildPlan(ProjectSettings? settings = null, string? repositoryPath = null)
+    [Fact]
+    public void Dossier_only_concept_review_plans_concept_fit_without_preparation_or_build_tests()
+    {
+        var repo = NodeRepository();
+        var control = BuildPlan(repositoryPath: repo, changedFiles: ["docs/topic/index.html", "src/index.js"]);
+        Assert.Contains(control.Commands, command => command.Aspect == "build-tests");
+        Assert.NotEmpty(control.Preparation!);
+
+        var plan = BuildPlan(repositoryPath: repo,
+            changedFiles: ["docs/topic/index.html", "docs/topic/workbench.json"]);
+
+        var command = Assert.Single(plan.Commands);
+        Assert.Equal("concept-fit", command.Aspect);
+        Assert.Equal(ReviewCommandKinds.AgentAspect, command.ExecutionKind);
+        Assert.Equal(["concept-fit"], plan.RequiredAspects);
+        Assert.Empty(plan.Preparation!);
+        Assert.DoesNotContain(plan.Commands, item => item.CompareToBaseline);
+        var skipped = Assert.Single(plan.SkippedAspects!, item => item.Aspect == "build-tests");
+        Assert.Equal(RemoteReviewPlanBuilder.ConceptDossierSkipReason("docs/topic"), skipped.Reason);
+        Assert.False(plan.BuildTestDeferredToBatch);
+        Assert.Equal(skipped.Reason, plan.BuildTestDeferralDisabledReason);
+
+        // The grade carries the skipped build-tests with its reason, and a red
+        // integration branch has no verification step through which it could
+        // block the Dossier: the concept-fit verdict alone settles the review.
+        var report = ConceptRemoteReviewPolicy.Enforce(plan, plan.BriefSha256, plan.BriefSha256,
+            EmptyPassingReport() with
+            {
+                Verdicts = [new ReviewVerdictDto("concept-fit", "pass", "content", "Dossier fits the brief.")],
+            });
+        Assert.Equal("Pass", report.Outcome);
+        Assert.Contains(report.SkippedAspects!, item => item.Aspect == "build-tests"
+            && item.Reason == RemoteReviewPlanBuilder.ConceptDossierSkipReason("docs/topic"));
+    }
+
+    [Fact]
+    public void Concept_review_keeps_tool_gates_when_the_diff_is_not_one_dossier()
+    {
+        var repo = NodeRepository();
+
+        foreach (var changed in new IReadOnlyList<string>?[]
+                 {
+                     null, ["docs/one/index.html", "docs/two/index.html"], ["docs/index.html"],
+                 })
+        {
+            var plan = BuildPlan(repositoryPath: repo, changedFiles: changed);
+            Assert.Contains(plan.Commands, command => command.Aspect == "build-tests");
+            Assert.Contains(plan.Commands, command => command.Aspect == "concept-fit");
+            Assert.DoesNotContain(plan.SkippedAspects!, item => item.Aspect == "build-tests");
+        }
+    }
+
+    [Fact]
+    public void Disabled_concept_fit_on_a_dossier_keeps_an_admissible_plan_that_cannot_pass()
+    {
+        var plan = BuildPlan(new ProjectSettings
+        {
+            PipelineSteps = new()
+            {
+                [PipelineCatalogue.RemoteConceptFitStepId] = new PipelineStepSetting { Enabled = false },
+            },
+        }, NodeRepository(), ["docs/topic/index.html"]);
+
+        Assert.Equal("completion", Assert.Single(plan.Commands).Aspect);
+        Assert.Empty(plan.Preparation!);
+        Assert.NotEqual("Pass", ConceptRemoteReviewPolicy.Enforce(
+            plan, plan.BriefSha256, plan.BriefSha256, EmptyPassingReport()).Outcome);
+    }
+
+    [Fact]
+    public void Single_dossier_directory_requires_every_path_inside_one_topic()
+    {
+        Assert.Equal("docs/topic", ConceptWorkbenchContract.SingleDossierDirectory(
+            ["docs/topic/index.html", "docs\\topic\\workbench.json", "/docs/topic/assets/a.png"]));
+        Assert.Null(ConceptWorkbenchContract.SingleDossierDirectory(null));
+        Assert.Null(ConceptWorkbenchContract.SingleDossierDirectory([]));
+        Assert.Null(ConceptWorkbenchContract.SingleDossierDirectory(["docs/topic/index.html", "README.md"]));
+        Assert.Null(ConceptWorkbenchContract.SingleDossierDirectory(["docs/a/index.html", "docs/b/index.html"]));
+        Assert.Null(ConceptWorkbenchContract.SingleDossierDirectory(["docs/index.html"]));
+    }
+
+    // The playthrough's small Node repository: npm test auto-discovered, npm ci
+    // as preparation.
+    private string NodeRepository()
+    {
+        var repo = Path.Combine(_folder, "repo");
+        Directory.CreateDirectory(Path.Combine(repo, "src"));
+        File.WriteAllText(Path.Combine(_folder, "prompt.md"), "Write a Concept Dossier.");
+        File.WriteAllText(Path.Combine(repo, "package.json"),
+            "{\"name\":\"small\",\"scripts\":{\"test\":\"node --test\"}}\n");
+        File.WriteAllText(Path.Combine(repo, "package-lock.json"),
+            "{\"name\":\"small\",\"lockfileVersion\":3,\"packages\":{}}\n");
+        File.WriteAllText(Path.Combine(repo, "src", "index.js"), "module.exports = 1;\n");
+        Git(repo, "init", "-q");
+        Git(repo, "add", ".");
+        return repo;
+    }
+
+    private static void Git(string repo, params string[] arguments)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = repo,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        using var process = Process.Start(start)!;
+        process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, $"git {string.Join(' ', arguments)}: {error}");
+    }
+
+    private ReviewPlanDto BuildPlan(ProjectSettings? settings = null, string? repositoryPath = null,
+        IReadOnlyList<string>? changedFiles = null)
     {
         var config = new ConfigurationBuilder().Build();
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
@@ -250,7 +367,8 @@ public sealed class RemoteConceptReviewTests : IDisposable
             Id = "CON-1", Title = "Concept", Mode = TaskModes.Concept,
             FolderPath = _folder, ProjectName = "Test",
         };
-        return new RemoteReviewPlanBuilder(aspects, config).Build(task, repositoryPath, settings, "refs/heads/main");
+        return new RemoteReviewPlanBuilder(aspects, config).Build(task, repositoryPath, settings,
+            "refs/heads/main", changedFiles: changedFiles);
     }
 
     private static ReviewReportRequest EmptyPassingReport() => new(

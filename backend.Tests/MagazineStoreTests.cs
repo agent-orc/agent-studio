@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using AgentStudio.Magazine;
 using AgentStudio.Tasks;
 using Microsoft.Extensions.Time.Testing;
@@ -49,6 +50,37 @@ public sealed class MagazineStoreTests : IDisposable
         Assert.Equal("two", store.Get(Project, "weekly")!.Body);
         Assert.Null(store.Get(Project, "weekly", 3));
         Assert.Equal([2, 1], store.History(Project, "weekly")!.Select(entry => entry.Revision));
+    }
+
+    [Fact]
+    public void Persona_and_role_ids_are_saved_while_legacy_authors_stay_readable()
+    {
+        var store = Store();
+        var first = store.Upsert(Project, "people", Article("one") with { Persona = "Aster" }, "agent:orchestrator", null).Article;
+        var folder = Path.Combine(store.Root, "project-PROJ-002", "people");
+        foreach (var file in new[] { Path.Combine(folder, MagazineStore.HeadFileName),
+            Path.Combine(folder, MagazineStore.RevisionFolderName, "000001.json") })
+        {
+            var json = JsonNode.Parse(File.ReadAllText(file))!;
+            if (json["authors"] is JsonArray authors)
+                foreach (var author in authors) { author!.AsObject().Remove("personaId"); author.AsObject().Remove("roleId"); }
+            if (json["author"] is JsonObject revisionAuthor)
+            { revisionAuthor.Remove("personaId"); revisionAuthor.Remove("roleId"); }
+            File.WriteAllText(file, json.ToJsonString());
+        }
+        Assert.Null(first.Author.PersonaId);
+        Assert.Null(store.Get(Project, "people")!.Author.RoleId);
+
+        var second = store.Upsert(Project, "people", Article("two") with
+        {
+            Persona = "Aster", PersonaId = "persona-aster", RoleId = "editor",
+        }, "agent:orchestrator", first.Revision).Article;
+
+        Assert.Equal(("Aster", "persona-aster", "editor"),
+            (second.Author.Persona, second.Author.PersonaId, second.Author.RoleId));
+        Assert.Equal(2, second.Authors.Count);
+        Assert.Null(store.Get(Project, "people", 1)!.Author.PersonaId);
+        Assert.Equal("editor", store.Get(Project, "people")!.Author.RoleId);
     }
 
     [Fact]

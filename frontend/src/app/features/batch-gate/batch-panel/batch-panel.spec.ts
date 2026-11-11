@@ -39,6 +39,64 @@ describe('BatchPanelComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Moved to per-task gates after pause: fresh gate verdict required');
     http.verify();
   });
+  it('lists formed batch members only under their batch', async () => {
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
+    const fixture = TestBed.createComponent(BatchPanelComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('closed', vi.fn());
+    await fixture.whenStable();
+    const http = TestBed.inject(HttpTestingController);
+    const pending = [1, 2].map(index => ({ taskKey: `AGT-${index}`,
+      reviewAttemptId: `r-${index}`, resultSha: 'a'.repeat(40), waitMinutes: 229.234388035, risk: 0.2 }));
+    const batch = { ...redHalvingState.batches[1], phase: 'formed',
+      members: [{ taskKey: 'AGT-1', replay: 'applied', released: false }], runs: [] };
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush({ ...redHalvingState,
+      pending, batches: [batch], members: {} });
+    http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({ project: 'Demo', windowDays: 7, tests: [] });
+    await Promise.resolve();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const host = fixture.nativeElement as HTMLElement;
+    const waiting = host.querySelector('[aria-labelledby="batch-pending-title"]')!;
+    expect(waiting.textContent).toContain('Waiting cards (1)');
+    expect(waiting.textContent).toContain('AGT-2 · 3 h 49 min');
+    expect(waiting.textContent).not.toContain('AGT-1');
+    expect(host.querySelector('#batch-batch-8')!.textContent).toContain('AGT-1');
+    http.verify();
+  });
+  it('separates batch members from waiting cards and shows interrupted runs and detached flights', async () => {
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
+    const fixture = TestBed.createComponent(BatchPanelComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('closed', vi.fn());
+    await fixture.whenStable();
+    const http = TestBed.inject(HttpTestingController);
+    const pending = [1, 2, 3, 4, 5].map(index => ({ taskKey: `AGT-${index}`,
+      reviewAttemptId: `r-${index}`, resultSha: 'a'.repeat(40), waitMinutes: 229.234388035, risk: 0.2 }));
+    const batch = { ...redHalvingState.batches[1], batchId: 'gate-host-01', phase: 'abandoned',
+      phaseAtUtc: '2026-11-10T12:49:00Z', members: pending.slice(0, 4).map(item =>
+        ({ taskKey: item.taskKey, replay: 'applied', released: false })),
+      runs: [{ batchRunId: 'run-1', host: 'gate-host-01', startedAtUtc: '2026-11-10T09:00:00Z' }] };
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush({ ...redHalvingState, pending,
+      batches: [batch], members: {}, detachedFlights: [{ batchId: batch.batchId, project: 'Demo',
+        startedAtUtc: '2026-11-10T09:00:00Z', detachedAtUtc: '2026-11-10T12:49:00Z',
+        deadlineMinutes: 90, reason: 'lease deadline' }] });
+    http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({ project: 'Demo', windowDays: 7, tests: [] });
+    await Promise.resolve();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const host = fixture.nativeElement as HTMLElement;
+    const waiting = host.querySelector('[aria-labelledby="batch-pending-title"]')!;
+    expect(waiting.textContent).toContain('Waiting cards (5)');
+    expect(waiting.textContent).toContain('AGT-1 · 3 h 49 min');
+    expect(host.querySelector('#batch-gate-host-01')!.textContent!.replace(/\s+/g, ' '))
+      .toContain('gate-host-01 · interrupted · 3 h 49 min');
+    expect(host.querySelector('[data-testid="batch-detached-flights"]')!.textContent)
+      .toContain('Batch gate-host-01 · detached');
+    expect(host.querySelector('[data-testid="batch-detached-flights"]')!.textContent).toContain('deadline');
+    expect(host.querySelector('[data-testid="batch-detached-flights"]')!.textContent).toContain('(1 h 30 min)');
+    http.verify();
+  });
   it('shows halving, advisor veto and fallback membership from the state contract', async () => {
     TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
     const fixture: ComponentFixture<BatchPanelComponent> = TestBed.createComponent(BatchPanelComponent);

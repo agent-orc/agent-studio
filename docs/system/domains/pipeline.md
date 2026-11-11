@@ -29,12 +29,17 @@ pipeline view.
 
 ## Gate economics and integration lane
 
-The batch gate state read reports `phaseReason` for a stopped batch and
+The batch gate state read reports `phaseReason` and `phaseAtUtc` for a stopped batch and
 `causedByTaskKey` when a member eject or lost review generation caused
 abandonment. Explicit operator withdrawals are retained as batch withdrawal
 records with the actor, card, reason, and time. The existing eject path returns
 the remaining members to planning; the operator move requests a close on the
 next planner tick.
+The batch panel lists pending cards that have not joined a formed or running
+batch. A run without a finish event counts as running only while its batch is
+in the running phase; after interruption, the panel uses `phaseAtUtc` to show
+the elapsed run time. Detached flights include their batch, detach time, and
+lease deadline in the state response and panel.
 
 When a paused batch hands its members to per-task verification, the state read
 reports `perTaskGates` in queue order. Each row names the review generation,
@@ -455,10 +460,12 @@ Temporary worktree removal is retried, and cleanup leftovers do not discard
 a successful replay. Candidate refs use
 `refs/agent-studio/batch-candidates/<batchId>/<membershipDigest>/<coordinatorFence>`.
 
-The store durably writes the initial `Formed` state before publishing a closed
-manifest. A visible manifest with no state rows, for example after external
-file loss, has phase `Unknown` and is skipped by recovery until a state exists.
-The recovery scan logs this condition once per manifest and store instance.
+The store writes the closed manifest and then its first `Formed` phase record
+(AGT-3563). A visible manifest with neither a phase record nor state rows, for
+example after a crash between the two writes or external file loss, reads as
+phase `Unknown` and is skipped by recovery until a state exists. The next pilot
+tick writes its first record. The recovery scan logs this condition once per
+manifest and store instance.
 
 ### Flight queue order (AGT-3710)
 

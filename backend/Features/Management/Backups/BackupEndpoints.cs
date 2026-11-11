@@ -33,7 +33,24 @@ public static class BackupEndpoints
         LastVerification = overview.LastVerification is { } verification
             ? verification with { Detail = BackupAudit.WithoutHostPaths(verification.Detail) }
             : null,
-        OffHost = overview.OffHost with { Target = null, LastError = BackupAudit.WithoutHostPaths(overview.OffHost.LastError) },
-        Warnings = overview.Warnings.Select(warning => warning with { Message = BackupAudit.WithoutHostPaths(warning.Message)! }).ToArray(),
+        OffHost = overview.OffHost with
+        {
+            Target = null,
+            LastError = overview.OffHost.LastError is null ? null
+                : overview.OffHost.State == "invalid"
+                    ? "The off-host target is misconfigured. Ask an installation operator for details."
+                    : "The off-host copy failed. Ask an installation operator for details."
+        },
+        Warnings = overview.Warnings.Select(warning => warning with
+        {
+            Message = warning.Code.StartsWith("offhost-", StringComparison.Ordinal)
+                ? warning.Code switch
+                {
+                    "offhost-failed" => "The off-host copy failed. Ask an installation operator for details.",
+                    "offhost-invalid" => "The off-host target is misconfigured. Ask an installation operator for details.",
+                    _ => BackupAudit.WithoutHostPaths(warning.Message)!
+                }
+                : BackupAudit.WithoutHostPaths(warning.Message)!
+        }).ToArray(),
     };
 }

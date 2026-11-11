@@ -39,6 +39,9 @@ export interface BatchGateState {
   perTaskGates?: { taskKey: string; reviewAttemptId: string; position: number; total: number;
     batchId?: string | null; reason: string; running: boolean; host?: string | null;
     startedAtUtc?: string | null }[];
+  /** Gate processes detached at a lease deadline and still exiting. */
+  detachedFlights?: { batchId: string; project: string; startedAtUtc: string; detachedAtUtc: string;
+    deadlineMinutes: number; reason: string }[];
   dailySummary?: {
     phaseMinutes?: Record<string, { p50: number | null; p90: number | null; cards: number }>;
     diagnosticRerunShare?: number | null;
@@ -67,6 +70,7 @@ export interface BatchGateState {
     batchId: string;
     parentBatchId?: string | null;
     phase: string;
+    phaseAtUtc?: string | null;
     phaseReason?: string | null;
     /** AGT-3710: one-based place of a formed batch in its project's flight queue. */
     queuePosition?: number | null;
@@ -86,6 +90,22 @@ export interface BatchGateState {
 }
 
 export type BatchGateBatch = BatchGateState['batches'][number];
+
+const ACTIVE_BATCH_PHASES = new Set(['formed', 'assembling', 'assembled', 'running']);
+
+/** Pending records can remain in the snapshot after their cards joined a batch. */
+export function batchWaitingCards(state: BatchGateState | null): BatchGateState['pending'] {
+  if (!state) return [];
+  const assigned = new Set(state.batches.filter(batch => ACTIVE_BATCH_PHASES.has(batch.phase))
+    .flatMap(batch => batch.members.map(member => member.taskKey)));
+  const perTask = new Set((state.perTaskGates ?? []).map(gate => gate.reviewAttemptId));
+  return state.pending.filter(item => !assigned.has(item.taskKey) && !perTask.has(item.reviewAttemptId));
+}
+
+/** A run without a finish event is live only while its batch is running. */
+export function batchRunIsRunning(batch: BatchGateBatch, run: BatchGateBatch['runs'][number]): boolean {
+  return batch.phase === 'running' && !!run.startedAtUtc && !run.finishedAtUtc;
+}
 
 /** One formed batch in the flight queue; position 1 starts next. */
 export interface BatchFlightQueueEntry {

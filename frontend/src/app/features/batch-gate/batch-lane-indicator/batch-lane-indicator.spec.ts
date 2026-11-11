@@ -10,8 +10,8 @@ import { BatchLaneIndicatorComponent } from './batch-lane-indicator';
 describe('BatchLaneIndicatorComponent', () => {
   it('counts per-task fallback gates separately from batch waits', async () => {
     const state = signal<BatchGateState | null>({ ...redHalvingState,
-      pending: [{ ...redHalvingState.pending[0], taskKey: 'AGT-2' },
-        { ...redHalvingState.pending[0], taskKey: 'AGT-3' }],
+      pending: [{ ...redHalvingState.pending[0], taskKey: 'AGT-2', reviewAttemptId: 'r2' },
+        { ...redHalvingState.pending[0], taskKey: 'AGT-3', reviewAttemptId: 'r3' }],
       perTaskGates: [{ taskKey: 'AGT-2', reviewAttemptId: 'r2', position: 1, total: 2,
         reason: 'batch b1 paused: fresh gate verdict required', running: false },
         { taskKey: 'AGT-3', reviewAttemptId: 'r3', position: 2, total: 2,
@@ -71,5 +71,27 @@ describe('BatchLaneIndicatorComponent', () => {
     await fixture.whenStable();
     expect(button().dataset['batchAlert']).toBeUndefined();
     expect(alert()).toBeNull();
+  });
+  it('counts waiting cards and live runs from current batch membership and phase', async () => {
+    const pending = [1, 2, 3, 4].map(index => ({ taskKey: `AGT-${index}`, reviewAttemptId: `r-${index}`,
+      resultSha: 'a'.repeat(40), waitMinutes: 229.23, risk: 0.2 }));
+    const batch = { ...redHalvingState.batches[1], batchId: 'gate-host-01', phase: 'running',
+      members: pending.map(item => ({ taskKey: item.taskKey, replay: 'applied', released: false })),
+      runs: [{ batchRunId: 'run-1', host: 'gate-host-01', startedAtUtc: '2026-11-10T09:00:00Z' }] };
+    const state = signal<BatchGateState | null>({ ...redHalvingState, pending, batches: [batch], members: {} });
+    await TestBed.configureTestingModule({ imports: [BatchLaneIndicatorComponent], providers: [provideZonelessChangeDetection(), {
+      provide: BatchGateService, useValue: { state: () => state.asReadonly(), watch: vi.fn(() => vi.fn()) },
+    }] }).compileComponents();
+    const fixture = TestBed.createComponent(BatchLaneIndicatorComponent);
+    fixture.componentRef.setInput('laneState', '4-auto-review');
+    fixture.componentRef.setInput('projectScope', 'Demo');
+    await fixture.whenStable();
+    expect(fixture.nativeElement.textContent).toContain('Batch: 0 waiting');
+    expect(fixture.nativeElement.textContent).toContain('1 running');
+    for (const phase of ['abandoned', 'red', 'paused', 'published']) {
+      state.set({ ...state()!, batches: [{ ...batch, phase }] });
+      await fixture.whenStable();
+      expect(fixture.nativeElement.textContent).toContain('0 running');
+    }
   });
 });
