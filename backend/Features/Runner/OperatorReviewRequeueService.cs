@@ -11,6 +11,39 @@ namespace AgentStudio.Runner;
 public sealed class OperatorReviewRequeueService
 {
     public const string EpochFileName = "review-attempt.json";
+    public const string InstructionsFileName = "operator-reissue.json";
+
+    public static bool ValidInstructions(AgentStudio.Shared.OperatorReissueInstructions value)
+        => value.Findings is { Count: <= 12 }
+            && value.Findings.All(item => !string.IsNullOrWhiteSpace(item) && item.Length <= 500
+                && !item.Contains('\n') && !item.Contains('\r'))
+            && (value.Note?.Length ?? 0) <= 2000
+            && (value.Findings.Count > 0 || !string.IsNullOrWhiteSpace(value.Note));
+
+    public static AgentStudio.Shared.OperatorReissueInstructions? ReadInstructions(string folderPath)
+    {
+        var path = Path.Combine(folderPath, InstructionsFileName);
+        if (!File.Exists(path)) return null;
+        try { return JsonSerializer.Deserialize<AgentStudio.Shared.OperatorReissueInstructions>(File.ReadAllText(path), Json); }
+        catch { return null; }
+    }
+
+    public static string PromptText(AgentStudio.Shared.OperatorReissueInstructions instructions)
+    {
+        var lines = new List<string> { "# Operator reissue instructions", "" };
+        if (instructions.Findings.Count > 0)
+            lines.Add("Selected escalation findings:");
+        lines.AddRange(instructions.Findings.Select(item => $"- [ ] {item}"));
+        if (!string.IsNullOrWhiteSpace(instructions.Note))
+        {
+            lines.Add("");
+            lines.Add("Owner note:");
+            lines.Add(instructions.Findings.Count == 0
+                ? $"- [ ] {instructions.Note.Trim()}"
+                : instructions.Note.Trim());
+        }
+        return string.Join("\n", lines);
+    }
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -73,7 +106,8 @@ public sealed class OperatorReviewRequeueService
         string fromState,
         string toState,
         string? reason,
-        string actor)
+        string actor,
+        AgentStudio.Shared.OperatorReissueInstructions? reissueInstructions = null)
     {
         var now = DateTime.UtcNow;
         var previousEpoch = ReadEpoch(folderPath);
@@ -119,6 +153,18 @@ public sealed class OperatorReviewRequeueService
         }
 
         var rotated = RotateVerdictArtifacts(folderPath, epoch, fromState, now);
+        if (reissueInstructions is not null)
+        {
+            try
+            {
+                var path = Path.Combine(folderPath, InstructionsFileName);
+                File.WriteAllText(path, JsonSerializer.Serialize(reissueInstructions, Json));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "operator-requeue: failed to persist reissue instructions for {JobId}", jobId);
+            }
+        }
         var historyRef = rotated.Count == 0
             ? null
             : Path.GetDirectoryName(rotated[0])?.Replace('\\', '/');
@@ -231,6 +277,7 @@ public sealed class OperatorReviewRequeueService
         AddFile(candidates, folderPath, PostProcessingOutcomeLog.FileName);
         AddFile(candidates, folderPath, "lifecycle.json");
         AddFile(candidates, folderPath, "orchestrator-follow-up.md");
+        AddFile(candidates, folderPath, InstructionsFileName);
 
         AddNonEmptyDirectory(candidates, folderPath, "post-steps");
         AddNonEmptyDirectory(candidates, folderPath, PostAbortReviewStepService.ContractsDirName);

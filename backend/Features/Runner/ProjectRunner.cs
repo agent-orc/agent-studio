@@ -5589,6 +5589,13 @@ public class ProjectRunner
 
             var followUpPath = Path.Combine(info.FolderPath, "orchestrator-follow-up.md");
             var followUpText = File.Exists(followUpPath) ? File.ReadAllText(followUpPath) : string.Empty;
+            // This handoff belongs to the first run after the operator epoch.
+            // A later automatic reissue must use its own fresh review findings.
+            var operatorInstructions = priorRunExists
+                ? null
+                : OperatorReviewRequeueService.ReadInstructions(info.FolderPath);
+            if (operatorInstructions is not null)
+                followUpText = OperatorReviewRequeueService.PromptText(operatorInstructions);
 
             // Foreground BOTH the auto-review aspect concerns AND the user-run
             // code-review findings (code-review-*.md). The latter were the
@@ -5597,7 +5604,7 @@ public class ProjectRunner
             // re-run only saw the old prompt and not "what the review said was
             // wrong". Both feed the same open-items channel - the pre-check
             // treats them generically as items to resolve before anything else.
-            var reviewFindings = GatherAspectConcernSummaries(info.FolderPath)
+            List<string> reviewFindings = operatorInstructions is not null ? [] : GatherAspectConcernSummaries(info.FolderPath)
                 .Concat(GatherCodeReviewFindings(info.FolderPath))
                 .ToList();
             var reissueCause = ResolveLatestReissueCause(info.FolderPath);
@@ -5605,6 +5612,7 @@ public class ProjectRunner
             return ReissueOpenItemsPreCheck.Evaluate(new ReissueOpenItemsPreCheck.PreCheckInput
             {
                 HasReissueTag = hasReissueTag,
+                HasOperatorInstructions = operatorInstructions is not null,
                 PriorRunCompleted = priorRunExists,
                 PriorRunCount = prior?.Attempt ?? 0,
                 FollowUpText = followUpText,
@@ -8874,7 +8882,7 @@ public class ProjectRunner
             : rendered;
     }
 
-    private static RunPlan BuildReissueChangePlan(
+    internal static RunPlan BuildReissueChangePlan(
         RunPlan plan,
         ReissueOpenItemsPreCheck.PreCheckDecision decision,
         string projectName,
