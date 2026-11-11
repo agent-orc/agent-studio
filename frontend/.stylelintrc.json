@@ -222,6 +222,7 @@
         "src/app/features/board/components/lane-group-head/lane-group-head.component.scss",
         "src/app/features/orchestrator/components/orchestrator-feed-burst/orchestrator-feed-burst.scss",
         "src/app/features/orchestrator/components/orchestrator-feed-burst-detail/orchestrator-feed-burst-detail.scss",
+        "src/app/features/orchestrator/components/orchestrator-feed/_orchestrator-feed-responsive.scss",
         "src/app/features/board/components/active-board-filters/active-board-filters.component.scss",
         "src/app/features/board/components/failure-intervention-chip/failure-intervention-chip.component.scss",
         "src/app/features/board/components/model-routing-suggestion/model-routing-suggestion.component.scss",

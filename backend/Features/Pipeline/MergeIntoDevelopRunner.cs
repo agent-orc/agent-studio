@@ -832,8 +832,12 @@ public sealed partial class MergeIntoDevelopRunner
                 if (inlinePush.Success && inlinePush.Status is ("pushed" or "already-remote"))
                 {
                     if (result.Outcome.IsFreshMerge())
+                    {
                         RecordFreshMergeVerification(jobFolderPath, repoRoot, pushBranch!,
                             result, preMainResult ?? preDevelopResult);
+                        RecordPublishedGate(project, jobId, jobFolderPath, watchPath,
+                            repoRoot, pushBranch!, inlinePush.Sha);
+                    }
                     else if (verification is { NoOp: false }
                              && verification.Decision.State == IntegrationVerificationStates.Verified)
                         RecordVerification(jobFolderPath, repoRoot, verification.Branch,
@@ -1601,6 +1605,21 @@ public sealed partial class MergeIntoDevelopRunner
 
         var executed = gate.VerdictSource == GateVerdictSource.Executed
             && gate.FailureKind is not (BuildTestGateFailureKind.MissingSource or BuildTestGateFailureKind.Cancellation);
+        // A green gate on a net-change publication must have passed on the
+        // exact published commit, or acceptance finds a hole on the
+        // first-parent line. A red gate keeps its own failure code below.
+        if (result.Outcome == MergeIntoIntegrationOutcome.MergedAfterRebase
+            && PreDevelopBuildGate.IsGreen(gate)
+            && (gate.Verdict != BuildTestGateVerdict.Ok
+                || !string.Equals(gate.TestedSha, gatedSha, StringComparison.OrdinalIgnoreCase)))
+        {
+            var rollback = _git.ResetIntegrationBranch(repoRoot, integrationBranch, preMergeTip!);
+            return (MergeIntoIntegrationResult.Failed(
+                AcceptedIntegrationFailureCodes.GateUnavailable,
+                $"The net-change publication {gatedSha} has no passed gate on its exact tree. "
+                + (rollback.Success ? "The integration branch was rolled back."
+                    : $"Rolling the integration branch back failed: {rollback.Error}")), gate);
+        }
         if (PreDevelopBuildGate.IsGreen(gate))
         {
             _logger.LogInformation(
