@@ -2431,7 +2431,7 @@ public static class V1ReviewPlaneEndpoints
         }
     }
 
-    private static bool HasSettledResultEnvelope(RunAttemptDto? run)
+    internal static bool HasSettledResultEnvelope(RunAttemptDto? run)
     {
         if (run is not
             {

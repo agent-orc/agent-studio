@@ -117,6 +117,32 @@ public sealed class RemoteReviewPlanBuilder
            + "build, test and lint would compare this SHA with itself. "
            + "The integration lane verifies the contained tree before completion (AGT-3002).";
 
+    /// <summary>
+    /// AGT-3740: the first rule that keeps build and tests in the review
+    /// instead of deferring them to the batch gate, or null when the plan may
+    /// defer. Each rule names itself, and the plan carries the text as
+    /// <c>BuildTestDeferralDisabledReason</c>, so the card shows why a review
+    /// ran its own build and tests. Before, only the test selection rules
+    /// named themselves; a plan sealed while the batch gate looked disabled or
+    /// the diff was unavailable gave no reason at all.
+    /// </summary>
+    internal static string? BatchDeferralBlocker(bool batchGateEnabled, bool postMerge,
+        bool noCodingTask, string? batchScope, IReadOnlyList<string>? changedPaths,
+        string? resultRef, string? resultSha)
+    {
+        if (!batchGateEnabled) return "The project batch gate was off when the review plan was sealed.";
+        if (postMerge) return "The project integrates post-merge, so no batch gate runs.";
+        if (noCodingTask) return "A report-only or card-less review has no batch gate.";
+        if (changedPaths is null)
+            return "The changed paths against the integration branch were unavailable when the review plan was sealed.";
+        if (changedPaths.Count == 0) return "The delivery changes no path against the integration branch.";
+        if (batchScope != "code" && !DocsOnlyDeliveryPolicy.IsDocsOnly(changedPaths))
+            return "The batch gate scope is documentation only and this delivery changes code.";
+        if (string.IsNullOrWhiteSpace(resultRef)) return "The delivery has no immutable result ref.";
+        if (!ReviewSubjectStore.IsValidResultSha(resultSha)) return "The delivery has no valid result SHA.";
+        return null;
+    }
+
     private string? InventoryDeferralReason(string repositoryPath, string? integrationRef,
         string? resultSha, IReadOnlyList<string> changedPaths)
     {
@@ -237,19 +263,17 @@ public sealed class RemoteReviewPlanBuilder
             RequireDifferentHostFailureDomain = projectSettings?.RequireDifferentReviewHost == true,
         };
         var ordinaryToolPlan = toolPlan;
-        var deferBuildTest = projectSettings?.BatchGate.Enabled == true
-            && (_postMergeMode?.Resolve(task?.ProjectName ?? string.Empty, projectSettings)
-                ?? IntegrationTestModes.Resolve(projectSettings)) != IntegrationTestModes.PostMerge
-            && task is not null && !TaskModes.IsReportOnly(task.Mode)
-            && (projectSettings.BatchGate.EffectiveScope == "code"
-                || DocsOnlyDeliveryPolicy.IsDocsOnly(changedPaths))
-            && changedPaths is { Count: > 0 }
-            && !string.IsNullOrWhiteSpace(resultRef)
-            && ReviewSubjectStore.IsValidResultSha(resultSha);
+        var deferralDisabledReason = BatchDeferralBlocker(
+            projectSettings?.BatchGate.Enabled == true,
+            projectSettings is not null
+                && (_postMergeMode?.Resolve(task?.ProjectName ?? string.Empty, projectSettings)
+                    ?? IntegrationTestModes.Resolve(projectSettings)) == IntegrationTestModes.PostMerge,
+            task is null || TaskModes.IsReportOnly(task.Mode),
+            projectSettings?.BatchGate.EffectiveScope, changedPaths, resultRef, resultSha);
+        var deferBuildTest = deferralDisabledReason is null;
         var noChange = IsNoChangeResult(changedPaths, resultSha, resultRef);
         string? testLevel = null;
         string? selectionDigest = null;
-        string? deferralDisabledReason = null;
         if (deferBuildTest)
         {
             var options = projectSettings!.BatchGate;
