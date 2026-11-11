@@ -450,6 +450,8 @@ export class StudioTabStateService {
         return { kind: 'board', projectName: tab.projectName };
       case 'feed':
         return { kind: 'feed' };
+      case 'magazine':
+        return { kind: 'magazine', scope: tab.scope, label: tab.label };
       case 'task': {
         const scope = normalizeTaskTabScope(tab.scope);
         return { kind: 'task', taskKey: tab.taskKey, ...(scope ? { scope } : {}) };

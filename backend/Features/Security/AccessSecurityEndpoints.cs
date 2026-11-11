@@ -20,7 +20,7 @@ public static class AccessSecurityEndpoints
                 SecurityProfiles.ActiveProfile(configuration),
                 store.BootstrapRequired,
                 principal is not null,
-                principal is null ? null : ToResponse(principal.User),
+                principal is null ? null : SessionUser(principal.User, store, context),
                 BootstrapCodeRequired: store.BootstrapRequired && RequiresBootstrapCode(context, configuration),
                 SecondFactorEnrollmentRequired: principal?.Session.SecondFactorEnrollmentOnly == true,
                 RecoveryCodesRemaining: principal?.Session.RecoveryCodesRemaining,
@@ -42,7 +42,7 @@ public static class AccessSecurityEndpoints
                 var created = store.Bootstrap(request, publicEntry: true);
                 audit.LogInformation("Owner {Username} bootstrapped from client {ClientAddress}", created.User.Username, context.Connection.RemoteIpAddress);
                 SetSessionCookies(context, created.SessionToken, created.CsrfToken);
-                return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(created.User), created.CsrfToken,
+                return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, SessionUser(created.User, store, context), created.CsrfToken,
                     SecondFactorEnrollmentRequired: true));
             }));
 
@@ -86,7 +86,7 @@ public static class AccessSecurityEndpoints
                     origin: RequestOrigin(context), rpId: context.Request.Host.Host);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);
                 var session = store.AuthenticateSession(result.SessionToken, touch: false)?.Session;
-                return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken,
+                return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, SessionUser(result.User, store, context), result.CsrfToken,
                     SecondFactorEnrollmentRequired: session?.SecondFactorEnrollmentOnly == true,
                     RecoveryCodesRemaining: session?.RecoveryCodesRemaining,
                     RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(session),
@@ -100,7 +100,7 @@ public static class AccessSecurityEndpoints
                 var accepted = store.AcceptInvitation(request, publicEntry: true);
                 SetSessionCookies(context, accepted.SessionToken, accepted.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true,
-                    ToResponse(accepted.User), accepted.CsrfToken,
+                    SessionUser(accepted.User, store, context), accepted.CsrfToken,
                     SecondFactorEnrollmentRequired: store.AuthenticateSession(accepted.SessionToken, touch: false)?.Session.SecondFactorEnrollmentOnly == true));
             }));
 
@@ -121,7 +121,7 @@ public static class AccessSecurityEndpoints
                     },
                     statusCode: StatusCodes.Status401Unauthorized)
                 : Results.Ok(new AuthStatusResponse(
-                    SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(principal.User),
+                    SecurityProfiles.ActiveProfile(configuration), false, true, SessionUser(principal.User, store, context),
                     SecondFactorEnrollmentRequired: principal.Session.SecondFactorEnrollmentOnly,
                     RecoveryCodesRemaining: principal.Session.RecoveryCodesRemaining,
                     RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(principal.Session),
@@ -449,6 +449,20 @@ public static class AccessSecurityEndpoints
         => new(user.Id, user.Username, user.DisplayName, user.Role, user.Projects, user.Disabled, user.MustChangePassword,
             user.ProductionApprovalProjects, user.TotpSecret is not null || user.Passkeys.Count > 0,
             user.FactorChangedAt ?? user.Passkeys.OrderByDescending(passkey => passkey.CreatedAt).FirstOrDefault()?.CreatedAt);
+
+    /// <summary>
+    /// The signed-in user's own record, with the projects where it reviews
+    /// (AGT-3670), named as the board names them: bindings hold project ids.
+    /// </summary>
+    private static AuthUserResponse SessionUser(StudioUser user, AccessSecurityStore store, HttpContext context)
+    {
+        var registry = context.RequestServices.GetService<AgentStudio.Registry.ProjectRegistry>();
+        var projects = store.ReviewerProjects(user.Id, (bound, requested) => ProjectAccessAuthorization.SameProject(bound, requested, registry))
+            .Select(project => project == ProjectAccessAuthorization.AllProjectsGrant
+                ? project : registry?.FindByIdOrDisplayName(project)?.DisplayName ?? project)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return ToResponse(user) with { ReviewerProjects = projects };
+    }
 
     /// <summary>
     /// SM-9 notices: a runner enrolled before project binding keeps all projects,

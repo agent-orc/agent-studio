@@ -78,6 +78,28 @@ public sealed partial class AccessSecurityStore
         return PermissionEvaluator.Evaluate(permission, subject, bindings, target, sameProject);
     }
 
+    /// <summary>
+    /// The projects where the user reviews through the Reviewer role and holds
+    /// no card write (AGT-3670). The Studio offers the Human Review decision
+    /// there instead of lane controls; the routes still decide every request.
+    /// A workspace Reviewer binding without a workspace card write is <c>*</c>.
+    /// </summary>
+    public IReadOnlyList<string> ReviewerProjects(string userId, Func<string, string, bool>? sameProject = null)
+    {
+        var (subject, bindings) = PrincipalBindings(IamPrincipalKind.User, userId);
+        var reviewer = bindings
+            .Where(binding => binding.Role == IamRoles.Reviewer && PermissionEvaluator.AppliesTo(binding, subject)).ToList();
+        if (reviewer.Count == 0) return [];
+        if (reviewer.Any(binding => binding.Scope.Kind == IamScopeKind.Workspace))
+            return PermissionEvaluator.Evaluate(IamPermissions.ProjectCardsWrite, subject, bindings, PermissionTarget.WorkspaceWide, sameProject).Allowed
+                ? [] : [ProjectAccessAuthorization.AllProjectsGrant];
+        return reviewer.Select(binding => binding.Scope.Project).OfType<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(project => !PermissionEvaluator.Evaluate(IamPermissions.ProjectCardsWrite, subject, bindings,
+                PermissionTarget.ForProject(project), sameProject).Allowed)
+            .ToList();
+    }
+
     public PermissionDecision AuthorizeServiceAccount(
         string accountId, string permission, PermissionTarget target, Func<string, string, bool>? sameProject = null)
         => CheckPermission(IamPrincipalKind.ServiceAccount, accountId, permission, target, sameProject);

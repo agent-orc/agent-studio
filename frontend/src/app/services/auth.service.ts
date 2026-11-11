@@ -23,6 +23,12 @@ export interface AuthUser {
   mustChangePassword: boolean;
   hasFactor?: boolean;
   factorChangedAt?: string | null;
+  /**
+   * AGT-3670: projects where this user reviews through the Reviewer role and
+   * holds no card write; `*` is every project. Absent outside a networked
+   * session.
+   */
+  reviewerProjects?: string[];
 }
 
 export interface AuthStatus {

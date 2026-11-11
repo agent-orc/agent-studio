@@ -124,7 +124,10 @@ public sealed partial class BatchGateStore
         lock (_queueWaitLock)
         {
             var path = QueueWaitPath(reviewAttemptId);
-            if (File.Exists(path)) File.Delete(path);
+            if (!File.Exists(path)) return;
+            BatchGateDurableWrites.Starting(path);
+            File.Delete(path);
+            BatchGateDurableWrites.Completed(path);
         }
     }
 
@@ -133,6 +136,7 @@ public sealed partial class BatchGateStore
 
     private static void ReplaceQueueStallRecord<T>(string path, T value)
     {
+        BatchGateDurableWrites.Starting(path);
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
@@ -140,6 +144,7 @@ public sealed partial class BatchGateStore
             stream.Flush(flushToDisk: true);
         }
         File.Move(temporary, path, overwrite: true);
+        BatchGateDurableWrites.Completed(path);
     }
 
     /// <summary>
@@ -150,7 +155,10 @@ public sealed partial class BatchGateStore
     public void ReopenPending(string reviewAttemptId)
     {
         var resolved = Path.Combine(_root, "pending", SafeName(reviewAttemptId) + ".json.resolved");
-        if (File.Exists(resolved)) File.Delete(resolved);
+        if (!File.Exists(resolved)) return;
+        BatchGateDurableWrites.Starting(resolved);
+        File.Delete(resolved);
+        BatchGateDurableWrites.Completed(resolved);
     }
 
     /// <summary>True while an unresolved pending record exists for the review.</summary>

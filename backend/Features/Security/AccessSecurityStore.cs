@@ -380,7 +380,7 @@ public sealed partial class AccessSecurityStore
                 ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
             RequireEnrollmentStepUpLocked(state, principal, user);
             if (!_pendingTotpSecrets.TryGetValue(principal.Session.Id, out var secret)
-                || !SecondFactorCodes.VerifyTotp(secret, code, Now))
+                || SecondFactorCodes.MatchTotpStep(secret, code, Now) is not { } acceptedStep)
                 throw new SecurityOperationException(400, "invalid-second-factor", "The authenticator code is invalid.");
             var recovery = SecondFactorCodes.NewRecoveryCodes();
             var replacing = user.TotpSecret is not null;
@@ -388,6 +388,7 @@ public sealed partial class AccessSecurityStore
             {
                 TotpSecret = secret,
                 FactorChangedAt = Now,
+                LastAcceptedTotpStep = acceptedStep,
                 RecoveryCodeHashes = recovery.Select(SecondFactorCodes.HashRecoveryCode).ToList()
             };
             _pendingTotpSecrets.Remove(principal.Session.Id);
@@ -631,7 +632,13 @@ public sealed partial class AccessSecurityStore
             throw new SecurityOperationException(403, "second-factor-required", "Register a second factor before signing in.");
         if (string.IsNullOrWhiteSpace(code))
             throw new SecurityOperationException(401, "second-factor-required", "A second factor is required.");
-        if (user.TotpSecret is not null && SecondFactorCodes.VerifyTotp(user.TotpSecret, code, Now)) return null;
+        if (user.TotpSecret is not null
+            && SecondFactorCodes.MatchTotpStep(user.TotpSecret, code, Now) is { } acceptedStep
+            && (user.LastAcceptedTotpStep is null || acceptedStep > user.LastAcceptedTotpStep))
+        {
+            state.Users[state.Users.IndexOf(user)] = user with { LastAcceptedTotpStep = acceptedStep };
+            return null;
+        }
         var recoveryHash = user.RecoveryCodeHashes.FirstOrDefault(hash => SecondFactorCodes.VerifyRecoveryCode(code, hash));
         if (recoveryHash is not null)
         {

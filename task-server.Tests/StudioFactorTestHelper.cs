@@ -16,7 +16,7 @@ internal static class StudioFactorTestHelper
         var code = SecondFactorCodes.CurrentTotp(secret, serverNow);
         (await client.PostAsJsonAsync("/api/v1/studio/auth/totp/confirm", new StudioConfirmTotpRequest(code)))
             .EnsureSuccessStatusCode();
-        return code;
+        return SecondFactorCodes.CurrentTotp(secret, serverNow.AddSeconds(30));
     }
 
     private sealed record SetupResponse(string Secret);

@@ -37,6 +37,12 @@
         (openUrlPreview)="openUrlPreview($event)" />
     }
   }
+  @if (activeRail() === 'magazine') {
+    @if (projectId(); as id) {
+      <app-magazine-view [scope]="'project:' + id" [label]="projectName()"
+        [projects]="[{ scope: 'project:' + id, label: projectName() }]" />
+    }
+  }
   @defer (when activeRail() === 'project-urls') {
     @if (activeRail() === 'project-urls') {
       <app-project-urls-panel
