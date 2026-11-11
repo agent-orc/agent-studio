@@ -117,6 +117,7 @@ public sealed record BackupOptions(
         {
             if (!configured.Any(source => string.Equals(source.Name, WorkspaceSource, StringComparison.Ordinal)))
                 configured.Insert(0, new BackupSource(WorkspaceSource, workspace, false, false, []));
+            ValidateNames(configured);
             return configured;
         }
 
@@ -124,15 +125,51 @@ public sealed record BackupOptions(
         // machine-local state root (batch gate store and leases, model routing,
         // prompt overrides, project settings). The root itself is shared with
         // other applications on a workstation and is never read as a whole.
-        var sources = new List<BackupSource> { new(WorkspaceSource, workspace, false, false, []) };
         string? local = null;
         try { local = LocalStateRoot.Resolve(); }
         catch (LocalStateRootUnavailableException) { local = null; }
+        return DefaultSources(workspace, local);
+    }
+
+    internal static IReadOnlyList<BackupSource> DefaultSources(string workspace, string? local)
+    {
+        var sources = new List<BackupSource> { new(WorkspaceSource, workspace, false, false, []) };
         if (local is not null)
             foreach (var folder in new[] { "agent-taskboard", "agentstudio", "agent-studio", "AgentStudio" })
-                sources.Add(new BackupSource("local-state-" + folder.ToLowerInvariant(),
-                    Path.Combine(local, folder), false, true, ["cache"]));
+            {
+                var path = Path.GetFullPath(Path.Combine(local, folder));
+                if (sources.Any(source => SameDirectory(source.Path, path))) continue;
+                var name = folder == "AgentStudio" ? "local-state-agentstudio-capitalized" : "local-state-" + folder;
+                sources.Add(new BackupSource(name,
+                    path, false, true, ["cache"]));
+            }
+        ValidateNames(sources);
         return sources;
+    }
+
+    internal static void ValidateNames(IReadOnlyList<BackupSource> sources)
+    {
+        if (sources.GroupBy(source => source.Name, StringComparer.OrdinalIgnoreCase).Any(group => group.Count() > 1))
+            throw new BackupException("backup-source-duplicate", "Backup source names must be unique.");
+    }
+
+    private static bool SameDirectory(string left, string right)
+        => string.Equals(Resolved(left), Resolved(right),
+            OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+                ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    private static string Resolved(string path)
+    {
+        var full = Path.GetFullPath(path);
+        if (!System.IO.Directory.Exists(full)) return Path.TrimEndingDirectorySeparator(full);
+        try
+        {
+            return Path.TrimEndingDirectorySeparator(new DirectoryInfo(full).ResolveLinkTarget(true)?.FullName ?? full);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return Path.TrimEndingDirectorySeparator(full);
+        }
     }
 
     private static BackupTargetOptions ReadTarget(IConfigurationSection section)

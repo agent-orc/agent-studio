@@ -1,4 +1,6 @@
 <div class="detail">
+  <app-mobile-lane-primary [primary]="mobilePrimary()" [mutationsBlocked]="mutationsBlocked()"
+                           (pressed)="mobilePrimaryRequest.emit()" />
   <app-task-resource-status />
   <app-detail-header
     #detailHeader
@@ -103,8 +105,11 @@
     (toggleRequest)="togglePane($event)"
     (openInVsCode)="openInVsCode()" />
 
-  <div class="detail__panes" [class.detail__panes--maximized]="!!maximizedPane()" data-testid="detail-panes">
-    @if (isPaneRendered('prompt')) {
+  <app-mobile-pane-switcher />
+
+  <div class="detail__panes" [class.detail__panes--maximized]="!!maximizedPane()"
+       [attr.data-mobile-pane]="layout.mobilePane()" data-testid="detail-panes">
+    @if (layout.isPaneRendered('prompt')) {
       <app-prompt-pane
         #promptPaneRef
         [markdown]="detail().promptMarkdown || ''"
@@ -131,7 +136,7 @@
         [thinkingLevelOverride]="thinkingLevelDraft()"
         [routeTab]="routeDetailTab()"
         [runOutcome]="runOutcomePresentation()"
-        (maximizeToggle)="toggleMaximize('prompt')"
+        (maximizeToggle)="layout.toggleMaximize('prompt')"
         (hide)="togglePane('prompt')"
         (save)="saveFileContent('prompt.md', $event)"
         (evidenceAcknowledge)="onEvidenceAcknowledge($event)"
@@ -149,10 +154,10 @@
            [class.pane__splitter--dragging]="paneSplitterDragging()"
            role="separator" aria-orientation="vertical"
            data-testid="pane-splitter"
-           [cacTooltip]="'Resize'" (pointerdown)="startPaneResize($event, 'prompt', firstVisibleAfter('prompt'))"><span></span></div>
+           [cacTooltip]="'Resize'" (pointerdown)="startPaneResize($event, 'prompt', layout.firstVisibleAfter('prompt'))"><span></span></div>
     }
 
-    @if (isPaneRendered('protocol')) {
+    @if (layout.isPaneRendered('protocol')) {
       <app-protocol-pane
         [detail]="detail()"
         [maximized]="maximizedPane() === 'protocol'"
@@ -170,7 +175,7 @@
         [mutationsBlocked]="mutationsBlocked()"
         [regenerating]="regeneratingSummary()"
         [runOutcome]="runOutcomePresentation()"
-        (maximizeToggle)="toggleMaximize('protocol')"
+        (maximizeToggle)="layout.toggleMaximize('protocol')"
         (hide)="togglePane('protocol')"
         (activeInspectorTabChange)="onInspectorTabChange($event)"
         (followupPromptChange)="followupPrompt.set($event)"
@@ -190,13 +195,13 @@
            [cacTooltip]="'Resize'" (pointerdown)="startPaneResize($event, 'protocol', 'git')"><span></span></div>
     }
 
-    @if (isPaneRendered('git')) {
+    @if (layout.isPaneRendered('git')) {
       <app-git-pane
         [maximized]="maximizedPane() === 'git'"
         [weight]="paneWeights().git"
         [isRunning]="isRunning()"
         [isActiveJob]="isActiveJob()"
-        (maximizeToggle)="toggleMaximize('git')"
+        (maximizeToggle)="layout.toggleMaximize('git')"
         (hide)="togglePane('git')" />
     }
 

@@ -58,6 +58,32 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
             .Single(parts => parts[0] == AccessSecurityStore.SessionCookieName)[1];
 
     [Fact]
+    public async Task Authenticator_code_cannot_sign_in_twice_in_one_step()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero));
+        using var factory = BuildFactory("203.0.113.15", clock: clock);
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var password = "long pass phrase " + Guid.NewGuid().ToString("N");
+        var bootstrap = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
+        var owner = store.AuthenticateSession(bootstrap.SessionToken)!;
+        var secret = store.BeginTotpEnrollment(owner);
+        store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime));
+        clock.Advance(TimeSpan.FromSeconds(30));
+        var code = SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime);
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
+        using var first = await client.PostAsJsonAsync("/api/auth/login",
+            new { username = "owner", password, secondFactorCode = code });
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        using var replay = await client.PostAsJsonAsync("/api/auth/login",
+            new { username = "owner", password, secondFactorCode = code });
+        Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
+        Assert.Equal("invalid-second-factor", (await replay.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+    }
+
+    [Fact]
     public async Task Networked_host_execution_and_url_targets_require_owner()
     {
         var projectPath = Directory.CreateDirectory(Path.Combine(_workspace, "projects", "networked-smoke")).FullName;
