@@ -2,7 +2,6 @@ import { test, expect } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as nodePath from 'node:path';
 import { createHash } from 'node:crypto';
-import { homedir } from 'node:os';
 import { auditModal } from '../helpers/audit-modal';
 
 test.use({ serviceWorkers: 'block' });
@@ -355,7 +354,8 @@ test('paused batch handoff is read from the real backend store', async ({ page, 
   const event = `batch ${batchId} paused: ${pauseReason}`;
   const digest = createHash('sha256').update(`${nodePath.resolve('..', 'backend')}\n${nodePath.resolve(workspace!)}`)
     .digest('hex').slice(0, 20);
-  const dataHome = process.env.XDG_DATA_HOME || nodePath.join(homedir(), '.local', 'share');
+  // The webServer process receives the isolated XDG root; Playwright itself does not.
+  const dataHome = nodePath.join(workspace!, 'data');
   const storeRoot = nodePath.join(dataHome, 'agentstudio', 'instances', digest, 'batch-gates');
   const safeName = (value: string) => createHash('sha256').update(value).digest('hex');
   const write = (relative: string, value: unknown) => {
