@@ -49,12 +49,24 @@ case "${PW_E2E_PROFILE:-standard}" in
   standard) ;;
   # operator-cli: a fresh networked monolith of its own, so the studio-op spec
   # bootstraps its Owner and API token without sharing first-run state.
-  # networked-https: a fresh networked monolith behind the HTTPS test proxy,
-  # so the browser itself holds the Secure session (AGT-3614).
-  networked-monolith|operator-cli|networked-https)
+  networked-monolith|operator-cli)
     export Security__Profile=networked
     export Security__TrustedProxyAddresses=127.0.0.1
     export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
+    ;;
+  # networked-https: a networked monolith with a second project, so a Product
+  # session bound to the first one proves it never sees the other (AGT-3668).
+  networked-https)
+    export Security__Profile=networked
+    export Security__TrustedProxyAddresses=127.0.0.1
+    export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
+    restricted_repo="${PW_E2E_WORKSPACE}/projects/restricted-fixture"
+    mkdir -p "${restricted_repo}"
+    git -C "${restricted_repo}" init -q
+    export WatchPaths__1__Name='Restricted Fixture'
+    export WatchPaths__1__Path="${restricted_repo}"
+    export WatchPaths__1__RootPath="${restricted_repo}"
+    export WatchPaths__1__RepositoryPath="${restricted_repo}"
     ;;
   recovery)
     recovery_repo="${PW_E2E_WORKSPACE}/recovery-repository"

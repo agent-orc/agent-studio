@@ -607,7 +607,8 @@ occur. It is not a claim about tunnel transfer time.
   independent detail resources begin. Two documents load after core paint;
   usage follows the rich view, Git waits for its pane (except the provenance
   read a Human Review card's Accept needs, which Accept awaits for at most
-  8 s, AGT-3621), and Activity loads its
+  8 s, AGT-3621; Accept waits only for a request in flight, never for a
+  deferred one, AGT-3625), and Activity loads its
   plan and output on selection. Review evidence and history wait for explicit
   tabs. Neighbor core lookahead starts after the first 1.6 seconds. The event
   ledger starts when Timeline first

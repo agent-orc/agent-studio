@@ -21,6 +21,7 @@ An older, host-level backup with a systemd timer and age encryption (AGT-3365) i
 | Backup key (`keys/backup/backup.key`) | Never | The owner's escrowed copy |
 | Host CA private key (`STUDIO_HOST_CA_DIR`) | No | The owner's escrowed copy, or a new CA and re-issued host certificates |
 | `api-tmp`, `caddy-config`, `frontend-data`, `frontend-config` | No | Recreated at start |
+| Control plane lock (`workspace/.security/control-plane.lock`) | No; the running API holds it exclusively | Recreated at start |
 
 With the archive, the two escrowed keys and the Git remotes, a new host comes back to the state of the backup. URL passwords and tokens are removed from recorded `origin` URLs. A file whose content is the secret store key or the backup key, or whose name ends in `.kek`, is left out of every source whatever its path; the archive's content list counts such files.
 
@@ -30,7 +31,7 @@ The API's `BackupHostedService` checks once a minute, five minutes after start:
 
 - **Backup** every 6 hours (`Backup__IntervalHours`, `.env` `STUDIO_BACKUP_INTERVAL_HOURS`). A failed run is retried after 30 minutes.
 - **Retention** after every backup: the newest 12 local archives stay (`Backup__RetentionCount`, `STUDIO_BACKUP_RETENTION`). Retention at the off-host target is configured there, because the host has no right to delete there.
-- **Off-host copy** of every archive and its `.sha256` file right after the backup. A failed copy is retried after 15 minutes, doubling up to six hours.
+- **Off-host copy** of every archive and its `.sha256` file before creation completes when a target is configured. A failed copy is reported as failed and retried after 15 minutes, doubling up to six hours.
 - **Restore verification** of the newest good backup once a day (`Backup__VerifyIntervalHours`), and at once when the last verification failed and a newer backup exists. It checks the archive against the checksum recorded at creation, decrypts it, restores every source into an empty staging host below the backup directory with the real restore code, checks every file against the SHA-256 list in the archive, and deletes the staging host again.
 
 Local archives live in `$STUDIO_DATA_DIR/backups` (`Backup__Directory`) as `studio-backup-<UTC time>-<id>.tar.gz.sbk` with a `.sha256` file and a non-secret `.json` record (size, hash, key fingerprints, consistency figures, verification and copy state). The backup directory must lie outside every source; the API refuses to back up otherwise.
@@ -45,6 +46,8 @@ A backup never archives a half-written state:
 - Append-only journals (`.jsonl`, `.ndjson`, `.log`) are cut after their last complete line.
 
 Background writers inside the API (runner loops, CLI logs) are not stopped; their files go through the same per-file rules. A file that changed on all five attempts is archived from its last complete read and listed as unsettled in the archive's content list and on the Operations page.
+
+A file or directory that exists but cannot be opened for reading, for example because another process holds an exclusive lock on it, is left out; the backup goes on. The archive's content list names it with the reason, the API logs `backup-files-unreadable`, and the Operations page shows a warning while the newest good backup has such files. A failure to write the archive itself (backup directory not writable, disk full) fails the run with `backup-io-failed` and the path; `Create backup` then answers `409` with that reason instead of `500`.
 
 ## Keys
 
@@ -120,6 +123,8 @@ The **Operations** page of every project shows an **Installation backups** panel
 | `offhost-not-configured`, `offhost-invalid`, `offhost-pending`, `offhost-failed` | The newest backup is not, or not yet, off the host. |
 
 Owners and operators read the same state from `GET /api/v1/management/backups` (`no-store`). Operator agents, whose credentials never reach `/api/v1`, read it from `GET /api/operator/backups` or `studio-op backups`; a caller without installation-wide operate permission does not see the target or the key fingerprints, and host paths in its error text read `<path>`. In the UI, **Settings > Task Server** offers **Create backup**, **Verify restore**, **Apply retention**, and **Copy off-host**. Preview an action there, then confirm it to run. Settings > Retention covers task and artifact retention and points to these installation controls; it does not list full backup sets. The management commands of `POST /api/v1/management/commands` run the same engine: `backup-create`, `restore-verify` (optional `backupId`), `backup-retention` (optional `retentionCount`) and `backup-upload`. Each needs `dryRun: false` and `confirmation` equal to the kind for a real run; `backup-create` no longer needs maintenance mode. A `backup-retention` run that keeps fewer archives than `Backup__RetentionCount` needs the Owner role; operators may preview it and may apply the configured count.
+
+Before retiring or moving a host, run `backup-create` and wait until the newest backup shows **Copied** in the Installation backups panel. The command result reports whether that archive was copied, whether its copy failed, or whether no target is configured. If the copy failed, keep the host available and retry with `backup-upload`; a locally created archive is not yet safe from host loss.
 
 ### Backup audit
 

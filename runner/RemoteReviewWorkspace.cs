@@ -768,11 +768,25 @@ public sealed class RemoteReviewWorkspace
                 }
             }
 
+            string? setupChangeReason = null;
+            if (!ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                && execution.Signal is null
+                && ReviewTestReportPolicy.NeedsSetupCheck(command, execution.Process))
+            {
+                var baseline = await ResolveBaselineShaAsync(ct);
+                var diff = await ProcessRunner.RunAsync(
+                    "git", ["diff", "--name-status", baseline, _subject.ExpectedResultSha],
+                    RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+                if (diff.Success)
+                    setupChangeReason = ReviewTestReportPolicy.SetupChangeReason(diff.StdOut.Split(
+                        ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            }
+
             if (!ReviewCommandKinds.IsAgent(command.ExecutionKind)
                 && execution.Signal is null
                 && (execution.Process.ExitCode == 0
                     || ReviewTestReportPolicy.HasExplicitMissingReport(execution.Process))
-                && ReviewTestReportPolicy.Missing(command, execution.Process))
+                && ReviewTestReportPolicy.Missing(command, execution.Process, setupChangeReason is not null))
             {
                 commands.Add(await AddCommandEvidenceAsync(
                     command.StepId, command.Aspect, command.FileName, command.Arguments,
@@ -787,7 +801,8 @@ public sealed class RemoteReviewWorkspace
                 retryPerformed = true;
                 await EnsureRetryDependenciesAsync(
                     RepositoryPath, "candidate", command.StepId, commands, artifacts, ct);
-                if (execution.Signal is null && ReviewTestReportPolicy.Missing(command, execution.Process))
+                if (execution.Signal is null
+                    && ReviewTestReportPolicy.Missing(command, execution.Process, setupChangeReason is not null))
                 {
                     commands.Add(await AddCommandEvidenceAsync(
                         command.StepId, command.Aspect, command.FileName, command.Arguments,
@@ -795,14 +810,17 @@ public sealed class RemoteReviewWorkspace
                         execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
                         "verification", "candidate", null, null, true, false, null,
                         artifacts, ct, command));
-                    var baseline = await ResolveBaselineShaAsync(ct);
-                    var diff = await ProcessRunner.RunAsync(
-                        "git", ["diff", "--name-status", baseline, _subject.ExpectedResultSha],
-                        RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
-                    var reason = diff.Success
-                        ? ReviewTestReportPolicy.SetupChangeReason(diff.StdOut.Split(
-                            ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
-                        : null;
+                    var reason = setupChangeReason;
+                    if (reason is null)
+                    {
+                        var baseline = await ResolveBaselineShaAsync(ct);
+                        var diff = await ProcessRunner.RunAsync(
+                            "git", ["diff", "--name-status", baseline, _subject.ExpectedResultSha],
+                            RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+                        if (diff.Success)
+                            reason = ReviewTestReportPolicy.SetupChangeReason(diff.StdOut.Split(
+                                ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+                    }
                     var reportPath = ReviewTestReportPolicy.MissingReportPath(
                         execution.Process,
                         Path.Combine(ArtifactPath, ArtifactName("candidate", command.StepId, "stdout")));
@@ -1814,7 +1832,8 @@ public sealed class RemoteReviewWorkspace
         string? repeatFilter = null,
         IReadOnlyList<string>? repeatObservedTests = null,
         string? verifyReusedFromAttemptId = null,
-        TimeSpan? verifyReusedAge = null)
+        TimeSpan? verifyReusedAge = null,
+        string? repeatObservation = null)
     {
         var stdoutName = ArtifactName(workspaceRole, stepId, "stdout");
         var stderrName = ArtifactName(workspaceRole, stepId, "stderr");
@@ -1892,7 +1911,8 @@ public sealed class RemoteReviewWorkspace
             (long)Math.Max(0, (verifyReusedAge ?? TimeSpan.Zero).TotalSeconds),
             !process.Success || signal is not null
                 ? ReviewCommandExitDiagnosis.OutputTail(process.StdOut, process.StdErr)
-                : null);
+                : null,
+            repeatObservation);
     }
 
     private async Task<ReviewArtifactEvidenceDto> WriteArtifactAsync(
@@ -2400,9 +2420,17 @@ public sealed class RemoteReviewWorkspace
                 return isolatedBuild.Execution;
             }
             var command = selectedCommand;
-            var execution = await RunCommandAsync(command, path, ct, environment);
+            // AGT-3650: the repeat must show that the failed tests ran. Vitest
+            // and dotnet test name passing tests only when asked to.
+            var repeatEnvironment = new Dictionary<string, string?>(environment, StringComparer.Ordinal)
+            {
+                [ReviewRepeatObservationPolicy.VitestReporterVariable] = "verbose",
+            };
+            var execution = await RunCommandAsync(
+                ReviewTargetedRerunPolicy.WithPassedTestNames(command), path, ct, repeatEnvironment);
             string? repeatFilter = null;
             IReadOnlyList<string>? observed = null;
+            string? observation = null;
             if (!ReferenceEquals(command, plannedCommand))
             {
                 repeatFilter = ReviewTargetedRerunPolicy.ClassFilter(failedTests);
@@ -2413,20 +2441,35 @@ public sealed class RemoteReviewWorkspace
                 {
                     _log($"review clean repeat step={command.StepId} selected tests missing from output; running full command");
                     command = plannedCommand;
-                    execution = await RunCommandAsync(command, path, ct, environment);
+                    execution = await RunCommandAsync(
+                        ReviewTargetedRerunPolicy.WithPassedTestNames(command), path, ct, repeatEnvironment);
                     repeatFilter = null;
                     observed = null;
                 }
             }
             if (execution.Process.Success
                 && ReviewTargetedRerunPolicy.ClassFilter(failedTests) is not null
-                && (selectedCommand.FileName is "dotnet" or "sh" or "bash" or "dash")
-                && ReviewTargetedRerunPolicy.ObservedPassingFailures(
-                    execution.Process.StdOut, failedTests).Count
+                && (selectedCommand.FileName is "dotnet" or "sh" or "bash" or "dash"))
+            {
+                if (ReviewTargetedRerunPolicy.ObservedPassingFailures(
+                        execution.Process.StdOut, failedTests).Count
                     != failedTests.Select(name => name.Split('(', 2)[0])
                         .Distinct(StringComparer.Ordinal).Count())
-                throw new ReviewInfrastructureException("CleanRepeatUnavailable",
-                    $"Clean repeat '{command.StepId}' exited successfully without reporting every previously failed test.");
+                    throw new ReviewInfrastructureException("CleanRepeatUnavailable",
+                        $"Clean repeat '{command.StepId}' exited successfully without reporting every previously failed test.");
+                observation = ReviewRepeatObservation.TestNames;
+            }
+            else if (execution.Process.Success && ReviewRepeatObservationPolicy.HasTestFileNames(failedTests))
+            {
+                var proof = ReviewRepeatObservationPolicy.Observe(
+                        execution.Process.StdOut + "\n" + execution.Process.StdErr, failedTests)
+                    ?? throw new ReviewInfrastructureException("CleanRepeatUnavailable",
+                        $"Clean repeat '{command.StepId}' exited successfully without reporting the previously failed " +
+                        $"tests or their test files as passed: {string.Join(", ", failedTests)}.");
+                observation = proof.Level;
+                _log($"review clean repeat step={command.StepId} observation={proof.Level} " +
+                     $"tests={string.Join(", ", proof.Tests)}");
+            }
             commands.Add(await AddCommandEvidenceAsync(
                 command.StepId, command.Aspect, plannedCommand.FileName, plannedCommand.Arguments,
                 head, tree, execution.Process, execution.StartedAt, execution.FinishedAt,
@@ -2434,7 +2477,8 @@ public sealed class RemoteReviewWorkspace
                 _baselineSha, comparison: null, retryPerformed: true,
                 dependencyCacheHit: false, dependencyCache: null, artifacts, ct,
                 plannedCommand, execution.AgentUsage,
-                repeatFilter: repeatFilter, repeatObservedTests: observed));
+                repeatFilter: repeatFilter, repeatObservedTests: observed,
+                repeatObservation: observation));
             return execution;
         }
         finally

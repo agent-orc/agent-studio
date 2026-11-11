@@ -6,12 +6,17 @@ namespace AgentStudio.TaskServer;
 /// <summary>
 /// Board read model and change feed per project (pipeline delivery target,
 /// M1 and M2). The board answers 304 when the client's validator names the
-/// current board and workspace source generations, checked before the card rows are read.
+/// current board generation, checked before the card rows are read.
 /// </summary>
 internal static class BoardReadModelEndpoints
 {
     public static void MapBoardReadModelEndpoints(this WebApplication app)
     {
+        app.MapPut("/api/v1/board/workspace-generation", async (
+                BoardWorkspaceGenerationRequest request, TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(() => store.RecordBoardWorkspaceGenerationAsync(request.Generation, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+
         var board = app.MapGroup("/api/v1/projects/{projectId}/board")
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
 
@@ -22,8 +27,8 @@ internal static class BoardReadModelEndpoints
                 var validators = context.Request.Headers.IfNoneMatch.ToString();
                 if (validators.Length > 0)
                 {
-                    var versions = await store.GetBoardVersionsAsync(projectId, ct);
-                    var current = BoardReadModelProjection.FormatETag(versions.Board, versions.WorkspaceSource);
+                    var version = await store.GetBoardVersionAsync(projectId, ct);
+                    var current = BoardReadModelProjection.FormatETag(version);
                     if (MatchesValidator(validators, current))
                     {
                         context.Response.Headers.ETag = current;

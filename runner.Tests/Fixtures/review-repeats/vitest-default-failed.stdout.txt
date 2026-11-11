@@ -1,0 +1,13 @@
+ RUN  v4.1.11 /repo/frontend
+
+ ❯ |frontend| src/app/agt3650-flaky-fixture.spec.ts (2 tests | 1 failed) 16ms
+     ✓ passes steadily 4ms
+       × fails only on the first run (AGT-3650) 8ms
+ ✓ |frontend| src/app/utils/ansi-text.spec.ts (2 tests) 17ms
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 3 passed (4)
+   Start at  03:03:24
+   Duration  2.73s (transform 175ms, setup 1.40s, import 24ms, tests 33ms, environment 3.41s)
+
+JSON report written to /tmp/agent-studio-vitest-b9V8hH/report.json

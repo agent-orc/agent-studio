@@ -190,6 +190,7 @@
       "files": [
         "src/app/features/retention/**/*.scss",
         "src/app/features/batch-gate/batch-phase-metrics/batch-phase-metrics.scss",
+        "src/app/components/error-dialog/error-dialog.component.scss",
         "src/app/features/backups/**/*.scss",
         "src/app/features/access/components/access-operator-agents/access-operator-agents.component.scss",
         "src/app/features/access/components/access-operator-activity/access-operator-activity.component.scss",
