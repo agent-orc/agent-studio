@@ -39,6 +39,8 @@ export interface StudioHeaderHost {
   readonly globalSearchOpen: WritableSignal<boolean>;
   readonly environmentOpen: WritableSignal<boolean>;
   readonly pickerOpen: WritableSignal<boolean>;
+  /** AGT-3668: no project to switch to, so the More menu offers no picker. */
+  readonly productWithoutProject: Signal<boolean>;
   readonly chatToggle: OutputEmitterRef<void>;
   readonly openOrchSettings: OutputEmitterRef<void>;
   openInstallationMagazine(): void;
@@ -61,7 +63,8 @@ export class StudioHeaderCockpit {
     const name = this.host.activeWorkspaceName();
     return (workspaces.find(ws => ws.displayName === name) ?? workspaces.find(ws => ws.isDefault) ?? workspaces[0])?.id ?? null;
   });
-  readonly navItems = STUDIO_HEADER_NAV_ITEMS;
+  readonly navItems = computed(() => this.host.productWithoutProject()
+    ? STUDIO_HEADER_NAV_ITEMS.filter(item => item.id !== 'project') : STUDIO_HEADER_NAV_ITEMS);
   readonly detailFocus = signal<UsageDetailFocus | null>(null);
   readonly detailNow = signal(Date.now());
   readonly openRequest = signal<UsageDetailRequest | null>(null);

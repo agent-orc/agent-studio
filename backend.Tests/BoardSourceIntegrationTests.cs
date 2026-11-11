@@ -135,6 +135,57 @@ public sealed class BoardSourceIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task One_project_write_imports_only_that_project_and_other_boards_answer_304()
+    {
+        const string second = "board-source-second";
+        const string third = "board-source-third";
+        foreach (var (name, key) in new[] { (second, "BSS-1"), (third, "BSTH-1") })
+        {
+            var folder = Path.Combine(_workspace, "projects", name, TaskStates.Backlog, key.ToLowerInvariant());
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+            {
+                id = key.ToLowerInvariant(), key, title = key, state = TaskStates.Backlog, order = 1, agent = "claude",
+            }));
+        }
+
+        await using var taskServer = new TaskServerFactory(_taskServerData);
+        var store = taskServer.Services.GetRequiredService<TaskServerStore>();
+        var workspace = await store.CreateWorkspaceAsync(new AgentStudio.TaskServer.Contracts.CreateWorkspaceRequest("Board source"), "test", default);
+        foreach (var (name, prefix) in new[] { (ProjectName, "BST"), (second, "BSS"), (third, "BTH") })
+            await store.CreateProjectAsync(new CreateProjectRequest(workspace.WorkspaceId, name, prefix), "test", default);
+
+        await using var backend = BuildBackend(taskServer, BoardSourceSetting.TaskServer, second, third);
+        using var client = backend.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var worker = backend.Services.GetRequiredService<BoardShadowWorker>();
+        var boardClient = backend.Services.GetRequiredService<TaskServerBoardClient>();
+        var index = backend.Services.GetRequiredService<TaskIndexCache>();
+        await worker.RunCycleAsync(default);
+        var unchanged = new List<(string Name, BoardReadModelResponse Model)>();
+        foreach (var name in new[] { second, third })
+            unchanged.Add((name, await store.GetBoardReadModelAsync(name, default)));
+
+        var move = await client.PostAsJsonAsync(
+            $"/api/tasks/{Slug}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
+            new { targetState = TaskStates.Ready });
+        move.EnsureSuccessStatusCode();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var publication = await index.WaitForCurrentMutationPublicationAsync(deadline.Token);
+        Assert.True(await worker.EnsureSyncedAsync(publication.Generation, TimeSpan.FromSeconds(30), deadline.Token));
+        Assert.Equal(worker.SyncedGeneration, await store.GetBoardWorkspaceGenerationAsync(default));
+        Assert.Equal(worker.SyncedGeneration, (await store.GetBoardReadModelAsync(ProjectName, default)).WorkspaceSourceGeneration);
+        foreach (var (name, before) in unchanged)
+        {
+            var after = await store.GetBoardReadModelAsync(name, default);
+            Assert.Equal(before.WorkspaceSourceGeneration, after.WorkspaceSourceGeneration);
+            Assert.Equal(before.ETag, after.ETag);
+            Assert.Equal(TaskServerBoardReadStatus.NotModified,
+                (await boardClient.GetBoardAsync(name, before.ETag, default)).Status);
+        }
+    }
+
+    [Fact]
     public async Task Task_server_source_answers_the_board_from_the_task_server_and_sees_its_own_write()
     {
         await using var taskServer = new TaskServerFactory(_taskServerData);
@@ -195,12 +246,13 @@ public sealed class BoardSourceIntegrationTests : IDisposable
     private static async Task<TaskDto> TaskServerCardAsync(TaskServerStore store)
         => (await store.GetTaskAsync(ProjectName, Key, default))!;
 
-    private WebApplicationFactory<Program> BuildBackend(TaskServerFactory taskServer, string source)
+    private WebApplicationFactory<Program> BuildBackend(TaskServerFactory taskServer, string source, params string[] additionalProjects)
         => new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
-            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
-                new Dictionary<string, string?>
+            builder.ConfigureAppConfiguration((_, configuration) =>
+            {
+                var settings = new Dictionary<string, string?>
                 {
                     ["TaskRepository"] = _workspace,
                     ["WatchPaths:0:Name"] = ProjectName,
@@ -212,7 +264,16 @@ public sealed class BoardSourceIntegrationTests : IDisposable
                     [BoardSourceSetting.SectionKey] = source,
                     ["Board:TaskServer:BaseUrl"] = "http://localhost/",
                     ["Board:Shadow:SyncIntervalSeconds"] = "3600",
-                }));
+                };
+                for (var i = 0; i < additionalProjects.Length; i++)
+                {
+                    var path = Path.Combine(_workspace, "projects", additionalProjects[i]);
+                    settings[$"WatchPaths:{i + 1}:Name"] = additionalProjects[i];
+                    settings[$"WatchPaths:{i + 1}:Path"] = path;
+                    settings[$"WatchPaths:{i + 1}:RootPath"] = path;
+                }
+                configuration.AddInMemoryCollection(settings);
+            });
             builder.ConfigureTestServices(services => services
                 .AddHttpClient(TaskServerBoardClient.ClientName)
                 .ConfigurePrimaryHttpMessageHandler(() => taskServer.Server.CreateHandler()));

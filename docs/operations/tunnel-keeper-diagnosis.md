@@ -10,7 +10,7 @@ review) because the runner reaches the Task Server *only* through this tunnel.
 | Thing | Finding |
 | --- | --- |
 | Scheduled task | `AgentRunner-TunnelKeeper`, State `Ready`, author `TUFI2\rmisc`, principal `rmisc` (Interactive, RunLevel Limited). |
-| Command it runs | `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File %USERPROFILE%\ops\tunnel-keeper.ps1` — **not** the repo copy under `deploy/windows/agent-runner-tunnel/`, and **not** the old `reverse-tunnel.ps1` in the devspace root (that loop-with-backoff script is dormant). |
+| Command it runs | `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File %USERPROFILE%\ops\tunnel-keeper.ps1`; **not** the repo copy under `deploy/windows/agent-runner-tunnel/`, and **not** the old `reverse-tunnel.ps1` in the devspace root (that loop-with-backoff script is dormant). |
 | Trigger | Single time trigger (2026-08-02 17:38) with a 5-minute repetition, infinite duration. **No AtStartup trigger.** `StartWhenAvailable = False`. |
 | Battery policy | `DisallowStartIfOnBatteries = True`, `StopIfGoingOnBatteries = True`, `WakeToRun = False`. This host is a **laptop** (battery `A32-K55`, Wi-Fi-only `Realtek 8822CE`, S3 standby + Fast Startup). |
 | Keeper log | `%USERPROFILE%\ops\tunnel-keeper.log` (478 lines at time of writing). Journals incidents only; healthy runs exit silently. |
