@@ -1,5 +1,5 @@
 import { SegmentedControlComponent } from '../../../../components/segmented-control/segmented-control.component';
-import { AfterViewInit, ChangeDetectionStrategy, Component, DestroyRef, ElementRef, ViewChild, computed, inject, input, model, output, signal } from '@angular/core';
+import { AfterViewInit, ChangeDetectionStrategy, Component, DestroyRef, ElementRef, ViewChild, computed, effect, inject, input, model, output, signal } from '@angular/core';
 import { ModalStackService } from '../../../../services/modal-stack.service';
 import { forkJoin, of } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
@@ -7,6 +7,8 @@ import { FormsModule } from '@angular/forms';
 import { TaskState, type CliType, type ComponentRoutingResolution, type TagRegistryEntry, type TaskMode, type WatchPathEntry } from '../../../../models/task.model';
 import type { CliModelInfo } from '../../../../features/cli';
 import { TaskService } from '../../../../services/task.service';
+import { AuthSessionState } from '../../../../services/auth.service';
+import { CREATE_LANE_OPTIONS, createLaneSegments } from './create-task-lanes.util';
 import { TagRegistryStore } from '../../../../services/tag-registry.store';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
@@ -14,27 +16,13 @@ import { CreateModePickerComponent } from '../create-mode-picker/create-mode-pic
 import { RoutingPreviewComponent } from '../routing-preview/routing-preview.component';
 import type { ModelRoutingRecommendation } from '../../../quota';
 import { ModelRoutingSuggestionComponent } from '../model-routing-suggestion/model-routing-suggestion.component';
-import { lanePresentation } from '../../../../models/lane-presentation';
+import { PendingButtonDirective } from '../../../../components/async-feedback/pending-button.directive';
 export interface PendingAttachment {
   id: string;
   file: File;
   alt: string;
   previewUrl: string;
 }
-export interface LaneOption {
-  state: string;
-  label: string;
-  icon: string;
-}
-/** Manual create targets stop before orchestrator-owned Progress. */
-export const CREATE_LANE_OPTIONS: readonly LaneOption[] = [
-  TaskState.Backlog,
-  TaskState.Preparation,
-  TaskState.Ready,
-].map((state) => {
-  const lane = lanePresentation(state);
-  return { state, label: lane.name, icon: lane.glyph };
-});
 
 const PENDING_PREFIX = 'pending-attachment-';
 
@@ -57,7 +45,7 @@ const PENDING_PREFIX = 'pending-attachment-';
   selector: 'app-create-job-dialog',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [SegmentedControlComponent, FormsModule, TooltipDirective, CliModelSelectorComponent, CreateModePickerComponent, RoutingPreviewComponent, ModelRoutingSuggestionComponent],
+  imports: [SegmentedControlComponent, FormsModule, TooltipDirective, CliModelSelectorComponent, CreateModePickerComponent, RoutingPreviewComponent, ModelRoutingSuggestionComponent, PendingButtonDirective],
   templateUrl: './create-task-dialog.component.html',
   styleUrl: './create-task-dialog.component.scss'
 })
@@ -67,6 +55,8 @@ export class CreateTaskDialogComponent implements AfterViewInit {
   readonly availableModels = input<CliModelInfo[]>([]);
   readonly cliTypeDraft = input.required<CliType>();
   readonly routing = input<ComponentRoutingResolution | null>(null); readonly routingPending = input(false);
+  readonly submitting = input(false);
+  readonly defaultsPending = input(false);
   readonly policySuggestion = input<ModelRoutingRecommendation | null>(null); readonly modelSelectionExplicit = input(false);
   readonly newTitle = model<string>('');
   readonly newWatchPath = model<string>('');
@@ -87,7 +77,12 @@ export class CreateTaskDialogComponent implements AfterViewInit {
   readonly availableTags = computed(() => this.tagRegistryStore.tags());
 
   readonly laneOptions = CREATE_LANE_OPTIONS;
-  readonly segmentedLaneOptions = this.laneOptions.map(lane => ({ value: lane.state, label: lane.label, testid: 'create-lane-' + lane.state }));
+  private readonly productSession = inject(AuthSessionState).productSession;
+  readonly segmentedLaneOptions = computed(() => createLaneSegments(this.productSession()));
+  /** AGT-3668: a lane the session cannot file into falls back to Backlog. */
+  private readonly productLaneFx = effect(() => {
+    if (!this.segmentedLaneOptions().some(lane => lane.value === this.newTargetState())) this.newTargetState.set(TaskState.Backlog);
+  });
   /** Reactive dialog header derived from the chosen target lane. */
   readonly header = computed<string>(() => {
     switch (this.newTargetState()) {
@@ -112,6 +107,7 @@ export class CreateTaskDialogComponent implements AfterViewInit {
   readonly cancelRequest = output<void>();
   readonly openChatRequest = output<void>();
   readonly submitRequest = output<void>();
+  readonly watchPathChange = output<string>();
 
   readonly isDragging = model<boolean>(false);
   readonly attachmentError = model<string | null>(null);

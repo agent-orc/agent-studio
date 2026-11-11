@@ -5,6 +5,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ErrorDialogComponent } from './error-dialog.component';
+import type { ErrorDialogState } from '../../models/error-dialog.model';
 
 /**
  * Cycle 11c smoke. Compiles + instantiates the standalone component.
@@ -40,5 +41,50 @@ describe('ErrorDialogComponent (smoke)', () => {
       console.warn('[smoke] ErrorDialogComponent initial render skipped:', (e as Error).message);
     }
     expect(fixture.componentInstance).toBeTruthy();
+  });
+});
+
+describe('ErrorDialogComponent expected refusal (AGT-3624)', () => {
+  async function render(state: Partial<ErrorDialogState>) {
+    await TestBed.configureTestingModule({
+      imports: [ErrorDialogComponent],
+      providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ErrorDialogComponent);
+    fixture.componentRef.setInput('error', {
+      title: 'Cannot move to Accepted',
+      message: 'integration-pending: Complete integration. Current status: pending.',
+      output: '{ "status": 409 }',
+      stackTrace: null,
+      source: 'Task demo-1',
+      canOpenCliConfig: false,
+      ...state,
+    });
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    return { fixture, el, q: (id: string) => el.ownerDocument.querySelector(`[data-testid="${id}"]`) as HTMLElement | null };
+  }
+
+  it('leads with the plain sentence and keeps the raw payload behind Technical details', async () => {
+    const { fixture, q } = await render({
+      refusal: { sentence: "This card's work is not in develop yet.", nextAction: 'Wait for integration to finish.' },
+    });
+    expect(q('error-dialog-message')?.textContent).toBe("This card's work is not in develop yet.");
+    expect(q('error-dialog-next-action')?.textContent).toBe('Wait for integration to finish.');
+    expect(q('error-dialog-technical')).toBeNull();
+    const toggle = q('error-dialog-technical-toggle')!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.querySelector('app-disclosure-marker')).toBeTruthy();
+
+    toggle.click();
+    fixture.detectChanges();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(q('error-dialog-server-message')?.textContent).toContain('integration-pending');
+    expect(q('error-dialog-output')?.textContent).toContain('409');
+  });
+
+  it('omits an empty stack trace section on a plain error', async () => {
+    const { el } = await render({});
+    expect(el.ownerDocument.body.textContent).not.toContain('Stack trace');
   });
 });

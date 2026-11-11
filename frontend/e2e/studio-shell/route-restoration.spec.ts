@@ -124,6 +124,12 @@ async function stubRouteData(page: Page): Promise<void> {
       projects: [PROJECT_RECORD],
     }]);
     if (url.pathname === '/api/v1/projects') return json([PROJECT_RECORD]);
+    if (url.pathname === '/api/workspaces/WS-ROUTE/quota/admission') return json({
+      workspaceId: 'WS-ROUTE',
+      workspace: { projectId: null, project: null, status: 'ok', message: null,
+        overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false },
+      projects: [],
+    });
     if (url.pathname === '/api/cli/quota') return json({ snapshots: [], ttlSeconds: 600 });
     if (url.pathname === '/api/usage/cockpit') return json({
       snapshotVersion: 1, workspaceId: 'WS-ROUTE', timeZone: 'Europe/Berlin', weekStart: 1,
@@ -390,6 +396,37 @@ test.describe('Studio route restoration', () => {
   test.beforeEach(async ({ page }) => {
     await stubRouteData(page);
   });
+
+  for (const restored of [
+    { name: 'board', tabs: [{ kind: 'board', projectName: '__all__' }], activeKey: 'board:__all__' },
+    { name: 'Project Settings', tabs: [{ kind: 'hub', projectName: PROJECT, section: 'settings' }], activeKey: `hub:${PROJECT}` },
+  ]) {
+    test(`task URL wins over a restored ${restored.name} tab while a new card resolves`, async ({ page }, testInfo) => {
+      // The card is deliberately absent from the board snapshot. Hold the
+      // first detail read while the registry and persisted tabs initialize.
+      await page.addInitScript(snapshot => {
+        localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({ v: 1, ...snapshot }));
+      }, { tabs: restored.tabs, activeKey: restored.activeKey });
+      await page.route(`**/api/tasks/${TASK_REFERENCE}/core*`, async route => {
+        await new Promise(resolve => setTimeout(resolve, 750));
+        await route.fallback();
+      });
+
+      await page.goto(`/#/tasks/${TASK_REFERENCE}`, { waitUntil: 'commit' });
+      await expect.poll(() => new URL(page.url()).hash).toBe(`#/tasks/${TASK_REFERENCE}`);
+      await expect(page.getByTestId(`studio-tab-task:${TASK_KEY}`)).toBeVisible();
+      await expect(page.getByTestId('prompt-tab-overview')).toHaveAttribute('aria-selected', 'true');
+
+      if (restored.name === 'board') {
+        await setTheme(page, 'light');
+        await page.screenshot({ path: evidencePath(testInfo, 'new-task-route-light.png') });
+        await setTheme(page, 'dark');
+        await page.screenshot({ path: evidencePath(testInfo, 'new-task-route-dark.png') });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.screenshot({ path: evidencePath(testInfo, 'new-task-route-390.png') });
+      }
+    });
+  }
 
   for (const legacy of [
     { path: '/epics', canonical: '/workbenches', tab: 'workbenches:__all__' },

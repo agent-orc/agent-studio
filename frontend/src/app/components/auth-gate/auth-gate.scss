@@ -35,6 +35,7 @@
 h1, p { margin: 0; }
 h1 { color: var(--studio-fg-strong); font-size: 1.5rem; }
 .auth-gate__muted { color: var(--studio-fg-dim); line-height: 1.5; }
+.auth-gate__checks { margin: 0; padding-inline-start: var(--studio-spacing-6); line-height: 1.6; }
 
 label {
   display: grid;

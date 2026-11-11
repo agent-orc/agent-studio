@@ -65,6 +65,69 @@ async function installCompletedJobMocks(
 }
 
 /**
+ * A board with one completed card and every other API answered empty, so the
+ * Result view renders from the given detail alone (AGT-2883, AGT-3689).
+ */
+async function installMockedShell(
+  page: Page,
+  target: { id: string; watchPath: string },
+  statusMarkdown: string,
+  detail: ReturnType<typeof buildCompletedJobDetail>,
+): Promise<void> {
+  await page.route('**/api/**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+  await page.route('**/api/v1/studio/auth/status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
+    });
+  });
+  await page.route('**/api/watch-paths', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([{ name: 'fixture', path: target.watchPath, rootPath: target.watchPath }]),
+    });
+  });
+  await page.route('**/api/tasks**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([detail.info]) });
+  });
+  await page.route('**/api/v1/studio/board**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [],
+        codeNotComplete: [], autoReview: [], humanReview: [], escalated: [], review: [],
+        completed: [detail.info], archive: [], gitStateAt: null, stale: false,
+      }),
+    });
+  });
+  await page.route('**/api/v1/studio/runner/status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ projects: { fixture: { projectName: 'fixture', mode: 'manual', activeJobId: null } } }),
+    });
+  });
+  await installCompletedJobMocks(page, target, statusMarkdown, detail);
+  await page.route(`**/api/tasks/${encodeURIComponent(target.id)}/pipeline?**`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        pipeline: { id: 'fixture', displayName: 'Fixture', version: 1, pre: [], core: [], post: [], allSteps: [] },
+        execution: null,
+        cost: { steps: [], totalTokens: 0, totalCostUsd: 0, anyModelUnknown: false },
+        config: {}, resultFiles: {}, onDemand: null,
+      }),
+    });
+  });
+}
+
+/**
  * Verifies the two protocol-pane additions for the
  * `protokollsummery-verbesserung` task:
  *
@@ -186,57 +249,7 @@ test.describe('Protocol pane - verdict chip + interim status', () => {
         decisionRequired: { required: false, source: null, reason: null },
       },
     });
-    await page.route('**/api/**', async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
-    });
-    await page.route('**/api/v1/studio/auth/status', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
-      });
-    });
-    await page.route('**/api/watch-paths', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify([{ name: 'fixture', path: target.watchPath, rootPath: target.watchPath }]),
-      });
-    });
-    await page.route('**/api/tasks**', async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([detail.info]) });
-    });
-    await page.route('**/api/v1/studio/board**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [],
-          codeNotComplete: [], autoReview: [], humanReview: [], escalated: [], review: [],
-          completed: [detail.info], archive: [], gitStateAt: null, stale: false,
-        }),
-      });
-    });
-    await page.route('**/api/v1/studio/runner/status', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ projects: { fixture: { projectName: 'fixture', mode: 'manual', activeJobId: null } } }),
-      });
-    });
-    await installCompletedJobMocks(page, target, statusMarkdown, detail);
-    await page.route(`**/api/tasks/${encodeURIComponent(target.id)}/pipeline?**`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          pipeline: { id: 'fixture', displayName: 'Fixture', version: 1, pre: [], core: [], post: [], allSteps: [] },
-          execution: null,
-          cost: { steps: [], totalTokens: 0, totalCostUsd: 0, anyModelUnknown: false },
-          config: {}, resultFiles: {}, onDemand: null,
-        }),
-      });
-    });
+    await installMockedShell(page, target, statusMarkdown, detail);
 
     const evidenceDir = resolve(process.env.JOB_RESULTS_DIR ?? join('..', 'results', 'AGT-2883'));
     mkdirSync(evidenceDir, { recursive: true });
@@ -260,6 +273,65 @@ test.describe('Protocol pane - verdict chip + interim status', () => {
       await expect(page.getByTestId('cac-tooltip')).toContainText('from status.md Result line');
       await page.screenshot({
         path: join(evidenceDir, `agt-2883--completed-verdict-source-tooltip--${theme}--mocked.png`),
+        fullPage: false,
+      });
+    }
+  });
+
+  /**
+   * AGT-3648 S4-F12: a review host on an older develop build graded a card
+   * into Human Review and the card did not say so. The Result view now names
+   * the grading release when it was not the Stable build.
+   */
+  test('names the grading release when a non-Stable build reviewed the card', async ({ page }) => {
+    const target = { id: 'agt-3689-grading-release', watchPath: '/e2e/agt-3689' };
+    const statusMarkdown = ['# Status', '- Result: Success', '', '## What Was Done', '- Graded remotely.'].join('\n');
+    const stableNotice = 'graded by release 20261105T090000Z-review-f947f2b1c3d4 (commit f947f2b), '
+      + 'which differs from Stable 0.9.5 (3d61e8b)';
+    const detail = buildCompletedJobDetail(target.id, target.watchPath, statusMarkdown);
+    Object.assign(detail.info, {
+      state: '6-completed',
+      folderPath: `${target.watchPath}/.orchestrator/jobs/6-completed/${target.id}`,
+      reviewProjection: {
+        attempts: [{
+          plane: 'Remote', attemptId: 'r-1', receivedAt: '2026-11-09T18:13:00Z', outcome: 'Pass', grade: null,
+          buildTestsResult: 'passed', buildTestsReason: null, aspects: [],
+          workerReleaseId: '20261105T090000Z-review-f947f2b1c3d4',
+          daemonReleaseId: '20261105T090000Z-review-f947f2b1c3d4',
+          workerReleaseSuperseded: null, workerReleaseStable: stableNotice,
+        }],
+        rounds: 1, latestPlane: 'remote', latestOutcome: 'Pass', latestReceivedAt: '2026-11-09T18:13:00Z',
+        blockingAspects: [], delivery: { status: 'not-attempted', reason: null },
+        decisionRequired: { required: false, source: null, reason: null },
+      },
+    });
+    await installMockedShell(page, target, statusMarkdown, detail);
+
+    const evidenceDir = resolve(process.env.JOB_RESULTS_DIR ?? join('..', 'results', 'AGT-3689'));
+    mkdirSync(evidenceDir, { recursive: true });
+    for (const [theme, width] of [['light', 1600], ['dark', 1600], ['dark', 390]] as const) {
+      await page.setViewportSize({ width, height: 1100 });
+      await page.goto(`/?job=${encodeURIComponent(target.id)}&watchPath=${encodeURIComponent(target.watchPath)}`);
+      await page.evaluate((value) => {
+        document.documentElement.dataset['studioTheme'] = value;
+        localStorage.setItem('atp.studio.theme', value);
+      }, theme);
+      await page.addStyleTag({ content: 'app-error-dialog { display: none !important; }' });
+
+      const notice = page.getByTestId('result-grading-release-notice');
+      await expect(notice).toHaveText(`Review ${stableNotice}.`, { timeout: 15_000 });
+      // The mocked shell answers every other API with [], which raises an
+      // unrelated runtime dialog (also seen in the AGT-2883 test above).
+      await notice.scrollIntoViewIfNeeded();
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const close = page.getByTestId('error-dialog-close');
+        if (!await close.isVisible().catch(() => false)) break;
+        await close.click({ timeout: 2_000 }).catch(() => { /* already gone */ });
+        await page.waitForTimeout(300);
+      }
+      await expect(page.getByTestId('error-dialog-close')).toBeHidden();
+      await page.screenshot({
+        path: join(evidenceDir, `agt-3689--result-grading-release--${theme}-${width}--mocked.png`),
         fullPage: false,
       });
     }

@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using AgentStudio.TestSupport;
+using System.Text.Json;
 
 namespace AgentStudio.Tests;
 
@@ -17,6 +18,39 @@ public sealed class ProjectPreparationTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { }
+    }
+
+    [Fact]
+    public void Minimal_schema_two_document_and_schema_required_fields_match_runtime()
+    {
+        const string minimal = "schemaVersion: 2\nproject:\n  id: example-project\nstack: [node]\ncommands:\n  prepare: .agent-studio/prepare\n";
+        var accepted = ProjectDefinitionReader.Parse(minimal);
+        Assert.True(accepted.IsValid, string.Join("; ", accepted.Issues.Select(issue => issue.Message)));
+        Assert.Contains(ProjectDefinitionReader.Parse(minimal.Replace("  prepare: .agent-studio/prepare\n", "", StringComparison.Ordinal)).Issues,
+            issue => issue.Path == "commands.prepare");
+        Assert.Contains(ProjectDefinitionReader.Parse(minimal.Replace("project:\n  id: example-project\n", "", StringComparison.Ordinal)).Issues,
+            issue => issue.Code == "v2-project-required");
+
+        using var schema = JsonDocument.Parse(File.ReadAllText(Path.Combine(RepositoryRoot.Find(),
+            "docs", "app", "schemas", "project-execution.schema.json")));
+        Assert.Equal(new[] { "schemaVersion", "stack", "commands" },
+            schema.RootElement.GetProperty("required").EnumerateArray().Select(item => item.GetString()));
+        Assert.Equal(new[] { "prepare" }, schema.RootElement.GetProperty("properties").GetProperty("commands")
+            .GetProperty("required").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("project", schema.RootElement.GetProperty("allOf")[0].GetProperty("else")
+            .GetProperty("required").EnumerateArray().Select(item => item.GetString()));
+    }
+
+    [Fact]
+    public void Generated_custom_stack_omits_empty_optional_sections()
+    {
+        var proposal = ProjectDefinitionGenerator.Generate(_root);
+        Assert.StartsWith("schemaVersion: 2\nproject:\n", proposal.Definition);
+        Assert.DoesNotContain("toolVersions:\n", proposal.Definition);
+        Assert.DoesNotContain("testSuites:\n", proposal.Definition);
+        Assert.DoesNotContain("cachePaths:\n", proposal.Definition);
+        Assert.Contains("  lint: []", proposal.Definition);
+        Assert.True(ProjectDefinitionReader.Parse(proposal.Definition).IsValid);
     }
 
     [Fact]
@@ -753,6 +787,7 @@ public sealed class ProjectPreparationTests : IDisposable
 
         var proposal = ProjectDefinitionGenerator.Generate(_root);
 
+        Assert.StartsWith("schemaVersion: 2\nproject:\n", proposal.Definition);
         Assert.Contains("stack: [dotnet, node]", proposal.Definition);
         Assert.Contains("dotnetSdk: global.json", proposal.Definition);
         Assert.Contains("npm --prefix 'web' ci --prefer-offline", proposal.PrepareScript);

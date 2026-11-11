@@ -14,7 +14,8 @@ public static class BoardReadModelProjection
     /// <summary>Bumped when the projection changes shape, so an old validator never matches.</summary>
     public const int Version = 1;
 
-    public static string FormatETag(long generation) => $"\"board-v{Version}-g{generation}\"";
+    public static string FormatETag(long generation)
+        => $"\"board-v{Version}-g{generation}\"";
 
     public static BoardReadModelResponse Project(
         string projectId,

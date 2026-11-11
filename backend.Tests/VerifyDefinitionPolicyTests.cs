@@ -115,6 +115,8 @@ public sealed class VerifyDefinitionPolicyTests : IDisposable
         Assert.Contains("`.agent-studio/prepare`", report.Message);
         Assert.Contains("```yaml", report.Message);
         Assert.Contains("go test ./...", report.Message);
+        Assert.Contains("docs/operations/setup/onboard-a-project.md#test-command-output-in-review",
+            report.Message);
     }
 
     [Fact]

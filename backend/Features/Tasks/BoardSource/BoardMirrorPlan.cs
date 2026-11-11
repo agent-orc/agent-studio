@@ -44,9 +44,10 @@ public sealed record BoardMirrorProjectDelta(
     IReadOnlyList<string> Removals);
 
 /// <summary>
-/// Pure delta between the card core last accepted by the Task Server and the
+/// Delta between the card core last accepted by the Task Server and the
 /// current workspace publication. A project never synced is sent whole; a
 /// project that vanished from the workspace sends removals for its cards.
+/// Unchanged projects are omitted; the mirror records the publication generation once.
 /// </summary>
 public static class BoardMirrorPlan
 {

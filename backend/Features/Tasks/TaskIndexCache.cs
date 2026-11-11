@@ -389,6 +389,38 @@ public sealed class TaskIndexCache
     }
 
     /// <summary>
+    /// Waits for the mutation requirements present at entry to be published.
+    /// Unlike a board read, this observes the write's generation. Later
+    /// mutations do not move the target while the caller is waiting.
+    /// </summary>
+    internal async Task<TaskIndexPublication> WaitForCurrentMutationPublicationAsync(
+        CancellationToken cancellationToken)
+    {
+        long targetMutationGen;
+        long targetMutationScanGen;
+        lock (_lock)
+        {
+            targetMutationGen = _requiredMutationGen;
+            targetMutationScanGen = _requiredMutationScanGen;
+        }
+
+        while (true)
+        {
+            Task refresh;
+            lock (_lock)
+            {
+                if (_hasSnapshot
+                    && _publishedMutationGen >= targetMutationGen
+                    && _publishedInvalidationGen >= targetMutationScanGen)
+                    return _publication;
+                StartBackgroundRefreshLocked();
+                refresh = _refreshCompletion!.Task;
+            }
+            await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
     /// Lets startup workers wait for the first publication without occupying a
     /// thread-pool worker. A failed scan is retried by the dedicated refresh
     /// worker; recovery passes must not mistake an empty index for an empty board.
@@ -793,15 +825,33 @@ public sealed class TaskIndexCache
     /// </summary>
     public void PublishRoutingFromFolder(string folder, Func<TaskInfo?> read)
     {
-        lock (_corePublicationLock)
+        long observedVersion;
+        lock (_lock) observedVersion = _coreFolderVersions.GetValueOrDefault(folder);
+        var info = read();
+        var published = false;
+        try
         {
-            var info = read();
-            if (info is null)
+            lock (_corePublicationLock)
             {
-                Invalidate(InvalidationSource.Mutation, changedPath: Path.Combine(folder, "task.json"));
-                return;
+                // A later publication, a watcher marker (often the echo of
+                // this very write) or a refresh prune may have moved the
+                // version while this folder was being read. The durable
+                // write has already landed, so skipping would leave the old
+                // routing in the core fact and the board (AGT-3723). Re-read
+                // under the lock: no older result can replace a newer card.
+                bool moved;
+                lock (_lock) moved = _coreFolderVersions.GetValueOrDefault(folder) != observedVersion;
+                if (moved) info = read();
+                if (info is null) return;
+                PublishRoutingMutation(info);
+                published = true;
             }
-            PublishRoutingMutation(info);
+        }
+        finally
+        {
+            // Every routing write ends in a publication or an invalidation.
+            if (!published)
+                Invalidate(InvalidationSource.Mutation, changedPath: Path.Combine(folder, "task.json"));
         }
     }
 
@@ -947,6 +997,13 @@ public sealed class TaskIndexCache
                 var info = read();
                 if (info is null) RemoveCoreByFolder(folder);
                 else PublishCore(info);
+                // A later incremental refresh must read this folder even when
+                // task.json and the directory stamp have not changed.
+                lock (_lock)
+                {
+                    if (_incremental) _pendingFolderPaths.Add(Path.Combine(folder, "task.json"));
+                    if (_refreshCompletion is not null) ++_invalidationGen;
+                }
             }
         }
         finally { EndCorePublication(pending); }
@@ -1685,7 +1742,10 @@ public sealed class TaskIndexCache
             }
             if (!forced.Contains(folder) && _scanner.FolderStampIsSettled(folder)
                 && _folderStamps.TryGetValue(folder, out var prior) && Equals(prior, stamp))
+            {
+                RefreshVolatileMarkers(folder);
                 continue;
+            }
             var task = _scanner.ScanJobFolder(folder, source.Entry, source.State,
                 bypassMemo: forced.Contains(folder));
             Interlocked.Increment(ref FolderReloads);
@@ -1700,7 +1760,24 @@ public sealed class TaskIndexCache
                 _folderStamps[folder] = stamp;
             }
         }
+        // A changed path may refresh only one card. Every other resident card
+        // still needs its in-place marker files read for this publication.
+        foreach (var folder in _folderFacts.Keys.ToArray())
+            if (!candidates.ContainsKey(folder)) RefreshVolatileMarkers(folder);
         return _folderFacts.Values.ToList();
+
+        void RefreshVolatileMarkers(string folder)
+        {
+            // Direct core publications can be newer than the last board scan.
+            // Use that fact as the base so a marker-only read never rolls it back.
+            TaskInfo baseFact;
+            lock (_lock)
+                baseFact = _coreFactsByFolder.GetValueOrDefault(folder) ?? _folderFacts[folder];
+            // Archive facts have no volatile live markers and retain their
+            // slim-hydrated instance across unchanged refreshes.
+            _folderFacts[folder] = baseFact.State == TaskStates.Archive
+                ? baseFact : _scanner.ApplyVolatileMarkers(baseFact, folder);
+        }
 
         static bool IsWithin(string root, string path)
         {

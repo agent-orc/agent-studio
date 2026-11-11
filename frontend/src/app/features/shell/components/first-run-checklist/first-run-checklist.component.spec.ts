@@ -55,6 +55,7 @@ describe('FirstRunChecklistComponent probes', () => {
   });
 
   beforeEach(() => {
+    for (const mock of Object.values(deviceLogins)) mock.mockReset();
     localStorage.removeItem('studio-first-run-proof');
     localStorage.removeItem('studio-first-run-git-setup-id');
     host.set([]);
@@ -94,15 +95,31 @@ describe('FirstRunChecklistComponent probes', () => {
     fixture.destroy();
   });
 
-  it('explains that the networked first-run journey needs the Task Server on a monolith', () => {
+  it('reads monolith owner enrollment from auth status when installation is absent', () => {
     const fixture = TestBed.createComponent(FirstRunChecklistComponent);
     fixture.detectChanges();
     http.expectOne('/api/v1/installation').flush({}, { status: 404, statusText: 'Not Found' });
+    http.expectOne('/api/auth/status').flush(authStatus());
     http.expectOne('/api/v1/projects').flush({}, { status: 404, statusText: 'Not Found' });
     fixture.detectChanges();
-    expect(fixture.nativeElement.querySelector('[data-testid="first-run-task-server-unavailable"]')?.textContent)
-      .toContain('running without a Task Server connection');
+    const banner = fixture.nativeElement.querySelector('[data-testid="first-run-task-server-unavailable"]') as HTMLElement;
+    expect(banner.textContent).toContain('supports owner sign-in and second-factor enrollment');
+    expect(banner.querySelector('a')?.getAttribute('href')).toContain('task-server-topology.md');
+    expect(fixture.nativeElement.querySelector('[data-testid="first-run-owner"]')?.getAttribute('data-state')).toBe('ready');
+    expect(fixture.componentInstance.ownerReady()).toBe(true);
+    fixture.destroy();
+  });
+
+  it('keeps the monolith owner pending until auth status verifies enrollment and session', () => {
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    http.expectOne('/api/v1/installation').flush({}, { status: 404, statusText: 'Not Found' });
+    http.expectOne('/api/auth/status').flush({ ...authStatus(), authenticated: false });
+    http.expectOne('/api/v1/projects').flush([]);
+    fixture.detectChanges();
     expect(fixture.componentInstance.ownerReady()).toBe(false);
+    expect(fixture.nativeElement.querySelector('[data-testid="first-run-owner"]')?.textContent)
+      .not.toContain('Installation identity is unavailable');
     fixture.destroy();
   });
 
@@ -209,6 +226,40 @@ describe('FirstRunChecklistComponent probes', () => {
       } } } } as unknown as TaskDetail);
     expect(component.proofReviewed()).toBe(true);
     expect(component.proofIntegrated()).toBe(true);
+    fixture.destroy();
+  });
+
+  it('marks local owner setup not applicable without an installation read', () => {
+    authStatus.set({ authenticated: false, profile: 'local', bootstrapRequired: true });
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    http.expectNone('/api/v1/installation');
+    http.expectOne('/api/projects').flush([]);
+    expect(fixture.componentInstance.ownerReady()).toBe(true);
+    const owner = fixture.nativeElement.querySelector('[data-testid="first-run-owner"]') as HTMLElement;
+    expect(owner.dataset['state']).toBe('ready');
+    expect(owner.textContent).toContain('No owner sign-in is needed in the local profile.');
+    expect(owner.textContent).toContain('Not applicable');
+    fixture.destroy();
+  });
+
+  it('accepts a fresh ok provider probe on a degraded host and explains stale ok badges', () => {
+    authStatus.set({ authenticated: false, profile: 'local', bootstrapRequired: true });
+    host.set([{ id: 'runner-a', clientId: 'runner-a', status: 'degraded',
+      lastHeartbeatAt: new Date().toISOString() } as RemoteHost]);
+    badges.set([readyBadge()]);
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    http.expectOne('/api/projects').flush([]);
+    const component = fixture.componentInstance;
+    expect(component.activeHosts()).toHaveLength(1);
+    expect(component.providersReady()).toBe(true);
+    expect(component.selectedProvider()?.provider).toBe('codex');
+    badges.set([{ ...readyBadge(), lastSeenAt: new Date(Date.now() - 6 * 60_000).toISOString() }]);
+    fixture.detectChanges();
+    expect(component.providersReady()).toBe(false);
+    expect(fixture.nativeElement.querySelector('[data-testid="first-run-providers"]')?.textContent)
+      .toContain('Provider probe is stale.');
     fixture.destroy();
   });
 

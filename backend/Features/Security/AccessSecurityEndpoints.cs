@@ -22,7 +22,8 @@ public static class AccessSecurityEndpoints
                 principal is not null,
                 principal is null ? null : ToResponse(principal.User),
                 BootstrapCodeRequired: store.BootstrapRequired && RequiresBootstrapCode(context, configuration),
-                SecondFactorEnrollmentRequired: principal?.Session.SecondFactorEnrollmentOnly == true));
+                SecondFactorEnrollmentRequired: principal?.Session.SecondFactorEnrollmentOnly == true,
+                RestoreNotice: principal?.User.Role == StudioRoles.Owner ? RestoreSecurityNotice.Read(store.SecurityFolder) : null));
         });
 
         auth.MapPost("/bootstrap", (BootstrapRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration, ILoggerFactory loggers) =>
@@ -87,7 +88,8 @@ public static class AccessSecurityEndpoints
                     origin: RequestOrigin(context), rpId: context.Request.Host.Host);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken,
-                    SecondFactorEnrollmentRequired: store.AuthenticateSession(result.SessionToken, touch: false)?.Session.SecondFactorEnrollmentOnly == true));
+                    SecondFactorEnrollmentRequired: store.AuthenticateSession(result.SessionToken, touch: false)?.Session.SecondFactorEnrollmentOnly == true,
+                    RestoreNotice: result.User.Role == StudioRoles.Owner ? RestoreSecurityNotice.Read(store.SecurityFolder) : null));
             });
         });
 
@@ -119,8 +121,17 @@ public static class AccessSecurityEndpoints
                     statusCode: StatusCodes.Status401Unauthorized)
                 : Results.Ok(new AuthStatusResponse(
                     SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(principal.User),
-                    SecondFactorEnrollmentRequired: principal.Session.SecondFactorEnrollmentOnly));
+                    SecondFactorEnrollmentRequired: principal.Session.SecondFactorEnrollmentOnly,
+                    RestoreNotice: principal.User.Role == StudioRoles.Owner ? RestoreSecurityNotice.Read(store.SecurityFolder) : null));
         });
+
+        auth.MapPost("/restore-notice/acknowledge", (RestoreNoticeAcknowledgeRequest request, HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                RequireOwner(context, store);
+                RestoreSecurityNotice.Acknowledge(store.SecurityFolder, request.ArchiveId);
+                return Results.NoContent();
+            }));
 
         auth.MapPost("/logout", (HttpContext context, AccessSecurityStore store, AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
             Execute(() =>

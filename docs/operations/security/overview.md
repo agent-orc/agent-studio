@@ -120,10 +120,13 @@ that is already allowed to edit that project's checkout.
   session cookie and sends it with `Secure`, `Path=/`, and no `Domain` attribute.
   Studio exposes an explicit sign-out action; a logout or API 401 tears
   down browser polling and SignalR before returning to the login gate.
-- Owner and Admin sign-in requires an enrolled authenticator code, a one-use
-  recovery code, or a WebAuthn passkey assertion. An account without an enrolled
-  factor receives a limited session for factor setup. Every step-up requires a
-  registered second factor. TOTP enrollment returns recovery codes once; store them away from
+- Owner, Admin, Developer, Approver, and Viewer must enroll an authenticator or a
+  WebAuthn passkey. Their permissions include run operation, deployment or
+  approval, secrets, or access; Viewer holds `secrets.read` for metadata. An account without a factor receives a limited
+  session for factor setup. Once any user registers a factor, every password
+  sign-in requires its authenticator code, a one-use recovery code, or a
+  WebAuthn passkey assertion, including Product sign-ins. Every
+  step-up requires a registered second factor. TOTP enrollment returns recovery codes once; store them away from
   the browser. Passkey ceremonies require user verification and bind the
   challenge to the current origin and relying party. Each user can list active
   sessions with device, address, creation, and last-use times, revoke one, or
@@ -146,7 +149,9 @@ that is already allowed to edit that project's checkout.
   Product cards carry no run controls: project defaults choose the CLI, model,
   and mode, and the card records the signed-in user as creator. Product
   sessions read only screenshot, HTML, and Markdown result files and never run
-  conversations, session events, or agent work detail. The per-route task
+  conversations, session events, or agent work detail. The shell lists a
+  Product session's workspaces, projects, and watch paths through the same
+  binding-filtered collections, without host checkout paths. The per-route task
   contract is in
   [Product session task access](../../system/domains/tasks.md#product-session-task-access-agt-3182).
   Production approval is a separate grant that an owner gives for one assigned
@@ -296,11 +301,24 @@ through its groups. Code: `backend/Features/Security/Iam/`.
 |---|---|---|
 | Owner | workspace | every permission; break-glass role, the only one with `access.read`, `access.manage`, and `workspace.administer` |
 | Admin | workspace, project | settings, operation, production deploy and approval, `secrets.write` |
-| Developer | workspace, project, environment | cards, runs, chats, documents, non-production deploys |
-| Operator agent (`operator-agent`) | workspace, project; service accounts only | the operator surface: reads, cards, runs, batch gate, review step models (`project.pipeline.write`), installation operation reads, stage deploys, the security view (`security.posture.read`) |
+| Developer | workspace, project, environment | cards, runs, chats, documents, magazine articles, non-production deploys |
+| Operator agent (`operator-agent`) | workspace, project; service accounts only | the operator surface: reads, cards, runs, batch gate, review step models (`project.pipeline.write`), installation operation reads, stage deploys, the security view (`security.posture.read`), magazine publishing (`magazine.write`) |
 | Product (`contributor`) | project | cards and chat, narrowed further by the Product allowlist |
 | Viewer | workspace, project, environment | reads, secret metadata included |
 | Approver | workspace, project, environment | `environment.production.deploy.approve` and reads |
+
+Every role reads the magazines it can see (`magazine.read`); Owner, Admin,
+Developer and Operator agent also publish (`magazine.write`). The
+installation and workspace magazines take writes only through a workspace
+binding ([magazine domain](../../system/domains/magazine.md#access)).
+
+For human users, factor enrollment follows effective permissions from direct
+and group bindings. Any role granting `project.runs.operate`,
+`environment.deploy`, production deployment or approval, `secrets.*`, or
+`access.*` requires enrollment. This currently covers Owner, Admin, Developer,
+Approver, and Viewer. Product can enroll voluntarily; if it does, every
+subsequent password sign-in verifies the factor. Operator agent is a service
+account role and does not use human sign-in.
 
 - Every route declares one named permission, such as `project.cards.write`,
   `environment.production.deploy.approve`, `secrets.write`, or
@@ -1226,12 +1244,13 @@ stream that API tokens may read. SignalR stays closed to tokens.
   for example a provider limit) need an Owner, an all-projects grant, or the
   local profile. `watcher.heartbeat` names no project data and every reader
   receives it, because the lease is per installation.
-- `GET /api/operator/attention` (AGT-3576) returns the facts the stream
-  currently sees as one list, `{ items, count }`, where `count` is the number
-  of items. It declares `project.read`, applies the same project scope as
-  the stream, omits `watcher.heartbeat`, and publishes nothing. The Studio
-  header's Needs you entry reads it. The fact read is reused for up to one
-  sweep interval.
+- `GET /api/operator/attention` returns current operator facts as
+  `{ items, count }`. Card rows include the title and a review or escalation
+  reason. It declares `project.read`, applies the stream's project scope, omits
+  `watcher.heartbeat`, and publishes nothing. The Studio Needs you entry adds
+  Dossier decision gates, backup and credential warnings from their existing reads.
+  Its bell total equals the rows it shows. Decision facts are reused for up
+  to one sweep interval.
 - `GET /api/operator/watcher/lease` reads the lease. `POST` takes it, `POST
   .../lease/{leaseId}/heartbeat` renews it, and `DELETE .../lease/{leaseId}`
   releases it. The writes declare `project.runs.operate` with project

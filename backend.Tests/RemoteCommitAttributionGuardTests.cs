@@ -141,6 +141,70 @@ public sealed class RemoteCommitAttributionGuardTests
         Assert.Contains("AGT-2240", result.Warning, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// AGT-3717: the Deploy 38 runner wrote the card title into its salvage
+    /// subject. Playthrough slices and follow-up cards name other keys there.
+    /// </summary>
+    [Theory]
+    [InlineData("AGT-3702: CP-9 · Guided playthrough slice")]
+    [InlineData("AGT-3702: Follow-up: review findings in AGT-3591")]
+    public void Attribute_OwnRunnerSalvageCommitWithKeyShapedTitle_IsAttributed(string subject)
+    {
+        var commits = new[]
+        {
+            Commit("1111111111111111111111111111111111111111", "fix(AGT-3702): agent change"),
+            Commit("2222222222222222222222222222222222222222", subject,
+                SalvageMessage(subject, "AGT-3702")),
+        };
+
+        var result = RemoteCommitAttributionGuard.Attribute(
+            "AGT-3702", "runner/agent-runner-01/AGT-3702", commits);
+
+        Assert.True(result.Accepted, result.Warning);
+        Assert.Equal(commits.Select(commit => commit.Sha), result.Commits.Select(commit => commit.Sha));
+    }
+
+    [Fact]
+    public void Attribute_ForeignKeyInAgentCommit_IsRejectedNextToTheOwnSalvageCommit()
+    {
+        const string salvage = "AGT-3702: CP-9 · Guided playthrough slice";
+        var result = RemoteCommitAttributionGuard.Attribute(
+            "AGT-3702",
+            "runner/agent-runner-01/AGT-3702",
+            [
+                Commit("1111111111111111111111111111111111111111", "docs(CP-9): foreign change"),
+                Commit("2222222222222222222222222222222222222222", salvage,
+                    SalvageMessage(salvage, "AGT-3702")),
+            ]);
+
+        Assert.False(result.Accepted);
+        Assert.Empty(result.Commits);
+        Assert.Contains("CP-9", result.Warning, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Only the salvage commit of the expected card is exempt. One that a
+    /// runner made for another card, or a message without the salvage
+    /// trailer, is scanned like every agent commit.
+    /// </summary>
+    [Theory]
+    [InlineData("Agent-Studio-Task: AGT-3591\nAgent-Studio-Salvage: teardown")]
+    [InlineData("Agent-Studio-Task: AGT-3702")]
+    [InlineData("Agent-Studio-Salvage: teardown")]
+    public void Attribute_SalvageTrailersOfAnotherCardOrIncomplete_StillScanTheSubject(string trailers)
+    {
+        const string subject = "AGT-3702: CP-9 · Guided playthrough slice";
+        var result = RemoteCommitAttributionGuard.Attribute(
+            "AGT-3702",
+            "runner/agent-runner-01/AGT-3702",
+            [Commit("2222222222222222222222222222222222222222", subject,
+                $"{subject}\n\nRunner committed changes the agent left uncommitted (outcome Done).\n\n"
+                + trailers)]);
+
+        Assert.False(result.Accepted);
+        Assert.Contains("CP-9", result.Warning, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Attribute_BranchForAnotherTask_RejectsTheWholeRange()
     {
@@ -184,7 +248,7 @@ public sealed class RemoteCommitAttributionGuardTests
             var first = RunGit(repo, "rev-parse HEAD");
             File.WriteAllText(Path.Combine(repo, "second.txt"), "second");
             RunGit(repo, "add -A");
-            RunGit(repo, "commit -q -m \"test(AGT-2389): second\"");
+            RunGit(repo, "commit -q -m \"AGT-2389: second delivery\" -m \"Runner committed changes the agent left uncommitted (outcome Done).\" -m \"Agent-Studio-Salvage: teardown\"");
             var tip = RunGit(repo, "rev-parse HEAD");
             RunGit(repo, "push -q origin runner/agent-runner-01/AGT-2389");
 
@@ -216,6 +280,11 @@ public sealed class RemoteCommitAttributionGuardTests
             Assert.Equal(baseSha, range.MergeBaseSha);
             Assert.Equal(tip, range.TipSha);
             Assert.Equal([first, tip], range.Commits.Select(commit => commit.Sha));
+            Assert.Contains("Agent-Studio-Salvage: teardown", range.Commits[1].Body);
+            var attributed = RemoteCommitAttributionGuard.Attribute(
+                "AGT-2389", "runner/agent-runner-01/AGT-2389", range.Commits);
+            Assert.True(attributed.Accepted, attributed.Warning);
+            Assert.Contains("Agent-Studio-Salvage: teardown", attributed.Commits[1].Message);
 
             // TE/CAC release tasks can fast-forward main themselves before the
             // remote completion reaches Agent Studio. A live merge-base then is
@@ -345,7 +414,7 @@ public sealed class RemoteCommitAttributionGuardTests
         }
     }
 
-    private static GitCommitInfo Commit(string sha, string subject) =>
+    private static GitCommitInfo Commit(string sha, string subject, string? body = null) =>
         new(
             sha,
             sha[..8],
@@ -354,7 +423,13 @@ public sealed class RemoteCommitAttributionGuardTests
             subject,
             1,
             1,
-            0);
+            0,
+            body);
+
+    private static string SalvageMessage(string subject, string taskKey) =>
+        $"{subject}\n\nRunner committed changes the agent left uncommitted (outcome Done).\n\n"
+        + $"Agent-Studio-Task: {taskKey}\nAgent-Studio-Run: run_fixture\n"
+        + "Agent-Studio-Salvage: teardown\nAgent-Studio-Outcome: Done";
 
     private static string RunGit(string cwd, string arguments)
     {

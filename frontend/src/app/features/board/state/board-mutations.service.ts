@@ -9,7 +9,8 @@ import { UndoController } from '../../../services/undo.service';
 import { TaskSelectionService } from '../../task-detail/state/task-selection.service';
 import { laneLabelFor } from '../../task-detail/state/triage-actions.model';
 import { NotificationService } from '../../../services/notification.service';
-import { decisionMoveRefusal } from '../../../models/decision-card-presentation';
+import { describeMoveRefusal, laneMoveRefusal, laneMoveRefusalText } from '../../../models/lane-move-guard';
+import { confirmTaskDelete } from '../../../services/task-delete-confirm.util';
 import { readyQueueReorder, type QueueEdge } from './ready-queue-order';
 
 /**
@@ -45,7 +46,7 @@ export class BoardMutationsService {
    * so a stale `/api/tasks/grouped` response can't repaint the old lane.
    * On failure, revert the local snapshot and surface the error.
    */
-  moveJob(event: { jobId: string; watchPath: string; targetState: string; targetIndex?: number }): void {
+  moveJob(event: { jobId: string; watchPath: string; targetState: string; targetIndex?: number }, withdrawFromBatch = false): void {
     // Virtual lanes inside the same filesystem state (e.g. the intake
     // sub-lane that splits 2-ready into "Human Ready" and "Orch Intake")
     // map back to the real state for the backend move; the orchestrator
@@ -60,25 +61,39 @@ export class BoardMutationsService {
     if (moving && moving.state === event.targetState) return;
     // AGT-2795: the decision lane guard refuses this move server-side; say
     // why up front instead of painting the card and snapping it back.
-    const refusal = moving ? decisionMoveRefusal(moving, event.targetState) : null;
+    const refusal = moving ? laneMoveRefusal(moving, event.targetState) : null;
     if (refusal) {
-      this.notifications.warning(refusal, 'Move refused');
+      this.notifications.warning(laneMoveRefusalText(refusal), 'Move refused');
       return;
     }
     const snapshot = this.jobService.applyOptimisticMove(event.jobId, event.watchPath, event.targetState, event.targetIndex);
     this.jobService.beginOptimisticPersist();
-    this.jobService.moveJob(event.jobId, event.targetState, event.watchPath, event.targetIndex).subscribe({
+    this.jobService.moveJob(event.jobId, event.targetState, event.watchPath, event.targetIndex,
+      withdrawFromBatch ? `Operator withdrew the card to move it to ${laneName(event.targetState)}.` : undefined,
+      false, 'revoke', withdrawFromBatch).subscribe({
       next: () => this.jobService.endOptimisticPersist(),
       error: (err) => {
         this.jobService.endOptimisticPersist();
         if (snapshot) this.jobService.revertOptimisticMove(snapshot);
+        if (this.offerBatchWithdrawal(err, () => this.moveJob(event, true), withdrawFromBatch)) return;
         this.jobService.error.set(err.message || 'Failed to move job');
-        this.errorDialog.show(err, {
-          title: 'Failed to move task',
-          fallbackMessage: 'Failed to move task',
-          source: `Task ${event.jobId}`,
-        });
+        this.reportMoveFailure(err, moving, event.targetState, event.jobId);
       },
+    });
+  }
+
+  /**
+   * AGT-3624: a lane guard refusal (409) is an expected outcome. It reads as
+   * one plain sentence and the next action; the raw payload stays behind
+   * Technical details. Any other failure keeps the error dialog.
+   */
+  private reportMoveFailure(err: unknown, job: TaskInfo | undefined, targetState: string, jobId: string): void {
+    const refusal = job ? describeMoveRefusal(err, job, targetState) : null;
+    this.errorDialog.show(err, {
+      title: refusal ? `Cannot move to ${laneName(targetState)}` : 'Failed to move task',
+      fallbackMessage: 'Failed to move task',
+      source: `Task ${jobId}`,
+      refusal,
     });
   }
 
@@ -153,18 +168,10 @@ export class BoardMutationsService {
   }
 
   private async confirmAndDeleteJob(job: TaskInfo, source: 'board' | 'detail'): Promise<void> {
-    const label = job.title || job.id;
-    const ok = await this.confirmDialog.confirm({
-      title: 'Delete this task?',
-      message: 'This removes the job folder and all its files (prompt, logs, results). Do you really want this?',
-      detail: label,
-      confirmLabel: 'Delete',
-      cancelLabel: 'Keep',
-      kind: 'danger',
-    });
-    if (!ok) return;
+    const confirmed = await confirmTaskDelete(this.confirmDialog, job);
+    if (!confirmed) return;
 
-    this.jobService.deleteJob(job.id, job.watchPath).subscribe({
+    this.jobService.deleteJob(job.id, job.watchPath, confirmed.reason).subscribe({
       next: () => {
         if (source === 'detail') {
           // Advance the pager iteration past the deleted job so the user can
@@ -197,11 +204,12 @@ export class BoardMutationsService {
    * "changing" flag is cleared by the detail component's effect when
    * the new `state` arrives.
    */
-  changeStateFromDetail(info: TaskInfo, targetState: string, updateSelection = true): void {
+  changeStateFromDetail(info: TaskInfo, targetState: string, updateSelection = true,
+    withdrawFromBatch = false): void {
     if (!targetState || targetState === info.state) return;
-    const refusal = decisionMoveRefusal(info, targetState);
+    const refusal = laneMoveRefusal(info, targetState);
     if (refusal) {
-      this.notifications.warning(refusal, 'Move refused');
+      this.notifications.warning(laneMoveRefusalText(refusal), 'Move refused');
       return;
     }
     // Capture the prev lane + slot BEFORE the optimistic move so the
@@ -232,7 +240,9 @@ export class BoardMutationsService {
       prevIndex,
       persisted,
     });
-    this.jobService.moveJob(info.id, targetState, info.watchPath).subscribe({
+    this.jobService.moveJob(info.id, targetState, info.watchPath, undefined,
+      withdrawFromBatch ? `Operator withdrew the card to move it to ${laneName(targetState)}.` : undefined,
+      false, 'revoke', withdrawFromBatch).subscribe({
       next: () => {
         this.jobService.endOptimisticPersist();
         persistResolve();
@@ -262,14 +272,25 @@ export class BoardMutationsService {
         persistReject(err);
         this.undo.cancelActive();
         if (snapshot) this.jobService.revertOptimisticMove(snapshot);
+        if (this.offerBatchWithdrawal(err,
+          () => this.changeStateFromDetail(info, targetState, updateSelection, true), withdrawFromBatch)) return;
         this.jobService.error.set(err.message || 'Failed to move job');
-        this.errorDialog.show(err, {
-          title: 'Failed to move task',
-          fallbackMessage: 'Failed to move task',
-          source: `Task ${info.id}`,
-        });
+        this.reportMoveFailure(err, info, targetState, info.id);
       },
     });
+  }
+
+  private offerBatchWithdrawal(error: unknown, retry: () => void, alreadyConfirmed: boolean): boolean {
+    const response = error as { status?: number; error?: { error?: string; message?: string } };
+    if (alreadyConfirmed || response?.status !== 409 || response.error?.error !== 'active-batch-member')
+      return false;
+    const message = response.error.message ?? 'This card belongs to an active batch.';
+    void this.confirmDialog.confirm({
+      title: 'Withdraw from batch?', eyebrow: 'Confirm withdrawal', message,
+      detail: 'This will abandon the current batch and return its other members to planning.',
+      confirmLabel: 'Withdraw and move', kind: 'danger',
+    }).then(confirmed => { if (confirmed) retry(); });
+    return true;
   }
 
   // ---------- bulk moves (archive all, group actions) ----------

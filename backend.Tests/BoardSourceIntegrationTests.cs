@@ -74,7 +74,7 @@ public sealed class BoardSourceIntegrationTests : IDisposable
         using var client = backend.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var worker = backend.Services.GetRequiredService<BoardShadowWorker>();
-        var scanner = backend.Services.GetRequiredService<TaskScannerService>();
+        var index = backend.Services.GetRequiredService<TaskIndexCache>();
         var ledger = backend.Services.GetRequiredService<BoardShadowLedger>();
         var shadow = BoardSourceSetting.Resolve(BoardSourceSetting.TaskServerShadow);
 
@@ -87,19 +87,24 @@ public sealed class BoardSourceIntegrationTests : IDisposable
         Assert.Equal(TaskStates.Backlog, (await TaskServerCardAsync(store)).State);
         var baseline = ledger.Snapshot(shadow);
         Assert.Equal((1L, 0), (baseline.Comparisons, baseline.UnexplainedDifferences));
+        var baselineGeneration = index.TryGetPublished()!.Generation;
 
         var move = await client.PostAsJsonAsync(
             $"/api/tasks/{Slug}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
             new { targetState = TaskStates.Ready });
         move.EnsureSuccessStatusCode();
 
-        // The first workspace generation that holds the move is the one the
-        // Task Server is given: no later generation is needed to see it there.
-        var publication = (await scanner.AcquireBoardReadAsync("local-default", default))!;
+        // Board reads may return the previous snapshot while the move's
+        // mutation generation is being published. Wait for that generation.
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var publication = await index.WaitForCurrentMutationPublicationAsync(deadline.Token);
+        Assert.True(publication.Generation > baselineGeneration);
         Assert.Contains(publication.Live, task => task.Key == Key && task.State == TaskStates.Ready);
         var read = await client.GetAsync("/api/tasks/grouped");
         read.EnsureSuccessStatusCode();
         await worker.RunCycleAsync(default);
+        // A watcher may publish a newer workspace generation before the
+        // mirror cycle; the imported model must name the generation it used.
         Assert.True(worker.SyncedGeneration >= publication.Generation);
         var model = await store.GetBoardReadModelAsync(ProjectName, default);
         Assert.Contains(model.Lanes.Single(lane => lane.State == TaskStates.Ready).Cards, card => card.TaskKey == Key);
@@ -107,7 +112,9 @@ public sealed class BoardSourceIntegrationTests : IDisposable
         var afterMove = ledger.Snapshot(shadow);
         Assert.Equal(0, afterMove.UnexplainedDifferences);
         Assert.True(afterMove.Comparisons >= 2);
-        Assert.Equal(worker.SyncedGeneration, afterMove.LastComparedGeneration);
+        // A later watcher publication can advance the mirror without another
+        // grouped read requesting a comparison.
+        Assert.True(afterMove.LastComparedGeneration >= publication.Generation);
 
         // A change the workspace never made is recorded by card id and field.
         var card = await TaskServerCardAsync(store);
@@ -128,6 +135,57 @@ public sealed class BoardSourceIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task One_project_write_imports_only_that_project_and_other_boards_answer_304()
+    {
+        const string second = "board-source-second";
+        const string third = "board-source-third";
+        foreach (var (name, key) in new[] { (second, "BSS-1"), (third, "BSTH-1") })
+        {
+            var folder = Path.Combine(_workspace, "projects", name, TaskStates.Backlog, key.ToLowerInvariant());
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+            {
+                id = key.ToLowerInvariant(), key, title = key, state = TaskStates.Backlog, order = 1, agent = "claude",
+            }));
+        }
+
+        await using var taskServer = new TaskServerFactory(_taskServerData);
+        var store = taskServer.Services.GetRequiredService<TaskServerStore>();
+        var workspace = await store.CreateWorkspaceAsync(new AgentStudio.TaskServer.Contracts.CreateWorkspaceRequest("Board source"), "test", default);
+        foreach (var (name, prefix) in new[] { (ProjectName, "BST"), (second, "BSS"), (third, "BTH") })
+            await store.CreateProjectAsync(new CreateProjectRequest(workspace.WorkspaceId, name, prefix), "test", default);
+
+        await using var backend = BuildBackend(taskServer, BoardSourceSetting.TaskServer, second, third);
+        using var client = backend.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var worker = backend.Services.GetRequiredService<BoardShadowWorker>();
+        var boardClient = backend.Services.GetRequiredService<TaskServerBoardClient>();
+        var index = backend.Services.GetRequiredService<TaskIndexCache>();
+        await worker.RunCycleAsync(default);
+        var unchanged = new List<(string Name, BoardReadModelResponse Model)>();
+        foreach (var name in new[] { second, third })
+            unchanged.Add((name, await store.GetBoardReadModelAsync(name, default)));
+
+        var move = await client.PostAsJsonAsync(
+            $"/api/tasks/{Slug}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
+            new { targetState = TaskStates.Ready });
+        move.EnsureSuccessStatusCode();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var publication = await index.WaitForCurrentMutationPublicationAsync(deadline.Token);
+        Assert.True(await worker.EnsureSyncedAsync(publication.Generation, TimeSpan.FromSeconds(30), deadline.Token));
+        Assert.Equal(worker.SyncedGeneration, await store.GetBoardWorkspaceGenerationAsync(default));
+        Assert.Equal(worker.SyncedGeneration, (await store.GetBoardReadModelAsync(ProjectName, default)).WorkspaceSourceGeneration);
+        foreach (var (name, before) in unchanged)
+        {
+            var after = await store.GetBoardReadModelAsync(name, default);
+            Assert.Equal(before.WorkspaceSourceGeneration, after.WorkspaceSourceGeneration);
+            Assert.Equal(before.ETag, after.ETag);
+            Assert.Equal(TaskServerBoardReadStatus.NotModified,
+                (await boardClient.GetBoardAsync(name, before.ETag, default)).Status);
+        }
+    }
+
+    [Fact]
     public async Task Task_server_source_answers_the_board_from_the_task_server_and_sees_its_own_write()
     {
         await using var taskServer = new TaskServerFactory(_taskServerData);
@@ -139,7 +197,9 @@ public sealed class BoardSourceIntegrationTests : IDisposable
         using var client = backend.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
 
-        await backend.Services.GetRequiredService<BoardShadowWorker>().RunCycleAsync(default);
+        var worker = backend.Services.GetRequiredService<BoardShadowWorker>();
+        var index = backend.Services.GetRequiredService<TaskIndexCache>();
+        await worker.RunCycleAsync(default);
 
         var first = await ReadBoardAsync(client);
         Assert.Equal(BoardSourceSetting.TaskServer, first.Source);
@@ -149,6 +209,10 @@ public sealed class BoardSourceIntegrationTests : IDisposable
             $"/api/tasks/{Slug}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
             new { targetState = TaskStates.Ready });
         move.EnsureSuccessStatusCode();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var publication = await index.WaitForCurrentMutationPublicationAsync(deadline.Token);
+        Assert.Contains(publication.Live, task => task.Key == Key && task.State == TaskStates.Ready);
+        Assert.True(await worker.EnsureSyncedAsync(publication.Generation, TimeSpan.FromSeconds(30), deadline.Token));
         var moved = await ReadBoardAsync(client);
         Assert.Contains(moved.Lanes.GetProperty("ready").EnumerateArray(), item => item.GetProperty("key").GetString() == Key);
         Assert.Equal(TaskStates.Ready, (await TaskServerCardAsync(store)).State);
@@ -182,12 +246,13 @@ public sealed class BoardSourceIntegrationTests : IDisposable
     private static async Task<TaskDto> TaskServerCardAsync(TaskServerStore store)
         => (await store.GetTaskAsync(ProjectName, Key, default))!;
 
-    private WebApplicationFactory<Program> BuildBackend(TaskServerFactory taskServer, string source)
+    private WebApplicationFactory<Program> BuildBackend(TaskServerFactory taskServer, string source, params string[] additionalProjects)
         => new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
-            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
-                new Dictionary<string, string?>
+            builder.ConfigureAppConfiguration((_, configuration) =>
+            {
+                var settings = new Dictionary<string, string?>
                 {
                     ["TaskRepository"] = _workspace,
                     ["WatchPaths:0:Name"] = ProjectName,
@@ -199,7 +264,16 @@ public sealed class BoardSourceIntegrationTests : IDisposable
                     [BoardSourceSetting.SectionKey] = source,
                     ["Board:TaskServer:BaseUrl"] = "http://localhost/",
                     ["Board:Shadow:SyncIntervalSeconds"] = "3600",
-                }));
+                };
+                for (var i = 0; i < additionalProjects.Length; i++)
+                {
+                    var path = Path.Combine(_workspace, "projects", additionalProjects[i]);
+                    settings[$"WatchPaths:{i + 1}:Name"] = additionalProjects[i];
+                    settings[$"WatchPaths:{i + 1}:Path"] = path;
+                    settings[$"WatchPaths:{i + 1}:RootPath"] = path;
+                }
+                configuration.AddInMemoryCollection(settings);
+            });
             builder.ConfigureTestServices(services => services
                 .AddHttpClient(TaskServerBoardClient.ClientName)
                 .ConfigurePrimaryHttpMessageHandler(() => taskServer.Server.CreateHandler()));

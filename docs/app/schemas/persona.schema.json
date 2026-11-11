@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-studio.local/schemas/persona.schema.json",
+  "title": "PersonaDescriptorV1",
+  "description": "One persona descriptor (persona team PT-D1, AGT-3573). Built-in descriptors ship as backend/Policies/personas/<id>.persona.json; workspace forks are application-owned and written only through /api/workspaces/{id}/personas. The descriptor says what the persona is; the workspace activation says how it runs (attributes, allowance, scope narrowing). The charter becomes part of the system prompt and is not authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "id", "revision", "title", "aspect", "kind", "charter", "scope", "attributes",
+    "operations", "model", "cadence", "triggers", "budget", "report", "floors"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": {
+      "description": "Stable key. Lowercase slug; it is also the file name stem.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$",
+      "maxLength": 64
+    },
+    "revision": {
+      "description": "Catalogue revision as year.month.sequence. A changed descriptor carries a new revision; the catalogue test refuses a changed file whose revision did not move.",
+      "type": "string",
+      "pattern": "^[0-9]{4}\\.(1[0-2]|[1-9])\\.[1-9][0-9]*$"
+    },
+    "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "aspect": {
+      "enum": [
+        "security", "operations", "reliability", "quality", "design", "product", "cost",
+        "documentation", "improvement", "presentation", "management"
+      ]
+    },
+    "kind": { "enum": ["persona", "presenter", "manager"] },
+    "startsActive": {
+      "description": "Starter catalogue hint (PT-D12): the Team page offers these first. Activation still needs the Owner and a fresh step-up.",
+      "type": "boolean"
+    },
+    "charter": {
+      "description": "What to watch, what good looks like, and what the persona must not do.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 600
+    },
+    "scope": { "$ref": "#/$defs/scope" },
+    "attributes": { "$ref": "#/$defs/attributes" },
+    "operations": {
+      "description": "Persona operations the persona may call. The activation grants the subset its autonomy allows.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "observe", "persona.item.publish", "persona.report.publish", "persona.proposal.draft",
+          "persona.decision.request", "persona.proposal.accept", "persona.importance.adjust",
+          "persona.budget.rebalance", "persona.pause", "card.requeue"
+        ]
+      }
+    },
+    "model": {
+      "description": "Resolved by ModelSelectionService for consumer class persona; never a pinned model.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capabilityClass", "thinking"],
+      "properties": {
+        "capabilityClass": { "enum": ["balanced", "frontier"] },
+        "thinking": { "enum": ["low", "medium", "high", "xhigh"] }
+      }
+    },
+    "cadence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["report", "window"],
+      "properties": {
+        "report": { "description": "Report period as an ISO 8601 day duration. The first period after activation is the shadow period.", "$ref": "#/$defs/days" },
+        "days": {
+          "description": "Weekdays within each period on which a report is due. Absent means the period end.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] }
+        },
+        "dueAtLocal": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
+        "window": { "description": "Analysis window.", "$ref": "#/$defs/days" },
+        "investigation": { "description": "Period of the time-boxed investigation session, if any.", "$ref": "#/$defs/days" },
+        "review": { "description": "Period of a review output, such as the presenter's monthly deck.", "type": "string", "pattern": "^P[1-9][0-9]?[DM]$" }
+      }
+    },
+    "triggers": {
+      "description": "Decision stream and fact events that bring the next due occurrence forward.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*(\\.[a-z0-9-]+)+$", "maxLength": 80 }
+    },
+    "budget": { "$ref": "#/$defs/budget" },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["template", "maxItems"],
+      "properties": {
+        "template": { "type": "string", "pattern": "^[a-z][a-z0-9-]*-v[0-9]+$" },
+        "maxItems": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "maxWords": { "type": "integer", "minimum": 50, "maximum": 1200 },
+        "sections": {
+          "description": "Mandatory sections in template order.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" }
+        }
+      }
+    },
+    "floors": {
+      "description": "Fact rules that set a minimum importance: '<fact>[<op><threshold>]:<floor>'. Only a catalogue revision changes them.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*(\\.[a-z0-9-]+)*([<>]=?[0-9]+[hdm]?)?:(100|[1-9]?[0-9])$"
+      }
+    }
+  },
+  "$defs": {
+    "days": { "type": "string", "pattern": "^P[1-9][0-9]?D$" },
+    "slug": { "type": "string", "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$", "maxLength": 64 },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projects", "areas"],
+      "properties": {
+        "projects": {
+          "description": "[\"*\"] for every project of the workspace, otherwise project ids.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "areas": {
+          "description": "Named source families such as operations.backups or review.aspects.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*(\\.[a-z0-9-]+)+$" }
+        },
+        "excludedPaths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 260 }
+        }
+      }
+    },
+    "attributes": {
+      "description": "Owner-set stats (PT-D2). Each one changes a concrete parameter.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["autonomy", "riskAppetite", "thoroughness", "signalThreshold"],
+      "properties": {
+        "focus": {
+          "description": "Weights per focus area, summing to 100. An area at 0 is out of scope.",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/slug" },
+          "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 100 }
+        },
+        "autonomy": { "description": "A0 observe, A1 propose, A2 decide within grants (managers only).", "enum": ["A0", "A1", "A2"] },
+        "riskAppetite": { "enum": ["low", "medium", "high"] },
+        "thoroughness": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "signalThreshold": { "type": "integer", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "budget": {
+      "description": "Default weekly allowance inside the persona pool (PT-D3).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tokensPerWeek", "sessionsPerWeek", "proposalsPerWeek", "draftCardsPerWeek", "minutesPerSession"],
+      "properties": {
+        "tokensPerWeek": { "type": "integer", "minimum": 0, "maximum": 1200000 },
+        "sessionsPerWeek": { "type": "integer", "minimum": 0, "maximum": 50 },
+        "investigationsPerWeek": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "proposalsPerWeek": { "type": "integer", "minimum": 0, "maximum": 20 },
+        "draftCardsPerWeek": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "minutesPerSession": { "type": "integer", "minimum": 1, "maximum": 15 }
+      }
+    }
+  }
+}

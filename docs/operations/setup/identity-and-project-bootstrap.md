@@ -46,13 +46,15 @@ provide host, credential, merge, or promotion access.
    credentials (`scripts/compose-secret-bootstrap.sh`, mode 600) and the Task
    Server reads it through `OWNER_BOOTSTRAP_CODE_FILE`.
    The native Linux installer creates the same code at
-   `<orchestrator-config-root>/owner_bootstrap_code` with owner and service
+   `<orchestrator-config-root>/owner_bootstrap_code` (by default,
+   `/etc/agent-orchestrator/owner_bootstrap_code`) with owner and service
    read access, and keeps it across reinstallations.
    Native Windows stores `owner-bootstrap.code` in
    `%ProgramData%\AgentOrchestrator` with restricted host permissions.
 2. While no owner exists the server arms that code. Read it over the
    administration channel only. For Compose, use
-   `docker compose exec task-server cat /run/agent-studio-secrets/owner_bootstrap_code`.
+   `docker compose exec task-server cat /run/agent-studio-secrets/owner_bootstrap_code`
+   (`task-server-dev` for the source-built stack).
    On a native Linux host, read the file directly as the installation
    administrator. Do not paste it into task text or logs.
 3. Sign in through the Studio edge and call
@@ -65,8 +67,14 @@ provide host, credential, merge, or promotion access.
    WebAuthn passkey in Studio. Store the one-use factor recovery codes outside
    the browser. They are separate from the installation recovery code. Owner
    and operator sign-in require a registered factor; every step-up requires one
-   regardless of role. A new
-   operator accepts an invitation in the same limited setup session.
+   regardless of role. A new operator accepts an invitation in the same
+   limited setup session.
+
+The networked backend has a separate IAM role model: **Owner, Admin,
+Developer, Approver, and Viewer** must register a factor because their permissions
+include run operation, deployment or approval, secrets, or access. Viewer holds
+`secrets.read` for metadata. **Product (Contributor)** may enroll voluntarily. The networked policy is
+described in the [security overview](../security/overview.md#rights-model-role-bindings-per-scope-ip-8).
 
 Studio lists each user's active sessions with device, address, creation time,
 and last use. A user can revoke one or all other sessions; the Owner can revoke

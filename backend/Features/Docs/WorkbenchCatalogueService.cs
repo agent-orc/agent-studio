@@ -165,9 +165,31 @@ public sealed class WorkbenchCatalogueService
         if (source.Info.Writable && _taskMutations != null)
             DossierCardsService.Backfill(projectName, items, _scanner, _taskMutations);
 
-        return FilterCatalogue(
+        return WithLinkedTaskKeys(FilterCatalogue(
             new WorkbenchCatalogue(projectName, true, items.Count, items),
-            includeHistory);
+            includeHistory));
+    }
+
+    /// <summary>Refresh task membership when a cached Wiki catalogue is read.</summary>
+    public WorkbenchCatalogue WithLinkedTaskKeys(WorkbenchCatalogue catalogue, string? projectName = null)
+    {
+        // The Wiki descriptor can be cached across task mutations. Membership
+        // must come from the current primary task.dossier snapshot on each read.
+        var cardsByPath = _scanner.ScanAllJobsWithArchiveForBackgroundIndex()
+            .Where(task => string.Equals(task.ProjectName, projectName ?? catalogue.ProjectName, StringComparison.OrdinalIgnoreCase)
+                && task.Dossier is { Path.Length: > 0 })
+            .GroupBy(task => task.Dossier!.Path, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key,
+                group => group.Select(task => task.Key).Where(key => !string.IsNullOrWhiteSpace(key))
+                    .Select(key => key!).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                StringComparer.OrdinalIgnoreCase);
+        return catalogue with
+        {
+            Items = catalogue.Items.Select(item => item with
+            {
+                LinkedTaskKeys = cardsByPath.GetValueOrDefault(item.EntryPath) ?? [],
+            }).ToList(),
+        };
     }
 
     /// <summary>All valid document reference keys currently owned by one project.</summary>
@@ -1382,6 +1404,8 @@ public record WorkbenchListItem(string Id, string Title, string Summary, string 
     [System.Text.Json.Serialization.JsonIgnore]
     public string[] DescriptorSourceTaskKeys { get; init; } = [];
     public string[] RelatedTaskKeys { get; init; } = [];
+    /// <summary>Cards whose primary task.dossier points at this Dossier.</summary>
+    public string[] LinkedTaskKeys { get; init; } = [];
     [System.Text.Json.Serialization.JsonIgnore]
     public List<ConceptImplementationTask> ImplementationTasks { get; init; } = [];
     [System.Text.Json.Serialization.JsonIgnore]
