@@ -120,10 +120,13 @@ that is already allowed to edit that project's checkout.
   session cookie and sends it with `Secure`, `Path=/`, and no `Domain` attribute.
   Studio exposes an explicit sign-out action; a logout or API 401 tears
   down browser polling and SignalR before returning to the login gate.
-- Owner and Admin sign-in requires an enrolled authenticator code, a one-use
-  recovery code, or a WebAuthn passkey assertion. An account without an enrolled
-  factor receives a limited session for factor setup. Every step-up requires a
-  registered second factor. TOTP enrollment returns recovery codes once; store them away from
+- Owner, Admin, Developer, Approver, and Viewer must enroll an authenticator or a
+  WebAuthn passkey. Their permissions include run operation, deployment or
+  approval, secrets, or access; Viewer holds `secrets.read` for metadata. An account without a factor receives a limited
+  session for factor setup. Once any user registers a factor, every password
+  sign-in requires its authenticator code, a one-use recovery code, or a
+  WebAuthn passkey assertion, including Product sign-ins. Every
+  step-up requires a registered second factor. TOTP enrollment returns recovery codes once; store them away from
   the browser. Passkey ceremonies require user verification and bind the
   challenge to the current origin and relying party. Each user can list active
   sessions with device, address, creation, and last-use times, revoke one, or
@@ -306,6 +309,14 @@ Every role reads the magazines it can see (`magazine.read`); Owner, Admin,
 Developer and Operator agent also publish (`magazine.write`). The
 installation and workspace magazines take writes only through a workspace
 binding ([magazine domain](../../system/domains/magazine.md#access)).
+
+For human users, factor enrollment follows effective permissions from direct
+and group bindings. Any role granting `project.runs.operate`,
+`environment.deploy`, production deployment or approval, `secrets.*`, or
+`access.*` requires enrollment. This currently covers Owner, Admin, Developer,
+Approver, and Viewer. Product can enroll voluntarily; if it does, every
+subsequent password sign-in verifies the factor. Operator agent is a service
+account role and does not use human sign-in.
 
 - Every route declares one named permission, such as `project.cards.write`,
   `environment.production.deploy.approve`, `secrets.write`, or
