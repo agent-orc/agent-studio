@@ -39,7 +39,7 @@
       }
     </div>
     @if (projects().length === 0) {
-      <app-empty-state>No projects loaded. Check the backend connection.</app-empty-state>
+      <app-empty-state testid="studio-welcome-no-projects">{{ emptyMessage() ?? 'No projects loaded. Check the backend connection.' }}</app-empty-state>
     }
   </section>
 </div>

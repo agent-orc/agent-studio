@@ -90,13 +90,13 @@ export default defineConfig({
           : profile === 'ref-drift' ? '**/system/crash-recovery-prompt.spec.ts'
           : profile === 'first-run' ? '**/settings/first-run-journey.spec.ts'
           : profile === 'networked-monolith' ? '**/settings/first-run-networked-monolith.spec.ts'
-          : profile === 'networked-https' ? '**/security/owner-second-factor-human-pace.spec.ts'
+          : profile === 'networked-https' ? ['**/security/product-session-networked-https.spec.ts', '**/security/owner-second-factor-human-pace.spec.ts']
           : profile === 'networked-https-demo' ? '**/security/product-card-detail.spec.ts'
           : profile === 'operator-cli' ? '**/operator/studio-op-operator-cli.spec.ts'
           : profile === 'demo' ? ['**/usage-cockpit/cockpit-integration-matrix.spec.ts', '**/project/dossier-decision-live.spec.ts']
           : profile === 'public-demo' ? '**/system/public-demo-shell.spec.ts' : '**/*.spec.ts',
         testIgnore: profile === 'standard'
-          ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|security\/owner-second-factor-human-pace\.spec\.ts|security\/product-card-detail\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts|project\/dossier-decision-live\.spec\.ts/
+          ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|security\/(product-session-networked-https|owner-second-factor-human-pace|product-card-detail)\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts|project\/dossier-decision-live\.spec\.ts/
           : /visual-evidence\//,
       } : { testIgnore: /visual-evidence\// }),
       use: { ...devices['Desktop Chrome'], channel: undefined },
