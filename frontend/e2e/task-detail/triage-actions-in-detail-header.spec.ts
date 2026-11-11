@@ -2,6 +2,9 @@ import { test, expect, Page } from '@playwright/test';
 import { api, BACKEND } from '../helpers/api';
 import { createJob, getJob, moveJob } from '../helpers/jobs';
 import { startLongTaskRecorder } from '../helpers/timing';
+import { setTheme } from '../helpers/theme';
+import { mkdirSync } from 'fs';
+import { join } from 'path';
 
 interface WatchPath { name: string; path: string; rootPath: string; }
 
@@ -113,6 +116,120 @@ async function openJobInDetail(page: Page, id: string, watchPath: string) {
   await expect(page.getByTestId('studio-triage-panel')).toBeVisible({ timeout: 10_000 });
   await dismissBlockingToasts(page);
 }
+
+async function waitForAcceptReady(page: Page): Promise<void> {
+  await expect(page.getByTestId('studio-triage-action-mark-done')).toBeEnabled({ timeout: 30_000 });
+}
+
+async function openReviewJobReadyToAccept(page: Page, id: string, watchPath: string): Promise<void> {
+  await page.route('**/api/tasks/**/details/git*', async route => {
+    if (!route.request().url().includes(encodeURIComponent(id))) return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      ...body, state: 'ready', data: { ...body.data, integration: {
+        status: 'not-applicable', deliveryRef: null, sha: null,
+        integrationBranch: 'develop', detail: 'Code-free test task.',
+      } },
+    }) });
+  });
+  await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/[^/?]+(?:\?|$)/, async route => {
+    if (!route.request().url().includes(encodeURIComponent(id))) return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      ...body, info: { ...body.info, integration: {
+        status: 'not-applicable', deliveryRef: null, sha: null,
+        integrationBranch: 'develop', detail: 'Code-free test task.',
+      } },
+    }) });
+  });
+  await page.addInitScript(() => localStorage.setItem('taskboard.panesVisible',
+    JSON.stringify({ prompt: true, protocol: true, git: true })));
+  await openJobInDetail(page, id, watchPath);
+  await waitForAcceptReady(page);
+}
+
+async function clickAcceptAndWaitForMove(page: Page, moveCount: () => number): Promise<void> {
+  for (let attempt = 0; attempt < 3 && moveCount() === 0; attempt++) {
+    const accept = page.getByTestId('studio-triage-action-mark-done');
+    await expect(accept).toBeEnabled({ timeout: 10_000 });
+    await accept.click();
+    const confirm = page.getByRole('button', { name: 'Accept anyway' });
+    if (await confirm.isVisible({ timeout: 500 }).catch(() => false)) await confirm.click();
+    await expect.poll(moveCount, { timeout: 3_000 }).toBe(1).catch(() => {});
+  }
+  expect(moveCount()).toBe(1);
+}
+
+for (const view of [
+  { name: 'light', theme: 'light' as const, width: 1280 },
+  { name: 'dark', theme: 'dark' as const, width: 1280 },
+  { name: '390px', theme: 'light' as const, width: 390 },
+]) {
+  test(`refused Accept keeps its task tab and explains the next step (${view.name})`, async ({ page }) => {
+    test.setTimeout(90_000);
+    const wp = await getFirstWatchPath();
+    const [job] = await plantHumanReviewJobs(wp, 1);
+    try {
+      await page.setViewportSize({ width: view.width, height: 820 });
+      await openReviewJobReadyToAccept(page, job.id, wp.path);
+      await setTheme(page, view.theme);
+      const originalUrl = page.url();
+      let moveCount = 0;
+      await page.route(/\/move(?:\?|$)/, async route => {
+        if (route.request().method() !== 'POST') return route.continue();
+        moveCount++;
+        await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({
+          code: 'completion-content-gap',
+          error: 'Completion refused: no content verdict for the current brief.',
+        }) });
+      });
+      await clickAcceptAndWaitForMove(page, () => moveCount);
+
+      await expect(page.getByTestId('task-move-refusal')).toContainText('Complete the required review for the current brief, or use a written operator override');
+      await expect(page.getByTestId('studio-triage-action-mark-done')).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'No task selected' })).toBeHidden();
+      await expect(page).toHaveURL(originalUrl);
+      expect((await getJob(job.id, wp.path)).state).toBe('5-human-review');
+      if (view.name === 'light') {
+        await page.waitForTimeout(15_000);
+        await expect(page.getByTestId('task-move-refusal')).toBeVisible();
+      }
+      const dir = process.env.JOB_RESULTS_DIR;
+      if (dir) {
+        mkdirSync(dir, { recursive: true });
+        await page.mouse.move(2, 2);
+        await page.screenshot({ path: join(dir, `accept-refused-${view.name}.png`), fullPage: false });
+      }
+    } finally {
+      await deleteJob(job.id, wp.path).catch(() => {});
+    }
+  });
+}
+
+test('failed Accept error dialog closes with Escape and focuses the action', async ({ page }) => {
+  test.setTimeout(90_000);
+  const wp = await getFirstWatchPath();
+  const [job] = await plantHumanReviewJobs(wp, 1);
+  try {
+    await openReviewJobReadyToAccept(page, job.id, wp.path);
+    let moveCount = 0;
+    await page.route(/\/move(?:\?|$)/, async route => {
+      if (route.request().method() !== 'POST') return route.continue();
+      moveCount++;
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Move failed.' }) });
+    });
+    await clickAcceptAndWaitForMove(page, () => moveCount);
+    await expect(page.getByTestId('error-dialog')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('error-dialog')).toBeHidden();
+    await expect(page.getByTestId('studio-triage-action-mark-done')).toBeFocused();
+    await expect(page.getByTestId('task-move-refusal')).toBeVisible();
+  } finally {
+    await deleteJob(job.id, wp.path).catch(() => {});
+  }
+});
 
 /**
  * Lane-action cluster anchored top-right of the detail view: a

@@ -36,6 +36,11 @@ export interface BatchGateConfiguration {
 }
 
 export interface BatchGateState {
+  dailySummary?: {
+    phaseMinutes?: Record<string, { p50: number | null; p90: number | null; cards: number }>;
+    diagnosticRerunShare?: number | null;
+    preCheckYield?: { runs: number; red: number; cardsKeptOut: number; costMinutes: number } | null;
+  } | null;
   reviewFixWaits?: { taskKey: string; reviewAttemptId: string; round: number; maximum: number; aspects: string[] }[];
   preChecksRun?: number;
   preChecksRed?: number;
@@ -60,6 +65,8 @@ export interface BatchGateState {
     parentBatchId?: string | null;
     phase: string;
     phaseReason?: string | null;
+    /** AGT-3710: one-based place of a formed batch in its project's flight queue. */
+    queuePosition?: number | null;
     formationReason?: string | null;
     exclusions?: { taskKey: string; reason: string; detail?: string | null }[];
     baseSha: string;
@@ -69,11 +76,22 @@ export interface BatchGateState {
     publication?: BatchPublication | null;
   }[];
   members: Record<string, BatchMemberState>;
+  /** AGT-3710: formed batches waiting for the project's flight, first in, first out. */
+  flightQueue?: BatchFlightQueueEntry[];
   /** AGT-3577: per member of a red batch, what the bisection proved. */
   isolationFindings?: BatchIsolationFinding[];
 }
 
 export type BatchGateBatch = BatchGateState['batches'][number];
+
+/** One formed batch in the flight queue; position 1 starts next. */
+export interface BatchFlightQueueEntry {
+  batchId: string;
+  position: number;
+  queuedSinceUtc: string;
+  size: number;
+  taskKeys: string[];
+}
 
 /**
  * One member's isolation outcome under the red batch `parentBatchId`. A
@@ -128,7 +146,28 @@ export interface BatchMemberState {
   size?: number | null;
   reason?: string | null;
   reasonDetail?: string | null;
+  /** What a per-task fallback waits for (AGT-3694); the detail names the engine run or the stage. */
+  waitKind?: string | null;
+  waitingFor?: string | null;
+  waitSinceUtc?: string | null;
+  engineRunId?: string | null;
+  engineStatus?: string | null;
   preCheck?: BatchPreCheck | null;
+  timeline?: BatchMemberTimeline | null;
+}
+
+export interface BatchMemberTimeline {
+  reviewPassedAtUtc: string;
+  preCheckQueuedAtUtc?: string | null;
+  preCheckStartedAtUtc?: string | null;
+  preCheckFinishedAtUtc?: string | null;
+  joinedBatchAtUtc?: string | null;
+  batchStartedAtUtc?: string | null;
+  batchFinishedAtUtc?: string | null;
+  publishedAtUtc?: string | null;
+  terminalAtUtc?: string | null;
+  outcome: string;
+  diagnosticRerun: boolean;
 }
 
 export interface BatchPreCheck {
@@ -170,6 +209,21 @@ export function batchEjectionLabel(reason: string | null | undefined): string | 
     case 'conflict': return 'replay conflict';
     case 'unattributable': return 'unattributable history';
     default: return reason || null;
+  }
+}
+
+/** Short card label of what a per-task fallback waits for. */
+export function batchFallbackWaitLabel(kind: string | null | undefined): string | null {
+  switch (kind) {
+    case 'engine-decision': return 'waits for engine decision';
+    case 'per-task-slot': return 'waits for per-task slot';
+    case 'batch-slot': return 'waits for batch slot';
+    case 'machine-gate-slot': return 'waits for machine gate slot';
+    case 'preparing': return 'preparing gate';
+    case 'gate-running': return 'gate running';
+    case 'integration': return 'integrating';
+    case 'resume-pending': return 'resumes next tick';
+    default: return kind || null;
   }
 }
 

@@ -21,6 +21,7 @@
 /api/attempts/tasks/{taskKey}	free	-	-	-
 /api/audits/{runId}	free	-	-	-
 /api/auth/api-tokens	free	-	-	-
+/api/auth/audit/backups	free	-	-	-
 /api/auth/audit/operator-activity	free	-	-	-
 /api/auth/iam/	free	-	-	-
 /api/auth/iam/break-glass/windows	free	-	-	-
@@ -45,6 +46,7 @@
 /api/bus/{project}/summary	free	-	-	-
 /api/bus/{project}/token-aggregate	free	-	-	-
 /api/cause-breakers	free	-	-	-
+/api/cause-breakers/by-cause/{causeKey}	free	-	-	-
 /api/cli/_probe/{cliType}	free	-	-	-
 /api/cli/contracts	free	-	-	-
 /api/cli/maintenance-model	free	-	-	-
@@ -93,6 +95,9 @@
 /api/filesystem-layer/snapshot	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
 /api/first-run/git-setups/{id}	free	-	-	-
 /api/first-run/projects/{projectId}/repository	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
+/api/magazine	free	-	-	-
+/api/magazine/{scope}/{slug}	free	-	-	-
+/api/magazine/{scope}/{slug}/history	free	-	-	-
 /api/model-selection/active	free	-	-	-
 /api/model-selection/effective	free	-	-	-
 /api/model-selection/active	free	-	-	-
@@ -416,6 +421,7 @@
 /api/tasks/{jobId}/timeline	free	-	-	-
 /api/tasks/{primaryId}/merge/candidates	free	-	-	-
 /api/token-pricing/unpriced-models	free	-	-	-
+/api/update-service/token	free	-	-	-
 /api/usage/cockpit	free	-	-	-
 /api/v1/gates/subjects/{subjectId}	free	-	-	-
 /api/v1/management/backups	free	-	-	-
@@ -463,6 +469,7 @@
 /api/workspace/tokens/timeline	free	-	-	-
 /api/workspace/tokens/timeline/cached	free	-	-	-
 /api/workspaces	free	-	-	-
+/api/workspaces/{id}/personas/	free	-	-	-
 /api/workspaces/{id}/settings	free	-	-	-
 /api/workspaces/{workspaceId}/decision-rules/	free	-	-	-
 /api/workspaces/{workspaceId}/decision-rules/versions/{versionId}/dry-run	free	-	-	-

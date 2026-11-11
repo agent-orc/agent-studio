@@ -15,6 +15,7 @@
       <span data-testid="remote-hosts-summary-roles"><strong>{{ counts.roles }}</strong> roles</span>
       @if (stableReleaseLabel(); as stable) { <span data-testid="remote-hosts-stable-release">{{ stable }}</span> }
       @if (behindReleaseCount(); as behind) { <span data-testid="remote-hosts-release-behind">{{ behind }} behind Stable</span> }
+      @if (differsReleaseLabel(); as differs) { <span data-testid="remote-hosts-release-differs">{{ differs }}</span> }
       @if (retiredCount()) {
         <label data-testid="remote-hosts-retired-filter" class="rh__retired-filter">
           <input type="checkbox" [checked]="showRetired()" (change)="toggleRetired()" />
@@ -34,7 +35,7 @@
     @if (machineCount()) {
       <div class="rh__layout" data-testid="remote-hosts-active">
         <app-environment-host-list [groups]="orderedGroups()" [gates]="gateWorkers()"
-          [selected]="currentSelection()" [slots]="slotFn" [now]="now()" (selectedChange)="selectHost($event)" />
+          [selected]="currentSelection()" [slots]="slotFn" [now]="now()" [stableRelease]="stableRelease()" (selectedChange)="selectHost($event)" />
         <main class="rh__detail" [class.rh__detail--mobile]="selectedId()" aria-label="Selected host detail"
           tabindex="0" (keydown)="onDetailKeydown($event)">
           <button type="button" class="rh__back" (click)="backToList()">Back to hosts</button>

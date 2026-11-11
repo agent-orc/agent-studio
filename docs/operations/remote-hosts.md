@@ -230,14 +230,32 @@ The comparison is server-owned and exposed at
 disagree. It uses the strongest evidence available: an identical commit means
 identical code; two build instants give both an order and an age; otherwise the
 product versions decide the order without an age. When nothing is comparable the
-row stays unmarked rather than accusing a host. Without an age the marker reads
-`behind Stable for 3h`: how long this server has observed the host behind, not
-the build gap.
+role reads `release unknown` rather than accusing a host. Without an age the
+marker reads `behind Stable for 3h`: how long this server has observed the host
+behind, not the build gap.
 
-The runner reads its commit from the assembly's `+sha.<revision>` metadata, or
-from the trailing sha of a stamped release id such as
-`20260928T1211Z-v0.9.4-6759fe303`, and reports only 7 to 40 hex characters; a
-build without a revision (`+sha.unknown`) reports no commit. The build instant
+The same version from another commit is `differs`, not current: the row, the
+role, and the header read `differs from Stable 3d61e8b`, and the header names
+Stable's commit next to its version (`Stable 0.9.5 · 3d61e8b`). A host that
+reports no commit is never current; it reads `release unknown` unless its
+version or build instant proves it older. A differing build has no age, so its
+alarm, like a version-only `behind`, waits until this server has observed it for
+the grace window.
+
+A review role shows the digest-pinned image it runs (`RUNNER_REVIEW_IMAGE_REF`,
+see [networked deploy](setup/networked-deploy.md)) next to the image this
+server expects for the host, configured as `Release:ReviewImages:<hostId>`
+(environment `Release__ReviewImages__<hostId>`). Without that setting the line
+reads `No expected image on this server`. A card whose remote review was graded
+by a release that was not the Stable build when the report arrived says so in
+its Result view (`workerReleaseStable` in the grade file), next to the existing
+superseded-worker notice.
+
+The runner reads its commit from `RUNNER_RELEASE_COMMIT`, the assembly's
+`+sha.<revision>` metadata, the trailing sha of a stamped release id such as
+`20260928T1211Z-v0.9.4-6759fe303`, or the `COMMIT` file the networked deploy
+writes into every release folder, and reports only 7 to 40 hex characters; a
+build without any of these (`+sha.unknown`) reports no commit. The build instant
 comes from `RUNNER_RELEASE_BUILT_AT` or from the release id stamp, in second
 (`T064049Z`) or minute (`T1211Z`) precision. The Stable side only has a build
 instant when the server runs from a release `build-manifest.json`. A Stable
@@ -264,6 +282,10 @@ Why this exists: on 15.09.2026 Stable and the Task Server ran v0.3.0 while
 agent-runner-01 still ran an agent-host release from 23.08. Remote review
 aspects received no diff, every larger delivery drew a code-quality "no unified
 diff" concern, and the drift was found only by reading the host release symlink.
+On 9.11.2026 (AGT-3648 S4-F12) a review image built from develop of 5 November
+served a server built on 9 November. Both said 0.9.5, the image reported no
+commit, and the host read `current` while it graded a card into Human review;
+AGT-3689 added the `differs` state and the review image identity.
 
 Root SSH with
 `/usr/local/sbin/agent-runner-deploy update-clis 0.166.0 2.1.305` is an emergency

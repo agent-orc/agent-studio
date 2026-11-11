@@ -7,6 +7,15 @@ Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
 
+## Phone navigation and theme
+
+At 390 px the Studio board shows one lane at a time. The Board lane picker
+selects a workflow lane or delivery column; the chosen group supplies the
+single visible board track. Workspace settings replace their section rail with
+a picker below 760 px, keeping the checklist at the top of the content area.
+The root app initializes `ThemeService` before authentication so the auth gate
+uses the same saved or system-resolved light and dark tokens as Studio.
+
 ## Manual task creation
 
 The create dialog resolves the selected project's `cliDefault` and
@@ -389,6 +398,11 @@ restore both the task and its captured lane position even when the task has
 since moved to a terminal lane. Pipeline-driven changes replace the current
 route instead and do not add review-history entries.
 
+A refused optimistic triage move restores the original task, lane-pager
+snapshot, route, and active task tab together. The detail shows the refusal
+beside the action with the next step. If an error dialog opens, closing it
+returns focus to the failed action.
+
 Each Wiki/Dossier tab owns a history stack containing its current target and up
 to 49 earlier or forward targets. Normal link navigation truncates that tab's
 forward entries and appends the destination. The tab toolbar and Alt+Left or
@@ -441,9 +455,10 @@ Task navigation reads the board it already holds. `TaskService` stays the
 single owner of the grouped board store; `TaskDetailPrefetchService` owns the
 bounded task core cache for `GET /api/tasks/{id}/core` (see
 [Bounded task core read](tasks.md#bounded-task-core-read-agt-2953)). The
-core-first selection of AGT-2955 reads every core through this cache; there
-is no full-detail lookahead any more, because a task switch no longer reads
-the legacy full detail.
+core-first selection of AGT-2955 reads every core through this cache. Human
+Review selection also reads `GET /api/tasks/{id}` for a fresh integration verdict;
+the board and Git resource carry cache-only integration projections and cannot
+decide whether Accept is available. There is no full-detail lookahead.
 
 - **Selection never reads the grouped board.** Board click, Explorer, pager,
   triage advance, deep link, Back/Forward and editor-tab switches do not call
@@ -509,10 +524,13 @@ Coverage: `task-core-cache.spec.ts` (cache invariants),
 `task-detail-prefetch.service.spec.ts` (superseded-read abort, conditional
 revalidation) and `task-selection-core.spec.ts` (board -> A -> B -> board,
 pager reuse, A -> D -> A abort, identical slugs, reconnect, push, delete,
-denial, registry removal) assert zero grouped and zero legacy full-detail
+denial, registry removal, fresh Human Review integration) assert zero grouped
 requests on selection and zero duplicate core requests;
-`task-detail-load-sections.component.spec.ts` covers the core rendering. The
-browser proof is `e2e/task-detail/task-core-board-reuse.spec.ts` (fully mocked
+`task-detail-load-sections.component.spec.ts` covers the core rendering.
+The Human Review queue regression is in `e2e/studio-shell/operator-attention-list.spec.ts`:
+three Accept actions through Needs you and auto-advance with a stale board
+integration projection. The core navigation browser proof is
+`e2e/task-detail/task-core-board-reuse.spec.ts` (fully mocked
 API; `PW_BASE_URL` may point at a served production bundle). It times each
 selection from the click event to the first animation frame after the
 selected task's core facts are in the DOM, and asserts resident p95 <= 50 ms

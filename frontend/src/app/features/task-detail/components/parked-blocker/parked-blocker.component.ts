@@ -13,6 +13,7 @@ import {
 import { formatDateTimeUtc } from '../../../../services/format.util';
 import { NowTickService } from '../../../../services/now-tick.service';
 import { TaskService } from '../../../../services/task.service';
+import { TaskSectionAccessService } from '../../../../services/task-section-access.service';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
@@ -90,6 +91,7 @@ export class ParkedBlockerComponent {
   /** Ledger rows; they supply the park cause when the marker predates it. */
   private readonly timeline = inject(TaskTimelinePollService, { optional: true });
   private readonly tasks = inject(TaskService);
+  private readonly sectionAccess = inject(TaskSectionAccessService);
   private readonly destroyRef = inject(DestroyRef);
   private loadedTaskId: string | null = null;
   private sessionRequest: Subscription | null = null;
@@ -237,6 +239,10 @@ export class ParkedBlockerComponent {
     const detail = this.detail();
     const info = detail.info;
     const taskId = info.id;
+    if (!this.sectionAccess.canRead('session-events') || !this.sectionAccess.canRead('output')) {
+      this.sessionError.set('Session context is not available to this account.');
+      return;
+    }
     this.sessionLoading.set(true);
     this.sessionRequest = forkJoin({
       timeline: this.tasks.getRunTimeline(info.id, info.watchPath),

@@ -47,12 +47,14 @@ public static class ObservedStructureProjection
                 {
                     var stale = now - host.LastSeenAt > TimeSpan.FromSeconds(90);
                     var releaseHost = hostReports[hostId].FirstOrDefault(report =>
-                        HostReleaseDriftPolicy.Evaluate(report.Release, releases?.Stable, now).State == HostReleaseDriftStates.Behind) ?? host;
+                        HostReleaseDriftPolicy.Evaluate(report.Release, releases?.Stable, now).State
+                            is HostReleaseDriftStates.Behind or HostReleaseDriftStates.Differs) ?? host;
                     var verdict = HostReleaseDriftPolicy.Evaluate(releaseHost.Release, releases?.Stable, now);
                     var behind = verdict.State == HostReleaseDriftStates.Behind;
+                    var differs = behind || verdict.State == HostReleaseDriftStates.Differs;
                     var down = host.Status != "active";
                     var telemetry = host.Telemetry;
-                    observation = new(stale ? "stale" : behind ? "differs" : "matched",
+                    observation = new(stale ? "stale" : differs ? "differs" : "matched",
                         stale ? "stale" : down ? "down" : "up", host.LastSeenAt,
                         releaseHost.Release?.Version, releases?.Stable.Version, behind,
                         telemetry is not null && now - telemetry.ObservedAt <= TimeSpan.FromSeconds(90)
@@ -83,9 +85,10 @@ public static class ObservedStructureProjection
                 var stale = now - runner.LastSeenAt > TimeSpan.FromSeconds(90);
                 var verdict = HostReleaseDriftPolicy.Evaluate(runner.Release, releases?.Stable, now);
                 var behind = verdict.State == HostReleaseDriftStates.Behind;
+                var differs = behind || verdict.State == HostReleaseDriftStates.Differs;
                 var freshTelemetry = runner.Telemetry is { } t && now - t.ObservedAt <= TimeSpan.FromSeconds(90)
                     ? t : null;
-                observation = new(stale ? "stale" : behind ? "differs" : "matched",
+                observation = new(stale ? "stale" : differs ? "differs" : "matched",
                     stale ? "stale" : runner.Status == "active" ? "up" : "down",
                     runner.LastSeenAt, runner.Release?.Version, releases?.Stable.Version, behind,
                     freshTelemetry?.CpuPercent, freshTelemetry?.MemoryUsedBytes,

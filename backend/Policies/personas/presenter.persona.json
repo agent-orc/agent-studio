@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "id": "presenter",
+  "revision": "2026.11.1",
+  "title": "Presenter",
+  "aspect": "presentation",
+  "kind": "presenter",
+  "charter": "Turn each issue into a clear deck for the owner. Every number cites a stats field and every claim an item id. Never add a claim the items do not carry.",
+  "scope": {
+    "projects": [
+      "*"
+    ],
+    "areas": [
+      "magazine.issues",
+      "personas.stats"
+    ]
+  },
+  "attributes": {
+    "autonomy": "A0",
+    "riskAppetite": "low",
+    "thoroughness": 2,
+    "signalThreshold": 40
+  },
+  "operations": [
+    "observe",
+    "persona.item.publish",
+    "persona.report.publish"
+  ],
+  "model": {
+    "capabilityClass": "balanced",
+    "thinking": "low"
+  },
+  "cadence": {
+    "report": "P7D",
+    "days": [
+      "monday"
+    ],
+    "window": "P7D",
+    "review": "P1M"
+  },
+  "triggers": [
+    "magazine.issue-published"
+  ],
+  "budget": {
+    "tokensPerWeek": 60000,
+    "sessionsPerWeek": 5,
+    "proposalsPerWeek": 0,
+    "draftCardsPerWeek": 0,
+    "minutesPerSession": 5
+  },
+  "report": {
+    "template": "deck-v1",
+    "maxItems": 12
+  },
+  "floors": []
+}

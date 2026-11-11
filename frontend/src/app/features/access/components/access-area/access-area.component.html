@@ -104,6 +104,13 @@
       </section>
     }
 
+    @if (showBackupActivity()) {
+      <section class="access__section" aria-labelledby="access-backup-activity-title">
+        <header><h3 id="access-backup-activity-title">Backup activity</h3><p class="access-hint">Backup create, off-host copy, restore verification, retention, and the offline decrypt and restore, each with its actor and outcome from the audit chain.</p></header>
+        <app-access-backup-activity />
+      </section>
+    }
+
     <section class="access__section" aria-labelledby="access-runners-title">
       <header><h3 id="access-runners-title">Runner enrollments and runners</h3><p class="access-hint">Runners and the engine enroll with a one-time code and keep their own credentials and Runner scopes.</p></header>
       <app-access-runners />
