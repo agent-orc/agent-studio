@@ -115,6 +115,12 @@ async function mockStudio(page: Page, currentEntries: () => readonly FeedEntry[]
       return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
     if (url.pathname === '/api/runner/orchestrator-feed') return json({ entries: currentEntries() });
+    if (/^\/api\/workspaces\/[^/]+\/quota\/admission$/.test(url.pathname)) return json({
+      workspaceId: 'workspace-1',
+      workspace: { projectId: null, project: null, status: 'ok', message: null,
+        overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false },
+      projects: [],
+    });
     if (url.pathname === '/api/usage/cockpit') return json({ workspaceId: 'workspace-1', clis: [], cost: null });
     if (url.pathname === '/api/runner/global/orchestrator-session') {
       return json({
@@ -242,6 +248,48 @@ test('status-bar Feed focuses the workspace tab and clears the Activity badge', 
   await expect(page.getByTestId('studio-tab-feed')).toHaveCount(1);
   await expect(page.locator('app-project-overlays app-orchestrator-feed')).toHaveCount(0);
   await page.screenshot({ path: join(evidenceDir(testInfo), 'status-bar-feed-tab.png'), fullPage: false });
+});
+
+test('Activity alert names lanes, exposes its next step, and keeps the message readable', async ({ page }, testInfo) => {
+  const message = '5-human-review drain rate is 0/h with 7 queued; review acceptance and integration are waiting';
+  const entry: FeedEntry = { ...buildEntries()[0], summary: message, jobId: 'AGT-3645',
+    topic: 'watcher-finding-raised', reasoning: null };
+  await mockStudio(page, () => [{ ...entry, stall: {
+    subject: 'card:AGT-3645:5-human-review', severity: 'warning', sinceUtc: entry.ts,
+    blockedCount: 1, affectedCards: ['AGT-3645'],
+    suggestedAction: 'Open the card and decide acceptance or integration.', evidence: {},
+  } }]);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/#/feed', { waitUntil: 'domcontentloaded' });
+  await dismissDevErrorDialog(page);
+  // The mocked shell can mount an empty global error dialog while unrelated
+  // polling endpoints settle. Keep it out of Activity visual evidence.
+  await page.addStyleTag({ content: 'app-error-dialog { display: none !important; }' });
+  await setTheme(page, 'light');
+  const summary = page.getByTestId('orchestrator-entry-summary');
+  await expect(summary).toContainText('Human review drain rate');
+  const visibleSixty = await summary.evaluate(element => {
+    const text = element.firstChild;
+    if (!text) return false;
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, Math.min(60, text.textContent?.length ?? 0));
+    return range.getBoundingClientRect().right <= element.getBoundingClientRect().right + 1;
+  });
+  expect(visibleSixty).toBe(true);
+  const action = page.getByTestId('orchestrator-suggested-action');
+  await expect(action.getByRole('button', { name: 'Open the card and decide acceptance or integration.' })).toBeVisible();
+  const output = evidenceDir(testInfo);
+  await page.screenshot({ path: join(output, 'activity-1280-light--mocked.png') });
+  await setTheme(page, 'dark');
+  await page.screenshot({ path: join(output, 'activity-1280-dark--mocked.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(summary).toHaveCSS('white-space', 'normal');
+  await summary.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'nearest' }));
+  const wrappedLines = await summary.evaluate(element =>
+    element.getBoundingClientRect().height / parseFloat(getComputedStyle(element).lineHeight));
+  expect(wrappedLines).toBeGreaterThan(1);
+  await page.screenshot({ path: join(output, 'activity-390-dark--mocked.png') });
 });
 
 test('Feed main view: route, Activity icon, fresh-alert badge, windowing, live stability, and responsive themes', async ({ page }, testInfo) => {
