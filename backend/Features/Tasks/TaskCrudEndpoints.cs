@@ -632,6 +632,7 @@ public static class TaskCrudEndpoints
         group.MapPost("/{jobId}/concept-dossier", (string jobId, string? project, string? watchPath,
             SetConceptDossierRequest req,
             TaskScannerService scanner,
+            TaskMutationService mutations,
             AgentStudio.Registry.ProjectRegistry projects,
             ILoggerFactory loggerFactory) =>
         {
@@ -654,6 +655,8 @@ public static class TaskCrudEndpoints
                         new { error = "Failed to persist the no-dossier explanation." },
                         statusCode: StatusCodes.Status500InternalServerError);
                 }
+                if (!mutations.SetJobDossier(info.Id, null, info.WatchPath))
+                    return Results.Problem("Failed to clear the Dossier link.");
             }
             else
             {
@@ -686,6 +689,8 @@ public static class TaskCrudEndpoints
                 {
                     ConceptDossierContract.WriteReference(info.FolderPath, path);
                     ConceptDossierClosureStore.Clear(info.FolderPath, logger);
+                    if (!mutations.SetJobDossier(info.Id, new TaskDossier { Path = path! }, info.WatchPath))
+                        return Results.Problem("Failed to link the Dossier.");
                 }
                 catch (Exception ex)
                 {
@@ -696,7 +701,7 @@ public static class TaskCrudEndpoints
                 }
             }
 
-            var summary = ConceptDossierContract.Read(info.FolderPath);
+            var summary = BuildConceptDossierSummary(scanner.FindJob(info.Id, info.WatchPath) ?? info)!;
             logger.LogInformation(
                 "concept-dossier updated for {Project}/{Task}: path={Path} noDossierNeeded={NoDossierNeeded}",
                 info.ProjectName,
