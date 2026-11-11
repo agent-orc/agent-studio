@@ -227,6 +227,10 @@ public sealed class GitStateIndexService : BackgroundService
     internal bool IsRunning(string projectName)
         => _repos.TryGetValue(projectName, out var state) && Volatile.Read(ref state.Running) == 1;
 
+    /// <summary>Test/diagnostic hook: queued card facts can outlive the first ready publication.</summary>
+    internal bool HasPendingCardFacts(string projectName)
+        => _cardFacts?.HasPendingWork(projectName) == true;
+
     /// <summary>
     /// Per-repository status for the Admin git-telemetry surface: the last
     /// successful index timestamp (null before the first run completes) and
