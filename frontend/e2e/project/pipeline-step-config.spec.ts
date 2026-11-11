@@ -6,7 +6,7 @@ import type { Page } from '@playwright/test';
 /**
  * Per-project pre/post pipeline-step config (this task).
  *
- * The Project Settings panel grows a "Pipeline steps" section: one row per
+ * The Deploy Run steps view contains the project step editor: one row per
  * configurable step (from /api/projects/pipeline-catalogue) joined with the
  * project's current overrides. Aspect steps expose a model picker + an
  * enable toggle; tool/orchestrator gate steps expose a mode select. Each
@@ -117,6 +117,13 @@ function slugFor(name: string): string {
   return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
+async function openPipelineSteps(page: Page): Promise<void> {
+  await page.goto(`/#/projects/${projectSlug}/deploy?view=steps`);
+  await expect(page.getByTestId('project-deploy-area')).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId('deploy-tab-steps').click();
+  await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 30_000 });
+}
+
 function enc(name: string): string {
   return encodeURIComponent(name);
 }
@@ -158,7 +165,8 @@ async function backendApi<T = unknown>(path: string, init: RequestInit = {}): Pr
   return text ? JSON.parse(text) as T : undefined as T;
 }
 
-test.afterEach(async () => {
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
   if (!projectName) return;
   // Restore the steps to their pre-test state (clear if they had no override).
   await setStep({
@@ -202,8 +210,8 @@ test('pipeline: pipeline-step section renders and a per-step model change persis
   // Start from a clean override so the model select begins on Inherit.
   await setStep({ stepId: STEP, enabled: null, economyModel: null, cliType: null, model: null, thinkingLevel: null, prompt: null, mode: null });
 
-  // The Pipeline route opens the Deploy view containing the step editor.
-  await page.goto(`/#/projects/${projectSlug}/pipeline`);
+  // The Run steps view contains the project step editor.
+  await openPipelineSteps(page);
   await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 10_000 });
 
   const section = page.getByTestId('project-detail-pipeline');
@@ -238,7 +246,7 @@ test('pipeline: a closed-row toggle disables a step without expanding it', async
   // --grep instead of relying on the model test that normally runs first.
   await setStep({ stepId: STEP, enabled: null });
 
-  await page.goto(`/#/projects/${projectSlug}/pipeline`);
+  await openPipelineSteps(page);
   await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 10_000 });
 
   const section = page.getByTestId('project-detail-pipeline');
@@ -267,7 +275,7 @@ test('pipeline: task type is first, switches catalogue, and keeps bug override i
   await setStep({ pipelineType: 'task', stepId: STEP, enabled: null });
   await setStep({ pipelineType: 'bug', stepId: STEP, enabled: null });
 
-  await page.goto(`/#/projects/${projectSlug}/pipeline`);
+  await openPipelineSteps(page);
   await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 10_000 });
 
   const type = page.getByTestId('pipeline-type-select');
@@ -290,7 +298,7 @@ test('pipeline: task type is first, switches catalogue, and keeps bug override i
 });
 
 test('pipeline: task type stays locked while aspect steps are being updated', async ({ page }) => {
-  await page.goto(`/#/projects/${projectSlug}/pipeline`);
+  await openPipelineSteps(page);
   const type = page.getByTestId('pipeline-type-select');
   await expect(type).toBeEnabled();
   const apply = page.getByTestId('aspect-model-apply-steps');
@@ -313,7 +321,7 @@ test('pipeline: task type stays locked while aspect steps are being updated', as
 
 test('pipeline: economy recommendation opt-in persists for an aspect', async ({ page }) => {
   await setStep({ stepId: STEP, enabled: null, economyModel: null, cliType: null, model: null, thinkingLevel: null });
-  await page.goto(`/#/projects/${projectSlug}/pipeline`);
+  await openPipelineSteps(page);
   await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 10_000 });
 
   const row = page.getByTestId(`pipeline-step-row-${STEP}`);
@@ -330,7 +338,7 @@ test('pipeline: abort-review exposes a run-condition control that persists', asy
   // Start from a clean abort-review override (opt-out step, default on since 2026-07-05).
   await setStep({ stepId: ABORT_STEP, enabled: null, model: null, mode: null, condition: null });
 
-  await page.goto(`/#/projects/${projectSlug}/pipeline`);
+  await openPipelineSteps(page);
   await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 10_000 });
 
   const section = page.getByTestId('project-detail-pipeline');
