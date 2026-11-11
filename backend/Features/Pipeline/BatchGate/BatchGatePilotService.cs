@@ -140,8 +140,9 @@ public sealed partial class BatchGatePilotService
         var scope = Scope(candidate.Subject);
         var reason = BatchGatePolicy.Exclusion(candidate.Subject with { EnqueueSequence = 1 },
             scope, project.BatchGate);
-        if (reason is not null)
-            throw new InvalidDataException($"Batch admission failed: {reason}.");
+        if (reason is { } refused)
+            throw new BatchAdmissionRefusedException(refused, BatchGatePolicy.AdmissionRefusal(
+                refused, review.Subject.Plan?.BuildTestDeferralDisabledReason));
         // The card must fail closed before it becomes visible to the queue.
         await BatchGateOwnershipStore.WriteAsync(task.FolderPath,
             new BatchGateOwnership(review.AttemptId, candidate.Subject), ct).ConfigureAwait(false);
@@ -887,7 +888,7 @@ public sealed partial class BatchGatePilotService
             DeriveIsolationFindings(parent);
         foreach (var manifest in _store.ListRecoverableManifests())
         {
-            if (_store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
+            if (_store.LatestState(manifest.BatchId).Phase is BatchPhase.Formed or BatchPhase.Unknown)
                 continue;
             BatchCoordinatorLease? recovery;
             try { recovery = _leases.TryAcquire(LeaseScope(manifest), "batch-recovery"); }
@@ -895,6 +896,8 @@ public sealed partial class BatchGatePilotService
             if (recovery is null) continue;
             try
             {
+                if (_store.LatestState(manifest.BatchId).Phase is BatchPhase.Formed or BatchPhase.Unknown)
+                    continue;
                 if (manifest.ParentBatchId is { } parentId)
                     DeriveIsolationFindings(_store.ReadManifest(parentId));
                 State(manifest, BatchPhase.Abandoned, null, recovery.Fence,
@@ -1209,6 +1212,7 @@ public sealed partial class BatchGatePilotService
             try
             {
                 var paused = _store.LatestState(manifest.BatchId);
+                if (paused.Phase != BatchPhase.Paused) continue;
                 var options = _settings.Get(manifest.Scope.Project).BatchGate;
                 if (paused.Reason == "integration-branch-red" && BatchEnabled(manifest.Scope.Project)
                     && (options.EffectiveScope == "code"
@@ -1891,7 +1895,8 @@ public sealed partial class BatchGatePilotService
             // lease is gone, so the batch may not publish. A verified remote
             // publication keeps its phase for the next tick's recovery.
             if (_store.ReadPublication(manifest.BatchId) is null
-                && _store.LatestState(manifest.BatchId).Phase != BatchPhase.Publishing)
+                && _store.LatestState(manifest.BatchId).Phase is not
+                    (BatchPhase.Publishing or BatchPhase.Unknown))
             {
                 State(manifest, BatchPhase.Abandoned, null, lease.Fence,
                     "coordinator lease lost during the gate");
@@ -1904,7 +1909,8 @@ public sealed partial class BatchGatePilotService
             // A verified remote publication is durable. Keep its phase so the
             // next tick can finish local attribution and lane release.
             if (_store.ReadPublication(manifest.BatchId) is null
-                && _store.LatestState(manifest.BatchId).Phase != BatchPhase.Publishing)
+                && _store.LatestState(manifest.BatchId).Phase is not
+                    (BatchPhase.Publishing or BatchPhase.Unknown))
                 State(manifest, BatchPhase.Paused, null, lease.Fence, ex.GetType().Name);
         }
         finally
@@ -2584,12 +2590,33 @@ public sealed partial class BatchGatePilotService
             return;
         }
         var replay = _store.ReadReplay(manifest.BatchId, subject.TaskKey);
+        BatchMemberTimeline? timeline = null;
+        try
+        {
+            var published = _store.ReadPublication(manifest.BatchId)?.VerifiedAtUtc;
+            timeline = BatchMemberTimelineProjection.Build(_store, subject, manifest,
+                BatchMemberTimelineProjection.Rows(_services?.GetService<GateRunLedger>(),
+                    manifest.Scope.Project, BatchMemberTimelineProjection.Days(
+                        subject.ReviewCompletedAtUtc, published ?? _time.GetUtcNow())),
+                _store.ListPreChecks(manifest.Scope.Project),
+                _store.ListFallbackCauses(manifest.Scope.Project)) with
+            {
+                PublishedAtUtc = published,
+                TerminalAtUtc = published,
+                Outcome = "published",
+            };
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            _logger.LogWarning(exception, "batch-member-timeline-projection-failed task={TaskKey}",
+                subject.TaskKey);
+        }
         var record = new BatchGateMemberRecord(
             subject.TaskKey, subject.RunAttempt, subject.DeliveryEpoch,
             subject.ResultSha, replay.Replacements.Select(item => item.RebasedSha).ToArray(),
             manifest.BatchId, manifest.MembershipDigest, manifest.BaseSha,
             run.CandidateSha, run.GateProfileDigest, run.BatchRunId,
-            "pass", run.EvidencePath, _time.GetUtcNow());
+            "pass", run.EvidencePath, _time.GetUtcNow(), timeline);
         if (_store.TryReadMember(manifest.BatchId, subject.TaskKey, run.BatchRunId) is null)
             _store.RecordMember(record);
         if (!_store.CanRelease(subject, manifest.BatchId, run.BatchRunId))

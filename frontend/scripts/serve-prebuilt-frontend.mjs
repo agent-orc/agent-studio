@@ -13,14 +13,14 @@ const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 const isProxy = url => /^\/(api|hubs)(?:[/?]|$)/.test(url);
 // Profiles whose proxy terminates TLS and keeps the browser's Host, so the
 // backend sees the page origin and issues a Secure cookie the browser keeps.
-const tlsProfiles = ['public-demo', 'networked-https'];
+const tlsProfiles = ['public-demo', 'networked-https', 'networked-https-demo'];
 const isTlsProfile = () => tlsProfiles.includes(process.env.PW_E2E_PROFILE ?? '');
 const proxyOptions = (backend, request) => ({
   hostname: backend.hostname.replace(/^\[|\]$/g, ''), port: backend.port || 80,
   path: request.url, method: request.method,
   headers: { ...request.headers,
     host: isTlsProfile() ? request.headers.host : backend.host,
-    ...(['networked-monolith', 'operator-cli', 'networked-https', 'public-demo'].includes(process.env.PW_E2E_PROFILE ?? '') ? { 'x-forwarded-proto': 'https' } : {}) },
+    ...(['networked-monolith', 'operator-cli', 'networked-https', 'networked-https-demo', 'public-demo'].includes(process.env.PW_E2E_PROFILE ?? '') ? { 'x-forwarded-proto': 'https' } : {}) },
 });
 
 async function createFrontendHandlers(directory, backendUrl) {
