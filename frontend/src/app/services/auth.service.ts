@@ -222,8 +222,8 @@ export class AuthService {
   dismissFactorRecommendation(): void { this.factorRecommendation.set(false); }
 
   previewInvitation(token: string): Observable<InvitationPreview> {
-    const root = token.startsWith('sti_') ? '/api/v1/studio/auth' : '/api/auth';
-    return this.http.get<InvitationPreview>(`${root}/invite/preview?token=${encodeURIComponent(token)}`);
+    return this.http.get<InvitationPreview>(
+      `/api/v1/studio/auth/invite/preview?token=${encodeURIComponent(token)}`);
   }
 
   listSessions(userId?: string | null): Observable<AuthSessionSummary[]> {
@@ -250,8 +250,7 @@ export class AuthService {
   }
 
   acceptInvitation(token: string, newPassword: string): Observable<AuthStatus> {
-    const root = token.startsWith('sti_') ? '/api/v1/studio/auth' : '/api/auth';
-    return this.http.post<AuthStatus | StandaloneAuthSession>(`${root}/invite/accept`, { token, newPassword })
+    return this.http.post<AuthStatus | StandaloneAuthSession>('/api/v1/studio/auth/invite/accept', { token, newPassword })
       .pipe(map(normalizeSession), tap(status => {
         this.status.set(status);
         if (!status.secondFactorEnrollmentRequired) this.factorRecommendation.set(true);

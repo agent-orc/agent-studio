@@ -91,12 +91,12 @@ describe('standalone Studio identity projection', () => {
   it('previews a networked invitation and offers one factor recommendation after acceptance', () => {
     const token = ['inv', 'example'].join('.');
     auth.previewInvitation(token).subscribe(preview => expect(preview.inviter).toBe('Robert'));
-    http.expectOne(`/api/auth/invite/preview?token=${encodeURIComponent(token)}`).flush({
+    http.expectOne(`/api/v1/studio/auth/invite/preview?token=${encodeURIComponent(token)}`).flush({
       username: 'carla', displayName: 'Carla', inviter: 'Robert', role: 'Product',
       projects: ['Website'], expiresAt: '2026-11-12T09:00:00Z', secondFactorRequired: false,
     });
     auth.acceptInvitation(token, 'new password long enough').subscribe();
-    http.expectOne('/api/auth/invite/accept').flush({
+    http.expectOne('/api/v1/studio/auth/invite/accept').flush({
       profile: 'networked', bootstrapRequired: false, authenticated: true,
       user: { id: 'usr_carla', username: 'carla', displayName: 'Carla', role: 'contributor',
         projects: ['PROJ-001'], disabled: false, mustChangePassword: false },

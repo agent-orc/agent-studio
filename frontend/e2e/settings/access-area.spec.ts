@@ -243,11 +243,11 @@ test('invitee sees who invited them, their project and role, then a recommended 
   await page.route('**/api/auth/status', route => json(route, {
     profile: 'networked', bootstrapRequired: false, authenticated: false, user: null,
   }));
-  await page.route('**/api/auth/invite/preview?*', route => json(route, {
+  await page.route('**/api/v1/studio/auth/invite/preview?*', route => json(route, {
     username: 'carla', displayName: 'Carla', inviter: 'Robert', role: 'Product',
     projects: ['Website'], expiresAt: '2026-11-12T09:00:00Z', secondFactorRequired: false,
   }));
-  await page.route('**/api/auth/invite/accept', route => json(route, {
+  await page.route('**/api/v1/studio/auth/invite/accept', route => json(route, {
     profile: 'networked', bootstrapRequired: false, authenticated: true, user, secondFactorEnrollmentRequired: false,
   }));
   await page.goto(`/?invite=${encodeURIComponent(token)}`, { waitUntil: 'domcontentloaded' });
