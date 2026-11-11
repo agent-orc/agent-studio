@@ -23,7 +23,7 @@ public sealed class BatchGateStoreQuarantineTests : IDisposable
     public void Truncated_manifest_is_skipped_by_every_listing_and_names_its_batch_and_project()
     {
         var running = Close("run");
-        _store.AppendState(new BatchGateState(running.BatchId, running.MembershipDigest,
+        BatchGateStates.Reach(_store, new BatchGateState(running.BatchId, running.MembershipDigest,
             BatchPhase.Running, null, 1, Now));
         var damaged = Close("damaged");
         var path = Truncate(Path.Combine(_store.BatchDirectory(damaged.BatchId), "manifest.json"));
@@ -56,31 +56,30 @@ public sealed class BatchGateStoreQuarantineTests : IDisposable
     }
 
     [Fact]
-    public void Unreadable_newest_state_row_reads_unknown_and_never_an_older_phase()
+    public void Unreadable_phase_record_reads_unknown_and_never_an_older_phase()
     {
         var batch = Close("state");
-        _store.AppendState(new BatchGateState(batch.BatchId, batch.MembershipDigest,
+        BatchGateStates.Reach(_store, new BatchGateState(batch.BatchId, batch.MembershipDigest,
             BatchPhase.Running, null, 1, Now));
         var other = Close("other");
-        _store.AppendState(new BatchGateState(other.BatchId, other.MembershipDigest,
+        BatchGateStates.Reach(_store, new BatchGateState(other.BatchId, other.MembershipDigest,
             BatchPhase.Running, null, 1, Now));
-        var newest = Path.Combine(_store.BatchDirectory(batch.BatchId), "state", "00000003.json");
-        File.WriteAllText(newest, "{\"batchId\":\"" + batch.BatchId + "\",\"phase\":\"Publi");
+        var newest = Path.Combine(_store.BatchDirectory(batch.BatchId), "phase.json");
+        var intact = File.ReadAllText(newest);
+        File.WriteAllText(newest, "{\"batchId\":\"" + batch.BatchId + "\",\"version\":");
 
         var state = _store.LatestState(batch.BatchId);
         Assert.Equal(BatchPhase.Unknown, state.Phase);
         Assert.Equal(BatchGateStore.StateUnreadableReason, state.Reason);
         Assert.Equal(other.BatchId, Assert.Single(_store.ListRecoverableManifests()).BatchId);
         var record = Assert.Single(_store.ListQuarantined());
-        Assert.Equal((batch.BatchId, "project", BatchGateRecordKinds.State, newest),
+        Assert.Equal((batch.BatchId, "project", BatchGateRecordKinds.Phase, newest),
             (record.BatchId, record.Project, record.Kind, record.File));
         Assert.Contains("move the batch folder", record.NextStep);
 
-        // A later state row supersedes the damaged one.
-        File.WriteAllText(Path.Combine(_store.BatchDirectory(batch.BatchId), "state", "00000004.json"),
-            JsonSerializer.Serialize(new BatchGateState(batch.BatchId, batch.MembershipDigest,
-                BatchPhase.Abandoned, null, 2, Now), Web));
-        Assert.Equal(BatchPhase.Abandoned, _store.LatestState(batch.BatchId).Phase);
+        // A restored phase record leaves the quarantine.
+        File.WriteAllText(newest, intact);
+        Assert.Equal(BatchPhase.Running, _store.LatestState(batch.BatchId).Phase);
         Assert.Empty(_store.ListQuarantined());
     }
 
@@ -108,12 +107,12 @@ public sealed class BatchGateStoreQuarantineTests : IDisposable
     public void State_route_lists_readable_batches_and_the_quarantine_for_its_project()
     {
         var running = Close("route");
-        _store.AppendState(new BatchGateState(running.BatchId, running.MembershipDigest,
+        BatchGateStates.Reach(_store, new BatchGateState(running.BatchId, running.MembershipDigest,
             BatchPhase.Running, null, 1, Now));
         var damaged = Close("route-damaged");
         Truncate(Path.Combine(_store.BatchDirectory(damaged.BatchId), "manifest.json"));
         var stateDamaged = Close("route-state");
-        File.WriteAllText(Path.Combine(_store.BatchDirectory(stateDamaged.BatchId), "state", "00000002.json"), "{");
+        File.WriteAllText(Path.Combine(_store.BatchDirectory(stateDamaged.BatchId), "phase.json"), "{");
 
         var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
             _store, "project", new BatchGateFormationOptions(Enabled: true)), Web);
@@ -132,7 +131,7 @@ public sealed class BatchGateStoreQuarantineTests : IDisposable
     public void Decision_source_keeps_reporting_red_batches_next_to_the_quarantine()
     {
         var red = Close("red");
-        _store.AppendState(new BatchGateState(red.BatchId, red.MembershipDigest, BatchPhase.Red,
+        BatchGateStates.Reach(_store, new BatchGateState(red.BatchId, red.MembershipDigest, BatchPhase.Red,
             null, 1, Now, "suite red"));
         var damaged = Close("fact-damaged");
         Truncate(Path.Combine(_store.BatchDirectory(damaged.BatchId), "manifest.json"));

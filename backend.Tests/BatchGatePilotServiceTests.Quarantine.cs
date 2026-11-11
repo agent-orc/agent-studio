@@ -29,7 +29,7 @@ public sealed class BatchGatePilotQuarantineTests : BatchGatePilotServiceTests
         };
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         var running = ClosePendingBatch(factory);
-        store.AppendState(new BatchGateState(running.BatchId, running.MembershipDigest,
+        BatchGateStates.Reach(store, new BatchGateState(running.BatchId, running.MembershipDigest,
             BatchPhase.Running, members[0].ResultSha, 1, _clock));
         var stalePath = SeedTruncatedManifest(store, running);
         _gate.Batch = request => Green(request.ExpectedSha);

@@ -10,6 +10,8 @@ public static class BatchGateRecordKinds
 {
     public const string Manifest = "manifest";
     public const string State = "state";
+    /// <summary>The phase record (<c>phase.json</c>, AGT-3563) that decides the batch phase.</summary>
+    public const string Phase = "phase";
     public const string Run = "run";
 }
 
@@ -23,7 +25,7 @@ public sealed record BatchGateQuarantinedRecord(
     DateTimeOffset DetectedAtUtc, DateTimeOffset FileWrittenAtUtc)
 {
     /// <summary>The batch folder the record lives in.</summary>
-    public string Folder => Kind == BatchGateRecordKinds.Manifest
+    public string Folder => BatchGateStore.InBatchFolder(Kind)
         ? Path.GetDirectoryName(File) ?? File
         : Path.GetDirectoryName(Path.GetDirectoryName(File)) ?? File;
 
@@ -86,6 +88,7 @@ public sealed partial class BatchGateStore
                 {
                     BatchGateRecordKinds.Manifest => (object)Read<BatchGateManifest>(path),
                     BatchGateRecordKinds.State => Read<BatchGateState>(path),
+                    BatchGateRecordKinds.Phase => Read<BatchPhaseRecord>(path),
                     _ => Read<BatchGateRunRecord>(path),
                 };
                 _quarantine.TryRemove(path, out _);
@@ -150,7 +153,7 @@ public sealed partial class BatchGateStore
         if (_quarantine.TryGetValue(path, out var known) && known.Length == length
             && known.Record.FileWrittenAtUtc == written && known.Record.Error == error)
             return known.Record;
-        var folder = kind == BatchGateRecordKinds.Manifest
+        var folder = InBatchFolder(kind)
             ? Path.GetDirectoryName(path)!
             : Path.GetDirectoryName(Path.GetDirectoryName(path)!)!;
         var (namedBatch, project) = Identity(kind, folder, path, batchId);
@@ -246,6 +249,11 @@ public sealed partial class BatchGateStore
         return (string.IsNullOrWhiteSpace(batchId) ? null : batchId,
             string.IsNullOrWhiteSpace(project) ? null : project);
     }
+
+    // A manifest and a phase record lie in the batch folder; state and run
+    // records lie one folder below it.
+    internal static bool InBatchFolder(string kind)
+        => kind is BatchGateRecordKinds.Manifest or BatchGateRecordKinds.Phase;
 
     private static bool IsLatestState(string path)
     {

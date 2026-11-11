@@ -802,7 +802,15 @@ public sealed partial class BatchGateStore
     /// </summary>
     public BatchGateState LatestState(string batchId)
     {
-        if (ReadPhaseRecord(batchId) is { } record) return record.State;
+        // An unreadable phase record decides nothing; an older history row
+        // could name a phase the batch already left, so the batch reads Unknown.
+        if (!TryReadPhaseRecord(batchId, out var record))
+        {
+            var phasePath = Path.Combine(BatchDirectory(batchId), PhaseRecordName);
+            return new BatchGateState(batchId, ManifestDigestOrEmpty(batchId), BatchPhase.Unknown, null, 0,
+                new DateTimeOffset(File.GetLastWriteTimeUtc(phasePath), TimeSpan.Zero), StateUnreadableReason);
+        }
+        if (record is not null) return record.State;
         var folder = Path.Combine(BatchDirectory(batchId), "state");
         var path = Directory.Exists(folder)
             ? Directory.EnumerateFiles(folder, "*.json")
@@ -814,11 +822,7 @@ public sealed partial class BatchGateStore
                 return state;
             // The newest row decides the phase; an older readable row could
             // name a phase the batch already left, so the batch reads Unknown.
-            var stateManifestPath = Path.Combine(BatchDirectory(batchId), "manifest.json");
-            var digest = File.Exists(stateManifestPath)
-                && TryReadRecord<BatchGateManifest>(stateManifestPath, BatchGateRecordKinds.Manifest, batchId, out var stateOwner)
-                ? stateOwner.MembershipDigest : string.Empty;
-            return new BatchGateState(batchId, digest, BatchPhase.Unknown, null, 0,
+            return new BatchGateState(batchId, ManifestDigestOrEmpty(batchId), BatchPhase.Unknown, null, 0,
                 new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero), StateUnreadableReason);
         }
         var manifestPath = Path.Combine(BatchDirectory(batchId), "manifest.json");
@@ -827,6 +831,14 @@ public sealed partial class BatchGateStore
             ? owner : null;
         return new BatchGateState(batchId, manifest?.MembershipDigest ?? string.Empty,
             BatchPhase.Unknown, null, 0, manifest?.ClosedAtUtc ?? DateTimeOffset.MinValue);
+    }
+
+    private string ManifestDigestOrEmpty(string batchId)
+    {
+        var path = Path.Combine(BatchDirectory(batchId), "manifest.json");
+        return File.Exists(path)
+            && TryReadRecord<BatchGateManifest>(path, BatchGateRecordKinds.Manifest, batchId, out var owner)
+            ? owner.MembershipDigest : string.Empty;
     }
 
     public void RecordRun(BatchGateRunRecord run)
