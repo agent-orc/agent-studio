@@ -29,7 +29,7 @@ public sealed class BatchPhaseTransitionRefusedException(string batchId, BatchPh
 public sealed partial class BatchGateStore
 {
     private const string PhaseRecordName = "phase.json";
-    private const int PhaseLockAttempts = 1000;
+    private const int PhaseLockAttempts = 6000;
     private static readonly TimeSpan PhaseLockRetry = TimeSpan.FromMilliseconds(10);
 
     public BatchPhaseRecord? ReadPhaseRecord(string batchId)

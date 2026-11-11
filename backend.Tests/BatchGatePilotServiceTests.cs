@@ -176,7 +176,7 @@ public sealed class BatchGatePilotOperatorMoveTests : BatchGatePilotServiceTests
         var other = SeedMember(factory, "DOC-BATCH-MOVE-B", "docs/batch-move-b.md");
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         var batch = ClosePendingBatch(factory);
-        store.AppendState(new BatchGateState(batch.BatchId, batch.MembershipDigest,
+        BatchGateStates.Reach(store, new BatchGateState(batch.BatchId, batch.MembershipDigest,
             BatchPhase.Running, member.ResultSha, 1, _clock));
 
         // The fixture removes hosted services; run the batch-move worker here.
@@ -226,7 +226,7 @@ public sealed class BatchGatePilotOperatorMoveTests : BatchGatePilotServiceTests
         SeedMember(factory, "DOC-WITHDRAW-THROW-B", "docs/withdraw-throw-b.md");
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         var batch = ClosePendingBatch(factory);
-        store.AppendState(new BatchGateState(batch.BatchId, batch.MembershipDigest,
+        BatchGateStates.Reach(store, new BatchGateState(batch.BatchId, batch.MembershipDigest,
             BatchPhase.Running, member.ResultSha, 1, _clock));
         var guard = new ActiveBatchMemberGuard(store);
         var membership = Assert.IsType<ActiveBatchMembership>(
