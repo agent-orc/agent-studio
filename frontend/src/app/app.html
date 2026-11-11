@@ -338,7 +338,7 @@
            the update strip docks alongside other banner notifications. -->
       <app-update-center />
       <app-update-block-modal />
-      <app-confirm-dialog />
+      @defer (when confirmDialog.active() !== null; prefetch on idle) { <app-confirm-dialog /> }
       @if (workspaceManager.createOpen()) {
         @defer (on immediate) {
         <app-workspace-create-dialog />
@@ -352,14 +352,16 @@
       <app-notification-stack />
       @defer (when mediaLightboxOpen() !== null) { <app-media-lightbox /> }
       @defer (when costBreakdownOpen()) { <app-cost-breakdown-dialog /> }
-      @if (errorDialog.activeError(); as error) {
-        <app-error-dialog
-          [error]="error"
-          [canOpenCliConfig]="error.canOpenCliConfig && selectedJobUsesCopilot()"
-          [copyButtonLabel]="copyErrorButtonLabel()"
-          (closeRequest)="closeErrorDialog()"
-          (copyRequest)="copyErrorDetails()"
-          (openCliConfig)="openCliConfigFromError()" />
+      @defer (when errorDialog.activeError() !== null; prefetch on idle) {
+        @if (errorDialog.activeError(); as error) {
+          <app-error-dialog
+            [error]="error"
+            [canOpenCliConfig]="error.canOpenCliConfig && selectedJobUsesCopilot()"
+            [copyButtonLabel]="copyErrorButtonLabel()"
+            (closeRequest)="closeErrorDialog()"
+            (copyRequest)="copyErrorDetails()"
+            (openCliConfig)="openCliConfigFromError()" />
+        }
       }
       @if (showCreate()) {
         @defer (on immediate) {
@@ -763,17 +765,19 @@
         }
       }
 
-      @if (errorDialog.activeError(); as error) {
-        <app-error-dialog
-          [error]="error"
-          [canOpenCliConfig]="error.canOpenCliConfig && selectedJobUsesCopilot()"
-          [copyButtonLabel]="copyErrorButtonLabel()"
-          (closeRequest)="closeErrorDialog()"
-          (copyRequest)="copyErrorDetails()"
-          (openCliConfig)="openCliConfigFromError()" />
+      @defer (when errorDialog.activeError() !== null; prefetch on idle) {
+        @if (errorDialog.activeError(); as error) {
+          <app-error-dialog
+            [error]="error"
+            [canOpenCliConfig]="error.canOpenCliConfig && selectedJobUsesCopilot()"
+            [copyButtonLabel]="copyErrorButtonLabel()"
+            (closeRequest)="closeErrorDialog()"
+            (copyRequest)="copyErrorDetails()"
+            (openCliConfig)="openCliConfigFromError()" />
+        }
       }
 
-      <app-confirm-dialog />
+      @defer (when confirmDialog.active() !== null; prefetch on idle) { <app-confirm-dialog /> }
       @if (workspaceManager.createOpen()) {
         @defer (on immediate) {
         <app-workspace-create-dialog />
@@ -802,4 +806,6 @@
       }
     </div>
     }
-} @else { <app-auth-gate /> }
+} @else {
+  @defer (on immediate) { <app-auth-gate /> }
+}

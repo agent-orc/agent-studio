@@ -24,7 +24,8 @@ public static class AccessSecurityEndpoints
                 BootstrapCodeRequired: store.BootstrapRequired && RequiresBootstrapCode(context, configuration),
                 SecondFactorEnrollmentRequired: principal?.Session.SecondFactorEnrollmentOnly == true,
                 RecoveryCodesRemaining: principal?.Session.RecoveryCodesRemaining,
-                RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(principal?.Session)));
+                RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(principal?.Session),
+                RestoreNotice: principal?.User.Role == StudioRoles.Owner ? RestoreSecurityNotice.Read(store.SecurityFolder) : null));
         });
 
         auth.MapPost("/bootstrap", (BootstrapRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration, ILoggerFactory loggers) =>
@@ -88,7 +89,8 @@ public static class AccessSecurityEndpoints
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken,
                     SecondFactorEnrollmentRequired: session?.SecondFactorEnrollmentOnly == true,
                     RecoveryCodesRemaining: session?.RecoveryCodesRemaining,
-                    RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(session)));
+                    RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(session),
+                    RestoreNotice: result.User.Role == StudioRoles.Owner ? RestoreSecurityNotice.Read(store.SecurityFolder) : null));
             });
         });
 
@@ -122,8 +124,17 @@ public static class AccessSecurityEndpoints
                     SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(principal.User),
                     SecondFactorEnrollmentRequired: principal.Session.SecondFactorEnrollmentOnly,
                     RecoveryCodesRemaining: principal.Session.RecoveryCodesRemaining,
-                    RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(principal.Session)));
+                    RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(principal.Session),
+                    RestoreNotice: principal.User.Role == StudioRoles.Owner ? RestoreSecurityNotice.Read(store.SecurityFolder) : null));
         });
+
+        auth.MapPost("/restore-notice/acknowledge", (RestoreNoticeAcknowledgeRequest request, HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                RequireOwner(context, store);
+                RestoreSecurityNotice.Acknowledge(store.SecurityFolder, request.ArchiveId);
+                return Results.NoContent();
+            }));
 
         auth.MapPost("/logout", (HttpContext context, AccessSecurityStore store, AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
             Execute(() =>

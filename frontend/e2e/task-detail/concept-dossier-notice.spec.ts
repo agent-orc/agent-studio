@@ -39,6 +39,9 @@ function taskInfo(conceptDossier: Record<string, unknown>) {
     commits: [],
     ownerClientId: 'local-default',
     mode: 'concept',
+    requiresIntegration: false,
+    integration: { status: 'not-applicable' },
+    dossier: conceptDossier['repoRelativePath'] ? { path: conceptDossier['repoRelativePath'] } : null,
     conceptDossier,
   };
 }
@@ -58,7 +61,7 @@ function detail(conceptDossier: Record<string, unknown>) {
 
 async function installRoutes(page: Page): Promise<{ mutationBodies: unknown[] }> {
   const emptyDossier = { noDossierNeeded: false, contractSatisfied: false };
-  let current = emptyDossier;
+  let current: Record<string, unknown> = emptyDossier;
   const mutationBodies: unknown[] = [];
   const escapedId = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -80,12 +83,41 @@ async function installRoutes(page: Page): Promise<{ mutationBodies: unknown[] }>
   await page.route('**/api/clients', route => json(route, [
     { id: 'local-default', displayName: 'Local', kind: 'agent-instance' },
   ]));
+  await page.route(/\/api\/workbenches\?project=/, route => json(route, {
+    projectName: PROJECT,
+    count: current.repoRelativePath ? 1 : 0,
+    currentCount: current.repoRelativePath ? 1 : 0,
+    historyCount: 0,
+    items: current.repoRelativePath ? [{ projectName: PROJECT, workbench: {
+      id: 'DEMO-W2', entryPath: DOSSIER_PATH, title: 'Export retention', summary: '',
+      status: 'decided', phase: 'decision-ready', updatedAtUtc: '2026-08-09T18:30:00Z',
+      valid: true, error: null, sourceTaskKeys: ['MKT-21'], linkedTaskKeys: ['MKT-21', 'DA-1'],
+    } }] : [],
+  }));
+  await page.route(new RegExp(`/api/projects/${encodeURIComponent(PROJECT)}/workbenches(?:\\?|$)`), route => json(route, {
+    projectName: PROJECT,
+    count: current.repoRelativePath ? 1 : 0,
+    items: current.repoRelativePath ? [{
+      id: 'DEMO-W2', key: 'DEMO-W2', entryPath: DOSSIER_PATH, valid: true,
+      sourceTaskKeys: ['MKT-21'], linkedTaskKeys: ['MKT-21', 'DA-1'],
+    }] : [],
+  }));
+  await page.route(`**/api/projects/${encodeURIComponent(PROJECT)}/workbenches/DEMO-W2`, route => json(route, {
+    workbench: { decision: {
+      responses: [{ decisionId: 'retention', selectedOptionIds: ['keep'] }],
+      spawnedTaskKeys: ['DA-1'],
+    } },
+    html: '<section data-decision-id="retention" data-decision-kind="single"><span data-option-id="keep">Keep</span></section>',
+  }));
   await page.route('**/api/clients/local-default/defaults**', route => json(route, {}));
   await page.route('**/api/clients/local-default/telemetry**', route => json(route, {
     points: [], findings: [], window: '14d',
   }));
   await page.route('**/api/cli/quota**', route => json(route, {
     at: '2026-08-09T18:30:00.000Z', ttlSeconds: 600, snapshots: [],
+  }));
+  await page.route('**/api/usage/cockpit**', route => json(route, {
+    workspaceId: null, clis: [], cost: null,
   }));
   await page.route('**/api/runner/orchestrator-feed**', route => json(route, {
     entries: [], generatedAtUtc: '2026-08-09T18:30:00.000Z',
@@ -142,11 +174,16 @@ test('concept completion shows one compact dossier sensor and links the recorded
   await expect(link).toHaveText(DOSSIER_PATH);
   await expect(link).toHaveAttribute(
     'href',
-    '#/projects/concept-dossier-fixture/wiki?page=coding-agent-sidesheet%2Findex.html',
+    '#/projects/concept-dossier-fixture/workbenches/DEMO-W2',
   );
+  await expect(page.getByTestId('concept-dossier-decision-receipt'))
+    .toContainText('Decisions recorded on DEMO-W2: 1 of 1; spawned DA-1.');
+  await expect(page.getByTestId('studio-triage-action-mark-done')).toContainText('Accept');
 
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
     await notice.screenshot({ path: path.join(RESULTS_DIR, `concept-dossier-linked-${theme}--mocked.png`) });
   }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await notice.screenshot({ path: path.join(RESULTS_DIR, 'concept-dossier-linked-390--mocked.png') });
 });

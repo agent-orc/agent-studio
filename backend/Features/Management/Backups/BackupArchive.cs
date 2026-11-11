@@ -36,7 +36,14 @@ public sealed record BackupConsistency(
     int Vanished,
     int KeyFilesExcluded,
     int SymlinksSkipped,
-    IReadOnlyList<string> Unsettled);
+    IReadOnlyList<string> Unsettled,
+    IReadOnlyList<BackupUnreadableEntry>? Unreadable = null);
+
+/// <summary>
+/// A file or directory the backup could not read and left out (AGT-3729), with the reason.
+/// Archives written before AGT-3729 carry no list.
+/// </summary>
+public sealed record BackupUnreadableEntry(string Path, string Reason);
 
 /// <summary>
 /// Archive layout inside the encryption envelope: a gzip-compressed PAX tar.

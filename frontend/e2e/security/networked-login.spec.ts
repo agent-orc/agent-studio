@@ -1,8 +1,51 @@
 import { test, expect } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import * as path from 'node:path';
+import { setTheme } from '../helpers/theme';
 
 const screenshotDir = path.join(process.env.JOB_RESULTS_DIR ?? path.resolve(__dirname, '..', '..', '..', 'results'), 'security');
+
+test('first owner sign-in shows the restored archive and security review', async ({ page }) => {
+  const evidence = path.join(process.env.JOB_RESULTS_DIR ?? screenshotDir, 'restore-security');
+  mkdirSync(evidence, { recursive: true });
+  const owner = { id: 'usr_owner', username: 'owner', displayName: 'Owner', role: 'owner',
+    projects: [], disabled: false, mustChangePassword: false };
+  const notice = { archiveId: 'studio-backup-drill', archiveCreatedAt: '2026-11-09T06:00:00Z',
+    restoredAt: '2026-11-10T06:00:00Z' };
+  await page.route('**/api/auth/status', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: false }),
+  }));
+  await page.route('**/api/auth/login', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: owner, restoreNotice: notice }),
+  }));
+  let acknowledged = false;
+  await page.route('**/api/auth/restore-notice/acknowledge', route => {
+    expect(route.request().postDataJSON()).toEqual({ archiveId: notice.archiveId });
+    acknowledged = true;
+    return route.fulfill({ status: 204, body: '' });
+  });
+  await page.goto('/');
+  await page.getByLabel('Username').fill('owner');
+  await page.getByLabel('Password').fill('owner password long enough');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  const gate = page.getByTestId('auth-gate');
+  await expect(gate.getByRole('heading', { name: 'Review security after restore' })).toBeVisible();
+  await expect(gate.getByTestId('restore-archive-id')).toHaveText(notice.archiveId);
+  await expect(gate.getByTestId('restore-security-checks').locator('li')).toHaveCount(5);
+  await setTheme(page, 'light');
+  await page.screenshot({ path: path.join(evidence, 'restore-notice-light.png'), fullPage: true });
+  await setTheme(page, 'dark');
+  await page.screenshot({ path: path.join(evidence, 'restore-notice-dark.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: path.join(evidence, 'restore-notice-390.png'), fullPage: true });
+  await gate.getByTestId('restore-review-access').click();
+  await expect(gate).toHaveCount(0);
+  expect(acknowledged).toBe(true);
+  await expect(page).toHaveURL(/#\/workspace\/settings\/access$/);
+});
 
 test('auth gate follows saved light and dark themes at phone width', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
