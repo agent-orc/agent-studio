@@ -176,7 +176,9 @@ public sealed partial class BatchGatePilotService
     public bool IsIsolationFlightActive(string parentBatchId)
     {
         lock (_runningBatches)
-            return _batchFlights.Values.Any(flight => flight.Manifest.BatchId == parentBatchId
+            return _batchFlights.Values.Any(flight =>
+                (flight.Manifest.BatchId == parentBatchId
+                    || flight.Manifest.ParentBatchId == parentBatchId)
                 && flight.Task is { IsCompleted: false } && !flight.Cancelled);
     }
 
@@ -409,7 +411,8 @@ public sealed partial class BatchGatePilotService
             return _batchFlights.Values.Where(flight =>
                     string.Equals(flight.Manifest.Scope.Project, project, StringComparison.OrdinalIgnoreCase)
                     && flight.Task is { IsCompleted: false } && !flight.Cancelled)
-                .Select(flight => flight.Manifest.BatchId).ToHashSet(StringComparer.Ordinal);
+                .Select(flight => flight.Manifest.ParentBatchId ?? flight.Manifest.BatchId)
+                .ToHashSet(StringComparer.Ordinal);
     }
 
     private static BatchGateReviewFixWait[] ReviewFixWaits(IEnumerable<TaskInfo> tasks, string project)
@@ -915,10 +918,7 @@ public sealed partial class BatchGatePilotService
                 .Where(item => item.ParentBatchId == parent.BatchId).ToArray();
             var allFound = parent.Members.All(member => findings.Any(item =>
                 item.TaskKey == member.TaskKey && item.RunAttempt == member.RunAttempt));
-            bool active;
-            lock (_runningBatches)
-                active = _runningBatches.TryGetValue(parent.Scope.Project, out var flight)
-                    && !flight.IsCompleted;
+            var active = IsIsolationFlightActive(parent.BatchId);
             if (!MonolithTransitionAdapter.BatchEndInterruptedIsolation(true, active,
                     hasPendingMember, allFound)) continue;
             BatchCoordinatorLease? recovery;
