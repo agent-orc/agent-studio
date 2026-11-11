@@ -15,6 +15,26 @@ delivery.
 Version: 2026-11-09
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
+## Concept brief and Dossier evidence
+
+Concept-fit review records the authored brief version from
+`.metadata/brief-version`, the same version completion uses. Follow-up notes
+appended to `prompt.md` do not change it. The Task Server reads the mirrored
+version and falls back to a full prompt hash for older mirrors without that
+metadata.
+The review subject's `TaskRequirementsHash` still hashes the complete prompt:
+it identifies the exact instructions for that review attempt, including
+follow-up notes, and is distinct from the authored brief version.
+
+Concept-fit receives a bounded snapshot of the published Dossier index,
+`workbench.json`, and local files linked from them. Its round diff shows what
+changed, while the snapshot supplies unchanged Dossier content. A missing,
+unreadable, or over-budget file is named in the prompt so the aspect cannot
+infer completeness from a truncated excerpt. For older settled concept reviews,
+completion accepts a whole-prompt review hash as current only while the current
+authored version equals the delivery version and the reviewed whole-prompt hash
+still matches `prompt.md`.
+
 ## Aspect prompt cache
 
 The review worker bounds every per-card and package agent aspect's final prompt to 800,000
@@ -415,6 +435,24 @@ current-delivery infrastructure failure with no scheduled retry gets one through
 the existing authority scheduler while its two-retry budget remains. A scheduled
 retry counts as an owner. Once the budget is spent, escalation names the review
 classification and summary.
+
+A passed review that ran its own build and tests (its frozen plan has
+`BuildTestDeferredToBatch: false`) never re-enters the batch gate: batch
+admission refuses it with `BuildTestNotDeferred` (AGT-3740).
+`AutoReviewStrandingPolicy.RouteBatch` turns the stranding decision for such a
+card into the per-task route, once per lane visit. The watchdog
+integrates it through the per-task path with the review's own verdicts. It
+uses the delivery settlement record, or rebuilds a missing one from the
+journaled report with the same `RemoteDeliveryIntegrationPolicy` as settlement.
+Only when no recorded verdict admits the delivery does the card get a
+re-planned review with a freshly sealed plan, which may defer to the batch. The
+receipt and the batch gate state (member status `fallback`, rule
+`review-ran-build-tests`) say "Review ran its own build and tests (rule); this
+card goes to per-task integration" or "... to a re-planned review". Every plan
+that does not defer names its rule in `BuildTestDeferralDisabledReason`, for
+example the batch gate being off when the plan was sealed, a missing diff, or
+test selection requiring the full suite. The build-test step on the card shows
+that rule.
 
 When the delivery-chain reconciler finds a stale acceptance or integration
 verdict, it returns the card to Auto Review and requests a fresh review at
@@ -1535,6 +1573,17 @@ failure remains in the review evidence and the baseline comparison still
 determines attribution. For a planned `--no-build` test, fresh baseline
 worktrees and clean-repeat clones replay the preceding frozen build after
 dependency preparation so the test assembly exists.
+A green clean repeat must show that the failed tests ran (AGT-3650). `dotnet
+test` names a passed test only at normal console verbosity, so the repeat adds
+`--logger "console;verbosity=normal"` unless the command already chose a
+console logger. Vitest and Jest failures are named `file > suite > test`. The
+repeat sets `AGENT_STUDIO_VITEST_REPORTER=verbose`, which `frontend/vitest.config.ts`
+reads to select the verbose reporter. That reporter names every passing test.
+A passed line for each failed test is `test-names` proof. If the output names
+no tests but every failed test's file is reported passed, as with Vitest's
+default reporter or Jest's `PASS` lines, the proof is `test-files`. The level
+is recorded in the clean repeat's `RepeatObservation`. A green repeat with
+neither proof stays `ReviewInfra / CleanRepeatUnavailable`.
 When the clean repeat has no new failures against a baseline that reported
 failed tests, the verification aspect passes and names the pre-existing
 failures in its verdict summary and card review evidence. The review reaches

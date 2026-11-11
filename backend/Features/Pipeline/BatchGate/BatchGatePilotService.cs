@@ -140,8 +140,9 @@ public sealed partial class BatchGatePilotService
         var scope = Scope(candidate.Subject);
         var reason = BatchGatePolicy.Exclusion(candidate.Subject with { EnqueueSequence = 1 },
             scope, project.BatchGate);
-        if (reason is not null)
-            throw new InvalidDataException($"Batch admission failed: {reason}.");
+        if (reason is { } refused)
+            throw new BatchAdmissionRefusedException(refused, BatchGatePolicy.AdmissionRefusal(
+                refused, review.Subject.Plan?.BuildTestDeferralDisabledReason));
         // The card must fail closed before it becomes visible to the queue.
         await BatchGateOwnershipStore.WriteAsync(task.FolderPath,
             new BatchGateOwnership(review.AttemptId, candidate.Subject), ct).ConfigureAwait(false);
