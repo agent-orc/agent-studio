@@ -174,6 +174,7 @@ public sealed class TaskArtifactsSourceIntegrationTests : IDisposable
                 }));
             builder.ConfigureTestServices(services => services
                 .AddHttpClient(TaskServerBoardClient.ClientName)
+                .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromMinutes(2))
                 .ConfigurePrimaryHttpMessageHandler(() => taskServer.Server.CreateHandler()));
         });
 

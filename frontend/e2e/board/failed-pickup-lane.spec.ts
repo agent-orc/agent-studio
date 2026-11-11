@@ -229,8 +229,8 @@ test.describe('Board card move menu (AGT-3588)', () => {
     await installBoardMocks(page, 0, 1);
     const productStatus = {
       profile: 'networked', bootstrapRequired: false, authenticated: true,
-      user: { userId: 'product-1', username: 'product', displayName: 'Product', role: 'contributor',
-        projectIds: ['PROJ-001'], disabled: false, mustChangePassword: false },
+      user: { id: 'product-1', username: 'product', displayName: 'Product', role: 'contributor',
+        projects: ['PROJ-001'], disabled: false, mustChangePassword: false },
     };
     for (const endpoint of ['**/api/auth/status', '**/api/v1/studio/auth/status']) {
       await page.route(endpoint, route => route.fulfill({ status: 200, contentType: 'application/json',
