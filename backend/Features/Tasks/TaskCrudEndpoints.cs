@@ -567,6 +567,7 @@ public static class TaskCrudEndpoints
                 });
                 pipelineLog.Complete(info.FolderPath, now);
                 SteerPendingMarker.Clear(info.FolderPath);
+                scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(info.FolderPath));
 
                 var move = await transitions.MoveAsync(
                     jobId,
@@ -631,6 +632,7 @@ public static class TaskCrudEndpoints
         group.MapPost("/{jobId}/concept-dossier", (string jobId, string? project, string? watchPath,
             SetConceptDossierRequest req,
             TaskScannerService scanner,
+            TaskMutationService mutations,
             AgentStudio.Registry.ProjectRegistry projects,
             ILoggerFactory loggerFactory) =>
         {
@@ -653,6 +655,8 @@ public static class TaskCrudEndpoints
                         new { error = "Failed to persist the no-dossier explanation." },
                         statusCode: StatusCodes.Status500InternalServerError);
                 }
+                if (!mutations.SetJobDossier(info.Id, null, info.WatchPath))
+                    return Results.Problem("Failed to clear the Dossier link.");
             }
             else
             {
@@ -685,6 +689,8 @@ public static class TaskCrudEndpoints
                 {
                     ConceptDossierContract.WriteReference(info.FolderPath, path);
                     ConceptDossierClosureStore.Clear(info.FolderPath, logger);
+                    if (!mutations.SetJobDossier(info.Id, new TaskDossier { Path = path! }, info.WatchPath))
+                        return Results.Problem("Failed to link the Dossier.");
                 }
                 catch (Exception ex)
                 {
@@ -695,7 +701,7 @@ public static class TaskCrudEndpoints
                 }
             }
 
-            var summary = ConceptDossierContract.Read(info.FolderPath);
+            var summary = BuildConceptDossierSummary(scanner.FindJob(info.Id, info.WatchPath) ?? info)!;
             logger.LogInformation(
                 "concept-dossier updated for {Project}/{Task}: path={Path} noDossierNeeded={NoDossierNeeded}",
                 info.ProjectName,
@@ -933,10 +939,17 @@ public static class TaskCrudEndpoints
             };
         });
 
-        group.MapDelete("/{jobId}", (string jobId, string? project, string? watchPath, TaskStateMachine states, AgentStudio.Registry.ProjectRegistry projects) =>
+        group.MapDelete("/{jobId}", (string jobId, string? project, string? watchPath, string? reason, TaskStateMachine states,
+            AgentStudio.Registry.ProjectRegistry projects, ILoggerFactory loggers) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var success = states.DeleteJob(jobId, watchPath);
+            // AGT-3624: deleting a card with unintegrated work carries the
+            // operator's written reason; the folder is gone, so the log keeps it.
+            if (success && !string.IsNullOrWhiteSpace(reason))
+                loggers.CreateLogger("AgentStudio.Tasks.TaskDelete").LogWarning(
+                    "task-deleted-with-reason job={JobId} watchPath={WatchPath} reason={Reason}",
+                    jobId, watchPath, reason.Trim());
             return success ? Results.Ok() : Results.NotFound();
         });
 

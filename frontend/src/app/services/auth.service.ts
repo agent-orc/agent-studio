@@ -76,6 +76,9 @@ function normalizeSession(response: AuthStatus | StandaloneAuthSession): AuthSta
   return 'status' in response ? normalizeStatus(response.status) : normalizeStatus(response);
 }
 
+/** AGT-3668: the one sentence a Product session sees when it has no project. */
+export const PRODUCT_NO_PROJECT_MESSAGE = 'You have no project yet; ask a workspace owner to add you to one.';
+
 /** Credential-free browser auth state shared with the 401 response interceptor. */
 @Injectable({ providedIn: 'root' })
 export class AuthSessionState {
@@ -97,6 +100,17 @@ export class AuthSessionState {
   readonly networkedAuthenticated = computed(() => {
     const status = this.status();
     return status?.profile === 'networked' && status.authenticated === true;
+  });
+  /** AGT-3668: the session holds the Product (contributor) role. */
+  readonly productSession = computed(() => this.status()?.user?.role === 'contributor');
+  /**
+   * AGT-3668: a signed-in account that holds no project. Removing a Product
+   * user's last project binding leaves no role at all, which the session
+   * summary reports as a viewer without projects; an owner always sees all.
+   */
+  readonly withoutProject = computed(() => {
+    const user = this.status()?.authenticated ? this.status()?.user : null;
+    return !!user && user.role !== 'owner' && (user.projects?.length ?? 0) === 0;
   });
 
   expireNetworkedSession(): void {

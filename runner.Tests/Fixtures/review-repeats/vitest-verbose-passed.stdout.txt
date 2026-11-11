@@ -1,0 +1,15 @@
+ RUN  v4.1.11 /repo/frontend
+
+ ✓ |frontend| src/app/agt3650-flaky-fixture.spec.ts > ReviewFlakyFixture > passes steadily 3ms
+ ✓ |frontend| src/app/agt3650-flaky-fixture.spec.ts > ReviewFlakyFixture > nested group > fails only on the first run (AGT-3650) 1ms
+ ✓ |frontend| src/app/utils/ansi-text.spec.ts > stripAnsi > removes escaped and orphaned colour sequences 4ms
+ ✓ |frontend| src/app/utils/ansi-text.spec.ts > stripAnsi > keeps ordinary bracketed text 3ms
+
+ Test Files  2 passed (2)
+      Tests  4 passed (4)
+   Start at  03:05:41
+   Duration  1.92s (transform 73ms, setup 1.01s, import 15ms, tests 14ms, environment 2.44s)
+
+JSON report written to /tmp/agent-studio-vitest-j6iuqC/report.json
+Test Files  2 passed (2)
+Tests  4 passed (4)

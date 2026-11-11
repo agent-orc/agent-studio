@@ -165,8 +165,8 @@ public sealed class ManagementService
         if (string.IsNullOrWhiteSpace(key)) throw new ManagementException(400, "idempotency-key-required");
         if (key.Length > 128) throw new ManagementException(400, "idempotency-key-too-long");
         var requestFingerprint = Fingerprint(request, kind);
-        if (kind == "backup-upload")
-            return ExecuteBackupUpload(request, actor, key, requestFingerprint);
+        if (kind is "backup-create" or "restore-verify" or "backup-upload" or "backup-retention")
+            return ExecuteBackupCommand(request, actor, key, requestFingerprint, kind);
 
         lock (_gate)
         {
@@ -188,10 +188,6 @@ public sealed class ManagementService
                     "delivery-stale-repair-2026-10-11" => RepairDeliveryBounce(request.DryRun, actor, key),
                     "orphan-sweep" => SweepOrphans(request.DryRun, actor, key),
                     "fixture-sweep" => SweepFixtures(request.DryRun, actor, key),
-                    "backup-create" => CreateBackup(request.DryRun, actor, key),
-                    "restore-verify" => VerifyRestore(request.DryRun, actor, key, request.BackupId),
-                    "backup-retention" => ApplyRetention(request.DryRun, actor, key, request.RetentionCount),
-                    "backup-upload" => UploadBackups(request.DryRun, actor, key),
                     "maintenance-enter" => SetMaintenance(request.DryRun, actor, key, "maintenance", request.Reason),
                     "maintenance-read-only" => SetMaintenance(request.DryRun, actor, key, "read-only", request.Reason),
                     "maintenance-exit" => SetMaintenance(request.DryRun, actor, key, "normal", request.Reason),
@@ -230,35 +226,45 @@ public sealed class ManagementService
         }
     }
 
-    private ManagementCommandResult ExecuteBackupUpload(
-        ManagementCommandRequest request, string actor, string key, string requestFingerprint)
+    private ManagementCommandResult ExecuteBackupCommand(
+        ManagementCommandRequest request, string actor, string key, string requestFingerprint, string kind)
     {
         string commandId;
         lock (_gate)
         {
-            var prior = FindPrior(key, "backup-upload", request.DryRun, actor, requestFingerprint);
+            var prior = FindPrior(key, kind, request.DryRun, actor, requestFingerprint);
             if (prior is not null) return prior;
-            if (!request.DryRun && !string.Equals(request.Confirmation, "backup-upload", StringComparison.Ordinal))
-                throw new ManagementException(400, "confirmation must exactly equal 'backup-upload'");
+            if (!request.DryRun && !string.Equals(request.Confirmation, kind, StringComparison.Ordinal))
+                throw new ManagementException(400, $"confirmation must exactly equal '{kind}'");
             commandId = "cmd_" + Guid.NewGuid().ToString("N");
-            AppendAudit(new ManagementCommandResult(commandId, "backup-upload", request.DryRun, "started",
+            AppendAudit(new ManagementCommandResult(commandId, kind, request.DryRun, "started",
                 0, 0, "Command accepted for execution.", DateTime.UtcNow.ToString("O"), actor, key), requestFingerprint);
         }
         try
         {
-            var result = UploadBackups(request.DryRun, actor, key) with { CommandId = commandId };
-            lock (_gate) AppendAudit(result, requestFingerprint);
+            var result = (kind switch
+            {
+                "backup-create" => CreateBackup(request.DryRun, actor, key),
+                "restore-verify" => VerifyRestore(request.DryRun, actor, key, request.BackupId),
+                "backup-retention" => ApplyRetention(request.DryRun, actor, key, request.RetentionCount),
+                _ => UploadBackups(request.DryRun, actor, key),
+            }) with { CommandId = commandId };
+            lock (_gate)
+            {
+                AppendAudit(result, requestFingerprint);
+                if (!request.DryRun && kind is ("backup-create" or "backup-retention")) _statistics.Invalidate();
+            }
             return result;
         }
         catch (SecurityOperationException ex)
         {
-            lock (_gate) AppendAudit(new ManagementCommandResult(commandId, "backup-upload", request.DryRun,
+            lock (_gate) AppendAudit(new ManagementCommandResult(commandId, kind, request.DryRun,
                 "failed", 0, 0, ex.Code, DateTime.UtcNow.ToString("O"), actor, key), requestFingerprint);
             throw new ManagementException(ex.Status, ex.Code);
         }
         catch (Exception ex)
         {
-            lock (_gate) AppendAudit(new ManagementCommandResult(commandId, "backup-upload", request.DryRun,
+            lock (_gate) AppendAudit(new ManagementCommandResult(commandId, kind, request.DryRun,
                 "failed", 0, 0, ex.Message, DateTime.UtcNow.ToString("O"), actor, key), requestFingerprint);
             throw;
         }
@@ -459,8 +465,15 @@ public sealed class ManagementService
         try
         {
             var record = Backups.CreateAsync(BackupAudit.ManualPrefix + actor, CancellationToken.None).GetAwaiter().GetResult();
+            var copyState = record.Upload?.State switch
+            {
+                "uploaded" => "Copied off-host.",
+                "failed" => "Off-host copy failed. The archive remains on this host; wait for Copied before moving it.",
+                "pending" => "Off-host copy pending. Wait for Copied before moving this host.",
+                _ => "No off-host target is configured. The archive remains on this host.",
+            };
             return Result("backup-create", false, 1, 1,
-                $"Created encrypted backup {record.Id} ({record.FileCount} files).", actor, key, record);
+                $"Created encrypted backup {record.Id} ({record.FileCount} files). {copyState}", actor, key, record);
         }
         catch (BackupException ex) { throw new ManagementException(409, ex.Code + ": " + ex.Message); }
     }

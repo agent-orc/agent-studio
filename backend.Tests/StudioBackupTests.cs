@@ -5,8 +5,10 @@ using System.Text;
 using System.Text.Json;
 using AgentStudio.Management;
 using AgentStudio.Secrets;
+using AgentStudio.Security;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -301,14 +303,27 @@ public sealed class StudioBackupTests : IDisposable
     }
 
     [Fact]
+    public async Task Create_waits_for_archive_and_checksum_to_reach_configured_target()
+    {
+        var target = new FakeTarget();
+        var service = _fixture.Service(_clock, target);
+
+        var record = await service.CreateAsync("manual:operator", CancellationToken.None);
+
+        Assert.Equal("uploaded", record.Upload?.State);
+        Assert.Equal("uploaded", service.List().Single().Upload?.State);
+        Assert.Equal([record.FileName, record.FileName + ".sha256"], target.Uploads.Select(upload => upload.Name).ToArray());
+        Assert.Equal(File.ReadAllBytes(_fixture.Catalog.ArchivePath(record.Id)), target.Uploads[0].Bytes);
+        Assert.Equal(File.ReadAllBytes(_fixture.Catalog.ChecksumPath(record.Id)), target.Uploads[1].Bytes);
+    }
+
+    [Fact]
     public async Task Upload_failure_is_recorded_retried_with_backoff_and_then_succeeds()
     {
         var target = new FakeTarget { Failures = 1 };
         var service = _fixture.Service(_clock, target);
         var record = await service.CreateAsync("test", CancellationToken.None);
-        Assert.Equal("pending", Assert.Single(service.List()).Upload?.State);
-
-        Assert.Equal(0, await service.UploadPendingAsync(force: false, "test", CancellationToken.None));
+        Assert.Equal("failed", record.Upload?.State);
         var failed = Assert.Single(service.List()).Upload!;
         Assert.Equal(("failed", 1), (failed.State, failed.Attempts));
         Assert.Contains("target offline", failed.Error);
@@ -331,14 +346,14 @@ public sealed class StudioBackupTests : IDisposable
     {
         var target = new BlockingTarget();
         var service = _fixture.Service(_clock, target);
-        await service.CreateAsync("test", CancellationToken.None);
-        var upload = service.UploadPendingAsync(true, "test", CancellationToken.None);
+        var upload = service.CreateAsync("test", CancellationToken.None);
         await target.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(service.IsRunning);
         try
         {
-            var created = await service.CreateAsync("test", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
-            Assert.NotNull(created);
+            var id = Assert.Single(service.List()).Id;
+            var verification = await service.VerifyAsync(id, "test", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal("verified", verification.Outcome);
         }
         finally { target.Release.TrySetResult(); }
         await upload;
@@ -556,6 +571,96 @@ public sealed class StudioBackupTests : IDisposable
         var overview = service.Overview();
         Assert.Equal("failed", overview.LastRun?.Outcome);
         Assert.Contains(overview.Warnings, warning => warning.Code == "backup-failed");
+    }
+
+    [Fact]
+    public async Task Scheduled_and_on_demand_backups_succeed_and_verify_while_the_kill_switch_holds_the_control_plane_lock()
+    {
+        // AGT-3729: the running API holds .security/control-plane.lock with FileShare.None for its lifetime.
+        var configuration = _fixture.Configuration();
+        var store = new AccessSecurityStore(configuration, NullLogger<AccessSecurityStore>.Instance, _clock);
+        using var http = new HttpClient();
+        var killSwitch = new OperatorKillSwitch(store, new OperatorKillSwitchLog(store.SecurityFolder),
+            new OperationsServerOperatorRevocation(http, OperationsServerRevocationOptions.From(configuration)),
+            new DeferredOperatorKillNotifier(), _clock);
+        var api = new OperatorKillSwitchService(killSwitch, store, new OperatorKillSwitchOptions(TimeSpan.FromSeconds(2), TimeSpan.Zero),
+            _clock, NullLogger<OperatorKillSwitchService>.Instance);
+        await api.StartAsync(CancellationToken.None);
+        try
+        {
+            File.WriteAllText(Path.Combine(store.SecurityFolder, "probe.json"), "{\"kept\":true}");
+            var lockPath = Path.Combine(store.SecurityFolder, OperatorKillSwitchHostLock.FileName);
+            Assert.True(File.Exists(lockPath));
+            Assert.Null(OperatorKillSwitchHostLock.TryAcquire(store.SecurityFolder));
+
+            var service = _fixture.Service(_clock, new FakeTarget());
+            await service.RunDueAsync(CancellationToken.None);
+            var scheduled = Assert.Single(service.List());
+            Assert.Equal("verified", scheduled.Verification?.Outcome);
+            Assert.Empty(scheduled.Consistency.Unreadable ?? []);
+            var overview = service.Overview();
+            Assert.Equal("ok", overview.State);
+            Assert.Equal("succeeded", overview.LastRun?.Outcome);
+            Assert.Equal(scheduled.Id, overview.LastGood?.Id);
+
+            var files = _fixture.ReadArchive(scheduled.Id);
+            Assert.True(files.ContainsKey("workspace/.security/probe.json"));
+            Assert.True(files.ContainsKey("workspace/.metadata/projects.json"));
+            Assert.False(files.ContainsKey("workspace/.security/" + OperatorKillSwitchHostLock.FileName));
+            using (var archive = File.OpenRead(_fixture.Catalog.ArchivePath(scheduled.Id)))
+            {
+                var (manifest, _) = BackupArchive.Read(archive, BackupKey.Load(_fixture.KeyFile), null, null, null);
+                Assert.Contains("workspace: .security/" + OperatorKillSwitchHostLock.FileName, manifest.NotIncluded);
+            }
+
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            var manual = await service.CreateAsync("manual:owner", CancellationToken.None);
+            Assert.Equal("verified", (await service.VerifyAsync(manual.Id, "manual:owner", CancellationToken.None)).Outcome);
+            Assert.Null(OperatorKillSwitchHostLock.TryAcquire(store.SecurityFolder));
+        }
+        finally
+        {
+            await api.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task A_file_another_process_locks_is_listed_as_unreadable_and_the_backup_still_verifies()
+    {
+        var locked = Path.Combine(_fixture.Workspace, ".metadata", "held.json");
+        File.WriteAllText(locked, "{}");
+        var service = _fixture.Service(_clock, new FakeTarget());
+        BackupRecord record;
+        using (new FileStream(locked, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            record = await service.CreateAsync("test", CancellationToken.None);
+
+        var unreadable = Assert.Single(record.Consistency.Unreadable ?? []);
+        Assert.Equal("workspace/.metadata/held.json", unreadable.Path);
+        Assert.False(string.IsNullOrWhiteSpace(unreadable.Reason));
+        var files = _fixture.ReadArchive(record.Id);
+        Assert.False(files.ContainsKey("workspace/.metadata/held.json"));
+        Assert.True(files.ContainsKey("workspace/.metadata/projects.json"));
+        using (var archive = File.OpenRead(_fixture.Catalog.ArchivePath(record.Id)))
+        {
+            var (_, contents) = BackupArchive.Read(archive, BackupKey.Load(_fixture.KeyFile), null, null, null);
+            Assert.Equal("workspace/.metadata/held.json", Assert.Single(contents.Consistency.Unreadable ?? []).Path);
+        }
+        Assert.Equal("verified", (await service.VerifyAsync(record.Id, "test", CancellationToken.None)).Outcome);
+        var warning = Assert.Single(service.Overview().Warnings, item => item.Code == "backup-files-unreadable");
+        Assert.Equal("warning", warning.Severity);
+        Assert.Contains("workspace/.metadata/held.json", warning.Message);
+    }
+
+    [Fact]
+    public async Task A_file_system_failure_fails_the_run_with_a_backup_exception_naming_the_path()
+    {
+        var blocker = Path.Combine(_fixture.Root, "not-a-directory");
+        File.WriteAllText(blocker, "a file where the backup directory belongs");
+        var service = _fixture.Service(_clock, null, backupDirectory: blocker);
+
+        var failure = await Assert.ThrowsAsync<BackupException>(() => service.CreateAsync("test", CancellationToken.None));
+        Assert.Equal("backup-io-failed", failure.Code);
+        Assert.Contains("not-a-directory", failure.Message);
     }
 
     [Fact]

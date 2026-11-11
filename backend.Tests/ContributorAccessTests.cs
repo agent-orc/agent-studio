@@ -26,6 +26,13 @@ public sealed class ContributorAccessTests : IDisposable
     {
         { "GET", "/api/tasks", null, false, true },
         { "GET", "/api/projects/PROJ-1/chat/scroll", null, false, true },
+        { "GET", "/api/projects", null, false, true },
+        { "GET", "/api/workspaces", null, false, true },
+        { "GET", "/api/watch-paths", null, false, true },
+        { "GET", "/api/workspaces/DEFAULT/quota/usage", null, false, false },
+        { "GET", "/api/watch-paths/product-project", null, false, false },
+        { "POST", "/api/workspaces", null, false, false },
+        { "POST", "/api/watch-paths", null, false, false },
         { "GET", "/api/projects/PROJ-1/visual-evidence", null, false, true },
         { "POST", "/api/tasks", null, false, true },
         { "PUT", "/api/tasks/card/title", TaskStates.Backlog, false, true },
@@ -301,6 +308,96 @@ public sealed class ContributorAccessTests : IDisposable
             request.Headers.Add("Sec-Fetch-Site", "same-origin");
             if (csrf is not null) request.Headers.Add("X-CSRF-Token", csrf);
             if (body is not null) request.Content = JsonContent.Create(body);
+            return http.SendAsync(request);
+        }
+    }
+
+    /// <summary>
+    /// AGT-3668: the shell, the project picker, the Add task dialog and Project
+    /// Chat read the session's projects from these lists. A Product session
+    /// on one project sees that project and nothing of the other one.
+    /// </summary>
+    [Fact]
+    public async Task Product_session_lists_only_its_bound_project_in_workspaces_projects_and_watch_paths()
+    {
+        const string project = "product-project";
+        const string hidden = "restricted-project";
+        var projectPath = Path.Combine(_root, "projects", project);
+        var hiddenPath = Path.Combine(_root, "projects", hidden);
+        foreach (var root in new[] { projectPath, hiddenPath })
+            foreach (var lane in new[] { TaskStates.Backlog, TaskStates.Ready })
+                Directory.CreateDirectory(Path.Combine(root, lane));
+
+        using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _root,
+                ["Security:Profile"] = "networked",
+                ["Security:BootstrapCode"] = "product-setup-code",
+                ["AllowedHosts"] = "studio.test",
+                ["WatchPaths:0:Name"] = project,
+                ["WatchPaths:0:Path"] = projectPath,
+                ["WatchPaths:0:RootPath"] = projectPath,
+                ["WatchPaths:0:RepositoryPath"] = projectPath,
+                ["WatchPaths:1:Name"] = hidden,
+                ["WatchPaths:1:Path"] = hiddenPath,
+                ["WatchPaths:1:RootPath"] = hiddenPath,
+                ["WatchPaths:1:RepositoryPath"] = hiddenPath,
+            }));
+            builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(_clock));
+        });
+        using var http = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var registry = factory.Services.GetRequiredService<ProjectRegistry>();
+        var granted = registry.EnsureProjectForStorage(projectPath, project, DefaultWorkspace.Id, _clock);
+        var restricted = registry.EnsureProjectForStorage(hiddenPath, hidden, DefaultWorkspace.Id, _clock);
+        var owner = store.Bootstrap(new BootstrapRequest("owner.account", "owner password phrase!", null));
+        var invite = store.InviteUser(new InviteUserRequest("product.user", "Product User", StudioRoles.Contributor, [project]));
+        var product = store.AcceptInvitation(new AcceptInvitationRequest(invite.Token, "new product password!"));
+
+        foreach (var route in new[] { "/api/v1/workspaces", "/api/v1/projects", "/api/workspaces", "/api/projects", "/api/watch-paths" })
+        {
+            using var response = await GetAsync(route, product.SessionToken);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.OK, $"{route}: {(int)response.StatusCode} {body}");
+            Assert.Contains(project, body);
+            Assert.DoesNotContain(hidden, body);
+            Assert.DoesNotContain(restricted.Id, body);
+        }
+
+        using (var workspaces = await GetAsync("/api/v1/workspaces", product.SessionToken))
+        {
+            var listed = (await workspaces.Content.ReadFromJsonAsync<JsonElement>()).EnumerateArray()
+                .SelectMany(workspace => workspace.GetProperty("projects").EnumerateArray())
+                .Select(item => item.GetProperty("id").GetString())
+                .ToList();
+            Assert.Equal([granted.Id], listed);
+        }
+        using (var paths = await GetAsync("/api/watch-paths", product.SessionToken))
+        {
+            var entry = Assert.Single((await paths.Content.ReadFromJsonAsync<JsonElement>()).EnumerateArray());
+            Assert.Equal(project, entry.GetProperty("name").GetString());
+            Assert.Equal(projectPath, entry.GetProperty("path").GetString());
+            Assert.Equal("", entry.GetProperty("rootPath").GetString());
+            Assert.Equal("", entry.GetProperty("repositoryPath").GetString());
+        }
+        using (var ownerPaths = await GetAsync("/api/watch-paths", owner.SessionToken))
+        {
+            var entries = (await ownerPaths.Content.ReadFromJsonAsync<JsonElement>()).EnumerateArray().ToList();
+            Assert.Equal(2, entries.Count);
+            Assert.All(entries, entry => Assert.NotEqual("", entry.GetProperty("rootPath").GetString()));
+        }
+        using (var quota = await GetAsync($"/api/workspaces/{DefaultWorkspace.Id}/quota/usage", product.SessionToken))
+            Assert.Equal(HttpStatusCode.Forbidden, quota.StatusCode);
+
+        Task<HttpResponseMessage> GetAsync(string path, string session)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, path);
+            request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={session}");
+            request.Headers.Add("Sec-Fetch-Site", "same-origin");
             return http.SendAsync(request);
         }
     }
