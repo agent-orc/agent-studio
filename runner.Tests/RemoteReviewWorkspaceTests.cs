@@ -928,6 +928,76 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     /// <summary>
+    /// AGT-3748: a review whose dependencies came from the cache fails with a
+    /// missing tool. The entry is quarantined once, the report names it, the
+    /// outcome stays infrastructure, and the next review prepares fresh.
+    /// </summary>
+    [Fact]
+    public async Task Missing_tool_from_a_restored_entry_quarantines_it_and_the_next_review_reinstalls()
+    {
+        var counter = Path.Combine(_root, "install-counter.txt");
+        var broken = Path.Combine(_root, "tool-broken.flag");
+        var sha = await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["package-lock.json"] = "lock-v1",
+            [".gitignore"] = "node_modules/\n.nm-state\n",
+        });
+        var preparation = new ReviewPreparationCommandDto(
+            "prepare-1",
+            PosixShell.RequirePath(),
+            ["-c", $"mkdir -p node_modules/.bin node_modules/fixture-a && touch node_modules/.bin/fixture-tool && printf x >> '{counter}'"],
+            DependencyScopes:
+            [
+                new ReviewDependencyScopeDto("", ["package-lock.json"]),
+            ],
+            CoveredByDependencyScopes: true);
+        var verify = new ReviewCommandDto(
+            "verify-3",
+            "build-tests",
+            PosixShell.RequirePath(),
+            ["-c", $"if [ -f '{broken}' ]; then echo 'Error [ERR_MODULE_NOT_FOUND]' >&2; exit 127; fi"]);
+
+        async Task<(RemoteReviewWorkspace Workspace, Func<Task<ReviewExecutionEvidence>> Run)> CreateAsync(string attempt)
+        {
+            var (workspace, _) = Workspace(
+                attempt,
+                sha,
+                [verify],
+                24021,
+                preparation: [preparation],
+                preserveGlobs: ["node_modules"]);
+            await workspace.PrepareAsync(null!, default);
+            return (workspace, () => workspace.ExecutePlanAsync(default));
+        }
+
+        var (cold, runCold) = await CreateAsync("quarantine-cold");
+        Assert.Equal("Pass", (await runCold()).Outcome);
+
+        await File.WriteAllTextAsync(broken, "1");
+        var (_, runWarm) = await CreateAsync("quarantine-warm");
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(() => runWarm());
+        var entryRoot = DependencyCacheSession.CachePath(
+            cold.DependencyCacheRoot, TaskServerClient.RepositoryIdentity(_origin)!, "candidate");
+        var quarantined = Assert.Single(Directory.EnumerateDirectories(
+            Path.Combine(entryRoot, DependencyCacheSession.QuarantineDirectoryName)));
+
+        Assert.Equal("ToolUnavailable", exception.Classification);
+        Assert.Equal("ReviewInfra", exception.Evidence!.Outcome);
+        Assert.Contains($"quarantinedCacheEntry={quarantined}", exception.Message, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(quarantined, "node_modules", ".bin", "fixture-tool")));
+        Assert.False(Directory.Exists(Path.Combine(entryRoot, "content")));
+
+        File.Delete(broken);
+        var (_, runNext) = await CreateAsync("quarantine-next");
+        var next = await runNext();
+        Assert.Equal("Pass", next.Outcome);
+        Assert.False(Assert.Single(next.Commands, item => item.Phase == "preparation").DependencyCacheHit);
+        Assert.Equal(2, (await File.ReadAllTextAsync(counter)).Length);
+        Assert.Single(Directory.EnumerateDirectories(
+            Path.Combine(entryRoot, DependencyCacheSession.QuarantineDirectoryName)));
+    }
+
+    /// <summary>
     /// AGT-3429 rule: a dependency-cache hit proves only that each lockfile
     /// scope still matches. It may skip a preparation command only when the plan
     /// marks that command as covered by its scopes; an opaque build-profile
