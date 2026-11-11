@@ -14,6 +14,7 @@ import {
   viewChild,
 } from '@angular/core';
 import type { Subscription } from 'rxjs';
+import { HttpErrorResponse } from '@angular/common/http';
 import {
   ArchivedTaskInfo,
   CliType,
@@ -23,6 +24,7 @@ import {
   TaskState,
 } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
+import { AuthService } from '../../../../services/auth.service';
 import { TaskCardComponent } from '../task-card/task-card.component';
 import { DecisionBacklogHintComponent } from '../decision-backlog-hint/decision-backlog-hint.component';
 import { projectIdentity } from '../../../../services/project-identity.util';
@@ -68,6 +70,7 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
 })
 export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   private readonly taskService = inject(TaskService);
+  private readonly auth = inject(AuthService);
   private readonly boardDrag = inject(BoardDragStateService);
   private readonly stalls = inject(OrchestratorFeedStore);
   readonly title = input.required<string>();
@@ -452,8 +455,16 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
           this.archiveLoading.set(false);
           this.archiveLoaded.set(true);
         },
-        error: () => {
-          this.archiveError.set('Failed to load archived tasks.');
+        error: (error: unknown) => {
+          if (error instanceof HttpErrorResponse && error.status === 403 && this.auth.status()?.profile === 'networked') {
+            this.auth.refreshAccessStatus().subscribe({
+              next: status => {
+                if (status.user?.role === 'owner' || (status.user?.projects.length ?? 0) > 0)
+                  this.archiveError.set('Failed to load archived tasks.');
+              },
+              error: () => this.archiveError.set('Failed to load archived tasks.'),
+            });
+          } else this.archiveError.set('Failed to load archived tasks.');
           this.archiveLoading.set(false);
           this.archiveLoaded.set(true);
         },

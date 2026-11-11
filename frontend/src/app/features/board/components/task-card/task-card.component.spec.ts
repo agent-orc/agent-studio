@@ -2,13 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TaskCardComponent } from './task-card.component';
 import { MODEL_IDS } from '../../../cli';
 import { ProviderAuthStatusService } from '../../../remote-hosts';
 import { TaskService } from '../../../../services/task.service';
+import { AuthService } from '../../../../services/auth.service';
 import { BoardMutationsService } from '../../state/board-mutations.service';
 import { LaneCollapseService } from '../../state/lane-collapse.service';
 import { MOVE_BOTTOM_ID, MOVE_PREFIX, MOVE_TOP_ID } from './task-card-view-model';
@@ -45,6 +46,29 @@ import {
  * stable across template tweaks.
  */
 describe('TaskCardComponent (smoke)', () => {
+  it('uses the signed-in creator display name for a human card', async () => {
+    await TestBed.configureTestingModule({
+      imports: [TaskCardComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    TestBed.inject(AuthService).status.set({
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr_owner', username: 'owner', displayName: 'First Owner', role: 'owner',
+        projects: [], disabled: false, mustChangePassword: false },
+    });
+    const fixture = TestBed.createComponent(TaskCardComponent);
+    fixture.componentRef.setInput('job', makeJob({ ownerClientId: 'usr_owner' }));
+    fixture.detectChanges();
+    TestBed.inject(HttpTestingController).expectOne('/api/auth/users').flush([
+      { id: 'usr_owner', username: 'owner', displayName: 'First Owner', role: 'owner', projects: [], disabled: false, mustChangePassword: false },
+      { id: 'usr_carla', username: 'carla', displayName: 'Carla', role: 'contributor', projects: [], disabled: false, mustChangePassword: false },
+    ]);
+    expect(fixture.componentInstance.ownerChip()?.label).toBe('First Owner');
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="task-card-owner"]')?.textContent).toContain('First Owner');
+    fixture.componentRef.setInput('job', makeJob({ ownerClientId: 'usr_carla' }));
+    fixture.detectChanges();
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="task-card-owner"]')?.textContent).toContain('Carla');
+  });
   it('dispatches an enabled move through the optimistic lane service', async () => {
     const changeStateFromDetail = vi.fn();
     await TestBed.configureTestingModule({

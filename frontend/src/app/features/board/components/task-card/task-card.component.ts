@@ -132,6 +132,9 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   });
   private readonly gitSummary = inject(GitSummaryService);
   private readonly clients = inject(ClientService);
+  private readonly humanOwnerNames = effect(() => {
+    if (this.job()?.ownerClientId?.startsWith('usr_')) this.clients.loadHumanNames();
+  });
   private readonly tagRegistry = inject(TagRegistryStore);
   private readonly projectTagsEffect = effect(() => { if (this.job().tags?.length) this.tagRegistry.ensureProject(this.job().projectName); });
   private readonly codeReviewActivity = inject(CodeReviewActivityStore);

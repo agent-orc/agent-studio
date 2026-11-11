@@ -28,6 +28,36 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "studio-networked-endpoints-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task Bootstrap_and_invitation_routes_record_the_browser_and_resolved_address()
+    {
+        using var factory = BuildFactory("203.0.113.15");
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("StudioTestBrowser/1.0");
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+
+        using var bootstrap = await client.PostAsJsonAsync("/api/auth/bootstrap",
+            new BootstrapRequest("first.owner", "correct horse battery staple!", "First Owner", "website-setup-code"));
+        bootstrap.EnsureSuccessStatusCode();
+        var ownerSession = store.AuthenticateSession(SessionToken(bootstrap))!.Session;
+        Assert.Equal(("StudioTestBrowser/1.0", "203.0.113.15"), (ownerSession.Device, ownerSession.Address));
+
+        var owner = store.ListUsers().Single();
+        var invite = store.InviteUser(new InviteUserRequest("invited.user", "Invited User", StudioRoles.Viewer, ["*"]), owner.Id);
+        using var accepted = await client.PostAsJsonAsync("/api/auth/invite/accept",
+            new AcceptInvitationRequest(invite.Token, "new invited password phrase!"));
+        accepted.EnsureSuccessStatusCode();
+        var invitedSession = store.AuthenticateSession(SessionToken(accepted))!.Session;
+        Assert.Equal(("StudioTestBrowser/1.0", "203.0.113.15"), (invitedSession.Device, invitedSession.Address));
+    }
+
+    private static string SessionToken(HttpResponseMessage response)
+        => response.Headers.GetValues("Set-Cookie")
+            .Select(value => value.Split(';')[0].Split('=', 2))
+            .Single(parts => parts[0] == AccessSecurityStore.SessionCookieName)[1];
+
+    [Fact]
     public async Task Networked_host_execution_and_url_targets_require_owner()
     {
         var projectPath = Directory.CreateDirectory(Path.Combine(_workspace, "projects", "networked-smoke")).FullName;

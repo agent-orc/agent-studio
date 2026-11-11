@@ -36,7 +36,8 @@ public static class AccessSecurityEndpoints
                     audit.LogWarning("Owner bootstrap without a valid installer code from client {ClientAddress}", context.Connection.RemoteIpAddress);
                     throw new SecurityOperationException(403, "bootstrap-code-required", "A valid installer owner code is required.");
                 }
-                var created = store.Bootstrap(request, publicEntry: true);
+                var created = store.Bootstrap(request, publicEntry: true,
+                    device: SessionDevice(context), address: SessionAddress(context));
                 audit.LogInformation("Owner {Username} bootstrapped from client {ClientAddress}", created.User.Username, context.Connection.RemoteIpAddress);
                 SetSessionCookies(context, created.SessionToken, created.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(created.User), created.CsrfToken,
@@ -78,8 +79,8 @@ public static class AccessSecurityEndpoints
                 var key = ClientThrottleKey(context.Connection.RemoteIpAddress);
                 var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key,
                     request.SecondFactorCode, requireSecondFactor: true,
-                    device: context.Request.Headers.UserAgent.ToString()[..Math.Min(context.Request.Headers.UserAgent.ToString().Length, 160)],
-                    address: context.Connection.RemoteIpAddress?.ToString(), passkey: request.Passkey,
+                    device: SessionDevice(context),
+                    address: SessionAddress(context), passkey: request.Passkey,
                     origin: RequestOrigin(context), rpId: context.Request.Host.Host);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken,
@@ -90,7 +91,8 @@ public static class AccessSecurityEndpoints
         auth.MapPost("/invite/accept", (AcceptInvitationRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
             Execute(() =>
             {
-                var accepted = store.AcceptInvitation(request, publicEntry: true);
+                var accepted = store.AcceptInvitation(request, publicEntry: true,
+                    device: SessionDevice(context), address: SessionAddress(context));
                 SetSessionCookies(context, accepted.SessionToken, accepted.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true,
                     ToResponse(accepted.User), accepted.CsrfToken,
@@ -417,6 +419,15 @@ public static class AccessSecurityEndpoints
     // forwarded 127.0.0.1 comes from whoever controls the proxy header.
     private static bool RequiresBootstrapCode(HttpContext context, IConfiguration configuration)
         => SecurityProfiles.IsNetworked(configuration) && !ConnectionPeer.IsDirectLoopback(context);
+
+    private static string SessionDevice(HttpContext context)
+    {
+        var userAgent = context.Request.Headers.UserAgent.ToString();
+        return string.IsNullOrWhiteSpace(userAgent) ? "Browser" : userAgent[..Math.Min(userAgent.Length, 160)];
+    }
+
+    private static string SessionAddress(HttpContext context)
+        => context.Connection.RemoteIpAddress?.ToString() ?? "Local connection";
 
     private static bool MatchesBootstrapCode(string? candidate, IConfiguration configuration)
     {

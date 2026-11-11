@@ -120,10 +120,13 @@ that is already allowed to edit that project's checkout.
   session cookie and sends it with `Secure`, `Path=/`, and no `Domain` attribute.
   Studio exposes an explicit sign-out action; a logout or API 401 tears
   down browser polling and SignalR before returning to the login gate.
+  Bootstrap, invitation acceptance, and login record the resolved client address
+  and a bounded browser device label on every new session.
 - Owner and Admin sign-in requires an enrolled authenticator code, a one-use
   recovery code, or a WebAuthn passkey assertion. An account without an enrolled
   factor receives a limited session for factor setup. Every step-up requires a
-  registered second factor. TOTP enrollment returns recovery codes once; store them away from
+  registered second factor. TOTP setup presents the secret, a locally generated
+  QR code, and an `otpauth://` link. Enrollment returns recovery codes once; store them away from
   the browser. Passkey ceremonies require user verification and bind the
   challenge to the current origin and relying party. Each user can list active
   sessions with device, address, creation, and last-use times, revoke one, or
@@ -134,6 +137,9 @@ that is already allowed to edit that project's checkout.
   authenticator code, recovery code, or passkey assertion. Verification grants
   one session administration action and expires after five minutes. Sign-in
   itself does not grant step-up authority.
+  Disabling a person asks for confirmation and revokes open sessions immediately.
+  A correct-password sign-in to a disabled account explains its state. A signed-in
+  person with no project access sees a single instruction to ask the owner.
 - The standalone Task Server Studio session uses the same 10-failure client
   lockout, 20-failure username budget, 15-minute window, 8-hour idle expiry,
   and 7-day absolute expiry as the networked monolith defaults.

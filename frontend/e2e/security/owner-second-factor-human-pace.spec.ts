@@ -43,13 +43,14 @@ function wrongCode(secret: string): string {
 }
 
 async function capture(page: Page, name: string): Promise<void> {
+  const mask = [page.getByTestId('totp-secret'), page.getByTestId('totp-link'), page.getByTestId('totp-qr'), page.getByTestId('factor-recovery-codes')];
   await setTheme(page, 'light');
-  await page.screenshot({ path: join(resultDir, `${name}-light.png`), fullPage: true });
+  await page.screenshot({ path: join(resultDir, `${name}-light.png`), fullPage: true, mask });
   await setTheme(page, 'dark');
-  await page.screenshot({ path: join(resultDir, `${name}-dark.png`), fullPage: true });
+  await page.screenshot({ path: join(resultDir, `${name}-dark.png`), fullPage: true, mask });
   const viewport = page.viewportSize()!;
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: join(resultDir, `${name}-390.png`), fullPage: true });
+  await page.screenshot({ path: join(resultDir, `${name}-390.png`), fullPage: true, mask });
   await page.setViewportSize(viewport);
 }
 
