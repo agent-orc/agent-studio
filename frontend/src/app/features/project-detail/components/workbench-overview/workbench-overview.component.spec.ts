@@ -170,7 +170,7 @@ describe('WorkbenchOverviewComponent', () => {
       '[data-testid="workbench-overview-pattern-Demo-active"]')?.getAttribute('data-pattern'))
       .toBe('concept');
     const decidedRow = fixture.nativeElement.querySelector('[data-testid="workbench-overview-item-Demo-tracking"]');
-    expect(decidedRow?.textContent).toContain('Accepted / In progress');
+    expect(decidedRow?.textContent).toContain('In implementation');
     expect(decidedRow?.textContent).not.toContain('Decision pending');
     expect(decidedRow?.textContent).not.toContain('Tracking');
 

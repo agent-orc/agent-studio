@@ -120,7 +120,8 @@ public sealed class MagazineStore
                     $"Revision {expectedRevision} is stale; the current revision is {head.Revision}.", head.Revision);
 
             var now = _clock.GetUtcNow().UtcDateTime;
-            var author = new MagazineAuthor(principal, validated.Persona);
+            var author = new MagazineAuthor(principal, validated.Persona,
+                request.PersonaId?.Trim(), request.RoleId?.Trim());
             var content = new MagazineRevision
             {
                 Revision = (head?.Revision ?? 0) + 1,
