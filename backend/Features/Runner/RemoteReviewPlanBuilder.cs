@@ -117,6 +117,11 @@ public sealed class RemoteReviewPlanBuilder
            + "build, test and lint would compare this SHA with itself. "
            + "The integration lane verifies the contained tree before completion (AGT-3002).";
 
+    internal static string ConceptDossierSkipReason(string dossierDirectory)
+        => $"Concept delivery changes only the Dossier in {dossierDirectory}/; "
+           + "the concept-fit aspect judges it, and build, test, lint and dependency "
+           + "preparation of the repository do not apply (AGT-3698).";
+
     /// <summary>
     /// AGT-3740: the first rule that keeps build and tests in the review
     /// instead of deferring them to the batch gate, or null when the plan may
@@ -266,13 +271,21 @@ public sealed class RemoteReviewPlanBuilder
             RequireDifferentHostFailureDomain = projectSettings?.RequireDifferentReviewHost == true,
         };
         var ordinaryToolPlan = toolPlan;
-        var deferralDisabledReason = BatchDeferralBlocker(
-            projectSettings?.BatchGate.Enabled == true,
-            projectSettings is not null
-                && (_postMergeMode?.Resolve(task?.ProjectName ?? string.Empty, projectSettings)
-                    ?? IntegrationTestModes.Resolve(projectSettings)) == IntegrationTestModes.PostMerge,
-            task is null || TaskModes.IsReportOnly(task.Mode),
-            projectSettings?.BatchGate.EffectiveScope, changedPaths, resultRef, resultSha);
+        // AGT-3698: a concept delivery confined to one docs/<topic>/ Dossier is
+        // judged by concept-fit alone. Installing and testing the repository
+        // proves nothing about the Dossier and let unrelated tooling block it.
+        var conceptDossier = task is not null && TaskModes.IsConcept(task.Mode)
+            ? ConceptWorkbenchContract.SingleDossierDirectory(changedPaths)
+            : null;
+        var deferralDisabledReason = conceptDossier is not null
+            ? ConceptDossierSkipReason(conceptDossier)
+            : BatchDeferralBlocker(
+                projectSettings?.BatchGate.Enabled == true,
+                projectSettings is not null
+                    && (_postMergeMode?.Resolve(task?.ProjectName ?? string.Empty, projectSettings)
+                        ?? IntegrationTestModes.Resolve(projectSettings)) == IntegrationTestModes.PostMerge,
+                task is null || TaskModes.IsReportOnly(task.Mode),
+                projectSettings?.BatchGate.EffectiveScope, changedPaths, resultRef, resultSha);
         var deferBuildTest = deferralDisabledReason is null;
         var noChange = IsNoChangeResult(changedPaths, resultSha, resultRef);
         string? testLevel = null;
@@ -343,7 +356,8 @@ public sealed class RemoteReviewPlanBuilder
         // AGT-3310: testing.perCard: affected runs tier T1 per card. Full keeps
         // the plan above byte for byte; so does a T1 scope that falls back.
         var perCardApplied = false;
-        if (!deferBuildTest && !noChange && task is not null && !TaskModes.IsReportOnly(task.Mode)
+        if (!deferBuildTest && !noChange && conceptDossier is null
+            && task is not null && !TaskModes.IsReportOnly(task.Mode)
             && PerCardTestModes.Resolve(projectSettings) == PerCardTestModes.Affected
             && changedPaths is { Count: > 0 } && !string.IsNullOrWhiteSpace(repositoryPath)
             && ReviewSubjectStore.IsValidResultSha(resultSha))
@@ -392,8 +406,21 @@ public sealed class RemoteReviewPlanBuilder
                 string.IsNullOrWhiteSpace(task.TaskKey) ? task.Id : task.TaskKey,
                 ReviewAspectModelPolicy.ModelSetting, hostDefault.CliType, hostDefault.Model, hostDefault.Fault);
 
-        var commands = toolPlan.Commands.ToList();
+        var commands = conceptDossier is null ? toolPlan.Commands.ToList() : [];
         var skipped = new List<Contract.ReviewSkippedAspectDto>();
+        if (conceptDossier is not null)
+        {
+            skipped.AddRange(toolPlan.Commands.Select(command => command.Aspect)
+                .Prepend("build-tests")
+                .Where(aspect => aspect != "completion")
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(aspect => new Contract.ReviewSkippedAspectDto(
+                    aspect, ConceptDossierSkipReason(conceptDossier))));
+            _logger?.LogInformation(
+                "remote-review-plan-concept-dossier task={TaskKey} dossier={Dossier} skipped={Skipped}",
+                string.IsNullOrWhiteSpace(task.TaskKey) ? task.Id : task.TaskKey, conceptDossier,
+                string.Join(",", skipped.Select(item => item.Aspect)));
+        }
         if (noChange)
         {
             static bool Skipped(Contract.ReviewCommandDto command)
@@ -545,6 +572,10 @@ public sealed class RemoteReviewPlanBuilder
             commands = ordinaryToolPlan.Commands.ToList();
             deferralDisabledReason = "No model review is planned for this delivery.";
         }
+        // A disabled concept-fit leaves a Dossier plan without commands; the
+        // concept policy then fails the review for the missing aspect.
+        if (conceptDossier is not null && commands.Count == 0)
+            commands.Add(V1ReviewPlaneEndpoints.CompletionOnlyCommand());
         if (noChange)
         {
             if (commands.Count == 0)
@@ -557,7 +588,7 @@ public sealed class RemoteReviewPlanBuilder
         var plan = toolPlan with
         {
             Commands = commands,
-            Preparation = noChange
+            Preparation = noChange || conceptDossier is not null
                 ? []
                 : deferBuildTest && !hasModelReview
                     ? ordinaryToolPlan.Preparation : toolPlan.Preparation,

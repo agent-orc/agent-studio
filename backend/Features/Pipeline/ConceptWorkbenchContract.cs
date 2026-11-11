@@ -94,13 +94,7 @@ public static class ConceptWorkbenchContract
             findings.Add("Concept runs may change only docs/<topic>/: " + string.Join(", ", outside));
 
         var topicRoots = normalized
-            .Where(path => path.StartsWith(DossierPrefix, StringComparison.OrdinalIgnoreCase))
-            .Select(path =>
-            {
-                var remainder = path[DossierPrefix.Length..];
-                var slash = remainder.IndexOf('/');
-                return slash <= 0 ? null : DossierPrefix + remainder[..slash];
-            })
+            .Select(TopicRoot)
             .Where(root => root is not null)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Cast<string>()
@@ -113,6 +107,30 @@ public static class ConceptWorkbenchContract
 
         var rel = topicRoots[0];
         return ReviewDirectory(checkoutRoot, rel, expectedSourceTaskKey);
+    }
+
+    /// <summary>
+    /// The one <c>docs/&lt;topic&gt;</c> directory that holds every changed
+    /// path, or null when a path lies outside it, the paths span several
+    /// topics, or the diff is unknown or empty (AGT-3698).
+    /// </summary>
+    public static string? SingleDossierDirectory(IReadOnlyList<string>? changedFiles)
+    {
+        var roots = (changedFiles ?? [])
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => TopicRoot(NormalizeRepoPath(path)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return roots is [{ } root] ? root : null;
+    }
+
+    private static string? TopicRoot(string normalizedPath)
+    {
+        if (!normalizedPath.StartsWith(DossierPrefix, StringComparison.OrdinalIgnoreCase))
+            return null;
+        var remainder = normalizedPath[DossierPrefix.Length..];
+        var slash = remainder.IndexOf('/');
+        return slash <= 0 ? null : DossierPrefix + remainder[..slash];
     }
 
     public static ConceptWorkbenchReview ReviewDirectory(

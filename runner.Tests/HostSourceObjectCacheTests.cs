@@ -7,8 +7,69 @@ using Xunit.Abstractions;
 
 namespace AgentRunner.Tests;
 
+[Collection(ProcessEnvironmentCollection.Name)]
 public sealed class HostSourceObjectCacheTests(ITestOutputHelper output)
 {
+    [Fact]
+    public async Task Materializes_with_home_that_has_no_local_directory()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(Path.GetTempPath(), "empty-home-cache-test-" + Guid.NewGuid().ToString("N"));
+        var home = Path.Combine(root, "home");
+        var previousHome = Environment.GetEnvironmentVariable("HOME");
+        var previousXdg = Environment.GetEnvironmentVariable("XDG_CACHE_HOME");
+        Directory.CreateDirectory(home);
+        try
+        {
+            var origin = Path.Combine(root, "origin");
+            await Git(root, ["init", origin]);
+            await Git(origin, ["config", "user.email", "cache@example.invalid"]);
+            await Git(origin, ["config", "user.name", "Cache Test"]);
+            File.WriteAllText(Path.Combine(origin, "source.txt"), "from an empty home");
+            await Git(origin, ["add", "."]);
+            await Git(origin, ["commit", "-qm", "source"]);
+            var sha = (await Git(origin, ["rev-parse", "HEAD"])).StdOut.Trim();
+            Environment.SetEnvironmentVariable("HOME", home);
+            Environment.SetEnvironmentVariable("XDG_CACHE_HOME", null);
+            Assert.False(Directory.Exists(Path.Combine(home, ".local")));
+            var cacheRoot = HostSourceObjectCache.EnsureRoot();
+            Assert.Equal(Path.Combine(home, ".cache", "agentstudio", "source", "cache"), cacheRoot);
+            Assert.True(Path.IsPathFullyQualified(cacheRoot));
+            var clock = new FakeTimeProvider();
+            Task<ProcessResult> Run(string cwd, IReadOnlyList<string> args,
+                bool _, CancellationToken ct) => ProcessRunner.RunAsync("git", args, cwd, ct: ct);
+            var destination = Path.Combine(root, "review", "repository");
+            await HostSourceObjectCache.MaterializeAsync(origin, sha, sha, destination,
+                Run, () => clock.GetUtcNow().UtcDateTime, CancellationToken.None);
+            Assert.Equal("from an empty home", File.ReadAllText(Path.Combine(destination, "source.txt")));
+            Assert.False(Directory.Exists(Path.Combine(home, ".local")));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("HOME", previousHome);
+            Environment.SetEnvironmentVariable("XDG_CACHE_HOME", previousXdg);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Refuses_a_relative_or_uncreatable_cache_root()
+    {
+        var relative = Assert.Throws<InvalidOperationException>(() =>
+            HostSourceObjectCache.EnsureRoot("agentstudio/source/cache"));
+        Assert.Contains("must be absolute", relative.Message, StringComparison.Ordinal);
+
+        var root = Path.Combine(Path.GetTempPath(), "cache-root-file-" + Guid.NewGuid().ToString("N"));
+        File.WriteAllText(root, "file");
+        try
+        {
+            var uncreatable = Assert.Throws<InvalidOperationException>(() =>
+                HostSourceObjectCache.EnsureRoot(Path.Combine(root, "cache")));
+            Assert.Contains(root, uncreatable.Message, StringComparison.Ordinal);
+        }
+        finally { File.Delete(root); }
+    }
+
     [Fact]
     public async Task Bundle_only_subject_downloads_once_and_checks_digest()
     {

@@ -2075,6 +2075,19 @@ catch (Exception ex)
     crashRecorder.Record("RemoteCompletionAttributionSweep", ex);
 }
 
+// AGT-3717: one-time re-attribution of deliveries whose own runner salvage
+// commit named a related card in its subject, which the attribution guard
+// rejected before it exempted that commit.
+if (runRepairSweeps) try
+{
+    hostTimeline.Sweep("SalvageSubjectAttributionRepair",
+        () => app.Services.GetRequiredService<RemoteCompletionAttributionSweep>().RunSalvageSubjectRepairOnce());
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("SalvageSubjectAttributionRepair", ex);
+}
+
 // Cap legacy durable CLI logs after the one-time full-history wiki read
 // backfill but before CLI reattachment can append new output. The sweep also
 // ensures the sole rotation file stays outside workspace evidence commits.

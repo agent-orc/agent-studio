@@ -76,6 +76,9 @@ import { OlderBriefOfferComponent } from './components/older-brief-offer/older-b
 import { BatchDetailComponent } from '../batch-gate/batch-detail/batch-detail';
 import { CardEnvironmentBadgesComponent } from '../deployments/components/card-environment-badges/card-environment-badges';
 import { TASK_REFERENCE_CHAT_PROVIDER } from '../../services/task-reference-chat.provider';
+import { MobileLanePrimaryComponent, type MobileLanePrimary } from './components/mobile-lane-primary/mobile-lane-primary.component';
+import { MobilePaneSwitcherComponent } from './components/mobile-pane-switcher/mobile-pane-switcher.component';
+
 @Component({
   selector: 'app-task-detail, app-job-detail',
   standalone: true,
@@ -99,6 +102,7 @@ import { TASK_REFERENCE_CHAT_PROVIDER } from '../../services/task-reference-chat
     OlderBriefOfferComponent,
     TaskResourceStatusComponent,
     BatchDetailComponent, CardEnvironmentBadgesComponent,
+    MobileLanePrimaryComponent, MobilePaneSwitcherComponent,
   ],
   providers: [
     TASK_REFERENCE_CHAT_PROVIDER,
@@ -143,6 +147,8 @@ export class TaskDetailComponent implements OnDestroy {
   readonly routeInspectorTab = input<'task' | 'activity' | 'protocol' | null>(null);
   /** True while the update-service is mid-update; disables triage actions. */
   readonly mutationsBlocked = input(false);
+  readonly mobilePrimary = input<MobileLanePrimary | null>(null);
+  readonly mobilePrimaryRequest = output<void>();
   readonly back = output<void>();
   readonly fileSaved = output<void>();
   /** Forwarded from the prompt-pane Evidence tab into the existing job
@@ -223,7 +229,7 @@ export class TaskDetailComponent implements OnDestroy {
   readonly editingPrompt = signal(false);
   // Three-pane layout state + resize handlers — owned by LayoutPanesService
   // (provided locally on this component); fields below re-expose as facades.
-  private readonly layout = inject(LayoutPanesService);
+  readonly layout = inject(LayoutPanesService);
   readonly panesVisible = this.layout.panesVisible;
   readonly paneWeights = this.layout.paneWeights;
   readonly maximizedPane = this.layout.maximizedPane;
@@ -278,10 +284,10 @@ export class TaskDetailComponent implements OnDestroy {
    * yet. Gates the detail-header's git-dependent acceptance primary so it cannot
    * fire (or show a guessed "Merge into Develop" label) before the branch/merge
    * truth is known (AGT-2006). Flips to `false` atomically with `landedState`
-   * resolving, so the button switches straight to its true label without a
-   * wrong -> right flicker. AGT-3621: the wait is bounded (`PROVENANCE_WAIT_MS`).
+   * resolving, so the button switches directly. A hidden git pane defers the
+   * request (AGT-3625); only an in-flight request counts (AGT-3621).
    */
-  readonly gitInfoLoading = computed(() => !this.git.provenanceLoaded());
+  readonly gitInfoLoading = computed(() => this.git.provenanceLoading() && !this.git.provenanceLoaded());
   readonly commitActionsAvailable = computed(() => {
     const status = this.git.status();
     return this.git.viewMode() === 'worktree'
@@ -595,6 +601,7 @@ export class TaskDetailComponent implements OnDestroy {
       this.activeInspectorTab.set(routeTab);
     }
   });
+
   private cliConfigEffect = effect(() => {
     const requestId = this.errorDialog.cliConfigRequest();
     if (requestId === 0 || requestId === this.lastCliConfigRequest) {
@@ -1152,10 +1159,11 @@ export class TaskDetailComponent implements OnDestroy {
         queueMicrotask(() => this.triageActingId.set(null));
         return;
       case 'editPrompt':
-        if (!this.panesVisible().prompt) this.togglePane('prompt');
+        this.layout.selectMobilePane('prompt');
         this.startEdit('prompt');
         return;
       case 'showActivity':
+        this.layout.selectMobilePane('protocol');
         this.activeInspectorTab.set('activity');
         this.userTouchedInspectorTab = true;
         return;
@@ -1269,7 +1277,7 @@ export class TaskDetailComponent implements OnDestroy {
   }
 
   openReviewAttempt(attemptId: string): void {
-    if (!this.panesVisible().protocol) this.togglePane('protocol');
+    this.layout.selectMobilePane('protocol');
     this.onInspectorTabChange('activity');
     this.reviewAttemptFocus.set(attemptId);
   }
@@ -1364,18 +1372,6 @@ export class TaskDetailComponent implements OnDestroy {
       // Lazy-load git status the first time the pane is shown.
       this.refreshGit();
     }
-  }
-
-  toggleMaximize(name: 'prompt' | 'protocol' | 'git'): void {
-    this.layout.toggleMaximize(name);
-  }
-
-  isPaneRendered(name: 'prompt' | 'protocol' | 'git'): boolean {
-    return this.layout.isPaneRendered(name);
-  }
-
-  firstVisibleAfter(name: 'prompt' | 'protocol' | 'git'): 'protocol' | 'git' {
-    return this.layout.firstVisibleAfter(name);
   }
 
   startPaneResize(

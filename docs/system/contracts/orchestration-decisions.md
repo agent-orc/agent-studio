@@ -149,6 +149,18 @@ occurrence. Restart, gate-drop and requeue rules are decided positively from
 frozen facts (busy slots and claimable work, the card state the authority key
 names, the last run's rate limit and the reviewed delivery); an unknown fact
 holds or proposes.
+AGT-3563: every batch phase change is a compare-and-swap of the batch's
+versioned phase and claim record through `BatchPhaseTransitionPolicy`. The
+store collects the current phase, version and coordinator fence, the claimed
+members keyed by review attempt, and for a terminal phase the members' replay
+outcomes; the rule returns the next version and the member dispositions, or
+refuses an illegal successor, a stale fence or a stale version.
+`BatchGateInvariantPolicy` turns the pilot's facts about each batch (phase,
+liveness, and per member: queued record, ownership marker, disposition) into
+the findings the batch gate state reports and the repair the pilot applies.
+The legal phases and the findings are listed in
+[batch gate](../../operations/gates/batch-gate.md#batch-phase-record-and-invariants-agt-3563).
+
 ## Decision grounds, shadow receipts and active coding choice
 
 AGT-3063 implements AGT-W73 OD-S1 for the `CodingCompletion` profile while it
