@@ -76,6 +76,10 @@ public sealed partial class RemoteRunnerEndToEndTests
         using var created = JsonDocument.Parse(promotedBody);
         Assert.Equal(1, created.RootElement.GetProperty("created").GetArrayLength());
         Assert.Equal(TaskStates.Completed, scanner.FindJob(flow.TaskKey, _watchPath)!.State);
+        using var acceptedCopy = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            ConceptWorkbenchStore.SnapshotRoot(card.FolderPath),
+            "docs", ConceptTopic, "workbench.json")));
+        Assert.Equal("decided", acceptedCopy.RootElement.GetProperty("status").GetString());
     }
 
     [Fact]

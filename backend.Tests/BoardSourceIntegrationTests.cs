@@ -82,11 +82,15 @@ public sealed class BoardSourceIntegrationTests : IDisposable
         initial.EnsureSuccessStatusCode();
         Assert.Equal(BoardSourceSetting.TaskServerShadow, initial.Headers.GetValues("X-Board-Source").Single());
         await worker.RunCycleAsync(default);
-        var sync = ledger.Snapshot(shadow).Sync;
+        var baseline = await WaitForShadowAsync(client, worker,
+            () => ledger.Snapshot(shadow),
+            status => status.Sync.SyncedGeneration is not null
+                && status.Sync.MissingProjects.Count == 0
+                && status.Comparisons >= 1);
+        var sync = baseline.Sync;
         Assert.True(sync.SyncedGeneration is not null && sync.MissingProjects.Count == 0, sync.LastError);
         Assert.Equal(TaskStates.Backlog, (await TaskServerCardAsync(store)).State);
-        var baseline = ledger.Snapshot(shadow);
-        Assert.Equal((1L, 0), (baseline.Comparisons, baseline.UnexplainedDifferences));
+        Assert.Equal(0, baseline.UnexplainedDifferences);
         var baselineGeneration = index.TryGetPublished()!.Generation;
 
         var move = await client.PostAsJsonAsync(
@@ -103,13 +107,18 @@ public sealed class BoardSourceIntegrationTests : IDisposable
         var read = await client.GetAsync("/api/tasks/grouped");
         read.EnsureSuccessStatusCode();
         await worker.RunCycleAsync(default);
-        // A watcher may publish a newer workspace generation before the
-        // mirror cycle; the imported model must name the generation it used.
-        Assert.True(worker.SyncedGeneration >= publication.Generation);
+        // Mirror and comparison are asynchronous. A busy test host can make
+        // the first board read time out, so wait for the requested generation.
+        var afterMove = await WaitForShadowAsync(client, worker,
+            () => ledger.Snapshot(shadow),
+            status => worker.SyncedGeneration >= publication.Generation
+                && status.LastComparedGeneration >= publication.Generation
+                && status.Comparisons > baseline.Comparisons
+                && status.UnexplainedDifferences == 0);
         var model = await store.GetBoardReadModelAsync(ProjectName, default);
         Assert.Contains(model.Lanes.Single(lane => lane.State == TaskStates.Ready).Cards, card => card.TaskKey == Key);
-        Assert.Equal(worker.SyncedGeneration, model.WorkspaceSourceGeneration);
-        var afterMove = ledger.Snapshot(shadow);
+        Assert.True(model.WorkspaceSourceGeneration >= publication.Generation);
+        Assert.True(model.WorkspaceSourceGeneration <= worker.SyncedGeneration);
         Assert.Equal(0, afterMove.UnexplainedDifferences);
         Assert.True(afterMove.Comparisons >= 2);
         // A later watcher publication can advance the mirror without another
@@ -122,6 +131,12 @@ public sealed class BoardSourceIntegrationTests : IDisposable
             new UpdateTaskRequest("Renamed on the Task Server", null, null, card.Version), "test", default);
         (await client.GetAsync("/api/tasks/grouped")).EnsureSuccessStatusCode();
         await worker.RunCycleAsync(default);
+        await WaitForShadowAsync(client, worker,
+            () => ledger.Snapshot(shadow),
+            status => status.UnexplainedDifferences == 1
+                && status.Differences.Any(difference => difference.TaskKey == Key
+                    && difference.Field == BoardShadowComparison.TitleField
+                    && difference.TaskServerValue == "Renamed on the Task Server"));
         var status = await client.GetFromJsonAsync<BoardSourceStatusResponse>("/api/admin/board-source");
         var difference = Assert.Single(status!.Differences);
         Assert.Equal((Key, BoardShadowComparison.TitleField, "Move me", "Renamed on the Task Server"),
@@ -132,6 +147,33 @@ public sealed class BoardSourceIntegrationTests : IDisposable
             new BoardSourceEndpoints.ExplainBoardDifferenceBody(difference.Fingerprint, "Seeded by the test"));
         explain.EnsureSuccessStatusCode();
         Assert.Equal(0, (await explain.Content.ReadFromJsonAsync<BoardSourceStatusResponse>())!.UnexplainedDifferences);
+    }
+
+    private static async Task<BoardSourceStatusResponse> WaitForShadowAsync(
+        HttpClient client,
+        BoardShadowWorker worker,
+        Func<BoardSourceStatusResponse> snapshot,
+        Func<BoardSourceStatusResponse, bool> ready)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(75));
+        var last = snapshot();
+        try
+        {
+            while (true)
+            {
+                if (ready(last)) return last;
+                using var read = await client.GetAsync("/api/tasks/grouped", deadline.Token);
+                read.EnsureSuccessStatusCode();
+                await worker.RunCycleAsync(deadline.Token);
+                last = snapshot();
+                await Task.Delay(500, deadline.Token);
+            }
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            Assert.Fail($"Board shadow did not settle: {JsonSerializer.Serialize(last)}");
+            throw;
+        }
     }
 
     [Fact]

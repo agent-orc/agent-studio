@@ -273,9 +273,9 @@ public sealed class BatchGateReviewPlanTests
     }
 
     /// <summary>
-    /// AGT-3696: a docs-only concept delivery never joins a batch. Its Dossier
-    /// placement and concept review run around the per-delivery merge, which a
-    /// batch candidate would bypass.
+    /// AGT-3696 and AGT-3698: a Dossier-only concept skips tool gates, and no
+    /// concept delivery joins a batch. Placement and review run around the
+    /// per-delivery merge, which a batch candidate would bypass.
     /// </summary>
     [Fact]
     public void ConceptDossierDeliveryIsNeverDeferredToTheBatch()
@@ -298,9 +298,18 @@ public sealed class BatchGateReviewPlanTests
 
             Assert.False(plan.BuildTestDeferredToBatch);
             Assert.Equal(TaskModes.Concept, plan.TaskMode);
-            Assert.Equal("A concept Dossier requires per-delivery placement and review before sight review.",
+            Assert.Equal(RemoteReviewPlanBuilder.ConceptDossierSkipReason("docs/pilot"),
                 plan.BuildTestDeferralDisabledReason);
             Assert.Contains(plan.Commands, command => command.Aspect == "concept-fit");
+            Assert.DoesNotContain(plan.Commands, command => command.Aspect == "build-tests");
+
+            var invalidShape = builder.Build(task with { Mode = TaskModes.Concept }, repo,
+                new ProjectSettings { BatchGate = new(Enabled: true) }, "develop",
+                resultSha, ["docs/pilot/index.html", "backend/Changed.cs"],
+                "refs/heads/agent-studio/results/task");
+            Assert.False(invalidShape.BuildTestDeferredToBatch);
+            Assert.Equal("A concept Dossier requires per-delivery placement and review before sight review.",
+                invalidShape.BuildTestDeferralDisabledReason);
         }
         finally
         {

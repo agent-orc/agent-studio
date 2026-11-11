@@ -2898,7 +2898,10 @@ operator changes cause the step to fail before its writer runs.
     checkout. Placement stores the Dossier's two contract files at the
     integrated commit under the card's `.metadata/concept-dossier/`.
     `promote-concept` reads the checkout first and falls back to that copy,
-    so its read request spawns no git process.
+    so its read request spawns no git process. When the checkout still lacks
+    the integrated Dossier, promotion records the accepted state on that
+    placed copy; a complete checkout Dossier uses the managed repository
+    mutation path (AGT-3670).
   - A concept delivery never joins a batch, so it always takes this
     per-delivery merge.
   - A new `workbench.json` without a document key gets one in the integration
@@ -2915,9 +2918,11 @@ operator changes cause the step to fail before its writer runs.
   section and log markers. Its implementation convention requires one
   `implementationTasks` entry per independently reviewable slice, never one
   open-ended all-recommendations entry. The concept pipeline runs no code
-  aspects. A concept delivery entering Remote
-  Review retains its project build and lint commands and adds the read-only
-  `aspect-concept-fit` content check. Its project pipeline-step setting controls
+  aspects. A Remote Review diff confined to one `docs/<slug>/` Dossier runs
+  the read-only `aspect-concept-fit` check and skips repository dependency
+  preparation, build, test, and lint with a recorded reason (AGT-3698).
+  Diffs outside that shape retain ordinary verification and are refused by
+  Dossier placement before integration. The project pipeline-step setting controls
   model, thinking level, CLI, and prompt. The frozen ReviewSubject records the
   `prompt.md` SHA-256; a missing content verdict or a changed brief cannot
   settle as `Pass`. The grade lists skipped applicable aspects with reasons.
