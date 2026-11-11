@@ -1514,7 +1514,7 @@ attempt as `ReviewInfra / ExecutorRestarted` and the server counts it as a
 - **Card.** The Auto Review queue line reads the failure classification, the
   lease host, the loss time and the scheduled retry from the board snapshot:
   "Review lost: review host restarted (lab-review-host, 02:27). Automatic
-  retry 1 of 3 at 02:28." The host name links to the host detail.
+  retry 1 of 2 at 02:28." The host name links to the host detail.
 - **Host detail.** `AttemptAuthorityService` keeps the newest 20 restarts per
   review runner identity, each with its lost attempts and their task keys.
   `GET /api/v1/management/remote-hosts` returns them as `reviewRestarts`, and

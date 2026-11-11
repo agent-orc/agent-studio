@@ -102,7 +102,7 @@ public sealed partial class AttemptAuthorityService
     /// most one archive write per hour instead of one per terminal transition.
     /// </summary>
     private static readonly TimeSpan CompactionInterval = TimeSpan.FromHours(1);
-    public const int ReviewInfrastructureRetryBudget = 3;
+    public const int ReviewInfrastructureRetryBudget = 2;
     /// <summary>Restarts kept per review runner identity (AGT-3690).</summary>
     internal const int ReviewDaemonRestartHistoryLimit = 20;
     public const string UnmaterializableReviewSubjectReason = "review-subject-unmaterialisierbar";

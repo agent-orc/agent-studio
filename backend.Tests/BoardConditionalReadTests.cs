@@ -402,7 +402,7 @@ public sealed class BoardConditionalReadTests : IClassFixture<BoardConditionalRe
         Assert.Equal(HttpStatusCode.OK, scheduled.Status);
         Assert.NotEqual(after.ETag, scheduled.ETag);
         Assert.Contains("retry-scheduled", scheduled.Body, StringComparison.Ordinal);
-        Assert.Contains("Automatic retry 1 of 3", scheduled.Body, StringComparison.Ordinal);
+        Assert.Contains("Automatic retry 1 of 2", scheduled.Body, StringComparison.Ordinal);
     }
 
     [Fact]

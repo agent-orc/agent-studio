@@ -225,10 +225,10 @@ public sealed class TaskLiveStatusProjectionTests
         Assert.Equal("infrastructureFailure", queue.Outcome);
         Assert.Equal(TaskLiveReviewLossCauses.Infrastructure, queue.Lost!.Cause);
         Assert.Equal("SnapshotUnavailable", queue.Lost.Classification);
-        Assert.Equal(new TaskLiveReviewRetry { Number = 2, Budget = 3, DueAt = due }, queue.Retry);
+        Assert.Equal(new TaskLiveReviewRetry { Number = 2, Budget = 2, DueAt = due }, queue.Retry);
         Assert.Equal(
             $"Review lost: review infrastructure failed (SnapshotUnavailable) (agent-runner-01, {Utc(Now.AddMinutes(-1))}). "
-            + $"Automatic retry 2 of 3 at {Utc(due)}.",
+            + $"Automatic retry 2 of 2 at {Utc(due)}.",
             queue.Reason);
     }
 
@@ -262,10 +262,10 @@ public sealed class TaskLiveStatusProjectionTests
                 At = lostAt,
             },
             queue.Lost);
-        Assert.Equal(new TaskLiveReviewRetry { Number = 1, Budget = 3, DueAt = due }, queue.Retry);
+        Assert.Equal(new TaskLiveReviewRetry { Number = 1, Budget = 2, DueAt = due }, queue.Retry);
         Assert.Equal(
             "Review lost: review host restarted (lab-review-host, 2026-11-10 01:27:16Z). "
-            + "Automatic retry 1 of 3 at 2026-11-10 01:28:16Z.",
+            + "Automatic retry 1 of 2 at 2026-11-10 01:28:16Z.",
             queue.Reason);
     }
 
