@@ -87,6 +87,7 @@ function evidenceDir(testInfo: TestInfo): string {
 }
 
 async function mockStudio(page: Page, currentEntries: () => readonly FeedEntry[], ownerEntries: readonly object[] = []): Promise<void> {
+  await page.route('**/healthz', route => route.fulfill({ json: { status: 'ok' } }));
   await page.route('**/update/status', route => route.fulfill({
     json: { phase: 'idle', isRunning: false, behindBy: 0 },
   }));
