@@ -133,6 +133,20 @@ public static class MonolithTransitionAdapter
     public static bool IsGateQueueOverrun(string? budgetName, string? budgetPhase)
         => GateQueueStallPolicy.IsQueueOverrun(budgetName, budgetPhase);
 
+    public static bool GateHostUnavailable(bool failed, bool cancelled, string? evidence, int failingItems)
+        => GateHostOutagePolicy.IsHostUnavailable(failed, cancelled, evidence, failingItems);
+
+    public static bool GateHostMayStartRun(DateTimeOffset? outageSinceUtc, DateTimeOffset lastAttemptUtc,
+        int failedProbes, DateTimeOffset nowUtc)
+        => GateHostOutagePolicy.MayStartRun(outageSinceUtc, lastAttemptUtc, failedProbes, nowUtc);
+
+    public static bool GateHostOutageEscalates(DateTimeOffset outageSinceUtc, DateTimeOffset nowUtc,
+        TimeSpan escalateAfter, bool alreadyEscalated)
+        => GateHostOutagePolicy.EscalatesGate(outageSinceUtc, nowUtc, escalateAfter, alreadyEscalated);
+
+    public static string GateHostWaitingReason(DateTimeOffset outageSinceUtc)
+        => GateHostOutagePolicy.WaitingReason(outageSinceUtc);
+
     public static bool GateQueueStallReminds(DateTimeOffset lastRaisedAtUtc, DateTimeOffset nowUtc)
         => GateQueueStallPolicy.RemindsStall(lastRaisedAtUtc, nowUtc);
 
