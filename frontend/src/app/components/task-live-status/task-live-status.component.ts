@@ -226,7 +226,7 @@ export class TaskLiveStatusComponent {
     if (status.queue) {
       const queuedHeadline = status.queue.kind === 'runner' ? 'Queued for runner'
         : status.queue.state === 'integration' ? 'Waiting for delivery integration' : 'Waiting for review slot';
-      const workflowWait = task.state === TaskState.AutoReview ? postProcessingAction(status.queue.reason) : null;
+      const workflowWait = task.state === TaskState.AutoReview && status.queue.state !== 'integration' ? postProcessingAction(status.queue.reason) : null;
       const headline = workflowWait ? `Waiting for ${workflowWait.toLowerCase()}` : (status.queue.position != null
         ? `${queuedHeadline} · position ${status.queue.position}`
         : status.queue.reason
