@@ -25,6 +25,26 @@ uncreatable root stops the daemon with the path and cause. Source materializatio
 failures during an attempt report `ReviewInfra/SourceUnavailable` with the
 repository and cache paths, rather than being mistaken for a lost worker.
 
+## Concept brief and Dossier evidence
+
+Concept-fit review records the authored brief version from
+`.metadata/brief-version`, the same version completion uses. Follow-up notes
+appended to `prompt.md` do not change it. The Task Server reads the mirrored
+version and falls back to a full prompt hash for older mirrors without that
+metadata.
+The review subject's `TaskRequirementsHash` still hashes the complete prompt:
+it identifies the exact instructions for that review attempt, including
+follow-up notes, and is distinct from the authored brief version.
+
+Concept-fit receives a bounded snapshot of the published Dossier index,
+`workbench.json`, and local files linked from them. Its round diff shows what
+changed, while the snapshot supplies unchanged Dossier content. A missing,
+unreadable, or over-budget file is named in the prompt so the aspect cannot
+infer completeness from a truncated excerpt. For older settled concept reviews,
+completion accepts a whole-prompt review hash as current only while the current
+authored version equals the delivery version and the reviewed whole-prompt hash
+still matches `prompt.md`.
+
 ## Aspect prompt cache
 
 The review worker bounds every per-card and package agent aspect's final prompt to 800,000
@@ -425,6 +445,24 @@ current-delivery infrastructure failure with no scheduled retry gets one through
 the existing authority scheduler while its two-retry budget remains. A scheduled
 retry counts as an owner. Once the budget is spent, escalation names the review
 classification and summary.
+
+A passed review that ran its own build and tests (its frozen plan has
+`BuildTestDeferredToBatch: false`) never re-enters the batch gate: batch
+admission refuses it with `BuildTestNotDeferred` (AGT-3740).
+`AutoReviewStrandingPolicy.RouteBatch` turns the stranding decision for such a
+card into the per-task route, once per lane visit. The watchdog
+integrates it through the per-task path with the review's own verdicts. It
+uses the delivery settlement record, or rebuilds a missing one from the
+journaled report with the same `RemoteDeliveryIntegrationPolicy` as settlement.
+Only when no recorded verdict admits the delivery does the card get a
+re-planned review with a freshly sealed plan, which may defer to the batch. The
+receipt and the batch gate state (member status `fallback`, rule
+`review-ran-build-tests`) say "Review ran its own build and tests (rule); this
+card goes to per-task integration" or "... to a re-planned review". Every plan
+that does not defer names its rule in `BuildTestDeferralDisabledReason`, for
+example the batch gate being off when the plan was sealed, a missing diff, or
+test selection requiring the full suite. The build-test step on the card shows
+that rule.
 
 When the delivery-chain reconciler finds a stale acceptance or integration
 verdict, it returns the card to Auto Review and requests a fresh review at
@@ -1219,10 +1257,14 @@ that verdict.
 | Clean repeat green, baseline red on cached state, clean baseline repeat green | `DependencyCacheDefect` or `BaselineResultCacheDefect` | no |
 | Reviewer block without evidence against a changed path | `concern` | no |
 
-**Missing test reports.** A successful test command without a recognized
-summary supplies exit-status evidence. A failed test command with no parseable
-result is retried once, before saving the dependency cache, and both attempts
-are recorded. If it still has no result, it settles as
+**Missing test reports.** A successful custom command with no recognized test
+runner can supply exit-status evidence. `dotnet test`, `node --test`, Jest, and
+Vitest must report a positive test count. Their zero-test summaries and
+"no test" diagnostics are missing results even when the command exits zero.
+The same requirement applies when the delivery changes test configuration or
+the spec file list. A test command with no parseable result is retried once
+before saving the dependency cache, and both attempts are recorded. If it
+still has no result, it settles as
 `ReviewInfra/BaselineUnavailable` and names the expected report path (or the
 captured stdout artifact for console-only reporters). An explicit missing-file
 diagnostic from the frontend wrapper follows the same path even when the wrapper
