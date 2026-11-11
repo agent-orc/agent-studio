@@ -100,7 +100,7 @@ test('card and batch panel explain interrupted isolation from the real backend',
     await page.setViewportSize({ width, height: 900 });
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
-      await card.screenshot({ path: path.join(results, `interrupted-card-${width}-${theme}.png`) });
+      await card.screenshot({ path: path.join(results, `interrupted-card-${width}-${theme}--real.png`) });
     }
   }
 
@@ -115,7 +115,7 @@ test('card and batch panel explain interrupted isolation from the real backend',
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       await panel.locator('#batch-interrupted-e2e').scrollIntoViewIfNeeded();
-      await page.screenshot({ path: path.join(results, `interrupted-panel-${width}-${theme}.png`) });
+      await page.screenshot({ path: path.join(results, `interrupted-panel-${width}-${theme}--real.png`) });
     }
   }
 });
