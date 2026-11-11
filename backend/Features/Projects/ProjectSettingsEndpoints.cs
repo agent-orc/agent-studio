@@ -1370,6 +1370,55 @@ public static class ProjectSettingsEndpoints
                 ? Results.NotFound(new { error = "No isolation evidence is recorded for this member." })
                 : Results.File(path, "text/plain; charset=utf-8");
         });
+        app.MapGet("/api/projects/{projectName}/batch-gate/run-evidence", (string projectName,
+            string? batchId, string? runId, BatchGateStore store, TaskScannerService scanner) =>
+        {
+            var project = scanner.GetWatchPaths().FirstOrDefault(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (project is null)
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (string.IsNullOrWhiteSpace(batchId) || string.IsNullOrWhiteSpace(runId))
+                return Results.BadRequest(new { error = "batchId and runId are required." });
+            if (!store.ListManifests().Any(manifest => manifest.BatchId == batchId
+                    && string.Equals(manifest.Scope.Project, project.Name, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = "No run evidence is recorded for this project." });
+            var run = store.ListRuns(batchId).FirstOrDefault(item => item.BatchRunId == runId);
+            if (run is null) return Results.NotFound(new { error = "No run evidence is recorded for this project." });
+            var path = store.StoredEvidenceFile(run.EvidencePath);
+            return path is null
+                ? Results.NotFound(new { error = "Run evidence is not available yet." })
+                : Results.File(path, "text/plain; charset=utf-8");
+        });
+        app.MapGet("/api/projects/{projectName}/batch-gate/run-log", (string projectName,
+            string? batchId, string? runId, BatchGateStore store, TaskScannerService scanner) =>
+        {
+            var project = scanner.GetWatchPaths().FirstOrDefault(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (project is null)
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (string.IsNullOrWhiteSpace(batchId) || string.IsNullOrWhiteSpace(runId))
+                return Results.BadRequest(new { error = "batchId and runId are required." });
+            if (!store.ListManifests().Any(manifest => manifest.BatchId == batchId
+                    && string.Equals(manifest.Scope.Project, project.Name, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = "No run log is recorded for this project." });
+            var run = store.ListRuns(batchId).FirstOrDefault(item => item.BatchRunId == runId);
+            if (run is null) return Results.NotFound(new { error = "No run log is recorded for this project." });
+            var path = store.StoredEvidenceFile(run.EvidencePath);
+            if (path is null) return Results.NotFound(new { error = "Run log is not available yet." });
+            var output = new List<string>();
+            foreach (var line in File.ReadLines(path))
+            {
+                try
+                {
+                    using var json = System.Text.Json.JsonDocument.Parse(line);
+                    if (json.RootElement.TryGetProperty("Output", out var value)
+                        && value.ValueKind == System.Text.Json.JsonValueKind.String)
+                        output.Add(value.GetString() ?? string.Empty);
+                }
+                catch (System.Text.Json.JsonException) { output.Add(line); }
+            }
+            return Results.Text(string.Join(Environment.NewLine, output), "text/plain; charset=utf-8");
+        });
         app.MapGet("/api/projects/{projectName}/batch-gate/ledger", (string projectName,
             DateOnly? day, string? type, int? page, int? pageSize,
             GateRunLedger ledger, TaskScannerService scanner) =>

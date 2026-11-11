@@ -161,6 +161,9 @@ public static class BatchGateStateSnapshotReader
                 phase = phase.Phase.ToString().ToLowerInvariant(),
                 phaseAtUtc = phase.RecordedAtUtc,
                 phaseReason = phase.Reason,
+                phaseHistory = store.StateHistory(manifest.BatchId).Select(item => new {
+                    phase = item.Phase.ToString().ToLowerInvariant(), reason = item.Reason, atUtc = item.RecordedAtUtc,
+                }).ToArray(),
                 queuePosition = queuePositions.TryGetValue(manifest.BatchId, out var position)
                     ? position : (int?)null,
                 causedByTaskKey = phase.CausedByTaskKey,
@@ -190,6 +193,7 @@ public static class BatchGateStateSnapshotReader
                         run.BatchRunId, run.Host,
                         outcome = verdict?.Outcome,
                         classification = verdict?.Classification,
+                        evidenceAvailable = store.StoredEvidenceFile(run.EvidencePath) is not null,
                         startedAtUtc = (DateTimeOffset?)run.StartedAtUtc,
                         finishedAtUtc = verdict?.CompletedAtUtc,
                     };

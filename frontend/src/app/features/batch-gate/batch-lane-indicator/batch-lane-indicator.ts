@@ -3,7 +3,7 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, input, si
 import type { TaskInfo } from '../../../models/task.model';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
-import { batchAlert, batchRunIsRunning, batchShortId, batchWaitingCards, type BatchAlert } from '../../../models/batch-gate.model';
+import { batchAlert, batchShortId, batchWaitingCards, type BatchAlert } from '../../../models/batch-gate.model';
 import { BatchPanelComponent } from '../batch-panel/batch-panel';
 
 @Component({
@@ -44,7 +44,7 @@ export class BatchLaneIndicatorComponent {
     return `Batch ${alert.batchId} ${alert.state === 'red' ? 'is red' : 'is isolating the red member'}${culprits}`;
   }
   runningFor(project: string): number {
-    return this.stateFor(project)?.batches.filter(batch => batch.runs.some(run => batchRunIsRunning(batch, run))).length ?? 0;
+    return this.stateFor(project)?.batches.filter(batch => batch.phase === 'running').length ?? 0;
   }
   waitingFor(project: string): number { return batchWaitingCards(this.stateFor(project)).length; }
 }

@@ -121,7 +121,8 @@ for (const width of [1280, 390]) {
     await routeBoard(page, state);
     await page.goto('/?includeFixtures=true');
     await page.getByRole('tab', { name: 'All projects · Board' }).click();
-    if (width === 390) await page.getByRole('combobox', { name: 'Board lane' }).selectOption({ label: 'Post Processing' });
+    if (width === 390) await page.getByRole('combobox', { name: 'Board lane' })
+      .selectOption({ label: 'Post Processing' });
     const opener = page.getByTestId('batch-lane-indicator').first();
     await opener.click();
     const dialog = page.getByTestId('batch-panel');
@@ -342,4 +343,67 @@ test('review concern fix wait is visible on the card and batch gate', async ({ p
   await page.getByTestId('batch-lane-indicator').first().click();
   await expect(page.getByTestId('batch-review-fix-waits')).toContainText('AGT-2 · concern fix round 1 of 1 · code-quality');
   await captureThemes(page, evidence, 'batch-review-fix-wait');
+});
+
+test('red, abandoned and running batches show truthful status and evidence at desktop and mobile widths', async ({ page }) => {
+  const batchState = {
+    ...state,
+    gateSlots: { busy: 1, total: 1 },
+    plan: { ...state.plan, decision: 'idle', reason: 'no eligible cards', proposedMembers: [] },
+    pending: [],
+    batches: [
+      { ...state.batches[0], phase: 'red', phaseReason: 'Suite failed; isolate the culprit',
+        phaseHistory: [{ phase: 'running', atUtc: '2026-10-11T13:00:00Z' },
+          { phase: 'red', reason: 'Suite failed; isolate the culprit', atUtc: '2026-10-11T13:05:00Z' }],
+        runs: [{ batchRunId: 'run-7', host: 'agent-runner-01', startedAtUtc: '2026-10-11T13:00:00Z', evidenceAvailable: true }] },
+      { ...state.batches[1], batchId: 'batch-abandoned', parentBatchId: null, phase: 'abandoned',
+        members: [{ taskKey: 'AGT-2', replay: null, released: false }],
+        runs: [{ batchRunId: 'run-abandoned', host: 'agent-runner-01', startedAtUtc: '2026-10-11T13:01:00Z', evidenceAvailable: true }] },
+      { ...state.batches[1], batchId: 'batch-running', parentBatchId: null, phase: 'running',
+        runs: [{ batchRunId: 'run-running', host: 'agent-runner-02', startedAtUtc: '2026-10-11T13:06:00Z', evidenceAvailable: true }] },
+    ],
+    members: { 'AGT-2': { status: 'in-batch', batchId: 'batch-7', phase: 'red', position: 1, size: 2 } },
+  };
+  await routeBoard(page, batchState);
+  await page.goto('/?includeFixtures=true');
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
+  const card = page.getByTestId('task-card').filter({ hasText: 'Batch fixture task' });
+  await expect(card.getByTestId('batch-member-badge')).toContainText('in a red batch: Suite failed; isolate the culprit');
+  await expect(page.getByTestId('batch-lane-indicator').first()).toContainText('1 running');
+  const evidence = process.env.JOB_RESULTS_DIR;
+  if (evidence) {
+    fs.mkdirSync(evidence, { recursive: true });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    for (const theme of ['light', 'dark'] as const) {
+      await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+      await card.screenshot({ path: nodePath.join(evidence, `batch-red-member-1280-${theme}.png`) });
+    }
+  }
+  await page.getByTestId('batch-lane-indicator').first().click();
+  const panel = page.getByTestId('batch-panel');
+  await expect(panel.locator('#batch-batch-7')).toContainText('interrupted');
+  await expect(panel.locator('#batch-batch-abandoned')).toContainText('interrupted');
+  await expect(panel.locator('#batch-batch-running')).toContainText('running');
+  await expect(panel.getByTestId('batch-red-next')).toContainText('waits for a gate slot');
+  await expect(panel.getByTestId('batch-close-now')).toBeDisabled();
+  await expect(panel.getByTestId('batch-close-unavailable')).toHaveText('No eligible cards to close.');
+  await expect(panel.locator('#batch-batch-7').getByRole('link', { name: /Batch fixture task/ })).toHaveAttribute('href', '#/tasks/AGT-2');
+  await expect(panel.locator('#batch-batch-7').getByRole('link', { name: 'Evidence' }))
+    .toHaveAttribute('href', /run-evidence\?batchId=batch-7&runId=run-7/);
+  await expect(panel.locator('#batch-batch-7').getByRole('link', { name: 'Run log' }))
+    .toHaveAttribute('href', /run-log\?batchId=batch-7&runId=run-7/);
+  await expect(panel.locator('#batch-batch-7').getByText('Phase history')).toBeVisible();
+  await expect(panel.locator('#batch-batch-7').getByText('Oct 11, 2026', { exact: false }).first()).toBeHidden();
+  await panel.locator('#batch-batch-7 summary').click();
+  await expect(panel.locator('#batch-batch-7').getByText('Oct 11, 2026', { exact: false }).first()).toBeVisible();
+  if (!evidence) return;
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const theme of ['light', 'dark'] as const) {
+      await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+      for (const id of ['batch-7', 'batch-abandoned', 'batch-running']) {
+        await panel.locator(`#batch-${id}`).screenshot({ path: nodePath.join(evidence, `batch-status-${id}-${width}-${theme}.png`) });
+      }
+    }
+  }
 });
