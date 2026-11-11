@@ -225,10 +225,8 @@ export class DetailHeaderComponent {
   readonly triageLaneLabel = computed(() => laneLabelFor(this.info().state));
 
   /** Index 0 of the lane's action list when it carries a primary variant. */
-  readonly triagePrimary = computed<TriageButton | null>(() =>
-    this.gateInfrastructurePark() || this.reviewsOnly()
-      ? null : primaryActionFor(this.info().state),
-  );
+  readonly triagePrimary = computed<TriageButton | null>(() => this.gateInfrastructurePark() || this.reviewsOnly()
+    ? null : primaryActionFor(this.info().state));
 
   /**
    * State-dependent presentation for the Human Review acceptance primary. Null
@@ -265,10 +263,8 @@ export class DetailHeaderComponent {
   readonly primaryDecisionRefusal = computed(() => triageDecisionRefusal(this.info(), this.triagePrimary()));
 
   /** Remaining lane actions + always-on Edit/Delete fallbacks. */
-  readonly triageOverflow = computed<TriageButton[]>(() =>
-    this.gateInfrastructurePark() || this.reviewsOnly()
-      ? [] : overflowActionsFor(this.info().state),
-  );
+  readonly triageOverflow = computed<TriageButton[]>(() => this.gateInfrastructurePark() || this.reviewsOnly()
+    ? [] : overflowActionsFor(this.info().state));
 
   /** True when a primary or any overflow action is available. */
   readonly hasTriageActions = computed(

@@ -87,7 +87,7 @@ function mount(opts: {
       opts.followUp == null ? throwError(() => ({ status: 404 })) : of(opts.followUp),
     continueJob: opts.continueJob ?? vi.fn(() => of({ status: 'queued' })),
   };
-  const timelineStub = { events: signal<TaskTimelineEvent[]>(opts.events ?? []) };
+  const timelineStub = { events: signal<TaskTimelineEvent[]>(opts.events ?? []), syncTo: vi.fn() };
 
   TestBed.configureTestingModule({
     imports: [EscalationSummaryComponent],
@@ -129,6 +129,7 @@ describe('EscalationSummaryComponent', () => {
     };
     const fixture = mount({ detail: parked, batchGate: gate });
     const element: HTMLElement = fixture.nativeElement;
+    expect(TestBed.inject(TaskTimelinePollService).syncTo).toHaveBeenCalledWith(parked.info);
     expect(element.querySelector('[data-testid="escalation-action-reissue-escalated"]')).toBeNull();
     expect(element.querySelector('[data-testid="escalation-action-accept-escalated"]')).toBeNull();
     (element.querySelector('[data-testid="escalation-action-retry-gate"]') as HTMLButtonElement).click();

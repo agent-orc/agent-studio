@@ -691,8 +691,8 @@ export class TaskDetailComponent implements OnDestroy {
     this.runTimelinePoll.syncTo(this.detail()?.info ?? null);
   });
 
-  // Clear the previous task's event ledger on navigation. The Timeline tab
-  // starts its own first read when selected and reuses the polled snapshot.
+  // Clear the previous task's event ledger on navigation. The Timeline tab or
+  // escalation summary starts the first read when displayed.
   private readonly taskTimelinePoll = inject(TaskTimelinePollService);
   private readonly taskTimelineEffect = effect(() =>
     this.taskTimelinePoll.prepareTask(this.detail()?.info.taskKey ?? null));

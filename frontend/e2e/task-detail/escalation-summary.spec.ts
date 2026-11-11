@@ -499,7 +499,7 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
   test('shows the latest continued attempt in the parked header', async ({ page }, testInfo) => {
     await openDetail(page, '5e-escalated', true, true);
     await expect(page.getByTestId('escalation-essence')).toContainText(
-      'Latest attempt ended 2026-10-06 04:22 UTC: Push protection rejected the branch.',
+      'Latest attempt ended 2026-10-06 04:22 UTC and parked this card.',
     );
     await shootBothThemes(page, testInfo, 'escalation-latest-attempt');
   });

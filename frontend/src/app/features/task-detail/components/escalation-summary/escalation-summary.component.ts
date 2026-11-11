@@ -110,6 +110,10 @@ export class EscalationSummaryComponent {
   private collapseJobId: string | null = null;
 
   constructor() {
+    // The summary needs the ledger for reissue history and the parked reason
+    // even when the operator has not opened the Timeline tab.
+    effect(() => this.timelinePoll.syncTo(this.detail().info));
+
     // Seed the collapse state whenever the open task changes: the stored
     // per-task preference wins; absent that, the lane picks the default.
     effect(() => {
