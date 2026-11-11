@@ -467,6 +467,19 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
           return route.fulfill({ status: 200, contentType: 'application/json', body: '{"retried":true}' });
         });
       });
+    const parked = page.getByTestId('parked-blocker');
+    await expect(parked).toContainText('The verification gate could not run.');
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        const shot = await parked.screenshot();
+        const name = `gate-infrastructure-park-${width}-${theme}--mocked.png`;
+        await saveShot(testInfo, name, shot);
+        writeFileSync(path.join(SHOTS_DIR, name), shot);
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 960 });
     await expect(page.getByTestId('escalation-action-retry-gate')).toBeVisible();
     await expect(page.getByTestId('escalation-action-disable-batch')).toBeVisible();
     await expect(page.getByTestId('escalation-action-reissue-escalated')).toHaveCount(0);

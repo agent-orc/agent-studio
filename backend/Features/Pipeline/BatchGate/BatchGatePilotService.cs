@@ -3536,8 +3536,7 @@ public sealed partial class BatchGatePilotService
         }
         RecordBatchShadowOutcome(task, pending.ReviewAttemptId, red);
         Lane(pending, "ejected", outcome: laneOutcome ?? (capacity ? "GateCapacity"
-            : reason.StartsWith("GateInfra", StringComparison.Ordinal)
-            ? "GateInfra" : "GateFailed"), reason: reason);
+            : infrastructure ? "GateInfra" : "GateFailed"), reason: reason);
         BatchGateOwnershipStore.ClearIfReviewAttempt(
             movedRed.NewFolderPath ?? task.FolderPath, pending.ReviewAttemptId);
         if (recordInStore)
