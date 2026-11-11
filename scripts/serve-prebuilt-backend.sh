@@ -49,12 +49,24 @@ case "${PW_E2E_PROFILE:-standard}" in
   standard) ;;
   # operator-cli: a fresh networked monolith of its own, so the studio-op spec
   # bootstraps its Owner and API token without sharing first-run state.
-  # networked-https: a fresh networked monolith behind the HTTPS test proxy,
-  # so the browser itself holds the Secure session (AGT-3614).
-  networked-monolith|operator-cli|networked-https)
+  networked-monolith|operator-cli)
     export Security__Profile=networked
     export Security__TrustedProxyAddresses=127.0.0.1
     export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
+    ;;
+  # networked-https: a networked monolith with a second project, so a Product
+  # session bound to the first one proves it never sees the other (AGT-3668).
+  networked-https)
+    export Security__Profile=networked
+    export Security__TrustedProxyAddresses=127.0.0.1
+    export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
+    restricted_repo="${PW_E2E_WORKSPACE}/projects/restricted-fixture"
+    mkdir -p "${restricted_repo}"
+    git -C "${restricted_repo}" init -q
+    export WatchPaths__1__Name='Restricted Fixture'
+    export WatchPaths__1__Path="${restricted_repo}"
+    export WatchPaths__1__RootPath="${restricted_repo}"
+    export WatchPaths__1__RepositoryPath="${restricted_repo}"
     ;;
   recovery)
     recovery_repo="${PW_E2E_WORKSPACE}/recovery-repository"
@@ -91,7 +103,10 @@ case "${PW_E2E_PROFILE:-standard}" in
     export WatchPaths__0__RootPath="${recovery_repo}"
     export WatchPaths__0__RepositoryPath="${recovery_repo}"
     ;;
-  demo|public-demo)
+  # networked-https-demo: the networked-https stack seeded with the demo
+  # cards, so role-scoped card reads (AGT-3669) meet real Ready and Human
+  # Review cards.
+  demo|public-demo|networked-https-demo)
     node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}"
     export WatchPaths__0__Name='Demo App'
     export WatchPaths__0__Path="${PW_E2E_WORKSPACE}/projects/demo-app"
@@ -109,6 +124,11 @@ case "${PW_E2E_PROFILE:-standard}" in
       # This override is scoped to the disposable Playwright backend. The
       # production public-demo rate limit remains unchanged.
       export Security__PublicDemoEdge__RateLimit__PermitLimit=2000
+    fi
+    if [[ "${PW_E2E_PROFILE}" == networked-https-demo ]]; then
+      export Security__Profile=networked
+      export Security__TrustedProxyAddresses=127.0.0.1
+      export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
     fi
     ;;
   first-run)

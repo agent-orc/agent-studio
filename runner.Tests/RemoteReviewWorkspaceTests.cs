@@ -2126,7 +2126,10 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     {
         var (_, subjectSha) = await SeedSubjectBranchWithFileAsync(
             "task/new-spec", "frontend/src/new.spec.ts", "test('new', () => {})");
-        var command = BaselineCommand("printf 'Application bundle generation complete.\\n'", reportPassingTest: false);
+        var command = BaselineCommand(
+            "case \"$PWD\" in *baseline-*) printf 'Total tests: 1\\n';; " +
+            "*) printf '# tests 0\\n';; esac",
+            reportPassingTest: false);
         var (workspace, subject) = Workspace("attempt-candidate-new-spec-no-report", subjectSha, [command], 26223,
             resultRef: "refs/heads/task/new-spec", integrationRef: "refs/heads/main");
         await workspace.PrepareAsync(null!, default);
@@ -2135,6 +2138,49 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Contains("spec file list changed", Assert.Single(evidence.Verdicts).Summary, StringComparison.Ordinal);
         Assert.Equal("ProductFailure",
             ReviewReportDiagnosisPolicy.Normalize(Report(evidence, workspace), subject.Plan).Outcome);
+    }
+
+    [Fact]
+    public async Task Candidate_without_report_after_test_project_change_is_product_finding()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchWithFileAsync(
+            "task/disabled-tests", "backend.Tests.csproj", "<Project />");
+        var command = BaselineCommand("printf 'custom check passed\\n'", reportPassingTest: false);
+        var (workspace, _) = Workspace("attempt-disabled-tests-no-report", subjectSha, [command], 26227,
+            resultRef: "refs/heads/task/disabled-tests", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        var verdict = Assert.Single(evidence.Verdicts);
+        Assert.Equal("block", verdict.Status);
+        Assert.Equal(ReviewTestReportPolicy.MissingReportClassification, verdict.Classification);
+        Assert.Contains("test configuration or runner changed: backend.Tests.csproj", verdict.Summary,
+            StringComparison.Ordinal);
+        Assert.Equal(2, evidence.Commands.Count(item =>
+            item.WorkspaceRole.StartsWith("candidate", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task Zero_test_baseline_retries_and_remains_unavailable()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            "printf '  Failed Product.NewFailure [1 ms]\\n'; exit 1; fi; " +
+            "printf 'No test is available in backend.Tests.dll\\n'",
+            reportPassingTest: false);
+        var (workspace, _) = Workspace("attempt-zero-test-baseline", subjectSha, [command], 26228,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("BaselineUnavailable", exception.Classification);
+        Assert.Equal(2, exception.Evidence!.Commands.Count(item =>
+            item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -2151,7 +2197,10 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             "commit", "-m", "rename spec to helper");
         await GitAsync(seed, "push", "origin", "task/removed-spec");
         var subjectSha = (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
-        var command = BaselineCommand("printf 'Application bundle generation complete.\\n'", reportPassingTest: false);
+        var command = BaselineCommand(
+            "case \"$PWD\" in *baseline-*) printf 'Total tests: 1\\n';; " +
+            "*) printf 'No tests found, exiting with code 0\\n';; esac",
+            reportPassingTest: false);
         var (workspace, subject) = Workspace("attempt-candidate-removed-spec-no-report", subjectSha,
             [command], 26225, resultRef: "refs/heads/task/removed-spec", integrationRef: "refs/heads/main");
         await workspace.PrepareAsync(null!, default);
@@ -2540,6 +2589,105 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         var normalized = ReviewReportDiagnosisPolicy.Normalize(report, subject.Plan);
         Assert.Equal("ReviewInfra", normalized.Outcome);
         Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, normalized.FailureClassification);
+    }
+
+    private const string VitestFailure =
+        "|frontend| src/app/agt3650-flaky-fixture.spec.ts > ReviewFlakyFixture > nested group > fails only on the first run (AGT-3650)";
+
+    private static string RepeatFixture(string name)
+        => Path.Combine(AppContext.BaseDirectory, "Fixtures", "review-repeats", name);
+
+    /// <summary>
+    /// A Vitest step whose first run fails one test and whose clean repeat
+    /// prints <paramref name="repeat"/> (real Vitest output). The repeat
+    /// shell honours the reporter switch the way frontend/vitest.config.ts does.
+    /// </summary>
+    private async Task<(RemoteReviewWorkspace Workspace, ReviewCommandDto Command)> VitestFlakeAsync(
+        string attemptId, int portBase, string repeat)
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var marker = Path.Combine(_root, attemptId + "-first-run-seen");
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            $"if test ! -f '{marker}'; then touch '{marker}'; " +
+            $"cat '{RepeatFixture("vitest-default-failed.stdout.txt")}'; " +
+            $"cat '{RepeatFixture("vitest-default-failed.stderr.txt")}' >&2; exit 1; fi; " +
+            $"{repeat}; fi; exit 0");
+        var (workspace, _) = Workspace(attemptId, subjectSha, [command], portBase,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+        return (workspace, command);
+    }
+
+    /// <summary>
+    /// AGT-3650 (AGT-3641 review, 2026-11-10): a clean repeat that passed was
+    /// review infrastructure because its output never named the failed test.
+    /// The repeat asks Vitest for its verbose reporter, sees the failed test
+    /// pass by name, and records test-name proof.
+    /// </summary>
+    [Fact]
+    public async Task Vitest_flake_whose_verbose_repeat_names_the_failed_test_is_not_review_infrastructure()
+    {
+        var (workspace, _) = await VitestFlakeAsync("attempt-vitest-verbose", 26650,
+            "if [ \"$AGENT_STUDIO_VITEST_REPORTER\" = verbose ]; " +
+            $"then cat '{RepeatFixture("vitest-verbose-passed.stdout.txt")}'; " +
+            $"else cat '{RepeatFixture("vitest-default-passed.stdout.txt")}'; fi");
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        var candidate = CandidateVerification(evidence);
+        var repeat = Assert.Single(evidence.Commands, item => item.Phase == "clean-repeat");
+        var verdict = Assert.Single(evidence.Verdicts);
+        Assert.Equal([VitestFailure], candidate.InitialFailures);
+        Assert.Empty(candidate.NewFailures!);
+        Assert.Equal(0, repeat.ExitCode);
+        Assert.Equal(ReviewRepeatObservation.TestNames, repeat.RepeatObservation);
+        Assert.Null(repeat.RepeatFilter);
+        Assert.False(candidate.Diagnosis!.ChargesCard);
+        Assert.Equal("pass", verdict.Status);
+        Assert.Contains($"failed-tests={VitestFailure}", verdict.Summary, StringComparison.Ordinal);
+        var report = Report(evidence, workspace);
+        Assert.True(ReviewRepeatFilterPolicy.IsValid(repeat, report.Commands));
+        Assert.True(ReviewFlakeEvidencePolicy.HasPassingRepeat(candidate, report));
+    }
+
+    /// <summary>
+    /// A repeat whose Vitest config ignores the reporter switch prints file
+    /// names only. Every failed test's file passed, so the review uses that
+    /// file-level evidence and records it as such.
+    /// </summary>
+    [Fact]
+    public async Task Vitest_flake_whose_default_repeat_passes_the_failed_file_records_file_level_proof()
+    {
+        var (workspace, _) = await VitestFlakeAsync("attempt-vitest-default", 26652,
+            $"cat '{RepeatFixture("vitest-default-passed.stdout.txt")}'");
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        var candidate = CandidateVerification(evidence);
+        var repeat = Assert.Single(evidence.Commands, item => item.Phase == "clean-repeat");
+        Assert.Equal([VitestFailure], candidate.InitialFailures);
+        Assert.Equal(ReviewRepeatObservation.TestFiles, repeat.RepeatObservation);
+        Assert.False(candidate.Diagnosis!.ChargesCard);
+        Assert.Equal("pass", Assert.Single(evidence.Verdicts).Status);
+        Assert.True(ReviewFlakeEvidencePolicy.HasPassingRepeat(candidate, Report(evidence, workspace)));
+    }
+
+    /// <summary>
+    /// A repeat that exits zero without running the failed test's file
+    /// proves nothing about it and stays review infrastructure.
+    /// </summary>
+    [Fact]
+    public async Task Vitest_repeat_that_does_not_run_the_failed_test_remains_review_infrastructure()
+    {
+        var (workspace, _) = await VitestFlakeAsync("attempt-vitest-unrun", 26654,
+            $"cat '{RepeatFixture("vitest-default-other-file.stdout.txt")}'");
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("CleanRepeatUnavailable", exception.Classification);
+        Assert.Contains(VitestFailure, exception.Message, StringComparison.Ordinal);
     }
 
     [Theory]
