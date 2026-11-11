@@ -3205,6 +3205,13 @@
           <td>The probe ordered waiting cards by park time, no UI read <code>/api/cause-breakers</code>, the CURRENT line ignored the cause-wait marker, and a plain move of a code-free intervention card hit the content check meant for deliveries.</td>
           <td>The breaker cleared only after the first card was deleted. The CURRENT line now says "Held behind &lt;key&gt;: &lt;cause&gt;" with a link, the intervention card offers "Re-check now", the probe takes the newest waiting delivery or the card the owner chose, and the owner's Accepted move on a code-free intervention completes as a recorded decision that closes the breaker.</td>
         </tr>
+        <tr id="case-gate-host-tunnel-outage">
+          <td>2026-11-11</td>
+          <td><code>AGT-3746</code><br><span class="small">gate-host-tunnel-outage</span></td>
+          <td>No CLI crashed. From 11:30:08Z to 11:33:53Z the SSH tunnel to the remote gate host refused connections. Every gate run in flight ended with <code>Remote gate transport failure after bounded retries: ssh exited 255</code>, and all 14 members, whose reviews had passed, were parked at 11:33Z. The operator moved them back by hand.</td>
+          <td>A gate host transport failure was settled as the members' red gate: the batch paused, and each member's per-task gate escalated it on its own.</td>
+          <td>The observed terminal was <span class="lane">5e-escalated</span> for 14 cards. <code>GateHostOutagePolicy</code> now classifies such a run as gate host unavailability. Members stay in Auto Review on their pool or active per-task marker, one run probes the host with backoff (30 s up to 5 min), and the gate state reads "gate host unreachable since &lt;time&gt;; waiting". The first run that reaches the host ends the outage with one <code>gate-host-outage</code> Operations event naming start, end and the affected runs. An outage longer than <code>RemoteGate:HostOutageEscalateMinutes</code> (default 60) escalates once for the gate, never per member. A run with failing items is still the members' red.</td>
+        </tr>
       </tbody>
     </table>
 

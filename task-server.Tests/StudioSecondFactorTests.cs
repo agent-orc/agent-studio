@@ -22,6 +22,7 @@ public sealed class StudioSecondFactorTests
         var bootstrap = await store.BootstrapStudioAuthAsync(new StudioBootstrapRequest("owner", password), false, default);
         var secret = await store.BeginStudioTotpAsync(bootstrap.SessionToken, default);
         await store.ConfirmStudioTotpAsync(bootstrap.SessionToken, SecondFactorCodes.CurrentTotp(secret, clock.Now.UtcDateTime), default);
+        clock.Now = clock.Now.AddSeconds(30);
         var ownerId = bootstrap.Status.User!.UserId;
         Assert.Equal("step-up-required", (await Assert.ThrowsAsync<StudioAuthenticationException>(() =>
             store.RevokeStudioSessionsAsync(bootstrap.SessionToken, ownerId, null, default))).Code);
@@ -79,6 +80,7 @@ public sealed class StudioSecondFactorTests
         Assert.True(bootstrap.Status.SecondFactorEnrollmentRequired);
         var secret = await store.BeginStudioTotpAsync(bootstrap.SessionToken, default);
         var codes = await store.ConfirmStudioTotpAsync(bootstrap.SessionToken, SecondFactorCodes.CurrentTotp(secret, clock.Now.UtcDateTime), default);
+        clock.Now = clock.Now.AddSeconds(30);
 
         var missing = await Assert.ThrowsAsync<StudioAuthenticationException>(() =>
             store.LoginStudioAsync(new StudioLoginRequest("owner", password), default, "client"));
@@ -98,6 +100,7 @@ public sealed class StudioSecondFactorTests
             store.LoginStudioAsync(new StudioLoginRequest("owner", password, codes[0]), default, "client"))).Code);
         await store.RevokeStudioSessionsAsync(bootstrap.SessionToken, null, null, default);
         Assert.False((await store.GetStudioAuthStatusAsync(recoveryLogin.SessionToken, default)).Authenticated);
+        clock.Now = clock.Now.AddSeconds(30);
         var refreshed = await store.LoginStudioAsync(new StudioLoginRequest("owner", password,
             SecondFactorCodes.CurrentTotp(secret, clock.Now.UtcDateTime)), default, "client");
         clock.Now = clock.Now.AddHours(8).AddSeconds(1);
@@ -112,6 +115,37 @@ public sealed class StudioSecondFactorTests
         }
         clock.Now = clock.Now.AddHours(7).AddSeconds(1);
         Assert.False((await store.GetStudioAuthStatusAsync(longLived.SessionToken, default)).Authenticated);
+    }
+
+    [Fact]
+    public async Task Totp_step_is_one_use_for_login_and_step_up_after_store_reopens()
+    {
+        using var temp = new TempDirectory();
+        var clock = new MutableClock(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero));
+        var options = Options.Create(new TaskServerOptions { DataDirectory = temp.Path });
+        var store = new TaskServerStore(options, clock);
+        await store.InitializeAsync();
+        var password = "owner pass phrase " + Guid.NewGuid().ToString("N");
+        var bootstrap = await store.BootstrapStudioAuthAsync(new StudioBootstrapRequest("owner", password), false, default);
+        var secret = await store.BeginStudioTotpAsync(bootstrap.SessionToken, default);
+        await store.ConfirmStudioTotpAsync(bootstrap.SessionToken,
+            SecondFactorCodes.CurrentTotp(secret, clock.Now.UtcDateTime), default);
+        clock.Now = clock.Now.AddSeconds(30);
+        var code = SecondFactorCodes.CurrentTotp(secret, clock.Now.UtcDateTime);
+        var login = await store.LoginStudioAsync(new StudioLoginRequest("owner", password, code), default, "client");
+
+        store = new TaskServerStore(options, clock);
+        await store.InitializeAsync();
+        Assert.Equal("invalid-second-factor", (await Assert.ThrowsAsync<StudioAuthenticationException>(() =>
+            store.LoginStudioAsync(new StudioLoginRequest("owner", password, code), default, "client"))).Code);
+        Assert.Equal("invalid-second-factor", (await Assert.ThrowsAsync<StudioAuthenticationException>(() =>
+            store.VerifyStudioStepUpAsync(login.SessionToken, code, default))).Code);
+
+        clock.Now = clock.Now.AddSeconds(30);
+        await store.VerifyStudioStepUpAsync(login.SessionToken,
+            SecondFactorCodes.CurrentTotp(secret, clock.Now.UtcDateTime), default);
+        Assert.Equal("invalid-second-factor", (await Assert.ThrowsAsync<StudioAuthenticationException>(() =>
+            store.LoginStudioAsync(new StudioLoginRequest("owner", password, code), default, "client"))).Code);
     }
 
     [Fact]
