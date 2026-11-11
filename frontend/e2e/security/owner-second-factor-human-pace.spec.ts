@@ -43,7 +43,8 @@ function wrongCode(secret: string): string {
 }
 
 async function capture(page: Page, name: string): Promise<void> {
-  const mask = [page.getByTestId('totp-secret'), page.getByTestId('totp-link'), page.getByTestId('totp-qr'), page.getByTestId('factor-recovery-codes')];
+  const mask = [page.getByTestId('totp-secret'), page.getByTestId('totp-link'), page.getByTestId('totp-qr'),
+    page.getByTestId('factor-recovery-codes'), page.getByLabel('Authenticator code')];
   await setTheme(page, 'light');
   await page.screenshot({ path: join(resultDir, `${name}-light.png`), fullPage: true, mask });
   await setTheme(page, 'dark');
