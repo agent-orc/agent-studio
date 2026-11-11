@@ -2123,6 +2123,7 @@ export class TaskService {
     mode?: ContinueMode,
     modeOverride?: string,
     reason?: string,
+    baseRef?: string,
   ) {
     const body: {
       prompt: string;
@@ -2132,6 +2133,7 @@ export class TaskService {
       mode?: ContinueMode;
       modeOverride?: string;
       reason?: string;
+      baseRef?: string;
     } = { prompt };
     if (model) body.model = model;
     if (cliType) body.cliType = cliType;
@@ -2139,6 +2141,8 @@ export class TaskService {
     if (mode) body.mode = mode;
     if (modeOverride) body.modeOverride = modeOverride;
     if (reason) body.reason = reason;
+    // AGT-3483: one of the card's own result refs; the backend refuses any other.
+    if (baseRef) body.baseRef = baseRef;
     return this.http.post<ContinueTaskResponse>(
       `${this.taskV1Url(jobId)}/continue`,
       body,
