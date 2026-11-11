@@ -29,6 +29,7 @@ import { SectionHeaderComponent } from '../../components/section-header/section-
 import { CountBadgeComponent } from '../../components/count-badge/count-badge.component';
 import { ListRowComponent } from '../../components/list-row/list-row.component';
 import { ClientService } from '../../services/client.service';
+import { AuthSessionState, PRODUCT_NO_PROJECT_MESSAGE } from '../../services/auth.service';
 import { FeatureFlagsService } from '../../services/feature-flags.service';
 import { projectIdentity } from '../../services/project-identity.util';
 import { TaskSelectionService } from '../task-detail/runtime';
@@ -67,6 +68,7 @@ import { ExplorerWorkbenchStateService } from './services/explorer-workbench-sta
 import { buildProjectSidebarRows, type ProjectSidebarRow } from './studio-shell.project-rows';
 import { StudioTab, studioTabKey } from './studio-shell.types';
 import { titleFromDocumentPath, truncateTabTitle } from './studio-shell.tab-labels';
+import { requestErrorMessage } from './studio-shell.request-error';
 import { ALL_PROJECTS_BOARD_NAME, taskTabProjectScope } from './services/task-tab-scope';
 import { GlobalSearchComponent } from './components/global-search/global-search.component';
 import { OrchestratorFeedStore } from '../orchestrator';
@@ -163,6 +165,7 @@ export class StudioShellComponent {
   private readonly projectLookup = inject(ProjectLookupService);
   private readonly themeService = inject(ThemeService);
   readonly orchestratorFeed = inject(OrchestratorFeedStore);
+  private readonly authSession = inject(AuthSessionState);
 
   /** Tab list + active selection re-exposed for the template. */
   readonly tabs = this.tabState.tabs;
@@ -396,6 +399,12 @@ export class StudioShellComponent {
   readonly registryProjects = signal<readonly RegistryProjectSummary[]>([]);
   readonly registryWorkspacesLoading = signal(false);
   readonly registryWorkspacesError = signal<string | null>(null);
+  /** True once a registry load answered, with data or an error. */
+  private readonly registryLoaded = signal(false);
+  readonly productNoProjectMessage = PRODUCT_NO_PROJECT_MESSAGE;
+  /** AGT-3668: one sentence instead of an empty tree and picker; a Product session whose registry lists nothing also counts. */
+  readonly productWithoutProject = computed(() => this.authSession.withoutProject() || (this.authSession.productSession()
+    && this.registryLoaded() && !this.registryWorkspacesLoading() && !this.registryProjects().length && !this.projectRows().length));
   /** Ids waiting on an Explorer-tree registry mutation (rename / delete), used
    *  to disable the affected row while the request is in flight. Registry
    *  *management* moved to the settings view; these stay for the tree's own
@@ -446,10 +455,12 @@ export class StudioShellComponent {
         this.registryProjects.set(projects ?? []);
         this.projectLookup.setWorkspaces(ws ?? []);
         this.registryWorkspacesLoading.set(false);
+        this.registryLoaded.set(true);
       },
       error: (err: unknown) => {
-        this.registryWorkspacesError.set(this.errMsg(err));
+        this.registryWorkspacesError.set(requestErrorMessage(err));
         this.registryWorkspacesLoading.set(false);
+        this.registryLoaded.set(true);
       },
     });
   }
@@ -470,20 +481,9 @@ export class StudioShellComponent {
       next: () => { this.registryProjectBusyId.set(null); this.reloadRegistryWorkspaces(); },
       error: (err: unknown) => {
         this.registryProjectBusyId.set(null);
-        this.registryWorkspacesError.set(this.errMsg(err));
+        this.registryWorkspacesError.set(requestErrorMessage(err));
       },
     });
-  }
-
-  private errMsg(err: unknown): string {
-    if (err && typeof err === 'object' && 'error' in err) {
-      const inner = (err as { error?: unknown }).error;
-      if (inner && typeof inner === 'object' && 'error' in inner)
-        return String((inner as { error?: unknown }).error);
-      if (typeof inner === 'string') return inner;
-    }
-    if (err instanceof Error) return err.message;
-    return 'Request failed';
   }
 
   private lastAutoExpandedNavigationPath: string | null = null;
@@ -847,7 +847,7 @@ export class StudioShellComponent {
       },
       error: (err: unknown) => {
         this.projectDrag.movingProjectId.set(null);
-        this.projectDrag.moveErrorMessage.set(this.errMsg(err));
+        this.projectDrag.moveErrorMessage.set(requestErrorMessage(err));
       },
     });
   }
@@ -863,7 +863,7 @@ export class StudioShellComponent {
       next: () => { this.registryWorkspaceBusyId.set(null); this.reloadRegistryWorkspaces(); },
       error: (err: unknown) => {
         this.registryWorkspaceBusyId.set(null);
-        this.registryWorkspacesError.set(this.errMsg(err));
+        this.registryWorkspacesError.set(requestErrorMessage(err));
       },
     });
   }
@@ -918,7 +918,7 @@ export class StudioShellComponent {
       },
       error: (err: unknown) => {
         this.registryProjectBusyId.set(null);
-        const msg = this.errMsg(err);
+        const msg = requestErrorMessage(err);
         this.registryWorkspacesError.set(msg);
         this.notifications.error(`Failed to delete project "${label}": ${msg}`);
       },

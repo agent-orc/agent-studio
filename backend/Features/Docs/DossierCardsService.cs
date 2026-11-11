@@ -7,7 +7,7 @@ public sealed class DossierCardsService(TaskScannerService scanner)
 {
     public DossierCardList List(string projectName, WorkbenchListItem dossier)
     {
-        return Project(projectName, dossier, scanner.ScanAllJobsWithArchive());
+        return Project(projectName, dossier, scanner.ScanAllJobsWithArchiveForBackgroundIndex());
     }
 
     public static DossierCardList Project(string projectName, WorkbenchListItem dossier,
@@ -25,7 +25,14 @@ public sealed class DossierCardsService(TaskScannerService scanner)
                 task.Dossier?.Environments ?? [],
                 task.Dossier?.Section, task.Dossier?.Decision, task.Dossier?.ImplementationIndex))
             .ToArray();
-        var implemented = Enumerable.Range(0, dossier.ImplementationTasks.Count + dossier.ImplementationTaskKeys.Length)
+        var declaredSlices = dossier.ImplementationTasks.Count + dossier.ImplementationTaskKeys.Length;
+        var spawnedSlices = (dossier.Decision?.SpawnedTaskKeys ?? [])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(key => assigned.FirstOrDefault(task => string.Equals(task.Key, key, StringComparison.OrdinalIgnoreCase)))
+            .Where(task => task is not null && task.Dossier?.ImplementationIndex is null)
+            .Select(task => task!)
+            .ToArray();
+        var implemented = Enumerable.Range(0, declaredSlices)
             .Count(index =>
             {
                 var slice = assigned.Where(task => task.Dossier?.ImplementationIndex == index).ToArray();
@@ -33,9 +40,9 @@ public sealed class DossierCardsService(TaskScannerService scanner)
                 var counted = implementation.Length > 0 ? implementation : slice;
                 return counted.Length > 0 && counted.All(task =>
                     task.State is TaskStates.Completed or TaskStates.Archive);
-            });
+            }) + spawnedSlices.Count(task => task.State is TaskStates.Completed or TaskStates.Archive);
         return new DossierCardList(projectName, dossier.Key, dossier.EntryPath,
-            dossier.ImplementationTasks.Count + dossier.ImplementationTaskKeys.Length, implemented, cards);
+            declaredSlices + spawnedSlices.Length, implemented, cards);
     }
 
     /// <summary>Called on writable catalogue discovery; existing explicit membership always wins.</summary>
@@ -92,6 +99,12 @@ public static class DossierBackfillPolicy
 
             foreach (var task in tasks.Where(task => item.Key != null
                          && task.References.Workbenches.Contains(item.Key, StringComparer.OrdinalIgnoreCase)))
+                Claim(task, primary);
+
+            foreach (var task in tasks.Where(task => TaskModes.IsConcept(task.Mode)
+                         && !string.IsNullOrWhiteSpace(task.FolderPath)
+                         && string.Equals(AgentStudio.Tasks.ConceptDossierContract.Read(task.FolderPath).RepoRelativePath,
+                             item.EntryPath, StringComparison.OrdinalIgnoreCase)))
                 Claim(task, primary);
 
             foreach (var sourceKey in item.SourceTaskKeys)
