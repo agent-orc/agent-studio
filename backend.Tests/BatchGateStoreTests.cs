@@ -11,6 +11,28 @@ namespace AgentStudio.Tests;
 public sealed class BatchGateStoreTests : IDisposable
 {
     [Fact]
+    public void State_keeps_excluded_overdue_member_out_of_proposals_and_uses_each_deadline()
+    {
+        _store.Enqueue(new BatchGatePendingRecord("review-a", Subject("task-a", 0),
+            _root, _root, _root, "direct-merge", "task", Now));
+        _store.Enqueue(new BatchGatePendingRecord("review-b", Subject("task-b", 25),
+            _root, _root, _root, "direct-merge", "task", Now));
+        _store.AppendPlanDecision("project", new BatchPlanDecision("wait", "waiting", Now.AddMinutes(30),
+            [], 2, [], ExcludedMembers: [new BatchPlanExcludedMember("task-a", "MissingResultSha")]));
+        var settings = new BatchGateFormationOptions(Enabled: true, DeadlineMinutes: 30);
+
+        JsonElement State(DateTimeOffset at) => JsonSerializer.SerializeToElement(
+            BatchGateStateSnapshotReader.Read(_store, "project", settings, now: at),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("plan");
+
+        var early = State(Now.AddMinutes(40));
+        Assert.Empty(early.GetProperty("proposedMembers").EnumerateArray());
+        Assert.Contains("task-a: excluded by MissingResultSha", early.GetProperty("reason").GetString());
+        var later = State(Now.AddMinutes(60));
+        Assert.Equal("task-b", Assert.Single(later.GetProperty("proposedMembers").EnumerateArray()).GetString());
+    }
+
+    [Fact]
     public void State_reports_capacity_and_current_slot_use_together()
     {
         var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
