@@ -1595,7 +1595,7 @@ public sealed partial class AttemptAuthorityService
     /// <summary>
     /// Returns whether another infrastructure retry may be created for the
     /// immutable subject owned by <paramref name="attemptId"/>. The initial
-    /// ReviewAttempt is not a retry; at most three linked retry attempts may be
+    /// ReviewAttempt is not a retry; at most two linked retry attempts may be
     /// scheduled after it.
     /// </summary>
     public bool HasReviewInfrastructureRetryBudget(string attemptId)

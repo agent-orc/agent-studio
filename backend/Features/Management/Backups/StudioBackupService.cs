@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using AgentStudio.Registry;
 using AgentStudio.Secrets;
+using AgentStudio.Security;
 
 namespace AgentStudio.Management;
 
@@ -49,7 +50,9 @@ public sealed record BackupOverview(
 /// One operation runs at a time. The management commands
 /// <c>backup-create</c>, <c>restore-verify</c>, <c>backup-retention</c> and
 /// <c>backup-upload</c> and the <see cref="BackupHostedService"/> schedule all
-/// go through here.
+/// go through here. Each create, upload, verification and retention writes a
+/// <see cref="BackupAudit"/> record to the control plane audit chain with the
+/// actor of its trigger and the outcome (AGT-3737).
 /// </summary>
 public sealed class StudioBackupService
 {
@@ -60,6 +63,7 @@ public sealed class StudioBackupService
     private readonly TimeProvider _clock;
     private readonly ILogger<StudioBackupService>? _logger;
     private readonly Func<BackupOptions, IBackupTarget?> _targets;
+    private readonly ControlPlaneAuditLog? _audit;
     private readonly SemaphoreSlim _run = new(1, 1);
 
     public StudioBackupService(
@@ -70,8 +74,10 @@ public sealed class StudioBackupService
         ProjectRegistry? projects = null,
         ILogger<StudioBackupService>? logger = null,
         IHttpClientFactory? http = null,
-        Func<BackupOptions, IBackupTarget?>? targets = null)
+        Func<BackupOptions, IBackupTarget?>? targets = null,
+        ControlPlaneAuditLog? audit = null)
     {
+        _audit = audit;
         _configuration = configuration;
         _pause = pause;
         _clock = clock;
@@ -114,15 +120,15 @@ public sealed class StudioBackupService
         finally { _run.Release(); }
     }
 
-    public async Task<int> UploadPendingAsync(bool force, CancellationToken cancellationToken)
+    public async Task<int> UploadPendingAsync(bool force, string trigger, CancellationToken cancellationToken)
     {
         await _run.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try { return await UploadLockedAsync(force, cancellationToken).ConfigureAwait(false); }
+        try { return await UploadLockedAsync(force, trigger, cancellationToken).ConfigureAwait(false); }
         finally { _run.Release(); }
     }
 
     /// <summary>Keeps the newest <paramref name="keep"/> local archives. Retention at the off-host target is configured there.</summary>
-    public (int Matched, int Removed) ApplyRetention(int? keep, bool dryRun)
+    public (int Matched, int Removed) ApplyRetention(int? keep, bool dryRun, string trigger)
     {
         var options = Options;
         var count = Math.Clamp(keep ?? options.RetentionCount, 1, 500);
@@ -133,9 +139,19 @@ public sealed class StudioBackupService
         try
         {
             surplus = catalog.List().Skip(count).ToArray();
-            foreach (var record in surplus) catalog.Delete(record.Id);
-            if (surplus.Length > 0 || catalog.List().Count > 0)
-                catalog.WriteState(catalog.ReadState() with { LastRetentionAt = _clock.GetUtcNow().ToString("O") });
+            try
+            {
+                foreach (var record in surplus) catalog.Delete(record.Id);
+                if (surplus.Length > 0 || catalog.List().Count > 0)
+                    catalog.WriteState(catalog.ReadState() with { LastRetentionAt = _clock.GetUtcNow().ToString("O") });
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Audit(BackupAudit.Record(trigger, BackupAudit.Retention, BackupAudit.Failed, null, ex.Message,
+                    new { keep = count, configured = options.RetentionCount }));
+                throw;
+            }
+            AuditRetention(trigger, count, options.RetentionCount, surplus);
             return (surplus.Length, surplus.Length);
         }
         finally { _run.Release(); }
@@ -150,20 +166,20 @@ public sealed class StudioBackupService
         var catalog = new BackupCatalog(options.Directory);
         if (BackupSchedulePolicy.BackupDue(_clock.GetUtcNow(), options, catalog.ReadState(), catalog.List().FirstOrDefault()))
         {
-            try { await CreateAsync("schedule", cancellationToken).ConfigureAwait(false); }
+            try { await CreateAsync(BackupAudit.Schedule, cancellationToken).ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger?.LogError("backup-scheduled-run-failed {Reason}", ex.Message);
             }
         }
-        try { await UploadPendingAsync(force: false, cancellationToken).ConfigureAwait(false); }
+        try { await UploadPendingAsync(force: false, BackupAudit.Schedule, cancellationToken).ConfigureAwait(false); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger?.LogError("backup-upload-failed {Reason}", ex.Message);
         }
         if (BackupSchedulePolicy.VerifyDue(_clock.GetUtcNow(), options, catalog.ReadState(), NewestGood(catalog.List())))
         {
-            try { await VerifyAsync(null, "schedule", cancellationToken).ConfigureAwait(false); }
+            try { await VerifyAsync(null, BackupAudit.Schedule, cancellationToken).ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger?.LogError("backup-scheduled-verification-failed {Reason}", ex.Message);
@@ -306,10 +322,16 @@ public sealed class StudioBackupService
                 LastRun = new BackupRunRecord(started.ToString("O"), trigger, "succeeded", id, null, watch.ElapsedMilliseconds),
             });
             _logger?.LogInformation("backup-created {BackupId} {SizeBytes} {Files}", record.Id, record.SizeBytes, record.FileCount);
+            Audit(BackupAudit.Record(trigger, BackupAudit.Create, BackupAudit.Succeeded, record.Id,
+                $"Created encrypted backup {record.Id} ({record.FileCount} files, {record.SizeBytes} bytes).",
+                new { record.FileCount, record.SizeBytes, record.Sha256, durationMilliseconds = watch.ElapsedMilliseconds }));
             var surplus = catalog.List().Skip(options.RetentionCount).ToArray();
             foreach (var old in surplus) catalog.Delete(old.Id);
             if (surplus.Length > 0)
+            {
                 catalog.WriteState(catalog.ReadState() with { LastRetentionAt = _clock.GetUtcNow().ToString("O") });
+                AuditRetention(trigger, options.RetentionCount, options.RetentionCount, surplus);
+            }
             return record;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -325,6 +347,8 @@ public sealed class StudioBackupService
             {
                 _logger?.LogError("backup-state-write-failed {Reason}", stateFailure.Message);
             }
+            Audit(BackupAudit.Record(trigger, BackupAudit.Create, BackupAudit.Failed, id, ex.Message,
+                new { code = (ex as BackupException)?.Code, durationMilliseconds = watch.ElapsedMilliseconds }));
             throw;
         }
     }
@@ -335,8 +359,16 @@ public sealed class StudioBackupService
         var catalog = new BackupCatalog(options.Directory);
         var records = catalog.List();
         var record = backupId is { Length: > 0 }
-            ? records.FirstOrDefault(item => item.Id == backupId) ?? throw new BackupException("backup-not-found", $"Backup {backupId} does not exist.")
-            : NewestGood(records) ?? throw new BackupException("backup-not-found", "No backup exists to verify.");
+            ? records.FirstOrDefault(item => item.Id == backupId)
+            : NewestGood(records);
+        if (record is null)
+        {
+            var missing = new BackupException("backup-not-found",
+                backupId is { Length: > 0 } ? $"Backup {backupId} does not exist." : "No backup exists to verify.");
+            Audit(BackupAudit.Record(trigger, BackupAudit.Verify, BackupAudit.Failed, backupId, missing.Message,
+                new { code = missing.Code }));
+            throw missing;
+        }
         var started = _clock.GetUtcNow();
         var watch = System.Diagnostics.Stopwatch.StartNew();
         var staging = Path.Combine(catalog.StagingDirectory, "restore-" + record.Id);
@@ -377,10 +409,16 @@ public sealed class StudioBackupService
                 verification.Outcome == "verified" ? null : verification.Detail, watch.ElapsedMilliseconds),
         });
         _logger?.LogInformation("backup-verified {BackupId} {Outcome}", record.Id, verification.Outcome);
+        Audit(BackupAudit.Record(trigger, BackupAudit.Verify,
+            verification.Outcome == "verified" ? BackupAudit.Succeeded : BackupAudit.Failed, record.Id,
+            verification.Outcome == "verified"
+                ? $"Restore verification of {record.Id}: {verification.Detail}"
+                : $"Restore verification of {record.Id} failed: {verification.Detail}",
+            new { verification.RestoredFiles, durationMilliseconds = watch.ElapsedMilliseconds }));
         return verification;
     }
 
-    private async Task<int> UploadLockedAsync(bool force, CancellationToken cancellationToken)
+    private async Task<int> UploadLockedAsync(bool force, string trigger, CancellationToken cancellationToken)
     {
         var options = Options;
         if (!options.Configured) return 0;
@@ -405,6 +443,9 @@ public sealed class StudioBackupService
                 });
                 uploaded++;
                 _logger?.LogInformation("backup-uploaded {BackupId} {Target}", record.Id, target.Kind);
+                Audit(BackupAudit.Record(trigger, BackupAudit.Upload, BackupAudit.Succeeded, record.Id,
+                    $"Copied {record.Id} to the {target.Kind} target {target.Description}.",
+                    new { target = target.Kind, attempts }));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -413,10 +454,32 @@ public sealed class StudioBackupService
                     Upload = new BackupUploadRecord(target.Description, "failed", null, attempt, ex.Message, attempts),
                 });
                 _logger?.LogError("backup-upload-failed {BackupId} {Reason}", record.Id, ex.Message);
+                Audit(BackupAudit.Record(trigger, BackupAudit.Upload, BackupAudit.Failed, record.Id,
+                    $"Copy of {record.Id} to the {target.Kind} target failed: {ex.Message}",
+                    new { target = target.Kind, attempts }));
             }
         }
         return uploaded;
     }
+
+    /// <summary>
+    /// Appends a backup record to the control plane audit chain. A write
+    /// failure is logged and does not undo the backup operation it describes.
+    /// </summary>
+    public void Audit(ControlPlaneAuditRecord record)
+    {
+        if (_audit is null) return;
+        try { _audit.Append(record); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger?.LogError("backup-audit-write-failed {Operation} {Reason}", record.Operation, ex.Message);
+        }
+    }
+
+    private void AuditRetention(string trigger, int keep, int configured, IReadOnlyList<BackupRecord> removed)
+        => Audit(BackupAudit.Record(trigger, BackupAudit.Retention, BackupAudit.Succeeded, null,
+            $"Removed {removed.Count} local {(removed.Count == 1 ? "backup" : "backups")}; newest {keep} retained (configured {configured}).",
+            new { keep, configured, removed = removed.Select(item => item.Id).ToArray() }));
 
     /// <summary>The newest archive whose verification did not fail.</summary>
     public static BackupRecord? NewestGood(IReadOnlyList<BackupRecord> records)
