@@ -56,8 +56,11 @@ describe('BackupStatusPanelComponent', () => {
     expect(host.querySelector('[data-testid="operations-backups-size"]')?.textContent).toContain('3.0 MB');
     expect(host.querySelector('[data-testid="operations-backups-verification"]')?.textContent).toContain('Verified');
     expect(host.querySelector('[data-testid="operations-backups-offhost"]')?.textContent).toContain('Copied');
+    expect(host.querySelector('[data-testid="operations-backups-offhost-id"]')?.textContent).toContain('studio-backup-20261109T060000Z-abc123');
     expect(host.querySelector('[data-testid="operations-backups-offhost"]')?.textContent).toContain('sftp://studio@backup.example');
     expect(host.querySelector('[data-testid="operations-backups-warnings"]')).toBeNull();
+    expect(host.querySelector('[data-testid="operations-backups-key-id"]')?.textContent).toContain('a1b2c3d4e5f60718');
+    expect(host.querySelector('[data-testid="operations-backups-secret-key-id"]')?.textContent).toContain('0011223344556677');
   });
 
   it('renders the stale warning when the newest good backup is older than the threshold', async () => {
@@ -75,7 +78,7 @@ describe('BackupStatusPanelComponent', () => {
 
   it('says backups are off when no key is configured', async () => {
     const host = await render(overview({
-      state: 'not-configured', configured: false, lastGood: null, lastGoodAgeHours: null, lastVerification: null,
+      state: 'not-configured', configured: false, keyId: null, secretKeyId: null, lastGood: null, lastGoodAgeHours: null, lastVerification: null,
       offHost: { kind: 'none', target: null, state: 'not-configured', lastUploadedId: null, lastUploadedAt: null, lastError: null },
       warnings: [{ code: 'backup-not-configured', severity: 'warning', message: 'Backups are off: no backup key is configured (Backup:KeyFile). See the backup runbook.' }],
     }));
@@ -83,6 +86,8 @@ describe('BackupStatusPanelComponent', () => {
     expect(host.textContent).toContain('Backups off');
     expect(host.querySelector('[data-testid="operations-backups-last-good"]')?.textContent).toContain('None');
     expect(host.querySelector('[data-testid="operations-backups-verification"]')?.textContent).toContain('Not run yet');
+    expect(host.querySelector('[data-testid="operations-backups-key-id"]')?.textContent).toContain('None');
+    expect(host.querySelector('[data-testid="operations-backups-secret-key-id"]')?.textContent).toContain('None');
   });
 
   it('hides itself for accounts without the management role', async () => {

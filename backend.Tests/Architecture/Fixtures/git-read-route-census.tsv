@@ -21,6 +21,7 @@
 /api/attempts/tasks/{taskKey}	free	-	-	-
 /api/audits/{runId}	free	-	-	-
 /api/auth/api-tokens	free	-	-	-
+/api/auth/audit/backups	free	-	-	-
 /api/auth/audit/operator-activity	free	-	-	-
 /api/auth/iam/	free	-	-	-
 /api/auth/iam/break-glass/windows	free	-	-	-
@@ -94,6 +95,9 @@
 /api/filesystem-layer/snapshot	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
 /api/first-run/git-setups/{id}	free	-	-	-
 /api/first-run/projects/{projectId}/repository	reachable	gap	Registry and diagnostics	Repository facts from the Git fact store
+/api/magazine	free	-	-	-
+/api/magazine/{scope}/{slug}	free	-	-	-
+/api/magazine/{scope}/{slug}/history	free	-	-	-
 /api/model-selection/active	free	-	-	-
 /api/model-selection/effective	free	-	-	-
 /api/model-selection/active	free	-	-	-
@@ -312,7 +316,7 @@
 /api/runner/global/orchestrator-session	free	-	-	-
 /api/runner/integration-lease/{projectName}/{integrationBranch}	free	-	-	-
 /api/runner/lease/{taskKey}	free	-	-	-
-/api/runner/orchestrator-feed	free	-	-	-
+/api/runner/orchestrator-feed	reachable	gap	Docs/Wiki	Wiki ref/config-generation projection for Dossier decisions
 /api/runner/post-merge/projects/{project}	free	-	-	-
 /api/runner/release-candidates/{project}/{commit}	reachable	gap	Deploy and environments	Release candidate plan from Task Server source facts
 /api/runner/project-chat/status	free	-	-	-
@@ -417,6 +421,7 @@
 /api/tasks/{jobId}/timeline	free	-	-	-
 /api/tasks/{primaryId}/merge/candidates	free	-	-	-
 /api/token-pricing/unpriced-models	free	-	-	-
+/api/update-service/token	free	-	-	-
 /api/usage/cockpit	free	-	-	-
 /api/v1/gates/subjects/{subjectId}	free	-	-	-
 /api/v1/management/backups	free	-	-	-

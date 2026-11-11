@@ -86,8 +86,12 @@ export class WorkbenchDecisionPanelComponent {
     if (decision) return decision.state === 'succeeded';
     return ['decided', 'documented', 'archived'].includes(this.document().workbench.status);
   });
+  // A concept delivery publishes status decision-pending (v2: lifecycle
+  // review-requested) and leaves phase at shaping, so either signal opens the gate.
   readonly gateReady = computed(() =>
     this.document().workbench.phase === 'decision-ready'
+    || this.document().workbench.status === 'decision-pending'
+    || this.document().workbench.lifecycleState === 'review-requested'
     || this.persistedDecision() !== null
     || this.settled());
   readonly mutationBlocked = computed(() =>

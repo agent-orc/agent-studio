@@ -167,6 +167,7 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
     private readonly ILogger<RemoteReviewEvidenceProjectionWorker> _logger;
     private readonly CauseBreakerService? _causeBreakers;
     private readonly IConfiguration? _configuration;
+    private readonly StableReleaseIdentity? _stable;
 
     /// <summary>Test seam: replaces the retry backoff so tests do not wait out the real schedule. Null in production.</summary>
     internal Func<int, TimeSpan>? RetryDelayOverride { get; set; }
@@ -181,8 +182,10 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
         RemotePipelineReviewEvidenceProjector projector,
         ILogger<RemoteReviewEvidenceProjectionWorker> logger,
         CauseBreakerService? causeBreakers = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        StableReleaseIdentity? stable = null)
     {
+        _stable = stable;
         _queue = queue;
         _scanner = scanner;
         _authority = authority;
@@ -277,7 +280,8 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
                 entry.Report,
                 RemoteReviewSettlementJournal.ReportHash(entry),
                 request.ReceivedAt,
-                ct);
+                ct,
+                _stable);
             // The attempt-named evidence file above is inert history. The shared
             // task projection is applied inside the generation fence, so a
             // successor created during this work is never overwritten.

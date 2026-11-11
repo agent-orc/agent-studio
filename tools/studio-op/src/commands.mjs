@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { evaluateAcceptance } from './accept-policy.mjs';
 import { positiveInteger, required, usage } from './args.mjs';
 import { describeToken, inspectCredential, isTokenShaped } from './credential.mjs';
+import { ARTICLE_KINDS, MAX_BODY_BYTES, articlePath, parseArticle, parseSource, scopeOf, slugOf } from './magazine.mjs';
 import { EXIT } from './exit-codes.mjs';
 import { OperationError, failure } from './studio.mjs';
 import { watchDecisions } from './watch.mjs';
@@ -33,10 +34,10 @@ const OWNER_KEEPS = [
   'product decisions: decision cards, Dossier acceptance, cards whose evidence is not green',
 ];
 
-function readText(file, flag) {
+function readText(file, flag, maxBytes = MAX_TEXT_BYTES) {
   let text;
   try {
-    if (fs.statSync(file).size > MAX_TEXT_BYTES) throw usage('text-file-too-large', `--${flag} is larger than 256 KB.`);
+    if (fs.statSync(file).size > maxBytes) throw usage('text-file-too-large', `--${flag} is larger than ${Math.round(maxBytes / 1024)} KB.`);
     text = fs.readFileSync(file, 'utf8');
   } catch (error) {
     if (error instanceof OperationError) throw error;
@@ -498,6 +499,39 @@ export const COMMANDS = {
       const entry = await ctx.client.request('POST', '/api/operator/log', { body: {
         project, kind, text, cardKeys: options.card ?? [], auditIds: options.audit ?? [] } });
       return { data: { entry }, text: `Logged #${entry?.cursor ?? '?'} (${kind}) in ${project}.` };
+    },
+  },
+
+  'magazine publish': {
+    summary: 'Publish or refresh a magazine article from a Markdown file with front matter.',
+    spec: { scope: 'string', slug: 'string', persona: 'string' },
+    async run(ctx, positionals, options) {
+      const [file] = positionals;
+      if (!file) throw usage('missing-argument', 'Name the article file, for example digest.md.');
+      // The front matter may add a few KB to a body at the limit.
+      const { fields, body } = parseArticle(readText(file, 'file', MAX_BODY_BYTES + 32 * 1024));
+      const scope = scopeOf(options.scope ?? fields.scope);
+      const slug = slugOf(options.slug ?? fields.slug);
+      const bodyBytes = Buffer.byteLength(body, 'utf8');
+      if (bodyBytes > MAX_BODY_BYTES)
+        throw usage('magazine-body-too-large', `The body has ${bodyBytes} bytes; an article body holds at most ${MAX_BODY_BYTES} bytes (256 KiB).`);
+      if (!fields.title) throw usage('front-matter-invalid', 'The front matter needs a title.');
+      if (!ARTICLE_KINDS.includes(fields.kind)) throw usage('front-matter-invalid', `The kind is ${ARTICLE_KINDS.join(', ')}.`);
+      const article = { title: fields.title, summary: fields.summary ?? '', kind: fields.kind, body,
+        persona: options.persona ?? fields.persona ?? null, sources: (fields.sources ?? []).map(parseSource) };
+
+      // Read the current revision first and send it, so one call refreshes the
+      // article; a writer that came in between makes Studio answer 409.
+      const route = articlePath(scope, slug);
+      const current = await ctx.client.send('GET', route);
+      let revision = null;
+      if (current.status >= 200 && current.status < 300) revision = current.body?.currentRevision ?? current.body?.revision ?? null;
+      else if (!(current.status === 404 && current.body?.error === 'magazine-article-not-found')) throw failure('GET', route, current);
+      const answer = await ctx.client.request('PUT', route,
+        { body: article, headers: revision === null ? {} : { 'If-Match': `"${revision}"` } });
+      const created = revision === null;
+      return { data: { scope: answer.scope, slug: answer.slug, revision: answer.revision, created, previousRevision: revision },
+        text: `${created ? 'Published' : 'Refreshed'} ${answer.scope}/${answer.slug} at revision ${answer.revision}.` };
     },
   },
 };

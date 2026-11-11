@@ -35,7 +35,7 @@ export class HostReleaseIdentityComponent {
     const releaseId = this.releaseId();
     return releaseId?.match(/(?:^|-)([0-9a-f]{7,40})$/i)?.[1] ?? null;
   });
-  readonly driftLabel = computed(() => releaseDriftLabel(this.host().releaseDrift));
+  readonly driftLabel = computed(() => releaseDriftLabel(this.host().releaseDrift, this.stableRelease()));
   readonly driftTone = computed(() => releaseDriftTone(this.host().releaseDrift));
   readonly indicatorTone = computed<StatusTone>(() => this.driftTone() === 'warn' ? 'warning' : 'neutral');
   readonly tooltip = computed(() =>

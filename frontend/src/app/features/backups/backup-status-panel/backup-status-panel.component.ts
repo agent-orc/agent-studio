@@ -11,7 +11,8 @@ import {
 /**
  * Installation backups on the Operations page (AGT-3574): the last good
  * backup with its age and size, the last restore verification, the
- * off-host copy, and the warnings of `GET /api/v1/management/backups`.
+ * off-host copy, the ids of the two escrowed keys (AGT-3738), and the
+ * warnings of `GET /api/v1/management/backups`.
  * AGT-3734 adds the restore receipt of an offline restore, the archives at
  * the off-host target that the local catalog does not know, and what the
  * last verification proved and did not prove.

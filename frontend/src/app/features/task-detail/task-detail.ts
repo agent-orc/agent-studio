@@ -278,10 +278,10 @@ export class TaskDetailComponent implements OnDestroy {
    * yet. Gates the detail-header's git-dependent acceptance primary so it cannot
    * fire (or show a guessed "Merge into Develop" label) before the branch/merge
    * truth is known (AGT-2006). Flips to `false` atomically with `landedState`
-   * resolving, so the button switches straight to its true label without a
-   * wrong -> right flicker. AGT-3621: the wait is bounded (`PROVENANCE_WAIT_MS`).
+   * resolving, so the button switches directly. A hidden git pane defers the
+   * request (AGT-3625); only an in-flight request counts (AGT-3621).
    */
-  readonly gitInfoLoading = computed(() => !this.git.provenanceLoaded());
+  readonly gitInfoLoading = computed(() => this.git.provenanceLoading() && !this.git.provenanceLoaded());
   readonly commitActionsAvailable = computed(() => {
     const status = this.git.status();
     return this.git.viewMode() === 'worktree'
@@ -571,7 +571,7 @@ export class TaskDetailComponent implements OnDestroy {
       this.cliPoll.startPolling();
     }
     if ((this.activeInspectorTab() === 'activity' || !d.statusMarkdown)
-      && this.outputLoadedFor !== d.info.taskKey) {
+      && this.outputLoadedFor !== d.info.taskKey && this.cliPoll.canReadOutput()) {
       this.outputLoadedFor = d.info.taskKey;
       this.jobService.getJobOutput(d.info.id, d.info.watchPath).subscribe({
         next: (output) => this.cliPoll.hydrateOutput(output, d.info.execution?.startedAt ?? null),

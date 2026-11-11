@@ -132,6 +132,10 @@
   font-weight: 650;
 }
 
+.backup-status dd code {
+  font-family: var(--font-mono);
+}
+
 .backup-status dd small {
   font-weight: 400;
   overflow-wrap: anywhere;
