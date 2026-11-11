@@ -1,0 +1,13 @@
+@if (primary(); as action) {
+  @if (action.primaryId; as primaryId) {
+    <button type="button" class="btn btn--primary mobile-lane-primary"
+            [attr.data-testid]="'studio-mobile-triage-action-' + primaryId"
+            [disabled]="mutationsBlocked() || action.awaitingGit || action.blockedByIntegration || !!action.blockedByDecision || action.actingId !== null"
+            [appPendingButton]="action.actingId === primaryId"
+            [pendingLabel]="action.primaryLabel + '…'"
+            [cacTooltip]="action.primaryTooltip"
+            (click)="pressed.emit()">
+      {{ action.awaitingGit ? 'Checking git status…' : action.primaryLabel }}
+    </button>
+  }
+}

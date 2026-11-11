@@ -218,12 +218,14 @@
                 <main class="workspace__main workspace__main--studio" data-testid="studio-task">
                   <app-job-detail #jobDetail
                                   [detail]="detail"
+                                  [mobilePrimary]="studioTabActionsTriage()"
                                   [watchPaths]="watchPaths()"
                                   [lanePeers]="triageLanePeers()"
                                   [mutationsBlocked]="updateClient.mutationsBlocked()"
                                   [routeDetailTab]="routeDetailTab()"
                                   [routeInspectorTab]="routeInspectorTab()"
                                   (back)="closeDetail()"
+                                  (mobilePrimaryRequest)="onStudioTriagePrimary()"
                                   (fileSaved)="onFileSaved()"
                                   (projectChanged)="onProjectChanged($event)"
                                   (deleteRequested)="onDeleteFromDetail(detail.info)"
