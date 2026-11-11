@@ -58,6 +58,31 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
             .Single(parts => parts[0] == AccessSecurityStore.SessionCookieName)[1];
 
     [Fact]
+    public async Task Signed_in_viewer_can_read_names_without_access_administration_fields()
+    {
+        using var factory = BuildFactory("203.0.113.15");
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var owner = store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", "Owner Name"));
+        var invitation = store.InviteUser(new InviteUserRequest("viewer", "Viewer Name", StudioRoles.Viewer, ["*"]), owner.User.Id);
+        var viewer = store.AcceptInvitation(new AcceptInvitationRequest(invitation.Token, "another correct horse phrase!"));
+
+        using var anonymous = await client.GetAsync("/api/auth/directory");
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/directory");
+        request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={viewer.SessionToken}");
+        using var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        var directory = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(2, directory.GetArrayLength());
+        Assert.Contains(directory.EnumerateArray(), user =>
+            user.GetProperty("id").GetString() == owner.User.Id
+            && user.GetProperty("displayName").GetString() == "Owner Name");
+        Assert.All(directory.EnumerateArray(), user => Assert.Equal(2, user.EnumerateObject().Count()));
+    }
+
+    [Fact]
     public async Task Authenticator_code_cannot_sign_in_twice_in_one_step()
     {
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero));

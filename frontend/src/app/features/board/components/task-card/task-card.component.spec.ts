@@ -46,23 +46,24 @@ import {
  * stable across template tweaks.
  */
 describe('TaskCardComponent (smoke)', () => {
-  it('uses the signed-in creator display name for a human card', async () => {
+  it('shows creator display names to a signed-in viewer', async () => {
     await TestBed.configureTestingModule({
       imports: [TaskCardComponent],
       providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
     }).compileComponents();
     TestBed.inject(AuthService).status.set({
       profile: 'networked', bootstrapRequired: false, authenticated: true,
-      user: { id: 'usr_owner', username: 'owner', displayName: 'First Owner', role: 'owner',
-        projects: [], disabled: false, mustChangePassword: false },
+      user: { id: 'usr_viewer', username: 'viewer', displayName: 'Viewer', role: 'viewer',
+        projects: ['PROJ-002'], disabled: false, mustChangePassword: false },
     });
     const fixture = TestBed.createComponent(TaskCardComponent);
     fixture.componentRef.setInput('job', makeJob({ ownerClientId: 'usr_owner' }));
     fixture.detectChanges();
-    TestBed.inject(HttpTestingController).expectOne('/api/auth/users').flush([
-      { id: 'usr_owner', username: 'owner', displayName: 'First Owner', role: 'owner', projects: [], disabled: false, mustChangePassword: false },
-      { id: 'usr_carla', username: 'carla', displayName: 'Carla', role: 'contributor', projects: [], disabled: false, mustChangePassword: false },
+    TestBed.inject(HttpTestingController).expectOne('/api/auth/directory').flush([
+      { id: 'usr_owner', displayName: 'First Owner' },
+      { id: 'usr_carla', displayName: 'Carla' },
     ]);
+    fixture.detectChanges();
     expect(fixture.componentInstance.ownerChip()?.label).toBe('First Owner');
     expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="task-card-owner"]')?.textContent).toContain('First Owner');
     fixture.componentRef.setInput('job', makeJob({ ownerClientId: 'usr_carla' }));

@@ -156,7 +156,8 @@ that is already allowed to edit that project's checkout.
   viewer is read-only. A contributor cannot access
   credentials, hosts, settings, quotas, merges, promotions, or raw logs.
   Product cards carry no run controls: project defaults choose the CLI, model,
-  and mode, and the card records the signed-in user as creator. Product
+  and mode, and the card records the signed-in user as creator. Signed-in viewers
+  receive only user IDs and display names for card attribution. Product
   sessions read only screenshot, HTML, and Markdown result files and never run
   conversations, session events, or agent work detail. The shell lists a
   Product session's workspaces, projects, and watch paths through the same
