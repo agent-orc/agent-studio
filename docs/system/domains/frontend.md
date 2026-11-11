@@ -81,9 +81,10 @@ renderers outside the board startup graph.
 
 ## Environment flow
 
-Environment > Installation shows a single one shot claim route status for the
-local monolith, where that Task Server route is unavailable. The runner retries
-the route every five minutes without filling its log with repeated 404 entries.
+Environment > Installation shows one one shot claim route status line only
+while a live host reports `telemetry.oneShotClaimRoute`: the oldest reporting
+host, since when, the retry interval and the operator action. Without a report
+nothing extra is shown, also on a local monolith.
 
 DP-S6 renders canary attempt rows beneath their physical host using
 `GET /api/v1/management/attempt-visibility`. Active occupancy follows the
