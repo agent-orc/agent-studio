@@ -1,0 +1,63 @@
+:host { display: block; min-width: 0; }
+
+// AGT-3670: the same calm, flat action surface as the continue round panel.
+// A review decision is not an acute state, so no tone wash (R4) and no left
+// bar (R1). Tokens only, so both themes follow (R5).
+.review {
+  display: grid;
+  gap: var(--studio-spacing-2);
+  margin: var(--studio-spacing-2) var(--studio-spacing-3);
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-md);
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg);
+  font-size: 0.78rem;
+}
+
+.review__head { display: grid; gap: var(--studio-spacing-1); min-width: 0; }
+.review__title { margin: 0; color: var(--studio-fg-strong); font-size: 0.82rem; font-weight: 600; }
+.review__hint,
+.review__help { margin: 0; color: var(--studio-fg-muted); overflow-wrap: anywhere; }
+
+.review__form { display: grid; gap: var(--studio-spacing-1); min-width: 0; }
+.review__label { color: var(--studio-fg); font-size: 0.72rem; font-weight: 600; }
+.review__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-md);
+  background: var(--studio-bg-surface);
+  color: var(--studio-fg);
+  font: inherit;
+  resize: vertical;
+}
+.review__input:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
+.review__error { margin: 0; color: var(--studio-error); overflow-wrap: anywhere; }
+
+.review__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+}
+.review__button {
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-spacing-1);
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg-strong);
+  font: inherit;
+  cursor: pointer;
+}
+.review__button:hover:not(:disabled) { background: var(--studio-bg-hover); }
+.review__button:disabled { cursor: not-allowed; opacity: 0.6; }
+.review__button--primary {
+  background: var(--studio-accent);
+  border-color: var(--studio-accent);
+  color: var(--studio-on-accent);
+}
+.review__button--primary:hover:not(:disabled) { background: var(--studio-accent); filter: brightness(1.08); }
+.review__button--ghost { background: transparent; border-color: transparent; }
+.review__button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
