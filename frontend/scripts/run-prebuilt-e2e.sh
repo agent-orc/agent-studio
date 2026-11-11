@@ -18,6 +18,7 @@ if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
       *crash-recovery-prompt.spec.ts*|*first-run-checklist.spec.ts*) PW_E2E_PROFILE=recovery ;;
       *first-run-journey.spec.ts*|*first-run-review-host-restart.spec.ts*) PW_E2E_PROFILE=first-run ;;
       *first-run-networked-monolith.spec.ts*) PW_E2E_PROFILE=networked-monolith ;;
+      *product-session-networked-https.spec.ts*) PW_E2E_PROFILE=networked-https ;;
       *owner-second-factor-human-pace.spec.ts*) PW_E2E_PROFILE=networked-https ;;
       *product-card-detail.spec.ts*) PW_E2E_PROFILE=networked-https-demo ;;
       *studio-op-operator-cli.spec.ts*) PW_E2E_PROFILE=operator-cli ;;

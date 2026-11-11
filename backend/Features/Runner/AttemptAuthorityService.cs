@@ -1685,6 +1685,23 @@ public sealed partial class AttemptAuthorityService
     }
 
     /// <summary>
+    /// Time since the scheduled infrastructure retry of the current
+    /// <paramref name="attemptId"/> came due on the authority clock, negative
+    /// while its backoff runs, or null when no retry is scheduled.
+    /// </summary>
+    public TimeSpan? ScheduledReviewInfrastructureRetryOverdue(string attemptId)
+    {
+        lock (_gate)
+        {
+            var review = FindReview(attemptId);
+            return review is not null && IsCurrentReview(review)
+                   && review.PendingInfrastructureRetryAt is { } dueAt
+                ? _utcNow() - dueAt
+                : null;
+        }
+    }
+
+    /// <summary>
     /// Number of linked infrastructure retries already spent in the chain
     /// ending at <paramref name="review"/> (the review itself is not counted -
     /// only its <see cref="ReviewAttemptRecord.SourceReviewAttemptId"/>
