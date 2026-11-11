@@ -50,7 +50,8 @@ export class OnboardProjectDialogComponent {
     host => this.codingRunner(host) && host.status !== 'retired' && !this.runnerUnavailable(host)));
 
   codingRunner(host: RemoteHost): boolean {
-    return host.id !== 'local' && hostExecutorRole(host) === 'coding';
+    return host.id !== 'local' && host.serviceRole !== 'review'
+      && hostExecutorRole(host) === 'coding';
   }
   readonly codingNeedsRunner = computed(() => !this.localCodingAdmitted()
     && (this.repositoryMode() === 'create' || !!this.repositoryPath().trim() || !!this.rootPath().trim()));

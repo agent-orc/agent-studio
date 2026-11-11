@@ -51,10 +51,14 @@ case "${PW_E2E_PROFILE:-standard}" in
   # bootstraps its Owner and API token without sharing first-run state.
   # networked-https: a fresh networked monolith behind the HTTPS test proxy,
   # so the browser itself holds the Secure session (AGT-3614).
-  networked-monolith|operator-cli|networked-https)
+  networked-monolith|operator-cli|networked-https|networked-checkout)
     export Security__Profile=networked
     export Security__TrustedProxyAddresses=127.0.0.1
     export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
+    if [[ "${PW_E2E_PROFILE}" == networked-checkout ]]; then
+      source "${REPO_ROOT}/scripts/first-run-e2e-fixture.sh"
+      first_run_prepare
+    fi
     ;;
   recovery)
     recovery_repo="${PW_E2E_WORKSPACE}/recovery-repository"
