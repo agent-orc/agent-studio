@@ -117,7 +117,7 @@ The guide asks for:
 
 It installs the Task Server, Orchestrator Engine, Studio API, BFF and UI as
 one versioned unit and waits for readiness. Bootstrap an owner using the code
-at `/etc/agent-orchestrator/owner-bootstrap.code` in the local Studio UI.
+at `/etc/agent-orchestrator/owner_bootstrap_code` in the local Studio UI.
 Configure the public origin to proxy Studio routes to the local UI over HTTPS.
 Native setup includes that origin in the BFF's allowed browser origins during
 install, update and rollback. Confirm from an Agent Host network:

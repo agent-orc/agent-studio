@@ -439,6 +439,8 @@ public static class TaskCrudEndpoints
                     TestEvidence = gitFacts.TestEvidence,
                     ReviewProjection = gitFacts.ReviewProjection,
                 } };
+            withRuntime = withRuntime with { Info = WithContractIntegration(withRuntime.Info,
+                projectSettings.Get(withRuntime.Info.ProjectName).IntegrationBranch) };
             if (AcceptanceAttemptLineagePolicy.ReadGap(withRuntime.Info, attemptAuthority) is { } attemptGap)
                 withRuntime = withRuntime with { Info = withRuntime.Info with { AcceptanceAttemptGap = attemptGap } };
             context.Response.Headers.ETag = AgentStudio.Operator.OperatorCoordinationStore.Revision(withRuntime.Info.FolderPath);
@@ -565,6 +567,7 @@ public static class TaskCrudEndpoints
                 });
                 pipelineLog.Complete(info.FolderPath, now);
                 SteerPendingMarker.Clear(info.FolderPath);
+                scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(info.FolderPath));
 
                 var move = await transitions.MoveAsync(
                     jobId,
@@ -629,6 +632,7 @@ public static class TaskCrudEndpoints
         group.MapPost("/{jobId}/concept-dossier", (string jobId, string? project, string? watchPath,
             SetConceptDossierRequest req,
             TaskScannerService scanner,
+            TaskMutationService mutations,
             AgentStudio.Registry.ProjectRegistry projects,
             ILoggerFactory loggerFactory) =>
         {
@@ -651,6 +655,8 @@ public static class TaskCrudEndpoints
                         new { error = "Failed to persist the no-dossier explanation." },
                         statusCode: StatusCodes.Status500InternalServerError);
                 }
+                if (!mutations.SetJobDossier(info.Id, null, info.WatchPath))
+                    return Results.Problem("Failed to clear the Dossier link.");
             }
             else
             {
@@ -683,6 +689,8 @@ public static class TaskCrudEndpoints
                 {
                     ConceptDossierContract.WriteReference(info.FolderPath, path);
                     ConceptDossierClosureStore.Clear(info.FolderPath, logger);
+                    if (!mutations.SetJobDossier(info.Id, new TaskDossier { Path = path! }, info.WatchPath))
+                        return Results.Problem("Failed to link the Dossier.");
                 }
                 catch (Exception ex)
                 {
@@ -693,7 +701,7 @@ public static class TaskCrudEndpoints
                 }
             }
 
-            var summary = ConceptDossierContract.Read(info.FolderPath);
+            var summary = BuildConceptDossierSummary(scanner.FindJob(info.Id, info.WatchPath) ?? info)!;
             logger.LogInformation(
                 "concept-dossier updated for {Project}/{Task}: path={Path} noDossierNeeded={NoDossierNeeded}",
                 info.ProjectName,
@@ -931,10 +939,17 @@ public static class TaskCrudEndpoints
             };
         });
 
-        group.MapDelete("/{jobId}", (string jobId, string? project, string? watchPath, TaskStateMachine states, AgentStudio.Registry.ProjectRegistry projects) =>
+        group.MapDelete("/{jobId}", (string jobId, string? project, string? watchPath, string? reason, TaskStateMachine states,
+            AgentStudio.Registry.ProjectRegistry projects, ILoggerFactory loggers) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var success = states.DeleteJob(jobId, watchPath);
+            // AGT-3624: deleting a card with unintegrated work carries the
+            // operator's written reason; the folder is gone, so the log keeps it.
+            if (success && !string.IsNullOrWhiteSpace(reason))
+                loggers.CreateLogger("AgentStudio.Tasks.TaskDelete").LogWarning(
+                    "task-deleted-with-reason job={JobId} watchPath={WatchPath} reason={Reason}",
+                    jobId, watchPath, reason.Trim());
             return success ? Results.Ok() : Results.NotFound();
         });
 
@@ -1602,6 +1617,18 @@ public static class TaskCrudEndpoints
                 && isolation.Find(card) is { } isolating)
                 return Results.Json(AgentStudio.Pipeline.BatchIsolationGuardPolicy.Body(isolating),
                     statusCode: StatusCodes.Status409Conflict);
+            // AGT-3612, AGT-3719: the shared guard in MoveAsync refuses this
+            // move too; the route checks first so a withdrawal can request the
+            // eject before the move.
+            var batchStore = context.RequestServices.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>();
+            var batchGuard = new AgentStudio.Pipeline.ActiveBatchMemberGuard(batchStore);
+            var activeBatch = batchGuard.Find(card, request.TargetState);
+            if (activeBatch is not null && !request.WithdrawFromBatch)
+                return Results.Json(AgentStudio.Pipeline.ActiveBatchMemberGuardPolicy.Body(activeBatch),
+                    statusCode: StatusCodes.Status409Conflict);
+            if (activeBatch is not null && string.IsNullOrWhiteSpace(request.Reason))
+                return Results.BadRequest(new { error = "withdrawal-reason-required",
+                    message = "Withdrawing from an active batch requires a written reason." });
             var live = request.TargetState != card.State
                 ? leases.Peek(card.TaskKey).Lease : null;
             var intent = RunDispositionPolicy.ParseMoveIntent(request.RunIntent);
@@ -1611,11 +1638,59 @@ public static class TaskCrudEndpoints
                 && card.PendingIntent?.RunIntent != "steer")
                 return Results.BadRequest(new { error = "Steer requires a queued follow-up." });
 
-            var moved = await transitions.MoveAsync(
+            // AGT-3617: the owner accepting a code-free intervention card is
+            // the decision that its shared cause is resolved; the claim records
+            // it instead of refusing the move for a delivery it never had.
+            if (InterventionOwnerDecisionPolicy.Applies(new InterventionOwnerDecisionFacts(
+                    request.TargetState,
+                    request.OperatorOverride,
+                    ProjectAccessAuthorization.HasOperatorAuthority(context),
+                    context.RequestServices.GetService<AgentStudio.Pipeline.FailureInterventionService>()
+                        ?.IsInterventionFollowUp(card) == true,
+                    HasAttributedCommits: card.Commits is { Count: > 0 },
+                    HasRunAttempt: new[] { card.Key, card.TaskKey, card.Id }
+                        .Where(key => !string.IsNullOrWhiteSpace(key))
+                        .Any(key => authority.GetTaskProjection(key!).CurrentRunAttempt is not null))))
+                request = request with
+                {
+                    OperatorOverride = true,
+                    Reason = InterventionOwnerDecisionPolicy.Reason(request.Reason),
+                };
+
+            Task<MoveJobOutcome> Move() => transitions.MoveAsync(
                 jobId, request.TargetState, watchPath, ct, request.TargetIndex,
                 cause: OperatorActor(context), reason: request.Reason,
                 operatorOverride: request.OperatorOverride,
-                archiveOverride: request.ArchiveOverride);
+                archiveOverride: request.ArchiveOverride,
+                batchWithdrawalId: activeBatch?.BatchId);
+            var moved = activeBatch is null ? await Move()
+                : await batchGuard.WithdrawAsync(activeBatch, Move);
+            if (moved.Status != MoveJobStatus.Success
+                && TimelineActors.IsHuman(OperatorActor(context)))
+                timeline.Append(card.FolderPath, TimelineEventKinds.OwnerMoveRefused,
+                    OperatorActor(context),
+                    $"Move to {request.TargetState} refused: {moved.Message ?? moved.Status.ToString()}",
+                    details: new Dictionary<string, string>
+                    {
+                        ["target"] = request.TargetState,
+                        ["reason"] = moved.Message ?? moved.Status.ToString(),
+                    });
+            if (activeBatch is not null && moved.Status == MoveJobStatus.Success)
+            {
+                var actorName = OperatorActor(context);
+                var explanation = request.Reason!.Trim();
+                batchStore.RecordWithdrawal(new AgentStudio.Pipeline.BatchGateWithdrawal(
+                    activeBatch.BatchId, activeBatch.TaskKey, actorName, explanation, DateTimeOffset.UtcNow));
+                batchStore.RequestCloseNow(activeBatch.Project);
+                var folder = moved.NewFolderPath ?? scanner.FindJob(jobId, watchPath)?.FolderPath ?? card.FolderPath;
+                timeline.Append(folder, TimelineEventKinds.BatchWithdrawn, actorName,
+                    $"Withdrew {activeBatch.TaskKey} from batch {activeBatch.BatchId}: {explanation}",
+                    details: new Dictionary<string, string>
+                    {
+                        ["batchId"] = activeBatch.BatchId,
+                        ["reason"] = explanation,
+                    });
+            }
             if (moved.Status == MoveJobStatus.Success && owner)
                 await attention.OwnerActionAsync(card.TaskKey, card.ProjectName, actor, ct);
             if (moved.Status == MoveJobStatus.Success && live?.AttemptId is { } attemptId

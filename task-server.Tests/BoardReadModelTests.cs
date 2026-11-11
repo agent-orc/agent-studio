@@ -169,8 +169,18 @@ public sealed class BoardReadModelTests
             Assert.Contains(board.Lanes.Single(lane => lane.State == TaskStates.Ready).Cards,
                 card => card.TaskKey == "BRD-90");
 
+            var noOp = await store.ImportWorkspaceBoardAsync(project.ProjectId,
+                new BoardWorkspaceImportRequest(42, [], []), "test", default);
+            Assert.Equal(board.Generation, noOp.Generation);
+            using var conditional = new HttpRequestMessage(HttpMethod.Get,
+                $"/api/v1/projects/{project.Name}/board");
+            conditional.Headers.IfNoneMatch.ParseAdd(board.ETag);
+            using var refreshed = await client.SendAsync(conditional);
+            Assert.Equal(HttpStatusCode.NotModified, refreshed.StatusCode);
+            Assert.Equal(42, (await store.GetBoardReadModelAsync(project.ProjectId, default)).WorkspaceSourceGeneration);
+
             var repeat = await store.ImportWorkspaceBoardAsync(project.ProjectId,
-                new BoardWorkspaceImportRequest(42, [new BoardWorkspaceCard(task.TaskKey, task.Title, TaskStates.Progress, 3)], ["BRD-90"]),
+                new BoardWorkspaceImportRequest(43, [new BoardWorkspaceCard(task.TaskKey, task.Title, TaskStates.Progress, 3)], ["BRD-90"]),
                 "test", default);
             Assert.Equal((0, 0, 1, 1), (repeat.Inserted, repeat.Updated, repeat.Unchanged, repeat.Removed));
             Assert.True(repeat.Generation > imported.Generation);

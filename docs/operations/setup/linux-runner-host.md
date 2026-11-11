@@ -3145,8 +3145,16 @@ cancellation, timeout, graceful systemd shutdown, and debris recovered when the
 next process starts:
 
 1. Inspect `git status` in the task worktree.
-2. Commit dirty and untracked files with
-   `wip(runner): salvage before teardown - outcome <X>`.
+2. Commit dirty and untracked files as `<TASK-KEY>: <card title>` (about 72
+   characters, cut at a word boundary), or `<TASK-KEY>: salvaged work (outcome <X>)`
+   when the title is unavailable. The subject drops every task-key-shaped token
+   of the title, because the server's attribution guard rejects a delivery
+   range whose commit subject names another card (AGT-3717); the full title
+   stays in a `Card:` line of the body. The body says the runner committed
+   changes the agent left uncommitted. The commit carries `Agent-Studio-Task`,
+   `Agent-Studio-Run`, `Agent-Studio-Salvage: teardown`, and
+   `Agent-Studio-Outcome` trailers. Earlier commits with the
+   `wip(runner): salvage before teardown` subject remain valid history.
 3. Preserve the moving salvage ref at `runner/<runner-id>/<task-key>` using only
    a normal create or fast-forward push.
 4. Publish the exact result to

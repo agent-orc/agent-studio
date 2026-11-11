@@ -494,8 +494,75 @@ public sealed class GitWorkspaceTests : IDisposable
         Assert.False(Directory.Exists(workspace.RepoPath));
         Assert.Equal("valuable work", (await GitAsync(_origin,
             "show", $"refs/heads/{result.Branch}:work.txt")).StdOut);
-        Assert.Equal("wip(runner): salvage before teardown - outcome Unknown",
+        Assert.Equal("AGT-2147: salvaged work (outcome Unknown)",
             (await GitAsync(_origin, "log", "-1", "--format=%s", $"refs/heads/{result.Branch}")).StdOut);
+        var message = (await GitAsync(_origin, "log", "-1", "--format=%B", $"refs/heads/{result.Branch}")).StdOut;
+        Assert.Contains("Runner committed changes the agent left uncommitted (outcome Unknown).", message);
+        Assert.Contains("Agent-Studio-Task: AGT-2147", message);
+        Assert.Contains("Agent-Studio-Run: unknown", message);
+        Assert.Contains("Agent-Studio-Salvage: teardown", message);
+        Assert.Contains("Agent-Studio-Outcome: Unknown", message);
+    }
+
+    [Fact]
+    public async Task Teardown_commit_uses_claimed_title_and_attempt_in_git_message()
+    {
+        await SeedOriginAsync();
+        var workspace = CreateWorkspace(
+            sourceRunAttemptId: "run_title", fencingToken: 7,
+            taskTitle: "Make teardown commits explain the card they deliver");
+        await workspace.PrepareAsync(CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(workspace.RepoPath, "work.txt"), "work");
+
+        var result = await workspace.TeardownAsync("Done", "run_title", CancellationToken.None);
+        var message = (await GitAsync(_origin, "log", "-1", "--format=%B",
+            $"refs/heads/{result.Branch}")).StdOut;
+
+        Assert.StartsWith("AGT-2147: Make teardown commits explain the card they deliver\n", message);
+        Assert.Contains("Runner committed changes the agent left uncommitted (outcome Done).", message);
+        Assert.Contains("Agent-Studio-Task: AGT-2147\n", message);
+        Assert.Contains("Agent-Studio-Run: run_title\n", message);
+        Assert.Contains("Agent-Studio-Salvage: teardown\n", message);
+        Assert.Contains("Agent-Studio-Outcome: Done", message);
+    }
+
+    [Fact]
+    public void Salvage_commit_subject_cuts_at_word_boundary()
+    {
+        var workspace = CreateWorkspace(taskTitle:
+            "Make every runner salvage commit describe the card clearly while retaining its provenance");
+        var subject = workspace.SalvageCommitMessage("Done", "run_title").Split('\n')[0];
+
+        Assert.True(subject.Length <= 72);
+        Assert.EndsWith("clearly", subject);
+        Assert.DoesNotContain("retain", subject);
+    }
+
+    /// <summary>
+    /// AGT-3717: the server rejects a delivery range whose commit subject names
+    /// another card. Playthrough slices and follow-up cards name keys in their
+    /// title, so the subject drops them and the body keeps the full title.
+    /// </summary>
+    [Theory]
+    [InlineData("CP-9 · Guided playthrough slice", "AGT-2147: Guided playthrough slice")]
+    [InlineData("Follow-up: review findings in AGT-3591", "AGT-2147: Follow-up: review findings in")]
+    [InlineData("Fix the badge (MAG-1) and np-10 layout", "AGT-2147: Fix the badge and layout")]
+    [InlineData("AGT-2147 · Own key in the title", "AGT-2147: Own key in the title")]
+    [InlineData("SU-4", "AGT-2147: salvaged work (outcome Done)")]
+    public void Salvage_commit_subject_names_no_other_task_key(string title, string expected)
+    {
+        var workspace = CreateWorkspace(taskTitle: title);
+        var message = workspace.SalvageCommitMessage("Done", "run_title");
+        var subject = message.Split('\n')[0];
+
+        Assert.Equal(expected, subject);
+        Assert.Equal(["AGT-2147"], System.Text.RegularExpressions.Regex.Matches(subject,
+                @"\b[A-Z][A-Z0-9]{1,15}-\d+\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Select(match => match.Value));
+        Assert.Contains($"\n\nCard: {title}\n\n", message);
+        Assert.Contains("Agent-Studio-Task: AGT-2147\n", message);
+        Assert.Contains("Agent-Studio-Salvage: teardown\n", message);
     }
 
     [Fact]
@@ -1298,7 +1365,8 @@ public sealed class GitWorkspaceTests : IDisposable
         string? continuationBaseRef = null,
         string? continuationBaseSha = null,
         string? continuationBaseReason = null,
-        RepositoryPushRecovery? pushRecovery = null)
+        RepositoryPushRecovery? pushRecovery = null,
+        string? taskTitle = null)
         => new(new RunnerOptions
         {
             ServerUrl = "http://localhost",
@@ -1318,7 +1386,8 @@ public sealed class GitWorkspaceTests : IDisposable
             fencingToken: fencingToken,
             continuationBaseRef: continuationBaseRef,
             continuationBaseSha: continuationBaseSha,
-            continuationBaseReason: continuationBaseReason)
+            continuationBaseReason: continuationBaseReason,
+            taskTitle: taskTitle)
         {
             PushRecovery = pushRecovery ?? new RepositoryPushRecovery((_, _) => Task.CompletedTask),
         };

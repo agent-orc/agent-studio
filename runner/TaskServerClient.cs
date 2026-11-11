@@ -520,8 +520,8 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             RunSpec: acceptance.MechanicalFreshRoute is { } hostRoute
                 ? new RunSpecDto(hostRoute.CliType, hostRoute.Model, hostRoute.ThinkingLevel,
                     ContextMode: CodingAgentRunner.Model.CliContextModes.Clean,
-                    FollowUp: acceptance.FollowUp)
-                : acceptance.FollowUp is null ? null : new RunSpecDto(FollowUp: acceptance.FollowUp),
+                    FollowUp: acceptance.FollowUp, TaskTitle: acceptance.Task.Title)
+                : new RunSpecDto(FollowUp: acceptance.FollowUp, TaskTitle: acceptance.Task.Title),
             FreshRunReason: acceptance.MechanicalDelta is null
                 ? acceptance.MechanicalFreshRoute?.Reason : null,
             ContinuationBaseRef: acceptance.ContinuationBaseRef,
@@ -843,14 +843,15 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
             // A required mechanical route wins. Otherwise operator fields
             // resolve with normal host settings as one route.
             RunSpec: !route.HasRoute && claim.MechanicalFreshRoute is null && claim.FollowUp is null
-                ? new RunSpecDto(BriefVersion: claim.Run.BriefVersion)
+                ? new RunSpecDto(BriefVersion: claim.Run.BriefVersion, TaskTitle: claim.Task.Title)
                 : new RunSpecDto(
                     route.CliType,
                     route.Model,
                     route.ThinkingLevel,
                     ContextMode: route.CleanContext ? CodingAgentRunner.Model.CliContextModes.Clean : null,
                     FollowUp: claim.FollowUp,
-                    BriefVersion: claim.Run.BriefVersion),
+                    BriefVersion: claim.Run.BriefVersion,
+                    TaskTitle: claim.Task.Title),
             ContinuationBaseRef: claim.ContinuationBaseRef,
             ContinuationBaseSha: claim.ContinuationBaseSha,
             ContinuationBaseReason: claim.ContinuationBaseReason,
@@ -2420,6 +2421,7 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
         ".html" or ".htm" => "text/html",
         ".png" => "image/png",
         ".jpg" or ".jpeg" => "image/jpeg",
+        ".webp" => "image/webp",
         ".svg" => "image/svg+xml",
         ".md" or ".txt" or ".log" => "text/plain",
         _ => "application/octet-stream",

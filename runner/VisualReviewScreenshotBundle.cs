@@ -7,12 +7,20 @@ using AgentStudio.Shared;
 
 namespace AgentRunner;
 
-/// <summary>Places the source run's screenshot artifacts beside the disposable review checkout.</summary>
+/// <summary>
+/// Places the source run's screenshot artifacts beside the disposable review checkout.
+/// The daemon prepares the bundle and a detached worker runs the plan, so the
+/// captured list is persisted as <c>visual-evidence/index.json</c> and the
+/// worker reloads it instead of relying on daemon memory (AGT-3718).
+/// </summary>
 internal static class VisualReviewScreenshotBundle
 {
-    private const int MaximumImages = 100;
+    internal const string DirectoryName = "visual-evidence";
+    internal const string IndexFileName = "index.json";
+    internal const string NoScreenshots = "No delivered screenshots were attached to this run.";
+    private const int MaximumImages = 12;
     private const int MaximumFailureDetails = 8;
-    private const long MaximumImageBytes = 8L * 1024 * 1024;
+    private const long MaximumImageBytes = 2L * 1024 * 1024;
     private const long MaximumTotalBytes = 100L * 1024 * 1024;
     private const long MaximumImagePixels = 80_000_000;
 
@@ -28,7 +36,13 @@ internal static class VisualReviewScreenshotBundle
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             log($"visual screenshot evidence unavailable: {ex.Message}");
-            return $"Delivered screenshots could not be loaded: {ex.Message}";
+            var index = new VisualScreenshotIndex([], [$"Delivered screenshots could not be loaded: {ex.Message}"]);
+            try { await WriteIndexAsync(attemptRoot, index, ct); }
+            catch (Exception writeEx) when (writeEx is IOException or UnauthorizedAccessException)
+            {
+                log($"visual screenshot index not written: {writeEx.Message}");
+            }
+            return Render(index, Path.Combine(attemptRoot, DirectoryName));
         }
     }
 
@@ -41,11 +55,17 @@ internal static class VisualReviewScreenshotBundle
             .OrderBy(artifact => VisualReviewEvidence.IsAfterScreenshot(artifact.Name) ? 0 : 1)
             .ThenBy(artifact => artifact.Name, StringComparer.Ordinal)
             .ToArray();
-        if (artifacts.Length == 0) return "No delivered screenshots were attached to this run.";
-        var directory = Path.Combine(attemptRoot, "visual-evidence");
+        var directory = Path.Combine(attemptRoot, DirectoryName);
+        if (artifacts.Length == 0)
+        {
+            var empty = new VisualScreenshotIndex([], []);
+            await WriteIndexAsync(attemptRoot, empty, ct);
+            return Render(empty, directory);
+        }
         Directory.CreateDirectory(directory);
-        var copiedImages = new List<string>();
+        var copiedImages = new List<VisualScreenshot>();
         var failures = new List<string>();
+        var omittedBySize = new List<string>();
         var failedCount = 0;
         void AddFailure(string detail)
         {
@@ -54,17 +74,17 @@ internal static class VisualReviewScreenshotBundle
         }
         long total = 0;
         var copied = 0;
-        var omittedByCount = 0;
+        var omittedByCount = new List<string>();
         foreach (var artifact in artifacts)
         {
             if (copied == MaximumImages)
             {
-                omittedByCount++;
+                omittedByCount.Add(artifact.Name);
                 continue;
             }
             if (artifact.SizeBytes > MaximumImageBytes || total + artifact.SizeBytes > MaximumTotalBytes)
             {
-                AddFailure($"- {JsonSerializer.Serialize(artifact.Name)}: omitted because of image evidence size limit");
+                omittedBySize.Add(artifact.Name);
                 continue;
             }
             string? temporaryPath = null;
@@ -84,21 +104,23 @@ internal static class VisualReviewScreenshotBundle
                     AddFailure($"- {JsonSerializer.Serialize(artifact.Name)}: integrity check failed");
                     continue;
                 }
-                if (!IsReadableImage(bytes, artifact.Name))
+                var mediaType = ReadableImageMediaType(bytes, artifact.Name);
+                if (mediaType is null)
                 {
                     AddFailure($"- {JsonSerializer.Serialize(artifact.Name)}: invalid image");
                     continue;
                 }
                 var extension = Path.GetExtension(artifact.Name).ToLowerInvariant();
                 var stage = VisualReviewEvidence.IsAfterScreenshot(artifact.Name) ? "after" : "before";
-                var path = Path.Combine(directory, $"{stage}-image-{copied + 1:D2}{extension}");
+                var fileName = $"{stage}-image-{copied + 1:D2}{extension}";
+                var path = Path.Combine(directory, fileName);
                 temporaryPath = Path.Combine(directory, $"capture-{Guid.NewGuid():N}.tmp");
                 await File.WriteAllBytesAsync(temporaryPath, bytes, ct);
                 File.Move(temporaryPath, path);
                 temporaryPath = null;
                 total += bytes.LongLength;
                 copied++;
-                copiedImages.Add($"- {JsonSerializer.Serialize(artifact.Name)}: {JsonSerializer.Serialize(path)}");
+                copiedImages.Add(new VisualScreenshot(artifact.Name, fileName, mediaType, Theme(artifact.Name)));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -116,27 +138,103 @@ internal static class VisualReviewScreenshotBundle
         }
         if (failedCount > failures.Count)
             failures.Add($"- {failedCount - failures.Count} more failed screenshots omitted from this list.");
-        if (omittedByCount > 0)
-            failures.Add($"- {omittedByCount} more screenshots omitted by the 100-image review limit.");
-        return string.Join('\n', copiedImages.Concat(failures));
+        if (omittedBySize.Count > 0)
+            failures.Add($"- Screenshots omitted by the {MaximumImageBytes / (1024 * 1024)} MiB per-image or " +
+                $"{MaximumTotalBytes / (1024 * 1024)} MiB total size limit ({omittedBySize.Count}): " +
+                $"{string.Join(", ", omittedBySize.Take(80).Select(name => JsonSerializer.Serialize(name)))}" +
+                (omittedBySize.Count > 80 ? $"; {omittedBySize.Count - 80} further names omitted" : string.Empty) + ".");
+        if (omittedByCount.Count > 0)
+            failures.Add($"- Screenshots omitted by the {MaximumImages}-image review limit " +
+                $"({omittedByCount.Count}): {string.Join(", ", omittedByCount.Take(80).Select(name => JsonSerializer.Serialize(name)))}" +
+                (omittedByCount.Count > 80 ? $"; {omittedByCount.Count - 80} further names omitted" : string.Empty) + ".");
+        var captured = new VisualScreenshotIndex(copiedImages, failures);
+        await WriteIndexAsync(attemptRoot, captured, ct);
+        return Render(captured, directory);
     }
 
-    private static bool IsReadableImage(byte[] bytes, string name)
+    /// <summary>
+    /// Rebuilds the evidence the preparing process captured. A missing index
+    /// means no capture ran for this attempt.
+    /// </summary>
+    internal static string LoadEvidence(string attemptRoot)
+    {
+        var directory = Path.Combine(attemptRoot, DirectoryName);
+        var indexPath = Path.Combine(directory, IndexFileName);
+        if (!File.Exists(indexPath)) return NoScreenshots;
+        VisualScreenshotIndex? index;
+        try { index = JsonSerializer.Deserialize<VisualScreenshotIndex>(File.ReadAllText(indexPath), IndexJson); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return $"Delivered screenshot index could not be read: {ex.Message}";
+        }
+        if (index is null) return "Delivered screenshot index could not be read: the index is empty.";
+        return Render(index, directory);
+    }
+
+    private static string Render(VisualScreenshotIndex index, string directory)
+    {
+        var lines = new List<string>();
+        var unavailable = new List<string>();
+        foreach (var screenshot in index.Screenshots ?? [])
+        {
+            // The index names a file inside its own directory; never follow a
+            // path that leaves it.
+            var path = Path.Combine(directory, Path.GetFileName(screenshot.Path));
+            if (!File.Exists(path))
+            {
+                unavailable.Add($"- {JsonSerializer.Serialize(screenshot.Name)}: unavailable after preparation");
+                continue;
+            }
+            var theme = string.IsNullOrEmpty(screenshot.Theme) ? string.Empty : $" ({screenshot.Theme} theme)";
+            lines.Add($"- {JsonSerializer.Serialize(screenshot.Name)}: {JsonSerializer.Serialize(path)}{theme}");
+        }
+        var text = string.Join('\n', lines.Concat(unavailable).Concat(index.Notes ?? []));
+        return text.Length == 0 ? NoScreenshots : text;
+    }
+
+    private static async Task WriteIndexAsync(string attemptRoot, VisualScreenshotIndex index, CancellationToken ct)
+    {
+        var directory = Path.Combine(attemptRoot, DirectoryName);
+        Directory.CreateDirectory(directory);
+        var temporaryPath = Path.Combine(directory, $"index-{Guid.NewGuid():N}.tmp");
+        try
+        {
+            await File.WriteAllTextAsync(temporaryPath, JsonSerializer.Serialize(index, IndexJson), ct);
+            File.Move(temporaryPath, Path.Combine(directory, IndexFileName), overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+        }
+    }
+
+    private static readonly JsonSerializerOptions IndexJson = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+
+    /// <summary>The media type proven by the image header, or null when the bytes are not the named image.</summary>
+    private static string? ReadableImageMediaType(byte[] bytes, string name)
     {
         var header = ImageHeaderReader.Read(bytes);
-        return header is not null && (long)header.Width * header.Height <= MaximumImagePixels
-            && (Path.GetExtension(name).ToLowerInvariant() switch
-            {
-                ".png" => header.Format == "png",
-                ".jpg" or ".jpeg" => header.Format == "jpeg",
-                ".webp" => header.Format == "webp",
-                _ => false,
-            });
+        if (header is null || (long)header.Width * header.Height > MaximumImagePixels) return null;
+        return (Path.GetExtension(name).ToLowerInvariant(), header.Format) switch
+        {
+            (".png", "png") => "image/png",
+            (".jpg" or ".jpeg", "jpeg") => "image/jpeg",
+            (".webp", "webp") => "image/webp",
+            _ => null,
+        };
+    }
+
+    /// <summary>Reads <c>light</c> or <c>dark</c> from screenshot names such as <c>after-1920-light.png</c>.</summary>
+    internal static string? Theme(string name)
+    {
+        var match = Regex.Match(Path.ChangeExtension(name.Replace('\\', '/'), null) ?? name,
+            @"(?:^|[-_./])(light|dark)(?=$|[-_./])", RegexOptions.IgnoreCase | RegexOptions.RightToLeft);
+        return match.Success ? match.Groups[1].Value.ToLowerInvariant() : null;
     }
 
     internal static bool HasReadableAfterScreenshot(string attemptRoot)
     {
-        var directory = Path.Combine(attemptRoot, "visual-evidence");
+        var directory = Path.Combine(attemptRoot, DirectoryName);
         return Directory.Exists(directory)
             && Directory.EnumerateFiles(directory, "after-image-*", SearchOption.TopDirectoryOnly).Any();
     }
@@ -172,3 +270,15 @@ internal static class VisualReviewScreenshotBundle
         return text.ToString();
     }
 }
+
+/// <summary>Persisted form of the screenshots captured for one review attempt.</summary>
+internal sealed record VisualScreenshotIndex(
+    IReadOnlyList<VisualScreenshot> Screenshots,
+    IReadOnlyList<string> Notes);
+
+/// <summary>
+/// One copied screenshot: the delivered artifact name used as citation, the
+/// file name inside <c>visual-evidence/</c>, the media type proven by the image
+/// header, and the theme read from the name when it names one.
+/// </summary>
+internal sealed record VisualScreenshot(string Name, string Path, string MediaType, string? Theme);

@@ -12,7 +12,9 @@ public sealed record RemoteCommitAttributionResult(
 /// <summary>
 /// Converts an exact remote runner branch range into task commit attribution.
 /// The whole range is rejected when either the branch belongs to another task
-/// or a commit subject explicitly names another task key.
+/// or a commit subject explicitly names another task key. The runner's own
+/// teardown salvage commit for this task is exempt from the subject scan: its
+/// subject carries the card title, which may name related cards (AGT-3717).
 /// </summary>
 public static partial class RemoteCommitAttributionGuard
 {
@@ -63,10 +65,8 @@ public static partial class RemoteCommitAttributionGuard
 
         foreach (var commit in commits)
         {
-            var foreign = TaskKeyPattern().Matches(commit.Subject)
-                .Select(match => match.Value)
-                .FirstOrDefault(key => !string.Equals(key, expected, StringComparison.OrdinalIgnoreCase));
-            if (foreign is not null)
+            if (RunnerSalvageCommit.IsTeardownFor(commit.Body, expected)) continue;
+            if (ForeignKeyInSubject(commit.Subject, expected) is { } foreign)
             {
                 return Rejected(
                     $"Remote commit attribution rejected for '{expected}': commit {commit.ShortSha} names foreign task '{foreign}'.");
@@ -77,7 +77,7 @@ public static partial class RemoteCommitAttributionGuard
         {
             Sha = commit.Sha,
             ShortSha = commit.ShortSha,
-            Message = commit.Subject,
+            Message = commit.Body ?? commit.Subject,
             Repository = repository,
             Branch = TaskIntegrationBranch.Name(deliveryBranch),
             FilesChanged = commit.FilesChanged,
@@ -87,6 +87,12 @@ public static partial class RemoteCommitAttributionGuard
         }).ToList();
         return new RemoteCommitAttributionResult(true, attributed, null);
     }
+
+    /// <summary>The first task key in <paramref name="subject"/> other than <paramref name="taskKey"/>.</summary>
+    internal static string? ForeignKeyInSubject(string subject, string taskKey)
+        => TaskKeyPattern().Matches(subject)
+            .Select(match => match.Value)
+            .FirstOrDefault(key => !string.Equals(key, taskKey.Trim(), StringComparison.OrdinalIgnoreCase));
 
     private static RemoteCommitAttributionResult Rejected(string warning)
         => new(false, [], warning);

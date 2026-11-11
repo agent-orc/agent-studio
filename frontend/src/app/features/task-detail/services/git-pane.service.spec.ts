@@ -1,11 +1,11 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { effect, provideZonelessChangeDetection, signal } from '@angular/core';
-import { GitPaneService } from './git-pane.service';
-import type { TaskInfo } from '../../../models/task.model';
+import { GitPaneService, PROVENANCE_WAIT_MS } from './git-pane.service';
+import { TaskState, type TaskInfo } from '../../../models/task.model';
 
 describe('GitPaneService hidden pane loading', () => {
   it('waits for the pane to open and reuses the same task snapshot', async () => {
@@ -24,6 +24,85 @@ describe('GitPaneService hidden pane loading', () => {
     service.setJob(job, true);
     http.expectNone(() => true);
     http.verify();
+  });
+
+  it('reports provenance as loading only while its request is in flight', async () => {
+    await TestBed.configureTestingModule({ providers: [GitPaneService,
+      provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+      provideRouter([])] }).compileComponents();
+    const service = TestBed.inject(GitPaneService);
+    const http = TestBed.inject(HttpTestingController);
+    const job = { id: 'job-y', watchPath: '/wp' } as TaskInfo;
+    // A hidden pane defers provenance; Accept must not wait for it.
+    service.setJob(job, false);
+    expect(service.provenanceLoading()).toBe(false);
+    service.setJob(job, true);
+    expect(service.provenanceLoading()).toBe(true);
+    http.expectOne(request => request.url.endsWith('/api/tasks/job-y/provenance')).flush(null);
+    expect(service.provenanceLoading()).toBe(false);
+    http.expectOne(request => request.url.endsWith('/api/tasks/job-y/code-review/list')).flush({ entries: [] });
+    http.verify();
+  });
+});
+
+describe('GitPaneService header provenance (AGT-3621)', () => {
+  let service: GitPaneService;
+  let http: HttpTestingController;
+  const job = { id: 'job-hr', watchPath: '/wp' } as TaskInfo;
+  const provenanceUrl = (request: { url: string }) => request.url.endsWith('/api/tasks/job-hr/provenance');
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({ providers: [GitPaneService,
+      provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+      provideRouter([])] }).compileComponents();
+    service = TestBed.inject(GitPaneService);
+    http = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  it('settles provenance while the Git pane stays hidden and does not refetch it when the pane opens', () => {
+    service.setJob(job, false);
+    expect(service.provenanceLoaded()).toBe(false);
+    service.ensureProvenance();
+    service.ensureProvenance();
+    http.expectOne(provenanceUrl).flush(null);
+    expect(service.provenanceLoaded()).toBe(true);
+    service.setJob(job, true);
+    http.expectNone(provenanceUrl);
+    http.expectOne(request => request.url.endsWith('/api/tasks/job-hr/code-review/list')).flush({ entries: [] });
+    http.verify();
+  });
+
+  it('loads provenance for a Human Review card while the Git pane is closed', () => {
+    service.setJob({ ...job, state: TaskState.HumanReview } as TaskInfo, false);
+    http.expectOne(provenanceUrl).flush(null);
+    expect(service.provenanceLoaded()).toBe(true);
+    http.verify();
+  });
+
+  it('stops waiting after the bounded wait when the provenance reply never arrives', () => {
+    vi.useFakeTimers();
+    service.setJob(job, false);
+    service.ensureProvenance();
+    const pending = http.expectOne(provenanceUrl);
+    vi.advanceTimersByTime(PROVENANCE_WAIT_MS - 1);
+    expect(service.provenanceLoaded()).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(service.provenanceLoaded()).toBe(true);
+    expect(PROVENANCE_WAIT_MS).toBeLessThan(10_000);
+    pending.flush({ landedState: 'released-to-main' });
+    expect(service.provenance()?.landedState).toBe('released-to-main');
+  });
+
+  it('ignores a provenance reply for a job the view has left', () => {
+    service.setJob(job, false);
+    service.ensureProvenance();
+    const stale = http.expectOne(provenanceUrl);
+    service.setJob({ id: 'job-next', watchPath: '/wp' } as TaskInfo, false);
+    stale.flush({ landedState: 'released-to-main' });
+    expect(service.provenance()).toBeNull();
+    expect(service.provenanceLoaded()).toBe(false);
   });
 });
 

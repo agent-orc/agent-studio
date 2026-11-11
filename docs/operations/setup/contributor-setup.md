@@ -2,17 +2,21 @@
 
 This is the source-build workflow for contributors who need to edit, test, or
 debug Agent Studio itself. It is not a product installation path. Product users
-should follow the single Docker Compose path in
-[getting-started.md](./getting-started.md).
+follow the recommended path for their situation in the
+[setup guide](./README.md#choose-your-path).
 
-Everything below was verified against this repository's actual scripts and source on 2026-07-08. All commands are Git Bash (`sh`), not PowerShell.
+The commands are POSIX `sh`/bash. They run in a normal shell on Linux and in
+Git Bash on Windows, never in PowerShell. `api.sh` has Linux and Windows
+branches; Linux runner hosts drive it through `scripts/worktree-test-stack.sh`
+and the Playwright stack. This page was last reconciled with the UI and
+scripts of `develop` on 2026-11-09.
 
 ## 1. Prerequisites
 
 | Requirement | Check | Notes |
 |---|---|---|
-| Windows | - | The only tested target today. `api.sh` and the other repo scripts are `sh`, run under Git Bash. |
-| Git Bash | `bash --version` | Ships with [Git for Windows](https://git-scm.com/download/win). Agents and the repo's own scripts never use PowerShell for these tasks - see [AGENTS.md](../../../AGENTS.md) "Agent shell policy". `api.ps1` exists for manual, human, interactive use only. |
+| Linux or Windows | - | Linux (x64) or Windows. No Docker and no root are needed for this seat. |
+| bash | `bash --version` | Any bash on Linux. On Windows use Git Bash, which ships with [Git for Windows](https://git-scm.com/download/win). Agents and the repo's own scripts never use PowerShell for these tasks - see [AGENTS.md](../../../AGENTS.md) "Agent shell policy". `api.ps1` exists for manual, human, interactive use only. |
 | .NET SDK 10 | `dotnet --version` -> `10.x` | Backend is `backend/OrchestratorApi.csproj`. |
 | Node.js 22 | `node --version` -> `v22.x` | Pinned in CI ([.github/workflows/release.yml](../../../.github/workflows/release.yml)). A newer LTS will often work but isn't the tested baseline. |
 | Corepack | `corepack --version` | Runs the npm version declared by `frontend/package.json`. |
@@ -56,7 +60,7 @@ cp appsettings.Local.json.example appsettings.Local.json
 
 Edit `appsettings.Local.json` (gitignored, per-checkout) and set at least:
 
-- **`TaskRepository`** - the workspace root where job folders and the project/workspace registry live (`<TaskRepository>/projects/...`, `<TaskRepository>/.metadata/{workspaces,projects}.json`). Point it at an empty folder you own, e.g. `C:\\Projects\\agent-orchestrator-workspace`.
+- **`TaskRepository`** - the workspace root where job folders and the project/workspace registry live (`<TaskRepository>/projects/...`, `<TaskRepository>/.metadata/{workspaces,projects}.json`). Point it at an empty folder you own, e.g. `/home/<you>/agent-orchestrator-workspace` or `C:\\Projects\\agent-orchestrator-workspace`.
 - **`WatchPaths`** - leave it `[]`. It's a bootstrap-only discovery list (ADR-0042); you add your first real project after boot with the in-app dialog, not by hand-editing this file (see step 3).
 - **`Environment.IsDev`** - set it to `false` (or delete the whole `Environment` block). This both turns off the orange "DEV" UI markers and matters functionally: the runner's pickup role infers from this flag when `Runner.Role` isn't set explicitly (`true` -> `test-subject`, which *disables* auto-pickup; anything else -> `orchestrator`, which runs it). You want `orchestrator` for a normal instance.
 - Delete the `Runner`, `DevTools`, and `//TaskRepository.dev-vs-stable` blocks entirely. Those exist for the maintainers' own **dev + stable** side-by-side setup (see "Reference: dev + stable" below) and aren't needed for a single instance.
@@ -144,16 +148,32 @@ npm start --prefix frontend
 
 ### 2.6 Optional: the self-update service
 
-Only needed if you want the in-app Update Center to work. `./update-service.sh start` runs a small standalone process on port 5039 that survives backend restarts during an update.
+Only needed if you want the in-app Update Center to work. `./update-service.sh start` runs a small standalone process on loopback port 5039 that survives backend restarts during an update. Its first start writes the trigger token to `update-service/.update-token`; the backend hands it to the Update Center. Token, allowed origins and settings: [update-service.md](./update-service.md).
 
 ## 3. Onboard your first project
 
-**Recommended: the in-app "Onboard Project" dialog**, not hand-editing config files.
+Recommended: the in-app **Create a project** dialog, not hand-editing config files.
 
-1. In the board, use the workspace "+" in the sidebar to create a workspace if you don't have one yet (`+ Workspace`, name it anything).
-2. Click "+" next to that workspace to open **Onboard Project**. Fill in a display name (a short code is auto-derived and editable), pick a default CLI + model, and set **CLI working directory** (`rootPath`) to the target project's checkout. The checkout tells the agent where the source is; it does not provide a coding executor.
-3. Under **Execution location**, select a connected runner host. If local coding is disabled and no host is available, start a runner host next to the source checkout using **Workspace Settings → Execution Hosts → Set up agent host** ([host walkthrough](./linux-runner-host.md#product-onboarding-from-execution-hosts)). Give it access to the project's Git origin and Task Server, then return to the dialog and select the host. **Local** on this orchestrator is for the board and orchestration only.
-4. Submit. This calls `POST /api/projects` and provisions the project's lane folders immediately - **no backend restart needed.**
+1. In the Explorer, hover the workspace row and choose its **+** button
+   (tooltip "Create project in this workspace"). Create a workspace first if
+   there is none. The first-run checklist's **Create project** button opens the
+   same dialog.
+2. Under **Identity**, enter the display name (the short code is derived and
+   editable). Under **Code location**, set **Repository checkout path** to the
+   target project's Git checkout and, if the CLI should start elsewhere,
+   **Working directory**. Under **Default coding agent**, pick the CLI and
+   model.
+3. Under **Execution location**, choose the **Execution runner**. The
+   checkout tells the agent where the source is; it does not provide a coding
+   executor. When local coding is disabled, the orchestrator is listed as
+   **Local (board and orchestration only)** and the dialog requires a runner
+   for a project with a checkout. If no host is listed, start one next to the
+   source checkout in **Workspace Settings > Execution Hosts > Set up agent
+   host** ([host walkthrough](./linux-runner-host.md#product-onboarding-from-execution-hosts),
+   or [workstation-runner-host.md](./workstation-runner-host.md)), give it
+   access to the project's Git origin and the Task Server, then select it.
+4. Choose **Create project**. This calls `POST /api/projects` and provisions
+   the project's task store immediately - **no backend restart needed.**
 
 This is the current, working path (`RegistryEndpoints.cs`, ADR-0042/ADR-0046). Note on scope: the persistent **Orchestrator Chat** side panel (the chat window docked to a project) is great for asking the orchestrator questions about a project once it's onboarded, but it cannot create a project registration for you today - that capability is still on the roadmap (see [orchestrator-chat.md](../../concepts/orchestrator-chat.md)). Use the dialog above for the actual creation step.
 
@@ -169,7 +189,7 @@ That's the whole onboarding step: **register the project, and (if you want the p
 Three things describe one project and should be decided in the same sitting. Skipping the third is the trap that broke a real onboarding (a fresh repo escalated its review because the gate ran a Studio-specific build command that did not exist there - AGT-1919 / TE-2):
 
 1. **Registry entry** - the project registration itself (`POST /api/projects`). Without it there is no board column.
-2. **Working directory** (`rootPath`, and `RepositoryPath` when the repo root differs from the CLI working dir) - where the source is. A coding runner needs its own checkout or access to the Git origin.
+2. **Working directory** (`rootPath`, and `RepositoryPath` when the repo root differs from the CLI working dir) - where the source is and where Git status/diff resolve. A coding runner needs its own checkout or access to the Git origin.
 3. **Build profile / verify gate** - *how this project is verified*. You usually get this for free: the deterministic build/test gate (`post-build-test-gate`) **derives** its verify commands from the repo layout, so there is nothing to configure for a conventional stack:
    - a `.sln`, `.slnx`, or `.csproj` at the **repo root** -> bare `dotnet build` + `dotnet test` (auto-discovery, no hardcoded project path);
    - a `package.json` (repo root or one level down, e.g. `frontend/`) -> `npm run build` / `npm test` / `npm run lint`, but only for the scripts that manifest actually declares;
@@ -211,16 +231,53 @@ Three things describe one project and should be decided in the same sitting. Ski
    /api/projects/{project}/build-profile` (`buildCmds` / `testCmds`); those
    commands are the override and take precedence over the derivation. See
    [onboard-a-project.md](./onboard-a-project.md) for the build-profile fields.
+   Project Settings can also detect the checkout stack and preview a schema 2
+   `.agent-studio/project.yml`, its prepare script, and the build, test, and lint
+   commands before creating a proposal card to add the files to the repository.
+
+### Declare repository checks
+
+When discovery cannot derive checks, commit `.agent-studio/project.yml` and
+the executable `.agent-studio/prepare` script. This is the minimal custom
+definition; create the named test script and make it run real checks:
+
+```yaml
+schemaVersion: 1
+stack: [custom]
+commands:
+  prepare: .agent-studio/prepare
+  test:
+    - ./scripts/test.sh
+```
+
+The prepare script starts with `#!/bin/sh` and `set -eu`. For a different
+stack, use the same YAML and substitute the stack and test command below:
+
+| Stack | `stack` | Test list entry | Prepare script setup |
+|---|---|---|---|
+| .NET | `[dotnet]` | `dotnet test App.sln --no-build` | `dotnet restore App.sln`; add `commands.build: [dotnet build App.sln]` |
+| Node built-in runner | `[node]` | `node --test` | `npm ci` |
+| Jest or Vitest | `[node]` | `npm test` | `npm ci` |
+| Python | `[python]` | `python -m pytest` | `python -m pip install -e .` |
+| Go | `[go]` | `go test ./...` | `go mod download` |
+| Make | `[make]` | `make test` | Install what the Makefile requires, if anything. |
+
+Review accepts a successful test command exit as evidence even without a
+parsed summary. See [accepted test output and stack examples](./onboard-a-project.md#test-command-output-in-review)
+for the recognized .NET, TAP, Jest, and Vitest summaries and successful
+exit-status evidence for pytest, Go, Make, and custom scripts.
 
 ## 4. Run your first task
 
-Full walkthrough, including what to queue and what to watch for: [your-first-task.md](./your-first-task.md). Short version:
+Full walkthrough, with screenshots of the current UI: [your-first-task.md](./your-first-task.md). Short version:
 
-1. In **Project Settings → Execution location**, confirm that the project uses a connected runner host with a checkout of the source. If none is listed, start one from **Workspace Settings → Execution Hosts → Set up agent host** next to the checkout ([host walkthrough](./linux-runner-host.md#product-onboarding-from-execution-hosts)). A local path on the orchestrator alone cannot run coding tasks when local coding is disabled.
-2. Create a small, scoped, read-then-write task (the "Project Overview Doc" pattern in that doc works well) in `2-ready`, targeting the CLI you configured.
-3. Set **Pickup mode** in Project Settings to **Auto** for automatic pickup, **Manual** to start tasks yourself, or **Paused** to stop automatic pickup. Execution location is a separate setting.
-4. Watch the card move `2-ready -> 3-progress -> 4-auto-review -> 5-human-review`. The Activity Log streams the CLI's tool calls live; the detail panel shows a live `git diff` once the agent starts writing.
-5. Logs and evidence live in the job folder: `logs/cli-output.log` (raw CLI stdout/stderr) and `results/` (screenshots and other evidence the run produced).
+1. Commit `.agent-studio/project.yml` and its executable `.agent-studio/prepare` to the target repository. Without a definition or derivable build commands, Project Settings shows "No verify commands defined" and Studio refuses to merge the delivery.
+2. In Project Settings, on the **Execution location** card, select a connected runner host with a checkout of the source and set **Pickup mode** to **Auto** ("Ready tasks are offered automatically."). **Manual** admits only explicit starts; **Paused** holds pickup and keeps the location. Execution location and pickup mode are separate settings; a local path on the orchestrator alone cannot run coding tasks when local coding is disabled.
+3. Choose **Add task**, write a small read-then-write prompt (the "Project overview" pattern in that doc), and queue it in **Ready**.
+4. Watch the card move **Ready -> In Progress -> Post Processing -> Human review**. The Activity Log streams the CLI's tool calls live; the detail panel shows a live `git diff` once the agent starts writing.
+5. Open the card in **Human review**, read the **Result** tab, and choose **Accept**. The card moves to **Accepted**.
+
+Logs and evidence live in the job folder: `logs/cli-output.log` (raw CLI stdout/stderr) and `results/` (screenshots and other evidence the run produced).
 
 Scripting task creation instead of clicking through the dialog: the Task API skill ([.agents/skills/task-api/SKILL.md](../../../.agents/skills/task-api/SKILL.md)) is the canonical, agent-neutral reference - read it before writing any script that creates or moves tasks; it covers the `watchPath` vs `rootPath` mixup that trips up everyone once.
 
@@ -229,12 +286,12 @@ Scripting task creation instead of clicking through the dialog: the Task API ski
 | Symptom | Cause | Fix |
 |---|---|---|
 | `./api.sh start` refuses with "refusing to start the dev backend" | ADR-0044 policy gate (see step 2.4) | `ATP_ALLOW_DEV_BACKEND=1 ./api.sh start` |
-| Claude quota panel is empty / plan shows unknown | Claude CLI never finished its first-run onboarding wizard | Run `claude` interactively once and click through to the ready prompt; see step 1. Full detail: [troubleshooting.md](./troubleshooting.md#claude-quota-panel-is-empty-plan-shows-unknown). |
+| Claude quota panel is empty / plan shows unknown | Claude CLI never finished its first-run onboarding wizard | Run `claude` interactively once and click through to the ready prompt; see step 1. Full detail: [troubleshooting.md](./troubleshooting.md#claude-quota-panel-is-empty--plan-shows-unknown). |
 | `npm ci` fails while resolving `coding-agent-chat` | The npm registry is unavailable or the lock file and manifest have drifted | Restore registry access and verify `frontend/package.json` and `frontend/package-lock.json` agree. Do not add a relative `file:` dependency as a workaround. |
 | `claude` / `gemini` command is missing or broken on Windows after an interrupted npm update | Half-completed npm install left orphan shim files or a stub binary | `bash tools/check-cli-shims.sh` - self-heals and re-verifies with `claude --version`. |
 | Port 5030 / 4010 (or 5031 / 4011) already in use | A previous `dotnet run` or `ng serve` is still listening | `./api.sh stop` (sweeps the port owner and this checkout's backend processes, not just the tracked PID); for the frontend, stop the other `ng serve` or pass `--port <n>`. |
-| A newly-added project's mode toggle returns `400 Invalid project or mode` | Per-project runners are only created at backend startup | `./api.sh restart`. Full detail: [troubleshooting.md](./troubleshooting.md#put-apirunnerprojectmode-returns-400). |
-| `./api.sh restart` succeeds but the change is not live, or a rebuild cannot write `backend/bin` | Fixed in AGT-2678; an older `api.sh` left the previous process alive and reported success anyway | Update the checkout, then confirm with `bash tools/api-restart-selfcheck.sh`. Full detail: [troubleshooting.md](./troubleshooting.md#apish-restart-said-it-worked-but-the-old-code-is-still-being-served). |
+| A pickup mode change returns `409` "has no RootPath configured" or `404` "Unknown project" | The project has no working directory, so no local runner exists, or the name is wrong | Set **Working directory** in Project Settings, or use the exact project name. Full detail: [troubleshooting.md](./troubleshooting.md#a-pickup-mode-change-is-refused). |
+| Ready tasks wait and the Execution location card says "Local coding is disabled on this orchestrator" | The project runs on **Local (board and orchestration only)**; the orchestrator does not run coding tasks itself | Select an execution host in Project Settings > Execution location. |
 
 For anything not on this short list, the full FAQ is [troubleshooting.md](./troubleshooting.md), and CLI-specific quirks (Codex's Windows sandbox setting, Copilot's auth, Gemini's stdout buffering) are in [onboard-an-agent-cli.md](./onboard-an-agent-cli.md).
 
@@ -342,7 +399,7 @@ The flags that gate the auto-review orchestrator, the orchestrator-prep lane, th
 
 ### Job organization through the API
 
-Agents and scripts must organize jobs through the application API, not by directly creating, moving, deleting, or reordering folders under `<TaskRepository>/projects/<projectKey>/`. See the Task API skill for the full endpoint list; the load-bearing ones are `GET /api/watch-paths`, `POST /api/tasks`, `POST /api/tasks/{jobId}/move`, `POST /api/tasks/reorder`, `DELETE /api/tasks/{jobId}`.
+Agents and scripts must organize jobs through the application API, not by directly creating, moving, deleting, or reordering folders under `<TaskRepository>/projects/<projectKey>/`. See the Task API skill for the full endpoint list; the load-bearing ones are `GET /api/watch-paths`, `POST /api/tasks` (prefer the `project` field over the deprecated `watchPath`), `POST /api/tasks/{jobId}/move`, `POST /api/tasks/reorder`, `DELETE /api/tasks/{jobId}`.
 
 ### Supported CLIs
 

@@ -139,6 +139,9 @@ builder.Services.AddSingleton<OrchestrationRolloutStore>();
 builder.Services.AddSingleton<MonolithOrchestrationStore>();
 builder.Services.AddSingleton<OrchestratorDecisionStore>();
 builder.Services.AddSingleton<DecisionRuleVersionStore>();
+// Persona team PT-1: built-in catalogue and per-workspace activations.
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaCatalogue>(_ => new AgentStudio.Personas.PersonaCatalogue());
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaActivationStore>();
 builder.Services.AddSingleton<DecisionGroundsCollector>();
 builder.Services.AddSingleton<ReviewInputDecisionGateway>();
 builder.Services.AddSingleton<ActiveChoiceAdmissionAdapter>();
@@ -1222,6 +1225,7 @@ if (!publicDemoExecutionProfile)
 // Forwarded into ProjectRunner via TaskRunnerService; default-OFF per project.
 builder.Services.AddSingleton<AgentStudio.Runner.PostAbortReviewStepService>();
 builder.Services.AddSingleton<AutoReviewStatusSnapshot>();
+builder.Services.AddSingleton<ReportContentReviewService>();
 builder.Services.AddSingleton<ReviewDecisionOrchestrator>();
 // Keep the review and delivery workers available for runtime profile rollback.
 if (!publicDemoExecutionProfile)
@@ -1407,6 +1411,8 @@ if (!publicDemoExecutionProfile)
 // orchestration-decisions.
 builder.Services.AddSingleton(sp => OperatorDecisionOptions.FromConfiguration(sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddSingleton<OperatorCoordinationStore>();
+// MAG-1: magazine articles and their revisions under <TaskRepository>/.magazine.
+builder.Services.AddSingleton<AgentStudio.Magazine.MagazineStore>();
 builder.Services.AddSingleton(sp => new OperatorDecisionLog(
     OperatorDecisionOptions.Folder(sp.GetRequiredService<IConfiguration>()),
     sp.GetRequiredService<OperatorDecisionOptions>().Retention, sp.GetRequiredService<TimeProvider>(),
@@ -2067,6 +2073,19 @@ if (runRepairSweeps) try
 catch (Exception ex)
 {
     crashRecorder.Record("RemoteCompletionAttributionSweep", ex);
+}
+
+// AGT-3717: one-time re-attribution of deliveries whose own runner salvage
+// commit named a related card in its subject, which the attribution guard
+// rejected before it exempted that commit.
+if (runRepairSweeps) try
+{
+    hostTimeline.Sweep("SalvageSubjectAttributionRepair",
+        () => app.Services.GetRequiredService<RemoteCompletionAttributionSweep>().RunSalvageSubjectRepairOnce());
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("SalvageSubjectAttributionRepair", ex);
 }
 
 // Cap legacy durable CLI logs after the one-time full-history wiki read

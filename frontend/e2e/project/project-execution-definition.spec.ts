@@ -38,6 +38,16 @@ test('Execution settings show unused-cache warning and justified override guard 
     override: null,
     source: 'subject-commit',
   } }));
+  await page.route(`**/api/projects/${project}/execution/proposal-preview`, route => route.fulfill({ json: {
+    definition: 'schemaVersion: 2\nproject:\n  id: cache-demo\nstack: [dotnet]\ncommands:\n  prepare: .agent-studio/prepare\n  build: [dotnet build]\n  test: [dotnet test]\n',
+    prepareScript: '#!/bin/sh\ndotnet restore\n',
+    detectedStacks: ['dotnet'],
+    reasoning: 'Stack detection found dotnet.',
+    reviewCommands: { build: ['dotnet build'], test: ['dotnet test'], lint: [] },
+  } }));
+  await page.route(`**/api/projects/${project}/execution/proposal`, route => route.fulfill({ json: {
+    taskId: 'AGT-preview',
+  } }));
   const settings = {
     autoCommit: true, crashRecoveryEnabled: true, autoPushStrategy: 'never',
     pickupMode: 'manual', executionLocation: 'local', integrationBranch: 'develop',
@@ -55,12 +65,27 @@ test('Execution settings show unused-cache warning and justified override guard 
     }));
   }, project);
   await page.goto('/');
+  const startupError = page.getByTestId('error-dialog');
+  await startupError.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+  if (await startupError.isVisible()) {
+    await startupError.getByRole('button', { name: 'Close' }).click();
+  }
+  await page.getByRole('tab', { name: /cache-demo.*Settings/ }).click();
   const execution = page.getByTestId('project-execution-definition');
   await expect(execution).toBeVisible();
   await expect(execution.getByText('Valid repository definition')).toBeVisible();
   await expect(execution.getByTestId('execution-repository-definition')).toContainText('schemaVersion: 1');
   await expect(execution.getByTestId('execution-preparation-warnings'))
     .toContainText('redirects or unsets NUGET_PACKAGES');
+  await execution.getByTestId('execution-preview-definition').click();
+  const preview = execution.getByTestId('execution-definition-preview');
+  await expect(preview).toContainText('Build profile for dotnet');
+  await expect(preview).toContainText('dotnet build');
+  await expect(preview).toContainText('dotnet test');
+  await expect(preview).toContainText('schemaVersion: 2');
+  await expect(execution.getByTestId('execution-create-proposal')).toBeVisible();
+  await execution.getByTestId('execution-create-proposal').click();
+  await expect(execution).toContainText('Proposal card AGT-preview is ready for review.');
 
   const save = execution.getByTestId('execution-save-override');
   await execution.getByText('Justified operator override').click();
@@ -74,6 +99,9 @@ test('Execution settings show unused-cache warning and justified override guard 
   mkdirSync(results!, { recursive: true });
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
-    await execution.screenshot({ path: join(results!, `execution-settings-unused-cache-${theme}--mocked.png`) });
+    await execution.screenshot({ path: join(results!, `execution-settings-build-profile-${theme}--mocked.png`) });
   }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await preview.scrollIntoViewIfNeeded();
+  await preview.screenshot({ path: join(results!, 'execution-settings-build-profile-390px--mocked.png') });
 });

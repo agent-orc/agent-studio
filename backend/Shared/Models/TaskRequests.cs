@@ -144,6 +144,8 @@ public record MoveJobRequest
     public bool OperatorOverride { get; init; }
     /// <summary>Owner-only, one-card archive override with a written reason.</summary>
     public bool ArchiveOverride { get; init; }
+    /// <summary>Explicitly withdraw this card from its active batch before leaving Auto Review.</summary>
+    public bool WithdrawFromBatch { get; init; }
 
     /// <summary>
     /// Optional operator rationale for the lane move. It is persisted on the
@@ -172,7 +174,9 @@ public enum MoveJobStatus
     Failure,
     PendingIntentSupersedeFailed,
     SourceStateMismatch,
-    IntegrationFailed
+    IntegrationFailed,
+    /// <summary>An operator move would take a member of an active batch out of Auto Review (AGT-3719).</summary>
+    ActiveBatchMember
 }
 
 /// <summary>
@@ -184,7 +188,11 @@ public enum MoveJobStatus
 /// job through the scanner — the cache may not yet reflect the move, and
 /// a stale path would silently recreate the source folder on first write.
 /// </summary>
-public record MoveJobOutcome(MoveJobStatus Status, string? Message = null, string? NewFolderPath = null);
+public record MoveJobOutcome(MoveJobStatus Status, string? Message = null, string? NewFolderPath = null)
+{
+    /// <summary>The batch named by an <see cref="MoveJobStatus.ActiveBatchMember"/> refusal.</summary>
+    public AgentStudio.Pipeline.ActiveBatchMembership? ActiveBatch { get; init; }
+}
 
 /// <summary>Result of <c>POST /api/tasks/{id}/restore-from-failed-pickup</c>.</summary>
 public enum RestoreFromFailedPickupStatus
@@ -259,6 +267,7 @@ public record BatchMoveRequest
 /// <item><description><c>not-found</c>: no job folder matched the (jobId, watchPath) pair.</description></item>
 /// <item><description><c>conflict</c>: a non-recoverable target path conflict blocked the move.</description></item>
 /// <item><description><c>rejected</c>: invalid input (unknown lane name, empty jobId, etc.).</description></item>
+/// <item><description><c>refused</c>: the card is a member of an active batch; the message names the batch, its phase and its other members.</description></item>
 /// <item><description><c>failed</c>: an unexpected IO error blocked the move.</description></item>
 /// </list>
 /// </summary>

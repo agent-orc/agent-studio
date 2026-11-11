@@ -179,6 +179,7 @@ public sealed class BoardShadowWorker : BackgroundService
                 if (current.TryGetValue(delta.Project, out var cards)) _synced[delta.Project] = cards;
                 else _synced.Remove(delta.Project);
             }
+            await _client.RecordWorkspaceGenerationAsync(publication.Generation, ct);
         }
         catch (HttpRequestException exception)
         {
