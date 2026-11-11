@@ -1332,13 +1332,15 @@ public class TaskScannerService : ITaskScanner
 
         var documentRoot = repositoryRoot;
         var review = AgentStudio.Pipeline.ConceptWorkbenchContract.ReviewDirectory(
-            documentRoot, publication.RepoRelativeDirectory, info.Key ?? info.Id);
+            documentRoot, publication.RepoRelativeDirectory, info.Key ?? info.Id,
+            allowAccepted: true);
         var placedCopy = AgentStudio.Pipeline.ConceptWorkbenchStore.SnapshotRoot(info.FolderPath);
         if (!review.IsComplete && Directory.Exists(placedCopy))
         {
             documentRoot = placedCopy;
             review = AgentStudio.Pipeline.ConceptWorkbenchContract.ReviewDirectory(
-                documentRoot, publication.RepoRelativeDirectory, info.Key ?? info.Id);
+                documentRoot, publication.RepoRelativeDirectory, info.Key ?? info.Id,
+                allowAccepted: true);
         }
         if (!review.IsComplete || review.Descriptor == null) return null;
 

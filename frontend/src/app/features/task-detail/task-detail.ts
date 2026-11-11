@@ -1072,7 +1072,6 @@ export class TaskDetailComponent implements OnDestroy {
         ? 'Backend not reachable — is the API running on localhost:5030?'
         : (typeof bodyError === 'string' && bodyError.trim()) ||
           `Request failed (${detail.status || 'unknown'}): ${detail.statusText || detail.message || 'Unknown error'}`;
-
     this.errorMsg.set(message);
     this.errorDialog.show(err, {
       title: 'Task action failed',
