@@ -247,6 +247,7 @@ public sealed class PersonaActivationStoreTests : IDisposable
         _clock.Advance(TimeSpan.FromSeconds(30));
         var session = _security.Login("first.owner", Password, "persona-tests", SecondFactorCodes.CurrentTotp(_totpSecret, Now)).SessionToken;
         var owner = _security.AuthenticateSession(session)!;
+        _clock.Advance(TimeSpan.FromSeconds(30));
         _security.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_totpSecret, Now));
         return owner;
     }

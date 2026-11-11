@@ -30,6 +30,7 @@ export const STUDIO_HEADER_NAV_ITEMS: readonly CockpitNavItem[] = [
   { id: 'theme', label: 'Switch theme', inlineFrom: 'desktop' },
   { id: 'environment', label: 'Environment', inlineFrom: 'tablet' },
   { id: 'settings', label: 'Orchestrator configuration', inlineFrom: null },
+  { id: 'magazine', label: 'Magazine', inlineFrom: 'desktop' },
 ];
 
 /** The parts of the studio shell the header cockpit drives. */
@@ -43,6 +44,7 @@ export interface StudioHeaderHost {
   readonly productWithoutProject: Signal<boolean>;
   readonly chatToggle: OutputEmitterRef<void>;
   readonly openOrchSettings: OutputEmitterRef<void>;
+  openInstallationMagazine(): void;
   toggleTheme(): void;
 }
 
@@ -118,6 +120,7 @@ export class StudioHeaderCockpit {
       case 'theme': host.toggleTheme(); return;
       case 'environment': host.environmentOpen.set(true); return;
       case 'settings': host.openOrchSettings.emit(); return;
+      case 'magazine': host.openInstallationMagazine(); return;
     }
   }
 

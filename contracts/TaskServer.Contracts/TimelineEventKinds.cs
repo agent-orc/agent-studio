@@ -275,6 +275,8 @@ public static class TimelineEventKinds
     public const string StallInterventionRecorded = "stall_intervention_recorded";
     /// <summary>A stale delivery verdict caused a fresh ReviewAttempt request.</summary>
     public const string DeliveryReviewRequested = "delivery_review_requested";
+    /// <summary>A stale verdict returned to Auto Review and queued integration of its current delivery.</summary>
+    public const string DeliveryIntegrationRequested = "delivery_integration_requested";
     /// <summary>
     /// The task was completed out-of-band (operator chat, external agent, a
     /// remote host) and reconciled through
