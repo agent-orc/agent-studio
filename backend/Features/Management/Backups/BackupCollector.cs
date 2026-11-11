@@ -180,6 +180,11 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
                 files = info.GetFiles();
             }
             catch (DirectoryNotFoundException) { stats.Vanished++; continue; }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                stats.Unreadable.Add(new(relativeDirectory == "." ? source.Name : $"{source.Name}/{relativeDirectory}", ex.Message));
+                continue;
+            }
 
             foreach (var file in files.OrderBy(item => item.Name, StringComparer.Ordinal))
             {
@@ -195,11 +200,19 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
                     continue;
                 }
                 if (BackupSnapshotReader.IsSqliteSidecar(full)) continue;
-                var capture = BackupSnapshotReader.Capture(full, spool);
-                AfterCapture?.Invoke(full);
-                stats.Count(capture, $"{source.Name}/{relative}");
-                if (capture.Kind == BackupCaptureKind.Vanished) continue;
                 var member = $"{source.Name}/{relative}";
+                BackupCapture capture;
+                try { capture = BackupSnapshotReader.Capture(full, spool); }
+                catch (BackupSourceUnreadableException ex)
+                {
+                    // One locked or unreadable file leaves only itself out; the content list names it.
+                    stats.Unreadable.Add(new(member, ex.InnerException?.Message ?? ex.Message));
+                    File.Delete(spool);
+                    continue;
+                }
+                AfterCapture?.Invoke(full);
+                stats.Count(capture, member);
+                if (capture.Kind == BackupCaptureKind.Vanished) continue;
                 BackupCredentialInventory.RejectPlaintextTotp(member, spool, request.SecretKeyId);
                 BackupArchive.WriteFile(writer, member, spool, file.LastWriteTimeUtc, UnixMode(full));
                 contents.Add(new(member, capture.Length, capture.Sha256, capture.Kind.ToString()));
@@ -220,7 +233,9 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
         => BackupCheckouts.Discover(projects);
 
     private static IEnumerable<string> DefaultAndSourceExcludes(BackupSource source)
-        => BackupOptions.DefaultExclude.Concat(source.Exclude);
+        => BackupOptions.DefaultExclude
+            .Concat(source.Name == BackupOptions.WorkspaceSource ? BackupOptions.WorkspaceRuntimeExclude : [])
+            .Concat(source.Exclude);
 
     private static IEnumerable<string> ExcludedPaths(BackupOptions options)
     {
@@ -273,6 +288,7 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
         public int KeyFiles;
         public int Symlinks;
         public readonly List<string> Unsettled = [];
+        public readonly List<BackupUnreadableEntry> Unreadable = [];
 
         public void Count(BackupCapture capture, string member)
         {
@@ -288,6 +304,6 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
 
         public BackupConsistency ToConsistency()
             => new(true, Drained, HeldMilliseconds, ReleasedEarly, Sqlite, Journals, Retried, Vanished, KeyFiles, Symlinks,
-                Unsettled.ToArray());
+                Unsettled.ToArray(), Unreadable.ToArray());
     }
 }

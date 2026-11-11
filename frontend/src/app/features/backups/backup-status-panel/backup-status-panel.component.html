@@ -17,7 +17,7 @@
         <ul class="backup-status__warnings" data-testid="operations-backups-warnings">
           @for (warning of o.warnings; track warning.code) {
             <li [attr.data-code]="warning.code" [attr.data-severity]="warning.severity">
-              <app-status-indicator [compact]="true" [tone]="warning.severity === 'danger' ? 'danger' : 'warning'" [label]="warning.message" />
+              <app-status-indicator [compact]="true" [wrap]="true" [tone]="warning.severity === 'danger' ? 'danger' : 'warning'" [label]="warning.message" />
             </li>
           }
         </ul>
@@ -52,6 +52,7 @@
           <dt>Off-host copy</dt>
           <dd>
             <app-status-indicator [compact]="true" [tone]="offHostTone(o.offHost)" [label]="offHostLabel(o.offHost)" [detail]="o.offHost.lastError" />
+            @if (o.lastGood; as good) { <small data-testid="operations-backups-offhost-id">Newest backup: <code>{{ good.id }}</code></small> }
             @if (o.offHost.target) { <small>{{ o.offHost.target }}</small> }
           </dd>
         </div>

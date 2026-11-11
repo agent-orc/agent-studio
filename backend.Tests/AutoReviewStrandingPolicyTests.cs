@@ -95,6 +95,88 @@ public sealed class AutoReviewStrandingPolicyTests
         => Assert.Equal(AutoReviewStrandingAction.ReenterBatch,
             AutoReviewStrandingPolicy.Decide(Stranded() with { HasReview = true, PassedReview = true }));
 
+    /// <summary>
+    /// AGT-3740: AGT-3243 passed a review that ran its own build and tests.
+    /// Re-entering the batch hit BuildTestNotDeferred and escalated the card on
+    /// every lane visit. Such a card takes the per-task route instead.
+    /// </summary>
+    [Fact]
+    public void Passed_review_that_ran_its_own_build_tests_takes_the_per_task_route()
+        => Assert.Equal(AutoReviewStrandingAction.IntegratePerTask,
+            Route(Stranded() with { HasReview = true, PassedReview = true }, OwnBuildTests));
+
+    [Fact]
+    public void Passed_review_that_deferred_build_tests_keeps_the_batch_route()
+        => Assert.Equal(AutoReviewStrandingAction.ReenterBatch,
+            Route(Stranded() with { HasReview = true, PassedReview = true },
+                new AutoReviewBatchRouteFacts(BuildTestDeferredToBatch: true)));
+
+    [Fact]
+    public void Per_task_route_is_not_reset_by_an_earlier_batch_reentry_of_the_same_visit()
+        => Assert.Equal(AutoReviewStrandingAction.IntegratePerTask,
+            Route(Stranded() with
+            {
+                HasReview = true, PassedReview = true,
+                SinceLastIntervention = TimeSpan.FromMinutes(31), ReenteredBatchBefore = true,
+            }, OwnBuildTests));
+
+    [Fact]
+    public void Per_task_route_that_did_not_hold_waits_a_threshold_then_escalates()
+    {
+        var facts = Stranded() with
+        {
+            HasReview = true, PassedReview = true, SinceLastIntervention = TimeSpan.FromMinutes(29),
+        };
+        var route = OwnBuildTests with { IntegratedPerTaskBefore = true };
+
+        Assert.Equal(AutoReviewStrandingAction.Leave, Route(facts, route));
+        Assert.Equal(AutoReviewStrandingAction.Escalate,
+            Route(facts with { SinceLastIntervention = TimeSpan.FromMinutes(31) }, route));
+    }
+
+    [Fact]
+    public void Batch_route_does_not_touch_a_card_without_a_passed_review()
+    {
+        Assert.Equal(AutoReviewStrandingAction.StartStep, Route(Stranded(), OwnBuildTests));
+        Assert.Equal(AutoReviewStrandingAction.Escalate,
+            Route(Stranded() with { HasReview = true }, OwnBuildTests));
+        Assert.Equal(AutoReviewStrandingAction.StartStep,
+            Route(Stranded() with { HasReview = true, PassedReview = true, ReportOnly = true }, OwnBuildTests));
+    }
+
+    [Theory]
+    [InlineData("running-step")]
+    [InlineData("running-review")]
+    [InlineData("pending-batch")]
+    [InlineData("queued-step")]
+    public void Card_with_a_defined_next_step_is_left_alone_whatever_its_review_plan(string owner)
+    {
+        var passed = Stranded() with { HasReview = true, PassedReview = true };
+        var facts = owner switch
+        {
+            "running-step" => passed with { RunningStep = true },
+            "running-review" => passed with { ActiveReview = true },
+            "pending-batch" => passed with { BatchMember = true },
+            _ => passed with { QueuedStep = true },
+        };
+
+        Assert.Equal(AutoReviewStrandingAction.Leave, Route(facts, OwnBuildTests));
+    }
+
+    private static readonly AutoReviewBatchRouteFacts OwnBuildTests = new(BuildTestDeferredToBatch: false);
+
+    private static AutoReviewStrandingAction Route(AutoReviewStrandingFacts facts, AutoReviewBatchRouteFacts route)
+        => AutoReviewStrandingPolicy.RouteBatch(AutoReviewStrandingPolicy.Decide(facts), facts, route);
+
+    [Theory]
+    [InlineData(AutoReviewResumePolicy.Reasons.NoSettlementRecord, true)]
+    [InlineData("review-settlement-repair-required", true)]
+    [InlineData("delivery-resume-failed", false)]
+    [InlineData("delivery-resume-exhausted", false)]
+    [InlineData("engine-owned", false)]
+    public void Only_a_review_without_a_usable_recorded_verdict_is_replanned(string resumeReason, bool replan)
+        => Assert.Equal(replan, AutoReviewStrandingWatchdog.NeedsReplannedReview(resumeReason));
+
     [Fact]
     public void Only_review_of_current_run_and_result_can_resume_delivery()
     {
@@ -129,6 +211,30 @@ public sealed class AutoReviewStrandingPolicyTests
     public void Terminal_failed_review_without_owner_escalates()
         => Assert.Equal(AutoReviewStrandingAction.Escalate,
             AutoReviewStrandingPolicy.Decide(Stranded() with { HasReview = true }));
+
+    [Theory]
+    [InlineData(-59)]
+    [InlineData(0)]
+    [InlineData(30 * 60)]
+    public void Scheduled_infrastructure_retry_owns_the_terminal_review_until_a_threshold_past_due(int overdueSeconds)
+        => Assert.Equal(AutoReviewStrandingAction.Leave,
+            AutoReviewStrandingPolicy.Decide(Stranded() with
+            {
+                HasReview = true, ScheduledRetryOverdue = TimeSpan.FromSeconds(overdueSeconds),
+            }));
+
+    [Fact]
+    public void Scheduled_retry_that_never_fired_leaves_the_card_ownerless()
+        => Assert.Equal(AutoReviewStrandingAction.Escalate,
+            AutoReviewStrandingPolicy.Decide(Stranded() with
+            {
+                HasReview = true, ScheduledRetryOverdue = TimeSpan.FromMinutes(31),
+            }));
+
+    [Fact]
+    public void Cause_breaker_wait_owns_the_parked_card()
+        => Assert.Equal(AutoReviewStrandingAction.Leave,
+            AutoReviewStrandingPolicy.Decide(Stranded() with { HasReview = true, CauseBreakerWait = true }));
 
     [Fact]
     public void Successful_step_recovery_can_advance_to_batch_recovery_in_same_lane_visit()

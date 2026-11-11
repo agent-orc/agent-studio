@@ -56,6 +56,7 @@ describe('BackupStatusPanelComponent', () => {
     expect(host.querySelector('[data-testid="operations-backups-size"]')?.textContent).toContain('3.0 MB');
     expect(host.querySelector('[data-testid="operations-backups-verification"]')?.textContent).toContain('Verified');
     expect(host.querySelector('[data-testid="operations-backups-offhost"]')?.textContent).toContain('Copied');
+    expect(host.querySelector('[data-testid="operations-backups-offhost-id"]')?.textContent).toContain('studio-backup-20261109T060000Z-abc123');
     expect(host.querySelector('[data-testid="operations-backups-offhost"]')?.textContent).toContain('sftp://studio@backup.example');
     expect(host.querySelector('[data-testid="operations-backups-warnings"]')).toBeNull();
     expect(host.querySelector('[data-testid="operations-backups-key-id"]')?.textContent).toContain('a1b2c3d4e5f60718');

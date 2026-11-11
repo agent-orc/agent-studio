@@ -26,6 +26,7 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
     private readonly AgentStudio.Projects.ProjectSettingsService _settings;
     private readonly RemoteReviewPlanBuilder _remoteReviewPlans;
     private readonly GitService _git;
+    private readonly TimelineLog _timeline;
     private readonly IConfiguration _configuration;
     private readonly ILogger<ReviewInfrastructureRetryScheduler> _logger;
 
@@ -37,6 +38,7 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
         AgentStudio.Projects.ProjectSettingsService settings,
         RemoteReviewPlanBuilder remoteReviewPlans,
         GitService git,
+        TimelineLog timeline,
         IConfiguration configuration,
         ILogger<ReviewInfrastructureRetryScheduler> logger)
     {
@@ -47,6 +49,7 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
         _settings = settings;
         _remoteReviewPlans = remoteReviewPlans;
         _git = git;
+        _timeline = timeline;
         _configuration = configuration;
         _logger = logger;
     }
@@ -159,14 +162,26 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
         if (review is null) return false;
 
         var task = V1ReviewPlaneEndpoints.FindTask(_scanner, review.TaskKey);
-        if (task is null
-            || !string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
+        if (task is null)
+        {
+            // The card is gone (archived or deleted) before the retry came
+            // due. The schedule is moot, not failed - abandon it instead of
+            // spinning on it forever.
+            _authority.ClearScheduledReviewInfrastructureRetry(item.AttemptId);
+            _logger.LogWarning(
+                "review-infrastructure-retry-dropped attempt={AttemptId} task={TaskKey} reason=card-not-found "
+                + "retryNumber={RetryNumber}/{RetryBudget}",
+                item.AttemptId, item.TaskKey, item.RetryNumber, item.RetryBudget);
+            return false;
+        }
+        if (!string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
         {
             // The card left Auto Review (an operator moved it, or it was
-            // resolved some other way) before the retry came due. The
-            // schedule is moot, not failed - abandon it instead of spinning
-            // on it forever.
+            // resolved some other way) before the retry came due. AGT-3691:
+            // say so on the card, a silent clear hid a lost review.
             _authority.ClearScheduledReviewInfrastructureRetry(item.AttemptId);
+            Dropped(item, task, "card-left-auto-review",
+                $"the card is in {task.State}, not Auto Review", ("lane", task.State));
             return false;
         }
 
@@ -176,9 +191,9 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
         if (causeWait is { Probe: false })
         {
             _authority.ClearScheduledReviewInfrastructureRetry(item.AttemptId);
-            _logger.LogInformation(
-                "review-infrastructure-retry-withheld attempt={AttemptId} task={TaskKey} cause={CauseKey} fingerprint={Fingerprint}",
-                item.AttemptId, item.TaskKey, causeWait.CauseKey, causeWait.Fingerprint);
+            Dropped(item, task, "cause-breaker-wait",
+                $"the card waits for {causeWait.CauseKey}, the cause breaker releases it",
+                ("causeKey", causeWait.CauseKey), ("fingerprint", causeWait.Fingerprint));
             return false;
         }
 
@@ -205,6 +220,31 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
             item.RetryNumber,
             item.RetryBudget);
         return true;
+    }
+
+    private void Dropped(ReviewInfrastructureRetryDue item, TaskInfo task, string reasonCode, string reason,
+        params (string Key, string Value)[] extra)
+    {
+        _logger.LogWarning(
+            "review-infrastructure-retry-dropped attempt={AttemptId} task={TaskKey} reason={Reason} "
+            + "retryNumber={RetryNumber}/{RetryBudget} detail={Detail}",
+            item.AttemptId, item.TaskKey, reasonCode, item.RetryNumber, item.RetryBudget, reason);
+        var details = new Dictionary<string, string>
+        {
+            ["attemptId"] = item.AttemptId,
+            ["retryNumber"] = item.RetryNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["retryBudget"] = item.RetryBudget.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["dueAtUtc"] = item.DueAtUtc.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+            ["reason"] = reasonCode,
+        };
+        foreach (var (key, value) in extra) details[key] = value;
+        _timeline.Append(
+            task.FolderPath,
+            TimelineEventKinds.ReviewInfrastructureRetryDropped,
+            TimelineActors.System,
+            $"Review infrastructure retry {item.RetryNumber}/{item.RetryBudget} dropped: {reason}.",
+            runId: item.AttemptId,
+            details: details);
     }
 
     /// <summary>

@@ -249,6 +249,7 @@ export class WorkbenchDecisionActionsComponent {
         thinkingLevelExplicit: true,
         taskType: draft.taskType,
         mode: draft.mode,
+        dossier: { path: this.document().workbench.entryPath },
       }).pipe(switchMap(created => this.tasks.getDetailByProject(created.id, this.projectName()).pipe(
         map(detail => ({ detail, id: created.id, watchPath })),
         catchError(() => this.tasks.deleteJob(created.id, watchPath).pipe(
