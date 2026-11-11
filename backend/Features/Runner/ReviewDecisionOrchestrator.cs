@@ -1595,6 +1595,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             entry.Name,
             current.Id);
         ConceptSightReviewHandoff.Record(_pipelineLog, _chatLog, _logger, current, review, stored);
+        if (review.IsComplete)
+            _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(current.FolderPath));
 
         if (!review.IsComplete)
         {

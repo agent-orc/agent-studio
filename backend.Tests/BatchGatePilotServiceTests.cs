@@ -3604,7 +3604,7 @@ public abstract partial class BatchGatePilotServiceTests
         bool deferredPlan = true, string? taskId = null,
         Contract.ReviewCommandDto? verificationCommand = null, string? content = null,
         string? mergeFrom = null, string generation = "",
-        string initialState = TaskStates.AutoReview)
+        string initialState = TaskStates.AutoReview, string? commitMessage = null)
     {
         var tips = Git(_repo, "rev-parse", "origin/develop", "HEAD").Split('\n');
         var baseSha = tips[0].Trim();
@@ -3614,7 +3614,8 @@ public abstract partial class BatchGatePilotServiceTests
         {
             // One fast-import writes the commit and the remote-tracking ref a
             // fetch of the pushed result would write (AGT-3566).
-            resultSha = ImportCommit(parentSha ?? baseSha, changedFile, content ?? key + "\n", key,
+            resultSha = ImportCommit(parentSha ?? baseSha, changedFile, content ?? key + "\n",
+                commitMessage ?? key,
                 $"refs/remotes/origin/agent-studio/results/{key}");
             Git(_repo, "push", "-q", "origin", $"{resultSha}:{resultRef}");
             Assert.Empty(Git(_repo, "for-each-ref", resultRef));

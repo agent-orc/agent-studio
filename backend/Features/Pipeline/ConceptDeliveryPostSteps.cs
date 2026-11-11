@@ -109,6 +109,8 @@ public sealed class ConceptDeliveryPostSteps
 
         var review = ReviewIntegratedDossier(check.RepositoryRoot!, integratedSha, record, current);
         ConceptSightReviewHandoff.Record(_pipelineLog, _chatLog, _logger, current, review, record);
+        if (review.IsComplete)
+            _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(current.FolderPath));
         _logger.LogInformation(
             "concept_delivery_post_steps project={Project} job={JobId} path={Path} commit={Commit} complete={Complete}",
             request.Project, card.Id, record.RepoRelativeEntrypoint, integratedSha, review.IsComplete);

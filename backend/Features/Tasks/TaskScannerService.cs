@@ -176,13 +176,15 @@ public class TaskScannerService : ITaskScanner
     /// </summary>
     public void InvalidateCache(
         [CallerMemberName] string callerMemberName = "",
-        [CallerFilePath] string callerFilePath = "")
+        [CallerFilePath] string callerFilePath = "",
+        string? changedPath = null)
     {
         _indexCache?.Invalidate(
             TaskIndexCache.InvalidationSource.Mutation,
             callerMemberName,
             callerFilePath,
-            clientId: AgentStudio.Clients.AmbientClient.Id);
+            clientId: AgentStudio.Clients.AmbientClient.Id,
+            changedPath: changedPath);
         _statsMetadataCache?.Invalidate();
     }
 
@@ -2521,7 +2523,7 @@ public class TaskScannerService : ITaskScanner
     /// place without changing the folder fingerprint, so they must be refreshed on
     /// every scan even when the fast path skips the full parse.
     /// </summary>
-    private TaskInfo ApplyVolatileMarkers(TaskInfo cached, string jobDir)
+    internal TaskInfo ApplyVolatileMarkers(TaskInfo cached, string jobDir)
         => cached with
         {
             QuotaWait = QuotaWaitMarker.ToStatus(QuotaWaitMarker.TryRead(jobDir, _logger)),
