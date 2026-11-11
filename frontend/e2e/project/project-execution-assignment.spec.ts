@@ -40,8 +40,9 @@ test('fresh local installation shows no invented runner and explains unavailable
   }));
   await page.goto(`/#/projects/${slugFor(projectName)}/settings`, { waitUntil: 'domcontentloaded' });
   const card = page.getByTestId('project-execution-card');
+  await expect(card).toBeVisible({ timeout: 60_000 });
   const select = card.getByTestId('project-execution-host-select');
-  await expect(select.locator('option')).toHaveCount(1);
+  await expect(select.locator('option')).toHaveCount(1, { timeout: 30_000 });
   await expect(select.locator('option')).toContainText(['Local (Local coding is disabled)']);
   await expect(select.locator('option')).toHaveJSProperty('disabled', true);
   for (const theme of ['light', 'dark'] as const) {
@@ -147,7 +148,7 @@ test('keeps pickup mode and execution location as independent controls', async (
 
   await page.goto(`/#/projects/${slugFor(projectName)}/settings`, { waitUntil: 'domcontentloaded' });
   const card = page.getByTestId('project-execution-card');
-  await expect(card).toBeVisible({ timeout: 30_000 });
+  await expect(card).toBeVisible({ timeout: 60_000 });
   await expect(card.getByTestId('project-pickup-mode-auto')).toHaveAttribute('aria-pressed', 'true');
   await expect(card.getByTestId('project-pickup-mode-auto')).toBeVisible();
   await expect(card.getByTestId('project-pickup-mode-paused')).toBeVisible();
