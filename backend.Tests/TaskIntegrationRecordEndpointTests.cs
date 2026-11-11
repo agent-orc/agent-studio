@@ -210,6 +210,9 @@ public sealed class TaskIntegrationRecordEndpointTests : IDisposable
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
         var index = factory.Services.GetRequiredService<TaskIndexCache>();
         index.GetSnapshot();
+        // GetSnapshot can return while the first publication is still scanning.
+        // Measure request scans only after resident facts are available.
+        await index.WaitForFirstPublicationAsync(CancellationToken.None);
         Assert.Equal(3000, scanner.GetResidentIdentityFacts().Count);
         var scans = scanner.RawScanCalls;
 
