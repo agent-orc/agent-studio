@@ -31,7 +31,8 @@ export function summarizeStatusBarReviewLane(cards: readonly TaskInfo[]): Status
     if (live?.activeStep || live?.queue?.state === 'reviewing') reviewing++;
     else if (live?.queue?.state === 'stalled') stalled++;
     else if (live?.queue?.state === 'integration') integration++;
-    else if (live?.queue?.kind === 'review') waiting++;
+    else if (live?.queue?.kind === 'review'
+      && (live.queue.state === 'queued' || live.queue.position != null)) waiting++;
   }
   return { total: cards.length, reviewing, waiting, stalled, integration };
 }

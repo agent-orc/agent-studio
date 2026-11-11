@@ -27,12 +27,13 @@ describe('summarizeStatusBarReviewLane', () => {
       card('D', { queue: { kind: 'review', state: 'stalled', reason: 'no review attempt' } }),
       card('E', { queue: { kind: 'review', state: 'integration', reason: 'waiting for delivery integration' } }),
       card('F'),
+      card('G', { queue: { kind: 'review', reason: 'untyped post-processing wait' } }),
     ]);
-    expect(lane).toEqual({ total: 6, reviewing: 2, waiting: 1, stalled: 1, integration: 1 });
+    expect(lane).toEqual({ total: 7, reviewing: 2, waiting: 1, stalled: 1, integration: 1 });
     const unclassified = lane.total - lane.reviewing - lane.waiting - lane.stalled - lane.integration;
     expect(lane.reviewing + lane.waiting + lane.stalled + lane.integration + unclassified).toBe(lane.total);
     expect(describeStatusBarReviewLane(lane)).toBe(
-      'Post Processing holds 6 cards: 1 waiting for review, 2 under review, 1 stalled, operator decision needed, 1 waiting for integration, 1 in post-processing.');
+      'Post Processing holds 7 cards: 1 waiting for review, 2 under review, 1 stalled, operator decision needed, 1 waiting for integration, 2 in post-processing.');
   });
 
   it('describes an empty lane', () => {
