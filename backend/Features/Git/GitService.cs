@@ -3701,9 +3701,18 @@ public partial class GitService
             // integration verdict reads that ref, so publish the exact SHA
             // locally before the caller resumes the card.
             if (!RecordPushedIntegrationTip(repoRoot, branch, sha))
-                _logger.LogWarning(
-                    "Integration push reached origin, but the local tracking ref for {Branch} could not be advanced to {Sha}.",
-                    branch, AbbreviateSha(sha));
+            {
+                // The remote already accepted this commit. Refresh on this write
+                // path once before deciding whether the push can be recorded as
+                // complete; a stale tracking ref would misreport integration.
+                var (_, fetchAfterPushError, fetchAfterPushCode) =
+                    RunGitArgs(repoRoot, ct, "fetch", "origin", branch);
+                if (fetchAfterPushCode != 0 || !RecordPushedIntegrationTip(repoRoot, branch, sha))
+                {
+                    return Task.FromResult(new GitPushResult(false, sha, "failed",
+                        $"Origin accepted the integration push, but origin/{branch} could not be refreshed: {fetchAfterPushError.Trim()}"));
+                }
+            }
             return Task.FromResult(new GitPushResult(true, sha, "pushed", null));
         }
         if (ct.IsCancellationRequested)
