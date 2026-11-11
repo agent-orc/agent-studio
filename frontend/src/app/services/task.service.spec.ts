@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TaskService, orchestratorContextChatSegment } from './task.service';
 import { ErrorDialogService } from './error-dialog.service';
 import { JobsHubClient, type JobsHubHandlers } from './jobs-hub-client.service';
+import { AuthSessionState } from './auth.service';
 import type { TaskDetail, TaskInfo } from '../models/task.model';
 
 class ErrorDialogServiceStub {
@@ -61,6 +62,9 @@ describe('TaskService', () => {
     });
 
     service = TestBed.inject(TaskService);
+    TestBed.inject(AuthSessionState).status.set({
+      profile: 'local', bootstrapRequired: false, authenticated: true,
+    });
     http = TestBed.inject(HttpTestingController);
   });
 
@@ -229,6 +233,47 @@ describe('TaskService', () => {
     expect(service.runnerStatus().projects['demo'].activeJobId).toBe('job-1');
     expect(service.runnerStatus().projects['demo'].mode).toBe('auto-continuous');
     service.stopLiveUpdates();
+  });
+
+  it('loads the board without runner or settings requests for a Product session', () => {
+    TestBed.inject(AuthSessionState).status.set({
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'product', username: 'product', displayName: 'Product', role: 'contributor',
+        projects: ['demo'], disabled: false, mustChangePassword: false },
+    });
+    service.refresh();
+    http.expectOne(groupedRequest).flush(emptyGrouped);
+    http.expectNone('/api/v1/studio/runner/status');
+    http.expectNone('/api/projects/settings');
+  });
+
+  it('builds a Product project tree from the authorized project list', () => {
+    TestBed.inject(AuthSessionState).status.set({
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'product', username: 'product', displayName: 'Product', role: 'contributor',
+        projects: ['PROJ-1'], disabled: false, mustChangePassword: false },
+    });
+    let workspaceIds: string[] = [];
+    let projectIds: string[] = [];
+    service.getRegistryWorkspaces().subscribe(workspaces => {
+      workspaceIds = workspaces.map(workspace => workspace.id);
+      projectIds = workspaces.flatMap(workspace => workspace.projects.map(project => project.id));
+    });
+    http.expectOne('/api/projects').flush([
+      { id: 'PROJ-1', displayName: 'Demo App', workspaceId: 'ws-one' },
+      { id: 'PROJ-2', displayName: 'Next App', workspaceId: 'ws-two' },
+    ]);
+    expect(workspaceIds).toEqual(['ws-one', 'ws-two']);
+    expect(projectIds).toEqual(['PROJ-1', 'PROJ-2']);
+    http.expectNone('/api/v1/workspaces');
+  });
+
+  it('does not open an error dialog for a refused background runner read', () => {
+    const show = vi.spyOn(TestBed.inject(ErrorDialogService), 'show');
+    service.refreshRunnerStatus();
+    http.expectOne('/api/v1/studio/runner/status').flush(
+      { error: 'role-denied' }, { status: 403, statusText: 'Forbidden' });
+    expect(show).not.toHaveBeenCalled();
   });
 
   it('builds flat and grouped board state from one grouped request', () => {

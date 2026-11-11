@@ -1,4 +1,6 @@
 import { GitHubAppService } from './features/github-app/github-app.service';
+import { ShellAccessService } from './services/shell-access.service';
+import { ProjectLookupService } from './services/project-lookup.service';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -236,6 +238,8 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   styleUrl: './app.scss',
 })
 export class App implements OnInit, OnDestroy {
+  readonly shellAccess = inject(ShellAccessService);
+  private readonly projectLookup = inject(ProjectLookupService);
   private readonly firstRunLaunch = inject(FirstRunLaunchService);
   private readonly gitHubApp = inject(GitHubAppService);
   readonly auth = inject(AuthService); private studioInitialized = false;
@@ -508,7 +512,9 @@ export class App implements OnInit, OnDestroy {
   }
 
   readonly projectNames = computed(() => {
-    return this.watchPaths().map((wp) => wp.name);
+    return !this.shellAccess.operator()
+      ? this.projectLookup.allProjects().map(project => project.displayName)
+      : this.watchPaths().map((wp) => wp.name);
   });
 
   // Cycle 9 / ADR-0034: filter signals + URL sync delegated to BoardFiltersService.
@@ -790,6 +796,14 @@ export class App implements OnInit, OnDestroy {
   readonly justCreatedJobId = signal<string | null>(null);
 
   constructor() {
+    effect(() => {
+      if (this.shellAccess.operator() || !this.projectLookup.loaded()) return;
+      this.watchPaths.set(this.projectLookup.allProjects().map(project => ({
+        name: project.displayName,
+        path: project.storageLocation,
+        rootPath: project.rootPath ?? project.storageLocation,
+      })));
+    });
     effect(() => {
       const allowed = this.auth.studioAllowed();
       const statusKnown = this.auth.status() !== null;
@@ -1084,16 +1098,16 @@ export class App implements OnInit, OnDestroy {
   ngOnInit() { this.auth.initialize(); }
   private initializeStudio(): void {
     if (this.studioInitialized) return; this.studioInitialized = true;
-    this.orchestratorFeedStore.start();
+    if (this.shellAccess.operator()) this.orchestratorFeedStore.start();
     // Backlog-lane spec: hydrate the filter bar from the URL hash before
     // rendering so a bookmark or copy-paste lands on the same view.
     this.boardFilters.hydrateFromUrl();
-    this.loadTagRegistry();
+    if (this.shellAccess.operator()) this.loadTagRegistry();
     // ADR-0046: pre-fetch every CLI's model catalog at boot so the
     // chat-model badge, status-bar picker, and create dialog can render
     // their model lists synchronously instead of paying a round-trip on
     // first open.
-    this.cliCatalogStore.hydrateAll();
+    if (this.shellAccess.operator()) this.cliCatalogStore.hydrateAll();
     // 1-Hz wall-clock tick for the lane status RUNNING pill's elapsed
     // string. Light enough to leave running without gating - the only
     // consumer is the lane column's statusCluster computed.
@@ -1101,10 +1115,12 @@ export class App implements OnInit, OnDestroy {
     this.refresh();
     this.jobService.startLiveUpdates();
     this.projectHubUrls.start();
-    this.loadWatchPaths(false);
-    this.jobService.refreshRunnerStatus();
-    this.devTools.loadFlags();
-    this.clientService.refresh();
+    if (this.shellAccess.operator()) {
+      this.loadWatchPaths(false);
+      this.jobService.refreshRunnerStatus();
+      this.devTools.loadFlags();
+      this.clientService.refresh();
+    }
     this.jobSelection.restoreFromUrl();
 
     // Reconcile settings deep links with editor tabs.

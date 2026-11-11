@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { test, expect, request as playwrightRequest, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect, request as playwrightRequest, type APIRequestContext, type Page, type Request } from '@playwright/test';
 import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 
 /**
@@ -34,7 +34,7 @@ function totp(secret: string, at = Date.now()): string {
 const sessionCookie = (header: string | undefined) => header?.match(/__Host-agentstudio-session=([^;,\s]+)/)?.[1];
 
 /** Bootstrap the Owner with a second factor and invite one Product user into the demo project. */
-async function inviteProductUser(baseURL: string, workspace: string): Promise<string> {
+async function inviteBoardUsers(baseURL: string, workspace: string): Promise<{ product: string; approver: string }> {
   const anonymous = await playwrightRequest.newContext({ baseURL, ignoreHTTPSErrors: true,
     extraHTTPHeaders: { 'Sec-Fetch-Site': 'same-origin' } });
   const password = ['owner', 'pass', 'phrase', 'long', 'enough'].join('-');
@@ -58,20 +58,28 @@ async function inviteProductUser(baseURL: string, workspace: string): Promise<st
   const invite = await owner.post('/api/auth/invitations', { data: {
     username: 'carla', displayName: 'Carla', role: 'contributor', projects: [demo!.id] } });
   expect(invite.ok(), await invite.text()).toBeTruthy();
-  const signInLink = (await invite.json()).signInLink as string;
+  const product = (await invite.json()).signInLink as string;
+  const approverInvite = await owner.post('/api/auth/invitations', { data: {
+    username: 'alex', displayName: 'Alex', role: 'viewer', projects: [demo!.id],
+    bindings: [{ role: 'approver', scope: { kind: 'project', project: demo!.id } }],
+  } });
+  expect(approverInvite.ok(), await approverInvite.text()).toBeTruthy();
+  const approver = (await approverInvite.json()).signInLink as string;
   await owner.dispose();
   await anonymous.dispose();
-  return signInLink;
+  return { product, approver };
 }
 
 /** Every API request the browser saw answered 403 after the Product user signed in. */
 const refusals: string[] = [];
 
-function watchRefusals(page: Page): void {
+function watchRefusals(page: Page, phase: () => string): void {
+  const requests = new WeakMap<Request, string>();
+  page.on('request', request => requests.set(request, phase()));
   page.on('response', response => {
     const url = new URL(response.url());
     if (response.status() === 403 && url.pathname.startsWith('/api/'))
-      refusals.push(`${response.request().method()} ${url.pathname}`);
+      refusals.push(`${requests.get(response.request()) ?? phase()} ${response.request().method()} ${url.pathname}`);
   });
 }
 
@@ -86,7 +94,7 @@ async function openCard(page: Page, key: string, title: string): Promise<void> {
 async function expectDeliveryAndReview(page: Page): Promise<void> {
   const detail = page.getByTestId('studio-task');
   await expect(detail.getByTestId('delivery-claim-panel')).toBeVisible();
-  await expect(detail.getByTestId('result-summary-meta')).toContainText('Grade B');
+  await expect(detail.getByTestId('result-summary-meta')).toContainText('Human review');
 }
 
 /** The prompt lives on the inspector's Task tab. */
@@ -103,23 +111,46 @@ test.afterEach(() => {
   writeFileSync(join(resultDir, 'refused-reads.txt'), [...new Set(refusals)].join('\n') + '\n');
 });
 
-test('a Product user opens Ready and Human Review cards without refused detail reads', async ({ page }) => {
-  test.setTimeout(240_000);
+test('Product and Approver load the board without refused reads; Product card details remain available', async ({ page, browser }) => {
+  test.setTimeout(360_000);
   const baseURL = process.env.PW_BASE_URL!;
   const workspace = process.env.PW_E2E_WORKSPACE!;
   expect(baseURL && workspace).toBeTruthy();
   mkdirSync(resultDir, { recursive: true });
-  const signInLink = await inviteProductUser(baseURL, workspace);
+  const signInLinks = await inviteBoardUsers(baseURL, workspace);
 
   // The Product user joins through the invitation page; the HTTPS hop lets
   // the browser keep the Secure session cookie like a deployed Studio.
-  await page.goto(signInLink);
+  let phase = 'invitation';
+  watchRefusals(page, () => phase);
+  await page.goto(signInLinks.product);
   await page.getByLabel('New password').fill(['product', 'pass', 'phrase', 'long', 'enough'].join('-'));
   await page.getByRole('button', { name: 'Join project' }).click();
   await expect(page.getByTestId('auth-gate')).toHaveCount(0);
   const status = await page.request.get('/api/auth/status');
   expect(await status.json()).toMatchObject({ profile: 'networked', authenticated: true, user: { role: 'contributor' } });
-  watchRefusals(page);
+
+  phase = 'board';
+  for (const theme of ['light', 'dark'] as const) {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/');
+    await setTheme(page, theme);
+    await expect(page.getByTestId('studio-sidebar')).toBeVisible();
+    await expect(page.getByTestId('studio-board')).toBeVisible();
+    await expect(page.getByTestId('status-bar-limited')).toBeVisible();
+    await expect(page.getByTestId('status-bar-running')).toHaveCount(0);
+    await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
+    await page.waitForTimeout(1_500);
+    expect(refusals, `${theme} Product board responses answered 403`).toEqual([]);
+    await page.screenshot({ path: join(resultDir, `product-board-${theme}.png`), fullPage: true });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await expect(page.getByTestId('studio-board')).toBeVisible();
+  await expect(page.getByTestId('status-bar-limited')).toBeVisible();
+  await page.waitForTimeout(1_500);
+  expect(refusals, '390 px Product board responses answered 403').toEqual([]);
+  await page.screenshot({ path: join(resultDir, 'product-board-390.png'), fullPage: true });
 
   const cards = [
     { key: 'DEMO-3', title: 'Update the accessibility test baseline', lane: 'ready', review: false },
@@ -154,5 +185,21 @@ test('a Product user opens Ready and Human Review cards without refused detail r
 
   // The card-open contract: no task read is refused. Shell reads outside
   // /api/tasks are recorded in refused-reads.txt for the Product shell.
-  expect(refusals.filter(read => read.includes(' /api/tasks')), 'task reads answered 403 on a card open').toEqual([]);
+  expect(refusals, 'Product shell and card reads answered 403').toEqual([]);
+
+  const approverPage = await browser.newPage({ ignoreHTTPSErrors: true });
+  phase = 'approver invitation';
+  watchRefusals(approverPage, () => phase);
+  await approverPage.goto(signInLinks.approver);
+  await approverPage.getByLabel('New password').fill(['approver', 'pass', 'phrase', 'long', 'enough'].join('-'));
+  await approverPage.getByRole('button', { name: 'Join project' }).click();
+  await expect(approverPage.getByTestId('auth-gate')).toHaveCount(0);
+  phase = 'approver board';
+  await approverPage.goto('/');
+  await expect(approverPage.getByTestId('studio-sidebar')).toBeVisible();
+  await expect(approverPage.getByTestId('studio-board')).toBeVisible();
+  await expect(approverPage.getByTestId('status-bar-limited')).toBeVisible();
+  await approverPage.waitForTimeout(1_500);
+  expect(refusals, 'Approver board responses answered 403').toEqual([]);
+  await approverPage.close();
 });

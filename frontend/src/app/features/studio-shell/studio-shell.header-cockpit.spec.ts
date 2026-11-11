@@ -6,6 +6,7 @@ import type { RegistryWorkspaceListItem } from '../../models/task.model';
 import { WorkspaceQuotaBoardState } from '../quota';
 import { UsageCockpitService } from '../usage-cockpit';
 import { StudioHeaderCockpit, type StudioHeaderHost } from './studio-shell.header-cockpit';
+import { ShellAccessService } from '../../services/shell-access.service';
 
 function workspace(id: string, displayName: string, isDefault: boolean, projectIds: string[]): RegistryWorkspaceListItem {
   return {
@@ -29,6 +30,7 @@ describe('StudioHeaderCockpit workspace quota', () => {
         provideZonelessChangeDetection(),
         { provide: WorkspaceQuotaBoardState, useValue: { load, reset } },
         { provide: UsageCockpitService, useValue: { connect: vi.fn(), setWorkspace: vi.fn(), snapshot: signal(null), readFailed: signal(false) } },
+        { provide: ShellAccessService, useValue: { operator: () => true } },
       ],
     });
     workspaces = signal<readonly RegistryWorkspaceListItem[]>([]);
