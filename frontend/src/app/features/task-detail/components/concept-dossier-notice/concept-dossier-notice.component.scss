@@ -46,6 +46,14 @@
   white-space: nowrap;
 }
 
+.dossier__path {
+  overflow-wrap: anywhere;
+}
+
+.dossier__publication {
+  color: var(--studio-fg-dim);
+}
+
 .dossier__spawn-key {
   white-space: nowrap;
 }
