@@ -98,7 +98,7 @@ describe('ExplorerWorkbenchListComponent', () => {
 
     const root = fixture.nativeElement as HTMLElement;
     expect(root.querySelector('[data-testid="studio-explorer-project-workbenches-Demo"]')?.textContent)
-      .toContain('3');
+      .toContain('5');
     expect(root.querySelector('[data-testid="studio-explorer-workbench-group-Demo-needs-decision"]')?.textContent)
       .toContain('Needs a decision');
     expect(root.querySelector('[data-testid="studio-explorer-workbench-group-Demo-in-implementation"]')?.textContent)

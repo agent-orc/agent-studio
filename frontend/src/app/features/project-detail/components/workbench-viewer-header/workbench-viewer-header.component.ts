@@ -100,12 +100,11 @@ export class WorkbenchViewerHeaderComponent {
   });
   readonly statusLabel = computed(() => {
     const workbench = this.document().workbench;
-    return [
-      this.implementationStatus() ?? humanize(workbench.status),
-      workbench.phase ? humanize(workbench.phase) : null,
-    ]
-      .filter(Boolean)
-      .join(' · ');
+    const label = workbench.status === 'decided' ? 'In implementation'
+      : this.implementationStatus() ?? humanize(workbench.status);
+    const phase = workbench.status === 'decided' || workbench.status === 'documented'
+      || workbench.status === 'archived' ? null : workbench.phase;
+    return phase ? `${label} · ${humanize(phase)}` : label;
   });
   readonly connectionLabel = computed(() => {
     const state = this.liveConnected() ? 'Connected' : 'Disconnected';

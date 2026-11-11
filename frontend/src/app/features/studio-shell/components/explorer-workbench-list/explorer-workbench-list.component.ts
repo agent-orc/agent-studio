@@ -13,7 +13,6 @@ import {
   viewChildren,
 } from '@angular/core';
 import { TreeRowComponent } from '../../../../components/tree-row/tree-row.component';
-import { TagChipsComponent } from '../../../../components/tag-chips/tag-chips.component';
 import type { StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
@@ -40,7 +39,7 @@ interface WorkbenchNavigationGroup {
 @Component({
   selector: 'app-explorer-workbench-list',
   standalone: true,
-  imports: [TreeRowComponent, TagChipsComponent, ExplorerWorkbenchHistoryComponent],
+  imports: [TreeRowComponent, ExplorerWorkbenchHistoryComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './explorer-workbench-list.component.html',
   styleUrl: './explorer-workbench-list.component.scss',
@@ -88,6 +87,7 @@ export class ExplorerWorkbenchListComponent {
   readonly pendingDecisionCount = computed(() =>
     (this.catalogue()?.items ?? [])
       .reduce((count, item) => count + this.openCount(item), 0));
+  readonly dossierCount = computed(() => this.dossierItems().length);
   readonly sectionScope = computed(() => this.projectId()?.trim() || this.projectName());
 
   private readonly topics = viewChildren<ElementRef<HTMLElement>>('workbenchTopic');
@@ -209,12 +209,13 @@ export class ExplorerWorkbenchListComponent {
   }
 
   navTooltip(item: WorkbenchListItem): string {
-    return [item.title, item.key, this.accessibleMeta(item)].filter(Boolean).join('\n');
+    const tags = item.tags?.length ? `Tags: ${item.tags.join(', ')}` : null;
+    return [item.title, item.key, this.accessibleMeta(item), tags].filter(Boolean).join('\n');
   }
 
   dossierAriaLabel(): string {
-    const count = this.pendingDecisionCount();
-    return count > 0 ? `Dossiers, ${count} decisions waiting` : 'Dossiers';
+    const count = this.dossierCount();
+    return count > 0 ? `Dossiers, ${count} dossiers` : 'Dossiers';
   }
 
   private dossierItems(): WorkbenchListItem[] {
