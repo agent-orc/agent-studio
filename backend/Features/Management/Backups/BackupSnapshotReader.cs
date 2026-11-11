@@ -22,6 +22,17 @@ public enum BackupCaptureKind
 public sealed record BackupCapture(BackupCaptureKind Kind, string SpoolPath, long Length, string Sha256, int Attempts);
 
 /// <summary>
+/// A source file that exists but cannot be opened for reading, for example
+/// because another process holds an exclusive lock on it. Failures to write
+/// the spool copy are not this exception: they fail the whole archive.
+/// </summary>
+public sealed class BackupSourceUnreadableException(string path, Exception inner)
+    : IOException($"{path} cannot be read: {inner.Message}", inner)
+{
+    public string SourcePath { get; } = path;
+}
+
+/// <summary>
 /// Reads one store file into a private spool file without ever archiving a
 /// half-written state:
 /// <list type="bullet">
@@ -70,6 +81,7 @@ public static class BackupSnapshotReader
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
     }
 
+    /// <exception cref="BackupSourceUnreadableException">The source exists but cannot be opened for reading.</exception>
     public static BackupCapture Capture(string source, string spool, Action<int>? afterRead = null)
     {
         if (!File.Exists(source)) return new(BackupCaptureKind.Vanished, spool, 0, "", 0);
@@ -137,7 +149,8 @@ public static class BackupSnapshotReader
         using (var to = new SqliteConnection(new SqliteConnectionStringBuilder
                { DataSource = spool, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ToString()))
         {
-            from.Open();
+            try { from.Open(); }
+            catch (SqliteException ex) { throw new BackupSourceUnreadableException(source, ex); }
             to.Open();
             from.BackupDatabase(to);
             using var journal = to.CreateCommand();
@@ -150,10 +163,28 @@ public static class BackupSnapshotReader
 
     private static void CopyTo(string source, string spool)
     {
-        using var from = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
-            81920, FileOptions.SequentialScan);
+        using var from = OpenSource(source);
         using var to = new FileStream(spool, FileMode.Create, FileAccess.Write, FileShare.None);
         from.CopyTo(to);
+    }
+
+    /// <summary>
+    /// Opens the source for a shared read. On Linux a holder of
+    /// <see cref="FileShare.None"/> keeps an exclusive lock that refuses this
+    /// open; that refusal is reported as <see cref="BackupSourceUnreadableException"/>.
+    /// </summary>
+    private static FileStream OpenSource(string source)
+    {
+        try
+        {
+            return new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
+                81920, FileOptions.SequentialScan);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException
+                                       or (IOException and not FileNotFoundException and not DirectoryNotFoundException))
+        {
+            throw new BackupSourceUnreadableException(source, ex);
+        }
     }
 
     private static void TrimToLastNewline(string spool)
