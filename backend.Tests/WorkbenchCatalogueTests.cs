@@ -320,6 +320,23 @@ public sealed class WorkbenchCatalogueTests : IDisposable
     }
 
     [Fact]
+    public void List_CountsDecisionReadyPointsBeforeTheLegacyStatusChanges()
+    {
+        WriteWorkbench("ready-phase", "Ready phase", "active", "2026-07-12T10:00:00Z");
+        var directory = Path.Combine(_root, "docs", "workbenches", "ready-phase");
+        var descriptorPath = Path.Combine(directory, "workbench.json");
+        var descriptor = JsonNode.Parse(File.ReadAllText(descriptorPath))!.AsObject();
+        descriptor["phase"] = "decision-ready";
+        File.WriteAllText(descriptorPath, descriptor.ToJsonString());
+        File.WriteAllText(Path.Combine(directory, "index.html"), """
+          <section data-decision-id="a" data-decision-kind="single"><span data-option-id="x">X</span></section>
+          <section data-decision-id="b" data-decision-kind="confirm"><span data-option-id="y">Y</span></section>
+          """);
+
+        Assert.Equal(2, Assert.Single(Service().List("Project")!.Items).OpenDecisionCount);
+    }
+
+    [Fact]
     public void List_HidesSettledItemsUnlessHistoryRequested()
     {
         WriteWorkbench("current", "Current", "active", "2026-07-12T10:00:00Z");

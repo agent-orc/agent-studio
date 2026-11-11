@@ -128,6 +128,18 @@ describe('TaskLiveStatusComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Requirement fit');
   });
 
+  it('does not claim the next attempt is running before any event exists', () => {
+    fixture.componentRef.setInput('variant', 'detail');
+    fixture.componentRef.setInput('task', task({
+      state: '2-ready', lastActivity: '',
+      liveStatus: { attempt: 2, activeStep: null, nextSteps: [], queue: null, latestEventAt: null },
+    }));
+    fixture.detectChanges();
+    const live = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    expect(live.textContent).not.toContain('Attempt 2');
+    expect(live.getAttribute('data-attempt')).toBeNull();
+  });
+
   // AGT-3617 (playthrough AGT-3560, H1): a card held behind an open cause
   // breaker said "Waiting for review slot · position 1" while the review host
   // was idle; the claim skips it, so the hold is the CURRENT state.

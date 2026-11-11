@@ -50,6 +50,10 @@ export class TaskLiveStatusComponent {
   private readonly tasks = inject(TaskService);
   private readonly errors = inject(ErrorDialogService);
   readonly switchingToAuto = signal(false);
+  readonly hasRecordedAttempt = computed(() => {
+    const task = this.task();
+    return !!(task.liveStatus?.activeStep || task.execution || task.runActivity || task.runner);
+  });
 
   switchToAuto(event: MouseEvent): void {
     event.stopPropagation();

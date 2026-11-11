@@ -237,7 +237,7 @@ export class TriageController {
       watchPath: info.watchPath,
       jobLabel: info.title || info.id,
       actionLabel,
-      targetLaneLabel: laneLabelFor(ev.targetState),
+      targetLaneLabel: ev.targetState === TaskState.Completed ? '' : laneLabelFor(ev.targetState),
       prevState,
       prevIndex,
       persisted,

@@ -800,7 +800,8 @@ select option:hover {
 .app-pending-button--pending {
   cursor: wait;
   opacity: 0.78;
-  font-size: 0;
+  // Scoped button font shorthands must not reveal the original text while busy.
+  font-size: 0 !important;
 }
 
 .app-pending-button--pending::before {

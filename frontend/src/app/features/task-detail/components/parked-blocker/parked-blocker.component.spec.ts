@@ -276,6 +276,28 @@ describe('ParkedBlockerComponent', () => {
     );
   });
 
+  it('hides a park receipt from an earlier lane after the card reaches Human Review', () => {
+    const el = render(auditPark({ lane: '5e-escalated' }), '5-human-review');
+    expect(el.querySelector('[data-testid="parked-blocker"]')).toBeNull();
+  });
+
+  it('omits a cause-free park placeholder from an otherwise reviewable card', () => {
+    const el = render(auditPark({
+      lane: '5-human-review', reason: 'operator-move: Parked with no recorded cause.',
+      cause: 'operator-decision', causeDetail: null, decision: null,
+      conditionDescription: 'Only a person can clear this park; no automatic precondition is recorded.',
+    }), '5-human-review');
+    expect(el.querySelector('[data-testid="parked-blocker"]')).toBeNull();
+  });
+
+  it('keeps a recorded decision visible even with a generic park reason', () => {
+    const el = render(auditPark({
+      lane: '5-human-review', reason: 'Parked with no recorded cause.',
+      decision: park().decision,
+    }), '5-human-review');
+    expect(el.querySelector('[data-testid="parked-blocker"]')).not.toBeNull();
+  });
+
   it('reads the cause from the lane-change row when the marker predates it', () => {
     timelineEvents.set([{
       ts: '2026-09-11T14:44:00.000Z', kind: 'lane_changed', actor: 'system', summary: '6-completed → 5e-escalated',

@@ -591,7 +591,8 @@ public sealed class WorkbenchCatalogueService
                     LifecycleHistory = lifecycleHistory,
                     Decision = decision,
                     DecisionStage = DecisionStage(decision),
-                    OpenDecisionCount = OpenDecisionCount(full, status),
+                    OpenDecisionCount = OpenDecisionCount(full, status, phase,
+                        lifecycleState ?? LifecycleFromStatus(status, phase)),
                     Review = review,
                 });
             }
@@ -886,9 +887,11 @@ public sealed class WorkbenchCatalogueService
         }
     }
 
-    private int OpenDecisionCount(string entrypoint, string status)
+    private int OpenDecisionCount(string entrypoint, string status, string? phase, string? lifecycleState)
     {
-        if (status != "decision-pending") return 0;
+        if (status is "decided" or "documented" or "archived") return 0;
+        if (status != "decision-pending" && phase != "decision-ready"
+            && lifecycleState != "review-requested") return 0;
         try
         {
             var info = new FileInfo(entrypoint);

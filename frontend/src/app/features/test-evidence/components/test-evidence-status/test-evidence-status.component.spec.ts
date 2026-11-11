@@ -36,13 +36,13 @@ describe('TestEvidenceStatusComponent', () => {
     TaskState.Progress,
     TaskState.FailedPickup,
     TaskState.CodeNotComplete,
+    TaskState.HumanReview,
   ])('suppresses missing evidence in %s before a delivery exists', (state) => {
     expect(visibleTestEvidence(task(state))).toBeNull();
   });
 
   it.each([
     TaskState.AutoReview,
-    TaskState.HumanReview,
     TaskState.Completed,
     TaskState.Archive,
   ])('shows missing evidence after the task reaches %s', (state) => {
@@ -96,7 +96,10 @@ describe('TestEvidenceStatusComponent', () => {
       evidenceState: state,
       summary,
     } satisfies TaskTestRunEvidence;
-    fixture.componentRef.setInput('task', task(TaskState.HumanReview, { testEvidence: evidence }));
+    fixture.componentRef.setInput('task', task(TaskState.HumanReview, {
+      commit: { sha: 'abcdef12' } as TaskInfo['commit'],
+      testEvidence: evidence,
+    }));
     fixture.detectChanges();
 
     const element = fixture.nativeElement.querySelector('[data-testid="task-card-test-evidence"]') as HTMLElement;

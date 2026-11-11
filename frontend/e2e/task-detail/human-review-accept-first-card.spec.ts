@@ -127,9 +127,14 @@ test.describe('First Human Review card is accepted with one click (AGT-3621)', (
 
         const elapsed = await openAndTimeAccept(page, jobId, wp.path);
         expect(elapsed, `Accept became clickable after ${elapsed} ms`).toBeLessThan(PENDING_CONTRACT_MS);
+        await expect(page.getByTestId('overview-status')).toBeVisible({ timeout: 30_000 });
+        await expect(page.getByTestId('parked-blocker')).toHaveCount(0);
+        await expect(page.getByTestId('integration-dead-end')).toHaveCount(0);
+        await expect(page.getByText('No test evidence assigned: card has no commit')).toHaveCount(0);
         await saveScreenshot(page, `agt-3621-human-review-accept-ready-1280-${theme}.png`);
 
         await clickAcceptAndExpectMove(page, jobId);
+        await expect(page.getByText(`Accepted "First accept ${theme}"`, { exact: true })).toBeVisible();
         await expect.poll(async () => (await getJob(jobId, wp.path)).state,
           { timeout: PENDING_CONTRACT_MS }).toBe('6-completed');
         await saveScreenshot(page, `agt-3621-human-review-accepted-1280-${theme}.png`);
@@ -149,7 +154,11 @@ test.describe('First Human Review card is accepted with one click (AGT-3621)', (
 
       const elapsed = await openAndTimeAccept(page, jobId, wp.path);
       expect(elapsed).toBeLessThan(PENDING_CONTRACT_MS);
+      await expect(page.getByText('No test evidence assigned: card has no commit')).toHaveCount(0);
       await saveScreenshot(page, 'agt-3621-human-review-accept-ready-390-light.png');
+      await clickAcceptAndExpectMove(page, jobId);
+      await expect(page.getByText('Accepted "First accept narrow"', { exact: true })).toBeVisible();
+      await saveScreenshot(page, 'agt-3666-human-review-accepted-390-light.png');
     } finally {
       await deleteJob(jobId, wp.path);
     }

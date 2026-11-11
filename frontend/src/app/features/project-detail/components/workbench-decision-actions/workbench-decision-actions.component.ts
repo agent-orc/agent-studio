@@ -319,12 +319,10 @@ export class WorkbenchDecisionActionsComponent {
   private seedFeatureDraft(): void {
     this.resetFeedback();
     const operationId = createOperationId();
-    const decisions = this.selectedSummary();
     const draft = this.drafts.beginFeature(this.projectName(), this.document().workbench.id, {
       actor: this.actor(),
       title: `Implement ${this.document().workbench.title}`,
-      goal: bounded([this.document().workbench.summary.trim(), decisions
-        ? `Recorded decisions:\n${decisions}` : ''].filter(Boolean).join('\n\n'), 20_000),
+      goal: bounded(`Implement ${this.document().workbench.title} according to the source Dossier and its recorded decisions.`, 20_000),
       operationId,
     }, this.responses());
     this.title.set(draft.title);

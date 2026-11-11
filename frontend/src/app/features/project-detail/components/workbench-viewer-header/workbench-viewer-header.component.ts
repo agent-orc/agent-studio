@@ -87,10 +87,10 @@ export class WorkbenchViewerHeaderComponent {
       workbench.status === 'archived'
     )
       return 0;
-    const answered = new Map(this.responses().map((response) => [response.decisionId, response]));
-    return this.decisionPoints().filter(
-      (point) => (answered.get(point.id)?.selectedOptionIds.length ?? 0) === 0,
-    ).length;
+    if (workbench.status !== 'decision-pending' && workbench.phase !== 'decision-ready'
+      && workbench.lifecycleState !== 'review-requested') return 0;
+    // Browser selections remain drafts until saved.
+    return workbench.openDecisionCount ?? Math.max(1, this.decisionPoints().length);
   });
   readonly implementationStatus = computed(() => {
     return implementationStatusFor(

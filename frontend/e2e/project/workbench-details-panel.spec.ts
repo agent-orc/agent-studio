@@ -3,6 +3,7 @@ import type { Page, Route } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { contrastRatio } from '../helpers/contrast';
+import { setTheme } from '../helpers/theme';
 import { test } from '../fixtures/dev-backend';
 
 const PROJECT = 'Naming Evidence';
@@ -20,9 +21,12 @@ const EMPTY_GROUPED = {
 };
 
 const DOSSIER_HTML = `<style>
-  :root { color-scheme: light dark; }
-  body { background: Canvas; color: CanvasText; }
-  textarea { background: Field; color: FieldText; }
+  :root { color-scheme: light dark; --bg: #ffffff; --fg: #171717; --field: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1a1a19; --fg: #f7f6f2; --field: #252523; }
+  }
+  body { background: var(--bg); color: var(--fg); }
+  textarea { background: var(--field); color: var(--fg); }
 </style><main>
   <h1>Naming Dossier</h1>
   <p>Select the stable public naming contract.</p>
@@ -166,6 +170,8 @@ async function installMocks(
       id: 'naming-feature-1', key: 'AGT-2611', displayKey: 'AGT-2611',
       taskKey: `${PROJECT}::AGT-2611`, title: 'Implement the stable naming contract',
       state: '2-ready', projectName: PROJECT, watchPath: WATCH_PATH,
+      folderPath: `${WATCH_PATH}/tasks/naming-feature-1`, order: 0,
+      agent: 'codex', cliType: 'codex', log: [], commits: [],
     }],
   } : EMPTY_GROUPED));
   await page.route('**/api/tasks/reference-status', route => json(route, {
@@ -175,6 +181,49 @@ async function installMocks(
       projectId: 'project-naming', projectName: PROJECT, projectColor: null,
       merge: null, reviewGrade: null,
     }] : [],
+  }));
+  await page.route('**/api/tasks/naming-feature-1/core**', route => json(route, {
+    state: 'ready', projectId: 'project-naming', projectName: PROJECT,
+    id: 'naming-feature-1', taskKey: `${PROJECT}::AGT-2611`,
+    watchPath: WATCH_PATH, folderPath: `${WATCH_PATH}/tasks/naming-feature-1`,
+    key: 'AGT-2611', title: 'Implement the stable naming contract',
+    kind: 'task', taskType: 'feature', lane: '2-ready',
+    enteredLaneAt: '2026-08-11T10:00:00Z', order: 0, mode: 'coding',
+    released: false, pendingIntent: false,
+    pins: { modelExplicit: false, thinkingLevelExplicit: false, allowWebAccess: false, noBranchExpected: false },
+    actions: { canEdit: true, canMove: true, canDelete: true, canContinue: true },
+    blocking: { dependencyBlocked: false, dependencyState: 'ready', dependencies: [], dependsOn: [], blockedBy: [] },
+    runtime: { location: 'none', leaseState: 'none' }, runtimeVersion: 'r0',
+    statusSummary: { state: 'missing', originalBytes: 0 },
+    prompt: { state: 'ready', text: 'Implement the stable naming contract.', originalBytes: 37 },
+    timeline: { state: 'missing', events: [], originalBytes: 0 }, coreVersion: '1',
+  }));
+  await page.route('**/api/tasks/naming-feature-1/details/*', route => {
+    const resource = new URL(route.request().url()).pathname.split('/').pop();
+    const data: Record<string, unknown> = {
+      overview: {},
+      documents: { name: 'status', markdown: null, summaryState: null },
+      usage: { tokenSummary: null, lastUsage: null, contextUsage: null },
+      git: { mergeSignal: null, integration: null, publishSignal: null, testEvidence: null, commit: null, commits: [] },
+      review: { reviewProjection: null, evidence: null },
+      history: { promptHistory: [], titleHistory: [], log: [] },
+    };
+    return json(route, {
+      id: 'naming-feature-1', taskKey: `${PROJECT}::AGT-2611`,
+      projectId: 'project-naming', attemptId: null, coreVersion: '1',
+      resource, version: `${resource}-1`, computedAt: null, state: 'ready',
+      data: data[resource ?? ''] ?? null, reason: null,
+    });
+  });
+  await page.route('**/api/tasks/naming-feature-1/pipeline**', route => json(route, {
+    pipeline: { id: 'fixture', displayName: 'Fixture', version: 1, pre: [], core: [], post: [], allSteps: [] },
+    execution: null, cost: null, config: {},
+  }));
+  await page.route('**/api/tasks/naming-feature-1/session-events**', route => json(route, {
+    events: [], sessionChain: [],
+  }));
+  await page.route('**/api/tasks/naming-feature-1/runs**', route => json(route, {
+    runs: [], runnerEvents: [],
   }));
   await page.route(/\/api\/tasks(?:\?.*)?$/, route => {
     if (route.request().method() !== 'POST') return json(route, []);
@@ -196,7 +245,11 @@ async function installMocks(
         id: 'naming-feature-1', key: 'AGT-2611', displayKey: 'AGT-2611',
         taskKey: `${PROJECT}::AGT-2611`, title: 'Implement the stable naming contract',
         state: '2-ready', projectName: PROJECT, watchPath: WATCH_PATH,
+        folderPath: `${WATCH_PATH}/tasks/naming-feature-1`, order: 0,
+        agent: 'codex', cliType: 'codex', commits: [],
       },
+      promptMarkdown: 'Implement the stable naming contract.',
+      statusMarkdown: '', log: [], promptHistory: [], reviewEvidence: [],
     });
   });
   await page.route(
@@ -314,6 +367,10 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
   const inline = page.getByTestId('workbench-inline-decision-action');
   await expect(inline.getByTestId('workbench-decision-start')).toBeEnabled();
   await inline.getByTestId('workbench-decision-start').press('Enter');
+  await expect(inline.getByTestId('workbench-decision-goal'))
+    .toHaveValue('Implement Naming Dossier according to the source Dossier and its recorded decisions.');
+  const seededPrompt = await inline.getByTestId('workbench-decision-prompt-preview').innerText();
+  expect(seededPrompt.match(/Recorded decisions/g)).toHaveLength(1);
   await expect(inline.getByTestId('workbench-decision-prompt-preview'))
     .toContainText('A · Same grid');
   await expect(inline.getByTestId('workbench-decision-prompt-preview'))
@@ -342,7 +399,30 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
     fullPage: true,
   });
 
+  let releaseCreate!: () => void;
+  const waitForCapture = new Promise<void>(resolveCapture => { releaseCreate = resolveCapture; });
+  await page.route(/\/decisions\/prepare(?:\?.*)?$/, async route => {
+    if (route.request().method() === 'POST') await waitForCapture;
+    await route.fallback();
+  });
   await inline.getByTestId('workbench-decision-confirm').click();
+  const pendingButton = inline.getByTestId('workbench-decision-confirm');
+  await expect(pendingButton).toHaveAttribute('aria-busy', 'true');
+  const pendingStyle = await pendingButton.evaluate(button => ({
+    fontSize: getComputedStyle(button).fontSize,
+    label: getComputedStyle(button, '::after').content,
+  }));
+  expect(pendingStyle).toEqual({ fontSize: '0px', label: '"Starting…"' });
+  for (const variant of [
+    { name: 'light', theme: 'light', width: 1600 },
+    { name: 'dark', theme: 'dark', width: 1600 },
+    { name: '390', theme: 'light', width: 390 },
+  ] as const) {
+    await page.setViewportSize({ width: variant.width, height: 1000 });
+    await setTheme(page, variant.theme);
+    await page.screenshot({ path: resolve(RESULTS, `dossier-pending-${variant.name}--mocked.png`) });
+  }
+  releaseCreate();
   const created = inline.getByTestId('workbench-decision-created-tasks');
   await expect(created).toContainText('AGT-2611');
   await expect(created).toContainText('Implement the stable naming contract');
@@ -369,6 +449,39 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
     path: resolve(RESULTS, 'dossier-inline-decision-created-receipt-mobile--mocked.png'),
     fullPage: true,
   });
+
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  const runtimeErrors: string[] = [];
+  page.on('console', message => {
+    if (message.type() === 'error' && message.text().includes('TypeError'))
+      runtimeErrors.push(message.text());
+  });
+  await page.goto(`/?job=naming-feature-1&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  const overview = page.getByTestId('overview-status');
+  await expect(overview).toBeVisible();
+  await expect(page.getByTestId('overview-title'))
+    .toContainText('Implement the stable naming contract');
+  await page.waitForTimeout(1000);
+  const runtimeError = page.getByRole('alertdialog');
+  if (await runtimeError.isVisible({ timeout: 500 }).catch(() => false))
+    throw new Error(`Spawned card runtime error: ${await runtimeError.innerText()}`);
+  for (const label of ['Last Activity', 'Created', 'Owner'])
+    await expect(overview.getByText(label, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/^Attempt \d+/)).toHaveCount(0);
+  for (const variant of [
+    { width: 1600, theme: 'light', name: 'light' },
+    { width: 1600, theme: 'dark', name: 'dark' },
+    { width: 390, theme: 'light', name: '390-light' },
+    { width: 390, theme: 'dark', name: '390-dark' },
+  ] as const) {
+    await page.setViewportSize({ width: variant.width, height: 1000 });
+    await setTheme(page, variant.theme);
+    await page.waitForTimeout(500);
+    if (await runtimeError.isVisible().catch(() => false))
+      throw new Error(`Spawned card runtime error after theme change: ${await runtimeError.innerText()}`);
+    await page.screenshot({ path: resolve(RESULTS, `agt-3666-spawned-card-${variant.name}--mocked.png`) });
+  }
+  expect(runtimeErrors).toEqual([]);
 
   expect(captured.decisionBodies).toHaveLength(2);
   expect(captured.taskBodies).toEqual([expect.objectContaining({

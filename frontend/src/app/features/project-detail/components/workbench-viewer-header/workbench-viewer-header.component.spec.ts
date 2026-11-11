@@ -128,10 +128,18 @@ describe('WorkbenchViewerHeaderComponent', () => {
       { id: 'density', kind: 'single', label: 'Density', options: [], commentLabel: null },
       { id: 'proof', kind: 'confirm', label: 'Proof', options: [], commentLabel: null },
     ]);
+    fixture.componentRef.setInput('responses', [
+      { decisionId: 'route', kind: 'single', selectedOptionIds: ['direct'], comment: null },
+      { decisionId: 'density', kind: 'single', selectedOptionIds: ['compact'], comment: null },
+      { decisionId: 'proof', kind: 'confirm', selectedOptionIds: ['capture'], comment: null },
+    ]);
     fixture.componentRef.setInput('liveConnected', true);
     fixture.componentRef.setInput('connectionChangedAtUtc', '2026-08-11T10:00:00Z');
     fixture.componentRef.setInput('lastUpdatedAtUtc', '2026-08-11T10:02:00Z');
     fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-viewer-open-decisions"]')?.textContent)
+      .toContain('3 open');
 
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/projects/Agent%20Studio/workbenches/AGT-W4/references').flush({
