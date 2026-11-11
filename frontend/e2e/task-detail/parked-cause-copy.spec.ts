@@ -181,3 +181,83 @@ test('an acceptance-audit park names the audit, states its reason once, and sugg
     }
   }
 });
+
+test('Auto Review watchdog park links its receipt and retries the same delivery', async ({ page }) => {
+  await installRoutes(page);
+  let retryCalls = 0;
+  let undoCalls = 0;
+  await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/DEMO-6(\?|$)/, route => json(route, {
+    info: {
+      id: JOB_ID, taskKey: JOB_ID, key: JOB_ID, title: 'Review the delivered fix',
+      state: '5e-escalated', order: 1, agent: 'codex', cliType: 'codex',
+      createdAt: '2026-11-09T01:00:00Z', lastActivity: PARKED_AT,
+      watchPath: WATCH_PATH, projectName: PROJECT, folderPath: `${WATCH_PATH}/${JOB_ID}`,
+      commits: [], orchestratorVerdict: 'escalate',
+      parkedBlocker: {
+        blockerType: 'environmental', conditionKind: 'review-retry-available',
+        conditionDescription: 'A completed immutable delivery is still current and can receive a fresh review attempt.',
+        lane: '5e-escalated', parkedAt: PARKED_AT,
+        reason: '[environmental] Auto Review had no active owner for 4 minutes. Last run completed at 2026-11-09 01:23 UTC. Last review ended as ExecutorRestarted at 2026-11-09 01:27 UTC. Infrastructure retry budget is exhausted.',
+        cause: 'escalated', causeDetail: 'auto-review-stranded', recallStatus: 'recallable',
+        lastEvaluatedAt: NOW, detail: 'The completed delivery is available for Retry review.',
+        evaluationAgeSeconds: 0, evaluationStale: false, requiresDecisionCard: false,
+        needsInputFile: null, decision: null,
+      },
+    },
+    promptMarkdown: 'Review the delivered fix.', statusMarkdown: '', log: [],
+    promptHistory: [], reviewEvidence: [],
+  }));
+  await page.route(/\/api\/tasks\/DEMO-6\/timeline(\?|$)/, route => json(route, [
+    { ts: PARKED_AT, kind: 'lane_changed', actor: 'system', summary: 'Auto Review parked',
+      details: { from: '4-auto-review', to: '5e-escalated', cause: 'escalated', causeDetail: 'auto-review-stranded' } },
+  ]));
+  await page.route(/\/api\/watcher\/interventions\?/, route => json(route, {
+    count: 1, interventions: [{
+      kind: 'auto-review-stranded', host: 'task-server', project: PROJECT,
+      decidedAtUtc: PARKED_AT, affectedCards: [JOB_ID], headline: 'Auto Review parked',
+      receipt: { id: 'watchdog-1', subject: `auto-review:${JOB_ID}`, action: 'Escalate',
+        autonomy: 'A1', status: 'escalated', observed: 'No Auto Review owner.',
+        done: 'Parked the card.', why: 'No running review owned the card.',
+        before: '4-auto-review', after: '5e-escalated', undo: 'Undo restores Auto Review.',
+        chain: [], undoable: true },
+    }],
+  }));
+  await page.route(/\/api\/watcher\/interventions\/watchdog-1\/undo$/, route => {
+    undoCalls++;
+    return json(route, { receipt: { id: 'watchdog-1', undoable: false, status: 'undone' } });
+  });
+  await page.route(/\/api\/tasks\/DEMO-6\/review\/retry/, route => {
+    retryCalls++;
+    return json(route, { status: 'review-started' });
+  });
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`/?job=${JOB_ID}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await page.addStyleTag({ content: HIDE_DEV_DIALOG });
+  await dismissDevErrorDialog(page);
+  await expect(page.getByTestId('parked-blocker-type')).toHaveText('Environmental · Auto Review watchdog');
+  await expect(page.getByTestId('parked-blocker-statement')).toContainText('Parked by the Auto Review watchdog.');
+  await expect(page.getByTestId('parked-blocker-statement')).toContainText('ExecutorRestarted');
+  await expect(page.getByTestId('parked-blocker-condition')).toContainText('fresh review attempt');
+  await expect(page.getByTestId('parked-watchdog-receipt-link')).toHaveAttribute('href', '#watchdog-receipt-watchdog-1');
+  await expect(page.getByTestId('escalation-action-retry-review')).toBeVisible();
+  await expect(page.getByTestId('escalation-essence')).not.toContainText('Latest attempt ended');
+  await expect(page.getByTestId('escalation-essence')).not.toContainText('Human decision required');
+  await expect(page.getByTestId('escalation-recommendation')).toContainText('Review retry available');
+  await expect(page.getByTestId('decision-surface')).toHaveCount(0);
+
+  mkdirSync(RESULTS, { recursive: true });
+  for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390]] as const) {
+    await page.setViewportSize({ width, height: 900 });
+    await setTheme(page, theme);
+    await dismissDevErrorDialog(page);
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: join(RESULTS, `auto-review-watchdog-${theme}-${width}--mocked.png`), fullPage: true });
+  }
+  await page.getByTestId('escalation-action-retry-review').click();
+  await expect(page.getByTestId('review-retry-message')).toContainText('fresh review attempt');
+  expect(retryCalls).toBe(1);
+  await page.getByTestId('parked-watchdog-undo').click();
+  await expect(page.getByTestId('parked-watchdog-undo')).toHaveCount(0);
+  expect(undoCalls).toBe(1);
+});

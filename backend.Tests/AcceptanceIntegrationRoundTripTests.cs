@@ -877,6 +877,87 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     }
 
     [Fact]
+    public async Task Stranding_park_receipt_can_be_undone_and_review_retried_for_unchanged_delivery()
+    {
+        var clock = VerificationFixtureAtUtc;
+        var deliverySha = PublishDelivery("stranded-review-retry.txt", "delivered work\n");
+        var deps = Build(deliverySha, initialState: TaskStates.AutoReview,
+            seedContent: false, authorityClock: () => clock);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.True(TaskJsonFile.UpdateField(card.FolderPath, "enteredLaneAt",
+            clock.AddMinutes(-90), NullLogger.Instance));
+        deps.Scanner.InvalidateCache();
+        var run = deps.Authority.GetTaskProjection(TaskKey).CurrentRunAttempt!;
+        var created = deps.Authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            TaskKey, run.RepositoryId, deliverySha, run.AttemptId,
+            AttemptAuthorityService.Hash("requirements"), AttemptAuthorityService.Hash("policy"),
+            run.EvidenceDigests, "initial-failed-review"));
+        Assert.True(created.Accepted);
+        var claimed = deps.Authority.ClaimReview(created.AttemptId, "reviewer", "host", 60,
+            "claim-failed-review").ReviewAttempt!;
+        Assert.True(deps.Authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(claimed.AttemptId, claimed.LastFence,
+                claimed.AuthorityEpoch, "settle-failed-review"),
+            deliverySha, ReviewTerminalOutcome.ProductFailure,
+            "ReviewFailed", "Review host failed to finish.")).Accepted);
+        clock = VerificationFixtureAtUtc.AddMinutes(45);
+
+        var lifecycle = new ReviewAttemptTaskLifecycleService(deps.Authority,
+            deps.Scanner, deps.Timeline, NullLogger<ReviewAttemptTaskLifecycleService>.Instance);
+        var records = new StallInterventionStore(() => _tempDir);
+        var log = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
+        var projector = new WatcherActivityProjector(log, deps.Scanner, deps.Configuration,
+            NullLogger<WatcherActivityProjector>.Instance);
+        var receipts = new StallInterventionReceipts(log, projector, deps.Scanner, deps.Timeline,
+            NullLogger<StallInterventionReceipts>.Instance);
+        var escalation = new HumanReviewEscalation(deps.States, deps.Transitions,
+            _tempDir, NullLogger.Instance, deps.Scanner);
+        var watchdog = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
+            lifecycle, new BatchGateStore(_tempDir), null!, deps.Settings,
+            deps.Pipeline, new AutoReviewPostProcessingQueue(), deps.Transitions,
+            null!, escalation, records, receipts, deps.Configuration,
+            NullLogger<AutoReviewStrandingWatchdog>.Instance);
+
+        Assert.Equal(1, await watchdog.RunOnceAsync());
+        var first = Assert.Single(records.All());
+        var parked = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.Escalated, parked.State);
+        Assert.Equal(HumanReviewEscalationCategories.Environmental,
+            parked.ParkedBlocker?.BlockerType);
+        Assert.Equal(ParkedBlockerConditionKinds.ReviewRetryAvailable,
+            parked.ParkedBlocker?.ConditionKind);
+        var recall = new ParkedBlockerProbe(attempts: deps.Authority).Evaluate(
+            ParkedBlockerCatalog.ConditionFor(HumanReviewEscalationCategories.AutoReviewStranded),
+            new ParkedBlockerContext(TaskKey: TaskKey), clock);
+        Assert.Equal(ParkedBlockerStatuses.Recallable, recall.Status);
+        Assert.True(first.Undoable);
+        Assert.Contains("Last run completed at", parked.ParkedBlocker?.Reason);
+        Assert.Contains("Last review ended as ReviewFailed", parked.ParkedBlocker?.Reason);
+
+        var undone = await watchdog.UndoParkAsync(first.Id, "operator");
+        Assert.True(undone.Undone, undone.Message);
+        Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        Assert.False((await watchdog.UndoParkAsync(first.Id, "operator")).Undone);
+
+        // A second visit gets a distinct receipt, then Retry review mints a
+        // successor from the same immutable run without a coding attempt.
+        card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.True(TaskJsonFile.UpdateField(card.FolderPath, "enteredLaneAt",
+            clock.AddMinutes(-90), NullLogger.Instance));
+        deps.Scanner.InvalidateCache();
+        Assert.Equal(1, await watchdog.RunOnceAsync());
+        var second = records.All().Single(record => record.Id != first.Id);
+        var result = await watchdog.RetryParkedReviewAsync(deps.Scanner.FindJob(Slug, _watchPath)!);
+        Assert.True(result.Started, result.Reason);
+        var projection = deps.Authority.GetTaskProjection(TaskKey);
+        Assert.Equal(run.AttemptId, projection.CurrentRunAttempt?.AttemptId);
+        Assert.NotEqual(claimed.AttemptId, projection.CurrentReviewAttempt?.AttemptId);
+        Assert.Equal(AttemptLifecycleState.Pending, projection.CurrentReviewAttempt?.State);
+        Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        Assert.False((await watchdog.UndoParkAsync(second.Id, "operator")).Undone);
+    }
+
+    [Fact]
     public async Task Stranding_watchdog_requests_new_review_when_passed_review_covers_older_run()
     {
         var deliverySha = PublishDelivery("stranded-new-run.txt", "delivered work\n");

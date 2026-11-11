@@ -26,6 +26,12 @@
     min-width: 0;
   }
 
+  [data-testid='review-retry-message'] {
+    margin: 0;
+    color: var(--studio-fg);
+    font-size: 12px;
+  }
+
   &__giveup {
     display: flex;
     flex-direction: column;

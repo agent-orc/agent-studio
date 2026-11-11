@@ -8,6 +8,7 @@ import {
   output,
   signal,
 } from '@angular/core';
+import { HttpClient, HttpParams } from '@angular/common/http';
 
 import { TaskState } from '../../../../models/task.model';
 import type { TaskDetail, TaskInfo } from '../../../../models/task.model';
@@ -69,15 +70,41 @@ export class EscalationSummaryComponent {
   readonly answerDraft = signal('');
   readonly answering = signal(false);
   readonly answerError = signal<string | null>(null);
+  readonly reviewRetrying = signal(false);
+  readonly reviewRetryMessage = signal<string | null>(null);
+  readonly watchdogPark = computed(() => this.detail().info.state === TaskState.Escalated
+    && this.detail().info.parkedBlocker?.blockerType === 'environmental'
+    && this.detail().info.parkedBlocker?.causeDetail === 'auto-review-stranded');
 
   /** The three terminal operator choices shown beside NEEDS DECISION. */
   readonly decisionActions = computed(() =>
     this.detail().info.state === TaskState.Escalated
       ? laneActionsFor(TaskState.Escalated).filter((action) => DECISION_ACTION_IDS.has(action.id))
+        .map(action => this.watchdogPark() && action.id === 'reissue-escalated'
+          ? { ...action, variant: 'secondary' as const } : action)
       : [],
   );
 
+  retryReview(): void {
+    const info = this.detail().info;
+    if (!this.watchdogPark() || this.reviewRetrying() || this.mutationsBlocked()) return;
+    this.reviewRetrying.set(true);
+    this.reviewRetryMessage.set(null);
+    this.http.post<{ status: string }>(`/api/tasks/${encodeURIComponent(info.id)}/review/retry`, null,
+      info.watchPath ? { params: new HttpParams().set('watchPath', info.watchPath) } : {}).subscribe({
+      next: () => {
+        this.reviewRetrying.set(false);
+        this.reviewRetryMessage.set('A fresh review attempt is queued for the same delivery.');
+      },
+      error: error => {
+        this.reviewRetrying.set(false);
+        this.reviewRetryMessage.set(reviewRetryError(error?.error?.error));
+      },
+    });
+  }
+
   private readonly jobs = inject(TaskService);
+  private readonly http = inject(HttpClient);
   private readonly timelinePoll = inject(TaskTimelinePollService);
   private readonly runTimelinePoll = inject(RunTimelinePollService);
 
@@ -181,6 +208,7 @@ export class EscalationSummaryComponent {
   readonly headTitle = computed<string>(() =>
     this.detail().info.needsInput
       ? (this.hasQueuedAnswer() ? 'Answer queued' : 'Agent needs input')
+      : this.watchdogPark() ? 'Review recovery'
       : this.view().escalation?.kind === 'gave-up' ? 'Orchestrator gave up' : 'Escalation',
   );
 
@@ -232,6 +260,13 @@ export class EscalationSummaryComponent {
     this.triageAction.emit({ id: action.id, label: action.label, intent: action.intent });
   }
 
+}
+
+function reviewRetryError(code?: string): string {
+  if (code === 'card-changed-since-park') return 'The card changed since the watchdog parked it. Reload and try again.';
+  if (code === 'review-delivery-unavailable') return 'The completed delivery is unavailable or another review owns it.';
+  if (code === 'review-attempt-could-not-start') return 'The card was restored, but a review attempt could not start.';
+  return 'Retry review failed.';
 }
 
 /** localStorage key holding the per-task collapse map (`{ [jobId]: boolean }`). */

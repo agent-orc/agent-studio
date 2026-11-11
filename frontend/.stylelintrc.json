@@ -322,6 +322,7 @@
         "src/app/features/task-detail/components/detail-load-error/detail-load-error.component.scss",
         "src/app/features/task-detail/components/decision-surface/decision-surface.component.scss",
         "src/app/features/task-detail/components/parked-blocker/parked-blocker.component.scss",
+        "src/app/features/task-detail/components/watchdog-receipt/watchdog-receipt.component.scss",
         "src/app/features/task-detail/components/concept-dossier-notice/concept-dossier-notice.component.scss",
         "src/app/features/task-detail/components/decision-card-panel/decision-card-panel.component.scss",
         "src/app/features/task-detail/components/decision-blocked-notice/decision-blocked-notice.component.scss",

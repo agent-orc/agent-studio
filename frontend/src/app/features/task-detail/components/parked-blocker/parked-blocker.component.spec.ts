@@ -134,7 +134,7 @@ describe('ParkedBlockerComponent', () => {
   const text = (el: HTMLElement, testId: string): string =>
     el.querySelector(`[data-testid="${testId}"]`)?.textContent?.trim() ?? '';
 
-  beforeEach(() => {
+  beforeEach(async () => {
     opened.length = 0;
     localStorage.clear();
     timelineEvents.set([]);
@@ -155,6 +155,7 @@ describe('ParkedBlockerComponent', () => {
         { provide: NowTickService, useValue: { now: signal(Date.parse('2026-09-14T14:44:00.000Z')) } },
       ],
     });
+    await TestBed.compileComponents();
   });
 
   it('renders nothing when the card is not parked', () => {

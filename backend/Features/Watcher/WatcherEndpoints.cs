@@ -99,8 +99,9 @@ public static class WatcherEndpoints
                 decisions = service.LatestDecisions().Where(item => Allowed(item.Project)).ToArray() });
         });
 
-        group.MapPost("/interventions/{id}/undo", (string id, HttpContext context,
-            ProjectRegistry projects, StallInterventionStore store, StallInterventionService service) =>
+        group.MapPost("/interventions/{id}/undo", async (string id, HttpContext context,
+            ProjectRegistry projects, StallInterventionStore store, StallInterventionService service,
+            AgentStudio.Runner.AutoReviewStrandingWatchdog stranding, CancellationToken ct) =>
         {
             var record = store.Find(id);
             if (record is null || context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal principal
@@ -108,7 +109,8 @@ public static class WatcherEndpoints
                 return Results.NotFound(new { error = "intervention-not-found" });
             var actor = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
                 ? human.User.Username : context.Request.Headers["X-Client-Id"].FirstOrDefault() ?? "operator";
-            var result = service.Undo(id, actor);
+            var result = record.Kind == "auto-review-stranded"
+                ? await stranding.UndoParkAsync(id, actor, ct) : service.Undo(id, actor);
             return result switch
             {
                 { Undone: true } => Results.Ok(new { result.Message, receipt = StallInterventionReceipts.View(result.Record!) }),

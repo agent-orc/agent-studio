@@ -314,6 +314,10 @@ describe('park copy from the recorded cause', () => {
     expect(parkCauseView('escalated', 'gate-capacity')).toMatchObject({
       origin: 'stall-intervention', label: 'Gate queue stall',
     });
+    expect(parkCauseView('escalated', 'auto-review-stranded')).toMatchObject({
+      origin: 'auto-review-watchdog', label: 'Environmental · Auto Review watchdog',
+      parkedBy: 'the Auto Review watchdog',
+    });
     expect(parkCauseView('escalated', 'aspect-verdict-infra-crash').origin).toBe('review-gate');
     expect(parkCauseView('escalated', 'completion-gate').origin).toBe('review-gate');
     expect(parkCauseView('escalated', 'agent-blocked').origin).toBe('run');
