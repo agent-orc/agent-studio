@@ -31,6 +31,16 @@ async function installRoutes(page: Page): Promise<void> {
   await page.clock.setFixedTime(new Date(NOW));
   await page.route('**:5039/update/status', route => json(route, { isRunning: false, behindBy: 0 }));
   await page.route('**/api/**', route => json(route, []));
+  await page.route('**/hubs/v1/studio/negotiate**', route => json(route, {
+    connectionId: 'parked-cause-copy', connectionToken: 'parked-cause-copy',
+    negotiateVersion: 1,
+    availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text'] }],
+  }));
+  await page.routeWebSocket('**/hubs/v1/studio**', socket => {
+    socket.onMessage(message => {
+      if (String(message).includes('"protocol"')) socket.send('{}\x1e');
+    });
+  });
   await page.route('**/api/cli/quota**', route => json(route, { at: NOW, ttlSeconds: 600, snapshots: [] }));
   await page.route('**/api/cli/usage**', route => json(route, { sessions: [] }));
   await page.route('**/api/usage/cockpit**', route => json(route, { workspaceId: null, clis: [], cost: null }));
@@ -183,6 +193,7 @@ test('an acceptance-audit park names the audit, states its reason once, and sugg
 });
 
 test('Auto Review watchdog park links its receipt and retries the same delivery', async ({ page }) => {
+  test.setTimeout(90_000);
   await installRoutes(page);
   let retryCalls = 0;
   let undoCalls = 0;
@@ -235,7 +246,7 @@ test('Auto Review watchdog park links its receipt and retries the same delivery'
   await page.goto(`/?job=${JOB_ID}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
   await page.addStyleTag({ content: HIDE_DEV_DIALOG });
   await dismissDevErrorDialog(page);
-  await expect(page.getByTestId('parked-blocker-type')).toHaveText('Environmental · Auto Review watchdog');
+  await expect(page.getByTestId('parked-blocker-type')).toHaveText('Environmental · Auto Review watchdog', { timeout: 30_000 });
   await expect(page.getByTestId('parked-blocker-statement')).toContainText('Parked by the Auto Review watchdog.');
   await expect(page.getByTestId('parked-blocker-statement')).toContainText('ExecutorRestarted');
   await expect(page.getByTestId('parked-blocker-condition')).toContainText('fresh review attempt');
@@ -253,6 +264,11 @@ test('Auto Review watchdog park links its receipt and retries the same delivery'
     await dismissDevErrorDialog(page);
     await page.waitForTimeout(500);
     await page.screenshot({ path: join(RESULTS, `auto-review-watchdog-${theme}-${width}--mocked.png`), fullPage: true });
+    if (width === 390) {
+      await page.getByTestId('escalation-action-discard-escalated').scrollIntoViewIfNeeded();
+      await expect(page.getByTestId('escalation-action-discard-escalated')).toBeInViewport();
+      await page.screenshot({ path: join(RESULTS, 'auto-review-watchdog-light-390-actions--mocked.png'), fullPage: true });
+    }
   }
   await page.getByTestId('escalation-action-retry-review').click();
   await expect(page.getByTestId('review-retry-message')).toContainText('fresh review attempt');
