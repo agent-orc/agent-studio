@@ -188,7 +188,8 @@ describe('StatusBarComponent review entry', () => {
     const service = TestBed.inject(TaskService);
     const waiting = Array.from({ length: 10 }, (_, index) => ({
       id: `DEMO-${index + 1}`, taskKey: `DEMO-${index + 1}`, title: 'Demo', state: '4-auto-review',
-      liveStatus: { attempt: 1, activeStep: null, nextSteps: [], queue: null, latestEventAt: null },
+      liveStatus: { attempt: 1, activeStep: null, nextSteps: [],
+        queue: { kind: 'review', position: index + 1 }, latestEventAt: null },
     })) as unknown as TaskInfo[];
     service.grouped.update(grouped => ({ ...grouped, autoReview: waiting }));
 
@@ -200,6 +201,27 @@ describe('StatusBarComponent review entry', () => {
     expect(fixture.componentInstance.reviewAttention()).toBe(true);
     expect(fixture.componentInstance.reviewTooltip()).toContain(
       'Post Processing holds 10 cards: 10 waiting for review, 0 under review.');
+  });
+
+  it('keeps integration waits outside review attention', async () => {
+    await TestBed.configureTestingModule({
+      imports: [StatusBarComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(StatusBarComponent);
+    const service = TestBed.inject(TaskService);
+    const cards = Array.from({ length: 3 }, (_, index) => ({
+      id: `DEMO-${index + 1}`, taskKey: `DEMO-${index + 1}`, title: 'Demo', state: '4-auto-review',
+      liveStatus: { attempt: 1, activeStep: null, nextSteps: [],
+        queue: { kind: 'review', state: 'integration', reason: 'waiting for delivery integration' }, latestEventAt: null },
+    })) as unknown as TaskInfo[];
+    service.grouped.update(grouped => ({ ...grouped, autoReview: cards }));
+    fixture.detectChanges();
+
+    const review = fixture.nativeElement.querySelector('[data-testid="status-bar-review"]') as HTMLElement;
+    expect(review.textContent).toContain('review idle · 3 awaiting integration');
+    expect(fixture.componentInstance.reviewAttention()).toBe(false);
+    expect(fixture.componentInstance.reviewTooltip()).toContain('3 waiting for integration');
   });
 
   it('stays idle when Post Processing is empty', async () => {
