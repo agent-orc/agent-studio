@@ -161,7 +161,6 @@ public static class BatchGateStateSnapshotReader
                 phase = phase.Phase.ToString().ToLowerInvariant(),
                 phaseAtUtc = phase.RecordedAtUtc,
                 phaseReason = phase.Reason,
-                phaseAtUtc = phase.RecordedAtUtc,
                 isolationActive = phase.Phase == BatchPhase.Red
                     && activeIsolationFlights?.Contains(manifest.BatchId) == true,
                 isolationPending = phase.Phase == BatchPhase.Red
