@@ -25,8 +25,7 @@ public static class BatchGateStorageRoot
     {
         if (string.IsNullOrWhiteSpace(taskRepository)) return;
         var workspace = Path.GetFullPath(taskRepository);
-        var identityPath = Path.Combine(workspace, ".metadata", IdentityFile);
-        Directory.CreateDirectory(Path.GetDirectoryName(identityPath)!);
+        var identityPath = Path.Combine(workspace, "." + IdentityFile);
         var legacyKey = LegacyKey(contentRoot, taskRepository);
         if (!File.Exists(identityPath))
         {
@@ -92,7 +91,7 @@ public static class BatchGateStorageRoot
     private static string? IdentityKey(string? taskRepository)
     {
         if (string.IsNullOrWhiteSpace(taskRepository)) return null;
-        var path = Path.Combine(Path.GetFullPath(taskRepository), ".metadata", IdentityFile);
+        var path = Path.Combine(Path.GetFullPath(taskRepository), "." + IdentityFile);
         if (!File.Exists(path)) return null;
         var id = File.ReadAllText(path).Trim();
         if (id.Length != 32 || !id.All(Uri.IsHexDigit))

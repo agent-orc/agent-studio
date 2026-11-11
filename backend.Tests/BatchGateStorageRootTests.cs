@@ -26,6 +26,8 @@ public sealed class BatchGateStorageRootTests : IDisposable
 
         BatchGateStorageRoot.Prepare(Path.Combine(_root, "old-app"), workspace,
             new ListLogger(), state);
+        Assert.True(File.Exists(Path.Combine(workspace, ".batch-state-installation-id")));
+        Assert.False(Directory.Exists(Path.Combine(workspace, ".metadata")));
         var identified = BatchGateStorageRoot.ForInstance(Path.Combine(_root, "old-app"),
             workspace, "batch-gates", state);
         Assert.True(File.Exists(Path.Combine(identified, "batch-1", "manifest.json")));

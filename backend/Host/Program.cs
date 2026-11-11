@@ -99,10 +99,6 @@ try
         [Directory.GetCurrentDirectory(), AppContext.BaseDirectory, builder.Configuration["RemoteGate:InstallationRoot"]],
         new Serilog.Extensions.Logging.SerilogLoggerFactory(Log.Logger)
             .CreateLogger("AgentStudio.State.LocalStateStartup"));
-    AgentStudio.Pipeline.BatchGateStorageRoot.Prepare(
-        builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"],
-        new Serilog.Extensions.Logging.SerilogLoggerFactory(Log.Logger)
-            .CreateLogger("AgentStudio.Pipeline.BatchGateStorageRoot"));
 }
 catch (Exception exception) when (exception is AgentStudio.TaskServer.Contracts.LocalStateRootUnavailableException
     or IOException or UnauthorizedAccessException or InvalidDataException)
@@ -219,6 +215,21 @@ if (underTestHost)
         Directory.CreateDirectory(iso);
         builder.Configuration["TaskRepository"] = iso;
     }
+}
+
+try
+{
+    AgentStudio.Pipeline.BatchGateStorageRoot.Prepare(
+        builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"],
+        new Serilog.Extensions.Logging.SerilogLoggerFactory(Log.Logger)
+            .CreateLogger("AgentStudio.Pipeline.BatchGateStorageRoot"));
+}
+catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+{
+    Log.Fatal("batch-state-startup-failed {Reason}", exception.Message);
+    await Log.CloseAndFlushAsync();
+    Environment.ExitCode = 1;
+    return;
 }
 
 var startupSecurityProfile = SecurityProfiles.ActiveProfile(builder.Configuration);
