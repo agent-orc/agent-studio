@@ -87,6 +87,26 @@ describe('standalone Studio identity projection', () => {
     });
     expect(auth.status()?.user?.id).toBe('usr_owner');
   });
+
+  it('holds the restored Owner at the notice until it is acknowledged', () => {
+    auth.initialize();
+    http.expectOne('/api/auth/status').flush({
+      profile: 'networked', bootstrapRequired: false, authenticated: false,
+    });
+    auth.login('owner', 'password').subscribe();
+    http.expectOne('/api/auth/login').flush({
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr_owner', username: 'owner', displayName: 'Owner', role: 'owner',
+        projects: [], disabled: false, mustChangePassword: false },
+      restoreNotice: { archiveId: 'archive-1', archiveCreatedAt: '2026-11-09T06:00:00Z', restoredAt: '2026-11-10T06:00:00Z' },
+    });
+    expect(auth.studioAllowed()).toBe(false);
+    auth.acknowledgeRestoreNotice('archive-1').subscribe();
+    const request = http.expectOne('/api/auth/restore-notice/acknowledge');
+    expect(request.request.body).toEqual({ archiveId: 'archive-1' });
+    request.flush(null);
+    expect(auth.studioAllowed()).toBe(true);
+  });
 });
 
 describe('AGT-3668 session without a project', () => {

@@ -800,4 +800,6 @@
       }
     </div>
     }
-} @else { <app-auth-gate /> }
+} @else {
+  @defer (on immediate) { <app-auth-gate /> }
+}

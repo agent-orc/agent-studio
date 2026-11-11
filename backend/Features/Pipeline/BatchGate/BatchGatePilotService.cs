@@ -3674,7 +3674,7 @@ public sealed partial class BatchGatePilotService
             subject.IntegrationBranch, subject.GateProfile,
             subject.GateProfileDigest, subject.PlatformVersion);
 
-    private static string GateProfile(BuildProfile? profile, string repo)
+    internal static string GateProfile(BuildProfile? profile, string repo)
     {
         var commands = VerifyCommandPlanner.Plan(repo, profile).Commands
             .Select(command => new { command.Command, command.WorkingSubdir,
