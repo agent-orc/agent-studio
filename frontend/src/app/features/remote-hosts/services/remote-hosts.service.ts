@@ -72,13 +72,13 @@ export interface RunnerInfrastructureFailure {
 /**
  * Registry + action service for the Remote-Hosts page (AGT-1921).
  *
- * Host topology comes from the static configuration seed while liveness comes
- * from the real client registry. Reload hydrates each configured client id from
- * `GET /api/clients`, so runner polling updates LastSeen and status without a
- * second host-registry backend contract.
+ * The local profile seeds only its own machine. Remote hosts are discovered
+ * from the client and capability registries; liveness comes from the real
+ * client registry. Reload hydrates seen client ids from `GET /api/clients`,
+ * so runner polling updates LastSeen and status.
  *
- * Lifecycle actions call the persisted client API. No seeded value is treated
- * as live telemetry.
+ * Lifecycle actions call the persisted client API. The local seed is not
+ * treated as live telemetry.
  */
 @Injectable({ providedIn: 'root' })
 export class RemoteHostsService {
