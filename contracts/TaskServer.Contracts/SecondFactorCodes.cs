@@ -26,15 +26,22 @@ public static class SecondFactorCodes
     }
 
     public static bool VerifyTotp(string secret, string? code, DateTime now)
+        => MatchTotpStep(secret, code, now) is not null;
+
+    /// <summary>Returns the matching time step so callers can persist one-time acceptance per user.</summary>
+    public static long? MatchTotpStep(string secret, string? code, DateTime now)
     {
-        if (code is null || code.Length != 6 || code.Any(c => c is < '0' or > '9')) return false;
+        if (code is null || code.Length != 6 || code.Any(c => c is < '0' or > '9')) return null;
         byte[] key;
         try { key = FromBase32(secret); }
-        catch (FormatException) { return false; }
+        catch (FormatException) { return null; }
         var step = new DateTimeOffset(DateTime.SpecifyKind(now, DateTimeKind.Utc)).ToUnixTimeSeconds() / 30;
-        return Enumerable.Range(-1, 3).Any(offset =>
-            CryptographicOperations.FixedTimeEquals(
-                Encoding.ASCII.GetBytes(Generate(key, step + offset)), Encoding.ASCII.GetBytes(code)));
+        long? matched = null;
+        foreach (var offset in new[] { -1, 0, 1 })
+            if (CryptographicOperations.FixedTimeEquals(
+                Encoding.ASCII.GetBytes(Generate(key, step + offset)), Encoding.ASCII.GetBytes(code)))
+                matched = step + offset;
+        return matched;
     }
 
     public static string CurrentTotp(string secret, DateTime now)

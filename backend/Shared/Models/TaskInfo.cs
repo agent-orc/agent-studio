@@ -628,7 +628,8 @@ public sealed record TaskLiveQueue
     public string? ReasonCode { get; init; }
     /// <summary>
     /// AGT-3094: one of the <see cref="TaskLiveQueueStates"/> tokens. Runner
-    /// queues and legacy review queues are always <c>queued</c>; a canonical
+    /// queues and review waits are <c>queued</c>; a post-review delivery wait
+    /// is <c>integration</c>; a canonical
     /// review card says whether its ReviewAttempt is leased (<c>reviewing</c>)
     /// or needs an operator because nothing will review it (<c>stalled</c>).
     /// </summary>
@@ -647,6 +648,7 @@ public static class TaskLiveQueueStates
     public const string Queued = "queued";
     public const string Reviewing = "reviewing";
     public const string Stalled = "stalled";
+    public const string Integration = "integration";
 }
 
 /// <summary>

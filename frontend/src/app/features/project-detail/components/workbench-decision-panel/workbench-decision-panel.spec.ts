@@ -111,6 +111,19 @@ describe('WorkbenchDecisionPanelComponent', () => {
 
   afterEach(() => http.verify());
 
+  it('shows recorded choices after concept acceptance without offering another decision', () => {
+    fixture.componentRef.setInput('document', {
+      ...DOCUMENT,
+      workbench: { ...DOCUMENT.workbench, status: 'decided', phase: 'shaping' },
+    });
+    fixture.detectChanges();
+
+    const receipt = fixture.nativeElement.querySelector('[data-testid="workbench-decision-receipt"]');
+    expect(receipt.textContent).toContain('In implementation · 1 decision point recorded');
+    expect(receipt.textContent).toContain('Direct path');
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-start"]')).toBeNull();
+  });
+
   it('prefills a compact feature proposal from inline responses and records the created card', () => {
     click('workbench-decision-start');
 

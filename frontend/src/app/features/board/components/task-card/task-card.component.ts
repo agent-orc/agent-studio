@@ -78,6 +78,7 @@ import { TaskSelectionService } from '../../../task-detail/runtime';
 import { PostProcessingActivityComponent } from '../post-processing-activity/post-processing-activity.component';
 import { TestEvidenceStatusComponent } from '../../../test-evidence';
 import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-key/copyable-task-key.component';
+import { ReviewerSession } from '../../../../services/reviewer-session.service';
 import { CodexSignInDialogService, ClaudeSignInDialogService, ProviderAuthStatusService, modelCliVersionWaitReason, providerAuthWaitReason } from '../../../remote-hosts';
 import { buildDecisionBadge, decisionBlockReason, decisionBlockers } from '../../../../models/decision-card-presentation';
 import { TaskCardDecisionChipsComponent } from '../task-card-decision-chips/task-card-decision-chips.component';
@@ -423,10 +424,15 @@ export class TaskCardComponent implements OnInit, OnDestroy {
     };
   });
 
+  private readonly reviewer = inject(ReviewerSession);
   readonly cardCtxMenuItems = computed(() => buildCardCtxMenuItems(
     this.job(), this.mutationsBlocked(),
     focusVisibleLaneStates(this.laneFocus()), this.readyQueueEdge(),
-    this.taskAccess.productSession(), this.taskAccess.readOnlySession()));
+    {
+      reviewsOnly: this.reviewer.reviewsOnly(this.job().projectName),
+      productSession: this.taskAccess.productSession(),
+      readOnlySession: this.taskAccess.readOnlySession(),
+    }));
 
   /** AGT-2029: open the dependency this card is waiting on (see resolveDependencyTarget). */
   navigateToDependency(chip: DependencyChip, event: MouseEvent): void {

@@ -1021,6 +1021,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   The target ref fingerprint is diagnostic evidence, not an acceptance boundary.
   A new delivery epoch or result SHA, or a delivery no longer integrated in the
   published branch, makes the verdict stale and returns the card to Auto Review.
+  Stale-verdict recovery records the integration request and returns from the
+  delivery-chain pass before the per-project merge gate finishes. Its completion
+  requests a fresh review or queues a merge round. After a restart, the
+  reconciler resumes a returned Auto Review card whose latest lane change was
+  the stale-verdict transition and whose review is still pending recovery.
   Older claims without these delivery fields remain accepted while Git reports
   the delivery integrated. An explicit operator override remains accepted for
   its recorded delivery; advancing the target branch does not reopen it.
@@ -1404,6 +1409,13 @@ with `403` and no body. Task Server denies with `403` and
 `backend.Tests/ContributorAccessTests.cs` and
 `task-server.Tests/IdentityBootstrapTests.cs`. The role summary is in
 [security overview](../../operations/security/overview.md).
+
+A Reviewer session (AGT-3670) is not a Product session. It reads cards like a
+Viewer and decides a card in Human Review through
+`POST /api/tasks/{jobId}/human-review/accept` and
+`POST /api/tasks/{jobId}/human-review/send-back`; the note of a send back
+becomes the next run's follow-up. The decision and its audit are described in
+[Who reviews cards](../../operations/security/overview.md#who-reviews-cards-the-reviewer-role-agt-3670).
 
 ## Parked-card blocker and recall
 
@@ -1955,6 +1967,9 @@ from completion backfill, cycle time, throughput, and environment flow metrics.
   option IDs, rationale, operator and decision time, but projects no settled
   promotion decision. The descriptor keeps its current status, and the normal
   prepare and confirm path remains available for a later promotion decision.
+  Concept promotion marks the descriptor `decided` after creating its slice
+  cards, retains those recorded choices, and can be retried without duplicating
+  the cards or lifecycle transition.
 - A delivering card resolved through `references.workbenches` or a descriptor
   `sourceTaskKeys` back edge receives the Dossier maintenance prompt contract.
   It appends only its own dated implementation entry between the canonical log

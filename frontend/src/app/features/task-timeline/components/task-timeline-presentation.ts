@@ -158,6 +158,8 @@ export function timelineEventTitle(event: TaskTimelineEvent): string {
     if (decision === 'accept') return 'Human review accepted';
     if (decision === 'reject') return 'Human review rejected';
     if (decision === 'reissue') return 'Human review requested changes';
+    // AGT-3670: the Reviewer's send back; the summary carries the note.
+    if (decision === 'send-back') return 'Human review sent back';
   }
 
   if (event.kind === TIMELINE_KIND.operatorRequeued) {

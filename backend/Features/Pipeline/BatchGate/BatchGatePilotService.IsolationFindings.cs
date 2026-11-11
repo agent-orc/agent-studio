@@ -6,35 +6,63 @@ namespace AgentStudio.Pipeline;
 
 public sealed partial class BatchGatePilotService
 {
-    private async Task RecoverGreenIsolationChildrenAsync(CancellationToken ct)
+    /// <summary>
+    /// A green batch whose flight stopped before publication publishes from its
+    /// recorded passing run: an isolation child, and since AGT-3563 also a
+    /// batch whose own flight died between its green verdict and the
+    /// publication fence. A green batch whose admitted member left the queue
+    /// is retired and returns the rest.
+    /// </summary>
+    private async Task RecoverGreenBatchesAsync(CancellationToken ct)
     {
-        foreach (var child in _store.ListManifests().Where(manifest =>
-                     manifest.ParentBatchId is not null
+        foreach (var green in _store.ListManifests().Where(manifest =>
+                     _store.HasState(manifest.BatchId)
                      && _store.LatestState(manifest.BatchId).Phase == BatchPhase.Green))
         {
             ct.ThrowIfCancellationRequested();
-            var pending = _store.ListPending().Where(item => child.Members.Any(member =>
+            var child = green.ParentBatchId is not null;
+            var admitted = child ? green.Members.Select(member => member.TaskKey).ToArray()
+                : green.Members.Where(member => _store.TryReadReplay(green.BatchId, member.TaskKey)
+                    is { Outcome: "admitted" }).Select(member => member.TaskKey).ToArray();
+            var pending = _store.ListPending().Where(item => green.Members.Any(member =>
                     member.TaskKey == item.Subject.TaskKey
                     && member.RunAttempt == item.Subject.RunAttempt))
                 .ToDictionary(item => item.Subject.TaskKey, StringComparer.Ordinal);
-            if (pending.Count != child.Members.Count
-                || child.Members.Any(member => !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
+            var complete = admitted.Length > 0 && admitted.All(pending.ContainsKey);
+            if (child && (!complete || pending.Count != green.Members.Count
+                    || green.Members.Any(member => !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration)))
                 continue;
             BatchCoordinatorLease? lease;
-            try { lease = _leases.TryAcquire(LeaseScope(child), "green-isolation-recovery"); }
+            try { lease = _leases.TryAcquire(LeaseScope(green), child ? "green-isolation-recovery" : "green-batch-recovery"); }
             catch (IOException) { continue; }
             if (lease is null) continue;
             try
             {
-                var run = _store.ListRuns(child.BatchId).LastOrDefault();
-                if (run is null) continue;
-                var verdict = _store.ReadVerdict(child.BatchId, run.BatchRunId);
-                if (verdict?.Outcome != "pass") continue;
-                var assembly = new BatchGateAssembly(child.BatchId, child.MembershipDigest,
-                    BatchGatePolicy.CandidateRef(child, run.CoordinatorFence), run.CandidateSha,
-                    child.Members.Select(member => member.TaskKey).ToArray(), [], [], false);
-                await PublishGreenAsync(child, assembly, run, verdict, lease, pending,
-                    pending.Values.First().RepositoryPath, new HashSet<string>(StringComparer.Ordinal), ct)
+                if (_store.LatestState(green.BatchId) is not { Phase: BatchPhase.Green } state) continue;
+                var run = _store.ListRuns(green.BatchId)
+                    .Where(item => item.CandidateSha == state.CandidateSha)
+                    .MaxBy(item => item.StartedAtUtc);
+                var verdict = run is null ? null : _store.ReadVerdict(green.BatchId, run.BatchRunId);
+                if (!complete || run is null || verdict?.Outcome != "pass")
+                {
+                    if (child) continue;
+                    State(green, BatchPhase.Abandoned, state.CandidateSha, lease.Fence,
+                        "green batch interrupted before publication; an admitted member left the queue");
+                    ReturnToPending(green);
+                    continue;
+                }
+                var outcomes = green.Members.ToDictionary(member => member.TaskKey,
+                    member => _store.TryReadReplay(green.BatchId, member.TaskKey)?.Outcome, StringComparer.Ordinal);
+                var assembly = new BatchGateAssembly(green.BatchId, green.MembershipDigest,
+                    BatchGatePolicy.CandidateRef(green, run.CoordinatorFence), run.CandidateSha, admitted,
+                    child ? [] : outcomes.Where(item => item.Value is "conflict" or "unattributable")
+                        .Select(item => item.Key).ToArray(),
+                    child ? [] : outcomes.Where(item => item.Value == "cascade-deferred")
+                        .Select(item => item.Key).ToArray(), false);
+                // Ejected members of a published batch leave through the
+                // published-batch recovery of the same tick.
+                await PublishGreenAsync(green, assembly, run, verdict, lease, pending,
+                    pending[admitted[0]].RepositoryPath, new HashSet<string>(StringComparer.Ordinal), ct)
                     .ConfigureAwait(false);
             }
             finally { _leases.Release(lease); }

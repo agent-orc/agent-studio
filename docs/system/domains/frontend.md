@@ -560,6 +560,12 @@ occur. It is not a claim about tunnel transfer time.
   auto-review status snapshot into a compact current-step or elapsed-wait
   indicator; the lane header reconciles those visible cards as active versus
   waiting, with machine-lock gate queueing remaining a distinct waiting state.
+  The status bar counts only queued or stalled review attempts as review
+  attention; passed reviews waiting for delivery integration have a separate
+  count. The create dialog treats a model as pinned only after a user choice
+  or a project model default; other prefilled values remain routing suggestions.
+  The extra status state adds under 1 kB to the initial bundle, so the
+  production error budget is 2101 kB.
 - Project Explorer entries follow Board, Dossiers, Deploy, Operations, Wiki,
   Deck (NV-D1 option A). Deploy hosts the BD-3 Deploy area (Overview,
   Releases, Pipeline, History, the existing deployment tools) plus a Run steps view with
@@ -821,12 +827,15 @@ occur. It is not a claim about tunnel transfer time.
   branch rather than exposing the descriptor's physical `operations/` path.
   Current entries are grouped as `Needs a decision` and `In implementation`;
   `Documented` and `Discarded` stay under a History branch. Every
-  lifecycle header and leaf uses one compact 24 px tree row: its pattern icon
+  lifecycle header and leaf uses one compact 32 px tree row: its pattern icon
   aligns with every sibling at that depth, its title receives the flexible
   width, and only a quiet status dot or compact open-decision count trails it.
+  Tags stay in the leaf tooltip so they cannot wrap the narrow tree row.
   Catalogue key, complete title, lifecycle state, phase, and freshness stay in
   the viewport-safe shared tooltip instead of a second tree line. The Dossiers
-  count is the number of open decisions, not the number of documents.
+  count is the number of Dossier leaves under the branch, excluding the
+  separately promoted Style Guide. Open-decision counts remain on pending
+  leaves and reconcile with the list and viewer header after acceptance.
   Dossier overview and Explorer lifecycle headers are keyboard-accessible disclosures whose per-project collapsed state persists locally; a newly populated section opens once with its quiet count visible.
   Lifecycle-group counts equal
   their visible leaves and zero counts stay hidden. The catalogue's
@@ -926,7 +935,14 @@ occur. It is not a claim about tunnel transfer time.
   through the runtime-owned
   `PUT /api/projects/{projectName}/execution-runner` contract. A null runner is
   the local default; a remote identity makes the remote daemon the sole
-  auto-pickup owner for that project. The guided check reports code channel,
+  auto-pickup owner for that project. Local-profile installations show the
+  intrinsic local machine and only remote runners discovered through client or
+  capability reports. The assignment and onboarding pickers disable local when
+  local coding admission is off, and disable remote identities without a
+  confirmed coding role or with an unavailable status. Their option labels
+  explain why. Onboarding reads local admission from
+  `GET /api/projects/execution-capability`. The guided check reports code
+  channel,
   `develop`, toolchain, and no-op readiness from the host registry snapshot.
   Board cards deliberately show the actual live runner from the fenced run
   lease, not merely this configured target, so assignment and attribution
