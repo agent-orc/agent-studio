@@ -80,6 +80,15 @@ public sealed class ContributorAccessTests : IDisposable
     public void Contributor_route_matrix(string method, string path, string? state, bool productionApproval, bool allowed)
         => Assert.Equal(allowed, ContributorAccessPolicy.Allows(method, path, state, productionApproval));
 
+    [Fact]
+    public void Product_can_enroll_its_own_second_factor()
+    {
+        foreach (var path in new[] { "/api/auth/totp/start", "/api/auth/totp/confirm",
+                     "/api/auth/passkeys/register-options", "/api/auth/passkeys/register" })
+            Assert.True(ContributorAccessPolicy.Allows("POST", path, null, false), path);
+        Assert.False(ContributorAccessPolicy.Allows("POST", "/api/auth/invitations", null, false));
+    }
+
     /// <summary>
     /// AGT-3669: a Product card open skips the task sections listed in the
     /// frontend <c>PRODUCT_DENIED_TASK_SECTIONS</c>. Each listed section must

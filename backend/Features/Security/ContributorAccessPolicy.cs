@@ -64,6 +64,9 @@ public static class ContributorAccessPolicy
     {
         if (path is "/api/auth/status" or "/api/auth/session" or "/api/auth/logout" or "/api/auth/change-password")
             return true;
+        if (path.StartsWith("/api/auth/totp/", StringComparison.OrdinalIgnoreCase)
+            || path is "/api/auth/passkeys/register-options" or "/api/auth/passkeys/register")
+            return true;
         if (path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase)) return false;
 

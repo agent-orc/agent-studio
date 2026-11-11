@@ -1207,6 +1207,9 @@ public sealed class AccessSecurityMiddleware
            || path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/passkeys/assertion-options", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/invite/accept", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/auth/invite/preview", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/v1/studio/auth/invite/accept", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/v1/studio/auth/invite/preview", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/runner-enroll", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsRunnerTaskFileRead(string method, string path)

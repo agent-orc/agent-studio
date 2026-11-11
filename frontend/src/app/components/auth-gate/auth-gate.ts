@@ -1,8 +1,8 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Observable, firstValueFrom } from 'rxjs';
-import { AuthService } from '../../services/auth.service';
+import { AuthService, type InvitationPreview } from '../../services/auth.service';
 import { createPasskey, getPasskey } from '../../services/webauthn';
 export { AuthService } from '../../services/auth.service';
 
@@ -27,7 +27,7 @@ export function authGateFailure(error: unknown, fallback: string): string {
   styleUrl: './auth-gate.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class AuthGateComponent {
+export class AuthGateComponent implements OnInit {
   readonly auth = inject(AuthService);
   readonly inviteToken = new URLSearchParams(window.location.search).get('invite');
   username = '';
@@ -40,10 +40,29 @@ export class AuthGateComponent {
   readonly recoveryCodes = signal<string[]>([]);
   readonly submitting = signal(false);
   readonly error = signal('');
+  readonly invitation = signal<InvitationPreview | null>(null);
+  readonly invitationExpiry = signal('');
+  readonly invitationLoading = signal(false);
+
+  ngOnInit(): void {
+    if (!this.inviteToken) return;
+    this.invitationLoading.set(true);
+    this.auth.previewInvitation(this.inviteToken).subscribe({
+      next: preview => {
+        this.invitation.set(preview);
+        this.invitationExpiry.set(new Intl.DateTimeFormat('en-GB', {
+          day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+          hour12: false, timeZone: 'UTC',
+        }).format(new Date(preview.expiresAt)) + ' UTC');
+        this.invitationLoading.set(false);
+      },
+      error: error => { this.error.set(authGateFailure(error, 'Invitation is invalid or expired.')); this.invitationLoading.set(false); },
+    });
+  }
 
   submit(): void {
     const status = this.auth.status();
-    if (status?.secondFactorEnrollmentRequired && !status.user?.mustChangePassword) {
+    if ((status?.secondFactorEnrollmentRequired || this.auth.factorRecommendation()) && !status?.user?.mustChangePassword) {
       this.confirmTotp();
       return;
     }
@@ -90,6 +109,8 @@ export class AuthGateComponent {
     this.recoveryCodes.set([]);
     this.auth.finishFactorEnrollment();
   }
+
+  skipRecommendedFactor(): void { this.auth.dismissFactorRecommendation(); }
 
   async registerPasskey(): Promise<void> {
     this.submitting.set(true);

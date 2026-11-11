@@ -208,6 +208,7 @@ public sealed record StudioInvitation
     public required string TokenHash { get; init; }
     public required DateTime ExpiresAt { get; init; }
     public DateTime? UsedAt { get; init; }
+    public string? InvitedBy { get; init; }
 }
 
 public sealed record StudioApiToken

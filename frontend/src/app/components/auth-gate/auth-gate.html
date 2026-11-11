@@ -13,8 +13,9 @@
       <p class="auth-gate__muted">Each code works once. Keep these codes outside this browser.</p>
       <output data-testid="factor-recovery-codes">{{ recoveryCodes().join(' ') }}</output>
       <button type="button" (click)="acknowledgeFactorRecoveryCodes()">I stored the codes</button>
-    } @else if (auth.status()?.secondFactorEnrollmentRequired && !auth.status()?.user?.mustChangePassword) {
+    } @else if ((auth.status()?.secondFactorEnrollmentRequired || auth.factorRecommendation()) && !auth.status()?.user?.mustChangePassword) {
       <h1>Set up a second factor</h1>
+      <p class="auth-gate__muted">{{ auth.status()?.secondFactorEnrollmentRequired ? 'A second factor is required before you can use Studio.' : 'A second factor is recommended to protect your account. You can add one now or continue to Studio.' }}</p>
       <p class="auth-gate__muted">Add this secret to an authenticator app, then enter its six-digit code.</p>
       @if (!totpSecret()) {
         <button type="button" (click)="beginTotp()" [disabled]="submitting()">Set up authenticator</button>
@@ -23,12 +24,19 @@
         <label>Authenticator code<input name="secondFactorCode" inputmode="numeric" autocomplete="one-time-code" [(ngModel)]="secondFactorCode" required></label>
         <button type="submit" [disabled]="submitting()">Verify authenticator</button>
       }
-      <button type="button" (click)="registerPasskey()" [disabled]="submitting()">Set up passkey</button>
+      <button type="button" class="auth-gate__secondary" (click)="registerPasskey()" [disabled]="submitting()">Set up passkey</button>
+      @if (auth.factorRecommendation()) {
+        <button type="button" class="auth-gate__ghost" data-testid="factor-skip" (click)="skipRecommendedFactor()">Continue to Studio</button>
+      }
     } @else if (inviteToken) {
       <h1>Accept invitation</h1>
-      <p class="auth-gate__muted">Choose a password to activate your account. This link works once.</p>
+      @if (invitationLoading()) { <p class="auth-gate__muted">Loading invitation...</p> }
+      @if (invitation(); as details) {
+        <p data-testid="invitation-context">{{ details.inviter }} invited {{ details.displayName }} ({{ details.username }}) to {{ details.projects.join(', ') }} as {{ details.role }}.</p>
+        <p class="auth-gate__muted">Choose a password to activate your account. This link works once and expires {{ invitationExpiry() }}. After acceptance, {{ details.secondFactorRequired ? 'you must set up a second factor before using Studio.' : details.role.includes('Approver') ? 'you can enter Studio, but must add a second factor before approving a production release.' : 'you can set up a recommended second factor or continue to Studio.' }}</p>
+      }
       <label>New password<input name="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" [(ngModel)]="newPassword" required></label>
-      <button type="submit" [disabled]="submitting()">Join project</button>
+      <button type="submit" [disabled]="submitting() || !invitation()">Accept invitation</button>
     } @else if (auth.status()?.user?.mustChangePassword) {
       <h1>Choose a new password</h1>
       <p class="auth-gate__muted">Your temporary password must be replaced before Studio opens.</p>

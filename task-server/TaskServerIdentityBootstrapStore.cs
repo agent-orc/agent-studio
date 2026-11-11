@@ -37,7 +37,8 @@ public sealed partial class TaskServerStore
                 token_hash TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 expires_at TEXT NOT NULL,
-                consumed_at TEXT
+                consumed_at TEXT,
+                invited_by TEXT
             );
             CREATE TABLE IF NOT EXISTS studio_production_approvals(
                 user_id TEXT NOT NULL REFERENCES studio_users(id),
@@ -77,6 +78,7 @@ public sealed partial class TaskServerStore
                 PRIMARY KEY(project_id, runner_id)
             );
             """, ct);
+        await AddColumnIfMissingAsync(connection, "studio_invitations", "invited_by", "TEXT", ct);
         await AddColumnIfMissingAsync(connection, "project_repositories", "repository_visibility", "TEXT", ct);
         await AddColumnIfMissingAsync(connection, "service_enrolments", "repository_write", "INTEGER NOT NULL DEFAULT 0", ct);
         if (await ReadMetaAsync(connection, null, InstallationIdKey, ct) is null)
@@ -245,18 +247,53 @@ public sealed partial class TaskServerStore
                 INSERT INTO studio_users(id, username, display_name, role, password_hash, project_ids_json,
                     disabled, must_change_password, created_at, updated_at)
                 VALUES ($id, $username, $display, $role, $hash, $projects, 0, 1, $now, $now);
-                INSERT INTO studio_invitations(id, user_id, token_hash, created_at, expires_at)
-                VALUES ($invite, $id, $token_hash, $now, $expires);
+                INSERT INTO studio_invitations(id, user_id, token_hash, created_at, expires_at, invited_by)
+                VALUES ($invite, $id, $token_hash, $now, $expires, $owner);
                 """, ct, transaction,
                 ("$id", userId), ("$username", username), ("$display", displayName), ("$role", role),
                 ("$hash", HashStudioPassword(RandomNumberGenerator.GetHexString(32))),
                 ("$projects", JsonSerializer.Serialize(projects)), ("$now", Iso(now)),
-                ("$invite", invitationId), ("$token_hash", HashOneTimeSecret(token)), ("$expires", Iso(expires)));
+                ("$invite", invitationId), ("$token_hash", HashOneTimeSecret(token)), ("$expires", Iso(expires)), ("$owner", ownerId));
             await AuditAsync(connection, transaction, ownerId, "studio-user.invited", "studio-user", userId,
                 JsonSerializer.Serialize(new { username, role, projects }), ct);
         }, ct);
         return new StudioInviteResult(new StudioAuthUserDto(userId, username, displayName, role, projects, false, true),
             "/?invite=" + Uri.EscapeDataString(token), expires);
+    }
+
+    public async Task<StudioInvitationPreview> PreviewStudioInvitationAsync(string token, CancellationToken ct)
+    {
+        var parts = token.Split('.', 2);
+        if (parts.Length != 2 || !parts[0].StartsWith("sti_inv_", StringComparison.Ordinal)
+            || parts[1].Length != 64)
+            throw new StudioAuthenticationException("invalid-invitation", "Invitation is invalid or expired.");
+        await using var connection = await OpenReadyAsync(ct);
+        await using var command = Command(connection, """
+            SELECT i.token_hash, i.expires_at, i.consumed_at, u.username, u.display_name, u.role,
+                   u.project_ids_json, u.disabled, COALESCE(owner.display_name, 'Installation owner')
+              FROM studio_invitations i
+              JOIN studio_users u ON u.id = i.user_id
+              LEFT JOIN studio_users owner ON owner.id = i.invited_by
+             WHERE i.id = $id;
+            """, null, ("$id", parts[0]["sti_".Length..]));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct) || !FixedTimeEqualsHex(HashOneTimeSecret(token), reader.GetString(0))
+            || Parse(reader.GetString(1)) <= UtcNow || !reader.IsDBNull(2) || reader.GetBoolean(7))
+            throw new StudioAuthenticationException("invalid-invitation", "Invitation is invalid or expired.");
+        var projectIds = JsonSerializer.Deserialize<string[]>(reader.GetString(6)) ?? [];
+        var username = reader.GetString(3);
+        var displayName = reader.GetString(4);
+        var inviter = reader.GetString(8);
+        var role = reader.GetString(5);
+        var expiry = Parse(reader.GetString(1));
+        await reader.DisposeAsync();
+        var projects = new List<string>();
+        foreach (var projectId in projectIds)
+            projects.Add((string?)await ScalarAsync(connection, "SELECT name FROM projects WHERE id = $id;", ct,
+                null, ("$id", projectId)) ?? projectId);
+        return new StudioInvitationPreview(username, displayName, inviter,
+            role switch { StudioUserRoles.Operator => "Admin", StudioUserRoles.Contributor => "Product", StudioUserRoles.Viewer => "Viewer", _ => role },
+            projects, expiry, role is StudioUserRoles.Owner or StudioUserRoles.Operator);
     }
 
     public async Task<StudioAuthSessionDto> AcceptStudioInvitationAsync(StudioAcceptInvitationRequest request, CancellationToken ct)
