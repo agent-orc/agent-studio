@@ -77,9 +77,10 @@ function cardInfo(spawned: boolean) {
       noDossierNeeded: false },
     requiresIntegration: false, integration: { status: 'not-applicable' },
     order: 1, agent: 'codex', cliType: 'codex', model: 'gpt-5.6-sol',
-    createdAt: '2026-08-11T10:00:00Z', lastActivity: '2026-08-11T10:00:00Z',
+    createdAt: spawned ? null : '2026-08-11T10:00:00Z',
+    lastActivity: spawned ? null : '2026-08-11T10:00:00Z',
     sessionName: null, useOwnSession: null, lastUsage: null,
-    execution: null, commit: null, commits: [], ownerClientId: 'local-default',
+    execution: null, commit: null, commits: [], ownerClientId: spawned ? null : 'local-default',
   };
 }
 
