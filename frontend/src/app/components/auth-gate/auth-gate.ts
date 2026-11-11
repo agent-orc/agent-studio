@@ -130,4 +130,19 @@ export class AuthGateComponent {
   }
 
   acknowledgeRecoveryCode(): void { this.auth.acknowledgeRecoveryCode(); }
+
+  reviewRestoreNotice(archiveId: string): void {
+    this.submitting.set(true);
+    this.error.set('');
+    this.auth.acknowledgeRestoreNotice(archiveId).subscribe({
+      next: () => {
+        window.location.hash = '#/workspace/settings/access';
+        this.submitting.set(false);
+      },
+      error: (error: unknown) => {
+        this.error.set(authGateFailure(error, 'Could not acknowledge the restore notice.'));
+        this.submitting.set(false);
+      },
+    });
+  }
 }

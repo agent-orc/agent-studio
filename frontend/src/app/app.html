@@ -802,4 +802,6 @@
     }
 } @else if (noProjectAccess()) {
   <main data-testid="no-project-access" class="no-project-access"><p>You currently have no access to any project. Ask the owner.</p></main>
-} @else { <app-auth-gate /> }
+} @else {
+  @defer (on immediate) { <app-auth-gate /> }
+}
