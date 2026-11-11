@@ -2394,6 +2394,7 @@ public sealed class TaskTransitionService
         }
         _pipelineLog?.Complete(folder, now);
         SteerPendingMarker.Clear(folder, _logger);
+        _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(folder));
     }
 
     private bool CanCompleteEscalatedJob(TaskInfo info, ProjectSettings settings)

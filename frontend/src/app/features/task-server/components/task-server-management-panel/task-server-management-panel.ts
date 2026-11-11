@@ -41,7 +41,7 @@ export class TaskServerManagementPanelComponent {
     { kind: 'archive-sweep', label: 'Archive sweep', description: 'Move completed tasks into the authoritative archive.', danger: false },
     { kind: 'orphan-sweep', label: 'Orphan sweep', description: 'Remove terminal folders that have no owning task.', danger: true },
     { kind: 'fixture-sweep', label: 'Fixture sweep', description: 'Remove tasks explicitly marked or identified as test fixtures.', danger: true },
-    { kind: 'backup-create', label: 'Create backup', description: 'Create an encrypted, consistent backup of the installation now; writes wait while the stores are read.', danger: false },
+    { kind: 'backup-create', label: 'Create backup', description: 'Create an encrypted, consistent backup and copy it to the configured off-host target before reporting the result.', danger: false },
     { kind: 'restore-verify', label: 'Verify restore', description: 'Restore the newest backup into an isolated staging host and check every file without touching live data.', danger: false },
     { kind: 'backup-retention', label: 'Apply retention', description: 'Keep the configured number of newest local backups.', danger: true },
     { kind: 'backup-upload', label: 'Copy off-host', description: 'Copy every backup that is not off this host yet to the configured target.', danger: false },
