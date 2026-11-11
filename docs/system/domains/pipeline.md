@@ -457,6 +457,19 @@ phase `Unknown` and is skipped by recovery until a state exists. The next pilot
 tick writes its first record. The recovery scan logs this condition once per
 manifest and store instance.
 
+A record that does not deserialize is quarantined per record (AGT-3681,
+`BatchGateStore.Quarantine.cs`). `ListManifests` and `ListRecoverableManifests`
+skip an unreadable manifest, `ListRuns` skips an unreadable run record, and
+`LatestState` answers `Unknown` with reason `batch-state-record-unreadable` when
+the newest state row is unreadable; it never falls back to an older row, whose
+phase the batch may already have left. A direct read of one named record
+(`ReadManifest`, `ReadRun`) raises `BatchGateRecordUnreadableException`, a
+`JsonException`, and the pilot's recovery skips that batch. The quarantine is an
+in-memory projection of the files: `ListQuarantined` drops a record whose file
+is removed, superseded by a newer state row, or reads again after a change. The
+decision stream publishes each record once as `batch.record-unreadable`, and the
+state route lists them under `quarantined`.
+
 ### Flight queue order (AGT-3710)
 
 Each project runs one ordinary batch flight at a time, so formed batches wait
