@@ -22,6 +22,7 @@ describe('operator attention model', () => {
     expect(attentionClassOf('human-review.ready')).toBe('human-review');
     expect(attentionClassOf('batch.red')).toBe('batch');
     expect(attentionClassOf('batch.isolating')).toBe('batch');
+    expect(attentionClassOf('batch-gate.stuck')).toBe('batch');
     expect(attentionClassOf('push.pending-overdue')).toBe('push');
     expect(attentionClassOf('quota.exhausted')).toBe('quota');
     expect(attentionClassOf('quota.fallback-active')).toBe('quota');
@@ -48,6 +49,8 @@ describe('operator attention model', () => {
     expect(attentionActionLabel(review.items[0], review.spec)).toBe('Review');
     const [batch] = groupAttention([item('batch.red', { cardKey: null, cards: ['A', 'B'] })]);
     expect(attentionTarget(batch.items[0], batch.spec)).toBe('batch-gate');
+    const [stuck] = groupAttention([item('batch-gate.stuck', { cardKey: null, cards: ['A', 'B'] })]);
+    expect(attentionActionLabel(stuck.items[0], stuck.spec)).toBe('Open batch panel');
     const orphan = item('escalation.opened', { cardKey: null, cards: [] });
     const [escalation] = groupAttention([orphan]);
     expect(attentionTarget(orphan, escalation.spec)).toBe('activity');
