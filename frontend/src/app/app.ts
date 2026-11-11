@@ -12,6 +12,8 @@ import {
   ViewChild,
   ViewEncapsulation,
   OnDestroy,
+  afterEveryRender,
+  DestroyRef,
 } from '@angular/core';
 import { forkJoin } from 'rxjs';
 import { FormsModule } from '@angular/forms';
@@ -50,6 +52,7 @@ import {
   overflowActionsFor,
   primaryActionFor,
   mergeAcceptViewFor,
+  acceptanceHoldReason,
   triageDecisionRefusal,
   triageDecisionRowState,
   type MergeAcceptView,
@@ -96,6 +99,7 @@ import {
   ProjectHubUrlService,
   StudioTabStateService,
   StudioPanelStateService,
+  ThemeService,
   studioTabKey,
   parseStudioRoute,
   navigateStudioRoute,
@@ -120,6 +124,7 @@ import type { TaskDetail, TaskInfo, WatchPathEntry, CliType } from './models/tas
 import { CLI_TYPES, TaskState } from './models/task.model';
 import { laneName } from './models/lane-presentation';
 import { ErrorDialogService } from './services/error-dialog.service';
+import { ConfirmDialogService } from './services/confirm-dialog.service';
 import {
   cliTypeLabel as fmtCliTypeLabel,
   formatMultiplier as fmtMultiplier,
@@ -142,6 +147,7 @@ import { DevToolsService } from './services/dev-tools.service';
 import { FeatureFlagsService } from './services/feature-flags.service';
 import { TaskCompletionSoundService } from './services/task-completion-sound.service';
 import { TagRegistryStore } from './services/tag-registry.store';
+import { ReviewerSession } from './services/reviewer-session.service';
 import { CliCatalogStore } from './features/cli';
 import type { CliOutputLine } from './models/task.model';
 import type { RunTimeline } from './features/run-timeline';
@@ -151,7 +157,8 @@ import { MenuComponent, MenuItem, MenuItemClickEvent } from './components/menu';
 import { CostBreakdownService, type TaskTokenSummary } from './features/tokens'; // verbose-debug overlay context types
 import { CostBreakdownDialogComponent } from './features/tokens/lazy';
 import { LoadingSurfaceComponent } from './components/async-feedback';
-import { AuthGateComponent, AuthService } from './components/auth-gate/auth-gate';
+import { AuthGateComponent } from './components/auth-gate/auth-gate';
+import { AuthService } from './services/auth.service';
 import { CodexSignInDialogService, ClaudeSignInDialogService } from './features/remote-hosts';
 import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts/lazy';
 import { ScrollMemoryDirective } from './directives/scroll-memory.directive';
@@ -238,7 +245,10 @@ export class App implements OnInit, OnDestroy {
   private readonly gitHubApp = inject(GitHubAppService);
   readonly auth = inject(AuthService); private studioInitialized = false;
   readonly jobService = inject(TaskService);
+  private readonly reviewerSession = inject(ReviewerSession);
   readonly errorDialog = inject(ErrorDialogService);
+  /** Drives the deferred confirm dialog mount; both dialogs stay out of the initial bundle. */
+  readonly confirmDialog = inject(ConfirmDialogService);
   readonly devTools = inject(DevToolsService);
   readonly clientService = inject(ClientService);
   private readonly notifications = inject(NotificationService);
@@ -348,7 +358,7 @@ export class App implements OnInit, OnDestroy {
    *  itself + show a spinner while a bulk archive is in flight. */
   readonly archivingInProgress = this.boardMutations.archiving;
   /** Cycle 10c: triage panel + j/k navigation + auto-advance live here. */
-  private readonly triage = inject(TriageController);
+  readonly triage = inject(TriageController);
   readonly showCreate = this.createJobForm.visible;
   readonly availableModels = this.createJobForm.availableModels;
   /**
@@ -429,6 +439,8 @@ export class App implements OnInit, OnDestroy {
    * working unchanged. Methods further down delegate to the service.
    */
   private readonly laneCollapse = inject(LaneCollapseService);
+  // Initialize document theme before the auth gate can render.
+  readonly theme = inject(ThemeService).theme;
   readonly collapsedLanes = this.laneCollapse.collapsedLanes;
   readonly focusedContainer = this.laneCollapse.focusedContainer;
   readonly taskNavCollapsed = this.uiPrefs.taskNavCollapsed;
@@ -574,16 +586,35 @@ export class App implements OnInit, OnDestroy {
    * shown alone (null: all of them); on wide boards it is the container focus.
    */
   readonly singleGroupBoard = this.laneCollapse.singleGroupLayout;
+  readonly singleLaneBoard = this.laneCollapse.singleLaneLayout;
+  readonly mobileLaneChoice = signal<string | null>(null);
+  readonly mobileLaneOptions = computed(() => [
+    ...this.laneGroups().flatMap(group => group.lanes.map(lane => ({
+      id: lane.state, label: lane.title, groupId: group.id,
+    }))),
+    ...(this.visibleDeliveryGroup()?.columns.map(column => ({
+      id: `delivery:${column.id}`, label: column.title, groupId: DELIVERY_GROUP_ID,
+    })) ?? []),
+  ]);
+  readonly mobileLane = computed(() => {
+    const options = this.mobileLaneOptions();
+    return options.find(option => option.id === this.mobileLaneChoice()) ?? options[0] ?? { id: '', label: '', groupId: '' };
+  });
+  selectMobileLane(id: string): void {
+    this.mobileLaneChoice.set(id);
+  }
   readonly deliveryGroupId = DELIVERY_GROUP_ID;
   private readonly deliverySection = viewChild(DeliverySectionComponent);
   readonly visibleDeliveryGroup = computed(() => {
     const section = this.deliverySection();
     return section?.visible() ? section.group() : null;
   });
-  readonly studioBoardFocus = computed(() => this.laneCollapse.boardFocus([
-    ...this.laneGroups().map((g) => g.id),
-    ...(this.visibleDeliveryGroup() ? [DELIVERY_GROUP_ID] : []),
-  ]));
+  readonly studioBoardFocus = computed(() => this.singleLaneBoard()
+    ? this.mobileLane()?.groupId ?? null
+    : this.laneCollapse.boardFocus([
+      ...this.laneGroups().map((g) => g.id),
+      ...(this.visibleDeliveryGroup() ? [DELIVERY_GROUP_ID] : []),
+    ]));
   selectBoardGroup(id: string): void {
     this.laneCollapse.selectSingleGroup(id);
   }
@@ -765,8 +796,24 @@ export class App implements OnInit, OnDestroy {
    * Cleared automatically after one animation cycle.
    */
   readonly justCreatedJobId = signal<string | null>(null);
+  private readonly destroyRef = inject(DestroyRef);
+  private detailPrefetchScheduled = false;
 
   constructor() {
+    // The deferred detail view can download after the board has painted. Keep
+    // its first-use network work out of the board's critical rendering path.
+    afterEveryRender(() => {
+      if (this.detailPrefetchScheduled || !document.querySelector('[data-testid="task-card"]')) return;
+      this.detailPrefetchScheduled = true;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (this.destroyRef.destroyed) return;
+        const preload = () => {
+          if (!this.destroyRef.destroyed) void import('./features/task-detail/task-detail');
+        };
+        if ('requestIdleCallback' in window) window.requestIdleCallback(preload, { timeout: 1000 });
+        else setTimeout(preload, 0);
+      }));
+    });
     effect(() => {
       const allowed = this.auth.studioAllowed();
       const statusKnown = this.auth.status() !== null;
@@ -1207,13 +1254,15 @@ export class App implements OnInit, OnDestroy {
   // <app-detail-header>, so the cluster needs its own seat there). All
   // actions route through the same TriageController paths as the kanban
   // panel; this is purely a second render site.
+  // AGT-3670: a Reviewer holds no lane move, edit, or delete; the overview's
+  // review panel carries its one decision.
   readonly studioTriagePrimary = computed<TriageButton | null>(() => {
     const sel = this.selectedJob();
-    return sel ? primaryActionFor(sel.info.state) : null;
+    return sel && !this.reviewerSession.reviewsOnly(sel.info.projectName) ? primaryActionFor(sel.info.state) : null;
   });
   readonly studioTriageOverflow = computed<TriageButton[]>(() => {
     const sel = this.selectedJob();
-    return sel ? overflowActionsFor(sel.info.state) : [];
+    return sel && !this.reviewerSession.reviewsOnly(sel.info.projectName) ? overflowActionsFor(sel.info.state) : [];
   });
   /**
    * State-dependent presentation for the studio Human Review acceptance primary
@@ -1235,16 +1284,15 @@ export class App implements OnInit, OnDestroy {
     return this.studioMergeAcceptView()?.acceptLabel ?? p.label;
   });
   /**
-   * True while the studio Human Review acceptance primary (`mark-done`) depends
-   * on git status that has not loaded yet. Until the graph-derived provenance
-   * settles, `landedState` is `null` and the label would guess "Merge into
-   * Develop" (an actionable merge) before flipping to "Accept" once the work is
-   * revealed as already merged - the race Robert reported (AGT-2006). The button
-   * stays disabled + skeletoned while this holds, then switches atomically.
+   * A missing integration verdict keeps the acceptance primary held while
+   * Git is loading. A fresh integrated or not-applicable verdict already
+   * proves Accept is safe; provenance may refine the explanation later.
    */
   readonly studioPrimaryAwaitingGit = computed(() => {
     const p = this.studioTriagePrimary();
     if (!p || p.id !== 'mark-done') return false;
+    const status = this.selectedJob()?.info.integration?.status;
+    if (status === 'integrated' || status === 'not-applicable') return false;
     return this.jobDetailSig()?.gitInfoLoading() ?? false;
   });
   readonly studioPrimaryBlockedByIntegration = computed(() => {
@@ -1284,10 +1332,10 @@ export class App implements OnInit, OnDestroy {
       hasActions: this.studioTriageHasActions(),
       primaryId: primary?.id ?? null,
       primaryLabel: label,
-      primaryTooltip: this.studioPrimaryAwaitingGit()
-        ? 'Checking git status — action available once loaded.'
-        : this.studioPrimaryDecisionRefusal()
-          ?? `${this.studioMergeAcceptView()?.statusTooltip || label} (Enter)`,
+      primaryTooltip: this.studioPrimaryDecisionRefusal()
+        ?? (this.studioPrimaryBlockedByIntegration()
+          ? acceptanceHoldReason(this.selectedJob()!.info)
+          : `${this.studioMergeAcceptView()?.statusTooltip || label} (Enter)`),
       awaitingGit: this.studioPrimaryAwaitingGit(),
       blockedByIntegration: this.studioPrimaryBlockedByIntegration(),
       blockedByDecision: !!this.studioPrimaryDecisionRefusal(),

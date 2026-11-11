@@ -96,7 +96,7 @@ public sealed partial class AttemptAuthorityService
     /// most one archive write per hour instead of one per terminal transition.
     /// </summary>
     private static readonly TimeSpan CompactionInterval = TimeSpan.FromHours(1);
-    public const int ReviewInfrastructureRetryBudget = 3;
+    public const int ReviewInfrastructureRetryBudget = 2;
     public const string UnmaterializableReviewSubjectReason = "review-subject-unmaterialisierbar";
 
     /// <summary>
@@ -1587,7 +1587,7 @@ public sealed partial class AttemptAuthorityService
     /// <summary>
     /// Returns whether another infrastructure retry may be created for the
     /// immutable subject owned by <paramref name="attemptId"/>. The initial
-    /// ReviewAttempt is not a retry; at most three linked retry attempts may be
+    /// ReviewAttempt is not a retry; at most two linked retry attempts may be
     /// scheduled after it.
     /// </summary>
     public bool HasReviewInfrastructureRetryBudget(string attemptId)
@@ -1673,6 +1673,23 @@ public sealed partial class AttemptAuthorityService
             var review = FindReview(attemptId);
             return review is not null && IsCurrentReview(review)
                    && review.PendingInfrastructureRetryAt is not null;
+        }
+    }
+
+    /// <summary>
+    /// Time since the scheduled infrastructure retry of the current
+    /// <paramref name="attemptId"/> came due on the authority clock, negative
+    /// while its backoff runs, or null when no retry is scheduled.
+    /// </summary>
+    public TimeSpan? ScheduledReviewInfrastructureRetryOverdue(string attemptId)
+    {
+        lock (_gate)
+        {
+            var review = FindReview(attemptId);
+            return review is not null && IsCurrentReview(review)
+                   && review.PendingInfrastructureRetryAt is { } dueAt
+                ? _utcNow() - dueAt
+                : null;
         }
     }
 
@@ -3319,13 +3336,13 @@ public sealed partial class AttemptAuthorityService
             journal.Write(BitConverter.GetBytes(payload.Length));
             journal.Write(SHA256.HashData(payload));
             journal.Write(payload);
-            journal.Flush(flushToDisk: true);
+            journal.Flush(flushToDisk: AtomicJsonFileWriter.FlushesToDisk);
             if (firstJournalWrite) AtomicJsonFileWriter.FlushDirectory(JournalPath);
         }
         catch
         {
             journal.SetLength(start);
-            journal.Flush(flushToDisk: true);
+            journal.Flush(flushToDisk: AtomicJsonFileWriter.FlushesToDisk);
             throw;
         }
         _state.JournalSequence = delta.Sequence;

@@ -86,7 +86,15 @@ automatic fix round, so the monolith's escalation and the engine's decision
 compare on the same facts. In Engine mode the red outcome waits for the engine
 like a release; the applier then moves the card and, for a decision that does
 not release the member, resolves its queue entry and removes its batch
-ownership, as the monolith's escalation does.
+ownership, as the monolith's escalation does. The wait is bounded (AGT-3694):
+`PerTaskFallbackWaitPolicy` marks such a decision stalled after 30 minutes
+open, or two minutes after an unrenewed lease expired, unless it is applying
+in this process. The batch pilot then supersedes it with the reason
+`batch-fallback-engine-stall` and escalates the card as `GateInfra` without a
+new occurrence. This parks the card for an operator; it is not a monolith
+decision on the gate outcome, so a stalled release is never released by the
+monolith. A later tick that finds the superseded occurrence escalates again
+rather than waiting.
 
 The review worker rechecks the current owner after long gate work and before
 each lane move. A monolith-owned resume checks again at integration dequeue,
@@ -141,6 +149,18 @@ occurrence. Restart, gate-drop and requeue rules are decided positively from
 frozen facts (busy slots and claimable work, the card state the authority key
 names, the last run's rate limit and the reviewed delivery); an unknown fact
 holds or proposes.
+AGT-3563: every batch phase change is a compare-and-swap of the batch's
+versioned phase and claim record through `BatchPhaseTransitionPolicy`. The
+store collects the current phase, version and coordinator fence, the claimed
+members keyed by review attempt, and for a terminal phase the members' replay
+outcomes; the rule returns the next version and the member dispositions, or
+refuses an illegal successor, a stale fence or a stale version.
+`BatchGateInvariantPolicy` turns the pilot's facts about each batch (phase,
+liveness, and per member: queued record, ownership marker, disposition) into
+the findings the batch gate state reports and the repair the pilot applies.
+The legal phases and the findings are listed in
+[batch gate](../../operations/gates/batch-gate.md#batch-phase-record-and-invariants-agt-3563).
+
 ## Decision grounds, shadow receipts and active coding choice
 
 AGT-3063 implements AGT-W73 OD-S1 for the `CodingCompletion` profile while it

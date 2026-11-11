@@ -189,6 +189,8 @@
       "comment": "Scoped spacing-token enforcement for the lane rail and new components. Padding/margin/gap must source --studio-spacing-* tokens. If a raw value is structurally necessary, use a targeted disable with rationale.",
       "files": [
         "src/app/features/retention/**/*.scss",
+        "src/app/features/batch-gate/batch-phase-metrics/batch-phase-metrics.scss",
+        "src/app/components/error-dialog/error-dialog.component.scss",
         "src/app/features/backups/**/*.scss",
         "src/app/features/access/components/access-operator-agents/access-operator-agents.component.scss",
         "src/app/features/access/components/access-operator-activity/access-operator-activity.component.scss",
@@ -220,6 +222,7 @@
         "src/app/features/board/components/lane-group-head/lane-group-head.component.scss",
         "src/app/features/orchestrator/components/orchestrator-feed-burst/orchestrator-feed-burst.scss",
         "src/app/features/orchestrator/components/orchestrator-feed-burst-detail/orchestrator-feed-burst-detail.scss",
+        "src/app/features/orchestrator/components/orchestrator-feed/_orchestrator-feed-responsive.scss",
         "src/app/features/board/components/active-board-filters/active-board-filters.component.scss",
         "src/app/features/board/components/failure-intervention-chip/failure-intervention-chip.component.scss",
         "src/app/features/board/components/model-routing-suggestion/model-routing-suggestion.component.scss",
@@ -403,8 +406,23 @@
       }
     },
     {
-      "comment": "New Studio mobile tab-bar rules use theme and spacing tokens.",
-      "files": ["src/app/features/studio-shell/_studio-shell-mobile-tabbar.scss"],
+      "comment": "Studio phone layout and controls use theme and spacing tokens.",
+      "files": [
+        "src/app/features/studio-shell/_studio-shell-mobile-tabbar.scss",
+        "src/app/features/task-detail/components/mobile-lane-primary/mobile-lane-primary.component.scss",
+        "src/app/features/task-detail/components/mobile-pane-switcher/mobile-pane-switcher.component.scss"
+      ],
+      "rules": {
+        "color-no-hex": true,
+        "scale-unlimited/declaration-strict-value": [
+          ["padding", "padding-block", "padding-inline", "margin", "gap", "row-gap", "column-gap"],
+          { "ignoreValues": ["0", "auto"], "ignoreFunctions": false, "disableFix": true, "severity": "error" }
+        ]
+      }
+    },
+    {
+      "comment": "Task move refusal uses semantic theme and spacing tokens.",
+      "files": ["src/app/_move-refusal.scss"],
       "rules": {
         "color-no-hex": true,
         "scale-unlimited/declaration-strict-value": [

@@ -7,6 +7,15 @@ Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
 
+## Phone navigation and theme
+
+At 390 px the Studio board shows one lane at a time. The Board lane picker
+selects a workflow lane or delivery column; the chosen group supplies the
+single visible board track. Workspace settings replace their section rail with
+a picker below 760 px, keeping the checklist at the top of the content area.
+The root app initializes `ThemeService` before authentication so the auth gate
+uses the same saved or system-resolved light and dark tokens as Studio.
+
 ## Manual task creation
 
 The create dialog resolves the selected project's `cliDefault` and
@@ -388,6 +397,11 @@ restore both the task and its captured lane position even when the task has
 since moved to a terminal lane. Pipeline-driven changes replace the current
 route instead and do not add review-history entries.
 
+A refused optimistic triage move restores the original task, lane-pager
+snapshot, route, and active task tab together. The detail shows the refusal
+beside the action with the next step. If an error dialog opens, closing it
+returns focus to the failed action.
+
 Each Wiki/Dossier tab owns a history stack containing its current target and up
 to 49 earlier or forward targets. Normal link navigation truncates that tab's
 forward entries and appends the destination. The tab toolbar and Alt+Left or
@@ -407,7 +421,7 @@ overflow instead of shrinking below that width; active styling and close-button
 alignment are stable in both themes.
 
 The workspace Activity Feed is the embedded `#/feed` main view and is opened
-by the Activity icon. Its 500-event backend snapshot is rendered through a
+by the Activity icon. Its capped backend snapshots are rendered through a
 bounded, variable-height history window based on the Activity scroll fix, so
 live prepends preserve the operator's reading position without FixedSize
 virtual-scroll assumptions. The entry default is all projects and all event
@@ -426,6 +440,14 @@ AGT-2410 acute-only status contract, and every event kind uses the same
 row-width grid so Watcher Problem and Decision projections can join the stream
 without a parallel surface.
 
+Owner actions join the workspace chronology from the task timeline and Dossier
+decision descriptor. The Owner actions class includes accepted and reissued
+lane moves, refused moves with their reason, decision cards, created cards, and
+confirmed Dossier decisions. Card rows open the task and Dossier rows link to
+the Dossier. The Day picker limits the stream and its class counts to a chosen
+local calendar day; clearing it restores the full history. Refused owner moves
+are appended to the card timeline at the move boundary.
+
 D10 steering feedback uses the same task timeline poll as the Overview status
 row and the Timeline tab. Overview shows only a fact marked current by the
 server's attempt generation; Timeline retains quiet historical receipts with
@@ -440,9 +462,10 @@ Task navigation reads the board it already holds. `TaskService` stays the
 single owner of the grouped board store; `TaskDetailPrefetchService` owns the
 bounded task core cache for `GET /api/tasks/{id}/core` (see
 [Bounded task core read](tasks.md#bounded-task-core-read-agt-2953)). The
-core-first selection of AGT-2955 reads every core through this cache; there
-is no full-detail lookahead any more, because a task switch no longer reads
-the legacy full detail.
+core-first selection of AGT-2955 reads every core through this cache. Human
+Review selection also reads `GET /api/tasks/{id}` for a fresh integration verdict;
+the board and Git resource carry cache-only integration projections and cannot
+decide whether Accept is available. There is no full-detail lookahead.
 
 - **Selection never reads the grouped board.** Board click, Explorer, pager,
   triage advance, deep link, Back/Forward and editor-tab switches do not call
@@ -508,10 +531,13 @@ Coverage: `task-core-cache.spec.ts` (cache invariants),
 `task-detail-prefetch.service.spec.ts` (superseded-read abort, conditional
 revalidation) and `task-selection-core.spec.ts` (board -> A -> B -> board,
 pager reuse, A -> D -> A abort, identical slugs, reconnect, push, delete,
-denial, registry removal) assert zero grouped and zero legacy full-detail
+denial, registry removal, fresh Human Review integration) assert zero grouped
 requests on selection and zero duplicate core requests;
-`task-detail-load-sections.component.spec.ts` covers the core rendering. The
-browser proof is `e2e/task-detail/task-core-board-reuse.spec.ts` (fully mocked
+`task-detail-load-sections.component.spec.ts` covers the core rendering.
+The Human Review queue regression is in `e2e/studio-shell/operator-attention-list.spec.ts`:
+three Accept actions through Needs you and auto-advance with a stale board
+integration projection. The core navigation browser proof is
+`e2e/task-detail/task-core-board-reuse.spec.ts` (fully mocked
 API; `PW_BASE_URL` may point at a served production bundle). It times each
 selection from the click event to the first animation frame after the
 selected task's core facts are in the DOM, and asserts resident p95 <= 50 ms
@@ -534,6 +560,12 @@ occur. It is not a claim about tunnel transfer time.
   auto-review status snapshot into a compact current-step or elapsed-wait
   indicator; the lane header reconciles those visible cards as active versus
   waiting, with machine-lock gate queueing remaining a distinct waiting state.
+  The status bar counts only queued or stalled review attempts as review
+  attention; passed reviews waiting for delivery integration have a separate
+  count. The create dialog treats a model as pinned only after a user choice
+  or a project model default; other prefilled values remain routing suggestions.
+  The extra status state adds under 1 kB to the initial bundle, so the
+  production error budget is 2101 kB.
 - Project Explorer entries follow Board, Dossiers, Deploy, Operations, Wiki,
   Deck (NV-D1 option A). Deploy hosts the BD-3 Deploy area (Overview,
   Releases, Pipeline, History, the existing deployment tools) plus a Run steps view with
@@ -589,7 +621,8 @@ occur. It is not a claim about tunnel transfer time.
   independent detail resources begin. Two documents load after core paint;
   usage follows the rich view, Git waits for its pane (except the provenance
   read a Human Review card's Accept needs, which Accept awaits for at most
-  8 s, AGT-3621), and Activity loads its
+  8 s, AGT-3621; Accept waits only for a request in flight, never for a
+  deferred one, AGT-3625), and Activity loads its
   plan and output on selection. Review evidence and history wait for explicit
   tabs. Neighbor core lookahead starts after the first 1.6 seconds. The event
   ledger starts when Timeline first
@@ -794,12 +827,15 @@ occur. It is not a claim about tunnel transfer time.
   branch rather than exposing the descriptor's physical `operations/` path.
   Current entries are grouped as `Needs a decision` and `In implementation`;
   `Documented` and `Discarded` stay under a History branch. Every
-  lifecycle header and leaf uses one compact 24 px tree row: its pattern icon
+  lifecycle header and leaf uses one compact 32 px tree row: its pattern icon
   aligns with every sibling at that depth, its title receives the flexible
   width, and only a quiet status dot or compact open-decision count trails it.
+  Tags stay in the leaf tooltip so they cannot wrap the narrow tree row.
   Catalogue key, complete title, lifecycle state, phase, and freshness stay in
   the viewport-safe shared tooltip instead of a second tree line. The Dossiers
-  count is the number of open decisions, not the number of documents.
+  count is the number of Dossier leaves under the branch, excluding the
+  separately promoted Style Guide. Open-decision counts remain on pending
+  leaves and reconcile with the list and viewer header after acceptance.
   Dossier overview and Explorer lifecycle headers are keyboard-accessible disclosures whose per-project collapsed state persists locally; a newly populated section opens once with its quiet count visible.
   Lifecycle-group counts equal
   their visible leaves and zero counts stay hidden. The catalogue's
@@ -899,7 +935,14 @@ occur. It is not a claim about tunnel transfer time.
   through the runtime-owned
   `PUT /api/projects/{projectName}/execution-runner` contract. A null runner is
   the local default; a remote identity makes the remote daemon the sole
-  auto-pickup owner for that project. The guided check reports code channel,
+  auto-pickup owner for that project. Local-profile installations show the
+  intrinsic local machine and only remote runners discovered through client or
+  capability reports. The assignment and onboarding pickers disable local when
+  local coding admission is off, and disable remote identities without a
+  confirmed coding role or with an unavailable status. Their option labels
+  explain why. Onboarding reads local admission from
+  `GET /api/projects/execution-capability`. The guided check reports code
+  channel,
   `develop`, toolchain, and no-op readiness from the host registry snapshot.
   Board cards deliberately show the actual live runner from the fenced run
   lease, not merely this configured target, so assignment and attribution

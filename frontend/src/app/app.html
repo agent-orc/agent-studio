@@ -110,8 +110,13 @@
             (triagePrimary)="onStudioTriagePrimary()"
             (triageMenuItem)="onStudioTriageMenuItemClick($event)" />
         </div>
-        <div studioContent class="studio-projected-content" [class.studio-projected-content--hidden]="studioTabState.activeTab()?.kind === 'structure'">
+        <div studioContent class="studio-projected-content" [class.studio-projected-content--hidden]="studioTabState.activeTab()?.kind === 'structure' || studioTabState.activeTab()?.kind === 'magazine'">
           <app-workspace-banner [projects]="bannerProjects()" />
+          @if (triage.moveRefusal(); as refusal) {
+            @if (selectedJob()?.info?.taskKey === refusal.taskKey) {
+              <p class="task-move-refusal" data-testid="task-move-refusal" role="alert">{{ refusal.message }}</p>
+            }
+          }
           @switch (studioTabState.activeTab()?.kind) {
             @case ('feed') {
               @defer (on immediate) {
@@ -135,7 +140,18 @@
                 </main>
               } @else {
               @if (singleGroupBoard()) {
-                <app-board-group-switcher [groups]="laneGroups()" [delivery]="visibleDeliveryGroup()" [value]="studioBoardFocus()" (valueChange)="selectBoardGroup($event)" />
+                @if (singleLaneBoard()) {
+                  <label class="mobile-lane-picker" data-testid="mobile-lane-picker">
+                    <span>Board lane</span>
+                    <select [value]="mobileLane().id" (change)="selectMobileLane($any($event.target).value)" aria-label="Board lane">
+                      @for (option of mobileLaneOptions(); track option.id) {
+                        <option [value]="option.id">{{ option.label }}</option>
+                      }
+                    </select>
+                  </label>
+                } @else {
+                  <app-board-group-switcher [groups]="laneGroups()" [delivery]="visibleDeliveryGroup()" [value]="studioBoardFocus()" (valueChange)="selectBoardGroup($event)" />
+                }
               }
               <main class="dashboard dashboard--studio" data-testid="studio-board" [appScrollMemory]="'board:' + (boardProjectScope() ?? '*')"
                     [class.dashboard--has-focus]="studioBoardFocus() !== null" [class.dashboard--single-group]="singleGroupBoard()">
@@ -152,6 +168,7 @@
                     <div class="lane-group__lanes" [attr.data-testid]="'lane-group-lanes-' + g.id" [appScrollMemory]="'board:' + (boardProjectScope() ?? '*') + ':group:' + g.id">
                       @for (lane of g.lanes; track lane.state) {
                         <app-job-column
+                          [class.mobile-lane-hidden]="singleLaneBoard() && mobileLane().id !== lane.state"
                           [title]="lane.title"
                           [icon]="lane.icon"
                           [state]="lane.state"
@@ -182,6 +199,7 @@
                   </section>
                 }
                 <app-delivery-section class="lane-group" data-testid="lane-group-delivery"
+                  [mobileColumnId]="singleLaneBoard() ? mobileLane().id : null"
                   [class.lane-group--hidden-by-focus]="studioBoardFocus() !== null && studioBoardFocus() !== deliveryGroupId" [tasks]="dossierBoardTasks()"
                   [projects]="boardProjectScope() ? [boardProjectScope()!] : projectNames()"
                   [mutationsBlocked]="updateClient.mutationsBlocked()" (jobClick)="openDetail($event)" />
@@ -200,12 +218,14 @@
                 <main class="workspace__main workspace__main--studio" data-testid="studio-task">
                   <app-job-detail #jobDetail
                                   [detail]="detail"
+                                  [mobilePrimary]="studioTabActionsTriage()"
                                   [watchPaths]="watchPaths()"
                                   [lanePeers]="triageLanePeers()"
                                   [mutationsBlocked]="updateClient.mutationsBlocked()"
                                   [routeDetailTab]="routeDetailTab()"
                                   [routeInspectorTab]="routeInspectorTab()"
                                   (back)="closeDetail()"
+                                  (mobilePrimaryRequest)="onStudioTriagePrimary()"
                                   (fileSaved)="onFileSaved()"
                                   (projectChanged)="onProjectChanged($event)"
                                   (deleteRequested)="onDeleteFromDetail(detail.info)"
@@ -314,7 +334,7 @@
            the update strip docks alongside other banner notifications. -->
       <app-update-center />
       <app-update-block-modal />
-      <app-confirm-dialog />
+      @defer (when confirmDialog.active() !== null; prefetch on idle) { <app-confirm-dialog /> }
       @if (workspaceManager.createOpen()) {
         @defer (on immediate) {
         <app-workspace-create-dialog />
@@ -328,14 +348,16 @@
       <app-notification-stack />
       @defer (when mediaLightboxOpen() !== null) { <app-media-lightbox /> }
       @defer (when costBreakdownOpen()) { <app-cost-breakdown-dialog /> }
-      @if (errorDialog.activeError(); as error) {
-        <app-error-dialog
-          [error]="error"
-          [canOpenCliConfig]="error.canOpenCliConfig && selectedJobUsesCopilot()"
-          [copyButtonLabel]="copyErrorButtonLabel()"
-          (closeRequest)="closeErrorDialog()"
-          (copyRequest)="copyErrorDetails()"
-          (openCliConfig)="openCliConfigFromError()" />
+      @defer (when errorDialog.activeError() !== null; prefetch on idle) {
+        @if (errorDialog.activeError(); as error) {
+          <app-error-dialog
+            [error]="error"
+            [canOpenCliConfig]="error.canOpenCliConfig && selectedJobUsesCopilot()"
+            [copyButtonLabel]="copyErrorButtonLabel()"
+            (closeRequest)="closeErrorDialog()"
+            (copyRequest)="copyErrorDetails()"
+            (openCliConfig)="openCliConfigFromError()" />
+        }
       }
       @if (showCreate()) {
         @defer (on immediate) {
@@ -575,6 +597,11 @@
             }
 
             <main class="workspace__main">
+              @if (triage.moveRefusal(); as refusal) {
+                @if (detail.info.taskKey === refusal.taskKey) {
+                  <p class="task-move-refusal" data-testid="task-move-refusal" role="alert">{{ refusal.message }}</p>
+                }
+              }
               @defer (when selectedJob() !== null) {
               <app-job-detail #jobDetail
                               [detail]="detail"
@@ -734,17 +761,19 @@
         }
       }
 
-      @if (errorDialog.activeError(); as error) {
-        <app-error-dialog
-          [error]="error"
-          [canOpenCliConfig]="error.canOpenCliConfig && selectedJobUsesCopilot()"
-          [copyButtonLabel]="copyErrorButtonLabel()"
-          (closeRequest)="closeErrorDialog()"
-          (copyRequest)="copyErrorDetails()"
-          (openCliConfig)="openCliConfigFromError()" />
+      @defer (when errorDialog.activeError() !== null; prefetch on idle) {
+        @if (errorDialog.activeError(); as error) {
+          <app-error-dialog
+            [error]="error"
+            [canOpenCliConfig]="error.canOpenCliConfig && selectedJobUsesCopilot()"
+            [copyButtonLabel]="copyErrorButtonLabel()"
+            (closeRequest)="closeErrorDialog()"
+            (copyRequest)="copyErrorDetails()"
+            (openCliConfig)="openCliConfigFromError()" />
+        }
       }
 
-      <app-confirm-dialog />
+      @defer (when confirmDialog.active() !== null; prefetch on idle) { <app-confirm-dialog /> }
       @if (workspaceManager.createOpen()) {
         @defer (on immediate) {
         <app-workspace-create-dialog />
@@ -773,4 +802,6 @@
       }
     </div>
     }
-} @else { <app-auth-gate /> }
+} @else {
+  @defer (on immediate) { <app-auth-gate /> }
+}

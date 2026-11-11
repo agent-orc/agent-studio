@@ -68,7 +68,6 @@ import { TaskPreviewComponent } from '../../../../components/task-preview/task-p
 import { TokenPopoverDirective } from './token-popover.directive';
 import { TaskTokenUsagePopoverComponent } from './token-usage-popover/token-usage-popover.component';
 import { TaskCardQuotaWaitComponent } from '../task-card-quota-wait/task-card-quota-wait.component';
-import { TaskCardCauseWaitComponent } from '../task-card-cause-wait/task-card-cause-wait.component';
 import { taskCardNow } from './task-card-clock';
 import { NotificationService } from '../../../../services/notification.service';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
@@ -78,6 +77,7 @@ import { TaskSelectionService } from '../../../task-detail/runtime';
 import { PostProcessingActivityComponent } from '../post-processing-activity/post-processing-activity.component';
 import { TestEvidenceStatusComponent } from '../../../test-evidence';
 import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-key/copyable-task-key.component';
+import { ReviewerSession } from '../../../../services/reviewer-session.service';
 import { CodexSignInDialogService, ClaudeSignInDialogService, ProviderAuthStatusService, modelCliVersionWaitReason, providerAuthWaitReason } from '../../../remote-hosts';
 import { buildDecisionBadge, decisionBlockReason, decisionBlockers } from '../../../../models/decision-card-presentation';
 import { TaskCardDecisionChipsComponent } from '../task-card-decision-chips/task-card-decision-chips.component';
@@ -96,7 +96,7 @@ if (typeof window !== 'undefined') {
 @Component({
   selector: 'app-task-card, app-job-card',
   standalone: true,
-  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskPreviewComponent, TaskCardQuotaWaitComponent, TaskCardCauseWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent, TaskCardQuotaNoticeComponent, CardEnvironmentBadgesComponent],
+  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskPreviewComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent, TaskCardQuotaNoticeComponent, CardEnvironmentBadgesComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-card.component.html',
   styleUrl: './task-card.component.scss',
@@ -422,9 +422,11 @@ export class TaskCardComponent implements OnInit, OnDestroy {
     };
   });
 
+  private readonly reviewer = inject(ReviewerSession);
   readonly cardCtxMenuItems = computed(() => buildCardCtxMenuItems(
     this.job(), this.mutationsBlocked(),
-    focusVisibleLaneStates(this.laneFocus()), this.readyQueueEdge()));
+    focusVisibleLaneStates(this.laneFocus()), this.readyQueueEdge(),
+    this.reviewer.reviewsOnly(this.job().projectName)));
 
   /** AGT-2029: open the dependency this card is waiting on (see resolveDependencyTarget). */
   navigateToDependency(chip: DependencyChip, event: MouseEvent): void {

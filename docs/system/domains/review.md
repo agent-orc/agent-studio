@@ -12,8 +12,38 @@ changed by the delivery before the gate tests the resulting tree. Catalogue
 discovery keeps its managed key mutation for descriptors outside a gated
 delivery.
 
-Version: 2026-11-09
+Version: 2026-11-11
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
+
+## Host source cache startup
+
+The review daemon creates and validates an absolute host source cache root before
+it starts background work or claims reviews. On Linux, `XDG_CACHE_HOME` selects
+the base when set; otherwise the daemon uses `HOME/.cache`. Windows uses Local
+Application Data with folder creation enabled. A missing, relative, or
+uncreatable root stops the daemon with the path and cause. Source materialization
+failures during an attempt report `ReviewInfra/SourceUnavailable` with the
+repository and cache paths, rather than being mistaken for a lost worker.
+
+## Concept brief and Dossier evidence
+
+Concept-fit review records the authored brief version from
+`.metadata/brief-version`, the same version completion uses. Follow-up notes
+appended to `prompt.md` do not change it. The Task Server reads the mirrored
+version and falls back to a full prompt hash for older mirrors without that
+metadata.
+The review subject's `TaskRequirementsHash` still hashes the complete prompt:
+it identifies the exact instructions for that review attempt, including
+follow-up notes, and is distinct from the authored brief version.
+
+Concept-fit receives a bounded snapshot of the published Dossier index,
+`workbench.json`, and local files linked from them. Its round diff shows what
+changed, while the snapshot supplies unchanged Dossier content. A missing,
+unreadable, or over-budget file is named in the prompt so the aspect cannot
+infer completeness from a truncated excerpt. For older settled concept reviews,
+completion accepts a whole-prompt review hash as current only while the current
+authored version equals the delivery version and the reviewed whole-prompt hash
+still matches `prompt.md`.
 
 ## Aspect prompt cache
 
@@ -393,9 +423,13 @@ authority and is never treated as missing.
 
 The per-card Auto Review stranding watchdog runs every 30 seconds. After
 `AutoReviewStranding:ThresholdMinutes` (30 by default), it checks for a running
-pipeline step, a pending or leased ReviewAttempt, a pending or active formed
-batch, a queued round, and a queued post-processing step. A card with none gets
-a durable intervention receipt in the existing stall-intervention feed and
+pipeline step, a pending or leased ReviewAttempt, a scheduled ReviewInfra
+retry of the current review, a cause breaker wait or probe marker, a pending or
+active formed batch, a queued round, and a queued post-processing step. A
+scheduled retry owns the card while its backoff runs and for one threshold
+after it came due, so a review host restart never escalates a card inside its
+backoff, while a retry that no scheduler tick fires still does (AGT-3691). A
+card with none gets a durable intervention receipt in the existing stall-intervention feed and
 its timeline. Report-only cards restart post-processing; coding cards with a
 completed run request a fresh ReviewAttempt; a passed review resumes delivery
 integration or re-enters the batch gate only when its source RunAttempt and
@@ -409,6 +443,30 @@ its own receipt. After a successful intervention, the watchdog waits another
 threshold interval before intervening again. It can advance from review recovery
 to batch recovery in the same visit. If the same recovery leaves the card
 ownerless again, it escalates the card with the reason.
+The threshold starts at the latest ownership change, including a review terminal,
+a batch state event, or a recovery intervention, rather than at lane entry. A
+current-delivery infrastructure failure with no scheduled retry gets one through
+the existing authority scheduler while its two-retry budget remains. A scheduled
+retry counts as an owner. Once the budget is spent, escalation names the review
+classification and summary.
+
+A passed review that ran its own build and tests (its frozen plan has
+`BuildTestDeferredToBatch: false`) never re-enters the batch gate: batch
+admission refuses it with `BuildTestNotDeferred` (AGT-3740).
+`AutoReviewStrandingPolicy.RouteBatch` turns the stranding decision for such a
+card into the per-task route, once per lane visit. The watchdog
+integrates it through the per-task path with the review's own verdicts. It
+uses the delivery settlement record, or rebuilds a missing one from the
+journaled report with the same `RemoteDeliveryIntegrationPolicy` as settlement.
+Only when no recorded verdict admits the delivery does the card get a
+re-planned review with a freshly sealed plan, which may defer to the batch. The
+receipt and the batch gate state (member status `fallback`, rule
+`review-ran-build-tests`) say "Review ran its own build and tests (rule); this
+card goes to per-task integration" or "... to a re-planned review". Every plan
+that does not defer names its rule in `BuildTestDeferralDisabledReason`, for
+example the batch gate being off when the plan was sealed, a missing diff, or
+test selection requiring the full suite. The build-test step on the card shows
+that rule.
 
 When the delivery-chain reconciler finds a stale acceptance or integration
 verdict, it returns the card to Auto Review and requests a fresh review at
@@ -418,8 +476,15 @@ on the timeline.
 
 ## Versioned review-library steps
 
-Concept cards on the remote plane receive one semantic `concept-fit` aspect in
-addition to the existing build and lint commands. It uses the shared aspect
+Concept cards on the remote plane receive one semantic `concept-fit` aspect.
+When every changed path lies inside one `docs/<topic>/` Dossier directory, it
+is the only planned aspect (AGT-3698): the plan carries no dependency
+preparation and no build, test or lint command, and lists `build-tests` (plus
+any other dropped tool aspect) as skipped with the reason. Installing and
+testing the repository proves nothing about a Dossier, and a missing lockfile,
+an empty dependency tree or a red integration branch must not block it. Any
+other concept diff (unknown, several topics, or paths outside `docs/<topic>/`)
+keeps the build and lint commands next to `concept-fit`. The aspect uses the shared aspect
 runner, verdict sentinel, citation policy, and review grade. Its frozen prompt
 compares the delivered Dossier in the Result-SHA diff with the current
 `prompt.md` (bounded to 64,000 characters in the rendered prompt): required
@@ -428,7 +493,9 @@ decisions, and implementation-card source data. A contradiction is a blocking
 finding. The project pipeline-step setting `aspect-concept-fit` resolves its
 enabled state, prompt override, CLI, model, and thinking level like other
 aspects. Its default route is the bounded support aspect route from
-`PipelineStepModelDefaults`; build and lint keep their existing plans.
+`PipelineStepModelDefaults`. A Dossier-only plan whose `concept-fit` is
+disabled carries the completion-only command, so the subject stays admissible
+and settles `Inconclusive` for the missing aspect.
 
 The concept ReviewSubject stores the SHA-256 of the complete `prompt.md` in
 both its requirements identity and frozen review plan. Its frozen plan also
@@ -517,7 +584,16 @@ valid screenshot path in the review context.
 An artifact must have a PNG, JPEG, or WebP header matching its extension before
 it uses an image slot; matching size and digest alone do not prove the header is
 valid. The server does not decode pixels, so later image viewing can still
-reject damaged payloads.
+reject damaged payloads. Candidates are selected by extension, not by the
+uploaded media type, so a `.webp` that an older runner sent as
+`application/octet-stream` still counts once its header is proven.
+The review daemon captures the screenshots while it prepares the attempt, but
+the detached review worker runs the plan in a separate process. The daemon
+therefore writes `visual-evidence/index.json` beside the copies (artifact name,
+file name, header-proven media type, and the `light` or `dark` theme read from
+the name), and the worker reloads that index when it adopts the prepared
+workspace (AGT-3718). A copy missing at reload is named as unavailable in the
+prompt.
 Name delivered screenshots under `results/` by surface, stage, viewport width,
 and theme, for example `bars/before-1920-light.png` and
 `bars/after-1920-light.png`. Use the same suffix for matching before and after
@@ -653,8 +729,15 @@ either. Two paths are deliberately outside the attempt directory (AGT-3429):
   scratch folder holds NuGet's extraction locks. See
   [pipeline.md](pipeline.md) for what a dependency-cache hit may skip.
 
+The conventional Node preparation plan runs `npm ci` only for selected package
+roots with a tracked `package-lock.json` or `npm-shrinkwrap.json`. It records
+roots without a tracked lockfile in `PreparationSkips` with reason
+`no-tracked-lockfile`; an explicit build-profile install command still runs.
+An npm lockfile with no installed packages may complete without `node_modules`.
+For that scope, a matching install marker is sufficient preparation.
+
 Before each candidate tool command, the review workspace checks every prepared
-dependency scope for its directory and lockfile marker. A missing scope reruns
+dependency scope for its required directory and lockfile marker. A missing scope reruns
 preparation and records the miss in command evidence. An environment diagnosis
 evicts the candidate cache entry and invalidates its scope markers, then the
 next candidate command prepares those scopes again. It keeps the dependency
@@ -914,11 +997,11 @@ attempt rises, bounded by the cap.
 A `ReviewInfra` outcome (`AspectTimeout`, `ToolUnavailable`, `BaselineUnavailable`,
 a workspace failure, ...) does not mint its linked retry attempt in the same
 instant as the failure report. `AttemptAuthorityService.ScheduleReviewInfrastructureRetry`
-records a due time instead: bounded backoff of 1, 3, then 9 minutes, indexed by
+records a due time instead: bounded backoff of 1 then 3 minutes, indexed by
 how many linked retries the chain has already spent
 (`AttemptAuthorityService.ReviewInfrastructureRetryBackoff`). The card timeline
 gets a `review_infrastructure_retry_scheduled` entry naming the retry number,
-the budget of three, the delay, and the failure reason at schedule time; the
+the budget of two, the delay, and the failure reason at schedule time; the
 card stays in `4-auto-review` with no successor to claim until the delay
 elapses. `ReviewInfrastructureRetryScheduler`, a background service, polls
 `AttemptAuthorityService.DueReviewInfrastructureRetries` and mints the
@@ -930,6 +1013,13 @@ plan kept calling a withdrawn review model for 59 attempts, so a corrected
 setting now costs exactly one attempt. This closes the
 AGT-2841 gap where a `ReviewInfra` verdict left a card sitting in Auto Review
 with no automatic next attempt until an operator issued `POST /move`.
+
+When the scheduler abandons a due retry without a successor, it logs
+`review-infrastructure-retry-dropped` and writes a
+`review_infrastructure_retry_dropped` timeline entry whose `reason` names why:
+`card-left-auto-review` (with the `lane` the card is in) or
+`cause-breaker-wait` (with the cause key and fingerprint). A card that is gone
+gets only the log line (AGT-3691).
 
 One class is never retried: `ReviewInfra/DiagnosisContractUnsupported`
 (AGT-3089). `ReviewReportDiagnosisPolicy.Normalize` sets it only when the worker
@@ -1003,14 +1093,28 @@ or two distinct cards within 24 hours, all three adjustable per project via
 `FailureInterventionService.RaiseCause` (ledger
 `.orchestrator/failure-interventions.json`, fleet store
 `.metadata/cause-breakers.json`). Every affected card stays in `4-auto-review`
-with a `cause-wait.json` marker, renders "Waiting for <key>", gets no scheduled
-retry, and is skipped by the review claim. A pending review whose plan calls
+with a `cause-wait.json` marker, gets no scheduled retry, and is skipped by the
+review claim. Its CURRENT line names the hold instead of a review queue
+position: "Held behind <key>: <cause>", where the cause is
+`CauseBreakerWording.Summary` of the failure class (for example "review cannot
+read the test report") and `<key>` links the cause card (AGT-3617). A pending review whose plan calls
 an open breaker's model route (any project), or whose project already saw an
 open tool-level cause, is held before it is claimed. The breaker closes when
 the cause card reaches `6-completed` (`CauseBreakerHostedService`) or a review
 of the exact successor attempt released by
 `POST /api/cause-breakers/{fingerprint}/probe` passes (probe green); a passing
-older review on the same waiting card does not close it. A card whose existing review is still
+older review on the same waiting card does not close it. The probe is the
+newest waiting delivery (the run behind the card's current review finished
+last), not the card that waited longest: that card's delivery is usually the
+one that broke the review. An optional body `{ "taskKey": "..." }` names the
+card to re-check instead; 409 means no card could be released. The cause
+card's detail view reads `GET /api/cause-breakers/by-cause/{causeKey}` (held
+cards in probe order, probe state) and offers one primary action, "Re-check
+now", that requests the probe. An operator moving a code-free intervention card
+to Accepted without an override is the owner's decision that the cause is
+resolved: the move endpoint records it as a `deliverable-without-code` claim
+(`InterventionOwnerDecisionPolicy`), and the sweep closes the breaker. A card
+with commits or a run attempt keeps the ordinary acceptance checks. A card whose existing review is still
 pending resumes that attempt; a terminal review gets one freshly planned successor.
 The report acknowledgement, evidence projection, and delivery resume each
 observe the durable passed verdict, so any of those paths can close the exact
@@ -1047,7 +1151,7 @@ phase. After exhaustion the post-processing queue stops re-enqueuing it and
 shows the specific stop reason; the integration reconciler still watches it.
 An unreadable retry file loses its backoff rather than exhausting a delivery.
 
-Once `AttemptAuthorityService.ReviewInfrastructureRetryBudget` (three) linked
+Once `AttemptAuthorityService.ReviewInfrastructureRetryBudget` (two) linked
 retries have all failed, no further retry is scheduled and the card is parked
 in `5e-escalated` with a named reason exactly as before this change - the
 budget-exhaustion and repeat-diagnosis behavior in
@@ -1180,10 +1284,14 @@ that verdict.
 | Clean repeat green, baseline red on cached state, clean baseline repeat green | `DependencyCacheDefect` or `BaselineResultCacheDefect` | no |
 | Reviewer block without evidence against a changed path | `concern` | no |
 
-**Missing test reports.** A successful test command without a recognized
-summary supplies exit-status evidence. A failed test command with no parseable
-result is retried once, before saving the dependency cache, and both attempts
-are recorded. If it still has no result, it settles as
+**Missing test reports.** A successful custom command with no recognized test
+runner can supply exit-status evidence. `dotnet test`, `node --test`, Jest, and
+Vitest must report a positive test count. Their zero-test summaries and
+"no test" diagnostics are missing results even when the command exits zero.
+The same requirement applies when the delivery changes test configuration or
+the spec file list. A test command with no parseable result is retried once
+before saving the dependency cache, and both attempts are recorded. If it
+still has no result, it settles as
 `ReviewInfra/BaselineUnavailable` and names the expected report path (or the
 captured stdout artifact for console-only reporters). An explicit missing-file
 diagnostic from the frontend wrapper follows the same path even when the wrapper
@@ -1506,6 +1614,17 @@ failure remains in the review evidence and the baseline comparison still
 determines attribution. For a planned `--no-build` test, fresh baseline
 worktrees and clean-repeat clones replay the preceding frozen build after
 dependency preparation so the test assembly exists.
+A green clean repeat must show that the failed tests ran (AGT-3650). `dotnet
+test` names a passed test only at normal console verbosity, so the repeat adds
+`--logger "console;verbosity=normal"` unless the command already chose a
+console logger. Vitest and Jest failures are named `file > suite > test`. The
+repeat sets `AGENT_STUDIO_VITEST_REPORTER=verbose`, which `frontend/vitest.config.ts`
+reads to select the verbose reporter. That reporter names every passing test.
+A passed line for each failed test is `test-names` proof. If the output names
+no tests but every failed test's file is reported passed, as with Vitest's
+default reporter or Jest's `PASS` lines, the proof is `test-files`. The level
+is recorded in the clean repeat's `RepeatObservation`. A green repeat with
+neither proof stays `ReviewInfra / CleanRepeatUnavailable`.
 When the clean repeat has no new failures against a baseline that reported
 failed tests, the verification aspect passes and names the pre-existing
 failures in its verdict summary and card review evidence. The review reaches
@@ -1616,7 +1735,7 @@ usually exists only under `refs/remotes/origin` in the Studio checkout.
   `Schedule_review_infrastructure_retry_uses_widening_backoff_and_stops_at_the_cap`)
   and `backend.Tests/RemoteRunnerEndToEndTests.cs`
   (`Monolith_v1_review_plane_schedules_a_named_retry_for_a_fake_aspect_timeout_without_an_operator_move`):
-  the backoff schedule, the three-retry cap, and the
+  the backoff schedule, the two-retry cap, and the
   `review_infrastructure_retry_scheduled` timeline entry.
 - `backend/Features/Runner/ReviewVerifyReusePolicy.cs`,
   `runner/ReviewVerifyResultCache.cs`, `backend.Tests/ReviewVerifyReusePolicyTests.cs`

@@ -100,7 +100,7 @@ public sealed class ContinueRoundBaseEndpointTests : IDisposable
     }
 
     [Fact]
-    public async Task Member_of_an_isolating_batch_refuses_continue_steer_and_requeue_while_eject_succeeds()
+    public async Task Member_of_an_isolating_batch_refuses_continue_steer_extend_failure_continue_and_requeue_while_eject_succeeds()
     {
         SeedReviewedCard("AGT-ISO", TaskStates.AutoReview);
         await using var factory = BuildFactory();
@@ -113,6 +113,18 @@ public sealed class ContinueRoundBaseEndpointTests : IDisposable
                 new { prompt = "Fix the failing test.", mode });
             await AssertIsolationRefusalAsync(round, flight.BatchId);
         }
+        var failureCheck = await client.GetAsync(Route("AGT-ISO", "failure/continue"));
+        Assert.Equal(HttpStatusCode.OK, failureCheck.StatusCode);
+        var checkBody = await failureCheck.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(checkBody.GetProperty("available").GetBoolean());
+        Assert.True(checkBody.GetProperty("isolationActive").GetBoolean());
+        Assert.Equal(BatchIsolationGuardPolicy.Message(new BatchIsolationMembership(Project, "AGT-ISO", flight.BatchId)),
+            checkBody.GetProperty("reason").GetString());
+        var failureRound = await client.PostAsJsonAsync(Route("AGT-ISO", "failure/continue"), new { });
+        var failureBody = await AssertIsolationRefusalAsync(failureRound, flight.BatchId);
+        Assert.Equal(checkBody.GetProperty("reason").GetString(), failureBody.GetProperty("message").GetString());
+        Assert.Equal(Project, failureBody.GetProperty("project").GetString());
+        Assert.Equal("AGT-ISO", failureBody.GetProperty("taskKey").GetString());
         var requeue = await client.PostAsJsonAsync(Route("AGT-ISO", "move"),
             new { targetState = TaskStates.Ready, reason = "Run it again" });
         await AssertIsolationRefusalAsync(requeue, flight.BatchId);
@@ -133,7 +145,7 @@ public sealed class ContinueRoundBaseEndpointTests : IDisposable
 
         // When isolation ends without a verdict the batch pauses; the member takes rounds again.
         var store = factory.Services.GetRequiredService<BatchGateStore>();
-        store.AppendState(new BatchGateState(flight.BatchId, flight.MembershipDigest, BatchPhase.Paused,
+        BatchGateStates.Reach(store, new BatchGateState(flight.BatchId, flight.MembershipDigest, BatchPhase.Paused,
             new string('b', 40), 1, Reviewed.AddMinutes(30), "unresolved-cohort:AGT-ISO"));
         var after = await client.PostAsJsonAsync(Route("AGT-ISO", "continue"),
             new { prompt = "Fix the failing test." });
@@ -208,12 +220,13 @@ public sealed class ContinueRoundBaseEndpointTests : IDisposable
         Assert.False(File.Exists(Path.Combine(folder, "pending-intent.json")));
     }
 
-    private static async Task AssertIsolationRefusalAsync(HttpResponseMessage response, string flight)
+    private static async Task<JsonElement> AssertIsolationRefusalAsync(HttpResponseMessage response, string flight)
     {
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("batch-isolation-active", body.GetProperty("error").GetString());
         Assert.Equal(flight, body.GetProperty("flight").GetString());
+        return body;
     }
 
     private (string Ref, string Sha) SeedReviewedCard(string id, string state, string? legacyRef = null)
@@ -261,7 +274,7 @@ public sealed class ContinueRoundBaseEndpointTests : IDisposable
         store.Enqueue(new BatchGatePendingRecord("rev-" + id, subject, "repo", WatchPath, folder,
             "merge", "default", Reviewed));
         BatchGateOwnershipStore.Write(folder, new BatchGateOwnership("rev-" + id, subject, BatchId: manifest.BatchId));
-        store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest, BatchPhase.Red,
+        BatchGateStates.Reach(store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest, BatchPhase.Red,
             resultSha, 1, Reviewed.AddMinutes(10), "deterministic suite red"));
         return manifest;
     }

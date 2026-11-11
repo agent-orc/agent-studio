@@ -5,6 +5,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { DetailHeaderComponent } from './detail-header.component';
+import { AuthSessionState } from '../../../../services/auth.service';
 import type { TaskInfo } from '../../../../models/task.model';
 
 const taskInfo: TaskInfo = {
@@ -143,10 +144,8 @@ describe('DetailHeaderComponent (smoke)', () => {
     expect(rows.find(item => item.id === 'add-commit')?.hint).toBe('Draft ready');
   });
 
-  // AGT-2006: the human-review acceptance primary (mark-done) depends on the
-  // live git landed status. While that status is still loading it must stay
-  // disabled + skeletoned and refuse to fire, then switch atomically once the
-  // truth is known.
+  // A missing verdict holds acceptance while Git checks the delivery. A
+  // fresh integrated verdict permits Accept while provenance is still loading.
   async function mountHeader() {
     await TestBed.configureTestingModule({
       imports: [DetailHeaderComponent],
@@ -168,8 +167,24 @@ describe('DetailHeaderComponent (smoke)', () => {
     return fixture;
   }
 
-  it('holds the git-dependent acceptance primary while git status is loading', async () => {
+  it('offers a Reviewer no triage cluster: the review panel decides (AGT-3670)', async () => {
     const fixture = await mountHeader();
+    TestBed.inject(AuthSessionState).status.set({
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr_rui', username: 'rui', displayName: 'Rui', role: 'viewer', projects: ['agent-taskboard'],
+        disabled: false, mustChangePassword: false, reviewerProjects: ['Agent-Taskboard'] },
+    });
+    fixture.detectChanges();
+
+    const cmp = fixture.componentInstance;
+    expect(cmp.triagePrimary()).toBeNull();
+    expect(cmp.triageOverflow()).toEqual([]);
+    expect(fixture.nativeElement.querySelector('[data-testid="triage-action-mark-done"]')).toBeNull();
+  });
+
+  it('holds acceptance while both integration and Git status are unknown', async () => {
+    const fixture = await mountHeader();
+    fixture.componentRef.setInput('info', { ...taskInfo, integration: null });
     fixture.componentRef.setInput('gitInfoLoading', true);
     fixture.detectChanges();
 
@@ -190,11 +205,12 @@ describe('DetailHeaderComponent (smoke)', () => {
     expect(btn!.disabled).toBe(true);
     expect(btn!.getAttribute('data-git-loading')).toBe('true');
     expect(fixture.nativeElement.querySelector('.detail__triage-primary-skeleton')).toBeTruthy();
+    expect(cmp.primaryTooltip()).toBe('Checking whether this delivery needs integration.');
   });
 
-  it('releases the acceptance primary once git status has loaded', async () => {
+  it('permits Accept from an integrated verdict while provenance loads', async () => {
     const fixture = await mountHeader();
-    fixture.componentRef.setInput('gitInfoLoading', false);
+    fixture.componentRef.setInput('gitInfoLoading', true);
     fixture.detectChanges();
 
     const cmp = fixture.componentInstance;

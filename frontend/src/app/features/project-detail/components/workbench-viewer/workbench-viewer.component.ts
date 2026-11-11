@@ -196,7 +196,8 @@ export class WorkbenchViewerComponent {
       return;
     }
     if (message?.type === WORKBENCH_DECISION_CHANGE_MESSAGE) {
-      if (this.document()?.workbench.decision?.state === 'succeeded') return;
+      if (this.document()?.workbench.decision?.state === 'succeeded'
+        || this.document()?.workbench.status === 'decided') return;
       const normalized = normalizeWorkbenchDecisionResponses(
         message.responses,
         this.decisionMarkup().points,
@@ -246,7 +247,8 @@ export class WorkbenchViewerComponent {
     if (!document) return;
     this.decisionDrafts.discard(this.projectName(), this.workbenchId());
     const discovered = discoverWorkbenchDecisionMarkup(document.html);
-    this.decisionResponses.set(document.workbench.decision?.responses ?? discovered.responses);
+    this.decisionResponses.set(document.workbench.decision?.responses
+      ?? document.workbench.recordedResponses ?? discovered.responses);
     this.hydrateFrame();
   }
 
@@ -289,7 +291,8 @@ export class WorkbenchViewerComponent {
       {
         type: WORKBENCH_DECISION_HYDRATE_MESSAGE,
         responses: this.decisionResponses(),
-        readonly: this.readOnly() || decision?.state === 'succeeded',
+        readonly: this.readOnly() || decision?.state === 'succeeded'
+          || this.document()?.workbench.status === 'decided',
       },
       '*',
     );
@@ -322,7 +325,8 @@ export class WorkbenchViewerComponent {
         this.decisionResponses.set(
           reworkRevisionLanded(document)
             ? discovered.responses
-            : document.workbench.decision?.responses ?? restored ?? discovered.responses,
+            : document.workbench.decision?.responses
+              ?? document.workbench.recordedResponses ?? restored ?? discovered.responses,
         );
         this.loading.set(false);
       },

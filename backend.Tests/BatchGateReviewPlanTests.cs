@@ -75,6 +75,71 @@ public sealed class BatchGateReviewPlanTests
         finally { DeleteDirectory(root); }
     }
 
+    /// <summary>
+    /// AGT-3740: AGT-3243's review ran its own build and tests and the card
+    /// never said why. A plan that does not defer names its rule, also for the
+    /// rules that ran before the test selection.
+    /// </summary>
+    [Theory]
+    [InlineData(false, "code", "The project batch gate was off when the review plan was sealed.")]
+    [InlineData(true, "documentation", "The batch gate scope is documentation only and this delivery changes code.")]
+    public void PlanThatRunsItsOwnBuildTestsNamesItsRule(bool enabled, string scope, string rule)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "batch-plan-test-" + Guid.NewGuid().ToString("N"));
+        var repo = Path.Combine(root, "repo");
+        var folder = Path.Combine(root, "task");
+        Directory.CreateDirectory(repo);
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var resultRef = BackendRepository(repo, folder);
+            const string changedPath = "backend/Feature.cs";
+            File.WriteAllText(Path.Combine(repo, changedPath), "namespace Fixture; public sealed class Feature;\n");
+            Git(repo, "add", ".");
+            Git(repo, "commit", "-qm", "code change");
+            var sha = Git(repo, "rev-parse", "HEAD").Trim();
+            Git(repo, "switch", "-q", "develop");
+
+            var plan = PlanBuilder().Build(AutoReviewTask(repo, folder), repo,
+                new ProjectSettings { BatchGate = new(Enabled: enabled, Scope: scope, DocumentationOnly: scope != "code") },
+                "develop", sha, [changedPath], resultRef);
+
+            Assert.False(plan.BuildTestDeferredToBatch);
+            Assert.Equal(rule, plan.BuildTestDeferralDisabledReason);
+            Assert.Equal($"Review ran its own build and tests ({rule.TrimEnd('.')}); this card goes to per-task integration.",
+                BatchGatePolicy.AdmissionRefusal(BatchExclusionReason.BuildTestNotDeferred,
+                    plan.BuildTestDeferralDisabledReason));
+        }
+        finally { DeleteDirectory(root); }
+    }
+
+    [Theory]
+    [InlineData("off", "The project batch gate was off when the review plan was sealed.")]
+    [InlineData("post-merge", "The project integrates post-merge, so no batch gate runs.")]
+    [InlineData("report-only", "A report-only or card-less review has no batch gate.")]
+    [InlineData("diff-unavailable", "The changed paths against the integration branch were unavailable when the review plan was sealed.")]
+    [InlineData("no-change", "The delivery changes no path against the integration branch.")]
+    [InlineData("documentation-scope", "The batch gate scope is documentation only and this delivery changes code.")]
+    [InlineData("no-result-ref", "The delivery has no immutable result ref.")]
+    [InlineData("bad-result-sha", "The delivery has no valid result SHA.")]
+    [InlineData("deferrable", null)]
+    public void EveryBatchDeferralBlockerNamesItsRule(string fact, string? rule)
+    {
+        const string sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        IReadOnlyList<string>? paths = fact switch
+        {
+            "diff-unavailable" => null,
+            "no-change" => [],
+            _ => ["backend/Feature.cs"],
+        };
+        Assert.Equal(rule, RemoteReviewPlanBuilder.BatchDeferralBlocker(
+            batchGateEnabled: fact != "off", postMerge: fact == "post-merge",
+            noCodingTask: fact == "report-only",
+            batchScope: fact == "documentation-scope" ? "documentation" : "code", paths,
+            resultRef: fact == "no-result-ref" ? null : "refs/heads/agent-studio/results/one",
+            resultSha: fact == "bad-result-sha" ? "not-a-sha" : sha));
+    }
+
     [Theory]
     [InlineData(".agent-studio/project.yml")]
     [InlineData("frontend/package.json")]
@@ -789,7 +854,8 @@ public sealed class BatchGateReviewPlanTests
     private const string ResultRef = "refs/heads/agent-studio/results/task";
     private const string ValidSha = "e21984dc539cdac298866477913e333f27a7154b";
     // An npm lint command plans an `npm ci` preparation step for the tracked
-    // tools/package.json, so the ordinary plan carries a preparation to drop.
+    // tools/package-lock.json, so the ordinary plan carries a preparation to
+    // drop. A package root without a lockfile gets no `npm ci` (AGT-3699).
     private const string LintCommand = "  lint: [npm --prefix tools run lint]\n";
 
     private static readonly string[] ToolAspects = ["build-tests", "lint", "review-verification"];
@@ -874,6 +940,8 @@ public sealed class BatchGateReviewPlanTests
         {
             Directory.CreateDirectory(Path.Combine(repo, "tools"));
             File.WriteAllText(Path.Combine(repo, "tools", "package.json"), "{ \"private\": true }\n");
+            File.WriteAllText(Path.Combine(repo, "tools", "package-lock.json"),
+                "{ \"lockfileVersion\": 3, \"packages\": { \"\": { \"devDependencies\": { \"eslint\": \"9.0.0\" } } } }\n");
         }
         Git(repo, "add", ".");
         Git(repo, "commit", "-qm", "base");

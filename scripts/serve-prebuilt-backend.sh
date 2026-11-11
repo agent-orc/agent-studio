@@ -38,7 +38,38 @@ export API_REQUIRE_PREBUILT=1
 export API_START_TIMEOUT_SECS="${API_START_TIMEOUT_SECS:-90}"
 export TaskRepository="${PW_E2E_WORKSPACE}"
 export GIT_CONFIG_GLOBAL="${PW_E2E_WORKSPACE}/gitconfig"
+export HOME="${PW_E2E_WORKSPACE}/home"
 export XDG_CONFIG_HOME="${PW_E2E_WORKSPACE}/config"
+export XDG_DATA_HOME="${PW_E2E_WORKSPACE}/data"
+export XDG_CACHE_HOME="${PW_E2E_WORKSPACE}/cache"
+export CODEX_HOME="${HOME}/.codex"
+export CLAUDE_CONFIG_DIR="${HOME}/.claude"
+mkdir -p "${HOME}" "${XDG_CONFIG_HOME}" "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}" \
+  "${CODEX_HOME}" "${CLAUDE_CONFIG_DIR}" "${PW_E2E_WORKSPACE}/bin"
+
+# The backend probes providers on startup. Keep every provider resolution in
+# this disposable workspace, including paths supplied by the CLI configuration.
+for provider in codex claude copilot gemini antigravity; do
+  cat > "${PW_E2E_WORKSPACE}/bin/${provider}" <<'PROVIDER'
+#!/usr/bin/env bash
+set -euo pipefail
+name="${0##*/}"
+printf '%s\n' "${name}" >> "${PW_E2E_WORKSPACE}/provider-cli-invocations.log"
+if [[ "${1:-}" == --version ]]; then
+  printf '%s 0.0.0\n' "${name}"
+  exit 0
+fi
+printf 'The isolated Playwright stack cannot run %s.\n' "${name}" >&2
+exit 69
+PROVIDER
+  chmod 700 "${PW_E2E_WORKSPACE}/bin/${provider}"
+done
+export PATH="${PW_E2E_WORKSPACE}/bin:${PATH}"
+export CodexCli__Path="${PW_E2E_WORKSPACE}/bin/codex"
+export ClaudeCli__Path="${PW_E2E_WORKSPACE}/bin/claude"
+export CopilotCli__Path="${PW_E2E_WORKSPACE}/bin/copilot"
+export GeminiCli__Path="${PW_E2E_WORKSPACE}/bin/gemini"
+export AntigravityCli__Path="${PW_E2E_WORKSPACE}/bin/antigravity"
 export Runner__Role=test-subject
 export WatchPaths__0__Name='Agent Studio Worktree'
 export WatchPaths__0__Path="${PW_E2E_WORKSPACE}/projects/agent-studio-worktree"
@@ -53,6 +84,20 @@ case "${PW_E2E_PROFILE:-standard}" in
     export Security__Profile=networked
     export Security__TrustedProxyAddresses=127.0.0.1
     export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
+    ;;
+  # networked-https: a networked monolith with a second project, so a Product
+  # session bound to the first one proves it never sees the other (AGT-3668).
+  networked-https)
+    export Security__Profile=networked
+    export Security__TrustedProxyAddresses=127.0.0.1
+    export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
+    restricted_repo="${PW_E2E_WORKSPACE}/projects/restricted-fixture"
+    mkdir -p "${restricted_repo}"
+    git -C "${restricted_repo}" init -q
+    export WatchPaths__1__Name='Restricted Fixture'
+    export WatchPaths__1__Path="${restricted_repo}"
+    export WatchPaths__1__RootPath="${restricted_repo}"
+    export WatchPaths__1__RepositoryPath="${restricted_repo}"
     ;;
   recovery)
     recovery_repo="${PW_E2E_WORKSPACE}/recovery-repository"
@@ -89,7 +134,10 @@ case "${PW_E2E_PROFILE:-standard}" in
     export WatchPaths__0__RootPath="${recovery_repo}"
     export WatchPaths__0__RepositoryPath="${recovery_repo}"
     ;;
-  demo|public-demo)
+  # networked-https-demo: the networked-https stack seeded with the demo
+  # cards, so role-scoped card reads (AGT-3669) meet real Ready and Human
+  # Review cards.
+  demo|public-demo|networked-https-demo)
     node "${REPO_ROOT}/scripts/seed-demo-workspace.mjs" --root "${PW_E2E_WORKSPACE}"
     export WatchPaths__0__Name='Demo App'
     export WatchPaths__0__Path="${PW_E2E_WORKSPACE}/projects/demo-app"
@@ -107,6 +155,11 @@ case "${PW_E2E_PROFILE:-standard}" in
       # This override is scoped to the disposable Playwright backend. The
       # production public-demo rate limit remains unchanged.
       export Security__PublicDemoEdge__RateLimit__PermitLimit=2000
+    fi
+    if [[ "${PW_E2E_PROFILE}" == networked-https-demo ]]; then
+      export Security__Profile=networked
+      export Security__TrustedProxyAddresses=127.0.0.1
+      export Security__BootstrapCode="${PW_E2E_WORKSPACE##*/}-owner-code"
     fi
     ;;
   first-run)

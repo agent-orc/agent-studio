@@ -120,10 +120,13 @@ that is already allowed to edit that project's checkout.
   session cookie and sends it with `Secure`, `Path=/`, and no `Domain` attribute.
   Studio exposes an explicit sign-out action; a logout or API 401 tears
   down browser polling and SignalR before returning to the login gate.
-- Owner and Admin sign-in requires an enrolled authenticator code, a one-use
-  recovery code, or a WebAuthn passkey assertion. An account without an enrolled
-  factor receives a limited session for factor setup. Every step-up requires a
-  registered second factor. TOTP enrollment returns recovery codes once; store them away from
+- Owner, Admin, Developer, Approver, and Viewer must enroll an authenticator or a
+  WebAuthn passkey. Their permissions include run operation, deployment or
+  approval, secrets, or access; Viewer holds `secrets.read` for metadata. An account without a factor receives a limited
+  session for factor setup. Once any user registers a factor, every password
+  sign-in requires its authenticator code, a one-use recovery code, or a
+  WebAuthn passkey assertion, including Product sign-ins. Every
+  step-up requires a registered second factor. TOTP enrollment returns recovery codes once; store them away from
   the browser. Passkey ceremonies require user verification and bind the
   challenge to the current origin and relying party. Each user can list active
   sessions with device, address, creation, and last-use times, revoke one, or
@@ -141,12 +144,16 @@ that is already allowed to edit that project's checkout.
   operator reads and mutates allowed projects, contributor (shown as Product)
   reads assigned projects, creates wishes and cards, edits Backlog and Ready
   cards, uses project and card chat, comments on previews, and accepts a
-  Human Review delivery; viewer is read-only. A contributor cannot access
+  Human Review delivery; reviewer reads assigned projects and decides
+  Human Review cards (accept, or send back with a note) and nothing else;
+  viewer is read-only. A contributor cannot access
   credentials, hosts, settings, quotas, merges, promotions, or raw logs.
   Product cards carry no run controls: project defaults choose the CLI, model,
   and mode, and the card records the signed-in user as creator. Product
   sessions read only screenshot, HTML, and Markdown result files and never run
-  conversations, session events, or agent work detail. The per-route task
+  conversations, session events, or agent work detail. The shell lists a
+  Product session's workspaces, projects, and watch paths through the same
+  binding-filtered collections, without host checkout paths. The per-route task
   contract is in
   [Product session task access](../../system/domains/tasks.md#product-session-task-access-agt-3182).
   Production approval is a separate grant that an owner gives for one assigned
@@ -296,11 +303,25 @@ through its groups. Code: `backend/Features/Security/Iam/`.
 |---|---|---|
 | Owner | workspace | every permission; break-glass role, the only one with `access.read`, `access.manage`, and `workspace.administer` |
 | Admin | workspace, project | settings, operation, production deploy and approval, `secrets.write` |
-| Developer | workspace, project, environment | cards, runs, chats, documents, non-production deploys |
-| Operator agent (`operator-agent`) | workspace, project; service accounts only | the operator surface: reads, cards, runs, batch gate, review step models (`project.pipeline.write`), installation operation reads, stage deploys, the security view (`security.posture.read`) |
+| Developer | workspace, project, environment | cards, runs, chats, documents, magazine articles, non-production deploys, the Human Review decision (`project.cards.review`) |
+| Operator agent (`operator-agent`) | workspace, project; service accounts only | the operator surface: reads, cards, runs, batch gate, review step models (`project.pipeline.write`), installation operation reads, stage deploys, the security view (`security.posture.read`), magazine publishing (`magazine.write`) |
 | Product (`contributor`) | project | cards and chat, narrowed further by the Product allowlist |
+| Reviewer (`reviewer`) | workspace, project; users only | reads and `project.cards.review`: accepts a Human Review card or sends it back with a note; see [Who reviews cards](#who-reviews-cards-the-reviewer-role-agt-3670) |
 | Viewer | workspace, project, environment | reads, secret metadata included |
 | Approver | workspace, project, environment | `environment.production.deploy.approve` and reads |
+
+Every role reads the magazines it can see (`magazine.read`); Owner, Admin,
+Developer and Operator agent also publish (`magazine.write`). The
+installation and workspace magazines take writes only through a workspace
+binding ([magazine domain](../../system/domains/magazine.md#access)).
+
+For human users, factor enrollment follows effective permissions from direct
+and group bindings. Any role granting `project.runs.operate`,
+`environment.deploy`, production deployment or approval, `secrets.*`, or
+`access.*` requires enrollment. This currently covers Owner, Admin, Developer,
+Approver, and Viewer. Product can enroll voluntarily; if it does, every
+subsequent password sign-in verifies the factor. Operator agent is a service
+account role and does not use human sign-in.
 
 - Every route declares one named permission, such as `project.cards.write`,
   `environment.production.deploy.approve`, `secrets.write`, or
@@ -433,7 +454,8 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   permission decision the middleware gives the handler a projected principal
   for this request: `role` is the strongest role among the workspace and
   project bindings that grant the route's permission on the addressed
-  project(s) (Admin and Developer appear as `operator`, Approver as `viewer`),
+  project(s) (Admin and Developer appear as `operator`, Approver and Reviewer
+  as `viewer`),
   and `projects` are the projects where the route's permission holds. An
   environment binding ranks as its role only for a request in its own
   environment and as Viewer elsewhere. A user who is Product in one project
@@ -569,6 +591,67 @@ through its groups. Code: `backend/Features/Security/Iam/`.
 - `.security/iam-audit.jsonl` records every binding, group, membership,
   service-account, token, and legacy role change with the acting user and the
   time, append-only.
+
+### Who reviews cards: the Reviewer role (AGT-3670)
+
+Decision: a person who reviews deliveries gets the **Reviewer** role
+(`reviewer`). Product is not extended. The second user playthrough (AGT-3646,
+finding B4) showed that no role fitted: Approver approves production releases
+and reads cards only, and Product writes cards, may only accept, and cannot
+send a card back. Considered options:
+
+- **A, chosen: a new Reviewer role.** It reads what a Viewer reads, secret
+  metadata excluded (`workspace.read`, `project.read`), and holds one write,
+  `project.cards.review`. It creates and edits no card, moves no lane except
+  through the review decision, and has no run controls, chat, or documents.
+- **B, rejected: extend Product.** Product would keep card creation and
+  editing, so the person who judges a delivery could also rewrite its brief.
+  The Product allowlist would also have to admit a lane move out of Human
+  Review to Ready, which every other Product rule refuses.
+
+The invite form shows the role with the sentence "Reviews and accepts cards
+in Human Review. For people who check deliveries: they read the card and its
+review, accept it, or send it back with a note for the next run. Cannot
+create cards or control runs." (`IamRoles.ReviewerDescription`).
+
+- `project.cards.review` is held by Reviewer, Developer, Admin, and Owner.
+  Exactly two routes declare it:
+  `POST /api/tasks/{jobId}/human-review/accept` (optional `note`) and
+  `POST /api/tasks/{jobId}/human-review/send-back` (required `note`, at most
+  4000 characters). Both answer 409 `not-in-human-review` for a card in any
+  other lane; the lane is checked again under the claim gate, so a decision
+  never lands on a card that has meanwhile moved.
+- Accept runs the operator move to Accepted with every completion check of
+  that move (content verdict, integration, batch gate). Send back queues the
+  note through the Continue path: the follow-up prompt names the reviewer and
+  quotes the note, `pending-intent.json` keeps it for the next run (local
+  pickup or a remote runner's run spec), `prompt.md` gets the continuation
+  note, and the card moves to the top of Ready. From Human Review a follow-up
+  never starts a process, so the reviewer gains no run control.
+- Each decision appends a `human_review_decided` row to the card timeline
+  (actor `human:<display name>`, `details.decision` `accept` or `send-back`,
+  `details.note`) and one entry to the control-plane audit, stream `review`,
+  operation `card.review.accept` or `card.review.send-back`, actor
+  `human:<user id>`, the card as target, and the SHA-256 of the note as
+  parameter digest. The note text itself stays on the card.
+- A Reviewer projects as `viewer` for handler checks. The middleware lets a
+  viewer projection through only for the two permissions that only Approver
+  and Reviewer add: `environment.production.deploy.approve` and
+  `project.cards.review`. The persisted legacy summary is `viewer`, so an
+  older binary keeps a Reviewer read-only. A Reviewer binding is not
+  representable as a legacy role, so the legacy user PUT answers 409
+  `bindings-managed` for it.
+- The signed-in user's own `/api/auth/status` and `/api/auth/session` carry
+  `user.reviewerProjects`: the projects (display names, `*` for a workspace
+  binding) where the user is Reviewer and holds no `project.cards.write`.
+  There the Studio shows the review panel on a Human Review card and hides
+  the lane, run, edit, and delete controls the server would refuse. A user
+  who also writes cards in a project keeps the normal controls there.
+- Product keeps its rules: it accepts but does not send back. The standalone
+  Task Server keeps its own legacy roles and has no Reviewer yet.
+- Coverage: `backend.Tests/HumanReviewDecisionTests.cs` and the
+  `networked-https` Playwright profile,
+  `frontend/e2e/security/reviewer-role.networked-https.spec.ts`.
 
 ### Operator agent identity (security model SM-1)
 
@@ -1226,12 +1309,13 @@ stream that API tokens may read. SignalR stays closed to tokens.
   for example a provider limit) need an Owner, an all-projects grant, or the
   local profile. `watcher.heartbeat` names no project data and every reader
   receives it, because the lease is per installation.
-- `GET /api/operator/attention` (AGT-3576) returns the facts the stream
-  currently sees as one list, `{ items, count }`, where `count` is the number
-  of items. It declares `project.read`, applies the same project scope as
-  the stream, omits `watcher.heartbeat`, and publishes nothing. The Studio
-  header's Needs you entry reads it. The fact read is reused for up to one
-  sweep interval.
+- `GET /api/operator/attention` returns current operator facts as
+  `{ items, count }`. Card rows include the title and a review or escalation
+  reason. It declares `project.read`, applies the stream's project scope, omits
+  `watcher.heartbeat`, and publishes nothing. The Studio Needs you entry adds
+  Dossier decision gates, backup and credential warnings from their existing reads.
+  Its bell total equals the rows it shows. Decision facts are reused for up
+  to one sweep interval.
 - `GET /api/operator/watcher/lease` reads the lease. `POST` takes it, `POST
   .../lease/{leaseId}/heartbeat` renews it, and `DELETE .../lease/{leaseId}`
   releases it. The writes declare `project.runs.operate` with project

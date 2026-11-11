@@ -111,6 +111,19 @@ describe('WorkbenchDecisionPanelComponent', () => {
 
   afterEach(() => http.verify());
 
+  it('shows recorded choices after concept acceptance without offering another decision', () => {
+    fixture.componentRef.setInput('document', {
+      ...DOCUMENT,
+      workbench: { ...DOCUMENT.workbench, status: 'decided', phase: 'shaping' },
+    });
+    fixture.detectChanges();
+
+    const receipt = fixture.nativeElement.querySelector('[data-testid="workbench-decision-receipt"]');
+    expect(receipt.textContent).toContain('In implementation · 1 decision point recorded');
+    expect(receipt.textContent).toContain('Direct path');
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-start"]')).toBeNull();
+  });
+
   it('prefills a compact feature proposal from inline responses and records the created card', () => {
     click('workbench-decision-start');
 
@@ -194,6 +207,35 @@ describe('WorkbenchDecisionPanelComponent', () => {
       responses: RESPONSES,
       idempotent: false,
     });
+  });
+
+  it('opens decisions for a published concept Dossier whose phase is still shaping', () => {
+    for (const workbench of [
+      { status: 'decision-pending' as const, lifecycleState: 'review-requested' as const },
+      { status: 'active' as const, lifecycleState: 'review-requested' as const },
+    ]) {
+      fixture.componentRef.setInput('document', {
+        ...DOCUMENT,
+        workbench: { ...DOCUMENT.workbench, ...workbench, phase: 'shaping' },
+      });
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-gate"]')).toBeNull();
+      expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-start"]'))
+        .not.toBeNull();
+    }
+  });
+
+  it('explains the descriptor states that open decisions for an active shaping Dossier', () => {
+    fixture.componentRef.setInput('document', {
+      ...DOCUMENT,
+      workbench: { ...DOCUMENT.workbench, status: 'active', phase: 'shaping', lifecycleState: 'in-progress' },
+    });
+    fixture.detectChanges();
+
+    const gate = fixture.nativeElement.querySelector('[data-testid="workbench-decision-gate"]');
+    expect(gate.textContent).toContain('status decision-pending or phase decision-ready');
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-start"]')).toBeNull();
   });
 
   it('renders a persisted archive decision after reload with neutral Decision wording', () => {

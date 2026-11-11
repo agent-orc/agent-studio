@@ -209,7 +209,8 @@ public sealed class IntegrationWorktreeProvider
             }
         }
 
-        var refreshed = Refresh(candidate, baseRef);
+        var refreshed = Refresh(candidate, baseRef,
+            freshlyAdded: decision.Action != IntegrationWorktreeAction.Reuse);
         return refreshed is null
             ? IntegrationWorktreeResolution.Prepared(candidate, decision.Action)
             : IntegrationWorktreeResolution.Failed(refreshed);
@@ -220,8 +221,11 @@ public sealed class IntegrationWorktreeProvider
     /// no leftover index or working-tree state from the previous merge, no
     /// untracked residue. The worktree belongs to Studio, so discarding its
     /// content is always safe - unlike doing the same in a developer checkout.
+    /// A slot <c>git worktree add --detach</c> has just created at
+    /// <paramref name="baseRef"/> is already in that state; it skips the
+    /// checkout, reset and clean (AGT-3567: three processes per new slot).
     /// </summary>
-    private string? Refresh(string worktreePath, string baseRef)
+    private string? Refresh(string worktreePath, string baseRef, bool freshlyAdded)
     {
         RemoveStaleIndexLock(worktreePath, baseRef);
         // Any other lock (a merge that died after the last rollback marker, a
@@ -229,6 +233,7 @@ public sealed class IntegrationWorktreeProvider
         // older than the threshold and held by no git process (AGT-3000).
         _staleLocks.EnsureWritable(worktreePath);
         _git.AbortInterruptedIntegration(worktreePath);
+        if (freshlyAdded) return null;
 
         var detached = _git.CheckoutDetachedAt(worktreePath, baseRef);
         if (!detached.Success)

@@ -19,6 +19,7 @@ function setup(options: {
   stepId?: string;
   activation?: PostStepActivation;
   attempts?: OnDemandPostStepAttempt[];
+  reviewResults?: boolean;
 } = {}) {
   const response = new Subject<{
     stepId: string;
@@ -28,6 +29,8 @@ function setup(options: {
     artifactRef?: string | null;
   }>();
   const runTaskPostStep = vi.fn().mockReturnValue(response);
+  const review = new Subject<{ stepId: string; ran: boolean; status: string | null; summary: string }>();
+  const reviewTaskResults = vi.fn().mockReturnValue(review);
   const readJobFile = vi.fn();
   const refresh = vi.fn();
   const success = vi.fn();
@@ -38,7 +41,7 @@ function setup(options: {
     imports: [PostStepControlsComponent],
     providers: [
       provideZonelessChangeDetection(),
-      { provide: TaskService, useValue: { runTaskPostStep, readJobFile } },
+      { provide: TaskService, useValue: { runTaskPostStep, reviewTaskResults, readJobFile } },
       { provide: TaskPipelinePollService, useValue: { refresh } },
       { provide: NotificationService, useValue: { success, warning } },
       { provide: StudioTabStateService, useValue: { open } },
@@ -53,6 +56,7 @@ function setup(options: {
   fixture.componentRef.setInput('projectName', 'Agent Studio');
   fixture.componentRef.setInput('activation', options.activation ?? ACTIVE);
   fixture.componentRef.setInput('attempts', options.attempts ?? []);
+  fixture.componentRef.setInput('reviewResults', options.reviewResults ?? false);
   fixture.detectChanges();
 
   const root = fixture.nativeElement as HTMLElement;
@@ -61,6 +65,8 @@ function setup(options: {
     root,
     response,
     runTaskPostStep,
+    review,
+    reviewTaskResults,
     refresh,
     success,
     warning,
@@ -188,6 +194,42 @@ describe('PostStepControlsComponent', () => {
       'results/post-steps/post-wiki-learnings-attempt-001.md',
     ]);
     expect(root.querySelectorAll('app-pipeline-step-result')).toHaveLength(2);
+  });
+
+  it('runs only the missing report review through Review results', () => {
+    const { fixture, root, review, reviewTaskResults, runTaskPostStep, refresh, success } = setup({
+      stepId: 'aspect-requirement-fit',
+      reviewResults: true,
+    });
+    expect(root.querySelector('[data-testid="overview-post-step-run"]')).toBeNull();
+    const button = root.querySelector('[data-testid="overview-post-step-review-results"]') as HTMLButtonElement;
+    expect(button.textContent?.trim()).toBe('Review results');
+
+    button.click();
+    fixture.detectChanges();
+
+    expect(reviewTaskResults).toHaveBeenCalledWith('AGT-2116', 'C:/tasks/project');
+    expect(runTaskPostStep).not.toHaveBeenCalled();
+    expect(button.getAttribute('data-pending-label')).toBe('Reviewing…');
+
+    review.next({
+      stepId: 'aspect-requirement-fit',
+      ran: true,
+      status: 'pass',
+      summary: 'Requirement fit of the report: pass.',
+    });
+    review.complete();
+    fixture.detectChanges();
+
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(success).toHaveBeenCalledWith('Requirement fit of the report: pass.', 'Results reviewed');
+  });
+
+  it('offers no review run for an aspect the backend does not list as missing', () => {
+    const { root } = setup({ stepId: 'aspect-requirement-fit' });
+
+    expect(root.querySelector('[data-testid="overview-post-step-review-results"]')).toBeNull();
+    expect(root.querySelector('[data-testid="overview-post-step-run"]')).toBeNull();
   });
 
   it('keeps activation visible for post-steps without an on-demand runner', () => {

@@ -86,6 +86,43 @@ public sealed class ReviewTargetedRerunPolicyTests
         Assert.Equal(["AgentStudio.Tests.FooTests.Fails"], observed);
     }
 
+    /// <summary>
+    /// AGT-3650: dotnet test at its default verbosity prints only the summary,
+    /// so a passing repeat never named the failed test and every .NET flake
+    /// ended as CleanRepeatUnavailable. The repeat asks for normal verbosity.
+    /// </summary>
+    [Fact]
+    public void Repeat_asks_dotnet_test_for_passed_test_names()
+    {
+        var direct = new ReviewCommandDto("verify-3", "build-tests", "dotnet",
+            ["test", "backend.Tests", "--no-build", "--filter", "Category!=MachineBound"]);
+        var shell = new ReviewCommandDto("verify-3", "build-tests", "sh",
+            ["-lc", "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound"]);
+
+        Assert.Equal(["test", "backend.Tests", "--no-build", "--filter", "Category!=MachineBound",
+            "--logger", "console;verbosity=normal"], ReviewTargetedRerunPolicy.WithPassedTestNames(direct).Arguments);
+        Assert.Equal("dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound" +
+            " --logger \"console;verbosity=normal\"", ReviewTargetedRerunPolicy.WithPassedTestNames(shell).Arguments[1]);
+    }
+
+    [Fact]
+    public void Repeat_keeps_a_chosen_console_logger_and_other_commands()
+    {
+        var direct = new ReviewCommandDto("verify-3", "build-tests", "dotnet",
+            ["test", "backend.Tests", "--logger", "console;verbosity=detailed"]);
+        var shell = new ReviewCommandDto("verify-3", "build-tests", "sh",
+            ["-lc", "dotnet test backend.Tests --logger \"console;verbosity=detailed\""]);
+        var chained = new ReviewCommandDto("verify-3", "build-tests", "sh",
+            ["-lc", "dotnet test backend.Tests && npm test"]);
+        var frontend = new ReviewCommandDto("verify-6", "build-tests", "sh",
+            ["-lc", "bash scripts/npm-frontend.sh run test:ci"]);
+
+        Assert.Same(direct, ReviewTargetedRerunPolicy.WithPassedTestNames(direct));
+        Assert.Same(shell, ReviewTargetedRerunPolicy.WithPassedTestNames(shell));
+        Assert.Same(chained, ReviewTargetedRerunPolicy.WithPassedTestNames(chained));
+        Assert.Same(frontend, ReviewTargetedRerunPolicy.WithPassedTestNames(frontend));
+    }
+
     [Fact]
     public void Fresh_clone_replays_the_frozen_build_before_no_build_test()
     {

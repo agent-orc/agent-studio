@@ -36,6 +36,14 @@ export interface BatchGateConfiguration {
 }
 
 export interface BatchGateState {
+  /** Gate processes detached at a lease deadline and still exiting. */
+  detachedFlights?: { batchId: string; project: string; startedAtUtc: string; detachedAtUtc: string;
+    deadlineMinutes: number; reason: string }[];
+  dailySummary?: {
+    phaseMinutes?: Record<string, { p50: number | null; p90: number | null; cards: number }>;
+    diagnosticRerunShare?: number | null;
+    preCheckYield?: { runs: number; red: number; cardsKeptOut: number; costMinutes: number } | null;
+  } | null;
   reviewFixWaits?: { taskKey: string; reviewAttemptId: string; round: number; maximum: number; aspects: string[] }[];
   preChecksRun?: number;
   preChecksRed?: number;
@@ -59,7 +67,10 @@ export interface BatchGateState {
     batchId: string;
     parentBatchId?: string | null;
     phase: string;
+    phaseAtUtc?: string | null;
     phaseReason?: string | null;
+    /** AGT-3710: one-based place of a formed batch in its project's flight queue. */
+    queuePosition?: number | null;
     formationReason?: string | null;
     exclusions?: { taskKey: string; reason: string; detail?: string | null }[];
     baseSha: string;
@@ -69,11 +80,37 @@ export interface BatchGateState {
     publication?: BatchPublication | null;
   }[];
   members: Record<string, BatchMemberState>;
+  /** AGT-3710: formed batches waiting for the project's flight, first in, first out. */
+  flightQueue?: BatchFlightQueueEntry[];
   /** AGT-3577: per member of a red batch, what the bisection proved. */
   isolationFindings?: BatchIsolationFinding[];
 }
 
 export type BatchGateBatch = BatchGateState['batches'][number];
+
+const ACTIVE_BATCH_PHASES = new Set(['formed', 'assembling', 'assembled', 'running']);
+
+/** Pending records can remain in the snapshot after their cards joined a batch. */
+export function batchWaitingCards(state: BatchGateState | null): BatchGateState['pending'] {
+  if (!state) return [];
+  const assigned = new Set(state.batches.filter(batch => ACTIVE_BATCH_PHASES.has(batch.phase))
+    .flatMap(batch => batch.members.map(member => member.taskKey)));
+  return state.pending.filter(item => !assigned.has(item.taskKey));
+}
+
+/** A run without a finish event is live only while its batch is running. */
+export function batchRunIsRunning(batch: BatchGateBatch, run: BatchGateBatch['runs'][number]): boolean {
+  return batch.phase === 'running' && !!run.startedAtUtc && !run.finishedAtUtc;
+}
+
+/** One formed batch in the flight queue; position 1 starts next. */
+export interface BatchFlightQueueEntry {
+  batchId: string;
+  position: number;
+  queuedSinceUtc: string;
+  size: number;
+  taskKeys: string[];
+}
 
 /**
  * One member's isolation outcome under the red batch `parentBatchId`. A
@@ -128,7 +165,28 @@ export interface BatchMemberState {
   size?: number | null;
   reason?: string | null;
   reasonDetail?: string | null;
+  /** What a per-task fallback waits for (AGT-3694); the detail names the engine run or the stage. */
+  waitKind?: string | null;
+  waitingFor?: string | null;
+  waitSinceUtc?: string | null;
+  engineRunId?: string | null;
+  engineStatus?: string | null;
   preCheck?: BatchPreCheck | null;
+  timeline?: BatchMemberTimeline | null;
+}
+
+export interface BatchMemberTimeline {
+  reviewPassedAtUtc: string;
+  preCheckQueuedAtUtc?: string | null;
+  preCheckStartedAtUtc?: string | null;
+  preCheckFinishedAtUtc?: string | null;
+  joinedBatchAtUtc?: string | null;
+  batchStartedAtUtc?: string | null;
+  batchFinishedAtUtc?: string | null;
+  publishedAtUtc?: string | null;
+  terminalAtUtc?: string | null;
+  outcome: string;
+  diagnosticRerun: boolean;
 }
 
 export interface BatchPreCheck {
@@ -170,6 +228,21 @@ export function batchEjectionLabel(reason: string | null | undefined): string | 
     case 'conflict': return 'replay conflict';
     case 'unattributable': return 'unattributable history';
     default: return reason || null;
+  }
+}
+
+/** Short card label of what a per-task fallback waits for. */
+export function batchFallbackWaitLabel(kind: string | null | undefined): string | null {
+  switch (kind) {
+    case 'engine-decision': return 'waits for engine decision';
+    case 'per-task-slot': return 'waits for per-task slot';
+    case 'batch-slot': return 'waits for batch slot';
+    case 'machine-gate-slot': return 'waits for machine gate slot';
+    case 'preparing': return 'preparing gate';
+    case 'gate-running': return 'gate running';
+    case 'integration': return 'integrating';
+    case 'resume-pending': return 'resumes next tick';
+    default: return kind || null;
   }
 }
 

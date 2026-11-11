@@ -5,6 +5,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TaskService, orchestratorContextChatSegment } from './task.service';
 import { ErrorDialogService } from './error-dialog.service';
+import { AuthSessionState } from './auth.service';
 import { JobsHubClient, type JobsHubHandlers } from './jobs-hub-client.service';
 import type { TaskDetail, TaskInfo } from '../models/task.model';
 
@@ -100,6 +101,23 @@ describe('TaskService', () => {
       http.expectOne(request => request.url === url && request.params.get('project') === 'project-1')
         .flush({ info: { id: 'AGT-1' } } as unknown as TaskDetail);
       expect(selected?.info.id).toBe('AGT-1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reads the fresh local task detail for Human Review integration', () => {
+    vi.useFakeTimers();
+    try {
+      let selected: TaskDetail | undefined;
+      service.getFreshDetail('AGT-1', 'project-1').subscribe(detail => { selected = detail; });
+      const read = () => http.expectOne(request => request.url === '/api/tasks/AGT-1'
+        && request.params.get('project') === 'project-1');
+      read().flush({ state: 'warming' }, { status: 202, statusText: 'Accepted' });
+      expect(selected).toBeUndefined();
+      vi.advanceTimersByTime(100);
+      read().flush({ info: { id: 'AGT-1', integration: { status: 'not-applicable' } } } as unknown as TaskDetail);
+      expect(selected?.info.integration?.status).toBe('not-applicable');
     } finally {
       vi.useRealTimers();
     }
@@ -237,6 +255,18 @@ describe('TaskService', () => {
     expect(service.grouped().autoReview).toEqual([task]);
     expect(service.jobs()).toEqual([task]);
     expect(service.loading()).toBe(false);
+  });
+
+  it('never asks for installation-wide runner status from a Product session (AGT-3668)', () => {
+    TestBed.inject(AuthSessionState).status.set({
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr-1', username: 'carla', displayName: 'Carla', role: 'contributor', projects: ['PROJ-1'],
+        disabled: false, mustChangePassword: false },
+    });
+
+    service.refreshRunnerStatus();
+
+    http.expectNone('/api/v1/studio/runner/status');
   });
 
   it('restores the task key a board card leaves out as watchPath::id', () => {

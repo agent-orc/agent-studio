@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, ElementRef, ViewChild, computed, effect, inject, input, output, signal } from '@angular/core';
+import { ReviewerSession } from '../../../../services/reviewer-session.service';
 import { TaskInfo, TaskState } from '../../../../models/task.model';
 import { laneName, laneTone as laneToneFor } from '../../../../models/lane-presentation';
 import {
@@ -22,6 +23,7 @@ import {
   TriageButton,
   laneLabelFor,
   mergeAcceptViewFor,
+  acceptanceHoldReason,
   overflowActionsFor,
   primaryActionFor,
   triageDecisionRefusal,
@@ -214,14 +216,15 @@ export class DetailHeaderComponent {
   }
 
   // --- triage cluster (primary + overflow) --------------------------------
+  // AGT-3670: a Reviewer gets no cluster; the overview's review panel decides.
+  private readonly reviewer = inject(ReviewerSession);
+  readonly reviewsOnly = computed(() => this.reviewer.reviewsOnly(this.info().projectName));
 
   /** Lane label for tooltips / aria-text on the overflow trigger. */
   readonly triageLaneLabel = computed(() => laneLabelFor(this.info().state));
 
   /** Index 0 of the lane's action list when it carries a primary variant. */
-  readonly triagePrimary = computed<TriageButton | null>(() =>
-    primaryActionFor(this.info().state),
-  );
+  readonly triagePrimary = computed<TriageButton | null>(() => this.reviewsOnly() ? null : primaryActionFor(this.info().state));
 
   /**
    * State-dependent presentation for the Human Review acceptance primary. Null
@@ -241,21 +244,14 @@ export class DetailHeaderComponent {
     return this.mergeAcceptView()?.acceptLabel ?? p.label;
   });
 
-  /**
-   * Primary-action ids whose label and effect depend on the live git landed
-   * status. The Human Review acceptance (`mark-done`) is the sole one today: it
-   * must not act while the git status is still loading (AGT-2006).
-   */
+  /** Primary-action ids held while their integration verdict is unknown. */
   private readonly GIT_DEPENDENT_PRIMARY_IDS: ReadonlySet<string> = new Set(['mark-done']);
-
-  /**
-   * True when the current primary depends on git status that is still loading.
-   * Drives the button's disabled + skeleton state so the acceptance action is
-   * held back until the branch/merge truth resolves, then switches atomically.
-   */
+  /** A fresh verdict releases Accept even if provenance is still loading. */
   readonly primaryAwaitingGit = computed(() => {
     const p = this.triagePrimary();
-    return !!p && this.GIT_DEPENDENT_PRIMARY_IDS.has(p.id) && this.gitInfoLoading();
+    const status = this.info().integration?.status;
+    return !!p && this.GIT_DEPENDENT_PRIMARY_IDS.has(p.id) && this.gitInfoLoading()
+      && status !== 'integrated' && status !== 'not-applicable';
   });
   readonly primaryBlockedByIntegration = computed(() => {
     const status = this.info().integration?.status;
@@ -265,9 +261,7 @@ export class DetailHeaderComponent {
   readonly primaryDecisionRefusal = computed(() => triageDecisionRefusal(this.info(), this.triagePrimary()));
 
   /** Remaining lane actions + always-on Edit/Delete fallbacks. */
-  readonly triageOverflow = computed<TriageButton[]>(() =>
-    overflowActionsFor(this.info().state),
-  );
+  readonly triageOverflow = computed<TriageButton[]>(() => this.reviewsOnly() ? [] : overflowActionsFor(this.info().state));
 
   /** True when a primary or any overflow action is available. */
   readonly hasTriageActions = computed(
@@ -324,10 +318,10 @@ export class DetailHeaderComponent {
   primaryTooltip(): string {
     const p = this.triagePrimary();
     if (!p) return '';
-    if (this.primaryAwaitingGit()) return 'Checking git status — action available once loaded.';
     if (this.mutationsBlocked()) return 'Update in progress — actions paused.';
     const refusal = this.primaryDecisionRefusal();
     if (refusal) return refusal;
+    if (this.primaryBlockedByIntegration()) return acceptanceHoldReason(this.info());
     const label = this.primaryLabel();
     if (this.triageActingId() === p.id) return `${label}…`;
     const merge = this.mergeAcceptView();

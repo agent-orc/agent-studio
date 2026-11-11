@@ -258,9 +258,9 @@ public sealed partial class AccessSecurityStore
                     throw new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
                 }
 
-                var needsEnrollment = requireSecondFactor && (current.Role is StudioRoles.Owner or StudioRoles.Operator)
-                    && string.IsNullOrEmpty(current.TotpSecret) && current.Passkeys.Count == 0;
-                if (requireSecondFactor && (current.Role is StudioRoles.Owner or StudioRoles.Operator) && !needsEnrollment)
+                var hasFactor = !string.IsNullOrEmpty(current.TotpSecret) || current.Passkeys.Count > 0;
+                var needsEnrollment = requireSecondFactor && RequiresSecondFactor(state, current.Id) && !hasFactor;
+                if (hasFactor)
                 {
                     try
                     {
@@ -366,12 +366,13 @@ public sealed partial class AccessSecurityStore
             var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
                 ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
             if (!_pendingTotpSecrets.TryGetValue(user.Id, out var secret)
-                || !SecondFactorCodes.VerifyTotp(secret, code, Now))
+                || SecondFactorCodes.MatchTotpStep(secret, code, Now) is not { } acceptedStep)
                 throw new SecurityOperationException(400, "invalid-second-factor", "The authenticator code is invalid.");
             var recovery = SecondFactorCodes.NewRecoveryCodes();
             state.Users[state.Users.IndexOf(user)] = user with
             {
                 TotpSecret = secret,
+                LastAcceptedTotpStep = acceptedStep,
                 RecoveryCodeHashes = recovery.Select(SecondFactorCodes.HashRecoveryCode).ToList()
             };
             _pendingTotpSecrets.Remove(user.Id);
@@ -582,7 +583,13 @@ public sealed partial class AccessSecurityStore
             throw new SecurityOperationException(403, "second-factor-required", "Register a second factor before signing in.");
         if (string.IsNullOrWhiteSpace(code))
             throw new SecurityOperationException(401, "second-factor-required", "A second factor is required.");
-        if (user.TotpSecret is not null && SecondFactorCodes.VerifyTotp(user.TotpSecret, code, Now)) return;
+        if (user.TotpSecret is not null
+            && SecondFactorCodes.MatchTotpStep(user.TotpSecret, code, Now) is { } acceptedStep
+            && (user.LastAcceptedTotpStep is null || acceptedStep > user.LastAcceptedTotpStep))
+        {
+            state.Users[state.Users.IndexOf(user)] = user with { LastAcceptedTotpStep = acceptedStep };
+            return;
+        }
         var recoveryHash = user.RecoveryCodeHashes.FirstOrDefault(hash => SecondFactorCodes.VerifyRecoveryCode(code, hash));
         if (recoveryHash is not null)
         {
@@ -733,7 +740,7 @@ public sealed partial class AccessSecurityStore
             state.Users[state.Users.IndexOf(user)] = updated;
             state.Invitations[state.Invitations.IndexOf(invitation)] = invitation with { UsedAt = Now };
             var session = CreateSessionLocked(state, updated,
-                enrollmentOnly: publicEntry && (updated.Role is StudioRoles.Owner or StudioRoles.Operator));
+                enrollmentOnly: publicEntry && RequiresSecondFactor(state, updated.Id));
             SaveLocked(state);
             return (updated, session.Token, session.Csrf);
         }

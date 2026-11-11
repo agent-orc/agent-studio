@@ -203,6 +203,7 @@ public static class RoutePermissionCatalog
         Add("W", IamPermissions.AccessManage,
             "/api/auth/users/**", "/api/auth/invitations", "/api/auth/runners/**", "/api/auth/runner-enrollments/**",
             "/api/auth/api-tokens/**", "/api/auth/iam/**", "/api/auth/audit/**");
+        Add("POST", IamPermissions.AccessManage, "/api/auth/restore-notice/acknowledge");
         // First-run setup writes Git credentials and probes repositories for
         // the installation; the checklist is the Owner's.
         Add("*", IamPermissions.WorkspaceAdminister, "/api/first-run/**");
@@ -438,7 +439,7 @@ public static class RoutePermissionCatalog
         // --- Runs, pipeline, integration, and project actions --------------
         Under("W", IamPermissions.ProjectRunsOperate, "/api/tasks/{}",
             "start", "stop", "continue", "failure/continue", "re-evaluate", "restore-from-failed-pickup", "dispatch-rejection",
-            "pipeline/**", "integration/**", "integration-records", "commits/integration", "git/**", "code-review",
+            "pipeline/**", "review-results", "integration/**", "integration-records", "commits/integration", "git/**", "code-review",
             "external-completion", "summary/**", "context-usage/refresh", "conversation/invalidate",
             "older-brief-delivery/decision", "open-in-vscode", "review-evidence/**", "preview-feedback",
             "merge", "merge/**");

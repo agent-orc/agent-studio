@@ -6,6 +6,20 @@ import { AuthService } from '../../services/auth.service';
 import { createPasskey, getPasskey } from '../../services/webauthn';
 export { AuthService } from '../../services/auth.service';
 
+/** Shown when a gate request never reached the server. */
+export const AUTH_GATE_RECONNECTING = 'Studio is reconnecting; try again.';
+
+/**
+ * The text for a failed gate request. Status 0 means the server never answered:
+ * the offline guard refused the request, or the network failed. Say so instead
+ * of blaming the code or password the user typed.
+ */
+export function authGateFailure(error: unknown, fallback: string): string {
+  if (error instanceof HttpErrorResponse && error.status === 0) return AUTH_GATE_RECONNECTING;
+  if (error instanceof HttpErrorResponse) return error.error?.message ?? fallback;
+  return error instanceof Error ? error.message : fallback;
+}
+
 @Component({
   selector: 'app-auth-gate',
   imports: [FormsModule],
@@ -47,8 +61,8 @@ export class AuthGateComponent {
         if (this.inviteToken) window.history.replaceState(null, '', window.location.pathname);
         this.password = ''; this.newPassword = ''; this.bootstrapCode = ''; this.secondFactorCode = ''; this.submitting.set(false);
       },
-      error: (error: HttpErrorResponse) => {
-        this.error.set(error?.error?.message ?? 'Sign-in failed.');
+      error: (error: unknown) => {
+        this.error.set(authGateFailure(error, 'Sign-in failed.'));
         this.submitting.set(false);
       },
     });
@@ -56,17 +70,19 @@ export class AuthGateComponent {
 
   beginTotp(): void {
     this.submitting.set(true);
+    this.error.set('');
     this.auth.beginTotp().subscribe({
       next: result => { this.totpSecret.set(result.secret); this.submitting.set(false); },
-      error: (error: HttpErrorResponse) => { this.error.set(error?.error?.message ?? 'Authenticator setup failed.'); this.submitting.set(false); },
+      error: (error: unknown) => { this.error.set(authGateFailure(error, 'Authenticator setup failed.')); this.submitting.set(false); },
     });
   }
 
   private confirmTotp(): void {
     this.submitting.set(true);
+    this.error.set('');
     this.auth.confirmTotp(this.secondFactorCode).subscribe({
       next: result => { this.recoveryCodes.set(result.recoveryCodes); this.secondFactorCode = ''; this.submitting.set(false); },
-      error: (error: HttpErrorResponse) => { this.error.set(error?.error?.message ?? 'Authenticator code is invalid.'); this.submitting.set(false); },
+      error: (error: unknown) => { this.error.set(authGateFailure(error, 'Authenticator code is invalid.')); this.submitting.set(false); },
     });
   }
 
@@ -84,8 +100,7 @@ export class AuthGateComponent {
       const result = await firstValueFrom(this.auth.registerPasskey(proof));
       this.recoveryCodes.set(result.recoveryCodes);
     } catch (error) {
-      this.error.set(error instanceof HttpErrorResponse ? error.error?.message ?? 'Passkey setup failed.'
-        : error instanceof Error ? error.message : 'Passkey setup failed.');
+      this.error.set(authGateFailure(error, 'Passkey setup failed.'));
     } finally { this.submitting.set(false); }
   }
 
@@ -98,10 +113,24 @@ export class AuthGateComponent {
       await firstValueFrom(this.auth.loginWithPasskey(this.username, this.password, proof));
       this.password = '';
     } catch (error) {
-      this.error.set(error instanceof HttpErrorResponse ? error.error?.message ?? 'Passkey sign-in failed.'
-        : error instanceof Error ? error.message : 'Passkey sign-in failed.');
+      this.error.set(authGateFailure(error, 'Passkey sign-in failed.'));
     } finally { this.submitting.set(false); }
   }
 
   acknowledgeRecoveryCode(): void { this.auth.acknowledgeRecoveryCode(); }
+
+  reviewRestoreNotice(archiveId: string): void {
+    this.submitting.set(true);
+    this.error.set('');
+    this.auth.acknowledgeRestoreNotice(archiveId).subscribe({
+      next: () => {
+        window.location.hash = '#/workspace/settings/access';
+        this.submitting.set(false);
+      },
+      error: (error: unknown) => {
+        this.error.set(authGateFailure(error, 'Could not acknowledge the restore notice.'));
+        this.submitting.set(false);
+      },
+    });
+  }
 }

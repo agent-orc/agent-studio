@@ -1,4 +1,5 @@
 using AgentStudio.TaskServer.Contracts.BatchGate;
+using AgentStudio.Pipeline;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Runner;
 using AgentStudio.TaskServer.Contracts;
@@ -10,6 +11,9 @@ public static class MonolithTransitionAdapter
 {
     public static AutoReviewStrandingAction AutoReviewStranding(AutoReviewStrandingFacts facts)
         => AutoReviewStrandingPolicy.Decide(facts);
+    public static AutoReviewStrandingAction AutoReviewBatchRoute(AutoReviewStrandingAction decided,
+        AutoReviewStrandingFacts facts, AutoReviewBatchRouteFacts route)
+        => AutoReviewStrandingPolicy.RouteBatch(decided, facts, route);
 
     public static TransitionDecision Decide(TransitionFacts facts) => TransitionDecisionPolicy.Decide(facts);
     public static RedDevelopRepairDecision RedDevelopRepair(RedDevelopRepairFacts facts)
@@ -87,6 +91,18 @@ public static class MonolithTransitionAdapter
     public static int GateStartsAfterCancellation(int startsBeforeThisRun, string? reason, bool serviceStopping)
         => GateCancellationPolicy.ChargedStartsAfterCancellation(startsBeforeThisRun, reason, serviceStopping);
 
+    public static PerTaskFallbackWaitDecision PerTaskFallbackEngineWait(EngineDecisionWaitFacts facts)
+        => PerTaskFallbackWaitPolicy.EngineDecision(facts);
+
+    public static PerTaskFallbackWaitDecision PerTaskFallbackFlight(FallbackFlightFacts facts)
+        => PerTaskFallbackWaitPolicy.Flight(facts);
+
+    public static bool PerTaskFallbackCancelsStalledStage(string stage)
+        => PerTaskFallbackWaitPolicy.CancelsStalledStage(stage);
+
+    public static bool PerTaskFallbackDetachesCancelledFlight(DateTimeOffset cancelledAtUtc, DateTimeOffset nowUtc)
+        => PerTaskFallbackWaitPolicy.DetachesCancelledFlight(cancelledAtUtc, nowUtc);
+
     public static bool GateCancellationOwnsResult(string? expectedSha, string? currentSha,
         string? expectedAttempt, string? currentAttempt,
         string? expectedLane, string? currentLane, bool continuePending)
@@ -95,6 +111,17 @@ public static class MonolithTransitionAdapter
 
     public static BatchPlanStep BatchPlan(BatchPlanFacts facts)
         => BatchPlanDecisionPolicy.Decide(facts);
+
+    /// <summary>AGT-3563: every batch phase change is a compare-and-swap through this rule.</summary>
+    public static BatchPhaseTransitionDecision BatchPhaseTransition(BatchPhaseTransitionFacts facts)
+        => BatchPhaseTransitionPolicy.Decide(facts);
+
+    public static IReadOnlyList<BatchMemberClaim> BatchMemberDispositions(BatchPhase phase,
+        IReadOnlyList<BatchMemberClaim> members, IReadOnlyDictionary<string, string> replayOutcomes)
+        => BatchPhaseTransitionPolicy.Dispositions(phase, members, replayOutcomes);
+
+    public static IReadOnlyList<BatchInvariantFinding> BatchGateInvariants(BatchInvariantFacts facts)
+        => BatchGateInvariantPolicy.Assess(facts);
 
     public static GateQueueOverrunAction GateQueueOverrun(string? budgetName, string? budgetPhase,
         string? lane, bool currentGeneration, TimeSpan totalQueueWait = default, TimeSpan? queueWaitCap = null)
@@ -105,6 +132,20 @@ public static class MonolithTransitionAdapter
 
     public static bool IsGateQueueOverrun(string? budgetName, string? budgetPhase)
         => GateQueueStallPolicy.IsQueueOverrun(budgetName, budgetPhase);
+
+    public static bool GateHostUnavailable(bool failed, bool cancelled, string? evidence, int failingItems)
+        => GateHostOutagePolicy.IsHostUnavailable(failed, cancelled, evidence, failingItems);
+
+    public static bool GateHostMayStartRun(DateTimeOffset? outageSinceUtc, DateTimeOffset lastAttemptUtc,
+        int failedProbes, DateTimeOffset nowUtc)
+        => GateHostOutagePolicy.MayStartRun(outageSinceUtc, lastAttemptUtc, failedProbes, nowUtc);
+
+    public static bool GateHostOutageEscalates(DateTimeOffset outageSinceUtc, DateTimeOffset nowUtc,
+        TimeSpan escalateAfter, bool alreadyEscalated)
+        => GateHostOutagePolicy.EscalatesGate(outageSinceUtc, nowUtc, escalateAfter, alreadyEscalated);
+
+    public static string GateHostWaitingReason(DateTimeOffset outageSinceUtc)
+        => GateHostOutagePolicy.WaitingReason(outageSinceUtc);
 
     public static bool GateQueueStallReminds(DateTimeOffset lastRaisedAtUtc, DateTimeOffset nowUtc)
         => GateQueueStallPolicy.RemindsStall(lastRaisedAtUtc, nowUtc);
@@ -119,9 +160,8 @@ public static class MonolithTransitionAdapter
     public static bool PerTaskGateSlotFree(int perTaskGates, int slotsTotal)
         => BatchGateLookAheadPlanner.PerTaskGateSlotFree(perTaskGates, slotsTotal);
 
-    public static IReadOnlyList<string> BatchStartOrder(IEnumerable<BatchGateStartCandidate> formed,
-        DateTimeOffset nowUtc)
-        => BatchGateStartPolicy.Order(formed, nowUtc);
+    public static IReadOnlyList<string> BatchStartOrder(IEnumerable<BatchGateStartCandidate> formed)
+        => BatchGateStartPolicy.Order(formed);
 
     public static bool BatchFlightLeaseDeadlinePassed(DateTimeOffset startedAtUtc, bool leaseClaimed,
         DateTimeOffset nowUtc, int deadlineMinutes)

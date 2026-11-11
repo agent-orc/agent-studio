@@ -3,6 +3,7 @@ using AgentStudio.Operator;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
+using AgentStudio.Tasks;
 using AgentStudio.Watcher;
 using Xunit;
 
@@ -151,10 +152,39 @@ public sealed class OperatorDecisionPolicyTests
         Assert.NotEqual(first.Key, again.Key);
     }
 
+    [Fact]
+    public void Review_attention_carries_title_grade_concerns_and_changed_brief()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "attention-grade-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, "code-review-grade-2026-11-04T09-00-00-000Z.md"),
+                "## Reviewer reply\n[[CODE_REVIEW_FINDING: text=Security gap ]]\n"
+                + "[[CODE_REVIEW_FINDING: text=Missing test ]]\n");
+        var graded = Card("A-2", TaskStates.HumanReview) with
+        {
+            Title = "Repair account flow",
+            FolderPath = folder, Tags = ["code-review:grade-b"],
+        };
+        var changed = Card("A-3", TaskStates.HumanReview) with
+        {
+            Title = "Updated brief",
+            OlderBriefDelivery = new("attempt", "old", "new", null, null, null, null, At),
+        };
+        var facts = OperatorDecisionFacts.FromTasks([graded, changed], _ => null);
+
+        Assert.Equal("Repair account flow", facts[0].Title);
+        Assert.Equal("Grade B · 2 concerns.", facts[0].Reason);
+        Assert.Equal("Cannot be accepted: brief changed.", facts[1].Reason);
+        }
+        finally { Directory.Delete(folder, true); }
+    }
+
     [Theory]
     [InlineData("host-offline", OperatorDecisionTypes.BackendStalled)]
     [InlineData("claim-refusal", OperatorDecisionTypes.BackendStalled)]
-    [InlineData("batch-gate-stuck", OperatorDecisionTypes.BackendStalled)]
+    [InlineData("batch-gate-stuck", OperatorDecisionTypes.BatchGateStuck)]
     [InlineData("idle-capacity", OperatorDecisionTypes.ProgressIdleWithReady)]
     [InlineData("fleet-claim-stall", OperatorDecisionTypes.ProgressIdleWithReady)]
     [InlineData("lane-stall", null)]

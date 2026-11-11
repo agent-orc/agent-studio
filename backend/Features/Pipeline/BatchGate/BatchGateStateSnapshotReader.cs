@@ -21,14 +21,43 @@ public static class BatchGateStateSnapshotReader
         GateRunLedger? ledger = null,
         IReadOnlyList<BatchGateReviewFixWait>? reviewFixWaits = null,
         GateCapacity? gateCapacity = null,
-        IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null)
+        IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null,
+        string? leaseDeadlineDeferredBatchId = null,
+        IReadOnlyList<BatchGateFallbackWait>? fallbackWaits = null,
+        BatchGateInvariantReport? invariants = null)
     {
+        // AGT-3694: what each per-task fallback waits for, so an overdue member
+        // never shows only its rule.
+        var waits = (fallbackWaits ?? []).GroupBy(wait => wait.ReviewAttemptId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
         var at = now ?? DateTimeOffset.UtcNow;
-        var dailySummary = ledger?.Summary(store, project, DateOnly.FromDateTime(at.UtcDateTime));
+        var today = DateOnly.FromDateTime(at.UtcDateTime);
         var pending = store.ListPending().Where(item =>
                 string.Equals(item.Subject.Project, project, StringComparison.OrdinalIgnoreCase))
             .OrderBy(item => item.Subject.EnqueueSequence).ToArray();
         var preChecks = store.ListPreChecks(project).OrderByDescending(item => item.CompletedAtUtc).ToArray();
+        var fallbackTimelineCauses = store.ListFallbackCauses(project);
+        var allPending = store.ListAllPending();
+        var projectManifests = store.ListManifests()
+            .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var relevantManifests = projectManifests.OrderByDescending(item => item.ClosedAtUtc)
+            .Take(Math.Clamp(history, 0, 500))
+            .Concat(projectManifests.Where(item => store.ReadPublication(item.BatchId) is { } publication
+                && DateOnly.FromDateTime(publication.VerifiedAtUtc.UtcDateTime) == today)).ToArray();
+        var relevantKeys = relevantManifests.SelectMany(item => item.Members)
+            .Concat(pending.Select(item => item.Subject)).ToArray();
+        var relevantChecks = preChecks.Where(check => DateOnly.FromDateTime(check.CompletedAtUtc.UtcDateTime) == today
+            || relevantKeys.Any(member => member.TaskKey == check.TaskKey && member.ResultSha == check.ResultSha));
+        var gateRows = BatchMemberTimelineProjection.Rows(ledger, project,
+            new[] { today, today.AddDays(-1) }
+                .Concat(relevantChecks.SelectMany(check => new[] {
+                    DateOnly.FromDateTime(check.StartedAtUtc.UtcDateTime),
+                    DateOnly.FromDateTime(check.StartedAtUtc.UtcDateTime).AddDays(-1) }))
+                .Concat(relevantManifests.SelectMany(manifest => BatchMemberTimelineProjection.Days(
+                    manifest.Members.Min(member => member.ReviewCompletedAtUtc),
+                    store.ReadPublication(manifest.BatchId)?.VerifiedAtUtc ?? at))));
+        var dailySummary = ledger?.Summary(store, project, today, gateRows);
         var plan = !settings.Enabled
             ? new BatchPlanDecision("disabled", "batch gate disabled", null, [], 0, [])
             : store.LatestPlanDecision(project)
@@ -37,12 +66,17 @@ public static class BatchGateStateSnapshotReader
                     null, [], 0, []);
         if (pushWait is not null)
             plan = plan with { Reason = pushWait.Reason };
-        var projectManifests = store.ListManifests()
-            .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
-            .ToArray();
         var recoverable = store.ListRecoverableManifests()
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
             .ToArray();
+        // AGT-3710: formed batches wait for the project's one flight first in, first out.
+        // AGT-3712: the positions come from the flight queue the pilot starts from.
+        var formedBatches = recoverable.Where(manifest =>
+                store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
+            .DistinctBy(manifest => manifest.BatchId, StringComparer.Ordinal).ToArray();
+        var queuePositions = BatchGateFlightQueue.Positions(store, formedBatches,
+            _ => leaseDeadlineDeferredBatchId);
+        var flightQueue = formedBatches.OrderBy(manifest => queuePositions[manifest.BatchId]).ToArray();
         var fallbackCauses = store.ListFallbackCauses(project);
         var planDeadlinePassed = plan.CloseAtUtc is { } closeAt && closeAt <= at;
         var overduePending = pending.Where(item => (item.Subject.ReviewCompletedAtUtc
@@ -58,10 +92,14 @@ public static class BatchGateStateSnapshotReader
                 var cause = fallbackCauses.LastOrDefault(entry =>
                     entry.ReviewAttemptId == item.ReviewAttemptId);
                 var reason = formed is not null
-                    ? $"batch {formed.BatchId} is {store.LatestState(formed.BatchId).Phase.ToString().ToLowerInvariant()}"
+                    ? $"batch {formed.BatchId} is {StateOf(store, formed).Phase.ToString().ToLowerInvariant()}"
+                        + (queuePositions.TryGetValue(formed.BatchId, out var queued)
+                            ? $", flight queue position {queued} of {flightQueue.Length}" : "")
                     : item.Subject.ActivePerTaskGate ? "per-task gate is in progress"
                     : cause is not null ? $"per-task fallback: {cause.Rule}"
                     : "pending member awaits the next planner tick";
+                if (formed is null && waits.TryGetValue(item.ReviewAttemptId, out var wait))
+                    reason += $", waits for {wait.Detail}";
                 return $"{item.Subject.TaskKey}: {reason}";
             }).ToArray();
         if (overdue.Length > 0)
@@ -87,14 +125,14 @@ public static class BatchGateStateSnapshotReader
             .DistinctBy(item => item.BatchId)
             .OrderByDescending(item => item.ClosedAtUtc).ToArray();
         var moved = projectManifests
-            .Select(item => store.LatestState(item.BatchId))
+            .Select(item => StateOf(store, item))
             .Where(state => state.BaseMoveToSha is not null).ToArray();
         var stacked = store.ListManifests()
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase)
                 && item.StackedOnBatchId is not null).ToArray();
         var executions = store.ListExecutions(project);
         var stackedCancelled = stacked.Where(item =>
-            store.LatestState(item.BatchId).Phase == BatchPhase.Abandoned
+            StateOf(store, item).Phase == BatchPhase.Abandoned
             && store.ReadPublication(item.BatchId) is null).ToArray();
         var wastedMinutes = stackedCancelled.Sum(item =>
         {
@@ -104,7 +142,7 @@ public static class BatchGateStateSnapshotReader
                     ? ms : (long)(fact.CompletedAtUtc - fact.StartedAtUtc).TotalMilliseconds) / 60000d));
             var started = store.ListRuns(item.BatchId).FirstOrDefault()?.StartedAtUtc;
             return started is null ? 0 : Math.Max(0,
-                (store.LatestState(item.BatchId).RecordedAtUtc - started.Value).TotalMinutes);
+                (StateOf(store, item).RecordedAtUtc - started.Value).TotalMinutes);
         });
         var baseMoves = moved.GroupBy(state => state.BaseMoveToSha!, StringComparer.OrdinalIgnoreCase)
             .Select(group => new { baseSha = group.Key,
@@ -113,7 +151,7 @@ public static class BatchGateStateSnapshotReader
             .OrderByDescending(group => group.baseSha).ToArray();
         var batches = manifests.Select(manifest =>
         {
-            var phase = store.LatestState(manifest.BatchId);
+            var phase = StateOf(store, manifest);
             return new
             {
                 manifest.BatchId,
@@ -121,7 +159,10 @@ public static class BatchGateStateSnapshotReader
                 manifest.ReformedFromBatchId,
                 manifest.StackedOnBatchId,
                 phase = phase.Phase.ToString().ToLowerInvariant(),
+                phaseAtUtc = phase.RecordedAtUtc,
                 phaseReason = phase.Reason,
+                queuePosition = queuePositions.TryGetValue(manifest.BatchId, out var position)
+                    ? position : (int?)null,
                 causedByTaskKey = phase.CausedByTaskKey,
                 baseMoveToSha = phase.BaseMoveToSha,
                 baseMoveOutcome = phase.BaseMoveOutcome,
@@ -171,21 +212,40 @@ public static class BatchGateStateSnapshotReader
         foreach (var check in preChecks.Where(check => check.Outcome == "red"))
             members.TryAdd(check.TaskKey, new { status = "pre-check-red", batchId = (string?)null,
                 phase = (string?)null, position = (int?)null, size = (int?)null,
-                preCheck = check });
+                preCheck = check,
+                timeline = allPending.Where(item => item.ReviewAttemptId == check.ReviewAttemptId)
+                    .Select(item => BatchMemberTimelineProjection.Build(store, item.Subject, null,
+                        gateRows, preChecks, fallbackTimelineCauses, allPending)).FirstOrDefault() });
+        foreach (var cause in fallbackTimelineCauses)
+        {
+            var origin = allPending.FirstOrDefault(item => item.ReviewAttemptId == cause.ReviewAttemptId);
+            if (origin is null) continue;
+            members[origin.Subject.TaskKey] = new { status = "fallback", batchId = cause.BatchId,
+                phase = (string?)null, position = (int?)null, size = (int?)null,
+                reason = cause.Rule, reasonDetail = cause.Event,
+                fallbackRule = cause.Rule, fallbackEvent = cause.Event,
+                timeline = BatchMemberTimelineProjection.Build(store, origin.Subject, null,
+                    gateRows, preChecks, fallbackTimelineCauses, allPending) };
+        }
         foreach (var item in pending)
         {
             var cause = causes.LastOrDefault(entry => entry.ReviewAttemptId == item.ReviewAttemptId);
-            members[item.Subject.TaskKey] = new { status = cause is null ? "pending" : "fallback",
+            var wait = waits.GetValueOrDefault(item.ReviewAttemptId);
+            members[item.Subject.TaskKey] = new { status = cause is null && wait is null ? "pending" : "fallback",
                 batchId = cause?.BatchId,
                 phase = (string?)null, position = (int?)null, size = (int?)null,
                 reason = cause?.Rule, reasonDetail = cause?.Event,
                 fallbackRule = cause?.Rule, fallbackEvent = cause?.Event,
+                waitKind = wait?.Kind, waitingFor = wait?.Detail, waitSinceUtc = wait?.SinceUtc,
+                engineRunId = wait?.EngineRunId, engineStatus = wait?.EngineStatus,
                 preCheck = preChecks.FirstOrDefault(check => check.ResultSha == item.Subject.ResultSha
-                    && check.GateProfileDigest == item.Subject.GateProfileDigest) };
+                    && check.GateProfileDigest == item.Subject.GateProfileDigest),
+                timeline = BatchMemberTimelineProjection.Build(store, item.Subject, null,
+                    gateRows, preChecks, fallbackTimelineCauses, allPending) };
         }
         foreach (var manifest in manifests.Reverse())
         {
-            var phase = store.LatestState(manifest.BatchId).Phase;
+            var phase = StateOf(store, manifest).Phase;
             var publication = store.ReadPublication(manifest.BatchId);
             for (var index = 0; index < manifest.Members.Count; index++)
             {
@@ -201,38 +261,54 @@ public static class BatchGateStateSnapshotReader
                     continue;
                 }
                 var ejected = replay is { Outcome: "unattributable" };
-                var left = phase == BatchPhase.Abandoned || ejected;
-                var baseMoveReason = store.LatestState(manifest.BatchId)
+                var fallbackCause = causes.LastOrDefault(entry => entry.TaskKey == member.TaskKey
+                    && entry.RunAttempt == member.RunAttempt && entry.RecordedAtUtc >= manifest.ClosedAtUtc);
+                var left = phase == BatchPhase.Abandoned || ejected || fallbackCause is not null;
+                var baseMoveReason = StateOf(store, manifest)
                     .BaseMoveMemberReasons?.GetValueOrDefault(member.TaskKey);
-                var cause = left
-                    ? causes.LastOrDefault(entry => entry.TaskKey == member.TaskKey
-                        && entry.RunAttempt == member.RunAttempt && entry.RecordedAtUtc >= manifest.ClosedAtUtc)
-                    : null;
+                var cause = left ? fallbackCause : null;
                 // A member of a batch abandoned before its gate that is queued
                 // again waits for the next batch; it is no per-task fallback.
                 var requeued = left && cause is null && !ejected && pending.Any(item =>
                     item.Subject.TaskKey == member.TaskKey && item.Subject.RunAttempt == member.RunAttempt);
+                var wait = left ? (fallbackWaits ?? []).LastOrDefault(item =>
+                    item.TaskKey == member.TaskKey && cause?.ReviewAttemptId == item.ReviewAttemptId) : null;
                 members[member.TaskKey] = new
                 {
                     status = replay is { Outcome: "cascade-deferred" } || requeued ? "pending"
                         : released ? "published"
-                        : left ? "fallback" : "in-batch",
+                        : left ? "fallback"
+                        : phase == BatchPhase.Unknown ? "unknown" : "in-batch",
                     batchId = manifest.BatchId,
                     phase = phase.ToString().ToLowerInvariant(),
                     position = (int?)(index + 1),
                     size = (int?)manifest.Members.Count,
                     reason = baseMoveReason ?? (ejected ? replay!.Outcome : requeued ? "requeued" : cause?.Rule),
                     reasonDetail = ejected ? EjectionDetail(replay!)
-                        : baseMoveReason is not null ? store.LatestState(manifest.BatchId).Reason
-                        : requeued ? store.LatestState(manifest.BatchId).Reason : cause?.Event,
+                        : baseMoveReason is not null ? StateOf(store, manifest).Reason
+                        : requeued ? StateOf(store, manifest).Reason : cause?.Event,
                     fallbackRule = cause?.Rule,
                     fallbackEvent = cause?.Event,
+                    waitKind = wait?.Kind, waitingFor = wait?.Detail, waitSinceUtc = wait?.SinceUtc,
+                    engineRunId = wait?.EngineRunId, engineStatus = wait?.EngineStatus,
                     preCheck = preChecks.FirstOrDefault(check => check.ResultSha == member.ResultSha
                         && check.BaseSha == manifest.BaseSha
                         && check.GateProfileDigest == member.GateProfileDigest),
+                    timeline = BatchMemberTimelineProjection.Build(store, member, manifest,
+                        gateRows, preChecks, fallbackTimelineCauses, allPending),
                 };
             }
         }
+        // AGT-3740: a passed review that ran its own build and tests never
+        // enters the queue. The state still names the route it took instead.
+        foreach (var route in causes.Where(entry => entry.Rule == PerTaskFallbackRules.ReviewRanBuildTests)
+                     .GroupBy(entry => entry.TaskKey, StringComparer.Ordinal)
+                     .Select(group => group.MaxBy(entry => entry.RecordedAtUtc)!))
+            members.TryAdd(route.TaskKey, new { status = "fallback", batchId = (string?)null,
+                phase = (string?)null, position = (int?)null, size = (int?)null,
+                reason = route.Rule, reasonDetail = route.Event,
+                fallbackRule = route.Rule, fallbackEvent = route.Event,
+                preCheck = (BatchGatePreCheckVerdict?)null });
         return new
         {
             plan,
@@ -256,6 +332,14 @@ public static class BatchGateStateSnapshotReader
                 };
             }).ToArray(),
             batches,
+            flightQueue = flightQueue.Select(manifest => new
+            {
+                manifest.BatchId,
+                position = queuePositions[manifest.BatchId],
+                queuedSinceUtc = BatchGateFlightQueue.QueuedSince(store, manifest),
+                size = manifest.Members.Count,
+                taskKeys = manifest.Members.Select(member => member.TaskKey).ToArray(),
+            }).ToArray(),
             stacking = new
             {
                 started = stacked.Count(item => store.ListRuns(item.BatchId).Count > 0),
@@ -269,8 +353,16 @@ public static class BatchGateStateSnapshotReader
             members,
             reviewFixWaits = reviewFixWaits ?? [],
             detachedFlights = detachedFlights ?? [],
+            fallbackWaits = fallbackWaits ?? [],
+            fallbackStalls = store.ListFallbackStalls(project, 20),
             isolationFindings = store.ListIsolationFindings(project)
                 .Select(finding => IsolationFinding(store, projectManifests, finding)).ToArray(),
+            // AGT-3563: the last invariant check of the pilot tick; null before the first tick.
+            invariants = invariants is null ? null : new
+            {
+                invariants.CheckedAtUtc,
+                invariants.Findings,
+            },
             pushWait,
             pushWaits = pushWaits ?? (pushWait is null
                 ? Array.Empty<PendingIntegrationPushWait>() : [pushWait]),
@@ -283,6 +375,15 @@ public static class BatchGateStateSnapshotReader
             dailySummary,
         };
     }
+
+    /// <summary>
+    /// A manifest the snapshot reads between the manifest write and its first
+    /// phase record is formed; the next tick writes that record (AGT-3563).
+    /// </summary>
+    private static BatchGateState StateOf(BatchGateStore store, BatchGateManifest manifest)
+        => store.HasState(manifest.BatchId) ? store.LatestState(manifest.BatchId)
+            : new BatchGateState(manifest.BatchId, manifest.MembershipDigest, BatchPhase.Formed,
+                null, 0, manifest.ClosedAtUtc);
 
     /// <summary>
     /// AGT-3577: a finding with the run that proved it. A proven-red finding
