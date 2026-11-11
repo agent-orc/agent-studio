@@ -37,8 +37,11 @@ public static class BatchGateStateSnapshotReader
         var preChecks = store.ListPreChecks(project).OrderByDescending(item => item.CompletedAtUtc).ToArray();
         var fallbackTimelineCauses = store.ListFallbackCauses(project);
         var allPending = store.ListAllPending();
+        // An unreadable newest state is reported under quarantined, not as a
+        // readable batch with a phase inferred from an older state row.
         var projectManifests = store.ListManifests()
-            .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
+            .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase)
+                && store.LatestState(item.BatchId).Reason != BatchGateStore.StateUnreadableReason)
             .ToArray();
         var relevantManifests = projectManifests.OrderByDescending(item => item.ClosedAtUtc)
             .Take(Math.Clamp(history, 0, 500))
@@ -365,8 +368,24 @@ public static class BatchGateStateSnapshotReader
             preChecksRed = preChecks.Count(check => check.Outcome == "red"),
             preCheckMinutesSaved = preChecks.Sum(check => check.MinutesSaved),
             dailySummary,
+            quarantined = Quarantined(store, project),
         };
     }
+
+    /// <summary>
+    /// The project's quarantined batch records, read after the route's own
+    /// reads so it lists what they met. A record whose project cannot be read
+    /// may belong to any project, so every project lists it.
+    /// </summary>
+    private static object[] Quarantined(BatchGateStore store, string project)
+        => store.ListQuarantined()
+            .Where(record => record.Project is null
+                || string.Equals(record.Project, project, StringComparison.OrdinalIgnoreCase))
+            .Select(record => (object)new
+            {
+                record.BatchId, record.Project, record.Kind, record.File, record.Error,
+                record.DetectedAtUtc, record.NextStep,
+            }).ToArray();
 
     /// <summary>
     /// AGT-3577: a finding with the run that proved it. A proven-red finding

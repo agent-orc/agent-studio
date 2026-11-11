@@ -8,12 +8,13 @@ import { CreateTaskFormService } from '../../board';
 import { TaskService } from '../../../services/task.service';
 import { PendingButtonDirective } from '../../../components/async-feedback';
 import { BatchIsolationComponent } from '../batch-isolation/batch-isolation';
+import { BatchQuarantineComponent } from '../batch-quarantine/batch-quarantine';
 import { BatchPhaseMetricsComponent } from '../batch-phase-metrics/batch-phase-metrics';
 
 @Component({
   selector: 'app-batch-panel',
   standalone: true,
-  imports: [PendingButtonDirective, BatchIsolationComponent, BatchPhaseMetricsComponent],
+  imports: [PendingButtonDirective, BatchIsolationComponent, BatchQuarantineComponent, BatchPhaseMetricsComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './batch-panel.html',
   styleUrl: './batch-panel.scss',

@@ -115,7 +115,7 @@ its class code. The cursor is saved, so the next `watch` resumes after it.
 | 21 | `human-review.ready` | `studio-op accept <card>`; on exit 7 log the reasons and leave the card. |
 | 22 | `decision-card.opened` | Owner decision. Log it as `observed`; do not act. |
 | 23 | `backend.stalled`, `progress.idle-with-ready` | `studio-op capacity`, then `studio-op triage`. |
-| 24 | `batch.red`, `batch.isolating` | Runbook "Stuck batch flight" or "Base-verdict quarantine". |
+| 24 | `batch.red`, `batch.isolating`, `batch.record-unreadable` | Runbook "Stuck batch flight", "Base-verdict quarantine" or "Unreadable batch record". |
 | 25 | `push.pending-overdue` | Runbook "Lost pending push". |
 | 26 | `quota.exhausted`, `quota.fallback-active` | `studio-op capacity`; wait for the reset or change a step model (below). |
 | 27 | `stream.gap` | Events were lost: `studio-op triage` and `studio-op capacity` before the next watch. |
@@ -205,6 +205,22 @@ A gated merge waits to reach origin, and nothing else integrates meanwhile.
 4. When it stays overdue, log what you see and hand it to the Owner; a push to
    origin is a platform-owned Git step, never yours.
 5. `studio-op log append --kind handoff --project <project> --text "Push of <job> (<sha>) pending <n> min; restart blocked." --card <job>`
+
+### 5. Unreadable batch record
+
+The batch store could not read one manifest, state or run record, for example
+one an older or newer binary wrote. Studio quarantines that record; every other
+batch keeps recovering, planning and publishing.
+
+1. Read the event reason, or `quarantined[]` of
+   `GET /api/projects/<project>/batch-gate/state`: batch id, project, `kind`,
+   `file`, `error` and `nextStep`.
+2. Do not edit, move or delete the file yourself: the batch store is
+   installation state. A manifest or state record keeps that batch out of
+   recovery and the batch panel; a run record hides only that run.
+3. Hand the record to the Owner with its `nextStep`. Once the file reads again
+   or is gone, the next pilot tick clears the event.
+4. `studio-op log append --kind handoff --project <project> --text "Batch <id> <kind> record unreadable: <file>: <error>."`
 
 ## Other routine operations
 

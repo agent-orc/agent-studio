@@ -242,6 +242,15 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   The initial `Formed` state is durable before its manifest becomes visible.
   A manifest found without state rows is `Unknown`; recovery skips it and logs
   the missing state once per manifest per store instance.
+  A manifest, state or run record that does not deserialize (for example one an
+  older or newer binary wrote) is quarantined per record (AGT-3681): listings
+  skip it, a batch whose newest state row is unreadable reads `Unknown`, and
+  recovery, planning, the state route, triage, the stall probe and the
+  stranding watchdog keep working for every other batch. The quarantine raises
+  one `batch.record-unreadable` attention item ("Batch record unreadable")
+  naming the batch, project, file, parse error and next step, and
+  `GET /api/projects/{p}/batch-gate/state` lists it under `quarantined` for the
+  batch panel. It clears once the file reads again, is replaced, or is removed.
   A missing manifest and missing state also reads as `Unknown`. The auto-review
   watchdog keeps ownership with a visible manifest whose state is `Unknown`,
   avoiding a second review pass while state visibility is unresolved.
