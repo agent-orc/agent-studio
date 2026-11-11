@@ -325,12 +325,20 @@ test.describe('Execution Hosts settings section', () => {
   });
 
   test('networked profile hides legacy and local phantom machines', async ({ page }) => {
-    await page.route('**/api/auth/status', route => route.fulfill({
+    const networkedAuth = {
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'operator', username: 'operator', displayName: 'Operator', role: 'owner',
+        projects: ['agent-taskboard'], disabled: false, mustChangePassword: false },
+    };
+    const respond = (route: Route) => route.fulfill({
       status: 200, contentType: 'application/json',
-      body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: true,
-        user: { id: 'operator', username: 'operator', displayName: 'Operator', role: 'owner',
-          projects: ['agent-taskboard'], disabled: false, mustChangePassword: false } }),
+      body: JSON.stringify(networkedAuth),
+    });
+    await page.route('**/api/auth/sessions', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [] }),
     }));
+    await page.route('**/api/auth/status', respond);
+    await page.route('**/api/v1/studio/auth/status', respond);
     await page.reload();
     await page.goto('/#/workspace/settings/execution-hosts');
     await dismissDevErrorDialog(page);
@@ -344,7 +352,7 @@ test.describe('Execution Hosts settings section', () => {
   test('hosts, topology, installation and history render at readable sizes in both themes', async ({ page }) => {
     await stubGroupedHostApis(page);
     await page.setViewportSize({ width: 1600, height: 900 });
-    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('studio-titlebar-settings').click();
     await page.getByTestId('workspace-settings-rail-remote-hosts').click();
     const panel = page.getByTestId('remote-hosts-panel');
     const output = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
@@ -466,9 +474,10 @@ test.describe('Execution Hosts settings section', () => {
       await expect(panel.getByTestId('remote-host-primary-row').first()).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       const bar = page.getByTestId('status-bar');
-      const chat = bar.getByTestId('usage-chat-trigger');
-      await expect(chat).toBeInViewport();
-      const fits = await chat.evaluate(el => {
+      const usage = bar.getByTestId('footer-usage-cost');
+      await usage.scrollIntoViewIfNeeded();
+      await expect(usage).toBeInViewport();
+      const fits = await usage.evaluate(el => {
         const item = el.getBoundingClientRect();
         const bar = el.closest('[data-testid="status-bar"]')!.getBoundingClientRect();
         return { whiteSpace: getComputedStyle(el).whiteSpace, height: item.height,
@@ -477,10 +486,11 @@ test.describe('Execution Hosts settings section', () => {
       expect(fits.whiteSpace).toBe('nowrap');
       expect(fits.top).toBeGreaterThanOrEqual(fits.barTop - 1);
       expect(fits.bottom).toBeLessThanOrEqual(fits.barBottom + 1);
-      for (const id of ['status-bar-running', 'footer-usage-cost', 'studio-titlebar-settings']) {
+      for (const id of ['status-bar-running', 'footer-usage-cost']) {
         const item = bar.getByTestId(id);
         await expect(item).toHaveCSS('white-space', 'nowrap');
       }
+      await expect(page.getByTestId('studio-titlebar-settings')).toBeVisible();
       if (width === 390) await expect(bar.getByTestId('status-bar-review')).toBeHidden();
       await page.screenshot({ path: join(output, `environment-responsive-${width}-light.png`), animations: 'disabled' });
       await setTheme(page, 'dark');
