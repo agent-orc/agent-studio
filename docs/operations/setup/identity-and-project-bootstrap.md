@@ -65,6 +65,9 @@ provide host, credential, merge, or promotion access.
    and operator sign-in require a registered factor; every step-up requires one
    regardless of role. A new
    operator accepts an invitation in the same limited setup session.
+   An authenticator code is accepted once. Sign-in and step-up require a code
+   from a later 30-second step than the last accepted code, including the
+   enrollment confirmation. A reused code counts as a failed sign-in.
 
 Studio lists each user's active sessions with device, address, creation time,
 and last use. A user can revoke one or all other sessions; the Owner can revoke

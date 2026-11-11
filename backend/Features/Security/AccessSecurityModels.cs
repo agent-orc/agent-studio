@@ -98,6 +98,7 @@ public sealed record StudioUser
     public DateTime CreatedAt { get; init; }
     public DateTime PasswordChangedAt { get; init; }
     public string? TotpSecret { get; init; }
+    public long? LastAcceptedTotpStep { get; init; }
     public List<string> RecoveryCodeHashes { get; init; } = [];
     public List<StudioPasskey> Passkeys { get; init; } = [];
 }

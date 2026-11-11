@@ -230,6 +230,7 @@ public sealed class StandingGrantTests : IDisposable
         _clock.Advance(TimeSpan.FromSeconds(30));
         var session = _store.Login("first.owner", Password, "standing-grant-tests", SecondFactorCodes.CurrentTotp(_totpSecret, Now)).SessionToken;
         var owner = _store.AuthenticateSession(session)!;
+        _clock.Advance(TimeSpan.FromSeconds(30));
         _store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(_totpSecret, Now));
         return owner;
     }
