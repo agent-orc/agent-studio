@@ -15,6 +15,8 @@ public sealed class BatchGateStoreTests : IDisposable
     {
         var manifest = Close();
         _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Assembling, Next, 1, Now.AddMinutes(-1), "assembling candidate"));
+        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Assembled, Next, 1, Now, "candidate assembled"));
         _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Abandoned, Next, 1, Now.AddMinutes(1), "interrupted"));
