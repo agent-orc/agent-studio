@@ -38,7 +38,38 @@ export API_REQUIRE_PREBUILT=1
 export API_START_TIMEOUT_SECS="${API_START_TIMEOUT_SECS:-90}"
 export TaskRepository="${PW_E2E_WORKSPACE}"
 export GIT_CONFIG_GLOBAL="${PW_E2E_WORKSPACE}/gitconfig"
+export HOME="${PW_E2E_WORKSPACE}/home"
 export XDG_CONFIG_HOME="${PW_E2E_WORKSPACE}/config"
+export XDG_DATA_HOME="${PW_E2E_WORKSPACE}/data"
+export XDG_CACHE_HOME="${PW_E2E_WORKSPACE}/cache"
+export CODEX_HOME="${HOME}/.codex"
+export CLAUDE_CONFIG_DIR="${HOME}/.claude"
+mkdir -p "${HOME}" "${XDG_CONFIG_HOME}" "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}" \
+  "${CODEX_HOME}" "${CLAUDE_CONFIG_DIR}" "${PW_E2E_WORKSPACE}/bin"
+
+# The backend probes providers on startup. Keep every provider resolution in
+# this disposable workspace, including paths supplied by the CLI configuration.
+for provider in codex claude copilot gemini antigravity; do
+  cat > "${PW_E2E_WORKSPACE}/bin/${provider}" <<'PROVIDER'
+#!/usr/bin/env bash
+set -euo pipefail
+name="${0##*/}"
+printf '%s\n' "${name}" >> "${PW_E2E_WORKSPACE}/provider-cli-invocations.log"
+if [[ "${1:-}" == --version ]]; then
+  printf '%s 0.0.0\n' "${name}"
+  exit 0
+fi
+printf 'The isolated Playwright stack cannot run %s.\n' "${name}" >&2
+exit 69
+PROVIDER
+  chmod 700 "${PW_E2E_WORKSPACE}/bin/${provider}"
+done
+export PATH="${PW_E2E_WORKSPACE}/bin:${PATH}"
+export CodexCli__Path="${PW_E2E_WORKSPACE}/bin/codex"
+export ClaudeCli__Path="${PW_E2E_WORKSPACE}/bin/claude"
+export CopilotCli__Path="${PW_E2E_WORKSPACE}/bin/copilot"
+export GeminiCli__Path="${PW_E2E_WORKSPACE}/bin/gemini"
+export AntigravityCli__Path="${PW_E2E_WORKSPACE}/bin/antigravity"
 export Runner__Role=test-subject
 export WatchPaths__0__Name='Agent Studio Worktree'
 export WatchPaths__0__Path="${PW_E2E_WORKSPACE}/projects/agent-studio-worktree"
