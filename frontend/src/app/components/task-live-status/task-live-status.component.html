@@ -14,7 +14,13 @@
       <span class="task-live__label">Current</span>
       <span class="task-live__signal" aria-hidden="true"></span>
       <span class="task-live__summary">
-        @if (live.hold; as hold) {
+        @if (live.loss; as loss) {
+          <span class="task-live__headline task-live__headline--wrap" data-testid="task-live-review-loss">
+            @if (loss.hostRoute; as route) {{{ loss.before }}<a class="task-live__host-link"
+              data-testid="task-live-host-link" [href]="'#' + route"
+              (click)="openHost($event, route)">{{ loss.host }}</a>{{ loss.after }}} @else {{{ loss.text }}}
+          </span>
+        } @else if (live.hold; as hold) {
           <span class="task-live__headline task-live__headline--hold" data-testid="task-live-hold" [attr.title]="live.headline">Held behind
             <button type="button"
                     class="task-live__link"

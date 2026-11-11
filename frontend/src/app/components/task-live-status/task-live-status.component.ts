@@ -8,6 +8,8 @@ import { runnerWaitCode, runnerWaitHeadline } from '../../models/ready-wait-reas
 import { TaskReferenceNavigationService } from '../../services/task-reference-navigation.service';
 import { TaskService } from '../../services/task.service';
 import { ErrorDialogService } from '../../services/error-dialog.service';
+import { withRouteSegment } from '../../services/url-hash.util';
+import { reviewLossHeadline, type ReviewLossHeadline } from './review-loss-headline';
 
 export type TaskLiveStatusVariant = 'card' | 'detail';
 type LiveTone = 'active' | 'waiting' | 'idle' | 'stalled';
@@ -21,6 +23,8 @@ interface LiveStatusView {
   attempt: number | null;
   /** AGT-3579: runner reason code when the runner is not picking this card. */
   waitReason?: string;
+  /** AGT-3690: a lost review; the headline renders its host as a link. */
+  loss?: ReviewLossHeadline;
   /** AGT-3617: the cause card this card is held behind, linked from the headline. */
   hold?: CauseHold;
 }
@@ -70,6 +74,13 @@ export class TaskLiveStatusComponent {
         });
       },
     });
+  }
+
+  /** AGT-3690: the host link inside a card opens the host, not the card. */
+  openHost(event: MouseEvent, route: string): void {
+    event.stopPropagation();
+    event.preventDefault();
+    window.location.hash = withRouteSegment(window.location.hash, route);
   }
 
   readonly view = computed<LiveStatusView | null>(() => {
@@ -162,6 +173,19 @@ export class TaskLiveStatusComponent {
         headline: since === null
           ? `Reviewing on ${executor}`
           : `Reviewing on ${executor} since ${clock(since)}`,
+        detail: activityDetail(task, status.latestEventAt, this.now()),
+        next,
+        attempt: status.attempt,
+      };
+    }
+    // AGT-3690: a review lost on its host names the cause, the host and the
+    // automatic retry; before, the card read as reviewing and then parked.
+    const loss = reviewLossHeadline(status.queue, clock);
+    if (loss) {
+      return {
+        tone: status.queue?.state === 'retry-scheduled' ? 'waiting' : 'stalled',
+        headline: loss.text,
+        loss,
         detail: activityDetail(task, status.latestEventAt, this.now()),
         next,
         attempt: status.attempt,

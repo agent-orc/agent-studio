@@ -368,6 +368,7 @@ export class RemoteHostsService {
                 : current.reviewPlane ?? null,
               restartedAt: snapshot.restartedAt ?? null,
               reviewsLost: snapshot.reviewsLost ?? 0,
+              reviewRestarts: snapshot.reviewRestarts ?? [],
               installedClis: snapshot.installedClis ?? current.installedClis ?? [],
               cliUpdate: snapshot.cliUpdate ?? current.cliUpdate ?? null,
               runtimeCapacityAppliedAt:
