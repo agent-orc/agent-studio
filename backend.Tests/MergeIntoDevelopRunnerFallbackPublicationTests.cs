@@ -92,6 +92,42 @@ public sealed partial class MergeIntoDevelopRunnerTests
         Assert.Empty(PublishedGateEvidenceStore.Read(fixture.WatchPath));
     }
 
+    [Fact]
+    public async Task Backfill_started_after_stop_never_runs_its_repair()
+    {
+        var fixture = SeedLateGateFixture("backfill-stop-first", "stop-first", publishDelivery: true);
+        var lifetime = new ApplicationLifetime(NullLogger<ApplicationLifetime>.Instance);
+        var backfill = new PublishedGateEvidenceBackfill(fixture.Scanner, fixture.Git, lifetime,
+            NullLogger<PublishedGateEvidenceBackfill>.Instance);
+
+        await backfill.StartAsync(CancellationToken.None);
+        await backfill.StopAsync(CancellationToken.None);
+        lifetime.NotifyStarted();
+
+        Assert.Null(backfill.RepairTask);
+        await backfill.StartAsync(CancellationToken.None);
+        lifetime.NotifyStarted();
+        Assert.Null(backfill.RepairTask);
+    }
+
+    [Fact]
+    public async Task Backfill_stop_waits_for_the_repair_the_started_host_began()
+    {
+        var fixture = SeedLateGateFixture("backfill-stop-waits", "stop-waits", publishDelivery: true);
+        var lifetime = new ApplicationLifetime(NullLogger<ApplicationLifetime>.Instance);
+        var backfill = new PublishedGateEvidenceBackfill(fixture.Scanner, fixture.Git, lifetime,
+            NullLogger<PublishedGateEvidenceBackfill>.Instance);
+
+        await backfill.StartAsync(CancellationToken.None);
+        lifetime.NotifyStarted();
+        var repair = backfill.RepairTask;
+        Assert.NotNull(repair);
+        await backfill.StopAsync(CancellationToken.None);
+
+        Assert.True(repair!.IsCompleted);
+        await backfill.StopAsync(CancellationToken.None);
+    }
+
     private static PublishedGateEvidenceBackfill Backfill(LateGateFixture fixture)
         => new(fixture.Scanner, fixture.Git,
             new ApplicationLifetime(NullLogger<ApplicationLifetime>.Instance),

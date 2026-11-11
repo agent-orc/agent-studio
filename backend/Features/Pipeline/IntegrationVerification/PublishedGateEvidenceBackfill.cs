@@ -18,41 +18,79 @@ public sealed class PublishedGateEvidenceBackfill(
     ILogger<PublishedGateEvidenceBackfill> logger) : IHostedService
 {
     private const string GatePrefix = IntegrationGateJournal.PreDevelopBuildGateStep;
+    // Start and stop meet under one lock: the started callback can fire on
+    // another thread while the host stops, and a repair started after stop
+    // would outlive it.
+    private readonly Lock _gate = new();
     private CancellationTokenSource? _stop;
+    private CancellationTokenRegistration _started;
     private Task? _repair;
+    private bool _stopped;
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        _stop = CancellationTokenSource.CreateLinkedTokenSource(lifetime.ApplicationStopping);
-        var token = _stop.Token;
-        lifetime.ApplicationStarted.Register(() => _repair = Task.Run(async () =>
+        lock (_gate)
         {
-            try
+            if (_stopped || _stop is not null) return Task.CompletedTask;
+            _stop = CancellationTokenSource.CreateLinkedTokenSource(lifetime.ApplicationStopping);
+            var token = _stop.Token;
+            _started = lifetime.ApplicationStarted.Register(() =>
             {
-                await scanner.WaitForFirstPublicationAsync(token).ConfigureAwait(false);
-                RepairAll(token);
-            }
-            catch (OperationCanceledException ex) when (token.IsCancellationRequested)
-            {
-                SilentCatch.Note(ex, "PublishedGateEvidenceBackfill: stopped before the first index publication");
-            }
-            catch (Exception ex) { logger.LogWarning(ex, "Published gate evidence backfill failed"); }
-        }, token));
+                lock (_gate)
+                {
+                    if (_stopped || _repair is not null) return;
+                    _repair = Task.Run(() => RunRepairAsync(token), token);
+                }
+            });
+        }
         return Task.CompletedTask;
+    }
+
+    private async Task RunRepairAsync(CancellationToken token)
+    {
+        try
+        {
+            await scanner.WaitForFirstPublicationAsync(token).ConfigureAwait(false);
+            RepairAll(token);
+        }
+        catch (OperationCanceledException ex) when (token.IsCancellationRequested)
+        {
+            SilentCatch.Note(ex, "PublishedGateEvidenceBackfill: stopped before the first index publication");
+        }
+        catch (Exception ex) { logger.LogWarning(ex, "Published gate evidence backfill failed"); }
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        var stop = Interlocked.Exchange(ref _stop, null);
+        CancellationTokenSource? stop;
+        Task? repair;
+        CancellationTokenRegistration started;
+        lock (_gate)
+        {
+            if (_stopped) return;
+            _stopped = true;
+            stop = _stop;
+            repair = _repair;
+            started = _started;
+            _stop = null;
+        }
+        // After _stopped no callback starts a repair; the registration goes too.
+        await started.DisposeAsync();
         if (stop is null) return;
         await stop.CancelAsync();
-        if (_repair is not null)
-            try { await _repair.WaitAsync(cancellationToken); }
+        if (repair is not null)
+            try { await repair.WaitAsync(cancellationToken); }
             catch (OperationCanceledException ex)
             {
                 SilentCatch.Note(ex, "PublishedGateEvidenceBackfill: stop cancellation");
             }
         stop.Dispose();
+    }
+
+    /// <summary>The repair started for this host, or null before the host started or after it stopped first.</summary>
+    internal Task? RepairTask
+    {
+        get { lock (_gate) return _repair; }
     }
 
     /// <summary>Backfills every card's qualifying receipts; returns the number of entries added.</summary>

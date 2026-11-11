@@ -540,9 +540,16 @@ now a no-op integration:
   its gate on the exact published SHA. A net-change publication whose green
   gate did not pass on that exact commit is rolled back with `gate-unavailable`.
   The per-task fallback (a card handed off from the batch gate, lane reason
-  `per-task-fallback`) publishes through the same inline push and records the
-  same entry, tree SHA equal to the published SHA; a red, cancelled or
-  missing-source gate records nothing (AGT-3747). Publications made before that
+  `per-task-fallback`) publishes through `RemoteDeliveryIntegration` with a
+  publication fence; the push runs inside that fence as the same inline push
+  and records the same entry, tree SHA equal to the published SHA; a red,
+  cancelled or missing-source gate records nothing (AGT-3747). Cause of the
+  missing `de9f7a8bf` entry: release `9041f2620` recorded the published gate
+  only inside `PushIntegrationBranchAsync`, which the fenced inline push runs
+  before `RecordFreshMergeVerification` writes the card's `Verified` record, so
+  the lookup found no passed own gate and skipped the entry. Commit `1ea24203f`
+  (10 November, after that publication) added the call after the verification
+  record; no path on current `develop` skips it. Publications made before that
   ordering held are repaired once at startup by `PublishedGateEvidenceBackfill`:
   it adds an entry only from a card's own executed `pre-develop-build-gate-*.log`
   receipt with verdict `Ok`, `test-level=full` and a run full suite, whose
