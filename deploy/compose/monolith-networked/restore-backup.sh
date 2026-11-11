@@ -10,7 +10,7 @@
 # it checks the checksum and both key fingerprints, clones every project
 # checkout from its recorded origin (through this account's SSH agent when
 # SSH_AUTH_SOCK is set), and only then writes the workspace, home, task
-# storage, Studio refs, host certificates and Caddy data. The archived stack
+# storage, local Git refs, host certificates and Caddy data. The archived stack
 # configuration lands in restored-stack/ for comparison; the new .env stays.
 set -euo pipefail
 

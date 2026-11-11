@@ -8,7 +8,7 @@ namespace AgentStudio.Management;
 /// <param name="Path">Absolute source directory.</param>
 /// <param name="Projects">
 /// True for the projects directory: project checkouts come back from their
-/// remotes, so only their origin, branch and <c>refs/agent-studio/*</c> travel
+/// remotes, so their origin, branch and all local refs travel
 /// in the archive (see <see cref="BackupCheckouts"/>).
 /// </param>
 /// <param name="Optional">A missing optional source is recorded and skipped instead of failing the run.</param>
