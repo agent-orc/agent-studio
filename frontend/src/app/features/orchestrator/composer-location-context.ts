@@ -158,6 +158,8 @@ export function buildComposerLocationContext(
       return { project: tab.projectName === '__all__' ? null : tab.projectName, surface: 'Board' };
     case 'feed':
       return { project: null, surface: 'Feed' };
+    case 'magazine':
+      return { project: null, surface: 'Magazine', detail: tab.label };
     case 'task':
       return taskContext('Task', tab.taskKey, tasks);
     case 'workbench':

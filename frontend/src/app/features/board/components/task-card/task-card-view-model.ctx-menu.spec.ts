@@ -69,6 +69,14 @@ describe('buildCardCtxMenuItems — delete row (AGT-2020)', () => {
     expect(rows.find(item => item.id === DELETE_ID)?.disabled).toBe(true);
   });
 
+  it('keeps only copy and filter rows for a Reviewer (AGT-3670)', () => {
+    for (const state of [TaskState.HumanReview, TaskState.Ready, TaskState.AutoReview]) {
+      const items = buildCardCtxMenuItems(makeJob({ state }), false, undefined, null, true, true);
+      expect(items.filter(isRow).map(item => item.id)).toEqual(['copy-name', 'copy-id', 'copy-key', 'filter-dependents']);
+      expect(items.some(item => item.kind === 'separator')).toBe(false);
+    }
+  });
+
   it('offers Review first and Normal review order on auto-review cards', () => {
     const normal = buildCardCtxMenuItems(makeJob({ state: TaskState.AutoReview })).filter(isRow);
     expect(normal.find(item => item.id === REVIEW_FIRST_ID)?.disabled).not.toBe(true);
