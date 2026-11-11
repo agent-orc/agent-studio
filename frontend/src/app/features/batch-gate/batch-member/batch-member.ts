@@ -24,6 +24,12 @@ export class BatchMemberComponent {
       ?? (state.pushWait?.jobId === this.taskId() ? state.pushWait : null);
   });
   readonly ejection = computed(() => batchEjectionLabel(this.member()?.reason));
+  readonly redReason = computed(() => {
+    const item = this.member();
+    if (!item?.batchId) return null;
+    const batch = this.gate.state(this.project())()?.batches.find(candidate => candidate.batchId === item.batchId);
+    return batch?.phase === 'red' ? batch.phaseReason ?? item.reasonDetail ?? item.reason ?? 'Batch gate failed' : null;
+  });
   readonly fallbackWait = computed(() => batchFallbackWaitLabel(this.member()?.waitKind));
   constructor() {
     effect(onCleanup => {

@@ -2,18 +2,20 @@ import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, O
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { ModalStackService } from '../../../services/modal-stack.service';
-import { batchIsolationRows, batchPublishedSha, batchReplayLabel, batchRiskLabel } from '../../../models/batch-gate.model';
+import { batchIsolationRows, batchPublishedSha, batchReplayLabel, batchRiskLabel, batchRunStatus, batchRunEvidenceUrl } from '../../../models/batch-gate.model';
 import type { BatchGateBatch, BatchTestFailureRank, BatchTestFailureReport, BatchGateState } from '../../../models/batch-gate.model';
 import { CreateTaskFormService } from '../../board';
 import { TaskService } from '../../../services/task.service';
 import { PendingButtonDirective } from '../../../components/async-feedback';
 import { BatchIsolationComponent } from '../batch-isolation/batch-isolation';
+import { TaskReferenceNavigationService } from '../../../services/task-reference-navigation.service';
+import { StatusIndicatorComponent, type StatusTone } from '../../../components/status-indicator/status-indicator.component';
 import { BatchPhaseMetricsComponent } from '../batch-phase-metrics/batch-phase-metrics';
 
 @Component({
   selector: 'app-batch-panel',
   standalone: true,
-  imports: [PendingButtonDirective, BatchIsolationComponent, BatchPhaseMetricsComponent],
+  imports: [PendingButtonDirective, BatchIsolationComponent, StatusIndicatorComponent, BatchPhaseMetricsComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './batch-panel.html',
   styleUrl: './batch-panel.scss',
@@ -40,7 +42,27 @@ export class BatchPanelComponent implements OnDestroy {
   readonly riskLabel = batchRiskLabel;
   readonly replayLabel = batchReplayLabel;
   readonly publishedSha = batchPublishedSha;
-  readonly phases = ['formed', 'assembling', 'assembled', 'running', 'green', 'publishing', 'published', 'red', 'paused', 'abandoned'];
+  phaseTone(phase: string): StatusTone {
+    switch (phase) {
+      case 'running': return 'running';
+      case 'red': return 'danger';
+      case 'paused': case 'abandoned': return 'warning';
+      case 'green': case 'published': return 'success';
+      default: return 'neutral';
+    }
+  }
+  runTone(status: string): StatusTone {
+    switch (status.toLowerCase()) {
+      case 'running': return 'running';
+      case 'pass': case 'passed': return 'success';
+      case 'fail': case 'failed': return 'danger';
+      case 'interrupted': return 'warning';
+      default: return 'neutral';
+    }
+  }
+  readonly runStatus = batchRunStatus;
+  readonly runEvidenceUrl = batchRunEvidenceUrl;
+  private readonly references = inject(TaskReferenceNavigationService);
   private readonly body = viewChild<ElementRef<HTMLDivElement>>('body');
   private readonly closeButton = viewChild<ElementRef<HTMLButtonElement>>('closeButton');
   private readonly confirmButton = viewChild<ElementRef<HTMLButtonElement>>('confirmButton');
@@ -97,7 +119,24 @@ export class BatchPanelComponent implements OnDestroy {
     const minutes = Math.max(0, Math.round(elapsed / 60_000));
     return `${minutes} min`;
   }
-  phaseLabel(phase: string): string { return phase; }
+  memberTitle(key: string): string | null {
+    const job = this.taskService.jobs().find(item => item.taskKey === key || item.id === key || item.key === key);
+    return job?.title ?? null;
+  }
+  memberHref(key: string): string { return `#/tasks/${encodeURIComponent(key.split('::').at(-1) ?? key)}`; }
+  openMember(event: MouseEvent, key: string): void {
+    const opened = this.references.openTaskKey(key) || this.references.openReference(key);
+    if (opened) { event.preventDefault(); this.close(); }
+  }
+  redNext(batch: BatchGateBatch): string {
+    const children = this.batches().filter(child => child.parentBatchId === batch.batchId);
+    if (children.some(child => ['formed', 'assembling', 'assembled', 'running', 'green', 'publishing'].includes(child.phase)))
+      return 'Isolation has started. The next verdict will identify which members need a separate gate.';
+    const slots = this.state()?.gateSlots;
+    if (slots && slots.busy >= slots.total)
+      return 'Isolation waits for a gate slot. It starts when a slot becomes free; members then return to their agents for a fix or continue through their own gate.';
+    return 'Isolation is awaiting the next planner tick. Members return to their agents for a fix or continue through their own gate after isolation.';
+  }
   isolationRows(batch: BatchGateBatch) { return batchIsolationRows(this.state(), batch); }
   /** The members a failed run proved red, joined for display, or null. */
   provenBy(failure: { batchId: string; runId: string }): string | null {

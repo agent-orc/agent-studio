@@ -11,6 +11,24 @@ namespace AgentStudio.Tests;
 public sealed class BatchGateStoreTests : IDisposable
 {
     [Fact]
+    public void State_history_preserves_recorded_transitions_in_order()
+    {
+        var manifest = Close();
+        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Assembled, Next, 1, Now, "candidate assembled"));
+        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Abandoned, Next, 1, Now.AddMinutes(1), "interrupted"));
+        var history = _store.StateHistory(manifest.BatchId);
+        Assert.Equal(BatchPhase.Assembled, history[^2].Phase);
+        Assert.Equal(BatchPhase.Abandoned, history[^1].Phase);
+        var snapshot = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var batch = Assert.Single(snapshot.GetProperty("batches").EnumerateArray());
+        Assert.Equal("abandoned", batch.GetProperty("phaseHistory").EnumerateArray().Last()
+            .GetProperty("phase").GetString());
+    }
+    [Fact]
     public void State_reports_capacity_and_current_slot_use_together()
     {
         var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
