@@ -3191,6 +3191,13 @@
           <td>The stranding facts counted a review as an owner only while it was Pending or Leased. The persisted retry due time and a cause breaker wait were not facts of <code>AutoReviewStrandingPolicy</code>, so with the default 30 minute threshold every card older than that in Auto Review was escalated when its review host restarted.</td>
           <td>The observed terminal was <span class="lane">5e-escalated</span> with a silently lost retry. A scheduled ReviewInfra retry of the current review now owns the card while its backoff runs and for one threshold after it came due, and a cause breaker wait or probe marker owns the parked card; the rule lives in <code>AutoReviewStrandingPolicy</code>. A retry that no scheduler tick fires still leaves the card ownerless. Every dropped retry is logged as <code>review-infrastructure-retry-dropped</code> and recorded as a <code>review_infrastructure_retry_dropped</code> timeline entry naming the reason and the lane.</td>
         </tr>
+        <tr id="case-integration-push-stale-tracking-ref">
+          <td>2026-11-09</td>
+          <td><code>AGT-3620 / DEMO-3</code><br><span class="small">integration-push-stale-tracking-ref</span></td>
+          <td>No CLI crashed. DEMO-3's integration push reported <code>pushed</code> and its timeline recorded <code>integrated-verified</code>, but the card showed <code>merged-locally</code> and stayed in Auto Review for 9.5 minutes. Opening Project Settings caused a fetch, and the card moved to Human Review three seconds later.</td>
+          <td>The push did not advance the checkout's <code>origin/main</code> tracking ref under the playthrough's URL rewrite. Integration status read that stale ref. The integration-owned resume wait stored no next attempt time.</td>
+          <td>The observed terminal was Human Review after the incidental fetch. A successful push now records its exact SHA in the tracking ref, and every deferred resume stores a next attempt time. The normal post-processing backstop can advance the card without a read-route fetch.</td>
+        </tr>
         <tr id="case-cause-breaker-recheck-newest-delivery">
           <td>2026-11-09</td>
           <td><code>AGT-3617</code><br><span class="small">cause-breaker-recheck-newest-delivery</span></td>
