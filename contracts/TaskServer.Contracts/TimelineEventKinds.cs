@@ -220,6 +220,8 @@ public static class TimelineEventKinds
     public const string TaskReleased = "task_released";
     /// <summary>The task's lane changed (any move).</summary>
     public const string LaneChanged = "lane_changed";
+    /// <summary>An owner tried to move a card, but the transition refused it with a reason.</summary>
+    public const string OwnerMoveRefused = "owner_move_refused";
     /// <summary>
     /// Another card was folded into this one via the consolidation API
     /// (sibling task). The merge endpoint mirrors the secondary's

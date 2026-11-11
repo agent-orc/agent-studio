@@ -1777,10 +1777,13 @@ export class TaskService {
     ).pipe(this.afterRemoval(jobId, watchPath));
   }
 
-  deleteJob(jobId: string, watchPath?: string) {
+  /** `reason` (AGT-3624) is the written reason for deleting unintegrated work. */
+  deleteJob(jobId: string, watchPath?: string, reason?: string | null) {
+    const options = this.withWatchPath(watchPath);
+    const params = reason ? (options.params ?? new HttpParams()).set('reason', reason) : options.params;
     return this.http.delete(
       this.taskV1Url(jobId),
-      this.withWatchPath(watchPath),
+      params ? { params } : {},
     ).pipe(this.afterRemoval(jobId, watchPath));
   }
 

@@ -301,6 +301,18 @@ describe('TaskService', () => {
     expect(service.loading()).toBe(false);
   });
 
+  it('never asks for installation-wide runner status from a Product session (AGT-3668)', () => {
+    TestBed.inject(AuthSessionState).status.set({
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr-1', username: 'carla', displayName: 'Carla', role: 'contributor', projects: ['PROJ-1'],
+        disabled: false, mustChangePassword: false },
+    });
+
+    service.refreshRunnerStatus();
+
+    http.expectNone('/api/v1/studio/runner/status');
+  });
+
   it('restores the task key a board card leaves out as watchPath::id', () => {
     const slim = { id: 'job-2', watchPath: 'C:/projects/demo', state: '2-ready', title: 'Slim' } as TaskInfo;
     const explicit = { id: 'job-3', taskKey: 'other::job-3', watchPath: 'C:/projects/demo', state: '2-ready', title: 'Kept' } as TaskInfo;
