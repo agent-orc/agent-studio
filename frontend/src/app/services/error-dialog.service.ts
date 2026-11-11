@@ -27,6 +27,7 @@ export class ErrorDialogService {
         options.output !== undefined ? serializeValue(options.output) : normalizedError.output,
       stackTrace:
         options.stackTrace !== undefined ? options.stackTrace : normalizedError.stackTrace,
+      refusal: options.refusal ?? null,
     });
     this.copyState.set('idle');
   }
@@ -60,6 +61,8 @@ export class ErrorDialogService {
 
     const payload = [
       `Title: ${activeError.title}`,
+      activeError.refusal ? `Reason: ${activeError.refusal.sentence}` : null,
+      activeError.refusal ? `Next: ${activeError.refusal.nextAction}` : null,
       activeError.source ? `Source: ${activeError.source}` : null,
       '',
       'Message:',

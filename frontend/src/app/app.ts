@@ -122,6 +122,7 @@ import type { TaskDetail, TaskInfo, WatchPathEntry, CliType } from './models/tas
 import { CLI_TYPES, TaskState } from './models/task.model';
 import { laneName } from './models/lane-presentation';
 import { ErrorDialogService } from './services/error-dialog.service';
+import { ConfirmDialogService } from './services/confirm-dialog.service';
 import {
   cliTypeLabel as fmtCliTypeLabel,
   formatMultiplier as fmtMultiplier,
@@ -241,6 +242,8 @@ export class App implements OnInit, OnDestroy {
   readonly auth = inject(AuthService); private studioInitialized = false;
   readonly jobService = inject(TaskService);
   readonly errorDialog = inject(ErrorDialogService);
+  /** Drives the deferred confirm dialog mount; both dialogs stay out of the initial bundle. */
+  readonly confirmDialog = inject(ConfirmDialogService);
   readonly devTools = inject(DevToolsService);
   readonly clientService = inject(ClientService);
   private readonly notifications = inject(NotificationService);
