@@ -41,6 +41,14 @@ public sealed partial class BatchGatePilotService
     private IReadOnlyList<BatchGateManifest> OrderForStart(IReadOnlyList<BatchGateManifest> formed)
         => BatchGateFlightQueue.Order(_store, formed, LeaseDeadlineDeferred());
 
+    internal IReadOnlyList<BatchGateManifest> StartOrderForTesting(IReadOnlyList<BatchGateManifest> formed)
+        => OrderForStart(formed);
+
+    internal void DeferAtLeaseDeadlineForTesting(string project, string batchId)
+    {
+        lock (_runningBatches) _leaseDeadlineDeferred[project] = batchId;
+    }
+
     private Func<string, string?> LeaseDeadlineDeferred()
     {
         Dictionary<string, string> deferred;
@@ -168,6 +176,7 @@ public sealed partial class BatchGatePilotService
     {
         var batchId = flight.Manifest.BatchId;
         var state = _store.LatestState(batchId);
+        if (state.Phase == BatchPhase.Unknown) return false;
         return MonolithTransitionAdapter.BatchFlightStartsNext(cancelledAtLeaseDeadline,
             state.Phase == BatchPhase.Formed, state.Phase == BatchPhase.Abandoned,
             _store.ListRuns(batchId).Count > 0, state.SuccessorBatchId is not null,

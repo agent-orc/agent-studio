@@ -125,10 +125,10 @@ public sealed class StudioBackupTests : IDisposable
         Assert.False(File.Exists(_fixture.Catalog.ArchivePath(created[0])));
         Assert.False(File.Exists(_fixture.Catalog.ChecksumPath(created[0])));
 
-        var (matched, removed) = service.ApplyRetention(1, dryRun: true);
+        var (matched, removed) = service.ApplyRetention(1, dryRun: true, "test");
         Assert.Equal((1, 0), (matched, removed));
         Assert.Equal(2, service.List().Count);
-        Assert.Equal((1, 1), service.ApplyRetention(1, dryRun: false));
+        Assert.Equal((1, 1), service.ApplyRetention(1, dryRun: false, "test"));
         Assert.Equal(created[2], Assert.Single(service.List()).Id);
     }
 
@@ -268,7 +268,7 @@ public sealed class StudioBackupTests : IDisposable
         var record = await service.CreateAsync("test", CancellationToken.None);
         Assert.Equal("pending", Assert.Single(service.List()).Upload?.State);
 
-        Assert.Equal(0, await service.UploadPendingAsync(force: false, CancellationToken.None));
+        Assert.Equal(0, await service.UploadPendingAsync(force: false, "test", CancellationToken.None));
         var failed = Assert.Single(service.List()).Upload!;
         Assert.Equal(("failed", 1), (failed.State, failed.Attempts));
         Assert.Contains("target offline", failed.Error);
@@ -278,9 +278,9 @@ public sealed class StudioBackupTests : IDisposable
         Assert.Equal("failing", overview.State);
 
         _clock.Advance(TimeSpan.FromMinutes(14));
-        Assert.Equal(0, await service.UploadPendingAsync(force: false, CancellationToken.None));
+        Assert.Equal(0, await service.UploadPendingAsync(force: false, "test", CancellationToken.None));
         _clock.Advance(TimeSpan.FromMinutes(1));
-        Assert.Equal(1, await service.UploadPendingAsync(force: false, CancellationToken.None));
+        Assert.Equal(1, await service.UploadPendingAsync(force: false, "test", CancellationToken.None));
         Assert.Equal("uploaded", Assert.Single(service.List()).Upload?.State);
         Assert.Equal("current", service.Overview().OffHost.State);
         Assert.Equal(record.FileName, target.Uploads[0].Name);

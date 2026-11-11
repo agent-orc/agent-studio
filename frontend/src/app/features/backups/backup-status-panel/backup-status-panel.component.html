@@ -61,6 +61,14 @@
             @if (o.nextBackupAt) { <small>Next <time [attr.datetime]="o.nextBackupAt">{{ o.nextBackupAt | date:'short':'UTC' }} UTC</time></small> }
           </dd>
         </div>
+        <div data-testid="operations-backups-key-id">
+          <dt>Backup key id</dt>
+          <dd>@if (o.keyId) { <code>{{ o.keyId }}</code> } @else { None }</dd>
+        </div>
+        <div data-testid="operations-backups-secret-key-id">
+          <dt>Secret store key id</dt>
+          <dd>@if (o.secretKeyId) { <code>{{ o.secretKeyId }}</code> } @else { None }</dd>
+        </div>
       </dl>
       @if (o.backups.length) {
         <div class="backup-status__table-wrap">

@@ -180,8 +180,14 @@ public sealed class TaskRoutingMutationPerformanceTests : IDisposable
         var second = Assert.Single(initial, task => task.Id == "second");
         using var readEntered = new ManualResetEventSlim();
         using var releaseRead = new ManualResetEventSlim();
+        var reads = 0;
         var slowRead = Task.Run(() => cache.PublishRoutingFromFolder(firstFolder, () =>
         {
+            // A re-read under the publication lock sees the newer disk card.
+            if (Interlocked.Increment(ref reads) > 1)
+                return scanner.ScanJobFolder(firstFolder,
+                    new WatchPathEntry { Name = "publication-project", Path = watchPath },
+                    TaskStates.Ready, bypassMemo: true);
             readEntered.Set();
             if (!releaseRead.Wait(TimeSpan.FromSeconds(10)))
                 throw new TimeoutException("Routing folder read was not released");
