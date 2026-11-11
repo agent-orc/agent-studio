@@ -535,6 +535,16 @@ now a no-op integration:
   card has no record of its own. A red gate is never recorded, a rewritten
   branch that no longer carries the tree drops the evidence, and containment
   alone still never verifies. The file keeps the newest 200 entries per branch.
+  The inline per-task push records the card's verification before appending
+  this project-level evidence, so a single-parent net-change publication keeps
+  its gate on the exact published SHA. A net-change publication whose green
+  gate did not pass on that exact commit is rolled back with `gate-unavailable`.
+  Acceptance also counts a passed full-suite batch base verdict as the gate of
+  its base commit when its gate profile digest matches the current project
+  profile, its evidence file exists, and that commit is on the first-parent
+  integration line. Failed, provisional, narrow, stale-profile, and
+  missing-evidence base verdicts do not cover a publication; the refusal names
+  such a base check.
 - **Batch candidate evidence.** The operator fast path pushes a batch
   candidate to the branch before its members' reviews settle. The batch gate
   already tested the candidate and wrote a run verdict (`outcome: pass`,

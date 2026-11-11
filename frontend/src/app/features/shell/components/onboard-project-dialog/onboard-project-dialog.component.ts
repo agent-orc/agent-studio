@@ -102,6 +102,9 @@ export class OnboardProjectDialogComponent {
     effect(() => {
       if (!this.manager.onboardProjectOpen()) return;
       const workspaceId = this.manager.onboardWorkspaceId() ?? '';
+      // Opening reads and writes other signals (the host registry reloads its
+      // own host list). Tracking them re-ran this effect on every host load and
+      // never rendered the dialog.
       untracked(() => this.initialize(workspaceId));
     });
     effect(() => {
