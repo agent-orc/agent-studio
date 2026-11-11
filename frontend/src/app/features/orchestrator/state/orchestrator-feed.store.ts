@@ -58,7 +58,7 @@ export class OrchestratorFeedStore {
         // reuseStableEntries (`next.map` crashed app-wide via the global error
         // dialog when the feed met a `[]` catch-all mock, sweep 31.07.).
         const entries = Array.isArray(response?.entries)
-          ? response.entries
+          ? [...response.entries, ...(Array.isArray(response.ownerEntries) ? response.ownerEntries : [])]
           : Array.isArray(response) ? (response as unknown as OrchestratorLogEntry[]) : [];
         const next = this.reuseStableEntries(entries);
         if (!this.sameReferences(this._entries(), next)) this._entries.set(next);

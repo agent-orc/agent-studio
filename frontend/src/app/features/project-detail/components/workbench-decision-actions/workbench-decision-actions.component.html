@@ -61,7 +61,7 @@
   <div class="decision-actions__bar">
     <span data-testid="workbench-decision-answer-count">
       {{ decisionPoints().length }} inline decision point{{ decisionPoints().length === 1 ? '' : 's' }}
-      · {{ answersComplete() ? 'ready' : 'answer every point in the document' }}
+      · {{ answersComplete() ? 'ready' : 'answer every point in the document before recording them together' }}
     </span>
     <div class="decision-actions__buttons">
       @if (!inline()) {

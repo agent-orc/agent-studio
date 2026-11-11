@@ -1,8 +1,51 @@
 import { test, expect } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import * as path from 'node:path';
+import { setTheme } from '../helpers/theme';
 
 const screenshotDir = path.join(process.env.JOB_RESULTS_DIR ?? path.resolve(__dirname, '..', '..', '..', 'results'), 'security');
+
+test('first owner sign-in shows the restored archive and security review', async ({ page }) => {
+  const evidence = path.join(process.env.JOB_RESULTS_DIR ?? screenshotDir, 'restore-security');
+  mkdirSync(evidence, { recursive: true });
+  const owner = { id: 'usr_owner', username: 'owner', displayName: 'Owner', role: 'owner',
+    projects: [], disabled: false, mustChangePassword: false };
+  const notice = { archiveId: 'studio-backup-drill', archiveCreatedAt: '2026-11-09T06:00:00Z',
+    restoredAt: '2026-11-10T06:00:00Z' };
+  await page.route('**/api/auth/status', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: false }),
+  }));
+  await page.route('**/api/auth/login', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: owner, restoreNotice: notice }),
+  }));
+  let acknowledged = false;
+  await page.route('**/api/auth/restore-notice/acknowledge', route => {
+    expect(route.request().postDataJSON()).toEqual({ archiveId: notice.archiveId });
+    acknowledged = true;
+    return route.fulfill({ status: 204, body: '' });
+  });
+  await page.goto('/');
+  await page.getByLabel('Username').fill('owner');
+  await page.getByLabel('Password').fill('owner password long enough');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  const gate = page.getByTestId('auth-gate');
+  await expect(gate.getByRole('heading', { name: 'Review security after restore' })).toBeVisible();
+  await expect(gate.getByTestId('restore-archive-id')).toHaveText(notice.archiveId);
+  await expect(gate.getByTestId('restore-security-checks').locator('li')).toHaveCount(5);
+  await setTheme(page, 'light');
+  await page.screenshot({ path: path.join(evidence, 'restore-notice-light.png'), fullPage: true });
+  await setTheme(page, 'dark');
+  await page.screenshot({ path: path.join(evidence, 'restore-notice-dark.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: path.join(evidence, 'restore-notice-390.png'), fullPage: true });
+  await gate.getByTestId('restore-review-access').click();
+  await expect(gate).toHaveCount(0);
+  expect(acknowledged).toBe(true);
+  await expect(page).toHaveURL(/#\/workspace\/settings\/access$/);
+});
 
 test('auth gate follows saved light and dark themes at phone width', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -142,6 +185,12 @@ test('one-time Product invitation lets the recipient choose a password', async (
     status: 200, contentType: 'application/json',
     body: JSON.stringify({ bootstrapRequired: false, authenticated: false, user: null }),
   }));
+  await page.route('**/api/v1/studio/auth/invite/preview?*', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ username: 'product', displayName: 'Product User', inviter: 'Owner',
+      role: 'Product', projects: ['Assigned project'], expiresAt: '2026-11-12T09:00:00Z',
+      secondFactorRequired: false }),
+  }));
   await page.route('**/api/v1/studio/auth/invite/accept', route => {
     expect(route.request().postDataJSON()).toEqual({ token: 'sti_inv_example', newPassword: 'product password long enough' });
     return route.fulfill({
@@ -153,9 +202,12 @@ test('one-time Product invitation lets the recipient choose a password', async (
   });
   await page.goto('/?invite=sti_inv_example');
   await expect(page.getByRole('heading', { name: 'Accept invitation' })).toBeVisible();
+  await expect(page.getByTestId('invitation-context')).toContainText('Owner invited Product User (product) to Assigned project as Product');
   await page.screenshot({ path: path.join(resultDir, 'product-invitation.png'), fullPage: true });
   await page.getByLabel('New password').fill('product password long enough');
-  await page.getByRole('button', { name: 'Join project' }).click();
+  await page.getByRole('button', { name: 'Accept invitation' }).click();
+  await expect(page.getByRole('heading', { name: 'Set up a second factor' })).toBeVisible();
+  await page.getByTestId('factor-skip').click();
   await expect(page.getByTestId('auth-gate')).toHaveCount(0);
   await expect(page).toHaveURL(/\/#\/board$/);
   expect(new URL(page.url()).search).toBe('');

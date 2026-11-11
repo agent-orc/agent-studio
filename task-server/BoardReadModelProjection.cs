@@ -14,9 +14,8 @@ public static class BoardReadModelProjection
     /// <summary>Bumped when the projection changes shape, so an old validator never matches.</summary>
     public const int Version = 1;
 
-    public static string FormatETag(long generation, long? workspaceSourceGeneration = null)
-        => $"\"board-v{Version}-g{generation}"
-           + (workspaceSourceGeneration is { } source ? $"-w{source}" : "") + "\"";
+    public static string FormatETag(long generation)
+        => $"\"board-v{Version}-g{generation}\"";
 
     public static BoardReadModelResponse Project(
         string projectId,
@@ -54,7 +53,7 @@ public static class BoardReadModelProjection
             projectId,
             projectName,
             generation,
-            FormatETag(generation, workspaceSourceGeneration),
+            FormatETag(generation),
             lanes,
             lanes.Sum(lane => lane.Count),
             archived,
