@@ -514,15 +514,28 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         var status = await client.GetFromJsonAsync<AuthStatusResponse>("/api/auth/status");
         Assert.True(status!.BootstrapCodeRequired);
         var owner = new { username = "first.owner", password = "correct horse battery staple!", displayName = "First Owner" };
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/auth/bootstrap", owner)).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/auth/bootstrap", new
+        await AssertCodeError(await client.PostAsJsonAsync("/api/auth/bootstrap", owner));
+        await AssertCodeError(await client.PostAsJsonAsync("/api/auth/bootstrap", new
         {
             owner.username, owner.password, owner.displayName, bootstrapCode = "wrong"
-        })).StatusCode);
+        }));
+        Assert.True(factory.Services.GetRequiredService<AccessSecurityStore>().BootstrapRequired);
         (await client.PostAsJsonAsync("/api/auth/bootstrap", new
         {
             owner.username, owner.password, owner.displayName, bootstrapCode = "website-setup-code"
         })).EnsureSuccessStatusCode();
+
+        static async Task AssertCodeError(HttpResponseMessage response)
+        {
+            using (response)
+            {
+                Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+                var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+                Assert.Equal("bootstrap-validation", body.GetProperty("error").GetString());
+                Assert.Equal("A valid installer owner code is required.",
+                    body.GetProperty("errors").GetProperty("bootstrapCode")[0].GetString());
+            }
+        }
     }
 
     [Fact]
