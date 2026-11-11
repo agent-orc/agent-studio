@@ -134,6 +134,10 @@ async function installMocks(
   let decisionStage: string | null = null;
   let revision = '0123456789abcdef';
   let fingerprint = 'a'.repeat(64);
+  const catalogueStatus = () => decisionStage === 'succeeded' ? 'decided' : descriptor.status;
+  const catalogueOpenCount = () => decisionStage === 'succeeded' ? 0
+    : descriptor.status === 'decision-pending' || descriptor.phase === 'decision-ready'
+      || descriptor.lifecycleState === 'review-requested' ? 1 : 0;
 
   await page.route('**/api/**', route => json(route, []));
   await page.route('**/api/v1/studio/auth/status', route => json(route, {
@@ -202,7 +206,9 @@ async function installMocks(
       workbench: {
         id: WORKBENCH_ID, key: WORKBENCH_KEY, title: 'Naming Dossier',
         summary: 'Choose the stable naming contract used by public references.',
-        status: descriptor.status, phase: descriptor.phase,
+        status: catalogueStatus(), phase: descriptor.phase,
+        lifecycleState: decisionStage === 'succeeded' ? 'decided' : descriptor.lifecycleState,
+        openDecisionCount: catalogueOpenCount(),
         updatedAtUtc: '2026-08-11T10:00:00Z',
         entryPath: DOSSIER_PATH,
         valid: true, error: null, sourceTaskKeys: ['AGT-2600'],
@@ -219,7 +225,9 @@ async function installMocks(
       items: [{
         id: WORKBENCH_ID, key: WORKBENCH_KEY, title: 'Naming Dossier',
         summary: 'Choose the stable naming contract used by public references.',
-        status: descriptor.status, phase: descriptor.phase,
+        status: catalogueStatus(), phase: descriptor.phase,
+        lifecycleState: decisionStage === 'succeeded' ? 'decided' : descriptor.lifecycleState,
+        openDecisionCount: catalogueOpenCount(),
         updatedAtUtc: '2026-08-11T10:00:00Z',
         entryPath: DOSSIER_PATH,
         valid: true, error: null, sourceTaskKeys: ['AGT-2600'],
@@ -401,7 +409,7 @@ async function installMocks(
       workbench: {
         id: WORKBENCH_ID, key: WORKBENCH_KEY, title: 'Naming Dossier',
         summary: 'Choose the stable naming contract used by public references.',
-        status: decisionStage === 'succeeded' ? 'decided' : descriptor.status,
+        status: catalogueStatus(), openDecisionCount: catalogueOpenCount(),
         phase: descriptor.phase, updatedAtUtc: '2026-08-11T10:00:00Z',
         entryPath: 'docs/operations/naming-dossier/index.html', valid: true, error: null,
         sourceTaskKeys: ['AGT-2600'], relatedTaskKeys: taskCreated ? ['AGT-2611'] : [],
@@ -452,6 +460,9 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
   await seedWorkbench(page);
   await page.goto('/');
   await expect(page.getByTestId('workbench-viewer')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('workbench-viewer-open-decisions')).toHaveText('1 open');
+  await expect(page.getByTestId(`studio-explorer-workbench-group-${PROJECT}-needs-decision`))
+    .toContainText('1');
 
   const cardList = page.getByTestId('dossier-card-list');
   await cardList.getByTestId('dossier-cards-toggle').click();
@@ -565,6 +576,11 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.reload();
   await expect(page.getByTestId('workbench-viewer')).toBeVisible();
+  await expect(page.getByTestId('workbench-viewer-open-decisions')).toHaveText('0 open');
+  await expect(page.getByTestId(`studio-explorer-workbench-group-${PROJECT}-needs-decision`))
+    .not.toContainText('1');
+  await expect(page.getByTestId(`studio-explorer-workbench-group-${PROJECT}-in-implementation`))
+    .toContainText('1');
   const reloadedCards = page.getByTestId('dossier-card-list');
   await reloadedCards.getByTestId('dossier-cards-toggle').click();
   await reloadedCards.getByTestId('dossier-card-AGT-2611').click();

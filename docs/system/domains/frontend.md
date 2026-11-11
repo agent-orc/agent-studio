@@ -828,7 +828,8 @@ occur. It is not a claim about tunnel transfer time.
   the viewport-safe shared tooltip instead of a second tree line. The Dossiers
   count is the number of open decisions, not the number of documents. A
   decision-pending status or decision-ready phase opens that count; unsaved
-  browser selections do not close it.
+  browser selections do not close it. An active Dossier with open decisions
+  stays under `Needs a decision` until the recorded decision closes them.
   Dossier overview and Explorer lifecycle headers are keyboard-accessible disclosures whose per-project collapsed state persists locally; a newly populated section opens once with its quiet count visible.
   Lifecycle-group counts equal
   their visible leaves and zero counts stay hidden. The catalogue's
