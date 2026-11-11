@@ -381,7 +381,9 @@ named sessions with the kill switch if any action must stop sooner.
 
 While Studio remains stopped, record each host action with its operation,
 target, and outcome. The command requires the current authenticator code on
-hidden input and confirms the host journal and sink acknowledgement:
+hidden input and confirms the host journal and sink acknowledgement. Each
+opening and recorded action needs a code from a later 30-second step than the
+last accepted code:
 
 ```sh
 dotnet OrchestratorApi.dll --record-break-glass \

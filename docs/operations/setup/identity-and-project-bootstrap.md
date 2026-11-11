@@ -67,6 +67,10 @@ provide host, credential, merge, or promotion access.
    regardless of role. A new operator accepts an invitation in the same
    limited setup session.
 
+An authenticator code is accepted once. Sign-in and step-up require a code
+from a later 30-second step than the last accepted code, including the
+enrollment confirmation. A reused code counts as a failed sign-in.
+
 The networked backend has a separate IAM role model: **Owner, Admin,
 Developer, Approver, and Viewer** must register a factor because their permissions
 include run operation, deployment or approval, secrets, or access. Viewer holds

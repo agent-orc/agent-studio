@@ -114,8 +114,9 @@ public static class LegacyRoleMapping
             return new LegacyRoleSummary(StudioRoles.Contributor, projects, approvals);
         }
 
-        // Developer, Approver, and Viewer read their scopes; an older binary
-        // must not let them write, so they summarize as viewer.
+        // Developer, Approver, Reviewer, and Viewer read their scopes; an older
+        // binary must not let them write, so they summarize as viewer. A
+        // Reviewer loses only the Human Review decision there.
         return new LegacyRoleSummary(StudioRoles.Viewer, ProjectsOf(bindings), []);
     }
 

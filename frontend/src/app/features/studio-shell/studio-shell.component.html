@@ -88,6 +88,8 @@
     </button>
 
     <div class="studio-titlebar__actions" data-testid="studio-titlebar-actions">
+      <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-magazine"
+              data-nav-inline-from="desktop" (click)="openInstallationMagazine()">Magazine</button>
       <app-task-defaults-control (cliChange)="defaultCliChange.emit($event)"
                                  (modelChange)="defaultModelChange.emit($event)" />
       <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-environment"
@@ -237,6 +239,7 @@
                 <!-- AGT-3668: without a project the editor says why; no empty tree. -->
                 @if (!productWithoutProject()) {
                   <app-explorer-workspace-tree
+                    (workspaceMagazineRequest)="openWorkspaceMagazine($event.id, $event.label)"
                     [projectRows]="projectRows()"
                     [registryWorkspaces]="registryWorkspaces()"
                     [registryProjects]="registryProjects()"
@@ -473,6 +476,13 @@
         -->
         @if (!productWithoutProject()) {
           <ng-content select="[studioContent]"></ng-content>
+        }
+        @if (activeTab(); as tab) {
+          @if (tab.kind === 'magazine') {
+            @if (magazineComponent(); as component) {
+              <ng-container *ngComponentOutlet="component; inputs: { scope: tab.scope, label: tab.label, children: magazineChildren(tab.scope), projects: magazineProjects() }" />
+            }
+          }
         }
         @if (activeTab()?.kind === 'deployment-dashboard') {
           @defer (on idle) {
