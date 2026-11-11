@@ -6,6 +6,12 @@
     </div>
   </header>
 
+  @if (available() === false) {
+    <p data-testid="retention-unavailable">Retention management requires a connected Task Server. This local connection does not serve that panel.</p>
+  } @else if (available() === null) {
+    <p role="status">Checking retention availability…</p>
+  } @else {
+
   <section class="retention__section" aria-labelledby="retention-rules-title">
     <header><h3 id="retention-rules-title">Rules</h3><p>Periods start when a task enters Accepted or Archive. Protected lanes are never archived.</p></header>
     <app-retention-rules-table scope="workspace" />
@@ -45,4 +51,5 @@
     <header><h3 id="retention-backups-title">Backups</h3><p>Each full set contains the store snapshot, referenced cold payloads, inventory hash, and analysis export.</p></header>
     <app-retention-backups />
   </section>
+  }
 </section>

@@ -1,4 +1,4 @@
-import { HttpErrorResponse } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, computed, inject, signal, viewChild } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { formatRetentionBytes, type RetentionPlan } from '../../models/retention.model';
@@ -22,7 +22,9 @@ import { RetentionRunHistoryComponent } from '../retention-run-history/retention
   styleUrl: './retention-admin.component.scss',
 })
 export class RetentionAdminComponent {
+  private readonly http = inject(HttpClient);
   private readonly retention = inject(RetentionService);
+  readonly available = signal<boolean | null>(null);
   private readonly history = viewChild(RetentionRunHistoryComponent);
 
   readonly report = signal<RetentionPlan | null>(null);
@@ -31,6 +33,13 @@ export class RetentionAdminComponent {
   readonly busy = signal<'plan' | 'apply' | null>(null);
   readonly error = signal<string | null>(null);
   readonly warnings = signal<string[]>([]);
+
+  constructor() {
+    this.http.get('/api/v1/management/retention/policy').subscribe({
+      next: () => this.available.set(true),
+      error: (error: unknown) => this.available.set(!(error instanceof HttpErrorResponse && error.status === 404)),
+    });
+  }
 
   readonly archiveBytes = computed(() => this.report()?.actions
     .filter(action => action.kind === 'ArchiveHeavy' || action.kind === 'ArchiveTask')

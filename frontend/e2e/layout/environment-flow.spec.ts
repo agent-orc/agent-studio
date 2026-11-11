@@ -131,4 +131,7 @@ test('environment view refreshes and fits light and dark desktop widths', async 
   }
   const box = await view.boundingBox();
   expect(box?.width).toBe(1920);
+  await page.route('**/api/v1/management/attempt-visibility', route => route.fulfill({ status: 404, json: { error: 'not-found' } }));
+  await view.getByRole('button', { name: 'Refresh' }).click();
+  await expect(view.getByText('Attempt receipts require a connected Task Server. This local connection does not serve that panel.')).toBeVisible();
 });

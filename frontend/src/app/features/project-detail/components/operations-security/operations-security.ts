@@ -13,7 +13,7 @@ import {
 export const SECURITY_POSTURE_URL = '/api/security/posture';
 
 /**
- * Installation security view on the Operations page (AGT-3575): ranked
+ * Installation security view in Settings → Operations (AGT-3575): ranked
  * findings with the ones that need action within 14 days first, then the
  * facts they come from. Reads the same route operator agents use; a caller
  * without security.posture.read gets 403 and the section stays hidden.

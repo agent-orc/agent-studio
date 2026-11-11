@@ -320,7 +320,7 @@ test.describe('Project Deploy area (mocked)', () => {
     await capture(page, 'operations-older-release');
   });
 
-  test('Operations shows installation backups with the stale warning and the off-host copy in both themes (AGT-3574)', async ({ page }) => {
+  test('project Operations links to installation backups in Settings with the stale warning in both themes (AGT-3574)', async ({ page }) => {
     await openDeploy(page, fullMocks());
     await page.route(`**${DEPLOY}/operations`, route => answer(route, {
       project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z', environments: [],
@@ -353,7 +353,11 @@ test.describe('Project Deploy area (mocked)', () => {
       backups: [newest, backup('studio-backup-20261019T000000Z-9f8e7d', '2026-10-19T00:00:00+00:00', 'unverified', 'uploaded')],
       generatedAt: '2026-10-20T08:00:00+00:00',
     }));
+    await page.route('**/api/security/posture', route => route.fulfill(json({ error: 'permission-denied' }, 403)));
     await page.getByTestId('deploy-tab-operations').click();
+    await expect(page.getByTestId('project-operations').getByTestId('operations-backups')).toHaveCount(0);
+    await page.getByTestId('project-operations').getByRole('link', { name: 'Settings → Operations' }).click();
+    await expect(page.getByTestId('workspace-operations')).toBeVisible();
     const backups = page.getByTestId('operations-backups');
     await expect(backups.getByTestId('operations-backups-state')).toHaveAttribute('data-state', 'failing');
     await expect(backups.getByTestId('operations-backups-warnings').locator('[data-code="backup-stale"]')).toContainText('26 hours old');
