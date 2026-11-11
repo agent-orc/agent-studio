@@ -65,7 +65,8 @@ public sealed partial class TaskServerStore
     // schema 42 changes were integrated.
     // 44 adds bounded, capability-gated one-shot model jobs.
     // 45 binds those jobs to the runner instance that claimed them.
-    public const int CurrentSchemaVersion = 45;
+    // 46 persists the last accepted TOTP step for each Studio user.
+    public const int CurrentSchemaVersion = 46;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -4887,10 +4888,12 @@ public sealed partial class TaskServerStore
             CREATE TABLE IF NOT EXISTS studio_factors(
                 user_id TEXT PRIMARY KEY REFERENCES studio_users(id),
                 totp_secret TEXT,
+                last_accepted_totp_step INTEGER,
                 recovery_hashes_json TEXT NOT NULL DEFAULT '[]',
                 passkeys_json TEXT NOT NULL DEFAULT '[]'
             );
             """, ct);
+        await EnsureColumnAsync(connection, "studio_factors", "last_accepted_totp_step", "INTEGER", ct);
         await ExecuteAsync(connection, """
             CREATE INDEX IF NOT EXISTS ix_tasks_project_state_rank ON tasks(project_id, state, rank);
             CREATE INDEX IF NOT EXISTS ix_studio_sessions_user ON studio_sessions(user_id, revoked_at);
