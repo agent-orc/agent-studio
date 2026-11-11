@@ -2227,6 +2227,34 @@ public sealed partial class RemoteReviewAuthorityTests
     }
 
     [Fact]
+    public async Task Concept_review_uses_mirrored_authored_version_after_two_follow_up_rounds()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        const string authored = "Deliver the persona team Dossier.";
+        var version = Hash(authored);
+        var fullPrompt = authored + "\nFollow-up round one.\nFollow-up round two.";
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto("aspect-concept-fit", "concept-fit", "codex", [],
+                ExecutionKind: ReviewCommandKinds.AgentAspect,
+                Prompt: "Review the Dossier.", CliType: "codex", Model: "gpt-5.6-sol")],
+            ["concept-fit"], IntegrationRef: "refs/heads/develop",
+            BriefSha256: version, TaskMode: "concept");
+        var subject = await SeedReviewSubjectAsync(store, plan: plan,
+            fullPrompt: fullPrompt, authoredVersion: version);
+        Assert.Equal(version, subject.Plan.BriefSha256);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+
+        var report = await store.ReportReviewAsync(claim.Attempt!.AttemptId,
+            PassingReport(claim), "review-a", default);
+
+        Assert.Equal("Pass", report.Outcome);
+    }
+
+    [Fact]
     public async Task Coding_agent_verdict_citing_changed_file_keeps_existing_delivery_grade()
     {
         using var temp = new TempDirectory();
@@ -2795,7 +2823,9 @@ public sealed partial class RemoteReviewAuthorityTests
         bool policyDifferentHost = false,
         string codingHost = "coding-host",
         ReviewPlanDto? plan = null,
-        string? codingPrincipal = null)
+        string? codingPrincipal = null,
+        string? fullPrompt = null,
+        string? authoredVersion = null)
     {
         var workspaces = await store.ListWorkspacesAsync(default);
         var workspace = workspaces.FirstOrDefault()
@@ -2806,6 +2836,13 @@ public sealed partial class RemoteReviewAuthorityTests
                 new CreateProjectRequest(workspace.WorkspaceId, "Project", "TS"), "test", default);
         var task = await store.CreateTaskAsync(
             project.ProjectId, new CreateTaskRequest(title, "Do the work", "2-ready"), "test", default);
+        if (fullPrompt is not null && authoredVersion is not null)
+        {
+            await TaskArtifactsContentTests.MirrorAsync(store, project.Name, task.TaskKey,
+                "prompt.md", Encoding.UTF8.GetBytes(fullPrompt));
+            await TaskArtifactsContentTests.MirrorAsync(store, project.Name, task.TaskKey,
+                ".metadata/brief-version", Encoding.UTF8.GetBytes(authoredVersion));
+        }
         var codingId = "coding-" + task.TaskId;
         var codingInstance = "instance-" + task.TaskId;
         await store.RegisterRunnerAsync(
