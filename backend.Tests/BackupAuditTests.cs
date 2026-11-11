@@ -171,6 +171,26 @@ public sealed class BackupAuditTests : IDisposable
         Assert.Equal("The last backup run failed: Could not write <path>: No space left on device", scoped.Warnings[0].Message);
     }
 
+    [Theory]
+    [InlineData("/mnt/private-backup")]
+    [InlineData("backup@private-host.example:/srv/archive")]
+    [InlineData("s3://private-bucket/archive")]
+    public void Scoped_overview_hides_off_host_target_in_error_and_warning(string target)
+    {
+        var overview = Service(null).Overview() with
+        {
+            OffHost = new BackupOffHostOverview("s3", target, "failed", null, null,
+                $"Upload to {target} failed"),
+            Warnings = [new BackupWarning("offhost-failed", "danger", $"Upload to {target} failed")],
+        };
+
+        var scoped = BackupEndpoints.Scoped(overview);
+
+        Assert.DoesNotContain(target, JsonSerializer.Serialize(scoped));
+        Assert.Equal("offhost-failed", Assert.Single(scoped.Warnings).Code);
+        Assert.Contains("off-host copy failed", scoped.OffHost.LastError);
+    }
+
     private StudioBackupService Service(IBackupTarget? target, bool withKey = true)
         => new(_fixture.Configuration(withKey), new BackupWritePause(), _clock, targets: _ => target, audit: _audit);
 
