@@ -116,6 +116,12 @@ distinct cards with a completed build/test step and the batch gate uses members
 in verified publications. Gate waiting comes from the active auto-review gate
 queue, and batch gate waiting from its pending store. Deployment card counts
 have no global attribution source yet, so that value remains unavailable.
+Ready-card waiting reasons use the pickup hold policy before aggregation, so
+execution placement and other holds count under their actual mechanism. Lane
+labels in Environment and Activity use `laneName()`; Activity alert summaries
+show affected card keys and titles when available, and a linked next step opens
+the affected card. The Activity message column remains readable at 1280 px and
+wraps on narrow screens.
 
 The view also lists application health for every declared environment from
 `GET /api/environment/health`: status, uptime over 24 hours, 7 days and
