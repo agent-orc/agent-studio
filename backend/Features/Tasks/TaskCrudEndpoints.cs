@@ -1583,11 +1583,15 @@ public static class TaskCrudEndpoints
     internal static readonly string OperatorAuthorityRequired =
         "operatorOverride needs the Admin or Owner role in this project.";
 
-    private static async Task<IResult> MoveOperatorWithRunIntentAsync(
+    /// <param name="expectedState">
+    /// When set, the move happens only from this lane, checked under the claim
+    /// gate (the Human Review decision, AGT-3670); another lane answers 409.
+    /// </param>
+    internal static async Task<IResult> MoveOperatorWithRunIntentAsync(
         string jobId, string? watchPath, MoveJobRequest request, HttpContext context,
         TaskTransitionService transitions, TaskScannerService scanner, RunLeaseService leases,
         AttemptAuthorityService authority, TimelineLog timeline,
-        AgentStudio.Pipeline.BatchIsolationGuard isolation, CancellationToken ct)
+        AgentStudio.Pipeline.BatchIsolationGuard isolation, CancellationToken ct, string? expectedState = null)
     {
         // Completion and claim use this same gate. Keep the lane move and its
         // authority decision in one ordering so neither can settle in between.
@@ -1596,6 +1600,9 @@ public static class TaskCrudEndpoints
         {
             var card = scanner.FindJob(jobId, watchPath);
             if (card is null) return Results.NotFound();
+            if (expectedState is not null && card.State != expectedState)
+                return Results.Json(new { error = "lane-changed", message = $"The card left {expectedState}.", state = card.State },
+                    statusCode: StatusCodes.Status409Conflict);
             var attention = context.RequestServices.GetRequiredService<AgentStudio.Operator.OperatorCoordinationStore>();
             var actor = AgentStudio.Operator.OperatorEndpoints.Actor(context);
             var owner = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
@@ -1665,6 +1672,16 @@ public static class TaskCrudEndpoints
                 batchWithdrawalId: activeBatch?.BatchId);
             var moved = activeBatch is null ? await Move()
                 : await batchGuard.WithdrawAsync(activeBatch, Move);
+            if (moved.Status != MoveJobStatus.Success
+                && TimelineActors.IsHuman(OperatorActor(context)))
+                timeline.Append(card.FolderPath, TimelineEventKinds.OwnerMoveRefused,
+                    OperatorActor(context),
+                    $"Move to {request.TargetState} refused: {moved.Message ?? moved.Status.ToString()}",
+                    details: new Dictionary<string, string>
+                    {
+                        ["target"] = request.TargetState,
+                        ["reason"] = moved.Message ?? moved.Status.ToString(),
+                    });
             if (activeBatch is not null && moved.Status == MoveJobStatus.Success)
             {
                 var actorName = OperatorActor(context);

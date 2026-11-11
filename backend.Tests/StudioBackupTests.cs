@@ -89,6 +89,46 @@ public sealed class StudioBackupTests : IDisposable
     }
 
     [Fact]
+    public void Default_local_state_sources_have_unique_names_and_configured_duplicates_are_rejected()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _fixture.Workspace,
+            ["Backup:KeyFile"] = _fixture.KeyFile,
+        }).Build();
+        var sources = BackupOptions.From(configuration).Sources;
+        Assert.Equal(sources.Count, sources.Select(source => source.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        if (sources.Any(source => source.Name == "local-state-agentstudio") && OperatingSystem.IsLinux())
+            Assert.Contains(sources, source => source.Name == "local-state-agentstudio-capitalized");
+
+        var local = Path.Combine(_fixture.Root, "local-state");
+        Directory.CreateDirectory(Path.Combine(local, "agentstudio"));
+        if (OperatingSystem.IsLinux())
+        {
+            Directory.CreateSymbolicLink(Path.Combine(local, "AgentStudio"), Path.Combine(local, "agentstudio"));
+            var aliased = BackupOptions.DefaultSources(_fixture.Workspace, local);
+            Assert.DoesNotContain(aliased, source => source.Name == "local-state-agentstudio-capitalized");
+        }
+
+        var duplicate = new[]
+        {
+            new BackupSource("same", _fixture.Home, false, false, []),
+            new BackupSource("SAME", _fixture.Projects, false, false, []),
+        };
+        Assert.Equal("backup-source-duplicate",
+            Assert.Throws<BackupException>(() => BackupOptions.ValidateNames(duplicate)).Code);
+
+        var colliding = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _fixture.Workspace,
+            ["Backup:KeyFile"] = _fixture.KeyFile,
+            ["Backup:Sources:Workspace:Path"] = _fixture.Home,
+        }).Build();
+        Assert.Equal("backup-source-duplicate",
+            Assert.Throws<BackupException>(() => BackupOptions.From(colliding)).Code);
+    }
+
+    [Fact]
     public async Task Scheduled_tick_creates_uploads_and_verifies_then_waits_for_the_interval()
     {
         var target = new FakeTarget();
@@ -302,6 +342,24 @@ public sealed class StudioBackupTests : IDisposable
     }
 
     [Fact]
+    public async Task Pending_upload_does_not_hold_the_local_backup_gate()
+    {
+        var target = new BlockingTarget();
+        var service = _fixture.Service(_clock, target);
+        var upload = service.CreateAsync("test", CancellationToken.None);
+        await target.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(service.IsRunning);
+        try
+        {
+            var id = Assert.Single(service.List()).Id;
+            var verification = await service.VerifyAsync(id, "test", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal("verified", verification.Outcome);
+        }
+        finally { target.Release.TrySetResult(); }
+        await upload;
+    }
+
+    [Fact]
     public async Task Directory_target_refuses_a_missing_mount_and_renames_complete_copies()
     {
         var source = Path.Combine(_fixture.Root, "archive.bin");
@@ -382,6 +440,84 @@ public sealed class StudioBackupTests : IDisposable
     }
 
     [Fact]
+    public async Task S3_target_times_out_after_upload_when_response_headers_stall()
+    {
+        var accessFile = Path.Combine(_fixture.Root, "s3-access-timeout");
+        var secretFile = Path.Combine(_fixture.Root, "s3-secret-timeout");
+        File.WriteAllText(accessFile, "fixture-access-" + Guid.NewGuid().ToString("N"));
+        File.WriteAllText(secretFile, "fixture-secret-" + Guid.NewGuid().ToString("N"));
+        var archive = Path.Combine(_fixture.Root, "timeout.sbk");
+        File.WriteAllBytes(archive, [1, 2, 3]);
+        var target = new S3BackupTarget(new BackupTargetOptions("s3", Endpoint: "https://s3.example.test",
+            Bucket: "generated-fixture", AccessKeyIdFile: accessFile, SecretAccessKeyFile: secretFile),
+            () => new HttpClient(new StalledHeadersHandler()) { Timeout = Timeout.InfiniteTimeSpan }, _clock)
+        { HeadersTimeoutOverride = TimeSpan.FromMilliseconds(50) };
+
+        var failure = await Assert.ThrowsAsync<BackupException>(() => target.UploadAsync(archive, "x.sbk", CancellationToken.None));
+        Assert.Equal("backup-target-upload-failed", failure.Code);
+        Assert.Contains("timed out", failure.Message);
+        Assert.True(S3BackupTarget.UploadTimeout(64L * 1024 * 1024) > S3BackupTarget.UploadTimeout(1));
+
+        var service = _fixture.Service(_clock, target);
+        await service.CreateAsync("test", CancellationToken.None);
+        Assert.Equal(0, await service.UploadPendingAsync(true, "test", CancellationToken.None));
+        var upload = Assert.Single(service.List()).Upload;
+        Assert.Equal("failed", upload?.State);
+        Assert.Contains("timed out", upload?.Error);
+    }
+
+    [Fact]
+    public async Task Commit_during_git_snapshot_walk_restores_a_connected_repository()
+    {
+        CheckoutFileFixture.Git(_fixture.Workspace, "init", "-q", "-b", "main");
+        Commit(_fixture.Workspace, "before backup");
+        var original = CheckoutFileFixture.Git(_fixture.Workspace, "rev-parse", "HEAD").Trim();
+        var service = _fixture.Service(_clock, null);
+        var committed = false;
+        service.AfterCapture = path =>
+        {
+            if (committed || !path.Contains("/git-", StringComparison.Ordinal)
+                || !path.Contains("/objects/", StringComparison.Ordinal)) return;
+            committed = true;
+            File.WriteAllText(Path.Combine(_fixture.Workspace, "later.txt"), "later");
+            Commit(_fixture.Workspace, "during walk");
+        };
+
+        var record = await service.CreateAsync("test", CancellationToken.None);
+        Assert.True(committed);
+        Assert.Equal("verified", (await service.VerifyAsync(record.Id, "test", CancellationToken.None)).Outcome);
+        var restored = Path.Combine(_fixture.Root, "git-restore");
+        BackupRestore.Restore(_fixture.Catalog.ArchivePath(record.Id), BackupKey.Load(_fixture.KeyFile),
+            new BackupRestorePlan(new Dictionary<string, string>(), false, restored));
+        Assert.Equal(original, CheckoutFileFixture.Git(Path.Combine(restored, "workspace"), "rev-parse", "HEAD").Trim());
+        _ = CheckoutFileFixture.Git(Path.Combine(restored, "workspace"), "fsck", "--connectivity-only");
+    }
+
+    [Fact]
+    public async Task Restore_verification_rejects_a_repository_with_a_missing_git_object()
+    {
+        CheckoutFileFixture.Git(_fixture.Workspace, "init", "-q", "-b", "main");
+        Commit(_fixture.Workspace, "before backup");
+        var service = _fixture.Service(_clock, null);
+        var changed = false;
+        service.AfterCapture = path =>
+        {
+            var objects = path.IndexOf("/objects/", StringComparison.Ordinal);
+            if (changed || objects < 0 || !path.Contains("/git-", StringComparison.Ordinal)) return;
+            changed = true;
+            var badRef = Path.Combine(path[..objects], "refs", "heads", "broken");
+            Directory.CreateDirectory(Path.GetDirectoryName(badRef)!);
+            File.WriteAllText(badRef, new string('0', 40) + "\n");
+        };
+
+        var record = await service.CreateAsync("test", CancellationToken.None);
+        Assert.True(changed);
+        var verification = await service.VerifyAsync(record.Id, "test", CancellationToken.None);
+        Assert.Equal("failed", verification.Outcome);
+        Assert.Contains("git fsck", verification.Detail);
+    }
+
+    [Fact]
     public async Task Overview_warns_when_the_newest_good_backup_is_older_than_the_threshold()
     {
         var service = _fixture.Service(_clock, new FakeTarget());
@@ -400,6 +536,27 @@ public sealed class StudioBackupTests : IDisposable
         var warning = Assert.Single(stale.Warnings, item => item.Code == "backup-stale");
         Assert.Equal("danger", warning.Severity);
         Assert.Contains("13 hours old", warning.Message);
+    }
+
+    [Fact]
+    public void Overview_exposes_restored_host_ca_mismatch()
+    {
+        var ca = Path.Combine(_fixture.Root, "ca.pub");
+        var state = Path.Combine(_fixture.Root, "host-certificates");
+        Directory.CreateDirectory(state);
+        File.WriteAllText(ca, "ssh-ed25519 " + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)) + " test\n");
+        File.WriteAllText(Path.Combine(state, "ca-fingerprint"), "SHA256:old-ca\n");
+        var configuration = new ConfigurationBuilder()
+            .AddConfiguration(_fixture.Configuration())
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["HostCertificates:CaPrivateKeyFile"] = Path.Combine(_fixture.Root, "ca"),
+                ["HostCertificates:StateDirectory"] = state,
+            }).Build();
+        var service = new StudioBackupService(configuration, new BackupWritePause(), _clock, targets: _ => new FakeTarget());
+        var overview = service.Overview();
+        Assert.Equal("failing", overview.State);
+        Assert.Contains(overview.Warnings, warning => warning.Code == "host-ca-mismatch" && warning.Severity == "danger");
     }
 
     [Fact]
@@ -619,6 +776,37 @@ public sealed class StudioBackupTests : IDisposable
         Assert.Equal(1, again);
         Assert.Contains("restore-target-not-empty", error.ToString());
         Assert.True(File.Exists(Path.Combine(targets["workspace"], ".security-access.json")));
+    }
+
+    [Fact]
+    public async Task Restore_ends_archived_sessions_and_flags_a_token_revoked_after_the_archive()
+    {
+        var live = new AccessSecurityStore(_fixture.Configuration(), NullLogger<AccessSecurityStore>.Instance, _clock);
+        var owner = live.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", "Owner"));
+        var token = live.CreateApiToken(new CreateApiTokenRequest("drill", StudioRoles.Viewer,
+            ["*"], Start.UtcDateTime.AddDays(1)), owner.User.Id);
+        var backup = await _fixture.Service(_clock, null).CreateAsync("test", CancellationToken.None);
+
+        live.RevokeApiToken(token.Token.Id);
+        Assert.Null(live.AuthenticateServiceAccount(token.Secret));
+
+        var restoredWorkspace = Path.Combine(_fixture.Root, "restored", "workspace");
+        var result = BackupRestore.Restore(_fixture.Catalog.ArchivePath(backup.Id), BackupKey.Load(_fixture.KeyFile),
+            new BackupRestorePlan(new Dictionary<string, string> { ["workspace"] = restoredWorkspace }, false));
+        var restoredConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["TaskRepository"] = restoredWorkspace }).Build();
+        var restored = new AccessSecurityStore(restoredConfig, NullLogger<AccessSecurityStore>.Instance, _clock);
+
+        Assert.Null(restored.AuthenticateSession(owner.SessionToken, touch: false));
+        Assert.Equal(backup.Id, result.Manifest.Id);
+        var notice = Assert.IsType<RestoreNotice>(RestoreSecurityNotice.Read(restored.SecurityFolder));
+        Assert.Equal(backup.Id, notice.ArchiveId);
+        Assert.Equal(backup.CreatedAt, notice.ArchiveCreatedAt);
+        // Revocations after the archive cannot be reconstructed. The Owner is
+        // explicitly warned while the restored token awaits re-revocation.
+        Assert.NotNull(restored.AuthenticateServiceAccount(token.Secret));
+        RestoreSecurityNotice.Acknowledge(restored.SecurityFolder, notice.ArchiveId);
+        Assert.Null(RestoreSecurityNotice.Read(restored.SecurityFolder));
     }
 
     [Theory]
@@ -842,6 +1030,20 @@ public sealed class StudioBackupTests : IDisposable
         }
     }
 
+    private sealed class BlockingTarget : IBackupTarget
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public string Kind => "fake";
+        public string Description => "fake://pending";
+
+        public async Task UploadAsync(string localPath, string remoteName, CancellationToken cancellationToken)
+        {
+            Started.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
+        }
+    }
+
     private sealed class FakeProcessRunner : IBackupProcessRunner
     {
         public int ExitCode { get; set; }
@@ -868,6 +1070,16 @@ public sealed class StudioBackupTests : IDisposable
             var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
             Requests.Add((request.Method, request.RequestUri!.ToString(), headers, body));
             return new HttpResponseMessage(Status) { Content = new StringContent(Status == System.Net.HttpStatusCode.OK ? "" : "AccessDenied") };
+        }
+    }
+
+    private sealed class StalledHeadersHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            _ = await request.Content!.ReadAsByteArrayAsync(cancellationToken);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("unreachable");
         }
     }
 }

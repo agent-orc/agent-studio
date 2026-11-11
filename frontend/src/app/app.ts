@@ -145,6 +145,7 @@ import { DevToolsService } from './services/dev-tools.service';
 import { FeatureFlagsService } from './services/feature-flags.service';
 import { TaskCompletionSoundService } from './services/task-completion-sound.service';
 import { TagRegistryStore } from './services/tag-registry.store';
+import { ReviewerSession } from './services/reviewer-session.service';
 import { CliCatalogStore } from './features/cli';
 import type { CliOutputLine } from './models/task.model';
 import type { RunTimeline } from './features/run-timeline';
@@ -154,7 +155,8 @@ import { MenuComponent, MenuItem, MenuItemClickEvent } from './components/menu';
 import { CostBreakdownService, type TaskTokenSummary } from './features/tokens'; // verbose-debug overlay context types
 import { CostBreakdownDialogComponent } from './features/tokens/lazy';
 import { LoadingSurfaceComponent } from './components/async-feedback';
-import { AuthGateComponent, AuthService } from './components/auth-gate/auth-gate';
+import { AuthGateComponent } from './components/auth-gate/auth-gate';
+import { AuthService } from './services/auth.service';
 import { CodexSignInDialogService, ClaudeSignInDialogService } from './features/remote-hosts';
 import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts/lazy';
 import { ScrollMemoryDirective } from './directives/scroll-memory.directive';
@@ -241,6 +243,7 @@ export class App implements OnInit, OnDestroy {
   private readonly gitHubApp = inject(GitHubAppService);
   readonly auth = inject(AuthService); private studioInitialized = false;
   readonly jobService = inject(TaskService);
+  private readonly reviewerSession = inject(ReviewerSession);
   readonly errorDialog = inject(ErrorDialogService);
   /** Drives the deferred confirm dialog mount; both dialogs stay out of the initial bundle. */
   readonly confirmDialog = inject(ConfirmDialogService);
@@ -1233,13 +1236,15 @@ export class App implements OnInit, OnDestroy {
   // <app-detail-header>, so the cluster needs its own seat there). All
   // actions route through the same TriageController paths as the kanban
   // panel; this is purely a second render site.
+  // AGT-3670: a Reviewer holds no lane move, edit, or delete; the overview's
+  // review panel carries its one decision.
   readonly studioTriagePrimary = computed<TriageButton | null>(() => {
     const sel = this.selectedJob();
-    return sel ? primaryActionFor(sel.info.state) : null;
+    return sel && !this.reviewerSession.reviewsOnly(sel.info.projectName) ? primaryActionFor(sel.info.state) : null;
   });
   readonly studioTriageOverflow = computed<TriageButton[]>(() => {
     const sel = this.selectedJob();
-    return sel ? overflowActionsFor(sel.info.state) : [];
+    return sel && !this.reviewerSession.reviewsOnly(sel.info.projectName) ? overflowActionsFor(sel.info.state) : [];
   });
   /**
    * State-dependent presentation for the studio Human Review acceptance primary

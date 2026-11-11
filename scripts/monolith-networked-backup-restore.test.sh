@@ -326,6 +326,15 @@ fi
 grep -q "needs $key_id" "$work/b/wrong-key.log"
 (cd "$work/b/stack" && COMPOSE_PROJECT_NAME="$project_b" bash restore.sh --identity "$work/offline/identity.txt" \
   --secret-key "$work/offline/secrets.kek" "$archive")
+node -e '
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const folder = process.argv[1];
+  const state = JSON.parse(fs.readFileSync(path.join(folder, "access-state.json"), "utf8"));
+  const notice = JSON.parse(fs.readFileSync(path.join(folder, "restore-notice.json"), "utf8"));
+  if (state.Sessions?.length !== 0 || notice.ArchiveId !== process.argv[2] || !notice.ArchiveCreatedAt)
+    process.exit(1);
+' "$work/b/data/workspace/.security" "$(basename "$archive")"
 if (cd "$work/b/stack" && COMPOSE_PROJECT_NAME="$project_b" bash restore.sh --identity "$work/offline/identity.txt" \
   --secret-key "$work/offline/secrets.kek" "$archive") > /dev/null 2> "$work/b/again.log"; then
   echo 'restore.sh restored into a stack that is not empty' >&2

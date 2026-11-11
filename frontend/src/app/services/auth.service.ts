@@ -21,6 +21,12 @@ export interface AuthUser {
   projects: string[];
   disabled: boolean;
   mustChangePassword: boolean;
+  /**
+   * AGT-3670: projects where this user reviews through the Reviewer role and
+   * holds no card write; `*` is every project. Absent outside a networked
+   * session.
+   */
+  reviewerProjects?: string[];
 }
 
 export interface AuthStatus {
@@ -31,6 +37,7 @@ export interface AuthStatus {
   bootstrapCodeRequired?: boolean;
   user?: AuthUser | null;
   secondFactorEnrollmentRequired?: boolean;
+  restoreNotice?: { archiveId: string; archiveCreatedAt: string; restoredAt: string } | null;
 }
 
 interface StandaloneAuthUser {
@@ -93,7 +100,7 @@ export class AuthSessionState {
     // server edge (PublicDemoEdgeMiddleware) is the actual boundary; letting
     // the shell render here is what makes the demo browsable in the first
     // place.
-    return !this.ownerRecoveryCode() && (status?.profile === 'local'
+    return !this.ownerRecoveryCode() && !status?.restoreNotice && (status?.profile === 'local'
       || status?.profile === 'public-demo-readonly'
       || (status?.authenticated === true && !status.user?.mustChangePassword && !status.secondFactorEnrollmentRequired));
   });
@@ -135,6 +142,12 @@ export class AuthService {
   readonly studioAllowed = this.session.studioAllowed;
   readonly networkedAuthenticated = this.session.networkedAuthenticated;
   readonly ownerRecoveryCode = this.session.ownerRecoveryCode;
+
+  acknowledgeRestoreNotice(archiveId: string): Observable<void> {
+    return this.http.post<void>('/api/auth/restore-notice/acknowledge', { archiveId }).pipe(tap(() => {
+      this.status.update(status => status ? { ...status, restoreNotice: null } : status);
+    }));
+  }
 
   acknowledgeRecoveryCode(): void { this.ownerRecoveryCode.set(null); }
 

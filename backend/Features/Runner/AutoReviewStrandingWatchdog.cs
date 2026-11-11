@@ -23,6 +23,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
     private readonly IConfiguration _configuration;
     private readonly RemoteDeliveryIntegrationCoordinator? _integration;
     private readonly ILogger<AutoReviewStrandingWatchdog> _logger;
+    private readonly TimeProvider _time;
 
     public AutoReviewStrandingWatchdog(TaskScannerService scanner, AttemptAuthorityService authority,
         ReviewAttemptTaskLifecycleService reviews, BatchGateStore batches, BatchGatePilotService batchPilot,
@@ -31,7 +32,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         AutoReviewDeliveryResumeService resume, HumanReviewEscalation escalation,
         StallInterventionStore records, StallInterventionReceipts receipts, IConfiguration configuration,
         ILogger<AutoReviewStrandingWatchdog> logger,
-        RemoteDeliveryIntegrationCoordinator? integration = null)
+        RemoteDeliveryIntegrationCoordinator? integration = null, TimeProvider? time = null)
     {
         _scanner = scanner;
         _authority = authority;
@@ -49,6 +50,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         _configuration = configuration;
         _integration = integration;
         _logger = logger;
+        _time = time ?? TimeProvider.System;
     }
 
     public async Task<int> RunOnceAsync(CancellationToken ct = default)
@@ -58,7 +60,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         var reviewMode = MonolithTransitionSwitch.For(_configuration, "ReviewReport");
         var threshold = TimeSpan.FromMinutes(Math.Clamp(
             _configuration.GetValue<int?>("AutoReviewStranding:ThresholdMinutes") ?? 30, 1, 1440));
-        var now = DateTime.UtcNow;
+        var now = _time.GetUtcNow().UtcDateTime;
         var pending = _batches.ListPending();
         var manifests = _batches.ListManifests();
         var activeBatchMembers = manifests
@@ -94,7 +96,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     { State: AttemptLifecycleState.Failed, Outcome: ReviewTerminalOutcome.InfrastructureFailure };
                 var facts = new AutoReviewStrandingFacts(withoutOwner, threshold,
                     _pipeline.Read(card.FolderPath)?.Steps.Any(step => step.Status == PipelineStepStatus.Running) == true
-                        || IntegrationGateJournal.Read(card.FolderPath) is not null,
+                        || IntegrationGateJournal.Read(card.FolderPath) is not null
+                        || card.Phase == LifecyclePhases.Integrating,
                     currentReview?.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased,
                     pending.Any(item => IsPendingForDelivery(item, card.ProjectName, key,
                         run, currentReview?.AttemptId))
@@ -110,6 +113,11 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     latest is null ? null : now - latest.DecidedAtUtc,
                     previous.Any(item => item.Action == AutoReviewStrandingAction.StartStep.ToString()),
                     previous.Any(item => item.Action == AutoReviewStrandingAction.ReenterBatch.ToString()),
+                    // A terminal ReviewInfra attempt waiting out its backoff is
+                    // owned by ReviewInfrastructureRetryScheduler (AGT-3691).
+                    currentReview is null ? null
+                        : _authority.ScheduledReviewInfrastructureRetryOverdue(currentReview.AttemptId),
+                    CauseWaitMarker.TryRead(card.FolderPath, _logger) is not null,
                     infraFailure,
                     infraFailure && _authority.HasReviewInfrastructureRetryBudget(currentReview!.AttemptId),
                     infraFailure && _authority.HasScheduledReviewInfrastructureRetry(currentReview!.AttemptId));
@@ -387,7 +395,9 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 : succeeded ? StallInterventionStatuses.Verified : StallInterventionStatuses.Failed,
             Project = card.ProjectName, AffectedCards = [card.Id],
             Observed = "Card had no active Auto Review owner beyond the configured threshold.",
-            Done = detail, Why = $"In {reviewMode} mode, no running step, review, batch gate entry, or queued round owned the card.",
+            Done = detail,
+            Why = $"In {reviewMode} mode, no running step, review, scheduled retry, cause breaker wait, "
+                + "batch gate entry, or queued round owned the card.",
             Before = TaskStates.AutoReview, After = escalated ? TaskStates.Escalated : action.ToString(),
             Receipt = detail, DecidedAtUtc = now, ResolvedAtUtc = now,
         };
