@@ -21,6 +21,8 @@ export interface AuthUser {
   projects: string[];
   disabled: boolean;
   mustChangePassword: boolean;
+  hasFactor?: boolean;
+  factorChangedAt?: string | null;
 }
 
 export interface AuthStatus {
@@ -31,6 +33,8 @@ export interface AuthStatus {
   bootstrapCodeRequired?: boolean;
   user?: AuthUser | null;
   secondFactorEnrollmentRequired?: boolean;
+  recoveryCodesRemaining?: number | null;
+  recoveryEnrollmentAllowed?: boolean;
 }
 
 interface StandaloneAuthUser {

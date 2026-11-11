@@ -98,6 +98,7 @@ public sealed record StudioUser
     public DateTime CreatedAt { get; init; }
     public DateTime PasswordChangedAt { get; init; }
     public string? TotpSecret { get; init; }
+    public DateTime? FactorChangedAt { get; init; }
     public List<string> RecoveryCodeHashes { get; init; } = [];
     public List<StudioPasskey> Passkeys { get; init; } = [];
 }
@@ -118,6 +119,9 @@ public sealed record StudioSession
     public string? Address { get; init; }
     public bool SecondFactorEnrollmentOnly { get; init; }
     public DateTime? StepUpVerifiedAt { get; init; }
+    public DateTime? RecoveryCodeUsedAt { get; init; }
+    public int? RecoveryCodesRemaining { get; init; }
+    public bool RecoveryEnrollmentAllowed { get; init; }
 }
 
 public sealed record RunnerCredential
@@ -272,8 +276,8 @@ public sealed record RunnerPrincipal(string RunnerId, string RunnerName, string 
     public DateTime? CredentialExpiresAt { get; init; }
 }
 
-public sealed record AuthStatusResponse(string Profile, bool BootstrapRequired, bool Authenticated, AuthUserResponse? User = null, string? CsrfToken = null, bool BootstrapCodeRequired = false, bool SecondFactorEnrollmentRequired = false);
-public sealed record AuthUserResponse(string Id, string Username, string DisplayName, string Role, IReadOnlyList<string> Projects, bool Disabled, bool MustChangePassword, IReadOnlyList<string>? ProductionApprovalProjects = null);
+public sealed record AuthStatusResponse(string Profile, bool BootstrapRequired, bool Authenticated, AuthUserResponse? User = null, string? CsrfToken = null, bool BootstrapCodeRequired = false, bool SecondFactorEnrollmentRequired = false, int? RecoveryCodesRemaining = null, bool RecoveryEnrollmentAllowed = false);
+public sealed record AuthUserResponse(string Id, string Username, string DisplayName, string Role, IReadOnlyList<string> Projects, bool Disabled, bool MustChangePassword, IReadOnlyList<string>? ProductionApprovalProjects = null, bool HasFactor = false, DateTime? FactorChangedAt = null);
 public sealed record BootstrapRequest(string Username, string Password, string? DisplayName, string? BootstrapCode = null);
 public sealed record LoginRequest(string Username, string Password, string? SecondFactorCode = null,
     PasskeyAssertionProof? Passkey = null);

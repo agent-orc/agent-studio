@@ -22,7 +22,9 @@ public static class AccessSecurityEndpoints
                 principal is not null,
                 principal is null ? null : ToResponse(principal.User),
                 BootstrapCodeRequired: store.BootstrapRequired && RequiresBootstrapCode(context, configuration),
-                SecondFactorEnrollmentRequired: principal?.Session.SecondFactorEnrollmentOnly == true));
+                SecondFactorEnrollmentRequired: principal?.Session.SecondFactorEnrollmentOnly == true,
+                RecoveryCodesRemaining: principal?.Session.RecoveryCodesRemaining,
+                RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(principal?.Session)));
         });
 
         auth.MapPost("/bootstrap", (BootstrapRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration, ILoggerFactory loggers) =>
@@ -82,8 +84,11 @@ public static class AccessSecurityEndpoints
                     address: context.Connection.RemoteIpAddress?.ToString(), passkey: request.Passkey,
                     origin: RequestOrigin(context), rpId: context.Request.Host.Host);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);
+                var session = store.AuthenticateSession(result.SessionToken, touch: false)?.Session;
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken,
-                    SecondFactorEnrollmentRequired: store.AuthenticateSession(result.SessionToken, touch: false)?.Session.SecondFactorEnrollmentOnly == true));
+                    SecondFactorEnrollmentRequired: session?.SecondFactorEnrollmentOnly == true,
+                    RecoveryCodesRemaining: session?.RecoveryCodesRemaining,
+                    RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(session)));
             });
         });
 
@@ -115,7 +120,9 @@ public static class AccessSecurityEndpoints
                     statusCode: StatusCodes.Status401Unauthorized)
                 : Results.Ok(new AuthStatusResponse(
                     SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(principal.User),
-                    SecondFactorEnrollmentRequired: principal.Session.SecondFactorEnrollmentOnly));
+                    SecondFactorEnrollmentRequired: principal.Session.SecondFactorEnrollmentOnly,
+                    RecoveryCodesRemaining: principal.Session.RecoveryCodesRemaining,
+                    RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(principal.Session)));
         });
 
         auth.MapPost("/logout", (HttpContext context, AccessSecurityStore store, AgentStudio.QualityStudio.QualityStudioRevokeOutbox revokes) =>
@@ -429,7 +436,8 @@ public static class AccessSecurityEndpoints
 
     internal static AuthUserResponse ToResponse(StudioUser user)
         => new(user.Id, user.Username, user.DisplayName, user.Role, user.Projects, user.Disabled, user.MustChangePassword,
-            user.ProductionApprovalProjects);
+            user.ProductionApprovalProjects, user.TotpSecret is not null || user.Passkeys.Count > 0,
+            user.FactorChangedAt ?? user.Passkeys.OrderByDescending(passkey => passkey.CreatedAt).FirstOrDefault()?.CreatedAt);
 
     /// <summary>
     /// SM-9 notices: a runner enrolled before project binding keeps all projects,

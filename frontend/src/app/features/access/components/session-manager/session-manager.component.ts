@@ -1,4 +1,5 @@
 import { DatePipe } from '@angular/common';
+import { HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, inject, input, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { AuthService, type AuthSessionSummary } from '../../../../services/auth.service';
@@ -15,6 +16,7 @@ import { createPasskey, getPasskey } from '../../../../services/webauthn';
 export class SessionManagerComponent implements OnInit, OnDestroy {
   private readonly auth = inject(AuthService);
   readonly userId = input<string | null>(null);
+  readonly recoveryMode = input(false);
   readonly watchNotices = input(false);
   readonly open = signal(false);
   readonly busy = signal(false);
@@ -23,8 +25,12 @@ export class SessionManagerComponent implements OnInit, OnDestroy {
   readonly totpSecret = signal('');
   readonly totpCode = signal('');
   readonly recoveryCodes = signal<string[]>([]);
+  readonly factorNotice = signal('');
   readonly notice = signal(false);
   readonly stepUpCode = signal('');
+  readonly enrollmentStepUpCode = signal('');
+  readonly pendingEnrollment = signal<'totp' | 'passkey' | null>(null);
+  readonly enrollmentAuthorized = signal(false);
   readonly pendingRevocation = signal<{ id?: string } | null>(null);
   private readonly noticed = new Set<string>();
   private poll: ReturnType<typeof setInterval> | null = null;
@@ -107,11 +113,45 @@ export class SessionManagerComponent implements OnInit, OnDestroy {
 
   sessionId(session: AuthSessionSummary): string { return session.id ?? session.sessionId ?? ''; }
 
+  async requestEnrollment(kind: 'totp' | 'passkey'): Promise<void> {
+    if (this.auth.status()?.user?.hasFactor && !this.auth.status()?.recoveryEnrollmentAllowed
+        && !this.enrollmentAuthorized()) {
+      this.pendingEnrollment.set(kind);
+      return;
+    }
+    if (kind === 'totp') await this.beginTotp();
+    else await this.addPasskey();
+  }
+
+  async confirmEnrollmentStepUp(usePasskey = false): Promise<void> {
+    const kind = this.pendingEnrollment();
+    if (!kind) return;
+    this.busy.set(true);
+    this.error.set('');
+    try {
+      if (usePasskey) {
+        const options = await firstValueFrom(this.auth.passkeyStepUpOptions());
+        await firstValueFrom(this.auth.stepUp(undefined, await getPasskey(options)));
+      } else await firstValueFrom(this.auth.stepUp(this.enrollmentStepUpCode()));
+      this.enrollmentAuthorized.set(true);
+      this.pendingEnrollment.set(null);
+      this.enrollmentStepUpCode.set('');
+    } catch { this.error.set('Current factor could not be verified.'); }
+    finally { this.busy.set(false); }
+    if (this.enrollmentAuthorized()) {
+      if (kind === 'totp') await this.beginTotp();
+      else await this.addPasskey();
+    }
+  }
+
   async beginTotp(): Promise<void> {
     this.busy.set(true);
     this.error.set('');
     try { this.totpSecret.set((await firstValueFrom(this.auth.beginTotp())).secret); }
-    catch { this.error.set('Authenticator setup could not start.'); }
+    catch (error) {
+      if (this.stepUpExpired(error)) { this.pendingEnrollment.set('totp'); this.enrollmentAuthorized.set(false); }
+      this.error.set(this.stepUpExpired(error) ? 'Verify your current factor again.' : 'Authenticator setup could not start.');
+    }
     finally { this.busy.set(false); }
   }
 
@@ -122,7 +162,16 @@ export class SessionManagerComponent implements OnInit, OnDestroy {
       this.recoveryCodes.set((await firstValueFrom(this.auth.confirmTotp(this.totpCode()))).recoveryCodes);
       this.totpSecret.set('');
       this.totpCode.set('');
-    } catch { this.error.set('The authenticator code is invalid.'); }
+      this.factorNotice.set('New authenticator registered. Store the new recovery codes.');
+      this.enrollmentAuthorized.set(false);
+      this.auth.initialize();
+    } catch (error) {
+      if (this.stepUpExpired(error)) {
+        this.pendingEnrollment.set('totp');
+        this.enrollmentAuthorized.set(false);
+      }
+      this.error.set(this.stepUpExpired(error) ? 'Verify your current factor again.' : 'The authenticator code is invalid.');
+    }
     finally { this.busy.set(false); }
   }
 
@@ -133,7 +182,18 @@ export class SessionManagerComponent implements OnInit, OnDestroy {
       const options = await firstValueFrom(this.auth.passkeyRegistrationOptions());
       const proof = await createPasskey(options);
       this.recoveryCodes.set((await firstValueFrom(this.auth.registerPasskey(proof))).recoveryCodes);
-    } catch (error) { this.error.set(error instanceof Error ? error.message : 'Passkey setup failed.'); }
+      this.factorNotice.set('New passkey registered.');
+      this.enrollmentAuthorized.set(false);
+      this.auth.initialize();
+    } catch (error) {
+      if (this.stepUpExpired(error)) { this.pendingEnrollment.set('passkey'); this.enrollmentAuthorized.set(false); }
+      this.error.set(this.stepUpExpired(error) ? 'Verify your current factor again.'
+        : error instanceof Error ? error.message : 'Passkey setup failed.');
+    }
     finally { this.busy.set(false); }
+  }
+
+  private stepUpExpired(error: unknown): boolean {
+    return error instanceof HttpErrorResponse && error.status === 403 && error.error?.error === 'step-up-required';
   }
 }

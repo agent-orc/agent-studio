@@ -13,6 +13,93 @@ public sealed class SecondFactorSecurityTests
 {
     private static readonly DateTime TestUtcNow = new(2026, 11, 2, 12, 0, 0, DateTimeKind.Utc);
     [Fact]
+    public void Replacing_authenticator_requires_fresh_step_up_and_audits_the_session()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = NewStore(root);
+            var password = "long pass phrase " + Guid.NewGuid().ToString("N");
+            var bootstrap = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
+            var owner = store.AuthenticateSession(bootstrap.SessionToken)!;
+            var original = store.BeginTotpEnrollment(owner);
+            store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(original, TestUtcNow));
+
+            var denied = Assert.Throws<SecurityOperationException>(() => store.BeginTotpEnrollment(owner));
+            Assert.Equal(403, denied.Status);
+            Assert.Equal("step-up-required", denied.Code);
+            Assert.Equal("step-up-required", Assert.Throws<SecurityOperationException>(
+                () => store.BeginPasskeyRegistration(owner)).Code);
+            store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(original, TestUtcNow));
+            var replacement = store.BeginTotpEnrollment(owner);
+            store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(replacement, TestUtcNow));
+            Assert.Equal("step-up-required", Assert.Throws<SecurityOperationException>(
+                () => store.BeginTotpEnrollment(owner)).Code);
+
+            var audit = File.ReadAllText(Path.Combine(store.SecurityFolder, AccessSecurityStore.IamAuditFileName));
+            Assert.Contains("factor.bound", audit);
+            Assert.Contains("factor.replaced", audit);
+            Assert.Contains("recovery-codes.regenerated", audit);
+            Assert.Contains(owner.Session.Id, audit);
+            var events = store.ControlPlaneAudit.ReadNewest(entry => entry.Operation == "factor.replaced", 1);
+            Assert.Single(events);
+            Assert.Equal(owner.Session.Id, events[0].Session);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Recovery_sign_in_reports_remaining_codes_and_authorizes_one_enrollment()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = NewStore(root);
+            var password = "long pass phrase " + Guid.NewGuid().ToString("N");
+            var bootstrap = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
+            var owner = store.AuthenticateSession(bootstrap.SessionToken)!;
+            var original = store.BeginTotpEnrollment(owner);
+            var codes = store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(original, TestUtcNow));
+            var login = store.Login("owner", password, "recovery-client", codes[0], requireSecondFactor: true);
+            var recovered = store.AuthenticateSession(login.SessionToken)!;
+            Assert.Equal(codes.Count - 1, recovered.Session.RecoveryCodesRemaining);
+            var replacement = store.BeginTotpEnrollment(recovered);
+            store.ConfirmTotpEnrollment(recovered, SecondFactorCodes.CurrentTotp(replacement, TestUtcNow));
+            Assert.Null(store.AuthenticateSession(login.SessionToken)!.Session.RecoveryCodesRemaining);
+            Assert.Equal("step-up-required", Assert.Throws<SecurityOperationException>(
+                () => store.BeginTotpEnrollment(recovered)).Code);
+            var audit = File.ReadAllText(Path.Combine(store.SecurityFolder, AccessSecurityStore.IamAuditFileName));
+            Assert.Contains("recovery-code.used", audit);
+            Assert.Contains(recovered.Session.Id, audit);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Recovery_sign_in_enrollment_authority_expires_after_five_minutes()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var clock = new FakeTimeProvider(new DateTimeOffset(TestUtcNow));
+            var store = NewStore(root, clock);
+            var password = "long pass phrase " + Guid.NewGuid().ToString("N");
+            var bootstrap = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
+            var owner = store.AuthenticateSession(bootstrap.SessionToken)!;
+            var secret = store.BeginTotpEnrollment(owner);
+            var codes = store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(secret, TestUtcNow));
+            var login = store.Login("owner", password, "recovery-client", codes[0], requireSecondFactor: true);
+            var recovered = store.AuthenticateSession(login.SessionToken)!;
+            Assert.True(store.IsRecoveryEnrollmentAllowed(recovered.Session));
+            clock.Advance(TimeSpan.FromMinutes(6));
+            Assert.False(store.IsRecoveryEnrollmentAllowed(recovered.Session));
+            var denied = Assert.Throws<SecurityOperationException>(() => store.BeginTotpEnrollment(recovered));
+            Assert.Equal(403, denied.Status);
+            Assert.Equal("step-up-required", denied.Code);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+    [Fact]
     public void Owner_password_alone_cannot_create_a_networked_session()
     {
         var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
@@ -170,7 +257,7 @@ public sealed class SecondFactorSecurityTests
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
-    private static AccessSecurityStore NewStore(string root)
+    private static AccessSecurityStore NewStore(string root, FakeTimeProvider? clock = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -178,7 +265,7 @@ public sealed class SecondFactorSecurityTests
             ["Security:Profile"] = SecurityProfiles.Networked
         }).Build();
         return new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance,
-            new FakeTimeProvider(new DateTimeOffset(TestUtcNow)));
+            clock ?? new FakeTimeProvider(new DateTimeOffset(TestUtcNow)));
     }
 
     private static string ClientData(string type, string challenge, string origin)

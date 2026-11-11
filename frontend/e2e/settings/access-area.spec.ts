@@ -26,7 +26,8 @@ function accessState() {
     permissions: [],
     iamVersion: 1,
     users: [
-      { id: 'usr_owner', username: 'robert', displayName: 'Robert', role: 'owner', projects: [], disabled: false, mustChangePassword: false },
+      { id: 'usr_owner', username: 'robert', displayName: 'Robert', role: 'owner', projects: [], disabled: false, mustChangePassword: false,
+        hasFactor: true, factorChangedAt: created },
       { id: 'usr_product', username: 'product.lead', displayName: 'Product Lead', role: 'contributor', projects: ['PROJ-001'], disabled: false, mustChangePassword: false },
     ],
     groups: [{ id: 'grp_web', name: 'Team Website', description: 'Everyone on the website', members: ['usr_product'], createdAt: created }],
@@ -50,7 +51,7 @@ function accessState() {
 
 async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof accessState>> {
   const state = accessState();
-  const owner = { id: 'usr_owner', username: 'robert', displayName: 'Robert', role: 'owner', projects: [], disabled: false, mustChangePassword: false };
+  const owner = { id: 'usr_owner', username: 'robert', displayName: 'Robert', role: 'owner', projects: [], disabled: false, mustChangePassword: false, hasFactor: true };
   const status = { profile: 'networked', bootstrapRequired: false, authenticated: true, user: owner };
   await page.route('**/hubs/v1/studio/negotiate?*', route => json(route, {
     negotiateVersion: 1, connectionId: 'access-e2e', connectionToken: 'access-e2e',
@@ -71,6 +72,7 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof accessS
     ])
     : route.continue());
   await page.route('**/api/auth/iam', route => json(route, state));
+  await page.route('**/api/auth/iam/operator-approvals', route => json(route, []));
   // Operator agents and standing grants have their own spec (operator-agents.spec.ts); this server answers without them.
   await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-agents') || url.pathname.startsWith('/api/auth/audit/')
     || url.pathname === '/api/auth/iam/operator-catalogue' || url.pathname.startsWith('/api/auth/iam/standing-grants'),
@@ -105,6 +107,39 @@ async function openAccess(page: Page) {
   await expect(access.getByRole('heading', { name: 'Users' })).toBeVisible();
   return access;
 }
+
+test('Owner sees factor changes and verifies the current factor before replacement', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await stubNetworkedOwner(page);
+  await page.route('**/api/auth/audit/factors', route => json(route, [{
+    sequence: 1, at: created, actor: 'human:usr_owner', session: 'session-1',
+    operation: 'factor.bound', target: 'user:usr_owner',
+  }]));
+  await page.route('**/api/auth/step-up', route => json(route, {}));
+  await page.route('**/api/auth/totp/start', route => json(route, { secret: 'TESTSECRET' }));
+  const access = await openAccess(page);
+  await expect(access.getByTestId('access-user-robert')).toContainText('Registered');
+  await expect(access.getByTestId('factor-activity')).toContainText('factor.bound');
+  mkdirSync(resultDir, { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await access.getByTestId('access-user-robert').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(resultDir, `owner-factor-access-${theme}.png`) });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await access.getByTestId('access-user-robert').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(resultDir, 'owner-factor-access-390px.png') });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await access.getByTestId('session-manager-toggle').last().click();
+  await access.getByRole('button', { name: 'Add authenticator' }).click();
+  const challenge = access.getByTestId('enrollment-step-up');
+  await expect(challenge).toBeVisible();
+  await page.screenshot({ path: join(resultDir, 'owner-factor-step-up.png') });
+  await expect(access.getByTestId('session-totp-secret')).toHaveCount(0);
+  await challenge.getByLabel('Authenticator or recovery code').fill('123456');
+  await challenge.getByRole('button', { name: 'Verify', exact: true }).click();
+  await expect(access.getByTestId('session-totp-secret')).toHaveText('TESTSECRET');
+});
 
 test('owner sees users, groups, service accounts with API tokens, runners, and role bindings per scope', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
