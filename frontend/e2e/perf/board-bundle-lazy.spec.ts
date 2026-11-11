@@ -165,6 +165,28 @@ test('create task, chat, and workspace settings mount on first use', async ({ pa
   expect(assetRequests.filter((url, index) => assetRequests.indexOf(url) !== index)).toEqual([]);
 });
 
+test('update center and diff2html styles load on first use, not with the cold board', async ({ page }) => {
+  const assetRequests: string[] = [];
+  page.on('request', request => {
+    if (/\.(js|css)(\?|$)/.test(request.url())) assetRequests.push(request.url());
+  });
+  await installFixture(page, 20);
+  await page.goto('/');
+  await expect(page.getByTestId('task-card').first()).toBeVisible();
+  await expect(page.getByTestId('status-bar')).toBeVisible();
+  expect(assetRequests.filter(url => url.includes('diff2html'))).toEqual([]);
+  await expect(page.locator('link[href="diff2html.css"]')).toHaveCount(0);
+  await expect(page.locator('app-update-center')).toHaveCount(0);
+  await expect(page.locator('app-auth-gate')).toHaveCount(0);
+
+  await page.getByTestId('studio-titlebar-settings').click();
+  await page.getByTestId('workspace-settings-rail-updates').click();
+  await page.getByTestId('settings-update-open-center').click();
+  await expect(page.getByTestId('update-center')).toBeVisible();
+  await page.getByTestId('update-center-close').click();
+  await expect(page.getByTestId('update-center')).toHaveCount(0);
+});
+
 test('interleaved baseline and candidate board timing', async ({ browser }) => {
   const baselineUrl = process.env.BUNDLE_BASELINE_URL;
   test.skip(!baselineUrl, 'Requires a saved baseline build on a second static port.');

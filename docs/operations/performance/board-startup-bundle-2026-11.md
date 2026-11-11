@@ -8,6 +8,10 @@ from the earlier 3,000 kB warning and 3,800 kB error. The current 9 November
 build reported 2.05 MB initial raw code and styles, below both limits. The
 pre-change build at `433f34c` reported 3.72 MB and a 717.77 kB warning.
 
+The 11 November follow-up below (AGT-3745) moved the initial total to
+1,922,039 B and replaced this ratchet with the 3 % warning and 10 % error
+rule in [the frontend domain doc](../../system/domains/frontend.md#initial-bundle-budget).
+
 ## Per-chunk inventory and Chrome traces
 
 The [before inventory](board-startup-bundles-before.json) comes from a
@@ -139,3 +143,41 @@ target. The mocked first-detail container regressed by a paired median of
 does not measure populated core sections. This round changes measurement
 coverage and documentation only; it does not move detail content or alter
 the production bundle based on the container marker.
+
+## Start bundle follow-up, 11 November (AGT-3745)
+
+Batch gates failed because several deliveries, each within budget on its own
+base, crossed the 2,102 kB `maximumError` together by a few hundred bytes.
+`develop` at `3c3f72609` measured 2,100,405 B initial in 107 files, 1,595 B
+below the limit. Raw sizes from `npm --prefix frontend run build --
+--stats-json`; Angular counts 1 kB as 1,000 B.
+
+| Largest eager chunk (before) | Raw size | Main modules |
+|---|---:|---|
+| `main` | 426,924 B | `app.ts` 105,440, `studio-shell.component.ts` 86,260, explorer tree 27,981, crash-recovery prompt 17,553, status bar 16,734 |
+| board chunk | 417,721 B | task card 72,768, task column 46,890, card view model 28,546, delivery section 17,609, live status 16,508 |
+| Angular core | 188,047 B | `@angular/core` |
+| `styles.css` | 114,548 B | `styles.scss` 97,445, `diff2html.min.css` 17,085 |
+| task service | 105,359 B | `task.service.ts` 41,303, `@microsoft/signalr` |
+| board state | 80,397 B | task selection, board filters, tab state |
+| `@angular/cdk` | 62,506 B | drag and drop for the explorer tree |
+| Task-Server panels | 42,012 B | three panels pulled in by `isLocalUrl` through the feature barrel |
+| `@angular/forms` | 39,321 B | `FormsModule`, used only by the sign-in gate |
+
+| Move | Bytes out of the start bundle |
+|---|---:|
+| `FormsModule` dropped from `app.ts` and the studio shell (unused there); the sign-in gate deferred | 52,075 |
+| `isLocalUrl` and `TaskServerService` imported from the new `task-server/runtime.ts`, not the component barrel | 34,981 |
+| Update Center deferred until it opens; Updates settings moved to `update/lazy.ts` | 18,819 |
+| Crash-recovery prompt deferred in the status bar | 17,553 |
+| diff2html stylesheet linked by `loadDiff2Html()` instead of the global bundle | 17,085 |
+| Quota forecast panel, curve and workspace disclosure moved to `quota/lazy.ts` | 18,723 |
+| Legacy-layout header chrome (filters dropdown, project tabs, auto-review indicator, version badge, usage host) deferred with that layout | 19,547 |
+
+After the change the initial total is 1,922,039 B in 110 files, 178,366 B
+(8.5 %) less. The rows sum to 178,783 B; the defer wiring adds 661 B to
+`app.ts` and 113 B to the status bar, and chunk wrappers account for the rest. The budget is now 1,980 kB warning and 2,114 kB error. The board
+shell, columns, cards, explorer tree and the always-open inline filter panel
+stay eager; the filter panel registers its Escape handler at startup, so
+deferring it would change Escape handling.
+

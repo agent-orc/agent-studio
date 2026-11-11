@@ -14,15 +14,12 @@ import {
   OnDestroy,
 } from '@angular/core';
 import { forkJoin } from 'rxjs';
-import { FormsModule } from '@angular/forms';
 import {
   BoardFiltersService, ActiveBoardFiltersComponent,
   DossierGroupBoardComponent,
-  FiltersDropdownComponent,
   TaskColumnComponent,
   KanbanFilterSidesheetComponent, TagFiltersComponent, TagChipsComponent,
   LaneCollapseService,
-  ProjectTabsComponent,
   TypeFilterOption,
   BoardDragStateService,
   BoardMutationsService,
@@ -37,7 +34,7 @@ import {
   projectAutoInfo,
   projectRunnerIndicator,
 } from './features/board';
-import { CreateTaskDialogComponent } from './features/board/lazy';
+import { CreateTaskDialogComponent, FiltersDropdownComponent, ProjectTabsComponent } from './features/board/lazy';
 import {
   TaskDetailComponent,
   DetailLoadErrorComponent,
@@ -69,8 +66,7 @@ import {
   type ProjectRailKey,
 } from './features/project-detail/runtime';
 import {
-  AutoReviewIndicatorComponent,
-  StatusBarComponent, StatusBarUsageHostComponent, AccountControlComponent,
+  StatusBarComponent, AccountControlComponent,
   UiPreferencesService,
   WorkspaceBannerComponent,
   WorkspaceManagerService,
@@ -79,17 +75,19 @@ import {
   FirstRunLaunchService,
   type WorkspaceSettingsSection,
 } from './features/shell';
-import { WorkspaceCreateDialogComponent, OnboardProjectDialogComponent } from './features/shell/lazy';
+import {
+  AutoReviewIndicatorComponent,
+  OnboardProjectDialogComponent,
+  StatusBarUsageHostComponent,
+  WorkspaceCreateDialogComponent,
+} from './features/shell/lazy';
 import {
   buildDevtoolsMenuItems,
   DEVTOOLS_MENU_IDS,
 } from './features/dev-tools';
 import { E2ECleanupDialogComponent, TagManagerDialogComponent } from './features/dev-tools/lazy';
-import {
-  UpdateBlockModalComponent,
-  UpdateCenterComponent,
-  UpdateVersionBadgeComponent,
-} from './features/update';
+import { UpdateBlockModalComponent } from './features/update';
+import { UpdateCenterComponent, UpdateVersionBadgeComponent } from './features/update/lazy';
 import { VerboseDebugOverlayComponent } from './features/verbose-debug/lazy';
 import {
   StudioShellComponent, TaskDefaultsControlComponent,
@@ -154,7 +152,8 @@ import { MenuComponent, MenuItem, MenuItemClickEvent } from './components/menu';
 import { CostBreakdownService, type TaskTokenSummary } from './features/tokens'; // verbose-debug overlay context types
 import { CostBreakdownDialogComponent } from './features/tokens/lazy';
 import { LoadingSurfaceComponent } from './components/async-feedback';
-import { AuthGateComponent, AuthService } from './components/auth-gate/auth-gate';
+import { AuthService } from './services/auth.service';
+import { AuthGateComponent } from './components/auth-gate/auth-gate';
 import { CodexSignInDialogService, ClaudeSignInDialogService } from './features/remote-hosts';
 import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts/lazy';
 import { ScrollMemoryDirective } from './directives/scroll-memory.directive';
@@ -184,7 +183,6 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     ProjectOverlaysComponent,
     AutoReviewIndicatorComponent,
     StatusBarComponent, StatusBarUsageHostComponent, AccountControlComponent,
-    FormsModule,
     CreateTaskDialogComponent,
     DossierGroupBoardComponent,
     ErrorDialogComponent,

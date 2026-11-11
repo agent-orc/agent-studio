@@ -2,7 +2,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
-import { TaskServerService } from '../../../task-server';
+import { TaskServerService } from '../../../task-server/runtime';
 import {
   formatRetentionBytes,
   type FullBackupRetention,
