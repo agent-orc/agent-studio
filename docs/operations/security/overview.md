@@ -122,11 +122,15 @@ that is already allowed to edit that project's checkout.
   down browser polling and SignalR before returning to the login gate.
   Bootstrap, invitation acceptance, and login record the resolved client address
   and a bounded browser device label on every new session.
-- Owner and Admin sign-in requires an enrolled authenticator code, a one-use
-  recovery code, or a WebAuthn passkey assertion. An account without an enrolled
-  factor receives a limited session for factor setup. Every step-up requires a
-  registered second factor. TOTP setup presents the secret, a locally generated
-  QR code, and an `otpauth://` link. Enrollment returns recovery codes once; store them away from
+ - Owner, Admin, Developer, Approver, and Viewer must enroll an authenticator or a
+   WebAuthn passkey. Their permissions include run operation, deployment or
+   approval, secrets, or access; Viewer holds `secrets.read` for metadata. An account without a factor receives a limited
+   session for factor setup. Once any user registers a factor, every password
+   sign-in requires its authenticator code, a one-use recovery code, or a
+   WebAuthn passkey assertion, including Product sign-ins. Every
+   step-up requires a registered second factor. TOTP setup presents the secret,
+   a locally generated QR code, and an `otpauth://` link. Enrollment returns
+   recovery codes once; store them away from
   the browser. Passkey ceremonies require user verification and bind the
   challenge to the current origin and relying party. Each user can list active
   sessions with device, address, creation, and last-use times, revoke one, or
@@ -152,7 +156,9 @@ that is already allowed to edit that project's checkout.
   Product cards carry no run controls: project defaults choose the CLI, model,
   and mode, and the card records the signed-in user as creator. Product
   sessions read only screenshot, HTML, and Markdown result files and never run
-  conversations, session events, or agent work detail. The per-route task
+  conversations, session events, or agent work detail. The shell lists a
+  Product session's workspaces, projects, and watch paths through the same
+  binding-filtered collections, without host checkout paths. The per-route task
   contract is in
   [Product session task access](../../system/domains/tasks.md#product-session-task-access-agt-3182).
   Production approval is a separate grant that an owner gives for one assigned
@@ -312,6 +318,14 @@ Every role reads the magazines it can see (`magazine.read`); Owner, Admin,
 Developer and Operator agent also publish (`magazine.write`). The
 installation and workspace magazines take writes only through a workspace
 binding ([magazine domain](../../system/domains/magazine.md#access)).
+
+For human users, factor enrollment follows effective permissions from direct
+and group bindings. Any role granting `project.runs.operate`,
+`environment.deploy`, production deployment or approval, `secrets.*`, or
+`access.*` requires enrollment. This currently covers Owner, Admin, Developer,
+Approver, and Viewer. Product can enroll voluntarily; if it does, every
+subsequent password sign-in verifies the factor. Operator agent is a service
+account role and does not use human sign-in.
 
 - Every route declares one named permission, such as `project.cards.write`,
   `environment.production.deploy.approve`, `secrets.write`, or

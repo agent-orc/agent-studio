@@ -47,6 +47,12 @@ app-root {
   --studio-z-overlay-modal: 2147483002;
 }
 
+// AGT-3624: tooltips explain overlay content (disabled menu rows), so they
+// stack with the overlay root and follow it in DOM order (OverlayPortalService).
+body > .cac-tooltip {
+  z-index: var(--studio-z-overlay-root);
+}
+
 .studio-overlay-root {
   position: fixed;
   inset: 0;

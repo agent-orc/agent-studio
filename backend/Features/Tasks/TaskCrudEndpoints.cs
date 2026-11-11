@@ -567,6 +567,7 @@ public static class TaskCrudEndpoints
                 });
                 pipelineLog.Complete(info.FolderPath, now);
                 SteerPendingMarker.Clear(info.FolderPath);
+                scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(info.FolderPath));
 
                 var move = await transitions.MoveAsync(
                     jobId,
@@ -933,10 +934,17 @@ public static class TaskCrudEndpoints
             };
         });
 
-        group.MapDelete("/{jobId}", (string jobId, string? project, string? watchPath, TaskStateMachine states, AgentStudio.Registry.ProjectRegistry projects) =>
+        group.MapDelete("/{jobId}", (string jobId, string? project, string? watchPath, string? reason, TaskStateMachine states,
+            AgentStudio.Registry.ProjectRegistry projects, ILoggerFactory loggers) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var success = states.DeleteJob(jobId, watchPath);
+            // AGT-3624: deleting a card with unintegrated work carries the
+            // operator's written reason; the folder is gone, so the log keeps it.
+            if (success && !string.IsNullOrWhiteSpace(reason))
+                loggers.CreateLogger("AgentStudio.Tasks.TaskDelete").LogWarning(
+                    "task-deleted-with-reason job={JobId} watchPath={WatchPath} reason={Reason}",
+                    jobId, watchPath, reason.Trim());
             return success ? Results.Ok() : Results.NotFound();
         });
 

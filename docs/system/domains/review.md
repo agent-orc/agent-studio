@@ -1247,10 +1247,14 @@ that verdict.
 | Clean repeat green, baseline red on cached state, clean baseline repeat green | `DependencyCacheDefect` or `BaselineResultCacheDefect` | no |
 | Reviewer block without evidence against a changed path | `concern` | no |
 
-**Missing test reports.** A successful test command without a recognized
-summary supplies exit-status evidence. A failed test command with no parseable
-result is retried once, before saving the dependency cache, and both attempts
-are recorded. If it still has no result, it settles as
+**Missing test reports.** A successful custom command with no recognized test
+runner can supply exit-status evidence. `dotnet test`, `node --test`, Jest, and
+Vitest must report a positive test count. Their zero-test summaries and
+"no test" diagnostics are missing results even when the command exits zero.
+The same requirement applies when the delivery changes test configuration or
+the spec file list. A test command with no parseable result is retried once
+before saving the dependency cache, and both attempts are recorded. If it
+still has no result, it settles as
 `ReviewInfra/BaselineUnavailable` and names the expected report path (or the
 captured stdout artifact for console-only reporters). An explicit missing-file
 diagnostic from the frontend wrapper follows the same path even when the wrapper

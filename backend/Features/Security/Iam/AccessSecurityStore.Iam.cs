@@ -696,6 +696,10 @@ public sealed partial class AccessSecurityStore
         return bindings.Where(binding => PermissionEvaluator.AppliesTo(binding, subject));
     }
 
+    private static bool RequiresSecondFactor(SecurityState state, string userId)
+        => EffectiveBindings(userId, state.RoleBindings, state.Groups)
+            .Any(binding => IamRoles.Find(binding.Role)?.Permissions.Any(IamPermissions.RequiresSecondFactor) == true);
+
     private static IamSubject UserSubjectLocked(SecurityState state, string userId)
         => new(IamPrincipalKind.User, userId,
             state.Groups.Where(group => group.Members.Contains(userId, StringComparer.Ordinal)).Select(group => group.Id)

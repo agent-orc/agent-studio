@@ -1,4 +1,5 @@
 using AgentStudio.Secrets;
+using AgentStudio.Security;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Management;
@@ -58,6 +59,16 @@ public sealed record BackupOptions(
     /// <summary>Directory names left out of every source: package caches and build scratch that a restore does not need.</summary>
     public static readonly IReadOnlyList<string> DefaultExclude = ["node_modules", ".cache", ".npm", ".nuget"];
 
+    /// <summary>The source that holds the workspace (<c>TaskRepository</c>); every configuration has one.</summary>
+    public const string WorkspaceSource = "workspace";
+
+    /// <summary>
+    /// Workspace files left out because the running API holds them open and
+    /// recreates them at start: the kill switch host lock is held exclusively
+    /// for the API's lifetime, so no other process can read it (AGT-3729).
+    /// </summary>
+    public static readonly IReadOnlyList<string> WorkspaceRuntimeExclude = [".security/" + OperatorKillSwitchHostLock.FileName];
+
     public bool Configured => Enabled && !string.IsNullOrWhiteSpace(KeyFile);
 
     public static BackupOptions From(IConfiguration configuration)
@@ -104,8 +115,8 @@ public sealed record BackupOptions(
             .ToList();
         if (configured.Count > 0)
         {
-            if (!configured.Any(source => string.Equals(source.Name, "workspace", StringComparison.Ordinal)))
-                configured.Insert(0, new BackupSource("workspace", workspace, false, false, []));
+            if (!configured.Any(source => string.Equals(source.Name, WorkspaceSource, StringComparison.Ordinal)))
+                configured.Insert(0, new BackupSource(WorkspaceSource, workspace, false, false, []));
             return configured;
         }
 
@@ -113,7 +124,7 @@ public sealed record BackupOptions(
         // machine-local state root (batch gate store and leases, model routing,
         // prompt overrides, project settings). The root itself is shared with
         // other applications on a workstation and is never read as a whole.
-        var sources = new List<BackupSource> { new("workspace", workspace, false, false, []) };
+        var sources = new List<BackupSource> { new(WorkspaceSource, workspace, false, false, []) };
         string? local = null;
         try { local = LocalStateRoot.Resolve(); }
         catch (LocalStateRootUnavailableException) { local = null; }

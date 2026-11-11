@@ -1,5 +1,6 @@
 import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import { JobsHubClient } from './jobs-hub-client.service';
+import { AuthSessionState } from './auth.service';
 
 /**
  * Derives a debounced, app-wide "backend offline" signal from the SignalR hub
@@ -21,6 +22,7 @@ import { JobsHubClient } from './jobs-hub-client.service';
 @Injectable({ providedIn: 'root' })
 export class ConnectionStatusService {
   private readonly hub = inject(JobsHubClient);
+  private readonly auth = inject(AuthSessionState);
 
   /** True only after the hub has been down continuously for {@link GRACE_MS}. */
   readonly offline = signal(false);
@@ -51,7 +53,9 @@ export class ConnectionStatusService {
           // cancels it above, so transient back-off blips never show.
           this.graceHandle = setTimeout(() => {
             this.graceHandle = null;
-            if (!this.hub.connected()) this.offline.set(true);
+            // AGT-3668: an account without a project has nothing to stream;
+            // its refused socket is not a backend outage.
+            if (!this.hub.connected() && !this.auth.withoutProject()) this.offline.set(true);
           }, ConnectionStatusService.GRACE_MS);
         }
       });
