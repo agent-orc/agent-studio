@@ -253,6 +253,9 @@ if (config.services["task-server"].build.args.VERSION !== process.argv[2]
 ' "$scenario_compose_json" "$scenario_version"
 
 export FAKE_DOCKER_IMAGE_STORE="$repo_root/scripts/fixtures/fake-docker-image-store.sh"
+# This contract expects the current prune flag. Keep the fake Docker mode
+# independent of a caller testing the legacy flag in another shell script.
+export FAKE_DOCKER_LEGACY_BUILDER=0
 scenario_images() { cut -f1 "$fake_state/images" | grep -F -- "$1-" || true; }
 
 # Residue of an older, killed run: the retention pass at the start of the next

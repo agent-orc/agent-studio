@@ -1638,6 +1638,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             Question = "Review the concept Dossier, then promote its implementation cards or finish with no implementation.",
             CliType = current.CliType,
         }, _logger);
+        _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(current.FolderPath));
         _pipelineLog?.RecordStep(current.FolderPath, new PipelineStepExecution
         {
             StepId = PipelineCatalogue.ConceptSightReviewGateStepId,

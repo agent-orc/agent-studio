@@ -131,11 +131,21 @@ public sealed class ConceptPipelineTests : IDisposable
             Id = "concept-card",
             Mode = TaskModes.Concept,
             FolderPath = taskFolder,
+            Dossier = new TaskDossier { Path = dossierPath },
         });
         Assert.NotNull(summary);
         Assert.True(summary.ContractSatisfied);
         Assert.Equal(dossierPath, summary.RepoRelativePath);
-        Assert.Equal("results/deliverables.md", summary.ReferenceSource);
+        Assert.Equal("task.json.dossier", summary.ReferenceSource);
+        var legacyOnly = TaskEndpointHelpers.BuildConceptDossierSummary(new TaskInfo
+        {
+            Id = "older-concept", Mode = TaskModes.Concept, FolderPath = taskFolder,
+        });
+        Assert.False(legacyOnly!.ContractSatisfied);
+        Assert.True(ConceptDossierClosureStore.Write(taskFolder, "Concept discarded."));
+        var closed = ConceptDossierContract.Read(taskFolder);
+        Assert.True(closed.NoDossierNeeded);
+        Assert.Null(closed.RepoRelativePath);
         Assert.Contains(dossierPath, File.ReadAllText(Path.Combine(taskFolder, "status.md")));
         Assert.Contains(dossierPath, File.ReadAllText(Path.Combine(taskFolder, "results", "deliverables.md")));
         Assert.Null(ConceptDossierContract.NormalizePath("/docs/sidesheet-concept/index.html"));
