@@ -205,15 +205,26 @@ public sealed class TaskIntegrationStatusService
             var batches = _batchGates;
             var currentProfile = BatchGatePilotService.GateProfile(
                 _settings.Get(job.ProjectName).BuildProfile, root);
+            var uncountedBaseChecks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var verdict in batches.ListBaseVerdicts(job.ProjectName))
             {
-                if (verdict.Outcome != "pass" || verdict.Provisional
-                    || verdict.Source is not (BatchGateBaseCheckSources.FullSuite or null)
-                    || verdict.VerifiedSha is not null
+                if (verdict.Outcome != "pass"
+                    || !laterBySha.TryGetValue(verdict.BaseSha, out var parent)) continue;
+                var uncounted = verdict.Provisional ? "it is provisional"
+                    : verdict.Source is not (BatchGateBaseCheckSources.FullSuite or null)
+                        ? $"its source is {verdict.Source}, not the full suite"
+                    : verdict.VerifiedSha is not null
                         && !string.Equals(verdict.VerifiedSha, verdict.BaseSha, StringComparison.OrdinalIgnoreCase)
-                    || !string.Equals(verdict.GateProfileDigest, currentProfile, StringComparison.Ordinal)
-                    || !laterBySha.TryGetValue(verdict.BaseSha, out var parent)
-                    || !File.Exists(verdict.EvidencePath)) continue;
+                        ? $"it verified {verdict.VerifiedSha}"
+                    : !string.Equals(verdict.GateProfileDigest, currentProfile, StringComparison.Ordinal)
+                        ? "its gate profile digest is not the current profile"
+                    : !File.Exists(verdict.EvidencePath) ? "its evidence file is missing"
+                    : null;
+                if (uncounted is not null)
+                {
+                    uncountedBaseChecks[verdict.BaseSha] = uncounted;
+                    continue;
+                }
                 publications.Add(new(verdict.BaseSha, parent,
                     $"full-suite batch base gate on {verdict.BaseSha}"));
             }
@@ -265,6 +276,8 @@ public sealed class TaskIntegrationStatusService
             if (!decision.Verified)
                 return status with { Verification = UnverifiedAcceptance(tip,
                     $"The later publication {decision.MissingTree} has no passed gate on the first-parent integration line. "
+                    + (decision.MissingTree is { } hole && uncountedBaseChecks.TryGetValue(hole, out var why)
+                        ? $"A batch base check passed on it but is not counted: {why}. " : string.Empty)
                     + "A passed per-task gate on that published tree or a full-suite batch base verdict "
                     + "for the current gate profile with its evidence would cover it.") };
             var neutralEvidence = neutralCommits.Count == 0 ? string.Empty

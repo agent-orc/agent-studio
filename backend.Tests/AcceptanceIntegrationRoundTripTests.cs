@@ -3461,6 +3461,13 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         {
             Assert.Contains(netChangeSha, status.Verification?.Reason);
             Assert.Contains("full-suite batch base verdict", status.Verification?.Reason);
+            if (outcome == "pass")
+                Assert.Contains(evidenceExists
+                        ? "is not counted: its gate profile digest is not the current profile"
+                        : "is not counted: its evidence file is missing",
+                    status.Verification?.Reason);
+            else
+                Assert.DoesNotContain("is not counted", status.Verification?.Reason);
         }
     }
 

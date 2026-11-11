@@ -1416,16 +1416,6 @@ public sealed partial class MergeIntoDevelopRunner
         }
         if (!gateApplies && changedPaths is not null)
         {
-            if (result.Outcome == MergeIntoIntegrationOutcome.MergedAfterRebase)
-            {
-                var rollback = _git.ResetIntegrationBranch(repoRoot, integrationBranch, preMergeTip!);
-                IntegrationGateJournal.Clear(jobFolderPath);
-                return (MergeIntoIntegrationResult.Failed(
-                    AcceptedIntegrationFailureCodes.GateUnavailable,
-                    $"The net-change publication {gatedSha} has no passed gate on its exact tree. "
-                    + (rollback.Success ? "The integration branch was rolled back."
-                        : $"Rolling the integration branch back failed: {rollback.Error}")), null);
-            }
             const string skipReason =
                 "the merge touches neither frontend/, managed sources, nor the Compose stack, " +
                 "and the project declares no build-profile build commands";
@@ -1615,7 +1605,11 @@ public sealed partial class MergeIntoDevelopRunner
 
         var executed = gate.VerdictSource == GateVerdictSource.Executed
             && gate.FailureKind is not (BuildTestGateFailureKind.MissingSource or BuildTestGateFailureKind.Cancellation);
+        // A green gate on a net-change publication must have passed on the
+        // exact published commit, or acceptance finds a hole on the
+        // first-parent line. A red gate keeps its own failure code below.
         if (result.Outcome == MergeIntoIntegrationOutcome.MergedAfterRebase
+            && PreDevelopBuildGate.IsGreen(gate)
             && (gate.Verdict != BuildTestGateVerdict.Ok
                 || !string.Equals(gate.TestedSha, gatedSha, StringComparison.OrdinalIgnoreCase)))
         {
