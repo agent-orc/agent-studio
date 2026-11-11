@@ -54,7 +54,7 @@ public sealed class BatchIsolationGuardTests : IDisposable
     public void A_live_flight_refuses_a_red_parent_member()
     {
         var manifest = SeedMember();
-        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+        BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Red, Result, 1, Now, "deterministic suite red"));
         var membership = new BatchIsolationGuard(_store, activeFlight: _ => true).Find(Card());
         Assert.Equal(new BatchIsolationMembership(Project, TaskKey, manifest.BatchId), membership);

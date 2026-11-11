@@ -1985,7 +1985,7 @@ public sealed class BatchGatePilotPublicationTests : BatchGatePilotServiceTests
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         var parent = ClosePendingBatch(factory);
         _gate.Batch = request => Green(request.ExpectedSha);
-        store.AppendState(new BatchGateState(parent.BatchId, parent.MembershipDigest,
+        BatchGateStates.Reach(store, new BatchGateState(parent.BatchId, parent.MembershipDigest,
             BatchPhase.Red, null, 1, _clock, "deterministic suite red"));
         if (childRunning)
         {
@@ -1995,7 +1995,7 @@ public sealed class BatchGatePilotPublicationTests : BatchGatePilotServiceTests
                 MembershipDigest = digest, Members = subset, ParentBatchId = parent.BatchId,
                 Diagnostic = true };
             store.CloseManifest(child);
-            store.AppendState(new BatchGateState(child.BatchId, digest,
+            BatchGateStates.Reach(store, new BatchGateState(child.BatchId, digest,
                 BatchPhase.Running, null, 1, _clock));
             // The abandoned child may already have cleared every parent's
             // ownership marker before the restarted host sees the red parent.

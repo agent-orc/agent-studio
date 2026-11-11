@@ -1991,7 +1991,7 @@ public sealed partial class BatchGatePilotService
             // publication keeps its phase for the next tick's recovery.
             if (_store.ReadPublication(manifest.BatchId) is null
                 && _store.LatestState(manifest.BatchId).Phase is not
-                    (BatchPhase.Publishing or BatchPhase.Unknown))
+                    (BatchPhase.Publishing or BatchPhase.Unknown or BatchPhase.Abandoned or BatchPhase.Published))
             {
                 State(manifest, BatchPhase.Abandoned, null, lease.Fence,
                     "coordinator lease lost during the gate");
@@ -2005,7 +2005,7 @@ public sealed partial class BatchGatePilotService
             // next tick can finish local attribution and lane release.
             if (_store.ReadPublication(manifest.BatchId) is null
                 && _store.LatestState(manifest.BatchId).Phase is not
-                    (BatchPhase.Publishing or BatchPhase.Unknown))
+                    (BatchPhase.Publishing or BatchPhase.Unknown or BatchPhase.Abandoned or BatchPhase.Published))
                 State(manifest, BatchPhase.Paused, null, lease.Fence, ex.GetType().Name);
         }
         finally
