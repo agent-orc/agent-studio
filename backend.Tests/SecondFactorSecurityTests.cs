@@ -94,7 +94,8 @@ public sealed class SecondFactorSecurityTests
         var root = Path.Combine(Path.GetTempPath(), "second-factor-" + Guid.NewGuid().ToString("N"));
         try
         {
-            var store = NewStore(root);
+            var clock = new FakeTimeProvider(new DateTimeOffset(TestUtcNow));
+            var store = NewStore(root, clock);
             var password = "long pass phrase " + Guid.NewGuid().ToString("N");
             var bootstrap = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
             var owner = store.AuthenticateSession(bootstrap.SessionToken)!;
@@ -106,9 +107,11 @@ public sealed class SecondFactorSecurityTests
             Assert.Equal("step-up-required", denied.Code);
             Assert.Equal("step-up-required", Assert.Throws<SecurityOperationException>(
                 () => store.BeginPasskeyRegistration(owner)).Code);
-            store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(original, TestUtcNow));
+            // AGT-3675 rejects a TOTP step that was already accepted, so step up in the next step.
+            clock.Advance(TimeSpan.FromSeconds(30));
+            store.VerifyStepUp(owner, SecondFactorCodes.CurrentTotp(original, clock.GetUtcNow().UtcDateTime));
             var replacement = store.BeginTotpEnrollment(owner);
-            store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(replacement, TestUtcNow));
+            store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(replacement, clock.GetUtcNow().UtcDateTime));
             Assert.Equal("step-up-required", Assert.Throws<SecurityOperationException>(
                 () => store.BeginTotpEnrollment(owner)).Code);
 
