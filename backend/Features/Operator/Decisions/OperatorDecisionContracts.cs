@@ -11,6 +11,7 @@ public static class OperatorDecisionTypes
     public const string HumanReviewReady = "human-review.ready";
     public const string DecisionCardOpened = "decision-card.opened";
     public const string BackendStalled = "backend.stalled";
+    public const string BatchGateStuck = "batch-gate.stuck";
     public const string ProgressIdleWithReady = "progress.idle-with-ready";
     public const string BatchRed = "batch.red";
     public const string BatchIsolating = "batch.isolating";
@@ -22,7 +23,7 @@ public static class OperatorDecisionTypes
 
     public static readonly IReadOnlyList<string> All =
     [
-        EscalationOpened, HumanReviewReady, DecisionCardOpened, BackendStalled, ProgressIdleWithReady,
+        EscalationOpened, HumanReviewReady, DecisionCardOpened, BackendStalled, BatchGateStuck, ProgressIdleWithReady,
         BatchRed, BatchIsolating, BatchRecordUnreadable, PushPendingOverdue, QuotaExhausted, QuotaFallbackActive, WatcherHeartbeat,
     ];
 
@@ -61,6 +62,7 @@ public static class OperatorOperations
         // Decision cards stay with the owner (OA-D5).
         OperatorDecisionTypes.DecisionCardOpened => [CardInspect, OwnerDecide],
         OperatorDecisionTypes.BackendStalled => [StallsInspect, CapacityRead],
+        OperatorDecisionTypes.BatchGateStuck => [BatchTriage],
         OperatorDecisionTypes.ProgressIdleWithReady => [StallsInspect, CapacityRead],
         OperatorDecisionTypes.BatchRed => [BatchTriage, BatchEject],
         // Eject is the only member action while a batch isolates (Guardrails).

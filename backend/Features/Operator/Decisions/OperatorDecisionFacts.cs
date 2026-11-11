@@ -20,7 +20,7 @@ public static class OperatorDecisionFacts
     /// <summary>Watcher stall kinds that mean the execution backend stopped making progress.</summary>
     public static readonly IReadOnlySet<string> BackendStallKinds = new HashSet<string>(StringComparer.Ordinal)
     {
-        "host-offline", "host-overload", "memory-pressure", "deploy-drift", "claim-refusal", "batch-gate-stuck",
+        "host-offline", "host-overload", "memory-pressure", "deploy-drift", "claim-refusal",
     };
 
     /// <summary>Watcher stall kinds that mean capacity is idle while cards wait.</summary>
@@ -92,6 +92,7 @@ public static class OperatorDecisionFacts
                 continue;
             var kind = item.LastDetails.GetValueOrDefault("stallKind");
             var type = kind is null ? null
+                : kind == "batch-gate-stuck" ? OperatorDecisionTypes.BatchGateStuck
                 : BackendStallKinds.Contains(kind) ? OperatorDecisionTypes.BackendStalled
                 : IdleWithReadyKinds.Contains(kind) ? OperatorDecisionTypes.ProgressIdleWithReady
                 : null;
