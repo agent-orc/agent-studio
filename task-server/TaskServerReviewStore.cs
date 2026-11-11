@@ -211,7 +211,7 @@ public sealed partial class TaskServerStore
                 if (!string.Equals(briefHash, currentBriefHash, StringComparison.OrdinalIgnoreCase))
                     throw new TaskServerConflictException(
                         "concept-brief-changed",
-                        $"The concept review plan targets prompt.md SHA-256 {briefHash}, but the current brief is {currentBriefHash ?? "missing"}.");
+                        $"The concept review plan targets authored brief version {briefHash}, but the current brief is {currentBriefHash ?? "missing"}.");
             }
 
             result = await InsertReviewSubjectAsync(connection, transaction, request, actorId, ct);
@@ -1656,6 +1656,22 @@ public sealed partial class TaskServerStore
         string taskId,
         CancellationToken ct)
     {
+        // Follow-up rounds append to prompt.md without changing the authored
+        // brief. The mirrored metadata is the same version used by completion.
+        await using (var versionCommand = Command(connection, """
+            SELECT content_base64, object_stored, sha256 FROM task_files
+             WHERE task_id = $task AND path = '.metadata/brief-version';
+            """, transaction, ("$task", taskId)))
+        await using (var versionReader = await versionCommand.ExecuteReaderAsync(ct))
+        {
+            if (await versionReader.ReadAsync(ct))
+            {
+                var version = Encoding.UTF8.GetString(ReadTaskContent(
+                    versionReader.GetString(0), versionReader.GetInt64(1) != 0,
+                    versionReader.IsDBNull(2) ? null : versionReader.GetString(2))).Trim();
+                if (!string.IsNullOrWhiteSpace(version)) return version;
+            }
+        }
         string? encoded = null;
         var objectStored = false;
         string? sha256 = null;

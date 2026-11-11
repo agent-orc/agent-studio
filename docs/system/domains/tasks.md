@@ -194,14 +194,22 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   implementation slice count. A decision slice stays incomplete while any
   implementation card created from its choice remains open. Dossier chat
   receives the same bounded card list.
-  `TaskInfo.ConceptDossier` still detects a repository-relative
-  `docs/.../index.html` path from
-  `results/deliverables.md` first and `status.md` second. Task detail renders
-  that one path only as a compatibility fallback. A concept in `5-human-review` or
+  `TaskInfo.ConceptDossier` projects that same primary `task.json.dossier` path
+  for the detail notice. The result-document path is a backfill input for older
+  cards, not a separate visible link. The correction action writes the primary
+  association; a no-dossier decision clears it. A concept in `5-human-review` or
   `6-completed` with neither a link nor a deliberate no-dossier explanation
   gets one compact `No dossier linked` notice with the two correction actions.
-  The legacy Markdown reference is not bulk-migrated. MKT-21 remains a manual
-  correction example for that separate concept delivery contract.
+  The catalogue projects `linkedTaskKeys` from those primary associations for
+  the Dossier overview on each read, even while the Wiki descriptor is cached;
+  descriptor source and related keys
+  seed backfill but do not act as a separate visible membership source.
+  A recorded Dossier decision appears beside the concept link with its answered
+  point count and spawned keys. The task toolbar offers acceptance in Human
+  Review. A spawned card carries the primary Dossier association from creation
+  and links back from its task detail; its key appears in the Dossier card list
+  and counts as an implementation slice when the descriptor has no matching
+  declared slice.
 - The Dossier-key reference reuses the same detail row and operator actions,
   not a second Dossier block. The Markdown detector remains read-only
   compatibility for already-linked cards and never produces a duplicate visible
@@ -915,7 +923,10 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   through `TaskMutationService`.
 - Remote commit attribution is evaluated independently for every fenced run
   attempt. Each attempt's verified delivery range passes through the
-  foreign-task guard before persistence. Card-level `commits[]` is the
+  foreign-task guard before persistence. The guard skips the subject scan only
+  for this card's runner salvage commit, identified by the
+  `Agent-Studio-Task: <key>` and `Agent-Studio-Salvage: teardown` trailers,
+  because its subject carries the card title (AGT-3717). Card-level `commits[]` is the
   SHA-deduplicated union across generations; a later attempt does not replace
   earlier valid commits, and inherited SHAs retain their original
   `runAttemptId`, `runnerId`, delivery `branch`, and proving `resultSha`.
@@ -955,6 +966,16 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   through `TaskMutationService`. The same pass materializes missing remote
   token receipts from that attempt's CLI-log window. Ambiguous cards remain
   unchanged and are listed in the durable migration report.
+- Startup also runs the one-time `salvage-subject-attribution-v1` repair
+  (AGT-3717). It re-attributes a recent current generation without attributed
+  commits only when its verified range contains this card's own salvage commit
+  with another card key in the subject, the one case the guard rejected before
+  it exempted that commit. Its report sits next to the
+  `remote-completion-attribution-v1` report under `.metadata/migrations/`.
+- A batch member whose rebased-commit mapping cannot be recorded after
+  publication is escalated from Auto Review with the reason (its code is on
+  the integration branch), and the other members of the published batch are
+  released. A release failure of one member never holds the members after it.
 - Accepted-card `integration.status` is a read-time projection of attributed
   commit membership. `integration.repositories[]` contains one entry per
   attributed repository with its commits, integration and release branch
@@ -1349,6 +1370,23 @@ duplicate JSON property names, including case variants, and denies a lane field
 that is not a string or `null`. A body that is not valid JSON is denied instead
 of passed through. For every caller, Task Server JSON binding now rejects a
 body with duplicate property names (`AllowDuplicateProperties = false`).
+
+The shell, the project picker, the Add task dialog and Project Chat read a
+Product session's projects from three backend collections (AGT-3668):
+`GET /api/workspaces` (the Studio calls it as `/api/v1/workspaces`),
+`GET /api/projects` (`/api/v1/projects`), and `GET /api/watch-paths`. The
+Product allowlist admits exactly these paths, not their sub-resources, and each
+handler filters its payload by the session's project bindings, so no other
+project's name or id is returned. Watch-path entries for a Product session
+carry the project name and storage path; `rootPath` and `repositoryPath` are
+blank. The Add task dialog offers a Product session only the Backlog and Ready
+lanes the create rule above accepts, and the Studio does not poll the
+installation-wide `GET /api/runner/status` for it. A signed-in account that
+holds no project (a Product user whose last binding was removed reads as a
+viewer without projects) sees one sentence in the editor's welcome view at
+every width, in place of the board, the Explorer tree and the project picker;
+a refused read raises no error dialog for it. Test: `frontend/e2e/security/product-session-networked-https.spec.ts`
+in the `networked-https` Playwright profile.
 
 The backend route middleware denies with `403` and
 `{ "error": "role-denied", "message": ... }`; a backend handler check denies
