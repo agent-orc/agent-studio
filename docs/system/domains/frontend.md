@@ -428,7 +428,7 @@ overflow instead of shrinking below that width; active styling and close-button
 alignment are stable in both themes.
 
 The workspace Activity Feed is the embedded `#/feed` main view and is opened
-by the Activity icon. Its 500-event backend snapshot is rendered through a
+by the Activity icon. Its capped backend snapshots are rendered through a
 bounded, variable-height history window based on the Activity scroll fix, so
 live prepends preserve the operator's reading position without FixedSize
 virtual-scroll assumptions. The entry default is all projects and all event
@@ -446,6 +446,14 @@ surface and shares the same live feed store. Alert treatment follows the
 AGT-2410 acute-only status contract, and every event kind uses the same
 row-width grid so Watcher Problem and Decision projections can join the stream
 without a parallel surface.
+
+Owner actions join the workspace chronology from the task timeline and Dossier
+decision descriptor. The Owner actions class includes accepted and reissued
+lane moves, refused moves with their reason, decision cards, created cards, and
+confirmed Dossier decisions. Card rows open the task and Dossier rows link to
+the Dossier. The Day picker limits the stream and its class counts to a chosen
+local calendar day; clearing it restores the full history. Refused owner moves
+are appended to the card timeline at the move boundary.
 
 D10 steering feedback uses the same task timeline poll as the Overview status
 row and the Timeline tab. Overview shows only a fact marked current by the

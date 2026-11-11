@@ -194,14 +194,22 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   implementation slice count. A decision slice stays incomplete while any
   implementation card created from its choice remains open. Dossier chat
   receives the same bounded card list.
-  `TaskInfo.ConceptDossier` still detects a repository-relative
-  `docs/.../index.html` path from
-  `results/deliverables.md` first and `status.md` second. Task detail renders
-  that one path only as a compatibility fallback. A concept in `5-human-review` or
+  `TaskInfo.ConceptDossier` projects that same primary `task.json.dossier` path
+  for the detail notice. The result-document path is a backfill input for older
+  cards, not a separate visible link. The correction action writes the primary
+  association; a no-dossier decision clears it. A concept in `5-human-review` or
   `6-completed` with neither a link nor a deliberate no-dossier explanation
   gets one compact `No dossier linked` notice with the two correction actions.
-  The legacy Markdown reference is not bulk-migrated. MKT-21 remains a manual
-  correction example for that separate concept delivery contract.
+  The catalogue projects `linkedTaskKeys` from those primary associations for
+  the Dossier overview on each read, even while the Wiki descriptor is cached;
+  descriptor source and related keys
+  seed backfill but do not act as a separate visible membership source.
+  A recorded Dossier decision appears beside the concept link with its answered
+  point count and spawned keys. The task toolbar offers acceptance in Human
+  Review. A spawned card carries the primary Dossier association from creation
+  and links back from its task detail; its key appears in the Dossier card list
+  and counts as an implementation slice when the descriptor has no matching
+  declared slice.
 - The Dossier-key reference reuses the same detail row and operator actions,
   not a second Dossier block. The Markdown detector remains read-only
   compatibility for already-linked cards and never produces a duplicate visible
