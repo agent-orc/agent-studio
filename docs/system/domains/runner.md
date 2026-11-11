@@ -2679,7 +2679,11 @@ attempts, batch-gate pending records, card lane
 timestamps and claim failures, and the host release drift snapshot. Thresholds
 under `Watcher` are `HostTargetPercent` (85), `HostOverloadMinutes` (10),
 `MemoryUsedPercent` (90), `SwapBytesPerSecond` (65536), `IdleWaitMinutes` (15),
-`GatePendingHours` (2), `LaneBudgetHours` (24), and `HostHeartbeatMinutes` (10).
+`LaneBudgetHours` (24), and `HostHeartbeatMinutes` (10). Batch gate stalls use
+the running batch's configured `GateTimeoutMinutes`, measured from its gate
+run start. An idle plan with pending members is reported on the next sweep.
+The attention list groups these cases with batches and opens the project's
+batch panel.
 Every finding has a stable
 case fingerprint, subject, severity, since time, affected card count, evidence,
 and suggested action. A successful healthy sweep resolves an open operational

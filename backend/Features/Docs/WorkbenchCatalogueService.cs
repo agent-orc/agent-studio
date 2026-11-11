@@ -165,9 +165,31 @@ public sealed class WorkbenchCatalogueService
         if (source.Info.Writable && _taskMutations != null)
             DossierCardsService.Backfill(projectName, items, _scanner, _taskMutations);
 
-        return FilterCatalogue(
+        return WithLinkedTaskKeys(FilterCatalogue(
             new WorkbenchCatalogue(projectName, true, items.Count, items),
-            includeHistory);
+            includeHistory));
+    }
+
+    /// <summary>Refresh task membership when a cached Wiki catalogue is read.</summary>
+    public WorkbenchCatalogue WithLinkedTaskKeys(WorkbenchCatalogue catalogue, string? projectName = null)
+    {
+        // The Wiki descriptor can be cached across task mutations. Membership
+        // must come from the current primary task.dossier snapshot on each read.
+        var cardsByPath = _scanner.ScanAllJobsWithArchiveForBackgroundIndex()
+            .Where(task => string.Equals(task.ProjectName, projectName ?? catalogue.ProjectName, StringComparison.OrdinalIgnoreCase)
+                && task.Dossier is { Path.Length: > 0 })
+            .GroupBy(task => task.Dossier!.Path, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key,
+                group => group.Select(task => task.Key).Where(key => !string.IsNullOrWhiteSpace(key))
+                    .Select(key => key!).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                StringComparer.OrdinalIgnoreCase);
+        return catalogue with
+        {
+            Items = catalogue.Items.Select(item => item with
+            {
+                LinkedTaskKeys = cardsByPath.GetValueOrDefault(item.EntryPath) ?? [],
+            }).ToList(),
+        };
     }
 
     /// <summary>All valid document reference keys currently owned by one project.</summary>
@@ -592,6 +614,7 @@ public sealed class WorkbenchCatalogueService
                     Decision = decision,
                     DecisionStage = DecisionStage(decision),
                     OpenDecisionCount = OpenDecisionCount(full, status),
+                    RecordedResponses = ReadRecordedResponses(obj),
                     Review = review,
                 });
             }
@@ -912,6 +935,17 @@ public sealed class WorkbenchCatalogueService
         }
     }
 
+    private static List<WorkbenchDecisionResponse> ReadRecordedResponses(JsonElement descriptor)
+    {
+        if (!descriptor.TryGetProperty("decision", out var decision)
+            || decision.ValueKind != JsonValueKind.Object
+            || !decision.TryGetProperty("outcome", out var outcome)
+            || outcome.GetString() != "record-only"
+            || !decision.TryGetProperty("responses", out var responses)) return [];
+        return responses.Deserialize<List<WorkbenchDecisionResponse>>(
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
+    }
+
     private static bool ChangeTouchesPath(string changedPath, string targetPath)
     {
         var normalizedTarget = targetPath.Replace('\\', '/').TrimStart('/');
@@ -1157,14 +1191,14 @@ public sealed class WorkbenchCatalogueService
             var lifecycleMatches = outcome switch
             {
                 "archive" => lifecycleState == "done",
-                "record-only" => lifecycleState is "in-progress" or "review-requested",
+                "record-only" => lifecycleState is "in-progress" or "review-requested" or "decided",
                 _ => lifecycleState is "decided" or "documented",
             };
             if (lifecycleState != null && !lifecycleMatches)
                 throw new InvalidDataException(outcome == "archive"
                     ? "Succeeded archive decision requires lifecycleState 'done'."
                     : outcome == "record-only"
-                    ? "Record-only decision must preserve a current lifecycleState."
+                    ? "Record-only decision requires a current or accepted lifecycleState."
                     : "Succeeded feature decision requires lifecycleState 'decided' or 'documented'.");
         }
         else if (lifecycleState is "decided" or "documented" or "done")
@@ -1382,6 +1416,8 @@ public record WorkbenchListItem(string Id, string Title, string Summary, string 
     [System.Text.Json.Serialization.JsonIgnore]
     public string[] DescriptorSourceTaskKeys { get; init; } = [];
     public string[] RelatedTaskKeys { get; init; } = [];
+    /// <summary>Cards whose primary task.dossier points at this Dossier.</summary>
+    public string[] LinkedTaskKeys { get; init; } = [];
     [System.Text.Json.Serialization.JsonIgnore]
     public List<ConceptImplementationTask> ImplementationTasks { get; init; } = [];
     [System.Text.Json.Serialization.JsonIgnore]
@@ -1397,6 +1433,7 @@ public record WorkbenchListItem(string Id, string Title, string Summary, string 
     /// level gate so the queue never hides required operator action.
     /// </summary>
     public int OpenDecisionCount { get; init; }
+    public List<WorkbenchDecisionResponse> RecordedResponses { get; init; } = [];
     public WorkbenchDocumentationProjection? Documentation { get; init; }
     public WorkbenchReviewProjection? Review { get; init; }
     public bool ReviewDue { get; init; }

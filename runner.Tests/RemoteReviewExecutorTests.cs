@@ -9,12 +9,49 @@ using Xunit;
 
 namespace AgentRunner.Tests;
 
+[Collection(ProcessEnvironmentCollection.Name)]
 public sealed class RemoteReviewExecutorTests : IDisposable
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly string _reviewRoot = Path.Combine(
         Path.GetTempPath(),
         "remote-review-executor-tests-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public async Task Source_cache_failure_reports_source_unavailable_with_path()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var priorXdg = Environment.GetEnvironmentVariable("XDG_CACHE_HOME");
+        try
+        {
+            Environment.SetEnvironmentVariable("XDG_CACHE_HOME", "relative-cache");
+            var handler = new InterruptedArtifactHandler();
+            using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+            var options = Options();
+            using var client = new TaskServerClient(http, options.RunnerId,
+                usesDurableTaskServer: true, options: options);
+            var claim = Claim();
+            claim = claim with { Subject = claim.Subject! with
+            {
+                RepositoryUrl = "https://github.com/example/repository.git",
+                SourceBundleArtifactId = null,
+                SourceBundleSha256 = null,
+            } };
+            var state = new ReviewStateStore(options.StateDir);
+
+            var exitCode = await new RemoteReviewExecutor(options, client, state, _ => { })
+                .RunClaimedAsync(claim, CancellationToken.None);
+
+            Assert.Equal(3, exitCode);
+            var report = Assert.Single(handler.Reports);
+            Assert.Equal("ReviewInfra", report.Outcome);
+            Assert.Equal("SourceUnavailable", report.FailureClassification);
+            Assert.Contains("relative-cache", report.Summary, StringComparison.Ordinal);
+            Assert.Contains("repository", report.Summary, StringComparison.Ordinal);
+            Assert.Empty(state.LoadAll());
+        }
+        finally { Environment.SetEnvironmentVariable("XDG_CACHE_HOME", priorXdg); }
+    }
 
     [Fact]
     public async Task Graceful_shutdown_during_preparation_hands_the_attempt_to_the_replacement()

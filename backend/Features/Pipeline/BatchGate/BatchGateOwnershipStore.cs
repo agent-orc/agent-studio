@@ -65,6 +65,7 @@ public static class BatchGateOwnershipStore
     private static void WriteLocked(string folder, BatchGateOwnership ownership)
     {
         var path = Path.Combine(folder, Name);
+        BatchGateDurableWrites.Starting(path);
         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
@@ -72,6 +73,7 @@ public static class BatchGateOwnershipStore
             stream.Flush(flushToDisk: true);
         }
         File.Move(temp, path, overwrite: true);
+        BatchGateDurableWrites.Completed(path);
     }
 
     // A marker belongs to one review generation. Superseding that review must
@@ -82,8 +84,10 @@ public static class BatchGateOwnershipStore
         if (!Directory.Exists(folder)) return;
         using var guard = Guard(folder);
         var path = Path.Combine(folder, Name);
-        if (Read(taskFolder)?.ReviewAttemptId == reviewAttemptId)
-            File.Delete(path);
+        if (Read(taskFolder)?.ReviewAttemptId != reviewAttemptId) return;
+        BatchGateDurableWrites.Starting(path);
+        File.Delete(path);
+        BatchGateDurableWrites.Completed(path);
     }
 
     private static FileStream Guard(string folder)
@@ -115,6 +119,7 @@ public static class BatchGateOwnershipStore
         var folder = TaskPaths.LogsDir(taskFolder);
         Directory.CreateDirectory(folder);
         var path = Path.Combine(folder, name);
+        BatchGateDurableWrites.Starting(path);
         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
@@ -130,6 +135,7 @@ public static class BatchGateOwnershipStore
             stream.Flush(flushToDisk: true);
         }
         File.Move(temp, path, overwrite: true);
+        BatchGateDurableWrites.Completed(path);
         var contained = ownership with
         {
             FallbackEvidencePath = name,
@@ -155,6 +161,7 @@ public static class BatchGateOwnershipStore
 
         var name = $"batch-contained-{expected.ReviewAttemptId}.json";
         var path = Path.Combine(folder, name);
+        BatchGateDurableWrites.Starting(path);
         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
@@ -170,6 +177,7 @@ public static class BatchGateOwnershipStore
             stream.Flush(flushToDisk: true);
         }
         File.Move(temp, path, overwrite: true);
+        BatchGateDurableWrites.Completed(path);
         var contained = expected with
         {
             FallbackEvidencePath = name,

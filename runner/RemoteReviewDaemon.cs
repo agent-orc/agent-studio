@@ -57,6 +57,9 @@ public sealed class RemoteReviewDaemon
 
     public async Task RunAsync(CancellationToken shutdown)
     {
+        // Refuse claims before any background work starts if this host cannot
+        // provide an absolute, writable source cache directory.
+        HostSourceObjectCache.EnsureRoot();
         await using var idleWatchdog = new DaemonIdleWatchdog(
             _log,
             TimeSpan.FromMinutes(_options.IdleWatchdogMinutes));

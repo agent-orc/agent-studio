@@ -86,7 +86,7 @@ public static class AcceptedIntegrationFailureCodes
     /// <summary>An exact branch, tip, or merge-result SHA the merge needs could not be resolved.</summary>
     public const string IntegrationRefUnresolved = "integration-ref-unresolved";
 
-    /// <summary>The mandatory pre-main test gate is not wired, so main is not advanced.</summary>
+    /// <summary>A mandatory integration gate is unavailable, so the branch is not advanced.</summary>
     public const string GateUnavailable = "gate-unavailable";
 
     /// <summary>

@@ -421,7 +421,7 @@ overflow instead of shrinking below that width; active styling and close-button
 alignment are stable in both themes.
 
 The workspace Activity Feed is the embedded `#/feed` main view and is opened
-by the Activity icon. Its 500-event backend snapshot is rendered through a
+by the Activity icon. Its capped backend snapshots are rendered through a
 bounded, variable-height history window based on the Activity scroll fix, so
 live prepends preserve the operator's reading position without FixedSize
 virtual-scroll assumptions. The entry default is all projects and all event
@@ -439,6 +439,14 @@ surface and shares the same live feed store. Alert treatment follows the
 AGT-2410 acute-only status contract, and every event kind uses the same
 row-width grid so Watcher Problem and Decision projections can join the stream
 without a parallel surface.
+
+Owner actions join the workspace chronology from the task timeline and Dossier
+decision descriptor. The Owner actions class includes accepted and reissued
+lane moves, refused moves with their reason, decision cards, created cards, and
+confirmed Dossier decisions. Card rows open the task and Dossier rows link to
+the Dossier. The Day picker limits the stream and its class counts to a chosen
+local calendar day; clearing it restores the full history. Refused owner moves
+are appended to the card timeline at the move boundary.
 
 D10 steering feedback uses the same task timeline poll as the Overview status
 row and the Timeline tab. Overview shows only a fact marked current by the
@@ -607,7 +615,8 @@ occur. It is not a claim about tunnel transfer time.
   independent detail resources begin. Two documents load after core paint;
   usage follows the rich view, Git waits for its pane (except the provenance
   read a Human Review card's Accept needs, which Accept awaits for at most
-  8 s, AGT-3621), and Activity loads its
+  8 s, AGT-3621; Accept waits only for a request in flight, never for a
+  deferred one, AGT-3625), and Activity loads its
   plan and output on selection. Review evidence and history wait for explicit
   tabs. Neighbor core lookahead starts after the first 1.6 seconds. The event
   ledger starts when Timeline first
@@ -812,12 +821,15 @@ occur. It is not a claim about tunnel transfer time.
   branch rather than exposing the descriptor's physical `operations/` path.
   Current entries are grouped as `Needs a decision` and `In implementation`;
   `Documented` and `Discarded` stay under a History branch. Every
-  lifecycle header and leaf uses one compact 24 px tree row: its pattern icon
+  lifecycle header and leaf uses one compact 32 px tree row: its pattern icon
   aligns with every sibling at that depth, its title receives the flexible
   width, and only a quiet status dot or compact open-decision count trails it.
+  Tags stay in the leaf tooltip so they cannot wrap the narrow tree row.
   Catalogue key, complete title, lifecycle state, phase, and freshness stay in
   the viewport-safe shared tooltip instead of a second tree line. The Dossiers
-  count is the number of open decisions, not the number of documents.
+  count is the number of Dossier leaves under the branch, excluding the
+  separately promoted Style Guide. Open-decision counts remain on pending
+  leaves and reconcile with the list and viewer header after acceptance.
   Dossier overview and Explorer lifecycle headers are keyboard-accessible disclosures whose per-project collapsed state persists locally; a newly populated section opens once with its quiet count visible.
   Lifecycle-group counts equal
   their visible leaves and zero counts stay hidden. The catalogue's
@@ -917,7 +929,14 @@ occur. It is not a claim about tunnel transfer time.
   through the runtime-owned
   `PUT /api/projects/{projectName}/execution-runner` contract. A null runner is
   the local default; a remote identity makes the remote daemon the sole
-  auto-pickup owner for that project. The guided check reports code channel,
+  auto-pickup owner for that project. Local-profile installations show the
+  intrinsic local machine and only remote runners discovered through client or
+  capability reports. The assignment and onboarding pickers disable local when
+  local coding admission is off, and disable remote identities without a
+  confirmed coding role or with an unavailable status. Their option labels
+  explain why. Onboarding reads local admission from
+  `GET /api/projects/execution-capability`. The guided check reports code
+  channel,
   `develop`, toolchain, and no-op readiness from the host registry snapshot.
   Board cards deliberately show the actual live runner from the fenced run
   lease, not merely this configured target, so assignment and attribution

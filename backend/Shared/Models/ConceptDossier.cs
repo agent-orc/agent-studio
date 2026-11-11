@@ -1,9 +1,8 @@
 namespace AgentStudio.Shared;
 
 /// <summary>
-/// Read-time concept-delivery projection. Until structured
-/// <c>references.workbenches</c> ships, the repository-relative path is
-/// detected from <c>results/deliverables.md</c> and <c>status.md</c>.
+/// Read-time concept-delivery projection. The visible path is the primary
+/// <c>task.json.dossier</c> association shared with the board and Dossier cards.
 /// </summary>
 public sealed record ConceptDossierSummary
 {

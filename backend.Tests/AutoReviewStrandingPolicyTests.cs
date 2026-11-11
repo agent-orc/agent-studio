@@ -212,6 +212,30 @@ public sealed class AutoReviewStrandingPolicyTests
         => Assert.Equal(AutoReviewStrandingAction.Escalate,
             AutoReviewStrandingPolicy.Decide(Stranded() with { HasReview = true }));
 
+    [Theory]
+    [InlineData(-59)]
+    [InlineData(0)]
+    [InlineData(30 * 60)]
+    public void Scheduled_infrastructure_retry_owns_the_terminal_review_until_a_threshold_past_due(int overdueSeconds)
+        => Assert.Equal(AutoReviewStrandingAction.Leave,
+            AutoReviewStrandingPolicy.Decide(Stranded() with
+            {
+                HasReview = true, ScheduledRetryOverdue = TimeSpan.FromSeconds(overdueSeconds),
+            }));
+
+    [Fact]
+    public void Scheduled_retry_that_never_fired_leaves_the_card_ownerless()
+        => Assert.Equal(AutoReviewStrandingAction.Escalate,
+            AutoReviewStrandingPolicy.Decide(Stranded() with
+            {
+                HasReview = true, ScheduledRetryOverdue = TimeSpan.FromMinutes(31),
+            }));
+
+    [Fact]
+    public void Cause_breaker_wait_owns_the_parked_card()
+        => Assert.Equal(AutoReviewStrandingAction.Leave,
+            AutoReviewStrandingPolicy.Decide(Stranded() with { HasReview = true, CauseBreakerWait = true }));
+
     [Fact]
     public void Successful_step_recovery_can_advance_to_batch_recovery_in_same_lane_visit()
     {
@@ -313,12 +337,14 @@ public sealed class AutoReviewStrandingPolicyTests
             Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1",
                 run with { ResultSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }, "review-1"));
             Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "other-project", "card-1", run, "review-1"));
-            var stateFolder = Path.Combine(store.BatchDirectory(manifest.BatchId), "state");
+            var batchFolder = store.BatchDirectory(manifest.BatchId);
+            var stateFolder = Path.Combine(batchFolder, "state");
             Directory.Delete(stateFolder, recursive: true);
+            File.Delete(Path.Combine(batchFolder, "phase.json"));
             Assert.True(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", run, "review-1"));
             Directory.CreateDirectory(stateFolder);
             Assert.True(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", run, "review-1"));
-            store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchGateStates.Reach(store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
                 BatchPhase.Published, null, 0, now.AddMinutes(21)));
             Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", run, "review-1"));
         }

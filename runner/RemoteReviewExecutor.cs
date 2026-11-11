@@ -381,6 +381,13 @@ public sealed class RemoteReviewExecutor
                         exception.Message,
                         shutdown);
                 }
+                catch (Exception exception)
+                {
+                    return await FinalizeInfrastructureAsync(
+                        slot, workspace, "WorkspacePreparationFailed",
+                        $"Review workspace preparation failed at '{workspace.RepositoryPath}': {exception.Message}",
+                        shutdown);
+                }
             }
 
             async Task<int?> LaunchOrSettleAsync()
