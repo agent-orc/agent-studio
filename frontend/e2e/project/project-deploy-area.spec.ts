@@ -320,7 +320,7 @@ test.describe('Project Deploy area (mocked)', () => {
     await capture(page, 'operations-older-release');
   });
 
-  test('Operations shows installation backups with the stale warning and the off-host copy in both themes (AGT-3574)', async ({ page }) => {
+  test('Operations shows backup and host CA warnings in both themes and at 390 px (AGT-3736)', async ({ page }) => {
     await openDeploy(page, fullMocks());
     await page.route(`**${DEPLOY}/operations`, route => answer(route, {
       project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z', environments: [],
@@ -349,19 +349,22 @@ test.describe('Project Deploy area (mocked)', () => {
         { code: 'backup-stale', severity: 'danger', message: 'The newest good backup is 26 hours old; the threshold is 12 hours.' },
         { code: 'backup-failed', severity: 'danger', message: 'The last backup run failed: Backup source workspace is not readable.' },
         { code: 'offhost-failed', severity: 'danger', message: 'The off-host copy failed: sftp exited with 255: Connection timed out' },
+        { code: 'host-ca-mismatch', severity: 'danger', message: 'The configured host CA does not match the restored host certificate state. Install the escrowed CA before issuing certificates.' },
       ] : [],
-      backups: [newest, backup('studio-backup-20261019T000000Z-9f8e7d', '2026-10-19T00:00:00+00:00', 'unverified', 'uploaded')],
+      backups: [stale ? newest : { ...newest, offHost: 'uploaded' }, backup('studio-backup-20261019T000000Z-9f8e7d', '2026-10-19T00:00:00+00:00', 'unverified', 'uploaded')],
       generatedAt: '2026-10-20T08:00:00+00:00',
     }));
     await page.getByTestId('deploy-tab-operations').click();
     const backups = page.getByTestId('operations-backups');
     await expect(backups.getByTestId('operations-backups-state')).toHaveAttribute('data-state', 'failing');
     await expect(backups.getByTestId('operations-backups-warnings').locator('[data-code="backup-stale"]')).toContainText('26 hours old');
+    await expect(backups.getByTestId('operations-backups-warnings').locator('[data-code="host-ca-mismatch"]')).toContainText('escrowed CA');
     await expect(backups.getByTestId('operations-backups-age')).toHaveAttribute('data-stale', 'true');
     await expect(backups.getByTestId('operations-backups-age')).toContainText('26 h');
     await expect(backups.getByTestId('operations-backups-size')).toContainText('412.0 MB');
     await expect(backups.getByTestId('operations-backups-verification')).toContainText('Verified');
     await expect(backups.getByTestId('operations-backups-offhost')).toContainText('Copy failed');
+    await expect(backups.getByTestId('operations-backups-offhost-id')).toContainText(newest.id);
     await expect(backups.getByTestId('operations-backups-offhost')).toContainText('sftp://studio@backup.example');
     await expect(backups.getByTestId('operations-backups-list').locator('tbody tr')).toHaveCount(2);
     // The runbook compares the escrowed copies against these ids (AGT-3738).
@@ -370,14 +373,19 @@ test.describe('Project Deploy area (mocked)', () => {
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       fs.mkdirSync(results, { recursive: true });
-      await backups.screenshot({ path: path.join(results, `operations-backups-stale-${theme}--mocked.png`) });
+      await backups.screenshot({ path: path.join(results, `operations-host-ca-mismatch-${theme}--mocked.png`) });
     }
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await backups.evaluate(element => element.getBoundingClientRect().width)).toBeLessThanOrEqual(390);
+    await backups.screenshot({ path: path.join(results, 'operations-host-ca-mismatch-390--mocked.png') });
+    await page.setViewportSize({ width: 1280, height: 800 });
 
     stale = false;
     await backups.getByTestId('operations-backups-refresh').click();
     await expect(backups.getByTestId('operations-backups-state')).toHaveAttribute('data-state', 'ok');
     await expect(backups.getByTestId('operations-backups-warnings')).toHaveCount(0);
     await expect(backups.getByTestId('operations-backups-offhost')).toContainText('Copied');
+    await expect(backups.getByTestId('operations-backups-list').locator('tbody tr').first()).toContainText('Copied');
     await backups.screenshot({ path: path.join(results, 'operations-backups-current-dark--mocked.png') });
 
     await page.setViewportSize({ width: 390, height: 844 });

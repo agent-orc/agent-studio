@@ -558,9 +558,9 @@ export interface PlanningSpawnSummary {
 }
 
 /**
- * Interim concept-dossier projection. The path is detected from
- * results/deliverables.md or status.md until references.workbenches provides
- * the structured carrier.
+ * Concept Dossier projection from the same primary task.dossier link used by
+ * the board and the Dossier card list. A deliberate no-Dossier choice is
+ * carried separately.
  */
 export interface ConceptDossierSummary {
   repoRelativePath?: string | null;
@@ -1790,6 +1790,7 @@ export interface CreateTaskRequest {
   /** Ownership-routing input. The backend resolves and validates the destination. */
   routing?: ComponentRoutingRequest;
   requestedTaskPrefix?: string;
+  dossier?: { path: string; section?: string | null; decision?: string | null; implementationIndex?: number | null };
 }
 
 /**

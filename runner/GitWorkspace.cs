@@ -1,5 +1,6 @@
 using AgentStudio.TaskServer.Contracts;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace AgentRunner;
 
@@ -8,7 +9,7 @@ namespace AgentRunner;
 /// each claimed task. Shared git metadata is mutated under a short process-wide
 /// gate; agent CLIs only ever run in their own checkout.
 /// </summary>
-public sealed class GitWorkspace
+public sealed partial class GitWorkspace
 {
     internal static readonly SemaphoreSlim GitMetadataGate = new(1, 1);
     private readonly RunnerOptions _options;
@@ -1169,26 +1170,53 @@ public sealed class GitWorkspace
                 ResultRefFailure: immutableResultFailure);
     }
 
+    // The pattern the server's RemoteCommitAttributionGuard scans commit
+    // subjects with. A card title often names related cards ("Follow-up:
+    // review findings in AGT-...", "CP-9 · ..."), and a foreign key in the
+    // subject rejected the whole delivery range (AGT-3717).
+    [GeneratedRegex(@"\b[A-Z][A-Z0-9]{1,15}-\d+\b",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex TaskKeyPattern();
+
+    [GeneratedRegex(@"\(\s*\)|\[\s*\]")]
+    private static partial Regex EmptyBracketPattern();
+
+    private static readonly char[] SubjectEdgeSeparators =
+        [' ', '\u00b7', ':', '-', '\u2013', '\u2014', ',', ';', '/', '|'];
+
     internal string SalvageCommitMessage(string outcome, string? sourceRunAttemptId)
     {
+        var fallback = $"salvaged work (outcome {outcome})";
         var title = string.IsNullOrWhiteSpace(_taskTitle)
-            ? $"salvaged work (outcome {outcome})"
+            ? null
             : string.Join(' ', _taskTitle.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-        var subject = $"{_taskKey}: {title}";
+        var subjectTitle = title is null ? fallback : WithoutTaskKeys(title);
+        if (subjectTitle.Length == 0) subjectTitle = fallback;
+        var subject = $"{_taskKey}: {subjectTitle}";
         if (subject.Length > 72)
         {
             var boundary = subject.LastIndexOf(' ', 72);
             if (boundary <= _taskKey.Length + 1)
                 boundary = subject.IndexOf(' ', 73);
             if (boundary > _taskKey.Length + 1)
-                subject = subject[..boundary];
+                subject = subject[..boundary].TrimEnd(SubjectEdgeSeparators);
         }
         var runId = sourceRunAttemptId ?? _sourceRunAttemptId ?? "unknown";
-        return $"{subject}\n\nRunner committed changes the agent left uncommitted (outcome {outcome}).\n\n" +
+        // The full title stays in the body, where the guard does not look.
+        var titleLine = title is null ? "" : $"Card: {title}\n\n";
+        return $"{subject}\n\n{titleLine}Runner committed changes the agent left uncommitted (outcome {outcome}).\n\n" +
             $"Agent-Studio-Task: {_taskKey}\n" +
             $"Agent-Studio-Run: {runId}\n" +
             "Agent-Studio-Salvage: teardown\n" +
             $"Agent-Studio-Outcome: {outcome}";
+    }
+
+    internal static string WithoutTaskKeys(string title)
+    {
+        var stripped = EmptyBracketPattern().Replace(TaskKeyPattern().Replace(title, ""), "");
+        return string.Join(' ', stripped.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            .Replace(" ,", ",", StringComparison.Ordinal)
+            .Trim(SubjectEdgeSeparators);
     }
 
     private async Task<SalvageReconciliationResult> PublishImmutableSalvageAsync(
