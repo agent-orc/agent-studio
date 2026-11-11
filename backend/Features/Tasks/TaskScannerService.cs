@@ -1325,7 +1325,8 @@ public class TaskScannerService : ITaskScanner
             return null;
 
         var review = AgentStudio.Pipeline.ConceptWorkbenchContract.ReviewDirectory(
-            repositoryRoot, publication.RepoRelativeDirectory, info.Key ?? info.Id);
+            repositoryRoot, publication.RepoRelativeDirectory, info.Key ?? info.Id,
+            allowAccepted: true);
         if (!review.IsComplete || review.Descriptor == null) return null;
 
         return new PromoteConceptResponse

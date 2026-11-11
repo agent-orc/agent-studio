@@ -118,7 +118,8 @@ public static class ConceptWorkbenchContract
     public static ConceptWorkbenchReview ReviewDirectory(
         string checkoutRoot,
         string repoRelativeDirectory,
-        string? expectedSourceTaskKey = null)
+        string? expectedSourceTaskKey = null,
+        bool allowAccepted = false)
     {
         var rel = NormalizeRepoPath(repoRelativeDirectory).TrimEnd('/');
         var findings = new List<string>();
@@ -175,7 +176,8 @@ public static class ConceptWorkbenchContract
             if (!string.Equals(descriptor.Entrypoint, EntryFileName, StringComparison.OrdinalIgnoreCase))
                 findings.Add("workbench.json entrypoint must be index.html.");
             if (isNewDossier
-                && !string.Equals(descriptor.Status, "decision-pending", StringComparison.OrdinalIgnoreCase))
+                && !string.Equals(descriptor.Status, "decision-pending", StringComparison.OrdinalIgnoreCase)
+                && !(allowAccepted && string.Equals(descriptor.Status, "decided", StringComparison.OrdinalIgnoreCase)))
                 findings.Add("workbench.json status must be decision-pending.");
             else if (isLegacyWorkbench && string.IsNullOrWhiteSpace(descriptor.Status))
                 findings.Add("workbench.json status is required.");

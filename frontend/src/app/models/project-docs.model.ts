@@ -370,6 +370,8 @@ export interface WorkbenchListItem {
   decisionStage?: WorkbenchDecisionStage | null;
   /** Dossier-level gate count until inline decision points extend it. */
   openDecisionCount?: number;
+  /** Operator choices recorded before concept acceptance. */
+  recordedResponses?: WorkbenchDecisionResponse[];
   documentation?: WorkbenchDocumentationProjection | null;
   /** Missing means this Dossier has never received a relevance review. */
   review?: WorkbenchReview | null;

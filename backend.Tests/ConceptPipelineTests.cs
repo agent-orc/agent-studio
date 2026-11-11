@@ -1,4 +1,6 @@
 using System.Text.Json;
+using AgentStudio.Git;
+using AgentStudio.Docs;
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -193,7 +195,7 @@ public sealed class ConceptPipelineTests : IDisposable
         var taskStore = Path.Combine(_root, "tasks");
         Directory.CreateDirectory(repository);
         Directory.CreateDirectory(taskStore);
-        var (_, scanner, _, mutations) = BuildServices(repository, taskStore);
+        var (config, scanner, _, mutations) = BuildServices(repository, taskStore);
         var sourceId = mutations.CreateJob(new CreateTaskRequest
         {
             Id = "concept-source",
@@ -257,8 +259,15 @@ public sealed class ConceptPipelineTests : IDisposable
         var plan = scanner.BuildPromoteConceptPlan(source.Id, taskStore);
         Assert.NotNull(plan);
         Assert.Equal(2, plan!.Items.Count);
+        var notifier = new WorkbenchChangeNotifier(NullLogger<WorkbenchChangeNotifier>.Instance);
+        var updates = new List<WorkbenchDecisionRecordedEvent>();
+        notifier.DecisionRecorded += updates.Add;
         var service = new ConceptPromotionService(
-            scanner, mutations, NullLogger<ConceptPromotionService>.Instance);
+            scanner, mutations,
+            new ManagedRepositoryMutationService(
+                new GitService(NullLogger<GitService>.Instance, scanner, config)),
+            notifier,
+            NullLogger<ConceptPromotionService>.Instance);
 
         var first = service.Promote(source, plan, new PromoteConceptRequest());
         var repeated = service.Promote(source, plan, new PromoteConceptRequest());
@@ -287,6 +296,10 @@ public sealed class ConceptPipelineTests : IDisposable
         Assert.Equal("§4", apiCard?.Dossier?.Section);
         Assert.Equal("delivery-mode", apiCard?.Dossier?.Decision);
         Assert.Equal(0, apiCard?.Dossier?.ImplementationIndex);
+        using var accepted = JsonDocument.Parse(File.ReadAllText(descriptorPath));
+        Assert.Equal("decided", accepted.RootElement.GetProperty("status").GetString());
+        Assert.Equal(2, scanner.BuildPromoteConceptPlan(source.Id, taskStore)?.Items.Count);
+        Assert.Equal("decided", Assert.Single(updates).CurrentStatus);
     }
 
     [Fact]

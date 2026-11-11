@@ -592,6 +592,7 @@ public sealed class WorkbenchCatalogueService
                     Decision = decision,
                     DecisionStage = DecisionStage(decision),
                     OpenDecisionCount = OpenDecisionCount(full, status),
+                    RecordedResponses = ReadRecordedResponses(obj),
                     Review = review,
                 });
             }
@@ -912,6 +913,17 @@ public sealed class WorkbenchCatalogueService
         }
     }
 
+    private static List<WorkbenchDecisionResponse> ReadRecordedResponses(JsonElement descriptor)
+    {
+        if (!descriptor.TryGetProperty("decision", out var decision)
+            || decision.ValueKind != JsonValueKind.Object
+            || !decision.TryGetProperty("outcome", out var outcome)
+            || outcome.GetString() != "record-only"
+            || !decision.TryGetProperty("responses", out var responses)) return [];
+        return responses.Deserialize<List<WorkbenchDecisionResponse>>(
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
+    }
+
     private static bool ChangeTouchesPath(string changedPath, string targetPath)
     {
         var normalizedTarget = targetPath.Replace('\\', '/').TrimStart('/');
@@ -1157,14 +1169,14 @@ public sealed class WorkbenchCatalogueService
             var lifecycleMatches = outcome switch
             {
                 "archive" => lifecycleState == "done",
-                "record-only" => lifecycleState is "in-progress" or "review-requested",
+                "record-only" => lifecycleState is "in-progress" or "review-requested" or "decided",
                 _ => lifecycleState is "decided" or "documented",
             };
             if (lifecycleState != null && !lifecycleMatches)
                 throw new InvalidDataException(outcome == "archive"
                     ? "Succeeded archive decision requires lifecycleState 'done'."
                     : outcome == "record-only"
-                    ? "Record-only decision must preserve a current lifecycleState."
+                    ? "Record-only decision requires a current or accepted lifecycleState."
                     : "Succeeded feature decision requires lifecycleState 'decided' or 'documented'.");
         }
         else if (lifecycleState is "decided" or "documented" or "done")
@@ -1397,6 +1409,7 @@ public record WorkbenchListItem(string Id, string Title, string Summary, string 
     /// level gate so the queue never hides required operator action.
     /// </summary>
     public int OpenDecisionCount { get; init; }
+    public List<WorkbenchDecisionResponse> RecordedResponses { get; init; } = [];
     public WorkbenchDocumentationProjection? Documentation { get; init; }
     public WorkbenchReviewProjection? Review { get; init; }
     public bool ReviewDue { get; init; }
