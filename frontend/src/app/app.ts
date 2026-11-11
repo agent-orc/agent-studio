@@ -153,7 +153,8 @@ import { MenuComponent, MenuItem, MenuItemClickEvent } from './components/menu';
 import { CostBreakdownService, type TaskTokenSummary } from './features/tokens'; // verbose-debug overlay context types
 import { CostBreakdownDialogComponent } from './features/tokens/lazy';
 import { LoadingSurfaceComponent } from './components/async-feedback';
-import { AuthGateComponent, AuthService } from './components/auth-gate/auth-gate';
+import { AuthGateComponent } from './components/auth-gate/auth-gate';
+import { AuthService } from './services/auth.service';
 import { CodexSignInDialogService, ClaudeSignInDialogService } from './features/remote-hosts';
 import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts/lazy';
 import { ScrollMemoryDirective } from './directives/scroll-memory.directive';
