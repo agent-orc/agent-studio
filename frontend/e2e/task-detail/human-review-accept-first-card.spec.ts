@@ -86,7 +86,7 @@ async function dismissBlockingToasts(page: Page): Promise<void> {
  */
 async function openAndTimeAccept(page: Page, jobId: string, watchPath: string): Promise<number> {
   await page.goto(`/?job=${encodeURIComponent(jobId)}&watchPath=${encodeURIComponent(watchPath)}`);
-  const accept = page.getByTestId('studio-triage-action-mark-done');
+  const accept = acceptAction(page);
   await expect(accept).toBeVisible({ timeout: 30_000 });
   const started = Date.now();
   await expect(accept).toBeEnabled({ timeout: PENDING_CONTRACT_MS });
@@ -98,12 +98,18 @@ async function openAndTimeAccept(page: Page, jobId: string, watchPath: string): 
   return elapsed;
 }
 
+function acceptAction(page: Page) {
+  return page.getByTestId((page.viewportSize()?.width ?? 1280) <= 599
+    ? 'studio-mobile-triage-action-mark-done'
+    : 'studio-triage-action-mark-done');
+}
+
 /** Clicks Accept and fails with the move answer when the backend refuses it. */
 async function clickAcceptAndExpectMove(page: Page, jobId: string): Promise<void> {
   const move = page.waitForResponse(response =>
     response.url().includes(`/tasks/${encodeURIComponent(jobId)}/move`)
     && response.request().method() !== 'GET', { timeout: 30_000 });
-  await page.getByTestId('studio-triage-action-mark-done').click();
+  await acceptAction(page).click();
   const answer = await move;
   expect(answer.status(), `move answered ${answer.status()}: ${await answer.text()}`).toBe(200);
 }
