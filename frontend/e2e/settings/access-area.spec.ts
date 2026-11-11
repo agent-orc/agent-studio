@@ -128,6 +128,8 @@ test('Owner sees factor changes and verifies the current factor before replaceme
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await access.getByTestId('access-user-robert').scrollIntoViewIfNeeded();
+  await expect(access.getByTestId('access-user-robert').getByRole('cell', { name: 'Registered' })).toBeInViewport();
+  await expect(access.getByTestId('access-user-robert').getByRole('cell', { name: /Oct 20, 2026/ })).toBeInViewport();
   await page.screenshot({ path: join(resultDir, 'owner-factor-access-390px.png') });
   await page.setViewportSize({ width: 1440, height: 900 });
   await access.getByTestId('session-manager-toggle').last().click();
