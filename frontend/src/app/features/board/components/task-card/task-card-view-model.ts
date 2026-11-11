@@ -1854,13 +1854,16 @@ export function cardMoveTarget(id: string): string | null {
 }
 
 /**
- * Right-click context-menu rows for a card.
+ * Right-click context-menu rows for a card. `reviewsOnly` (AGT-3670) keeps
+ * the copy and filter rows only: a Reviewer holds no lane move, review
+ * order, or delete, and decides a Human Review card inside its detail.
  */
 export function buildCardCtxMenuItems(
   job: TaskInfo,
   mutationsBlocked = false,
   visibleLanes: readonly string[] = MANUAL_MOVE_LANES,
   queueEdge: ReadyQueueEdge | null = null,
+  reviewsOnly = false,
 ): MenuItem[] {
   const items: MenuItem[] = [
     { kind: 'row', id: 'copy-name', label: 'Copy Name' },
@@ -1874,6 +1877,7 @@ export function buildCardCtxMenuItems(
       label: `Filter: tasks depending on ${job.key}`,
     });
   }
+  if (reviewsOnly) return items;
   if (job.state === TaskState.AutoReview) {
     items.push({ kind: 'separator' });
     items.push({ kind: 'row', id: REVIEW_FIRST_ID, label: 'Review first',

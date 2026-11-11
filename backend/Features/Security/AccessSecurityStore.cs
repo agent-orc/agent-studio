@@ -372,12 +372,13 @@ public sealed partial class AccessSecurityStore
             var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
                 ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
             if (!_pendingTotpSecrets.TryGetValue(user.Id, out var secret)
-                || !SecondFactorCodes.VerifyTotp(secret, code, Now))
+                || SecondFactorCodes.MatchTotpStep(secret, code, Now) is not { } acceptedStep)
                 throw new SecurityOperationException(400, "invalid-second-factor", "The authenticator code is invalid.");
             var recovery = SecondFactorCodes.NewRecoveryCodes();
             state.Users[state.Users.IndexOf(user)] = user with
             {
                 TotpSecret = secret,
+                LastAcceptedTotpStep = acceptedStep,
                 RecoveryCodeHashes = recovery.Select(SecondFactorCodes.HashRecoveryCode).ToList()
             };
             _pendingTotpSecrets.Remove(user.Id);
@@ -588,7 +589,13 @@ public sealed partial class AccessSecurityStore
             throw new SecurityOperationException(403, "second-factor-required", "Register a second factor before signing in.");
         if (string.IsNullOrWhiteSpace(code))
             throw new SecurityOperationException(401, "second-factor-required", "A second factor is required.");
-        if (user.TotpSecret is not null && SecondFactorCodes.VerifyTotp(user.TotpSecret, code, Now)) return;
+        if (user.TotpSecret is not null
+            && SecondFactorCodes.MatchTotpStep(user.TotpSecret, code, Now) is { } acceptedStep
+            && (user.LastAcceptedTotpStep is null || acceptedStep > user.LastAcceptedTotpStep))
+        {
+            state.Users[state.Users.IndexOf(user)] = user with { LastAcceptedTotpStep = acceptedStep };
+            return;
+        }
         var recoveryHash = user.RecoveryCodeHashes.FirstOrDefault(hash => SecondFactorCodes.VerifyRecoveryCode(code, hash));
         if (recoveryHash is not null)
         {
