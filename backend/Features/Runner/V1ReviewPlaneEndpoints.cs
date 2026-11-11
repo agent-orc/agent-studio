@@ -2162,6 +2162,7 @@ public static class V1ReviewPlaneEndpoints
                         integrationOutcome = integrationDecision.VerifyDefinitionMissing
                             ? AcceptedIntegrationFailureCodes.VerifyDefinitionMissing
                             : AcceptedIntegrationFailureCodes.DeliveryGateFailed;
+                        integrationParkReason = RemoteDeliveryParkReason.ForCode(integrationOutcome);
                     }
                     AdvanceDeliverySettlement(
                         task.FolderPath,
@@ -2186,7 +2187,10 @@ public static class V1ReviewPlaneEndpoints
                         task.WatchPath,
                         ct,
                         cause: $"remote-review:{attemptId}",
-                        reason: integrationParkReason,
+                        reason: integrationParkReason
+                            ?? (settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass
+                                ? RemoteDeliveryParkReason.CompletedReviewPark
+                                : RemoteDeliveryParkReason.ReviewDecisionPark),
                         authorityWrite: new AttemptWriteReference(
                             attemptId,
                             request.Fence,

@@ -153,7 +153,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   readonly tagChips = computed(() => buildTagChips(this.job().tags, this.tagRegistry.byIdForProject(this.job().projectName), this.job().state));
 
   readonly publishableChip = computed(() => {
-    if (this.job().state !== TaskState.Completed) return null;
+    if (this.job().mode === 'concept' || this.job().state !== TaskState.Completed) return null;
     const labels = this.job().publishSignal?.labels ?? [];
     if (labels.length === 0) return null;
     return { labels, text: labels.join(', ') };
@@ -289,6 +289,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   readonly pipelineDots = computed(() => buildPipelineDots(this.job()));
 
   readonly changeContext = computed(() => {
+    if (this.job().mode === 'concept') return null;
     const live = this.gitPill();
     const gitState = this.gitStateBadge();
     const commits = this.commitChainView();
@@ -330,7 +331,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   });
 
   readonly mergeSignal = computed(() => buildMergeSignal(this.job()));
-  readonly integrationStatus = computed(() => currentIntegrationStatus(this.job()));
+  readonly integrationStatus = computed(() => this.job().mode === 'concept' ? null : currentIntegrationStatus(this.job()));
   readonly needsAttention = computed(() => cardNeedsAttention(this.job()));
   readonly outcomeIssueBadge = computed(() => buildOutcomeIssueBadge(this.job()));
   readonly currentPendingIntent = computed(() =>

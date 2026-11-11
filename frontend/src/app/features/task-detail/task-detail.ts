@@ -482,7 +482,7 @@ export class TaskDetailComponent implements OnDestroy {
     this.currentJobKey = d.info.taskKey;
     // Keep GitPaneService in sync with the open job; resets internal
     // state on actual job changes, no-ops on same-job refreshes.
-    this.git.setJob(d.info, this.panesVisible().git);
+    this.git.setJob(d.info, this.panesVisible().git && d.info.mode !== 'concept');
 
     if (isJobSwitch) {
       this.outputLoadedFor = null;

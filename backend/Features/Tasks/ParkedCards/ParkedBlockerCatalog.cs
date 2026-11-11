@@ -1,4 +1,5 @@
 using AgentStudio.Runner;
+using AgentStudio.Shared;
 
 namespace AgentStudio.Tasks;
 
@@ -168,6 +169,12 @@ public static class ParkedBlockerCatalog
 
         var cause = (transitionCause ?? string.Empty).Trim();
         var detail = (transitionDetail ?? string.Empty).Trim();
+        if (cause == LaneChangeCauses.ReviewVerdict)
+        {
+            if (detail is "Merged" or "MergedAfterRebase" or "AlreadyMerged" or "AlreadyOnIntegrationBranch")
+                return "Remote Review passed and delivery integration completed. Human Review is waiting for a decision; review the task and accept or requeue it.";
+            return "Remote Review finished, but the delivery or review result needs a Human Review decision. Inspect the review and integration evidence, then accept, retry, or requeue the task.";
+        }
         if (cause.Length > 0 && detail.Length > 0) return $"{cause}: {detail}";
         if (detail.Length > 0) return detail;
         if (cause.Length > 0) return cause;

@@ -233,7 +233,7 @@ public sealed class ReviewPlaneGateLogicTests
             IntegrationLanePolicy.DecideSync(new IntegrationLaneSyncState(
                 "lane", "published", LaneContainsPublished: false, PublishedContainsLane: false)));
         Assert.Equal(
-            "integration: branch-sync-failed",
+            RemoteDeliveryParkReason.ForCode(AcceptedIntegrationFailureCodes.BranchSyncFailed),
             RemoteDeliveryParkReason.For(MergeIntoIntegrationResult.Failed(
                 AcceptedIntegrationFailureCodes.BranchSyncFailed,
                 "Integration branch 'develop' diverged from origin.")));

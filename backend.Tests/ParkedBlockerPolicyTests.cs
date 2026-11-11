@@ -68,8 +68,8 @@ public sealed class ParkedBlockerPolicyTests
     [InlineData(null, "escalated", null, "escalated")]
     [InlineData(null, null, "no-completion-signal", "no-completion-signal")]
     [InlineData(null, "escalated", "no-completion-signal", "escalated: no-completion-signal")]
-    [InlineData("", "review-verdict", "gate-failure", "review-verdict: gate-failure")]
-    [InlineData("   ", "review-verdict", "gate-failure", "review-verdict: gate-failure")]
+    [InlineData("", "review-verdict", "gate-failure", "Remote Review finished, but the delivery or review result needs a Human Review decision. Inspect the review and integration evidence, then accept, retry, or requeue the task.")]
+    [InlineData("   ", "review-verdict", "gate-failure", "Remote Review finished, but the delivery or review result needs a Human Review decision. Inspect the review and integration evidence, then accept, retry, or requeue the task.")]
     [InlineData("[no-completion-signal] agent did not signal", "escalated", "no-completion-signal", "[no-completion-signal] agent did not signal")]
     public void Build_NeverProducesAnEmptyReason(
         string? reason, string? transitionCause, string? transitionDetail, string expectedReason)

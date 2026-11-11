@@ -22,7 +22,8 @@ public sealed record AutoReviewStrandingFacts(
     bool HasCompletedRun, bool HasReview, bool PassedReview,
     TimeSpan? SinceLastIntervention = null, bool StartedStepBefore = false,
     bool ReenteredBatchBefore = false, bool InfrastructureFailure = false,
-    bool InfrastructureRetryAvailable = false, bool InfrastructureRetryScheduled = false);
+    bool InfrastructureRetryAvailable = false, bool InfrastructureRetryScheduled = false,
+    bool HostCapacityHeld = false);
 
 /// <summary>Per-card liveness decision for Auto Review. All ownership facts are read before acting.</summary>
 public static class AutoReviewStrandingPolicy
@@ -49,7 +50,7 @@ public static class AutoReviewStrandingPolicy
             || facts.SinceLastIntervention is { } elapsed && elapsed <= facts.Threshold
             || facts.RunningStep || facts.ActiveReview
             || facts.BatchMember || facts.QueuedRound || facts.QueuedStep
-            || facts.InfrastructureRetryScheduled)
+            || facts.InfrastructureRetryScheduled || facts.HostCapacityHeld)
             return AutoReviewStrandingAction.Leave;
         if (facts.InfrastructureFailure)
             return facts.InfrastructureRetryAvailable

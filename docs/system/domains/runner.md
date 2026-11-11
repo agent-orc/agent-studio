@@ -3,6 +3,11 @@
 Version: 2026-11-02
 Status: System-of-record map for runner-side changes.
 
+Review host load per core divides the host load average by the host CPU count.
+The review role's cgroup quota is a separate capacity limit and is never used
+as the denominator for host load. A known load or slot-capacity hold keeps a
+pending Auto Review card out of the ownerless-card escalation path.
+
 Task Server connectivity stays capability-ready until three consecutive failed
 requests span at least 60 seconds. The capability detail retains the failure
 count, and the route advertises structured `since`, `httpStatus`, and `request`

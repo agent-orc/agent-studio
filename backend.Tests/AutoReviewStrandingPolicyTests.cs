@@ -14,6 +14,11 @@ public sealed class AutoReviewStrandingPolicyTests
         false, false, false, false, true, false, false);
 
     [Fact]
+    public void Host_capacity_hold_keeps_pending_review_out_of_stranding_escalation()
+        => Assert.Equal(AutoReviewStrandingAction.Leave,
+            AutoReviewStrandingPolicy.Decide(Stranded() with { HostCapacityHeld = true }));
+
+    [Fact]
     public void Older_run_review_cannot_reenter_batch_for_a_new_delivery()
     {
         const string oldSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

@@ -2,6 +2,7 @@ import { expect, test, type Page, type Route } from '@playwright/test';
 import { mkdirSync } from 'fs';
 import * as path from 'path';
 import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
+import { SNAPSHOT } from '../../src/mockups/usage-chips/app/usage-chips.fixtures';
 
 const PROJECT = 'Concept dossier fixture';
 const WATCH_PATH = 'C:/fixtures/concept-dossier';
@@ -10,6 +11,10 @@ const DOSSIER_PATH = 'docs/coding-agent-sidesheet/index.html';
 const RESULTS_DIR = process.env.JOB_RESULTS_DIR?.trim()
   ? path.resolve(process.env.JOB_RESULTS_DIR)
   : path.resolve('test-results', 'concept-dossier-notice');
+const REGISTERED_PROJECT = {
+  id: PROJECT, displayName: PROJECT, shortCode: 'MKT', workspaceId: 'ws-concept',
+  storageLocation: WATCH_PATH, sortOrder: 0, archived: false, createdAt: '2026-08-09T18:00:00Z',
+};
 
 function json(route: Route, body: unknown): Promise<void> {
   return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
@@ -40,6 +45,11 @@ function taskInfo(conceptDossier: Record<string, unknown>) {
     ownerClientId: 'local-default',
     mode: 'concept',
     conceptDossier,
+    integration: { status: 'pending', detail: 'Delivery pending.', integrationBranch: 'develop' },
+    testEvidence: {
+      evidenceState: 'unassigned', summary: 'Review build-tests Not proven',
+      sources: [{ kind: 'review-build-tests', id: 'review-1', summary: 'Review build-tests Not proven' }],
+    },
   };
 }
 
@@ -64,7 +74,13 @@ async function installRoutes(page: Page): Promise<{ mutationBodies: unknown[] }>
 
   await page.route('**/api/**', route => json(route, []));
   await page.route('**/api/v1/studio/auth/status', route => json(route, {
-    profile: 'local', bootstrapRequired: false, authenticated: false, user: null,
+    profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+  }));
+  await page.route('**/api/usage/cockpit**', route => json(route, {
+    ...SNAPSHOT, workspaceId: 'ws-concept',
+  }));
+  await page.route('**/api/v1/management/credential-inventory**', route => json(route, {
+    generatedAt: '2026-08-09T18:00:00Z', items: [],
   }));
   await page.route('**/api/v1/studio/board**', route => json(route, {
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [],
@@ -76,7 +92,18 @@ async function installRoutes(page: Page): Promise<{ mutationBodies: unknown[] }>
   ]));
   await page.route('**/api/environment**', route => json(route, { isDev: false, devTools: {} }));
   await page.route('**/api/projects/settings**', route => json(route, {}));
-  await page.route(/\/api\/(?:workspaces|v1\/workspaces(?:\?|$))/, route => json(route, []));
+  await page.route(/\/api\/projects\/[^/]+\/workbenches(?:\?|$)/, route => json(route, { items: [] }));
+  await page.route(/\/api\/v1\/workspaces(?:\?|$)/, route => json(route, [{
+    id: 'ws-concept', displayName: 'Concept fixtures', sortOrder: 0, isDefault: true,
+    createdAt: '2026-08-09T18:00:00Z', projects: [REGISTERED_PROJECT],
+  }]));
+  await page.route(/\/api\/v1\/projects(?:\?|$)/, route => json(route, [REGISTERED_PROJECT]));
+  await page.route(/\/api\/workspaces\/[^/]+\/quota\/admission(?:\?|$)/, route => json(route, {
+    workspaceId: 'ws-concept',
+    workspace: { projectId: null, project: null, status: 'ok', message: null,
+      overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false },
+    projects: [],
+  }));
   await page.route('**/api/clients', route => json(route, [
     { id: 'local-default', displayName: 'Local', kind: 'agent-instance' },
   ]));
@@ -149,4 +176,24 @@ test('concept completion shows one compact dossier sensor and links the recorded
     await setTheme(page, theme);
     await notice.screenshot({ path: path.join(RESULTS_DIR, `concept-dossier-linked-${theme}--mocked.png`) });
   }
+});
+
+test('concept detail omits delivery context and the Git pane in both themes and on a phone', async ({ page }) => {
+  mkdirSync(RESULTS_DIR, { recursive: true });
+  await installRoutes(page);
+  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await dismissDevErrorDialog(page);
+
+  await expect(page.getByTestId('concept-dossier-notice')).toBeVisible();
+  await expect(page.getByTestId('error-dialog')).toHaveCount(0);
+  await expect(page.getByTestId('delivery-claim-panel')).toHaveCount(0);
+  await expect(page.getByTestId('integration-dead-end')).toHaveCount(0);
+  await expect(page.getByTestId('pane-toggle-git')).toHaveCount(0);
+  await expect(page.locator('app-git-pane')).toHaveCount(0);
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: path.join(RESULTS_DIR, `concept-review-detail-${theme}.png`) });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: path.join(RESULTS_DIR, 'concept-review-detail-390px.png') });
 });

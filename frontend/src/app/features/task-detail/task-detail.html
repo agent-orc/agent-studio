@@ -98,13 +98,14 @@
 
   <app-pane-toggle-bar
     [panesVisible]="panesVisible()"
+    [showGit]="detail().info.mode !== 'concept'"
     [commitCount]="gitCommitCount()"
     [gitTooltip]="gitToggleTooltip()"
     (toggleRequest)="togglePane($event)"
     (openInVsCode)="openInVsCode()" />
 
-  <div class="detail__panes" [class.detail__panes--maximized]="!!maximizedPane()" data-testid="detail-panes">
-    @if (isPaneRendered('prompt')) {
+  <div class="detail__panes" [class.detail__panes--maximized]="!!maximizedPane() && !(detail().info.mode === 'concept' && maximizedPane() === 'git')" data-testid="detail-panes">
+    @if (isPaneRendered('prompt') || (detail().info.mode === 'concept' && maximizedPane() === 'git' && panesVisible().prompt)) {
       <app-prompt-pane
         #promptPaneRef
         [markdown]="detail().promptMarkdown || ''"
@@ -144,7 +145,7 @@
         (reviewAttemptRequested)="openReviewAttempt($event)" />
     }
 
-    @if (!maximizedPane() && panesVisible().prompt && (panesVisible().protocol || panesVisible().git)) {
+    @if ((!maximizedPane() || (detail().info.mode === 'concept' && maximizedPane() === 'git')) && panesVisible().prompt && (panesVisible().protocol || (detail().info.mode !== 'concept' && panesVisible().git))) {
       <div class="pane__splitter"
            [class.pane__splitter--dragging]="paneSplitterDragging()"
            role="separator" aria-orientation="vertical"
@@ -152,7 +153,7 @@
            [cacTooltip]="'Resize'" (pointerdown)="startPaneResize($event, 'prompt', firstVisibleAfter('prompt'))"><span></span></div>
     }
 
-    @if (isPaneRendered('protocol')) {
+    @if (isPaneRendered('protocol') || (detail().info.mode === 'concept' && maximizedPane() === 'git' && panesVisible().protocol)) {
       <app-protocol-pane
         [detail]="detail()"
         [maximized]="maximizedPane() === 'protocol'"
@@ -182,7 +183,7 @@
         (followupCreatedFromEvidence)="fileSaved.emit()" />
     }
 
-    @if (!maximizedPane() && panesVisible().protocol && panesVisible().git) {
+    @if (!maximizedPane() && detail().info.mode !== 'concept' && panesVisible().protocol && panesVisible().git) {
       <div class="pane__splitter"
            [class.pane__splitter--dragging]="paneSplitterDragging()"
            role="separator" aria-orientation="vertical"
@@ -190,7 +191,7 @@
            [cacTooltip]="'Resize'" (pointerdown)="startPaneResize($event, 'protocol', 'git')"><span></span></div>
     }
 
-    @if (isPaneRendered('git')) {
+    @if (detail().info.mode !== 'concept' && isPaneRendered('git')) {
       <app-git-pane
         [maximized]="maximizedPane() === 'git'"
         [weight]="paneWeights().git"
@@ -200,7 +201,7 @@
         (hide)="togglePane('git')" />
     }
 
-    @if (!panesVisible().prompt && !panesVisible().protocol && !panesVisible().git) {
+    @if (!panesVisible().prompt && !panesVisible().protocol && (detail().info.mode === 'concept' || !panesVisible().git)) {
       <div class="detail__panes-empty">All panels hidden — re-enable one above.</div>
     }
   </div>

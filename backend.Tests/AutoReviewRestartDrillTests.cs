@@ -1478,7 +1478,8 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Assert.Equal(1, report.Completed);
         var parked = restarted.Scanner.FindJob(card.Id, _watchPath)!;
         Assert.Equal(TaskStates.HumanReview, parked.State);
-        Assert.Equal("automatic recovery budget used: 2/2", parked.ParkedBlocker?.Reason);
+        Assert.Contains("Delivery integration stopped after automatic recovery budget used: 2/2", parked.ParkedBlocker?.Reason);
+        Assert.Contains("Review the integration evidence and retry", parked.ParkedBlocker?.Reason);
         Assert.True(parked.ParkedBlocker?.RequiresDecisionCard);
     }
 
@@ -1551,6 +1552,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         var moved = restarted.Scanner.FindJob(card.Id, _watchPath)!;
         Assert.Equal(TaskStates.HumanReview, moved.State);
         Assert.True(IsOnIntegrationLane(card.DeliverySha), "the delivery did not reach the integration lane");
+        Assert.Equal(RemoteDeliveryParkReason.CompletedReviewPark, moved.ParkedBlocker?.Reason);
     }
 
     /// <summary>
@@ -1591,7 +1593,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Assert.Equal(1, first.Integrated);
         var parked = seeded.Scanner.FindJob(card.Id, _watchPath)!;
         Assert.Equal(TaskStates.HumanReview, parked.State);
-        Assert.Equal("integration: branch-sync-failed", parked.ParkedBlocker?.Reason);
+        Assert.Equal(RemoteDeliveryParkReason.ForCode(AcceptedIntegrationFailureCodes.BranchSyncFailed), parked.ParkedBlocker?.Reason);
         Assert.Equal(
             RemoteDeliverySettlementStage.LaneSettled,
             RemoteDeliverySettlementStore.Read(parked.FolderPath)!.Stage);

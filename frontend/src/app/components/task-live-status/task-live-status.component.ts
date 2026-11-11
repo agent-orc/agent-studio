@@ -202,12 +202,12 @@ export class TaskLiveStatusComponent {
     }
 
     if (status.queue) {
-      const queueName = status.queue.kind === 'review' ? 'review slot' : 'runner slot';
-      const queuedHeadline = status.queue.kind === 'runner' ? 'Queued for runner' : `Waiting for ${queueName}`;
-      const headline = status.queue.position != null
-        ? `${queuedHeadline} · position ${status.queue.position}`
-        : status.queue.reason
-          ? `${queuedHeadline} · ${status.queue.reason}`
+      const queue = status.queue;
+      const queuedHeadline = queue.kind === 'review' ? 'Waiting for review slot' : 'Queued for runner';
+      const headline = queue.position != null
+        ? `${queuedHeadline} · position ${queue.position}`
+        : queue.reason
+          ? `${queuedHeadline} · ${queue.reason}`
           : queuedHeadline;
       return {
         tone: 'waiting',

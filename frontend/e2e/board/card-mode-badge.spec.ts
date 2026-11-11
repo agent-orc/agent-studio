@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { SNAPSHOT } from '../../src/mockups/usage-chips/app/usage-chips.fixtures';
 
 test.use({ serviceWorkers: 'block', trace: 'off', video: 'off' });
 
@@ -18,6 +19,10 @@ test.use({ serviceWorkers: 'block', trace: 'off', video: 'off' });
 
 const PROJECT = 'fixture-mode-badge';
 const WATCH_PATH = 'C:/fixtures/mode-badge-repo';
+const REGISTERED_PROJECT = {
+  id: PROJECT, displayName: PROJECT, shortCode: 'MODE', workspaceId: 'ws-mode',
+  storageLocation: WATCH_PATH, sortOrder: 0, archived: false, createdAt: '2026-06-03T09:00:00Z',
+};
 
 function makeTask(id: string, title: string, order: number, mode: string | undefined) {
   return {
@@ -51,6 +56,20 @@ function makeTask(id: string, title: string, order: number, mode: string | undef
 const PLANNING_TASK = { ...makeTask('mode-A-planning', 'Mode badge planning alpha', 1, 'planning'), taggingStatus: 'tags-proposed' };
 const RESEARCH_TASK = { ...makeTask('mode-B-research', 'Mode badge research bravo', 2, 'research'), taggingStatus: 'tagged' };
 const CONCEPT_TASK = makeTask('mode-C-concept', 'Mode badge concept charlie', 3, 'concept');
+const CONCEPT_REVIEW_TASK = {
+  ...makeTask('mode-E-concept-review', 'Concept review host hold', 1, 'concept'),
+  state: '4-auto-review',
+  integration: { status: 'pending', detail: 'Delivery pending.', integrationBranch: 'develop' },
+  testEvidence: {
+    evidenceState: 'unassigned', summary: 'Review build-tests Not proven',
+    sources: [{ kind: 'review-build-tests', id: 'review-1', summary: 'Review build-tests Not proven' }],
+  },
+  liveStatus: {
+    attempt: 1, activeStep: null, nextSteps: [],
+    queue: { kind: 'review', position: null, reason: 'Review host saturated: load/core 3.2 > 1.0' },
+    latestEventAt: '2026-06-03T11:00:00Z',
+  },
+};
 const CODING_TASK = { ...makeTask('mode-D-coding', 'Mode badge coding delta', 4, 'coding'), taggingStatus: 'future-status' };
 
 const GROUPED_PAYLOAD = {
@@ -60,9 +79,11 @@ const GROUPED_PAYLOAD = {
   ready: [PLANNING_TASK, RESEARCH_TASK, CONCEPT_TASK, CODING_TASK],
   progress: [],
   failedPickup: [],
+  codeNotComplete: [],
   review: [],
-  autoReview: [],
+  autoReview: [CONCEPT_REVIEW_TASK],
   humanReview: [],
+  escalated: [],
   completed: [],
   archive: [],
 };
@@ -89,8 +110,36 @@ async function installRoutes(page: Page) {
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: false }),
+      body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true }),
     }));
+
+  await page.route('**/api/v1/workspaces**', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify([{
+      id: 'ws-mode', displayName: 'Mode fixtures', sortOrder: 0, isDefault: true,
+      createdAt: '2026-06-03T09:00:00Z', projects: [REGISTERED_PROJECT],
+    }]),
+  }));
+  await page.route(/\/api\/v1\/projects(\?|$)/, route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify([REGISTERED_PROJECT]),
+  }));
+  await page.route(/\/api\/workspaces\/[^/]+\/quota\/admission(?:\?|$)/, route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({
+      workspaceId: 'ws-mode',
+      workspace: { projectId: null, project: null, status: 'ok', message: null,
+        overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false },
+      projects: [],
+    }),
+  }));
+  await page.route('**/api/usage/cockpit**', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ...SNAPSHOT, workspaceId: 'ws-mode' }),
+  }));
+  await page.route('**/api/v1/management/credential-inventory**', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ generatedAt: '2026-06-03T09:00:00Z', items: [] }),
+  }));
 
   await page.route('**/api/watch-paths**', (route) =>
     route.fulfill({
@@ -156,6 +205,7 @@ async function gotoBoard(page: Page): Promise<void> {
   await expect(page.locator('[data-testid="studio-board"], [data-testid="kanban-dashboard"]').first())
     .toBeVisible({ timeout: 15_000 });
   await expect(page.locator('[data-testid="task-card"]').first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('error-dialog')).toHaveCount(0);
 }
 
 function cardByTitle(page: Page, title: string) {
@@ -214,6 +264,25 @@ test.describe('Card mode badge (planning / research / concept recognizable on th
     await expect(pill).toBeVisible();
     await expect(pill).toHaveAttribute('data-mode', 'concept');
     await expect(pill).toContainText('Concept');
+  });
+
+  test('concept review card names the host hold and omits code-delivery chips', async ({ page }) => {
+    await gotoBoard(page);
+    const card = cardByTitle(page, CONCEPT_REVIEW_TASK.title);
+    await expect(card.getByTestId('task-live-current')).toContainText('Review host saturated: load/core 3.2 > 1.0');
+    await expect(card.getByTestId('task-card-test-evidence')).toHaveCount(0);
+    await expect(card.getByTestId('task-card-change-context')).toHaveCount(0);
+    await expect(card).not.toContainText('main checkout');
+    await expect(card).not.toContainText('Review build-tests');
+    await expect(card).not.toContainText('Delivery pending');
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await card.screenshot({ path: `${process.env.JOB_RESULTS_DIR ?? 'test-results'}/concept-review-host-hold-${theme}.png` });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByTestId('mobile-lane-picker').locator('select').selectOption('4-auto-review');
+    await expect(card).toBeVisible();
+    await card.screenshot({ path: `${process.env.JOB_RESULTS_DIR ?? 'test-results'}/concept-review-host-hold-390px.png` });
   });
 
   test('coding card stays quiet (no mode pill for the default mode)', async ({ page }) => {
