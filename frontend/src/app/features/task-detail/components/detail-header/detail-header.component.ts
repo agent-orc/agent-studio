@@ -53,6 +53,7 @@ import { RemoteDispatchRejectionComponent } from '../../../../components/remote-
 })
 export class DetailHeaderComponent {
   readonly info = input.required<TaskInfo>();
+  readonly gateInfrastructurePark = input(false);
   readonly defaultThinkingLevel = input<string | null>(null);
   readonly headerModel = computed(() => {
     const info = this.info();
@@ -221,7 +222,8 @@ export class DetailHeaderComponent {
 
   /** Index 0 of the lane's action list when it carries a primary variant. */
   readonly triagePrimary = computed<TriageButton | null>(() =>
-    primaryActionFor(this.info().state),
+    this.gateInfrastructurePark()
+      ? null : primaryActionFor(this.info().state),
   );
 
   /**
@@ -260,7 +262,8 @@ export class DetailHeaderComponent {
 
   /** Remaining lane actions + always-on Edit/Delete fallbacks. */
   readonly triageOverflow = computed<TriageButton[]>(() =>
-    overflowActionsFor(this.info().state),
+    this.gateInfrastructurePark()
+      ? [] : overflowActionsFor(this.info().state),
   );
 
   /** True when a primary or any overflow action is available. */

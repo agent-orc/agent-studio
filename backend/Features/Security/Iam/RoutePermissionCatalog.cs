@@ -454,6 +454,7 @@ public static class RoutePermissionCatalog
             "execution/proposal", "checkout/**", "gate-result-cache", "urls/{}/start", "urls/test", "urls/{}/process");
         Add("POST", IamPermissions.WorkspaceOperate, "/api/projects/{}/operator-candidate-verifications");
         Add("POST", IamPermissions.ProjectRunsOperate, "/api/projects/{}/batch-gate/queue-stalls/release");
+        Add("POST", IamPermissions.ProjectRunsOperate, "/api/projects/{}/batch-gate/infrastructure/{}/retry");
         Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/failed-tests");
         Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/isolation-evidence");
         Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/execution/proposal-preview");

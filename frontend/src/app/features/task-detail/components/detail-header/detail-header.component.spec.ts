@@ -166,6 +166,19 @@ describe('DetailHeaderComponent (smoke)', () => {
     return fixture;
   }
 
+  it('hides coding reissue actions when gate infrastructure parks a reviewed card', async () => {
+    const fixture = await mountHeader();
+    fixture.componentRef.setInput('info', { ...taskInfo, state: '5e-escalated' });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.triagePrimary()?.label).toBe('Continue (reissue)');
+
+    fixture.componentRef.setInput('gateInfrastructurePark', true);
+    fixture.detectChanges();
+    expect(fixture.componentInstance.triagePrimary()).toBeNull();
+    expect(fixture.componentInstance.triageOverflow()).toEqual([]);
+    expect(fixture.nativeElement.querySelector('[data-testid="triage-action-reissue-escalated"]')).toBeNull();
+  });
+
   it('holds acceptance while both integration and Git status are unknown', async () => {
     const fixture = await mountHeader();
     fixture.componentRef.setInput('info', { ...taskInfo, integration: null });

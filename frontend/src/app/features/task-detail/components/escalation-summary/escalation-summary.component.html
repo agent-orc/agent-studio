@@ -53,6 +53,18 @@
           </span>
         }
         <div class="escalation__actions" role="group" aria-label="Escalation decisions">
+          @if (gateInfrastructure()) {
+            <button type="button" class="escalation__action escalation__action--primary"
+              data-testid="escalation-action-retry-gate"
+              [disabled]="mutationsBlocked() || gateAction() !== null"
+              [appPendingButton]="gateAction() === 'retry'" pendingLabel="Retrying gate…"
+              (click)="retryGate()">Retry gate</button>
+            <button type="button" class="escalation__action escalation__action--secondary"
+              data-testid="escalation-action-disable-batch"
+              [disabled]="mutationsBlocked() || gateAction() !== null"
+              [appPendingButton]="gateAction() === 'disable'" pendingLabel="Disabling…"
+              (click)="disableBatchVerification()">Disable batch verification</button>
+          }
           @for (action of decisionActions(); track action.id) {
             <button
               type="button"
@@ -66,6 +78,8 @@
             </button>
           }
         </div>
+        @if (gateActionMessage(); as message) { <p role="status" data-testid="gate-infrastructure-outcome">{{ message }}</p> }
+        @if (gateActionError(); as message) { <p role="alert" data-testid="gate-infrastructure-error">{{ message }}</p> }
       </div>
     </div>
 

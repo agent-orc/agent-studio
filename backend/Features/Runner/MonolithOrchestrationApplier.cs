@@ -332,15 +332,28 @@ public sealed class MonolithOrchestrationApplier(
                     "model-selected-salvage-handoff", occurrence.AuthorityAttemptId,
                     time.GetUtcNow().UtcDateTime);
             }
+            // The gate payload already carries the typed park reason. Preserve
+            // it when the engine applies the escalation, even if the batch
+            // member receipt was cleared before this decision arrived.
+            var batchInfrastructurePark = target == TaskStates.Escalated
+                && GateReason(occurrence.Run.PayloadJson).StartsWith(
+                    HumanReviewEscalation.FormatReason(
+                        HumanReviewEscalationCategories.GateInfrastructure, ""),
+                    StringComparison.Ordinal);
             var move = await transitions.MoveAsync(task.Id, target, task.WatchPath, ct,
-                cause: "engine-decision", reason: decision?.Reason ?? "Engine stage completed.",
+                cause: "engine-decision",
+                reason: batchInfrastructurePark ? GateReason(occurrence.Run.PayloadJson)
+                    : decision?.Reason ?? "Engine stage completed.",
                 authorityWrite: new AttemptWriteReference(occurrence.AuthorityAttemptId,
                     occurrence.AuthorityFence, occurrence.AuthorityEpoch, key),
                 suppressProductExecution: true,
                 expectedSourceState: occurrence.ExpectedSourceState,
-                transitionCause: decision?.Action is TransitionAction.FindingRound or TransitionAction.ConcernRound
-                    ? LaneChangeCauses.QualityLoop : LaneChangeCauses.Delivered,
-                transitionDetail: decision?.Action.ToString() ?? completion.Action.ToString(),
+                transitionCause: batchInfrastructurePark ? LaneChangeCauses.Escalated
+                    : decision?.Action is TransitionAction.FindingRound or TransitionAction.ConcernRound
+                        ? LaneChangeCauses.QualityLoop : LaneChangeCauses.Delivered,
+                transitionDetail: batchInfrastructurePark
+                    ? HumanReviewEscalationCategories.GateInfrastructure
+                    : decision?.Action.ToString() ?? completion.Action.ToString(),
                 engineDecisionRequeue: activeChoice is { Action: DecisionActionKinds.Retry,
                     Target: "card:ready" } or { Action: DecisionActionKinds.Adapt,
                     Target: "salvage-handoff" },

@@ -1232,10 +1232,12 @@ export class App implements OnInit, OnDestroy {
   // panel; this is purely a second render site.
   readonly studioTriagePrimary = computed<TriageButton | null>(() => {
     const sel = this.selectedJob();
+    if (sel?.info.parkedBlocker?.blockerType === 'gate-infrastructure') return null;
     return sel ? primaryActionFor(sel.info.state) : null;
   });
   readonly studioTriageOverflow = computed<TriageButton[]>(() => {
     const sel = this.selectedJob();
+    if (sel?.info.parkedBlocker?.blockerType === 'gate-infrastructure') return [];
     return sel ? overflowActionsFor(sel.info.state) : [];
   });
   /**

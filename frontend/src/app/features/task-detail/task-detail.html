@@ -3,6 +3,7 @@
   <app-detail-header
     #detailHeader
     [info]="detail().info"
+    [gateInfrastructurePark]="detail().info.parkedBlocker?.blockerType === 'gate-infrastructure'"
     [defaultThinkingLevel]="defaultThinkingLevel()"
     [editingTitle]="editingTitle()"
     [titleDraft]="titleDraft()"

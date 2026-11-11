@@ -151,6 +151,8 @@ public static class HumanReviewEscalationCategories
     /// <summary>AGT-3219: a passed review waited its queue wait cap for a
     /// machine gate slot. The gate host lacks capacity; the code was not judged.</summary>
     public const string GateCapacity = AgentStudio.OrchestrationDecisions.GateQueueStallPolicy.GateCapacityCategory;
+    /// <summary>A reviewed delivery could not pass its gate because the gate infrastructure failed.</summary>
+    public const string GateInfrastructure = "gate-infrastructure";
 
     /// <summary>An unanswered steer / NeedsInput question timed out (Run-Liveness
     /// Slice B, concept Rule 2) and the answer was not derivable from the task

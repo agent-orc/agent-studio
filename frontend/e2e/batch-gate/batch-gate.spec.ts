@@ -161,6 +161,7 @@ test('board badge, batch panel and project settings save use batch contract', as
     sinceUtc: '2026-10-11T13:00:00Z', ageAlert: true, ageMinutes: 4.5,
   } }, () => { saved = true; });
   await page.goto('/?includeFixtures=true');
+  await expect(page.getByRole('tab', { name: 'All projects · Board' })).toBeVisible({ timeout: 30_000 });
   await page.getByRole('tab', { name: 'All projects · Board' }).click();
   // This route-only fixture has no SignalR server; keep its offline banner out of the target surface.
   await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
@@ -212,6 +213,8 @@ test('board badge, batch panel and project settings save use batch contract', as
   await page.getByTestId('batch-settings-enabled').check();
   await expect(page.getByTestId('batch-settings-scope')).toHaveValue('code');
   await expect(page.getByTestId('batch-settings-scope-defaulted')).toContainText('Scope set to Code.');
+  await expect(page.locator('#batch-scope-help')).toContainText('code follow-ups from concept work');
+  await expect(page.locator('#batch-scope-help')).toContainText('documentation follow-ups from concept work');
   await page.getByTestId('batch-settings-stacking').selectOption('1');
   if (evidence) {
     await page.getByTestId('batch-settings-stacking').scrollIntoViewIfNeeded();
@@ -231,6 +234,34 @@ test('board badge, batch panel and project settings save use batch contract', as
   await captureThemes(page, evidence, 'batch-settings-390');
   await page.getByTestId('batch-pre-check-yield').scrollIntoViewIfNeeded();
   await captureThemes(page, evidence, 'batch-settings-yield-390');
+});
+
+test('batch settings explain the missing gate host before a save can succeed', async ({ page }) => {
+  const evidence = process.env.JOB_RESULTS_DIR;
+  if (evidence) fs.mkdirSync(evidence, { recursive: true });
+  await routeBoard(page, state);
+  await page.route('**/api/projects/*/batch-gate', route => {
+    if (route.request().method() === 'PUT') return json(route, {
+      error: 'Batch verification needs a remote gate host. Set RemoteGate:SshHost to an approved remote host and RemoteGate:WorkerPath to its absolute worker path, then save again.',
+      field: 'enabled',
+    }, 400);
+    return json(route, { settings: { ...settings, enabled: false }, limits: { hardMaximumSize: 8 } });
+  });
+  await page.goto('/#/projects/batch-fixture/settings');
+  await page.getByTestId('batch-settings-enabled').check({ timeout: 30_000 });
+  await page.getByTestId('batch-settings-save').click();
+  await expect(page.getByTestId('batch-settings-error')).toContainText('RemoteGate:SshHost');
+  await expect(page.getByTestId('batch-settings-enabled')).toHaveAttribute('aria-invalid', 'true');
+  await page.locator('#batch-settings-title').scrollIntoViewIfNeeded();
+  await captureThemes(page, evidence, 'batch-settings-missing-host');
+  await page.locator('#batch-scope-help').scrollIntoViewIfNeeded();
+  await captureThemes(page, evidence, 'batch-settings-scope-help');
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.getByTestId('studio-ab-explorer').click();
+  await page.getByTestId('batch-settings-error').scrollIntoViewIfNeeded();
+  await captureThemes(page, evidence, 'batch-settings-missing-host-390');
+  await page.locator('#batch-scope-help').scrollIntoViewIfNeeded();
+  await captureThemes(page, evidence, 'batch-settings-scope-help-390');
 });
 
 test('failed-test ranking stays readable at wide and mobile widths in both themes', async ({ page }) => {
