@@ -166,7 +166,7 @@ public sealed class BatchGateIsolationStateTests : IDisposable
             BatchGatePolicy.MembershipDigest(Base, Scope, members), Now, members, [],
             members.Select(member => member.TaskKey).ToArray());
         _store.CloseManifest(manifest);
-        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+        BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Red, Candidate, 1, Now));
         return manifest;
     }
@@ -181,7 +181,8 @@ public sealed class BatchGateIsolationStateTests : IDisposable
             EligibleKeys = [key], ParentBatchId = parent.BatchId, Diagnostic = true,
         };
         _store.CloseManifest(child);
-        _store.AppendState(new BatchGateState(child.BatchId, digest, BatchPhase.Assembled, Candidate, 1, Now));
+        BatchGateStates.Reach(_store, new BatchGateState(child.BatchId, digest, BatchPhase.Assembled,
+            Candidate, 1, Now));
         var evidence = Path.Combine(_store.BatchDirectory(child.BatchId), "gate-evidence.jsonl");
         File.WriteAllText(evidence, "{}\n");
         var runId = "run-" + key;
@@ -189,7 +190,8 @@ public sealed class BatchGateIsolationStateTests : IDisposable
             "full", "digest", "agent-runner-01", 1, ["dotnet test"], Now, evidence));
         _store.RecordVerdict(new BatchGateRunVerdict(runId, child.BatchId, digest, Candidate,
             "digest", "fail", "DeterministicSuiteRed", evidence, Now));
-        _store.AppendState(new BatchGateState(child.BatchId, digest, BatchPhase.Red, Candidate, 1, Now));
+        BatchGateStates.Reach(_store, new BatchGateState(child.BatchId, digest, BatchPhase.Red,
+            Candidate, 1, Now));
         _store.RecordExecution(new BatchGateExecutionFact("project", child.BatchId, runId, Candidate,
             "fail", "agent-runner-01", Now, Now, 0, 0, evidence, MemberKeys: [key]));
         return (child, runId, evidence);

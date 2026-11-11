@@ -78,11 +78,11 @@ public sealed class BatchIsolationGuardTests : IDisposable
         var guard = new BatchIsolationGuard(_store);
         Assert.Null(guard.Find(Card()));
 
-        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+        BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Red, Result, 1, Now, "deterministic suite red"));
         Assert.Null(guard.Find(Card()));
 
-        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+        BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Paused, Result, 1, Now.AddMinutes(1), "unresolved-cohort:" + TaskKey));
         Assert.Null(guard.Find(Card()));
     }
@@ -94,7 +94,7 @@ public sealed class BatchIsolationGuardTests : IDisposable
     public void An_isolation_finding_releases_the_member_it_names(string status, bool released)
     {
         var manifest = SeedMember();
-        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+        BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Red, Result, 1, Now, "deterministic suite red"));
         _store.RecordIsolationFinding(new BatchGateIsolationFinding(Project, manifest.BatchId, TaskKey,
             "run-1", Result, Base, status, "evidence.json", Now));

@@ -1382,6 +1382,12 @@ public static class ProjectSettingsEndpoints
             scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
                 ? Results.Ok(pilot.State(projectName, history ?? 10))
                 : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
+        // AGT-3563: the batch invariant check on demand; the tick runs the same check.
+        app.MapGet("/api/projects/{projectName}/batch-gate/invariants", async (string projectName,
+            BatchGatePilotService pilot, TaskScannerService scanner, CancellationToken ct) =>
+            scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
+                ? Results.Ok(await pilot.CheckInvariantsAsync(projectName, ct))
+                : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
         app.MapPost("/api/projects/{projectName}/batch-gate/close-now", (string projectName,
             HttpContext context, BatchGatePilotService pilot, TaskScannerService scanner) =>
         {
