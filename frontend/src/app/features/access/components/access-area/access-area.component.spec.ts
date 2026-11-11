@@ -2,18 +2,20 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it } from 'vitest';
 import { AccessService } from '../../services/access.service';
+import { BackupActivityService } from '../../services/backup-activity.service';
 import { OperatorAgentsService } from '../../services/operator-agents.service';
 import { OperatorApprovalsService } from '../../services/operator-approvals.service';
 import { StandingGrantsService } from '../../services/standing-grants.service';
 import { accessOverview, fakeAccessService } from '../../testing/access-fixtures';
 import { fakeOperatorApprovalsService } from '../../testing/approval-fixtures';
+import { fakeBackupActivityService } from '../../testing/backup-fixtures';
 import { fakeStandingGrantsService } from '../../testing/grant-fixtures';
 import { fakeOperatorAgentsService } from '../../testing/operator-fixtures';
 import { AccessAreaComponent } from './access-area.component';
 
 describe('AccessAreaComponent', () => {
   async function render(access: ReturnType<typeof fakeAccessService>, operators = fakeOperatorAgentsService(),
-    grants = fakeStandingGrantsService(), approvals = fakeOperatorApprovalsService()) {
+    grants = fakeStandingGrantsService(), approvals = fakeOperatorApprovalsService(), backups = fakeBackupActivityService()) {
     await TestBed.configureTestingModule({
       imports: [AccessAreaComponent],
       providers: [
@@ -22,6 +24,7 @@ describe('AccessAreaComponent', () => {
         { provide: OperatorAgentsService, useValue: operators },
         { provide: StandingGrantsService, useValue: grants },
         { provide: OperatorApprovalsService, useValue: approvals },
+        { provide: BackupActivityService, useValue: backups },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(AccessAreaComponent);
@@ -43,7 +46,7 @@ describe('AccessAreaComponent', () => {
     expect([invited.dataset['tone'], invited.dataset['icon'], invited.textContent?.trim()]).toEqual(['info', 'info', 'Invited']);
     expect(element.querySelector('[data-testid="access-single-user"]')).toBeNull();
     for (const section of ['access-users', 'access-bindings', 'access-groups', 'access-service-accounts', 'access-invite-form', 'access-runners',
-      'access-operator-agents', 'access-operator-approvals', 'access-standing-grants', 'access-operator-activity'])
+      'access-operator-agents', 'access-operator-approvals', 'access-standing-grants', 'access-operator-activity', 'access-backup-activity'])
       expect(element.querySelector(`[data-testid="${section}"]`)).toBeTruthy();
   });
 
@@ -55,6 +58,18 @@ describe('AccessAreaComponent', () => {
     expect(element.querySelector('[data-testid="access-operator-agents"]')).toBeNull();
     expect(element.querySelector('[data-testid="access-operator-activity"]')).toBeNull();
     expect(element.querySelector('[data-testid="access-service-accounts"]')).toBeTruthy();
+  });
+
+  it('loads backup activity for the Owner and hides it while loading or when the server refuses', async () => {
+    const backups = fakeBackupActivityService(null);
+    const element = await render(fakeAccessService(), fakeOperatorAgentsService(), fakeStandingGrantsService(),
+      fakeOperatorApprovalsService(), backups);
+    expect(backups.load).toHaveBeenCalledTimes(1);
+    expect(element.querySelector('[data-testid="access-backup-activity"]')).toBeNull();
+    backups.state.set('loading');
+    await Promise.resolve();
+    expect(element.querySelector('[data-testid="access-backup-activity"]')).toBeNull();
+    expect(element.querySelector('[data-testid="access-runners"]')).toBeTruthy();
   });
 
   it('loads standing grants for the Owner and hides them when the server refuses', async () => {

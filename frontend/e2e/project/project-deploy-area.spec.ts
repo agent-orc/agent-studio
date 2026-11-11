@@ -350,7 +350,7 @@ test.describe('Project Deploy area (mocked)', () => {
         { code: 'backup-failed', severity: 'danger', message: 'The last backup run failed: Backup source workspace is not readable.' },
         { code: 'offhost-failed', severity: 'danger', message: 'The off-host copy failed: sftp exited with 255: Connection timed out' },
       ] : [],
-      backups: [newest, backup('studio-backup-20261019T000000Z-9f8e7d', '2026-10-19T00:00:00+00:00', 'unverified', 'uploaded')],
+      backups: [stale ? newest : { ...newest, offHost: 'uploaded' }, backup('studio-backup-20261019T000000Z-9f8e7d', '2026-10-19T00:00:00+00:00', 'unverified', 'uploaded')],
       generatedAt: '2026-10-20T08:00:00+00:00',
     }));
     await page.getByTestId('deploy-tab-operations').click();
@@ -362,8 +362,12 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(backups.getByTestId('operations-backups-size')).toContainText('412.0 MB');
     await expect(backups.getByTestId('operations-backups-verification')).toContainText('Verified');
     await expect(backups.getByTestId('operations-backups-offhost')).toContainText('Copy failed');
+    await expect(backups.getByTestId('operations-backups-offhost-id')).toContainText(newest.id);
     await expect(backups.getByTestId('operations-backups-offhost')).toContainText('sftp://studio@backup.example');
     await expect(backups.getByTestId('operations-backups-list').locator('tbody tr')).toHaveCount(2);
+    // The runbook compares the escrowed copies against these ids (AGT-3738).
+    await expect(backups.getByTestId('operations-backups-key-id')).toContainText('3f2a9c0d11e4b7a8');
+    await expect(backups.getByTestId('operations-backups-secret-key-id')).toContainText('0b1c2d3e4f5a6b7c');
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       fs.mkdirSync(results, { recursive: true });
@@ -375,7 +379,13 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(backups.getByTestId('operations-backups-state')).toHaveAttribute('data-state', 'ok');
     await expect(backups.getByTestId('operations-backups-warnings')).toHaveCount(0);
     await expect(backups.getByTestId('operations-backups-offhost')).toContainText('Copied');
+    await expect(backups.getByTestId('operations-backups-list').locator('tbody tr').first()).toContainText('Copied');
     await backups.screenshot({ path: path.join(results, 'operations-backups-current-dark--mocked.png') });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await setTheme(page, 'light');
+    await expect(backups.getByTestId('operations-backups-secret-key-id')).toBeVisible();
+    await backups.screenshot({ path: path.join(results, 'operations-backups-current-390-light--mocked.png') });
   });
 
   test('Operations shows deploy markers, DORA and telemetry empty state in both themes', async ({ page }) => {

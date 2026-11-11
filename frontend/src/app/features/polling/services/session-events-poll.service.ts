@@ -2,6 +2,8 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { Observable } from 'rxjs';
 import type { SessionEventsResponse } from '../../../features/session-events';
 import { TaskService } from '../../../services/task.service';
+import { TaskSectionAccessService } from '../../../services/task-section-access.service';
+import type { TaskInfo } from '../../../models/task.model';
 import { TaskBackgroundPoller } from './task-background-poller';
 
 /**
@@ -16,6 +18,7 @@ import { TaskBackgroundPoller } from './task-background-poller';
 @Injectable()
 export class SessionEventsPollService extends TaskBackgroundPoller<SessionEventsResponse | null> {
   private readonly jobService = inject(TaskService);
+  private readonly sectionAccess = inject(TaskSectionAccessService);
 
   protected readonly intervalMs = 10_000;
 
@@ -45,6 +48,12 @@ export class SessionEventsPollService extends TaskBackgroundPoller<SessionEvents
     if (!r) return 0;
     return r.sessionChain.filter((s) => s && s !== '(recovery)').length;
   });
+
+  /** A Product session is refused the session-event log; never request it. */
+  protected override shouldPoll(info: TaskInfo): boolean {
+    void info;
+    return this.sectionAccess.canRead('session-events');
+  }
 
   protected fetch(jobId: string, watchPath: string): Observable<SessionEventsResponse | null> {
     return this.jobService.getSessionEvents(jobId, watchPath);
