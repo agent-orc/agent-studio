@@ -397,10 +397,7 @@ public sealed class RemoteReviewWorkspace
                 .Select(scope =>
                 {
                     var installRoot = ResolveWorkingDirectory(RepositoryPath, scope.WorkingSubdir);
-                    var decision = DependencyPreparationState.Evaluate(installRoot, scope);
-                    return !Directory.Exists(Path.Combine(installRoot, DependencyPreparationState.DependencyDirectoryName))
-                        ? decision with { State = "miss", Reason = "deps-dir-missing" }
-                        : decision;
+                    return DependencyPreparationState.Evaluate(installRoot, scope);
                 })
                 .Where(decision => decision.State != "hit" && decision.Reason != "no-lockfile")
                 .ToArray();
@@ -3060,7 +3057,8 @@ public sealed class RemoteReviewWorkspace
                      .SelectMany(command => command.DependencyScopes ?? []))
         {
             var installRoot = ResolveWorkingDirectory(workspacePath, scope.WorkingSubdir);
-            if (Directory.Exists(Path.Combine(
+            if (!DependencyPreparationState.RequiresDependencyDirectory(installRoot, scope.Lockfiles)
+                || Directory.Exists(Path.Combine(
                     installRoot, DependencyPreparationState.DependencyDirectoryName)))
                 continue;
             var name = string.IsNullOrWhiteSpace(scope.WorkingSubdir) ? "." : scope.WorkingSubdir;

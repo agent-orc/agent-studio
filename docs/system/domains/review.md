@@ -729,8 +729,15 @@ either. Two paths are deliberately outside the attempt directory (AGT-3429):
   scratch folder holds NuGet's extraction locks. See
   [pipeline.md](pipeline.md) for what a dependency-cache hit may skip.
 
+The conventional Node preparation plan runs `npm ci` only for selected package
+roots with a tracked `package-lock.json` or `npm-shrinkwrap.json`. It records
+roots without a tracked lockfile in `PreparationSkips` with reason
+`no-tracked-lockfile`; an explicit build-profile install command still runs.
+An npm lockfile with no installed packages may complete without `node_modules`.
+For that scope, a matching install marker is sufficient preparation.
+
 Before each candidate tool command, the review workspace checks every prepared
-dependency scope for its directory and lockfile marker. A missing scope reruns
+dependency scope for its required directory and lockfile marker. A missing scope reruns
 preparation and records the miss in command evidence. An environment diagnosis
 evicts the candidate cache entry and invalidates its scope markers, then the
 next candidate command prepares those scopes again. It keeps the dependency

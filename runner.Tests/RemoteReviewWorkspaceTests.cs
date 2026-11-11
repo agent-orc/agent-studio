@@ -804,6 +804,64 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Package_without_lockfile_skips_install_and_verifies()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var sha = await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["frontend/package.json"] = """{"name":"no-lock","version":"1.0.0","scripts":{"build":"true"}}""",
+        });
+        var plan = GatePreparationPlanner.PlanWithSkips(Path.Combine(_root, "seed"), null,
+            [new VerifyCommand(VerifyEcosystem.Node, VerifyCommandKind.Build, "frontend", "npm run build")]);
+        Assert.Empty(plan.Commands);
+        var skip = Assert.Single(plan.Skips);
+        Assert.Equal("frontend", skip.WorkingSubdir);
+        Assert.Equal("no-tracked-lockfile", skip.Reason);
+
+        var command = new ReviewCommandDto("verify-no-lock", "build-tests", PosixShell.RequirePath(),
+            ["-c", "test -f frontend/package.json && test ! -e frontend/node_modules"]);
+        var (workspace, _) = Workspace("no-lock-package", sha, [command], 24035);
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.DoesNotContain(evidence.Commands, item => item.Phase == "preparation");
+    }
+
+    [Fact]
+    public async Task Empty_lockfile_scope_is_prepared_without_node_modules()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var sha = await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["frontend/package.json"] = """{"name":"empty-lock","version":"1.0.0","scripts":{"build":"true"}}""",
+            ["frontend/package-lock.json"] = """{"name":"empty-lock","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"empty-lock","version":"1.0.0"}}}""",
+            [".gitignore"] = "frontend/.nm-state\nfrontend/node_modules/\n",
+        });
+        var preparation = new ReviewPreparationCommandDto("prepare-empty", PosixShell.RequirePath(),
+            ["-c", "true"], "frontend",
+            DependencyScopes: [new ReviewDependencyScopeDto("frontend", ["package-lock.json"])],
+            CoveredByDependencyScopes: true);
+        var commands = new[]
+        {
+            new ReviewCommandDto("verify-empty-1", "build-tests", PosixShell.RequirePath(),
+                ["-c", "test ! -e frontend/node_modules"]),
+            new ReviewCommandDto("verify-empty-2", "build-tests", PosixShell.RequirePath(),
+                ["-c", "test ! -e frontend/node_modules"]),
+        };
+        var (workspace, _) = Workspace("empty-lock-package", sha, commands, 24036,
+            preparation: [preparation]);
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Equal(2, evidence.Commands.Count(item => item.Phase == "verification"));
+        Assert.Single(evidence.Commands, item => item.StepId == "prepare-empty");
+    }
+
+    [Fact]
     public async Task Lost_dependency_that_cannot_be_reprepared_names_scope_and_removing_step()
     {
         if (OperatingSystem.IsWindows()) return;
