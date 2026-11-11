@@ -146,7 +146,9 @@ that is already allowed to edit that project's checkout.
   Product cards carry no run controls: project defaults choose the CLI, model,
   and mode, and the card records the signed-in user as creator. Product
   sessions read only screenshot, HTML, and Markdown result files and never run
-  conversations, session events, or agent work detail. The per-route task
+  conversations, session events, or agent work detail. The shell lists a
+  Product session's workspaces, projects, and watch paths through the same
+  binding-filtered collections, without host checkout paths. The per-route task
   contract is in
   [Product session task access](../../system/domains/tasks.md#product-session-task-access-agt-3182).
   Production approval is a separate grant that an owner gives for one assigned

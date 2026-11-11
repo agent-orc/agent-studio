@@ -1363,6 +1363,23 @@ that is not a string or `null`. A body that is not valid JSON is denied instead
 of passed through. For every caller, Task Server JSON binding now rejects a
 body with duplicate property names (`AllowDuplicateProperties = false`).
 
+The shell, the project picker, the Add task dialog and Project Chat read a
+Product session's projects from three backend collections (AGT-3668):
+`GET /api/workspaces` (the Studio calls it as `/api/v1/workspaces`),
+`GET /api/projects` (`/api/v1/projects`), and `GET /api/watch-paths`. The
+Product allowlist admits exactly these paths, not their sub-resources, and each
+handler filters its payload by the session's project bindings, so no other
+project's name or id is returned. Watch-path entries for a Product session
+carry the project name and storage path; `rootPath` and `repositoryPath` are
+blank. The Add task dialog offers a Product session only the Backlog and Ready
+lanes the create rule above accepts, and the Studio does not poll the
+installation-wide `GET /api/runner/status` for it. A signed-in account that
+holds no project (a Product user whose last binding was removed reads as a
+viewer without projects) sees one sentence in the editor's welcome view at
+every width, in place of the board, the Explorer tree and the project picker;
+a refused read raises no error dialog for it. Test: `frontend/e2e/security/product-session-networked-https.spec.ts`
+in the `networked-https` Playwright profile.
+
 The backend route middleware denies with `403` and
 `{ "error": "role-denied", "message": ... }`; a backend handler check denies
 with `403` and no body. Task Server denies with `403` and

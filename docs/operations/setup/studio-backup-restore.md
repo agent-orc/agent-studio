@@ -30,7 +30,7 @@ The API's `BackupHostedService` checks once a minute, five minutes after start:
 
 - **Backup** every 6 hours (`Backup__IntervalHours`, `.env` `STUDIO_BACKUP_INTERVAL_HOURS`). A failed run is retried after 30 minutes.
 - **Retention** after every backup: the newest 12 local archives stay (`Backup__RetentionCount`, `STUDIO_BACKUP_RETENTION`). Retention at the off-host target is configured there, because the host has no right to delete there.
-- **Off-host copy** of every archive and its `.sha256` file right after the backup. A failed copy is retried after 15 minutes, doubling up to six hours.
+- **Off-host copy** of every archive and its `.sha256` file before creation completes when a target is configured. A failed copy is reported as failed and retried after 15 minutes, doubling up to six hours.
 - **Restore verification** of the newest good backup once a day (`Backup__VerifyIntervalHours`), and at once when the last verification failed and a newer backup exists. It checks the archive against the checksum recorded at creation, decrypts it, restores every source into an empty staging host below the backup directory with the real restore code, checks every file against the SHA-256 list in the archive, and deletes the staging host again.
 
 Local archives live in `$STUDIO_DATA_DIR/backups` (`Backup__Directory`) as `studio-backup-<UTC time>-<id>.tar.gz.sbk` with a `.sha256` file and a non-secret `.json` record (size, hash, key fingerprints, consistency figures, verification and copy state). The backup directory must lie outside every source; the API refuses to back up otherwise.
@@ -120,6 +120,8 @@ The **Operations** page of every project shows an **Installation backups** panel
 | `offhost-not-configured`, `offhost-invalid`, `offhost-pending`, `offhost-failed` | The newest backup is not, or not yet, off the host. |
 
 Owners and operators read the same state from `GET /api/v1/management/backups` (`no-store`). Operator agents, whose credentials never reach `/api/v1`, read it from `GET /api/operator/backups` or `studio-op backups`; a caller without installation-wide operate permission does not see the target or the key fingerprints, and host paths in its error text read `<path>`. The management commands of `POST /api/v1/management/commands` run the same engine: `backup-create`, `restore-verify` (optional `backupId`), `backup-retention` (optional `retentionCount`) and `backup-upload`. Each needs `dryRun: false` and `confirmation` equal to the kind for a real run; `backup-create` no longer needs maintenance mode. A `backup-retention` run that keeps fewer archives than `Backup__RetentionCount` needs the Owner role; operators may preview it and may apply the configured count.
+
+Before retiring or moving a host, run `backup-create` and wait until the newest backup shows **Copied** in the Installation backups panel. The command result reports whether that archive was copied, whether its copy failed, or whether no target is configured. If the copy failed, keep the host available and retry with `backup-upload`; a locally created archive is not yet safe from host loss.
 
 ### Backup audit
 
