@@ -550,6 +550,10 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             Assert.Contains("no run attempt in the current authority epoch",
                 body.RootElement.GetProperty("error").GetString());
         }
+        var refusedCard = factory.Services.GetRequiredService<TaskScannerService>().FindJob(Slug, _watchPath)!;
+        Assert.Contains(factory.Services.GetRequiredService<TimelineLog>().ReadAll(refusedCard.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.OwnerMoveRefused
+                && entry.Summary.Contains("no run attempt in the current authority epoch"));
 
         using var accepted = await client.PostAsJsonAsync(route, new
         {
