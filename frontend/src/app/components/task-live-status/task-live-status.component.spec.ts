@@ -391,6 +391,39 @@ describe('TaskLiveStatusComponent', () => {
     expect(TestBed.inject(TaskService).refresh).toHaveBeenCalledWith(true);
   });
 
+  it('shows breaker cause and end time without offering Switch to Auto', () => {
+    const reason = 'Auto-pickup is cooling down after a circuit-breaker trip (quota failure) and resumes at 2026-11-10T12:00:00.0000000Z.';
+    fixture.componentRef.setInput('task', task({
+      state: '2-ready',
+      executionLocation: {
+        state: 'no-active-execution', executionKind: 'none',
+        configuredRunnerId: 'first-run-coding', hostDisplayName: 'first-run-coding',
+      },
+      liveStatus: { attempt: 1, activeStep: null, nextSteps: [], latestEventAt: null,
+        queue: { kind: 'runner', position: 1, reasonCode: 'breaker-cooldown', reason } },
+    }));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    expect(root.textContent).toContain('Not picked · breaker cooldown');
+    expect(root.textContent).toContain('quota failure');
+    expect(root.textContent).toContain('2026-11-10T12:00:00.0000000Z');
+    expect(root.querySelector('[data-testid="task-live-switch-auto"]')).toBeNull();
+    expect(modeCalls).toEqual([]);
+  });
+
+  it('names an integration wait without describing a review slot', () => {
+    fixture.componentRef.setInput('task', task({
+      liveStatus: { attempt: 1, activeStep: null, nextSteps: [], latestEventAt: null,
+        queue: { kind: 'review', state: 'integration', reason: 'waiting for integration recovery' } },
+    }));
+    fixture.detectChanges();
+    const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    expect(root.textContent).toContain('Waiting for delivery integration');
+    expect(root.textContent).toContain('waiting for integration recovery');
+    expect(root.textContent).not.toContain('Waiting for review slot');
+  });
+
   it('keeps a card hold ahead of a runner reason', () => {
     fixture.componentRef.setInput('task', task({
       state: '2-ready',
