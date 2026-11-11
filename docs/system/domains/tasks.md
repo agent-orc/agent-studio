@@ -1401,6 +1401,13 @@ with `403` and no body. Task Server denies with `403` and
 `task-server.Tests/IdentityBootstrapTests.cs`. The role summary is in
 [security overview](../../operations/security/overview.md).
 
+A Reviewer session (AGT-3670) is not a Product session. It reads cards like a
+Viewer and decides a card in Human Review through
+`POST /api/tasks/{jobId}/human-review/accept` and
+`POST /api/tasks/{jobId}/human-review/send-back`; the note of a send back
+becomes the next run's follow-up. The decision and its audit are described in
+[Who reviews cards](../../operations/security/overview.md#who-reviews-cards-the-reviewer-role-agt-3670).
+
 ## Parked-card blocker and recall
 
 Every move into `5-human-review` or `5e-escalated` writes a machine-readable
