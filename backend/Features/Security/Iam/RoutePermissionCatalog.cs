@@ -203,6 +203,7 @@ public static class RoutePermissionCatalog
         Add("W", IamPermissions.AccessManage,
             "/api/auth/users/**", "/api/auth/invitations", "/api/auth/runners/**", "/api/auth/runner-enrollments/**",
             "/api/auth/api-tokens/**", "/api/auth/iam/**", "/api/auth/audit/**");
+        Add("POST", IamPermissions.AccessManage, "/api/auth/restore-notice/acknowledge");
         // First-run setup writes Git credentials and probes repositories for
         // the installation; the checklist is the Owner's.
         Add("*", IamPermissions.WorkspaceAdminister, "/api/first-run/**");

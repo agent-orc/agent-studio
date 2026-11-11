@@ -109,12 +109,20 @@
   gap: var(--studio-spacing-3);
   border-inline-end: 1px solid var(--studio-border);
 }
-.orch-feed__filter-group h3 {
+.orch-feed__filter-group h3,
+.orch-feed__filter-group label {
   margin: var(--studio-spacing-2) 0 var(--studio-spacing-1);
   color: var(--studio-fg-dim);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: .06em;
+}
+.orch-feed__filter-group label { display: block; }
+.orch-feed__filter-group input[type='date'] {
+  width: 100%; min-height: var(--studio-row-min-h-interactive);
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  color: var(--studio-fg); background: var(--studio-bg-surface);
+  border: 1px solid var(--studio-border); border-radius: var(--studio-action-radius-sm);
 }
 .orch-feed__filter {
   width: 100%;

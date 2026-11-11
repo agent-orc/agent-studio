@@ -23,7 +23,7 @@
   @if (error()) { <div class="orch-feed__error" role="alert">{{ error() }}</div> }
 
   @if (activeView() === 'load') {
-    <app-load-distribution [entries]="entries()" (openTaskRequest)="openTask.emit($event)" />
+    <app-load-distribution [entries]="orchestratorEntries()" (openTaskRequest)="openTask.emit($event)" />
   } @else {
     <section class="orch-feed__global" aria-label="Global orchestrator scope">
       <app-global-orchestrator-card />
@@ -31,6 +31,11 @@
 
   <div class="orch-feed__grid" data-testid="orchestrator-feed-grid">
     <aside class="orch-feed__filters" aria-label="Feed filters" data-testid="orchestrator-feed-filters">
+      <div class="orch-feed__filter-group">
+        <label for="activity-day">Day</label>
+        <input id="activity-day" type="date" [ngModel]="dayFilter()" (ngModelChange)="dayFilter.set($event)" data-testid="activity-day-filter" />
+        @if (dayFilter()) { <button type="button" class="orch-feed__filter" (click)="dayFilter.set('')" data-testid="activity-day-clear">All days</button> }
+      </div>
       <div class="orch-feed__filter-group">
         <h3>Projects</h3>
         <button type="button" class="orch-feed__filter"
@@ -62,7 +67,7 @@
 
     <section #stream class="orch-feed__stream" data-testid="orchestrator-feed-stream">
       @if (visibleEntries().length === 0 && !loading() && !error()) {
-        <div class="orch-feed__empty">No orchestrator activity in this section yet.</div>
+        <div class="orch-feed__empty">No activity in this section yet.</div>
       }
       <div class="orch-feed__list">
         @for (group of dayGroups(); track group.key) {
@@ -132,6 +137,9 @@
                         data-testid="orchestrator-detail-task">{{ entry.jobId }}</button>
               </dd>
             </div>
+          }
+          @if (entry.dossierId) {
+            <div><dt>Dossier</dt><dd><a [href]="dossierHref(entry)" data-testid="orchestrator-detail-dossier">{{ entry.dossierId }}</a></dd></div>
           }
           @if (entry.commandId) { <div><dt>Command</dt><dd>{{ entry.commandId }}</dd></div> }
           @if (entry.attemptId) { <div><dt>Attempt</dt><dd>{{ entry.attemptId }}</dd></div> }

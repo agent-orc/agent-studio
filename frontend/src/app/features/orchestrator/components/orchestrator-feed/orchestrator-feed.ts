@@ -28,7 +28,6 @@ import { OrchestratorFeedBurstDetailComponent } from '../orchestrator-feed-burst
 import { OrchestratorFeedStore } from '../../state/orchestrator-feed.store';
 import { OrchestratorFeedWindow } from './orchestrator-feed-windowing';
 import { buildFeedRows, type FeedBurst, type FeedRow } from './feed-bursts';
-
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { laneName } from '../../../../models/lane-presentation';
 
@@ -56,9 +55,11 @@ export class OrchestratorFeedComponent {
   private readonly projectLookup = inject(ProjectLookupService);
   readonly feedStore = inject(OrchestratorFeedStore);
   readonly entries = this.feedStore.entries;
+  readonly orchestratorEntries = computed(() => this.entries().filter(entry => entry.kind !== 'owner_action'));
   readonly loading = this.feedStore.loading;
   readonly error = this.feedStore.error;
   readonly kindFilter = signal<string>('all');
+  readonly dayFilter = signal('');
   readonly projectFilter = computed<ReadonlySet<string>>(() =>
     this.boardFilters.hasExplicitProjectFilter()
       ? this.boardFilters.activeProjects()
@@ -78,6 +79,7 @@ export class OrchestratorFeedComponent {
     { id: 'alert', label: 'Alerts' },
     { id: 'decision', label: 'Decisions' },
     { id: 'action', label: 'Actions' },
+    { id: 'owner_action', label: 'Owner actions' },
     { id: 'observation', label: 'Observations' },
     { id: 'intervention', label: 'Interventions' },
     { id: 'signal', label: 'Signal' },
@@ -97,7 +99,10 @@ export class OrchestratorFeedComponent {
   readonly reversed = computed(() => [...this.entries()].sort((a, b) => newestFirst(a.ts, b.ts)));
   readonly projectEntries = computed(() => {
     const projects = this.projectFilter();
-    return this.reversed().filter(entry => projects.size === 0 || projects.has(entry.project || this.projectName()));
+    const day = this.dayFilter();
+    return this.reversed().filter(entry =>
+      (projects.size === 0 || projects.has(entry.project || this.projectName()))
+      && (!day || new Date(entry.ts).toLocaleDateString('sv-SE') === day));
   });
   readonly visibleEntries = computed(() => {
     const filter = this.kindFilter();
@@ -168,6 +173,7 @@ export class OrchestratorFeedComponent {
       case 'alert': return 'Alert';
       case 'decision': return 'Decision';
       case 'action': return 'Action';
+      case 'owner_action': return 'Owner action';
       case 'observation': return 'Observation';
       case 'intervention': return 'Intervention';
       default: return kind;
@@ -175,11 +181,14 @@ export class OrchestratorFeedComponent {
   }
 
   filterCount(kind: string): number {
+    if (kind === this.kindFilter()) return this.rows().length;
     const entries = this.projectEntries();
-    if (kind === 'all') return entries.length;
-    if (kind === 'signal') return entries.filter(entry => entry.kind !== 'observation').length;
-    return entries.filter(entry => entry.kind === kind).length;
+    const matching = kind === 'all' ? entries
+      : kind === 'signal' ? entries.filter(entry => entry.kind !== 'observation')
+      : entries.filter(entry => entry.kind === kind);
+    return buildFeedRows(matching.slice(0, 100), entry => this.entryKey(entry), this.projectName()).length;
   }
+  dossierHref(entry: OrchestratorLogEntry): string { const project = entry.project || this.projectName(); const id = this.projectLookup.getProjectDisplay(project).id ?? project.toLowerCase().replace(/[^a-z0-9]+/g, '-'); return `#/projects/${encodeURIComponent(id)}/workbenches/${encodeURIComponent(entry.dossierId || '')}`; }
 
   /** Opening a burst lists its members and shows the group in the detail pane. */
   toggleBurst(burst: FeedBurst): void {
@@ -317,7 +326,7 @@ export class OrchestratorFeedComponent {
   }
 
   private filterScope(projects: ReadonlySet<string>, kind: string): string {
-    return `${[...projects].sort().join(',')}\u0000${kind}`;
+    return `${[...projects].sort().join(',')}\u0000${kind}\u0000${this.dayFilter()}`;
   }
 }
 
