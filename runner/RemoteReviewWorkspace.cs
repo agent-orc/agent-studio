@@ -765,11 +765,25 @@ public sealed class RemoteReviewWorkspace
                 }
             }
 
+            string? setupChangeReason = null;
+            if (!ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                && execution.Signal is null
+                && ReviewTestReportPolicy.NeedsSetupCheck(command, execution.Process))
+            {
+                var baseline = await ResolveBaselineShaAsync(ct);
+                var diff = await ProcessRunner.RunAsync(
+                    "git", ["diff", "--name-status", baseline, _subject.ExpectedResultSha],
+                    RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+                if (diff.Success)
+                    setupChangeReason = ReviewTestReportPolicy.SetupChangeReason(diff.StdOut.Split(
+                        ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            }
+
             if (!ReviewCommandKinds.IsAgent(command.ExecutionKind)
                 && execution.Signal is null
                 && (execution.Process.ExitCode == 0
                     || ReviewTestReportPolicy.HasExplicitMissingReport(execution.Process))
-                && ReviewTestReportPolicy.Missing(command, execution.Process))
+                && ReviewTestReportPolicy.Missing(command, execution.Process, setupChangeReason is not null))
             {
                 commands.Add(await AddCommandEvidenceAsync(
                     command.StepId, command.Aspect, command.FileName, command.Arguments,
@@ -784,7 +798,8 @@ public sealed class RemoteReviewWorkspace
                 retryPerformed = true;
                 await EnsureRetryDependenciesAsync(
                     RepositoryPath, "candidate", command.StepId, commands, artifacts, ct);
-                if (execution.Signal is null && ReviewTestReportPolicy.Missing(command, execution.Process))
+                if (execution.Signal is null
+                    && ReviewTestReportPolicy.Missing(command, execution.Process, setupChangeReason is not null))
                 {
                     commands.Add(await AddCommandEvidenceAsync(
                         command.StepId, command.Aspect, command.FileName, command.Arguments,
@@ -792,14 +807,17 @@ public sealed class RemoteReviewWorkspace
                         execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
                         "verification", "candidate", null, null, true, false, null,
                         artifacts, ct, command));
-                    var baseline = await ResolveBaselineShaAsync(ct);
-                    var diff = await ProcessRunner.RunAsync(
-                        "git", ["diff", "--name-status", baseline, _subject.ExpectedResultSha],
-                        RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
-                    var reason = diff.Success
-                        ? ReviewTestReportPolicy.SetupChangeReason(diff.StdOut.Split(
-                            ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
-                        : null;
+                    var reason = setupChangeReason;
+                    if (reason is null)
+                    {
+                        var baseline = await ResolveBaselineShaAsync(ct);
+                        var diff = await ProcessRunner.RunAsync(
+                            "git", ["diff", "--name-status", baseline, _subject.ExpectedResultSha],
+                            RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+                        if (diff.Success)
+                            reason = ReviewTestReportPolicy.SetupChangeReason(diff.StdOut.Split(
+                                ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+                    }
                     var reportPath = ReviewTestReportPolicy.MissingReportPath(
                         execution.Process,
                         Path.Combine(ArtifactPath, ArtifactName("candidate", command.StepId, "stdout")));

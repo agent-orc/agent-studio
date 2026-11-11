@@ -19,6 +19,8 @@ describe('StudioHeaderCockpit workspace quota', () => {
   const reset = vi.fn();
   let workspaces: ReturnType<typeof signal<readonly RegistryWorkspaceListItem[]>>;
   let activeWorkspaceName: ReturnType<typeof signal<string | null>>;
+  let productWithoutProject: ReturnType<typeof signal<boolean>>;
+  let cockpit: StudioHeaderCockpit;
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -33,10 +35,11 @@ describe('StudioHeaderCockpit workspace quota', () => {
     });
     workspaces = signal<readonly RegistryWorkspaceListItem[]>([]);
     activeWorkspaceName = signal<string | null>(null);
-    runInInjectionContext(TestBed.inject(EnvironmentInjector), () => {
+    productWithoutProject = signal(false);
+    cockpit = runInInjectionContext(TestBed.inject(EnvironmentInjector), () => {
       const host = {
         registryWorkspaces: workspaces, activeWorkspaceName,
-        globalSearchOpen: signal(false), environmentOpen: signal(false), pickerOpen: signal(false),
+        globalSearchOpen: signal(false), environmentOpen: signal(false), pickerOpen: signal(false), productWithoutProject,
         chatToggle: { emit: vi.fn() }, openOrchSettings: { emit: vi.fn() },
         toggleTheme: () => undefined,
       } as unknown as StudioHeaderHost;
@@ -89,5 +92,11 @@ describe('StudioHeaderCockpit workspace quota', () => {
     expect(load).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     expect(load).toHaveBeenCalledExactlyOnceWith('ws-a');
+  });
+
+  it('offers no Switch project row when the session has no project (AGT-3668)', () => {
+    expect(cockpit.navItems().map(item => item.id)).toContain('project');
+    productWithoutProject.set(true);
+    expect(cockpit.navItems().map(item => item.id)).not.toContain('project');
   });
 });

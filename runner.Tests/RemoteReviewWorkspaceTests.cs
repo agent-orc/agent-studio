@@ -2184,7 +2184,10 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     {
         var (_, subjectSha) = await SeedSubjectBranchWithFileAsync(
             "task/new-spec", "frontend/src/new.spec.ts", "test('new', () => {})");
-        var command = BaselineCommand("printf 'Application bundle generation complete.\\n'", reportPassingTest: false);
+        var command = BaselineCommand(
+            "case \"$PWD\" in *baseline-*) printf 'Total tests: 1\\n';; " +
+            "*) printf '# tests 0\\n';; esac",
+            reportPassingTest: false);
         var (workspace, subject) = Workspace("attempt-candidate-new-spec-no-report", subjectSha, [command], 26223,
             resultRef: "refs/heads/task/new-spec", integrationRef: "refs/heads/main");
         await workspace.PrepareAsync(null!, default);
@@ -2193,6 +2196,49 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Contains("spec file list changed", Assert.Single(evidence.Verdicts).Summary, StringComparison.Ordinal);
         Assert.Equal("ProductFailure",
             ReviewReportDiagnosisPolicy.Normalize(Report(evidence, workspace), subject.Plan).Outcome);
+    }
+
+    [Fact]
+    public async Task Candidate_without_report_after_test_project_change_is_product_finding()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchWithFileAsync(
+            "task/disabled-tests", "backend.Tests.csproj", "<Project />");
+        var command = BaselineCommand("printf 'custom check passed\\n'", reportPassingTest: false);
+        var (workspace, _) = Workspace("attempt-disabled-tests-no-report", subjectSha, [command], 26227,
+            resultRef: "refs/heads/task/disabled-tests", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        var verdict = Assert.Single(evidence.Verdicts);
+        Assert.Equal("block", verdict.Status);
+        Assert.Equal(ReviewTestReportPolicy.MissingReportClassification, verdict.Classification);
+        Assert.Contains("test configuration or runner changed: backend.Tests.csproj", verdict.Summary,
+            StringComparison.Ordinal);
+        Assert.Equal(2, evidence.Commands.Count(item =>
+            item.WorkspaceRole.StartsWith("candidate", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task Zero_test_baseline_retries_and_remains_unavailable()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            "printf '  Failed Product.NewFailure [1 ms]\\n'; exit 1; fi; " +
+            "printf 'No test is available in backend.Tests.dll\\n'",
+            reportPassingTest: false);
+        var (workspace, _) = Workspace("attempt-zero-test-baseline", subjectSha, [command], 26228,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("BaselineUnavailable", exception.Classification);
+        Assert.Equal(2, exception.Evidence!.Commands.Count(item =>
+            item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -2209,7 +2255,10 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             "commit", "-m", "rename spec to helper");
         await GitAsync(seed, "push", "origin", "task/removed-spec");
         var subjectSha = (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
-        var command = BaselineCommand("printf 'Application bundle generation complete.\\n'", reportPassingTest: false);
+        var command = BaselineCommand(
+            "case \"$PWD\" in *baseline-*) printf 'Total tests: 1\\n';; " +
+            "*) printf 'No tests found, exiting with code 0\\n';; esac",
+            reportPassingTest: false);
         var (workspace, subject) = Workspace("attempt-candidate-removed-spec-no-report", subjectSha,
             [command], 26225, resultRef: "refs/heads/task/removed-spec", integrationRef: "refs/heads/main");
         await workspace.PrepareAsync(null!, default);

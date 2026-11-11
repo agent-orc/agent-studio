@@ -109,7 +109,10 @@ export class OverlayPortalService {
     const root = document.createElement('div');
     root.className = OVERLAY_ROOT_CLASS;
     root.setAttribute('data-testid', 'studio-overlay-root');
-    document.body.appendChild(root);
+    // AGT-3624: the shared tooltip shares the root's z-index and must paint
+    // above it (a disabled menu row explains itself in a tooltip), so the
+    // root goes in front of an already mounted tooltip host.
+    document.body.insertBefore(root, document.body.querySelector(':scope > .cac-tooltip'));
     this.root = root;
     return root;
   }
