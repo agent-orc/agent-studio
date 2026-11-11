@@ -1186,6 +1186,9 @@ public sealed class ManagementApiOwnHostTests : IDisposable
             || relativeToTemp == ".."
             || relativeToTemp.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal));
         client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        // AGT-3729: the test host removes hosted services, so hold the kill switch lock as the running API does.
+        using var hostLock = AgentStudio.Security.OperatorKillSwitchHostLock.TryAcquire(Path.Combine(_root, ".security"));
+        Assert.NotNull(hostLock);
         // AGT-3574: backups no longer need maintenance; writes are held while the stores are read.
         var response = await client.PostAsJsonAsync("/api/v1/management/commands", new
         {

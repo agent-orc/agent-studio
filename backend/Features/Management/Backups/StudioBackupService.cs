@@ -236,6 +236,8 @@ public sealed class StudioBackupService
             else if (stale)
                 warnings.Add(new("backup-stale", "danger",
                     $"The newest good backup is {ageHours:0.#} hours old; the threshold is {options.StaleAfter.TotalHours:0.#} hours."));
+            if (newestGood?.Consistency.Unreadable is { Count: > 0 } unreadable)
+                warnings.Add(new("backup-files-unreadable", "warning", UnreadableWarning(unreadable)));
             if (state.LastRun is { Outcome: "failed" } failed)
                 warnings.Add(new("backup-failed", "danger", $"The last backup run failed: {failed.Error}"));
             if (state.LastVerification is { Outcome: "failed" } failedVerification)
@@ -324,6 +326,9 @@ public sealed class StudioBackupService
                 LastRun = new BackupRunRecord(started.ToString("O"), trigger, "succeeded", id, null, watch.ElapsedMilliseconds),
             });
             _logger?.LogInformation("backup-created {BackupId} {SizeBytes} {Files}", record.Id, record.SizeBytes, record.FileCount);
+            if (record.Consistency.Unreadable is { Count: > 0 } unreadable)
+                _logger?.LogWarning("backup-files-unreadable {BackupId} {Count} {Paths}", record.Id, unreadable.Count,
+                    string.Join(", ", unreadable.Select(entry => entry.Path)));
             Audit(BackupAudit.Record(trigger, BackupAudit.Create, BackupAudit.Succeeded, record.Id,
                 $"Created encrypted backup {record.Id} ({record.FileCount} files, {record.SizeBytes} bytes).",
                 new { record.FileCount, record.SizeBytes, record.Sha256, durationMilliseconds = watch.ElapsedMilliseconds }));
@@ -340,19 +345,25 @@ public sealed class StudioBackupService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            // A file system failure (staging or backup directory not writable, disk full) fails the
+            // run as a BackupException naming the path, so callers report it instead of an HTTP 500.
+            var failure = ex is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException
+                ? new BackupException("backup-io-failed", $"The backup could not read or write a file: {ex.Message}")
+                : ex;
             try
             {
                 catalog.WriteState(catalog.ReadState() with
                 {
-                    LastRun = new BackupRunRecord(started.ToString("O"), trigger, "failed", null, ex.Message, watch.ElapsedMilliseconds),
+                    LastRun = new BackupRunRecord(started.ToString("O"), trigger, "failed", null, failure.Message, watch.ElapsedMilliseconds),
                 });
             }
             catch (Exception stateFailure) when (stateFailure is IOException or UnauthorizedAccessException)
             {
                 _logger?.LogError("backup-state-write-failed {Reason}", stateFailure.Message);
             }
-            Audit(BackupAudit.Record(trigger, BackupAudit.Create, BackupAudit.Failed, id, ex.Message,
-                new { code = (ex as BackupException)?.Code, durationMilliseconds = watch.ElapsedMilliseconds }));
+            Audit(BackupAudit.Record(trigger, BackupAudit.Create, BackupAudit.Failed, id, failure.Message,
+                new { code = (failure as BackupException)?.Code, durationMilliseconds = watch.ElapsedMilliseconds }));
+            if (!ReferenceEquals(failure, ex)) throw failure;
             throw;
         }
     }
@@ -537,6 +548,16 @@ public sealed class StudioBackupService
         {
             return null;
         }
+    }
+
+    private static string UnreadableWarning(IReadOnlyList<BackupUnreadableEntry> unreadable)
+    {
+        const int Shown = 3;
+        var names = string.Join(", ", unreadable.Take(Shown).Select(entry => entry.Path));
+        var more = unreadable.Count > Shown ? $" and {unreadable.Count - Shown} more" : "";
+        return unreadable.Count == 1
+            ? $"The newest backup left out 1 file it could not read: {names}."
+            : $"The newest backup left out {unreadable.Count} files it could not read: {names}{more}.";
     }
 
     private static BackupOverviewItem Item(BackupRecord record) => new(
