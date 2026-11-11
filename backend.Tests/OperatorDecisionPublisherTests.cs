@@ -76,7 +76,7 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
         cases.Save(_root, Case("host-offline", factTime));
         cases.Save(_root, Case("idle-capacity", factTime));
         var parent = Close(batches, null, "A-9", "A-10");
-        batches.AppendState(new BatchGateState(parent.BatchId, parent.MembershipDigest, BatchPhase.Red, null, 1,
+        BatchGateStates.Reach(batches, new BatchGateState(parent.BatchId, parent.MembershipDigest, BatchPhase.Red, null, 1,
             _clock.GetUtcNow(), "deterministic suite red"));
         Close(batches, parent.BatchId, "A-9");
         limits.Record(new ProviderLimitStatus("claude", factTime, factTime.AddHours(1), "rate limited", true));

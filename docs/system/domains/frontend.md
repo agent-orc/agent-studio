@@ -926,7 +926,14 @@ occur. It is not a claim about tunnel transfer time.
   through the runtime-owned
   `PUT /api/projects/{projectName}/execution-runner` contract. A null runner is
   the local default; a remote identity makes the remote daemon the sole
-  auto-pickup owner for that project. The guided check reports code channel,
+  auto-pickup owner for that project. Local-profile installations show the
+  intrinsic local machine and only remote runners discovered through client or
+  capability reports. The assignment and onboarding pickers disable local when
+  local coding admission is off, and disable remote identities without a
+  confirmed coding role or with an unavailable status. Their option labels
+  explain why. Onboarding reads local admission from
+  `GET /api/projects/execution-capability`. The guided check reports code
+  channel,
   `develop`, toolchain, and no-op readiness from the host registry snapshot.
   Board cards deliberately show the actual live runner from the fenced run
   lease, not merely this configured target, so assignment and attribution
