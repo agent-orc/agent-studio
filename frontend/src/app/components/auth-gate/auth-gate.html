@@ -8,6 +8,19 @@
       <p class="auth-gate__muted">This code is shown once. Keep it with the installation recovery set, outside this browser.</p>
       <output data-testid="owner-recovery-code">{{ recoveryCode }}</output>
       <button type="button" data-testid="owner-recovery-acknowledge" (click)="acknowledgeRecoveryCode()">I stored the code</button>
+    } @else if (auth.status()?.restoreNotice; as notice) {
+      <h1>Review security after restore</h1>
+      <p class="auth-gate__muted">Studio was restored from archive <strong data-testid="restore-archive-id">{{ notice.archiveId }}</strong>, created <time [attr.datetime]="notice.archiveCreatedAt">{{ notice.archiveCreatedAt }}</time>. Security changes made after that time may have been undone.</p>
+      <p>Re-check and revoke or rotate anything changed since the archive:</p>
+      <ul class="auth-gate__checks" data-testid="restore-security-checks">
+        <li>API and service account tokens</li>
+        <li>Users and disabled accounts</li>
+        <li>Role bindings and permissions</li>
+        <li>Runner credentials</li>
+        <li>Secrets and their external copies</li>
+      </ul>
+      <p class="auth-gate__muted">All earlier browser sessions were ended. Everyone must sign in again. Your authenticator seed still works.</p>
+      <button type="button" data-testid="restore-review-access" [disabled]="submitting()" (click)="reviewRestoreNotice(notice.archiveId)">Review Access</button>
     } @else if (recoveryCodes().length) {
       <h1>Store your recovery codes</h1>
       <p class="auth-gate__muted">Each code works once. Keep these codes outside this browser.</p>

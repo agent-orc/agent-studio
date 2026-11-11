@@ -1,3 +1,5 @@
+@use './orchestrator-feed-responsive' as responsive;
+
 // Token-only surfaces keep the shared feed legible in both themes.
 :host { display: block; min-height: 0; height: 100%; }
 
@@ -107,12 +109,20 @@
   gap: var(--studio-spacing-3);
   border-inline-end: 1px solid var(--studio-border);
 }
-.orch-feed__filter-group h3 {
+.orch-feed__filter-group h3,
+.orch-feed__filter-group label {
   margin: var(--studio-spacing-2) 0 var(--studio-spacing-1);
   color: var(--studio-fg-dim);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: .06em;
+}
+.orch-feed__filter-group label { display: block; }
+.orch-feed__filter-group input[type='date'] {
+  width: 100%; min-height: var(--studio-row-min-h-interactive);
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  color: var(--studio-fg); background: var(--studio-bg-surface);
+  border: 1px solid var(--studio-border); border-radius: var(--studio-action-radius-sm);
 }
 .orch-feed__filter {
   width: 100%;
@@ -342,38 +352,4 @@
 .orch-feed__override-submit:disabled,
 .orch-feed__override-cancel:disabled { opacity: .5; cursor: not-allowed; }
 
-@media (max-width: 1060px) {
-  .orch-feed {
-    height: auto;
-    min-height: 100%;
-    overflow: visible;
-  }
-
-  .orch-feed__head {
-    align-items: stretch;
-    flex-wrap: wrap;
-  }
-
-  .orch-feed__grid {
-    display: flex;
-    flex: none;
-    flex-direction: column;
-    min-height: auto;
-  }
-
-  .orch-feed__filters,
-  .orch-feed__detail {
-    overflow: visible;
-  }
-
-  .orch-feed__filters,
-  .orch-feed__stream {
-    border-inline-end: 0;
-    border-bottom: 1px solid var(--studio-border);
-  }
-
-  .orch-feed__stream {
-    min-height: 360px;
-    max-height: 56vh;
-  }
-}
+@include responsive.styles;
