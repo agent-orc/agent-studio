@@ -122,15 +122,15 @@ that is already allowed to edit that project's checkout.
   down browser polling and SignalR before returning to the login gate.
   Bootstrap, invitation acceptance, and login record the resolved client address
   and a bounded browser device label on every new session.
- - Owner, Admin, Developer, Approver, and Viewer must enroll an authenticator or a
-   WebAuthn passkey. Their permissions include run operation, deployment or
-   approval, secrets, or access; Viewer holds `secrets.read` for metadata. An account without a factor receives a limited
-   session for factor setup. Once any user registers a factor, every password
-   sign-in requires its authenticator code, a one-use recovery code, or a
-   WebAuthn passkey assertion, including Product sign-ins. Every
-   step-up requires a registered second factor. TOTP setup presents the secret,
-   a locally generated QR code, and an `otpauth://` link. Enrollment returns
-   recovery codes once; store them away from
+- Owner, Admin, Developer, Approver, and Viewer must enroll an authenticator or a
+  WebAuthn passkey. Their permissions include run operation, deployment or
+  approval, secrets, or access; Viewer holds `secrets.read` for metadata. An
+  account without a factor receives a limited session for factor setup. Once
+  any user registers a factor, every password sign-in requires its
+  authenticator code, a one-use recovery code, or a WebAuthn passkey assertion,
+  including Product sign-ins. Every step-up requires a registered second
+  factor. TOTP setup presents the secret, a locally generated QR code, and an
+  `otpauth://` link. Enrollment returns recovery codes once; store them away from
   the browser. Passkey ceremonies require user verification and bind the
   challenge to the current origin and relying party. Each user can list active
   sessions with device, address, creation, and last-use times, revoke one, or
