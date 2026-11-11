@@ -168,6 +168,8 @@ export class RemoteHostCardComponent {
   readonly statusLabel = computed(() => this.liveLoading() ? 'Loading live status' : hostStatusLabel(this.host().status));
   readonly statusReason = computed(() => this.host().diskPressureReason ?? (this.host().status === 'degraded'
     ? 'A runner role is degraded. Inspect its role row and Capabilities detail.' : null));
+  readonly filesystems = computed(() => this.host().filesystems
+    ?? this.host().telemetry?.points.at(-1)?.filesystems ?? []);
   readonly roleLabel = computed(() => hostRoleLabel(this.host().role));
   readonly heartbeatLabel = computed(() => this.liveLoading()
     ? 'loading…'

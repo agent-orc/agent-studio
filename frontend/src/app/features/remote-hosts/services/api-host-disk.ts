@@ -8,7 +8,8 @@ export function hydrateApiHost(http: HttpClient, hosts: WritableSignal<RemoteHos
     level: 'healthy' | 'warning' | 'critical'; reason: string }>('/api/host/filesystems').subscribe({
     next: reading => {
       const id = local ? 'local' : 'api-host';
-      hosts.update(currentHosts => {
+      hosts.update(hostsNow => {
+        const currentHosts = hostsNow.filter(host => host.id !== (local ? 'api-host' : 'local'));
         const current = currentHosts.find(host => host.id === id);
         const base: RemoteHost = current ?? {
           id, name: local ? 'Local machine' : reading.host, role: 'local', serviceRole: 'local',

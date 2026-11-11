@@ -356,8 +356,8 @@ test.describe('Execution Hosts settings section', () => {
   test('hosts, topology, installation and history render at readable sizes in both themes', async ({ page }) => {
     await stubGroupedHostApis(page);
     await page.setViewportSize({ width: 1600, height: 900 });
-    await page.getByTestId('status-bar-settings').click();
-    await page.getByTestId('workspace-settings-rail-remote-hosts').click();
+    await page.goto('/#/workspace/settings/execution-hosts');
+    await dismissDevErrorDialog(page);
     const panel = page.getByTestId('remote-hosts-panel');
     const output = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
     mkdirSync(output, { recursive: true });

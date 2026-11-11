@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { RemoteHostsPanelComponent } from './remote-hosts-panel';
 import { RemoteHostsService } from '../../services/remote-hosts.service';
 import { ReviewQueueService, type ReviewQueueSnapshot } from '../../services/review-queue.service';
+import { AuthSessionState } from '../../../../services/auth.service';
 
 function reviewSnapshot(overrides: Partial<ReviewQueueSnapshot> = {}): ReviewQueueSnapshot {
   return {
@@ -30,6 +31,32 @@ function reviewSnapshot(overrides: Partial<ReviewQueueSnapshot> = {}): ReviewQue
  */
 describe('RemoteHostsPanelComponent', () => {
   beforeEach(() => localStorage.removeItem('atp.environment.view.v1.local'));
+  it('adds the API host after the networked profile arrives', async () => {
+    await TestBed.configureTestingModule({
+      imports: [RemoteHostsPanelComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const auth = TestBed.inject(AuthSessionState);
+    const http = TestBed.inject(HttpTestingController);
+    const hosts = TestBed.inject(RemoteHostsService).hosts;
+    const fixture = TestBed.createComponent(RemoteHostsPanelComponent);
+    fixture.detectChanges();
+    http.expectNone('/api/host/filesystems');
+
+    auth.status.set({ profile: 'networked', authenticated: true, bootstrapRequired: false });
+    fixture.detectChanges();
+    http.expectOne('/api/host/filesystems').flush({
+      host: 'studio-api', observedAt: '2026-11-10T12:00:00Z', level: 'warning',
+      reason: 'Instance data is low.', filesystems: [{ purpose: 'instance data', path: '/data',
+        freeBytes: 12, totalBytes: 100 }],
+    });
+    for (const request of http.match('/api/clients')) request.flush([]);
+    http.expectOne('/api/v1/management/remote-hosts').flush([]);
+    fixture.detectChanges();
+    expect(hosts().map(host => host.id)).toEqual(['api-host']);
+    fixture.destroy();
+  });
+
   it('shows provider request refusals by model and day', async () => {
     await TestBed.configureTestingModule({
       imports: [RemoteHostsPanelComponent],

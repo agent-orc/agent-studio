@@ -1,5 +1,5 @@
 import { HttpClient } from '@angular/common/http';
-import { DestroyRef, Injectable, inject, signal } from '@angular/core';
+import { Injectable, inject, signal } from '@angular/core';
 import { Observable, of, tap } from 'rxjs';
 import type { ClientSummary } from '../../../models/task.model';
 import type {
@@ -118,19 +118,17 @@ export class RemoteHostsService {
   private static readonly DEGRADED_CLIENT_MS = 5 * 60_000;
   /** Optional keeps direct-constructor pure tests and non-HTTP previews viable. */
   private readonly http = tryInjectHttpClient();
-  private readonly destroyRef = tryInjectDestroyRef();
   private readonly providerAuth = tryInjectProviderAuthStatus();
   private readonly notifications = tryInjectNotificationService();
   private readonly auth = tryInjectAuthSession();
   private seed(): RemoteHost[] {
     return seedRemoteHosts(Date.now(), this.auth?.status()?.profile ?? 'local');
   }
-  private capabilityRunnerIds = new Set<string>();
+  private capabilityRunnerIds = new Set<string>(['api-host']);
 
   /** Every mount revalidates live state; cached cards are never authoritative. */
   ensureLoaded(): void {
     this.reload();
-    this.hydrateApiHost();
   }
 
   /**
@@ -146,7 +144,6 @@ export class RemoteHostsService {
       })));
     }
     this.hydrateClientRegistry('1h', true);
-    if (this.hosts().some(host => host.clientId === 'api-host')) this.hydrateApiHost();
   }
 
   reload(): void {
@@ -168,14 +165,6 @@ export class RemoteHostsService {
     }
   }
 
-  private hydrateApiHost(): void {
-    if (!this.http) return;
-    void import('./api-host-disk').then(({ hydrateApiHost }) => {
-      if (this.destroyRef?.destroyed) return;
-      hydrateApiHost(this.http!, this.hosts, this.auth?.status()?.profile !== 'networked');
-    });
-  }
-
   private hydrateClientRegistry(
     telemetryWindow: '1h' | '14d' = '14d',
     preserveLongTelemetry = false,
@@ -193,7 +182,7 @@ export class RemoteHostsService {
         const now = Date.now();
         this.hosts.update(hosts => {
           const projected = (this.auth?.status()?.profile === 'networked'
-            ? hosts.filter(host => host.id === 'api-host' || this.capabilityRunnerIds.has(host.clientId)) : hosts).map(host => {
+            ? hosts.filter(host => this.capabilityRunnerIds.has(host.clientId)) : hosts).map(host => {
           if (host.clientId === 'api-host') return host;
           const client = byId.get(host.clientId);
           if (!client) return {
@@ -288,7 +277,7 @@ export class RemoteHostsService {
     this.http.get<TaskServerRunnerCapabilitySnapshot[]>('/api/v1/management/remote-hosts').subscribe({
       next: snapshots => {
         this.providerAuth?.ingest(snapshots ?? []);
-        this.capabilityRunnerIds = new Set((snapshots ?? []).map(snapshot => snapshot.runnerId));
+        this.capabilityRunnerIds = new Set([...(snapshots ?? []).map(snapshot => snapshot.runnerId), 'api-host']);
         const now = Date.now();
         this.hosts.update(hosts => {
           const projected = this.auth?.status()?.profile === 'networked'
@@ -398,7 +387,6 @@ export class RemoteHostsService {
                 : current.taskServerConnection ?? null,
               activeTaskCount: snapshot.telemetry?.activeSlots ?? current.activeTaskCount,
               claimLoadGate: telemetryFresh ? snapshot.telemetry?.claimLoadGate ?? null : null,
-              filesystems: telemetryFresh ? snapshot.telemetry?.filesystems ?? null : current.filesystems ?? null,
               stats,
             };
             if (index >= 0) projected[index] = next;
@@ -483,15 +471,14 @@ export class RemoteHostsService {
                 ramFreeMb: latest.memoryTotalBytes && latest.memoryUsedBytes !== null
                   ? (latest.memoryTotalBytes - latest.memoryUsedBytes) / 1024 / 1024
                   : 0,
-                diskTotalGb: (latest.filesystems?.[0]?.totalBytes ?? 0) / 1024 / 1024 / 1024,
-                diskFreeGb: (latest.filesystems?.[0]?.freeBytes ?? 0) / 1024 / 1024 / 1024,
+                diskTotalGb: 0,
+                diskFreeGb: 0,
             }
             : null;
           const nextTelemetry = preserveLongTelemetry && host.telemetry?.window === '14d'
             ? mergeRecentTelemetry(host.telemetry, telemetry)
             : telemetry;
-          return { ...host, stats, filesystems: latest?.filesystems ?? host.filesystems,
-            telemetry: nextTelemetry, telemetryLoading: false };
+          return { ...host, stats, telemetry: nextTelemetry, telemetryLoading: false };
         });
         this.log('telemetry-hydrated', { hostId, points: telemetry.points.length, findings: telemetry.findings.length,
           durationMs: Math.round(performance.now() - startedAt) });
@@ -939,11 +926,6 @@ function tryInjectHttpClient(): HttpClient | null {
   } catch {
     return null;
   }
-}
-
-function tryInjectDestroyRef(): DestroyRef | null {
-  try { return inject(DestroyRef, { optional: true }); }
-  catch { return null; }
 }
 
 function tryInjectProviderAuthStatus(): ProviderAuthStatusService | null {
