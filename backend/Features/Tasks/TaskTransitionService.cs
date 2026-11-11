@@ -1808,9 +1808,9 @@ public sealed class TaskTransitionService
                 return null;
             return new MoveJobOutcome(
                 MoveJobStatus.IntegrationFailed,
-                "Acceptance refused: the delivery is on the integration branch but integrated-unverified - no gate passed on "
-                + $"the merged tree{(string.IsNullOrWhiteSpace(verification?.Sha) ? string.Empty : $" {verification!.Sha}")}. "
-                + $"{verification?.Reason} Repair the branch and deliver again, or accept with an operator override.",
+                AgentStudio.Pipeline.VerifyDefinitionPolicy.DescribesMissingDefinition(verification?.Reason)
+                    ? "Acceptance needs verification, but `.agent-studio/project.yml` is missing a usable `commands.build` or `commands.test` setting; ask a project Admin or Owner to configure it and rerun verification."
+                    : "Acceptance needs a passing verification gate for this delivery; ask a project Admin or Owner to check the `commands.build` and `commands.test` settings in `.agent-studio/project.yml` and rerun verification.",
                 reviewed.FolderPath);
         }
 

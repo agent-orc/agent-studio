@@ -1860,6 +1860,8 @@ export function buildCardCtxMenuItems(
   mutationsBlocked = false,
   visibleLanes: readonly string[] = MANUAL_MOVE_LANES,
   queueEdge: ReadyQueueEdge | null = null,
+  productSession = false,
+  readOnlySession = false,
 ): MenuItem[] {
   const items: MenuItem[] = [
     { kind: 'row', id: 'copy-name', label: 'Copy Name' },
@@ -1873,7 +1875,7 @@ export function buildCardCtxMenuItems(
       label: `Filter: tasks depending on ${job.key}`,
     });
   }
-  if (job.state === TaskState.AutoReview) {
+  if (!productSession && !readOnlySession && job.state === TaskState.AutoReview) {
     items.push({ kind: 'separator' });
     items.push({ kind: 'row', id: REVIEW_FIRST_ID, label: 'Review first',
       disabled: mutationsBlocked || job.reviewPriority === 'urgent' });
@@ -1887,8 +1889,14 @@ export function buildCardCtxMenuItems(
   const current = job.state === '2-ready-intake' ? TaskState.Ready : job.state;
   const targets = MANUAL_MOVE_LANES.filter((state) => visibleLanes.includes(state)
     && state !== current
-    && !manualMoveSkipsExecution(current, state));
-  if (current === TaskState.Ready) {
+    && !manualMoveSkipsExecution(current, state)
+    && !readOnlySession
+    && (!productSession || (
+      (job.state === TaskState.Backlog && state === TaskState.Ready)
+      || (job.state === TaskState.Ready && state === TaskState.Backlog)
+      || (job.state === TaskState.HumanReview && state === TaskState.Completed)
+    )));
+  if (!productSession && !readOnlySession && current === TaskState.Ready) {
     items.push({ kind: 'separator' }, { kind: 'header', label: 'Queue position' });
     items.push({ kind: 'row', id: MOVE_TOP_ID, label: 'Move to top',
       disabled: mutationsBlocked || queueEdge?.first === true });
@@ -1903,14 +1911,16 @@ export function buildCardCtxMenuItems(
   }
 
   // Destructive delete lives at the very end behind a separator so it never
-  // sits next to the everyday copy rows. Present on every card.
-  items.push({ kind: 'separator' });
-  items.push({
-    kind: 'row',
-    id: DELETE_ID,
-    label: 'Delete task',
-    danger: true,
-    disabled: mutationsBlocked,
-  });
+  // sits next to the everyday copy rows. Restricted roles do not see it.
+  if (!productSession && !readOnlySession) {
+    items.push({ kind: 'separator' });
+    items.push({
+      kind: 'row',
+      id: DELETE_ID,
+      label: 'Delete task',
+      danger: true,
+      disabled: mutationsBlocked,
+    });
+  }
   return items;
 }

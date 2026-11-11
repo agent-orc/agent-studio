@@ -1311,6 +1311,8 @@ again, so a body the middleware reads differently cannot widen the rules.
 | Create | `POST /api/tasks` | `POST .../tasks` | Target lane absent, Backlog, or Ready. |
 | Edit fields | `PUT .../{id}/title`, `tags`, `references`, `waits-on`, `files/prompt.md` | `PUT .../{taskIdentity}`, `title`, `tags`, `references` | Card in Backlog or Ready, and the requested `state` keeps it there. A Task Server update with `mechanicalDelta` is denied. |
 | Move | `POST .../{id}/move`, `POST .../{id}/state` | `POST .../{taskIdentity}/move`, `PUT .../{taskIdentity}/state` | Backlog and Ready among each other, or Human Review to Completed. Backend `operatorOverride` and `archiveOverride` are denied. |
+
+The board card menu lists only Product-permitted move targets for the card's current lane and shows no mutation rows for a Viewer. A refused Product move on either backend route returns HTTP 403 with `code: product-move-forbidden` and a one-sentence `message` explaining that a project Admin or Owner can make the move. Acceptance that lacks a passing verification gate points to `.agent-studio/project.yml` `commands.build` and `commands.test` and the Admin or Owner who can configure them; it does not expose a tree SHA or internal verification state.
 | Read a result file | `GET .../{id}/results/{**path}` | `GET .../{taskIdentity}/results/{**path}` | Only `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.bmp`, `.html`, `.htm`, and `.md`. Both the requested path and the resolved artifact must match, so a folder-prefix match cannot return a log, TRX, JSONL, or other raw output. |
 | Release | `PUT .../{id}/release` | `PUT .../{taskIdentity}/release` | Requires the production approval grant for the project. |
 

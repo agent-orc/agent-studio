@@ -720,7 +720,7 @@ public static class TaskCrudEndpoints
             if (ContributorAccessPolicy.IsProductSession(ctx)
                 && !ContributorAccessPolicy.AllowsTransition(scanner.FindJob(jobId, watchPath)?.State,
                     req.TargetState, req.OperatorOverride, req.ArchiveOverride))
-                return Results.StatusCode(StatusCodes.Status403Forbidden);
+                return ProductMoveRefusal(scanner.FindJob(jobId, watchPath)?.State, req.TargetState);
             var validation = ValidateTargetState(req.TargetState);
             if (validation != null) return validation;
             if (req.OperatorOverride && req.TargetState != TaskStates.Completed)
@@ -763,7 +763,7 @@ public static class TaskCrudEndpoints
             if (ContributorAccessPolicy.IsProductSession(ctx)
                 && !ContributorAccessPolicy.AllowsTransition(scanner.FindJob(jobId, watchPath)?.State,
                     req.TargetState, req.OperatorOverride, req.ArchiveOverride))
-                return Results.StatusCode(StatusCodes.Status403Forbidden);
+                return ProductMoveRefusal(scanner.FindJob(jobId, watchPath)?.State, req.TargetState);
             var validation = ValidateTargetState(req.TargetState);
             if (validation != null) return validation;
             if (req.OperatorOverride && req.TargetState != TaskStates.Completed)
@@ -1569,6 +1569,15 @@ public static class TaskCrudEndpoints
 
     internal static readonly string OperatorAuthorityRequired =
         "operatorOverride needs the Admin or Owner role in this project.";
+
+    internal static IResult ProductMoveRefusal(string? currentState, string? targetState)
+    {
+        var message = currentState == TaskStates.HumanReview && targetState == TaskStates.Ready
+            ? "Your role can accept this card but cannot move it back to Ready; ask a project Admin or Owner to send it back."
+            : "Your role cannot move this card to that lane; ask a project Admin or Owner to make the move.";
+        return Results.Json(new { code = "product-move-forbidden", message },
+            statusCode: StatusCodes.Status403Forbidden);
+    }
 
     private static async Task<IResult> MoveOperatorWithRunIntentAsync(
         string jobId, string? watchPath, MoveJobRequest request, HttpContext context,
