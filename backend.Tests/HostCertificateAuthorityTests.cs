@@ -14,6 +14,36 @@ namespace AgentStudio.Tests;
 public sealed class HostCertificateAuthorityTests
 {
     [Fact]
+    public void Restored_certificate_state_warns_when_host_ca_changes()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ca-identity-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var ca = Path.Combine(root, "ca");
+            var other = Path.Combine(root, "other");
+            var state = Path.Combine(root, "state");
+            Directory.CreateDirectory(state);
+            Run("-q", "-t", "ed25519", "-N", "", "-f", ca);
+            Run("-q", "-t", "ed25519", "-N", "", "-f", other);
+            var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["HostCertificates:CaPrivateKeyFile"] = ca,
+                ["HostCertificates:StateDirectory"] = state,
+            }).Build();
+            File.WriteAllText(Path.Combine(state, "ca-fingerprint"),
+                HostCertificateAuthority.PublicKeyFingerprint(File.ReadAllText(ca + ".pub")) + "\n");
+            Assert.Null(HostCertificateAuthority.FingerprintWarning(configuration));
+            File.Copy(other + ".pub", ca + ".pub", true);
+            Assert.Contains("does not match", HostCertificateAuthority.FingerprintWarning(configuration));
+            File.Delete(Path.Combine(state, "ca-fingerprint"));
+            File.WriteAllText(Path.Combine(state, "issued.jsonl"), "{}\n");
+            Assert.Contains("no CA fingerprint", HostCertificateAuthority.FingerprintWarning(configuration));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     [Trait("Category", "MachineBound")]
     public async Task Break_glass_certificate_expires_at_the_window_end()
     {
@@ -87,6 +117,8 @@ public sealed class HostCertificateAuthorityTests
                 new FakeTimeProvider(new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero)));
             var receipt = await authority.IssueAsync("host-a", "operator-agent:agent/session:session",
                 File.ReadAllText(user + ".pub"), default);
+            Assert.Equal(HostCertificateAuthority.PublicKeyFingerprint(File.ReadAllText(ca + ".pub")),
+                File.ReadAllText(Path.Combine(root, "state", "ca-fingerprint")).Trim());
             var cert = Path.Combine(root, "issued-cert.pub");
             File.WriteAllText(cert, receipt.Certificate);
             var inspection = Run("-L", "-f", cert);

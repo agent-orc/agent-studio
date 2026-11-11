@@ -1,4 +1,5 @@
-.project-operations { display: grid; gap: var(--studio-spacing-4); font-variant-numeric: tabular-nums; }
+:host { display: block; min-width: 0; }
+.project-operations { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--studio-spacing-4); font-variant-numeric: tabular-nums; }
 .project-operations h2, .project-operations h3, .project-operations h4, .project-operations p { margin: 0; }
 .project-operations__head { display: flex; align-items: start; justify-content: space-between; gap: var(--studio-spacing-4); }
 .project-operations__head > div { display: grid; gap: var(--studio-spacing-1); }
