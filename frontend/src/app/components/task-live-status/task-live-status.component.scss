@@ -204,6 +204,13 @@
   min-width: 0;
 }
 
+.task-live--breaker-cooldown .task-live__detail {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .task-live__next {
   display: flex;
   align-items: baseline;

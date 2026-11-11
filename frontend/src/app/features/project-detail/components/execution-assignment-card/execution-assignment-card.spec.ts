@@ -3,7 +3,7 @@ import { provideHttpClientTesting, HttpTestingController } from '@angular/common
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ExecutionAssignmentCardComponent } from './execution-assignment-card';
-import { RemoteHostsService } from '../../../remote-hosts';
+import { RemoteHostsService, type RemoteHost } from '../../../remote-hosts';
 
 describe('ExecutionAssignmentCardComponent', () => {
   it('warns when automatic pickup is routed local and coding is denied', () => {
@@ -43,6 +43,10 @@ describe('ExecutionAssignmentCardComponent', () => {
     });
     flushHostRegistryFailure(http);
 
+    TestBed.inject(RemoteHostsService).hosts.update(hosts => [...hosts, {
+      id: 'agent-runner-01', role: 'remote', serviceRole: 'coding', status: 'online',
+    } as RemoteHost]);
+
     fixture.componentInstance.assign('agent-runner-01');
     const request = http.expectOne('/api/projects/Agent%20Studio/execution-runner');
     expect(request.request.method).toBe('PUT');
@@ -65,7 +69,7 @@ describe('ExecutionAssignmentCardComponent', () => {
 
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/projects/settings').flush({
-      'Agent Studio': { pickupMode: 'auto', executionLocation: 'agent-runner-01' },
+      'Agent Studio': { pickupMode: 'auto', executionLocation: 'agent-runner-01', localCodingAdmitted: true },
     });
     flushHostRegistryFailure(http);
 
@@ -121,22 +125,13 @@ describe('ExecutionAssignmentCardComponent', () => {
         'Agent Studio': { pickupMode: 'auto', executionLocation: 'agent-runner-01', integrationBranch: 'develop' },
       });
       flushHostRegistryFailure(http);
-      fixture.componentInstance.hostRegistry.hosts.update((hosts) =>
-        hosts.map((host) => host.id === 'agent-runner-01'
-          ? {
-              ...host,
-              status: 'online',
-              capabilities: [...host.capabilities, 'node 22'],
-              cliQuotas: [{
-                cliType: 'codex',
-                plan: null,
-                windowLabel: 'weekly',
-                usedPct: 0,
-                resetLabel: null,
-              }],
-            }
-          : host),
-      );
+      fixture.componentInstance.hostRegistry.hosts.update((hosts) => [...hosts, {
+        id: 'agent-runner-01', name: 'agent-runner-01', role: 'remote', serviceRole: 'coding',
+        address: null, clientId: 'agent-runner-01', status: 'online', os: 'Linux',
+        lastHeartbeatAt: null, uptimeLabel: null, stats: null,
+        capabilities: ['git', 'node 22'],
+        cliQuotas: [{ cliType: 'codex', plan: null, windowLabel: 'weekly', usedPct: 0, resetLabel: null }],
+      } as RemoteHost]);
 
       const probe = fixture.componentInstance.runProbe();
       await vi.runAllTimersAsync();

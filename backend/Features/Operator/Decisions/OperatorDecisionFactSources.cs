@@ -40,7 +40,8 @@ public sealed class OperatorTaskFactSource(
 public sealed class OperatorWatcherCaseFactSource(WatcherCaseStore cases, string? workspaceRoot) : IOperatorDecisionFactSource
 {
     public IReadOnlyList<string> Types { get; } =
-        [OperatorDecisionTypes.BackendStalled, OperatorDecisionTypes.ProgressIdleWithReady];
+        [OperatorDecisionTypes.BackendStalled, OperatorDecisionTypes.BatchGateStuck,
+            OperatorDecisionTypes.ProgressIdleWithReady];
 
     public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
         => string.IsNullOrWhiteSpace(workspaceRoot) ? [] : OperatorDecisionFacts.FromWatcherCases(cases.All(workspaceRoot));

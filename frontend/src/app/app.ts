@@ -12,6 +12,8 @@ import {
   ViewChild,
   ViewEncapsulation,
   OnDestroy,
+  afterEveryRender,
+  DestroyRef,
 } from '@angular/core';
 import { forkJoin } from 'rxjs';
 import { FormsModule } from '@angular/forms';
@@ -145,6 +147,7 @@ import { DevToolsService } from './services/dev-tools.service';
 import { FeatureFlagsService } from './services/feature-flags.service';
 import { TaskCompletionSoundService } from './services/task-completion-sound.service';
 import { TagRegistryStore } from './services/tag-registry.store';
+import { ReviewerSession } from './services/reviewer-session.service';
 import { CliCatalogStore } from './features/cli';
 import type { CliOutputLine } from './models/task.model';
 import type { RunTimeline } from './features/run-timeline';
@@ -242,6 +245,7 @@ export class App implements OnInit, OnDestroy {
   private readonly gitHubApp = inject(GitHubAppService);
   readonly auth = inject(AuthService); private studioInitialized = false;
   readonly jobService = inject(TaskService);
+  private readonly reviewerSession = inject(ReviewerSession);
   readonly errorDialog = inject(ErrorDialogService);
   /** Drives the deferred confirm dialog mount; both dialogs stay out of the initial bundle. */
   readonly confirmDialog = inject(ConfirmDialogService);
@@ -792,8 +796,24 @@ export class App implements OnInit, OnDestroy {
    * Cleared automatically after one animation cycle.
    */
   readonly justCreatedJobId = signal<string | null>(null);
+  private readonly destroyRef = inject(DestroyRef);
+  private detailPrefetchScheduled = false;
 
   constructor() {
+    // The deferred detail view can download after the board has painted. Keep
+    // its first-use network work out of the board's critical rendering path.
+    afterEveryRender(() => {
+      if (this.detailPrefetchScheduled || !document.querySelector('[data-testid="task-card"]')) return;
+      this.detailPrefetchScheduled = true;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (this.destroyRef.destroyed) return;
+        const preload = () => {
+          if (!this.destroyRef.destroyed) void import('./features/task-detail/task-detail');
+        };
+        if ('requestIdleCallback' in window) window.requestIdleCallback(preload, { timeout: 1000 });
+        else setTimeout(preload, 0);
+      }));
+    });
     effect(() => {
       const allowed = this.auth.studioAllowed();
       const statusKnown = this.auth.status() !== null;
@@ -1234,13 +1254,15 @@ export class App implements OnInit, OnDestroy {
   // <app-detail-header>, so the cluster needs its own seat there). All
   // actions route through the same TriageController paths as the kanban
   // panel; this is purely a second render site.
+  // AGT-3670: a Reviewer holds no lane move, edit, or delete; the overview's
+  // review panel carries its one decision.
   readonly studioTriagePrimary = computed<TriageButton | null>(() => {
     const sel = this.selectedJob();
-    return sel ? primaryActionFor(sel.info.state) : null;
+    return sel && !this.reviewerSession.reviewsOnly(sel.info.projectName) ? primaryActionFor(sel.info.state) : null;
   });
   readonly studioTriageOverflow = computed<TriageButton[]>(() => {
     const sel = this.selectedJob();
-    return sel ? overflowActionsFor(sel.info.state) : [];
+    return sel && !this.reviewerSession.reviewsOnly(sel.info.projectName) ? overflowActionsFor(sel.info.state) : [];
   });
   /**
    * State-dependent presentation for the studio Human Review acceptance primary
