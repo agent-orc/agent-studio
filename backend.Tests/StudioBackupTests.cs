@@ -403,6 +403,27 @@ public sealed class StudioBackupTests : IDisposable
     }
 
     [Fact]
+    public void Overview_exposes_restored_host_ca_mismatch()
+    {
+        var ca = Path.Combine(_fixture.Root, "ca.pub");
+        var state = Path.Combine(_fixture.Root, "host-certificates");
+        Directory.CreateDirectory(state);
+        File.WriteAllText(ca, "ssh-ed25519 " + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)) + " test\n");
+        File.WriteAllText(Path.Combine(state, "ca-fingerprint"), "SHA256:old-ca\n");
+        var configuration = new ConfigurationBuilder()
+            .AddConfiguration(_fixture.Configuration())
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["HostCertificates:CaPrivateKeyFile"] = Path.Combine(_fixture.Root, "ca"),
+                ["HostCertificates:StateDirectory"] = state,
+            }).Build();
+        var service = new StudioBackupService(configuration, new BackupWritePause(), _clock, targets: _ => new FakeTarget());
+        var overview = service.Overview();
+        Assert.Equal("failing", overview.State);
+        Assert.Contains(overview.Warnings, warning => warning.Code == "host-ca-mismatch" && warning.Severity == "danger");
+    }
+
+    [Fact]
     public async Task Overview_reports_backups_off_without_a_key_and_creation_refuses()
     {
         var service = _fixture.Service(_clock, null, withKey: false);
