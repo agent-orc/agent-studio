@@ -9,9 +9,38 @@ internal static class HostSourceObjectCache
     private const long MaximumBytes = 4L * 1024 * 1024 * 1024;
     private const int MaximumEntries = 8;
 
-    internal static string Root => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "agentstudio", "source", "cache");
+    internal static string Root
+    {
+        get
+        {
+            var basePath = OperatingSystem.IsWindows()
+                ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData,
+                    Environment.SpecialFolderOption.Create)
+                : Environment.GetEnvironmentVariable("XDG_CACHE_HOME") is { Length: > 0 } xdg
+                    ? xdg
+                    : Environment.GetEnvironmentVariable("HOME") is { Length: > 0 } home
+                        ? Path.Combine(home, ".cache")
+                        : string.Empty;
+            return string.IsNullOrWhiteSpace(basePath) ? string.Empty
+                : Path.Combine(basePath, "agentstudio", "source", "cache");
+        }
+    }
+
+    internal static string EnsureRoot(string? cacheRoot = null)
+    {
+        var root = cacheRoot ?? Root;
+        if (string.IsNullOrWhiteSpace(root) || !Path.IsPathFullyQualified(root))
+            throw new InvalidOperationException(
+                $"Host source cache root must be absolute; resolved '{root}'. "
+                + "Set XDG_CACHE_HOME to an absolute path or configure an absolute HOME.");
+        try { Directory.CreateDirectory(root); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw new InvalidOperationException(
+                $"Host source cache root '{root}' could not be created: {exception.Message}", exception);
+        }
+        return root;
+    }
 
     internal static async Task<(long Bytes, TimeSpan Ready)> MaterializeAsync(
         string repositoryUrl, string resultRef, string expectedSha, string destination,
@@ -21,8 +50,7 @@ internal static class HostSourceObjectCache
     {
         var started = System.Diagnostics.Stopwatch.StartNew();
         var key = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(repositoryUrl)));
-        var root = cacheRoot ?? Root;
-        Directory.CreateDirectory(root);
+        var root = EnsureRoot(cacheRoot);
         var cache = Path.Combine(root, key);
         // The lock file lives outside the evictable entry. Independent daemon
         // processes on the host cannot fetch or evict the same repository at once.
@@ -84,8 +112,7 @@ internal static class HostSourceObjectCache
         string? cacheRoot = null)
     {
         var started = System.Diagnostics.Stopwatch.StartNew();
-        var root = cacheRoot ?? Root;
-        Directory.CreateDirectory(root);
+        var root = EnsureRoot(cacheRoot);
         var cache = Path.Combine(root, bundleSha256.ToLowerInvariant());
         await using var held = await LockAsync(cache + ".lock", ct);
         if (Directory.Exists(cache) && (!await HealthyAsync(cache, git, ct)

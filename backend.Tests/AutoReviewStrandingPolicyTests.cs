@@ -365,12 +365,14 @@ public sealed class AutoReviewStrandingPolicyTests
             Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1",
                 run with { ResultSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }, "review-1"));
             Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "other-project", "card-1", run, "review-1"));
-            var stateFolder = Path.Combine(store.BatchDirectory(manifest.BatchId), "state");
+            var batchFolder = store.BatchDirectory(manifest.BatchId);
+            var stateFolder = Path.Combine(batchFolder, "state");
             Directory.Delete(stateFolder, recursive: true);
+            File.Delete(Path.Combine(batchFolder, "phase.json"));
             Assert.True(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", run, "review-1"));
             Directory.CreateDirectory(stateFolder);
             Assert.True(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", run, "review-1"));
-            store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchGateStates.Reach(store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
                 BatchPhase.Published, null, 0, now.AddMinutes(21)));
             Assert.False(AutoReviewStrandingWatchdog.IsBatchMember(store, "project", "card-1", run, "review-1"));
         }

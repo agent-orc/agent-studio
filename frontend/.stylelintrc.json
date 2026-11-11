@@ -407,8 +407,12 @@
       }
     },
     {
-      "comment": "New Studio mobile tab-bar rules use theme and spacing tokens.",
-      "files": ["src/app/features/studio-shell/_studio-shell-mobile-tabbar.scss"],
+      "comment": "Studio phone layout and controls use theme and spacing tokens.",
+      "files": [
+        "src/app/features/studio-shell/_studio-shell-mobile-tabbar.scss",
+        "src/app/features/task-detail/components/mobile-lane-primary/mobile-lane-primary.component.scss",
+        "src/app/features/task-detail/components/mobile-pane-switcher/mobile-pane-switcher.component.scss"
+      ],
       "rules": {
         "color-no-hex": true,
         "scale-unlimited/declaration-strict-value": [

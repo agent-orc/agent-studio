@@ -450,10 +450,12 @@ Temporary worktree removal is retried, and cleanup leftovers do not discard
 a successful replay. Candidate refs use
 `refs/agent-studio/batch-candidates/<batchId>/<membershipDigest>/<coordinatorFence>`.
 
-The store durably writes the initial `Formed` state before publishing a closed
-manifest. A visible manifest with no state rows, for example after external
-file loss, has phase `Unknown` and is skipped by recovery until a state exists.
-The recovery scan logs this condition once per manifest and store instance.
+The store writes the closed manifest and then its first `Formed` phase record
+(AGT-3563). A visible manifest with neither a phase record nor state rows, for
+example after a crash between the two writes or external file loss, reads as
+phase `Unknown` and is skipped by recovery until a state exists. The next pilot
+tick writes its first record. The recovery scan logs this condition once per
+manifest and store instance.
 
 ### Flight queue order (AGT-3710)
 

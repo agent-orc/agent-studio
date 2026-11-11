@@ -72,6 +72,19 @@ picker, Project Chat and Add task dialog, and files a card. A second Product
 user whose only binding is removed sees the no-project sentence. With
 `JOB_RESULTS_DIR` set, it writes light, dark and 390 px screenshots to
 `product-session/` there.
+### Networked HTTPS profile
+
+`npm --prefix frontend run e2e -- e2e/security/reviewer-role.networked-https.spec.ts`
+selects the `networked-https` profile: a fresh networked monolith (as in
+`networked-monolith`) behind the same temporary localhost HTTPS proxy as
+`public-demo`. The proxy keeps the browser's Host and forwards the secure
+scheme, so the browser keeps the Secure `__Host-` session cookies and the
+backend's same-origin check sees the page's own origin. Specs run real
+sign-in, invitation, and second-factor flows in the browser with no cookie
+injection. Playwright ignores certificate errors only for this profile and
+`public-demo`. The Reviewer role spec (AGT-3670) writes its light, dark, and
+390 px screenshots and the review audit entries to
+`$JOB_RESULTS_DIR/reviewer-role/`.
 ### Networked owner setup over HTTPS
 
 Run `npm --prefix frontend run e2e -- e2e/security/owner-second-factor-human-pace.spec.ts`

@@ -217,7 +217,15 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3394 adds the structure library refresh on Preview.
         // AGT-3565 adds Review results on PostStep: it runs the missing
         // requirement-fit review of a report card, a model call public demo denies.
-        Assert.Equal(153, routes.Count);
+        // AGT-3670 adds accept (Start) and send back (Continue) decisions.
+        Assert.Equal(155, routes.Count);
+        foreach (var (routePath, path) in new[]
+        {
+            ("/api/tasks/{jobId}/human-review/accept", ExecutionAdmissionPath.Start),
+            ("/api/tasks/{jobId}/human-review/send-back", ExecutionAdmissionPath.Continue),
+        })
+            Assert.Contains(routes, route => route.RoutePattern.RawText == routePath
+                && route.Metadata.GetMetadata<ExecutionRouteMetadata>()?.Path == path);
         Assert.DoesNotContain(allRoutes, route => route.RoutePattern.RawText == "/api/cli/_probe/{cliType}");
         foreach (var (method, suffix) in new[]
         {
@@ -314,8 +322,8 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             new Dictionary<ExecutionAdmissionPath, int>
             {
                 [ExecutionAdmissionPath.Claim] = 12,
-                [ExecutionAdmissionPath.Start] = 34,
-                [ExecutionAdmissionPath.Continue] = 34,
+                [ExecutionAdmissionPath.Start] = 35,
+                [ExecutionAdmissionPath.Continue] = 35,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 32,
