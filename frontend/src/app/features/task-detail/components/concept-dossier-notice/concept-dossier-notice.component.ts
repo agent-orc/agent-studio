@@ -14,6 +14,9 @@ import { laneName } from '../../../../models/lane-presentation';
 import { NotificationService } from '../../../../services/notification.service';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
 import { TaskService } from '../../../../services/task.service';
+import { ProjectDocsService } from '../../../../services/project-docs.service';
+import { discoverWorkbenchDecisionMarkup } from '../../../../services/workbench-decision-markup.util';
+import { catchError, of, switchMap } from 'rxjs';
 
 type EditorKind = 'path' | 'no-dossier' | null;
 
@@ -28,20 +31,28 @@ type EditorKind = 'path' | 'no-dossier' | null;
 export class ConceptDossierNoticeComponent {
   private readonly tasks = inject(TaskService);
   private readonly notifications = inject(NotificationService);
+  private readonly docs = inject(ProjectDocsService);
 
   readonly job = input.required<TaskInfo>();
   readonly changed = output<void>();
 
   private readonly summaryOverride = signal<ConceptDossierSummary | null>(null);
+  readonly decisionReceipt = signal<{ recorded: number; total: number; spawned: string[] } | null>(null);
+  readonly dossierId = signal<string | null>(null);
   readonly summary = computed(() => this.summaryOverride() ?? this.job().conceptDossier ?? null);
-  readonly dossierPath = computed(() => this.summary()?.repoRelativePath?.trim() || null);
+  readonly dossierPath = computed(() => this.job().dossier?.path?.trim()
+    || this.summary()?.repoRelativePath?.trim() || null);
   readonly wikiPath = computed(() => this.dossierPath()?.replace(/^docs\//i, '') ?? null);
   readonly wikiHref = computed(() => {
     const path = this.wikiPath();
     if (!path) return null;
-    return `#/projects/${studioProjectSlug(this.job().projectName)}/wiki?page=${encodeURIComponent(path)}`;
+    const base = `#/projects/${studioProjectSlug(this.job().projectName)}`;
+    return this.dossierId() ? `${base}/workbenches/${encodeURIComponent(this.dossierId()!)}`
+      : `${base}/wiki?page=${encodeURIComponent(path)}`;
   });
-  readonly published = computed(() => this.job().integration?.status === 'integrated');
+  readonly published = computed(() => this.job().mode !== 'concept'
+    || this.job().integration?.status === 'integrated'
+    || !!this.dossierId());
   readonly publicationStage = computed(() => {
     switch (this.job().integration?.status) {
       case 'merged-locally': return 'Merged locally';
@@ -54,9 +65,10 @@ export class ConceptDossierNoticeComponent {
   });
   readonly eligibleLane = computed(() =>
     this.job().state === TaskState.HumanReview || this.job().state === TaskState.Completed);
+  readonly readyToAccept = computed(() => this.job().state === TaskState.HumanReview);
   readonly show = computed(() =>
-    this.job().mode === 'concept'
-      && (!!this.dossierPath() || !!this.summary()?.noDossierNeeded || this.eligibleLane()));
+    !!this.dossierPath() || (this.job().mode === 'concept'
+      && (!!this.summary()?.noDossierNeeded || this.eligibleLane())));
   readonly missing = computed(() =>
     this.eligibleLane() && !this.dossierPath() && !this.summary()?.noDossierNeeded);
 
@@ -71,6 +83,34 @@ export class ConceptDossierNoticeComponent {
     this.editor.set(null);
     this.pathDraft.set('');
     this.reasonDraft.set('');
+  });
+
+  private readonly loadDecision = effect(onCleanup => {
+    const path = this.dossierPath();
+    const project = this.job().projectName;
+    this.decisionReceipt.set(null);
+    this.dossierId.set(null);
+    if (!path) return;
+    const subscription = this.docs.getWorkbenchOverview(project).pipe(
+      switchMap(overview => {
+        const match = overview.items.find(item => item.projectName === project
+          && item.workbench.entryPath.toLowerCase() === path.toLowerCase());
+        if (!match) return of(null);
+        this.dossierId.set(match.workbench.id);
+        return this.docs.getWorkbench(project, match.workbench.id);
+      }),
+      catchError(() => of(null)),
+    ).subscribe(document => {
+      if (!document?.workbench.decision) return;
+      const receipt = document.workbench.decision;
+      const points = discoverWorkbenchDecisionMarkup(document.html).points;
+      this.decisionReceipt.set({
+        recorded: receipt.responses.filter(response => response.selectedOptionIds.length > 0).length,
+        total: points.length || receipt.responses.length,
+        spawned: receipt.spawnedTaskKeys,
+      });
+    });
+    onCleanup(() => subscription.unsubscribe());
   });
 
   openPathEditor(): void {

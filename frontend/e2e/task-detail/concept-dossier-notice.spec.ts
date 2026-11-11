@@ -39,7 +39,7 @@ function taskInfo(conceptDossier: Record<string, unknown>, published = false) {
     commits: [],
     ownerClientId: 'local-default',
     mode: 'concept',
-    conceptDossier,
+    requiresIntegration: false,
     integration: {
       status: published ? 'integrated' : 'pending',
       deliveryRef: 'refs/results/concept-dossier-card',
@@ -47,6 +47,8 @@ function taskInfo(conceptDossier: Record<string, unknown>, published = false) {
       integrationBranch: 'develop',
       detail: null,
     },
+    dossier: conceptDossier['repoRelativePath'] ? { path: conceptDossier['repoRelativePath'] } : null,
+    conceptDossier,
   };
 }
 
@@ -72,10 +74,6 @@ async function installRoutes(page: Page, published = false): Promise<{ mutationB
   const escapedId = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
   await page.route('**/api/**', route => json(route, []));
-  await page.route('**/api/projects/*/workbenches**', route => json(route, { items: [] }));
-  await page.route('**/api/usage/cockpit**', route => json(route, {
-    workspaceId: null, clis: [], cost: null,
-  }));
   await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: false, user: null,
   }));
@@ -93,12 +91,41 @@ async function installRoutes(page: Page, published = false): Promise<{ mutationB
   await page.route('**/api/clients', route => json(route, [
     { id: 'local-default', displayName: 'Local', kind: 'agent-instance' },
   ]));
+  await page.route(/\/api\/workbenches\?project=/, route => json(route, {
+    projectName: PROJECT,
+    count: published && current.repoRelativePath ? 1 : 0,
+    currentCount: published && current.repoRelativePath ? 1 : 0,
+    historyCount: 0,
+    items: published && current.repoRelativePath ? [{ projectName: PROJECT, workbench: {
+      id: 'DEMO-W2', entryPath: DOSSIER_PATH, title: 'Export retention', summary: '',
+      status: 'decided', phase: 'decision-ready', updatedAtUtc: '2026-08-09T18:30:00Z',
+      valid: true, error: null, sourceTaskKeys: ['MKT-21'], linkedTaskKeys: ['MKT-21', 'DA-1'],
+    } }] : [],
+  }));
+  await page.route(new RegExp(`/api/projects/${encodeURIComponent(PROJECT)}/workbenches(?:\\?|$)`), route => json(route, {
+    projectName: PROJECT,
+    count: published && current.repoRelativePath ? 1 : 0,
+    items: published && current.repoRelativePath ? [{
+      id: 'DEMO-W2', key: 'DEMO-W2', entryPath: DOSSIER_PATH, valid: true,
+      sourceTaskKeys: ['MKT-21'], linkedTaskKeys: ['MKT-21', 'DA-1'],
+    }] : [],
+  }));
+  await page.route(`**/api/projects/${encodeURIComponent(PROJECT)}/workbenches/DEMO-W2`, route => json(route, {
+    workbench: { decision: {
+      responses: [{ decisionId: 'retention', selectedOptionIds: ['keep'] }],
+      spawnedTaskKeys: ['DA-1'],
+    } },
+    html: '<section data-decision-id="retention" data-decision-kind="single"><span data-option-id="keep">Keep</span></section>',
+  }));
   await page.route('**/api/clients/local-default/defaults**', route => json(route, {}));
   await page.route('**/api/clients/local-default/telemetry**', route => json(route, {
     points: [], findings: [], window: '14d',
   }));
   await page.route('**/api/cli/quota**', route => json(route, {
     at: '2026-08-09T18:30:00.000Z', ttlSeconds: 600, snapshots: [],
+  }));
+  await page.route('**/api/usage/cockpit**', route => json(route, {
+    workspaceId: null, clis: [], cost: null,
   }));
   await page.route('**/api/runner/orchestrator-feed**', route => json(route, {
     entries: [], generatedAtUtc: '2026-08-09T18:30:00.000Z',
@@ -155,6 +182,7 @@ test('concept Dossier shows its stage before publication', async ({ page }) => {
   await expect(page.getByTestId('concept-dossier-path')).toHaveText(DOSSIER_PATH);
   await expect(page.getByTestId('concept-dossier-publication'))
     .toHaveText('Not published yet · Awaiting integration');
+  await expect(page.getByTestId('studio-triage-action-mark-done')).toContainText('Await integration');
 
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
@@ -162,17 +190,19 @@ test('concept Dossier shows its stage before publication', async ({ page }) => {
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await setTheme(page, 'light');
-  await notice.screenshot({ path: path.join(RESULTS_DIR, 'concept-dossier-pending-390px--mocked.png') });
+  await notice.screenshot({ path: path.join(RESULTS_DIR, 'concept-dossier-pending-390--mocked.png') });
 });
 
-test('published concept Dossier links to the integration Wiki', async ({ page }) => {
+test('published concept Dossier opens its integration Workbench', async ({ page }) => {
   await installRoutes(page, true);
   await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
   await dismissDevErrorDialog(page);
   const link = page.getByTestId('concept-dossier-link');
   await expect(link).toHaveText(DOSSIER_PATH);
   await expect(link).toHaveAttribute(
-    'href', '#/projects/concept-dossier-fixture/wiki?page=coding-agent-sidesheet%2Findex.html',
+    'href', '#/projects/concept-dossier-fixture/workbenches/DEMO-W2',
   );
+  await expect(page.getByTestId('concept-dossier-decision-receipt'))
+    .toContainText('Decisions recorded on DEMO-W2: 1 of 1; spawned DA-1.');
   await expect(page.getByTestId('concept-dossier-publication')).toHaveCount(0);
 });

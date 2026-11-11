@@ -13,6 +13,13 @@
         <span class="dossier__path" data-testid="concept-dossier-path">{{ path }}</span>
         <span class="dossier__publication" data-testid="concept-dossier-publication">Not published yet · {{ publicationStage() }}</span>
       }
+      @if (job().mode === 'concept' && decisionReceipt(); as receipt) {
+        <span data-testid="concept-dossier-decision-receipt">
+          Decisions recorded on {{ dossierId() || path }}: {{ receipt.recorded }} of {{ receipt.total }};
+          spawned @for (key of receipt.spawned; track key) {<span class="dossier__spawn-key">{{ key }}</span>@if (!$last) {, }} @empty {none}.
+          @if (readyToAccept()) { Accept in the task toolbar. }
+        </span>
+      }
     } @else if (summary()?.noDossierNeeded) {
       <span class="dossier__label">No dossier needed</span>
       <span class="dossier__reason" data-testid="concept-dossier-no-need-reason">
