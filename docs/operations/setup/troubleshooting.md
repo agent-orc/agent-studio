@@ -46,74 +46,82 @@ sandbox = "workspace-write"
 
 Restart the Codex CLI (no backend restart needed - the next pickup re-spawns Codex with the new config). The full background and the runner's preventive complement live in [onboard-an-agent-cli.md](./onboard-an-agent-cli.md) under "Codex on Windows: the sandbox quirk".
 
-## "Auto-mode flipped to Manual after a short time"
+## "Pickup mode flipped from Auto to Manual after a short time"
 
-Symptom: the project's runner-mode pill flips from `auto-continuous` to `manual` after a small number of failures, no further `2-ready` jobs are picked up.
+Symptom: the project's **Pickup mode** (Project Settings > Execution location)
+changes from **Auto** to **Manual** after a small number of failures, an infra
+halt banner names the CLI, and no further **Ready** tasks are picked up.
 
-Cause: the cross-slug infra circuit breaker ([../../backend/Services/Runner/CrossSlugInfraCircuitBreaker.cs](../../../backend/Services/Runner/CrossSlugInfraCircuitBreaker.cs)) tripped on consecutive infra-class failures (sandbox errors, CLI crashes, missing-sentinel runs). The runner falls back to manual to keep a misconfigured CLI from burning through the queue.
+Cause: the cross-slug infra circuit breaker ([CrossSlugInfraCircuitBreaker.cs](../../../backend/Features/Runner/CrossSlugInfraCircuitBreaker.cs)) saw several different tasks dead-lettered for the same CLI within its window (sandbox errors, CLI crashes, missing-sentinel runs). The runner switches to manual so a misconfigured CLI cannot drain the queue.
 
 What to check:
 
-1. Look at the most recent jobs in `3-progress`, plus any the pickup loop just returned to `2-ready` (spawn failure) or escalated to `5-human-review` (task-shaped failure). Same failure category across them?
-2. The bus event stream (`logs/bus/<project>/<date>.jsonl`) carries the circuit-breaker transitions and the reason it tripped.
-3. Fix the underlying cause (sandbox config, CLI install, network), then resume manually with the runner-mode pill.
+1. Look at the most recent tasks in **In Progress**, plus any the pickup loop just returned to **Ready** (spawn failure) or escalated to **Human review** (task-shaped failure). Same failure category across them?
+2. The banner names the CLI and suggests `tools/check-cli-shims.sh` or `<cli> --version`. The bus event stream (`logs/bus/<project>/<date>.jsonl`) carries the breaker transition and its reason.
+3. Fix the underlying cause (sandbox config, CLI install, network), then set **Pickup mode** back to **Auto**.
 
-## "Counters in the header look wrong"
+## "Ready tasks wait: Local coding is disabled on this orchestrator"
 
-Symptom: the per-project counters in the header strip show numbers that don't match the lanes you see on the board, or show counts from a different project.
+Symptom: tasks stay in **Ready**, each shows an `execution-placement` pickup
+hold, and the **Execution location** card in Project Settings says "Local
+coding is disabled on this orchestrator. Coding tasks need a runner host with
+a source checkout before they can start."
 
-Cause: known cross-project leak in the header counter aggregation. Tracked as `bug-board-shows-wrong-project-counter-cross-project-leak` (currently in `5-human-review`).
+Cause: the project's execution location is **Local (board and orchestration
+only)**. The orchestrator does not run coding tasks on its own host; coding
+runs on an execution host.
 
-Workaround: refresh the page; the counts recompute from `/api/tasks/grouped` on load. If the leak persists across refreshes, capture the response payload and attach it to the existing job rather than opening a new bug.
+Fix: choose **Open Project Settings** on the hold, or open Project Settings,
+and select an execution host in the card's **Execution location** list (in the
+Docker one-box, `distributed-runner`). If none is listed, start one next to
+the source checkout in **Workspace Settings > Execution Hosts > Set up agent
+host**, see
+[linux-runner-host.md](./linux-runner-host.md#product-onboarding-from-execution-hosts).
 
-## "Two jobs sitting in 3-progress at the same time"
+## "Counters look wrong for a project"
 
-Symptom: the lane that is supposed to hold one job at a time briefly (or persistently) shows two cards.
+Symptom: per-project counters show numbers that don't match the lanes on the
+board, or counts from a different project.
 
-Cause: the auto-review reissue race documented in [../../.agents/skills/task-api/references/known-pitfalls.md](../../../.agents/skills/task-api/references/known-pitfalls.md) §5. When the runner moved a job to `4-auto-review` and the orchestrator decided "reissue" while a fresh job was being picked up, both ended up in `3-progress`.
+Cause: a cross-project leak in the counter aggregation was reported as
+`bug-board-shows-wrong-project-counter-cross-project-leak` (May 2026). This
+guide could not confirm a fix.
 
-Status: fixed by `fix-auto-review-reissue-must-go-to-ready-not-progress` (2026-05-11). Reissues now land in `2-ready order=0` instead of `3-progress`. If you still see two cards in `3-progress` after that date, inspect each job's `cli-output.log` for `Decision: reissue` to confirm whether the fix regressed or you are hitting a different race.
+Workaround: refresh the page; the counts recompute from `/api/tasks/grouped`
+on load. If the leak persists, capture that response and attach it to the
+existing bug instead of opening a new one.
 
-## "Aspect-runner says Concerns without a reason"
+## Fixed issues that older notes still mention
 
-Symptom: a job's auto-review aspects all read `Concerns: Aspect runner produced no parseable verdict` with no body.
+These symptoms came from defects that are fixed on current `develop`. If one
+reappears, treat it as a regression and open a new card with the evidence.
 
-Cause: pre-2026-05-11 bug. The aspect-runner CLI invocation used `-p <multi-KB prompt>` as argv on Windows, which silently failed (argv-length overflow). All four aspects defaulted to the same template.
+| Old symptom | Fixed by | If you still see it |
+|---|---|---|
+| Two cards in **In Progress** after an auto-review reissue | `fix-auto-review-reissue-must-go-to-ready-not-progress` (2026-05-11): reissues land at the top of **Ready** | Check each card's `cli-output.log` for `Decision: reissue`. |
+| Every review aspect reads "Aspect runner produced no parseable verdict" | 2026-05-11: the aspect runner reads its prompt from stdin instead of argv | Treat aspect rows from before that date as no signal. |
+| `./api.sh restart` reports success but the old process keeps serving | AGT-2678 (2026-08-24): `stop`, `start` and `restart` verify the process | Run `bash tools/api-restart-selfcheck.sh`; see [hollow-api-restart](../common-problems/hollow-api-restart/). |
+| `PUT /api/runner/<project>/mode` returns `400 Invalid project or mode` for a new project | Projects created through the dialog or `POST /api/projects` get their runner at once; the message no longer exists | See the next section for the current responses. |
 
-Status: fixed by routing the aspect-runner through `ICliOneShot` (stdin-piped). Aspects produced after 2026-05-11 should carry real verdicts. When triaging the lingering 100+ jobs in `5-human-review` from that day, filter aspect rows whose summary matches `/Aspect runner produced no parseable verdict/i` and treat them as no-signal.
+## A pickup mode change is refused
 
-## "PUT /api/runner/<project>/mode returns 400"
+Symptom: setting the pickup mode (Project Settings > Execution location, or
+`PUT /api/runner/<project>/mode`) fails with one of:
 
-Symptom: enabling `auto-continuous` for a newly-added project returns `400 Invalid project or mode`.
-
-Cause: `TaskRunnerService` only creates per-project runners at startup. Hot-reload of `WatchPaths` makes the project visible to `/api/watch-paths` but doesn't register the runner.
-
-Fix: restart the backend (`./api.sh restart`). Tracked for a durable fix as `fix-runner-mode-rejects-newly-added-projects`. Full context: [onboard-a-project.md](./onboard-a-project.md) Step 2.
-
-## "api.sh restart said it worked, but the old code is still being served"
-
-Symptom: `./api.sh restart` prints `API stopped.` and then `API is successfully started and healthy!`, but the deployed change is not live. A config edit (for example a `project-settings.json` patch) has no effect, the process start time in `./api.sh status` is older than the restart, or a rebuild fails to copy into `backend/bin` because a file is locked.
-
-Cause: this was a real defect, fixed on 2026-08-24 (AGT-2678). Before the fix, `stop` only signalled the one PID it happened to know about, and `start` only asked whether `/healthz` returned 200. Neither question can tell the new process from the old one:
-
-- `dotnet run` is a launcher whose *child* owns the port. Signalling one of the two left the other alive. A surviving child kept serving; a surviving launcher kept the build output locked, which is what produced the "zombie PID holds the DLLs" rebuild failure.
-- An orphaned backend answers `/healthz` exactly like a fresh one. When the old process still owned the port, the newly launched one died with an address-in-use error and `start` reported the *old* process as its own success.
-- Nothing ever compared the process before the restart with the process after it.
-
-Fix: nothing to do on a current checkout. `api.sh` now verifies each step and fails loudly instead of reporting a hollow success: `stop` sweeps the port listener and every `OrchestratorApi` process of that checkout, then proves the port is free; `start` refuses a port owned by a process it did not launch; `restart` asserts that the PID and the process start time both changed.
-
-To prove it on your own machine, or to check an older checkout:
-
-```sh
-bash tools/api-restart-selfcheck.sh                                    # hermetic, no .NET build needed
-bash tools/api-restart-selfcheck.sh --live ../agent-taskboard-stable   # restarts the real seat
-```
-
-The hermetic run reproduces both failure shapes (an orphan that outlived its launcher, and a healthy stranger on the port) and fails with a named check against any `api.sh` that does not satisfy the contract. Full analysis: [../common-problems/hollow-api-restart/](../common-problems/hollow-api-restart/).
+- `409` "Project '<name>' has no RootPath configured, so its runner was never
+  started." The project has no working directory, so no local runner exists.
+  Set **Working directory** (and **Repository checkout path**) in Project
+  Settings, or select a remote execution host.
+- `404` "Unknown project '<name>'". The name does not match a registered
+  project. Use the exact display name, or the project id.
+- `400` "Invalid mode '<mode>'. Allowed: manual, auto-single, auto-continuous,
+  paused." The raw runner route still uses the old mode names. Project
+  Settings writes `auto`, `manual` or `paused` through
+  `PUT /api/projects/<project>/execution-runner` instead.
 
 ## "Codex run lands as missing-terminal-sentinel"
 
-Symptom: a Codex job finishes the work cleanly but the run is marked `missing-terminal-sentinel` and lands in auto-review instead of `4-auto-review -> 5-human-review` with a clean Done.
+Symptom: a Codex task finishes the work cleanly but the run is marked `missing-terminal-sentinel` instead of reaching **Post Processing** and **Human review** with a clean Done.
 
 Cause: Codex has no `--append-system-prompt` flag, so the sentinel grammar is only injected via `CodexCliService.BuildSystemPromptPrefix`. On a resume turn the fresh-start template is not re-rendered. Without the prefix, Codex regularly drops the terminal sentinel.
 
@@ -132,13 +140,21 @@ triage script.
 
 See [../../.agents/skills/task-api/references/known-pitfalls.md](../../../.agents/skills/task-api/references/known-pitfalls.md) §7.
 
-## "Crash recovery committed my uncommitted edits"
+## "Studio asks me to review recovered working-tree changes"
 
-Symptom: you ran `./api.sh start` while you had uncommitted edits in the dev checkout; on boot a `chore(crash-recovery)` commit appeared with your work folded in.
+Symptom: after a backend restart, a crash recovery entry opens the dialog
+"Review recovered working-tree changes" (or "Checkout lags behind ...") with
+the project, task, and changed files.
 
-Cause: the crash-recovery service auto-commits uncommitted edits on boot to keep the runner's commit boundary clean. This is the documented behaviour but it's surprising the first time.
+Cause: on boot, crash recovery found uncommitted changes in a project's
+working tree. It no longer commits them on its own; it queues a pending item
+for you ([CrashRecoveryService.cs](../../../backend/Features/Runner/CrashRecoveryService.cs)).
 
-Fix going forward: commit before booting the dev backend. The orchestrator memory entry "Crash recovery auto-commits before you can" captures the reminder.
+Fix: review the listed files. Confirm the commit in the dialog only when the
+changes belong to the task; it commits with the `crash-recovery` author tag
+and never pushes. A ref-drift item (the checkout lags behind its branch) offers
+no commit. Commit your own edits before restarting the backend to avoid the
+prompt.
 
 ## "I want to script a job move but the API rejects it"
 
@@ -146,7 +162,7 @@ Symptom: `POST /api/tasks/<id>/move` returns `409 Job already exists or invalid 
 
 Cause: you passed `rootPath` as `watchPath`. The server resolves jobs against the *resolved job-folder root* under the workspace, not the project's source tree.
 
-Fix: use the `path` field returned by `GET /api/watch-paths`, not `rootPath`. The full pitfall and ready-to-use Node templates live in [../../.agents/skills/task-api/SKILL.md](../../../.agents/skills/task-api/SKILL.md).
+Fix: pass the project's short code or `PROJ-NNN` id in the `project` field (or query parameter), or the `path` field returned by `GET /api/watch-paths`, never `rootPath`. The full pitfall and ready-to-use Node templates live in [../../.agents/skills/task-api/SKILL.md](../../../.agents/skills/task-api/SKILL.md).
 
 ## "Claude quota panel is empty / plan shows unknown"
 
@@ -154,4 +170,4 @@ Symptom: the Claude quota widget (status bar donut, admin panel) shows no usage 
 
 Cause: the backend's quota probe drives `claude` headlessly and sends `/usage`. If the CLI has never been taken past its first-run onboarding (folder-trust dialog, theme picker, a "try the new renderer" upsell), those screens sit in front of the ready REPL and swallow the `/usage` command, so the probe returns zero windows. `ClaudeQuotaProbe.LooksLikeOnboardingWizard` (see [ClaudeQuotaProbe.cs](../../../backend/Features/Cli/Quota/ClaudeQuotaProbe.cs)) detects this case and logs it distinctly from an actual `/usage` output-format drift.
 
-Fix: run `claude` interactively yourself once, log in, and click through every first-run screen until you reach the normal `? for shortcuts` prompt. The onboarding state persists in `~/.claude.json`, so this is a one-time fix per machine/user. See [getting-started.md](./getting-started.md) step 1 for the full first-install version of this.
+Fix: run `claude` interactively yourself once, log in, and click through every first-run screen until you reach the normal `? for shortcuts` prompt. The onboarding state persists in `~/.claude.json`, so this is a one-time fix per machine/user. See [contributor-setup.md](./contributor-setup.md#claude-code-login-and-onboarding-read-this-before-your-first-run) for the full first-install version of this; on a runner host, sign in through the first-run checklist's **Provider login on an execution host** step.
