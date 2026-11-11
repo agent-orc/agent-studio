@@ -460,7 +460,7 @@ test('Feed main view: route, Activity icon, fresh-alert badge, windowing, live s
     page.getByTestId('orchestrator-feed-detail').boundingBox(),
   ]);
   if (!filters || !stream || !detail) throw new Error('Feed panes did not render');
-  expect(stream.x).toBeGreaterThan(filters.x + filters.width - 4);
+  expect(stream.y).toBeGreaterThanOrEqual(filters.y + filters.height - 4);
   expect(detail.x).toBeGreaterThan(stream.x + stream.width - 4);
 
   await renderedEntries.nth(20).click();
