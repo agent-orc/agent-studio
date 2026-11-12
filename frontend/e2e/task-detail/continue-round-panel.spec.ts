@@ -33,6 +33,12 @@ const BASE_REF = `refs/heads/agent-studio/results/run_demo_continue/fence-3/${BA
 const ISOLATION_MESSAGE = 'This card is a member of batch flight flight-demo-7, which is isolating a red result. '
   + 'Eject it from the batch to change it.';
 
+// The card panels keep reading the card after a test's last assertion, so a
+// lane rewrite can still be fetching when the context closes.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 async function pickWatchPath(): Promise<string> {
   const paths = await api<WatchPath[]>('/api/watch-paths');
   if (!paths.length) throw new Error('No watch paths configured');
