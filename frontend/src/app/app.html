@@ -364,11 +364,11 @@
         @defer (on immediate) {
         <app-create-job-dialog
           [watchPaths]="watchPaths()" [availableModels]="availableModels()"
-          [cliTypeDraft]="createJobForm.newCliType"
+          [cliTypeDraft]="createJobForm.newCliType()"
           [routing]="createJobForm.routing()" [routingPending]="createJobForm.routingPending()"
           [submitting]="createJobForm.submitting()"
-          [defaultsPending]="createJobForm.defaultsPending()"
-          [policySuggestion]="createJobForm.policySuggestion()" [modelSelectionExplicit]="createJobForm.modelSelectionExplicit"
+          [defaultsPending]="createJobForm.agentPending()"
+          [policySuggestion]="createJobForm.policySuggestion()" [modelSelectionExplicit]="createJobForm.modelSelectionExplicit()"
           [(newTitle)]="createJobForm.newTitle"
           [(newWatchPath)]="createJobForm.newWatchPath"
           (watchPathChange)="createJobForm.selectProject($event)"
@@ -718,11 +718,11 @@
         @defer (on immediate) {
         <app-create-job-dialog
           [watchPaths]="watchPaths()" [availableModels]="availableModels()"
-          [cliTypeDraft]="createJobForm.newCliType"
+          [cliTypeDraft]="createJobForm.newCliType()"
           [routing]="createJobForm.routing()" [routingPending]="createJobForm.routingPending()"
           [submitting]="createJobForm.submitting()"
-          [defaultsPending]="createJobForm.defaultsPending()"
-          [policySuggestion]="createJobForm.policySuggestion()" [modelSelectionExplicit]="createJobForm.modelSelectionExplicit"
+          [defaultsPending]="createJobForm.agentPending()"
+          [policySuggestion]="createJobForm.policySuggestion()" [modelSelectionExplicit]="createJobForm.modelSelectionExplicit()"
           [(newTitle)]="createJobForm.newTitle"
           [(newWatchPath)]="createJobForm.newWatchPath"
           (watchPathChange)="createJobForm.selectProject($event)"
