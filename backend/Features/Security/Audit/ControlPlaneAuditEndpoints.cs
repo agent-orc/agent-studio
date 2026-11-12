@@ -16,6 +16,19 @@ public static class ControlPlaneAuditEndpoints
     {
         var audit = app.MapGroup("/api/auth/audit");
 
+        audit.MapGet("/factors", (HttpContext context, AccessSecurityStore store, int? limit) => AccessSecurityEndpoints.Execute(() =>
+        {
+            var owner = AccessSecurityEndpoints.RequireHuman(context, store);
+            if (owner.User.Role != StudioRoles.Owner)
+                throw new SecurityOperationException(403, "owner-required", "Owner role is required.");
+            var entries = store.ControlPlaneAudit.ReadNewest(entry =>
+                entry.Stream == ControlPlaneAuditStreams.Iam && entry.Operation is
+                    "factor.bound" or "factor.replaced" or "recovery-code.used" or "recovery-codes.regenerated",
+                Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit));
+            context.Response.Headers.CacheControl = "no-store";
+            return Results.Ok(entries.Select(View).ToList());
+        }));
+
         audit.MapGet("/operator-activity", (HttpContext context, AccessSecurityStore store, ControlPlaneAuditMonitor monitor,
             string? operatorAgentId, string? sessionId, int? limit) => AccessSecurityEndpoints.Execute(() =>
             {

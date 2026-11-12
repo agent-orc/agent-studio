@@ -42,6 +42,7 @@ public sealed class IntegrationWorktreeProviderTests : IDisposable
 
         Assert.False(resolution.Success);
         Assert.Contains("needs a server checkout", resolution.Error);
+        Assert.True(resolution.CheckoutMissing);
     }
 
     [Fact]

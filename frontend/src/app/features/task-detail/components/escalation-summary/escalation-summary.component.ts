@@ -31,7 +31,7 @@ import { EscalationDetailsComponent } from '../escalation-details/escalation-det
 import { GateQueueReleaseComponent } from '../gate-queue-release/gate-queue-release.component';
 import {
   laneActionsFor,
-  escalationNeedsServerCheckout,
+  taskNeedsServerCheckout,
   type TriageActionPayload,
   type TriageButton,
 } from '../../state/triage-actions.model';
@@ -103,8 +103,7 @@ export class EscalationSummaryComponent {
       this.selectedFindings().length ? this.ownerNote().trim() : `- [ ] ${this.ownerNote().trim()}`] : []),
   ].join('\n'));
 
-  readonly serverCheckoutMissing = computed(() => escalationNeedsServerCheckout(this.detail().info, this.detail().statusMarkdown,
-    this.view().reason, this.view().escalation?.reason, ...this.view().gateItems.flatMap(item => [item.text, item.detail])));
+  readonly serverCheckoutMissing = computed(() => taskNeedsServerCheckout(this.detail().info));
 
   /** The three terminal operator choices shown beside NEEDS DECISION. */
   readonly decisionActions = computed(() =>

@@ -761,17 +761,17 @@ public sealed partial class AccessSecurityStore
     /// Append-only IAM audit: who changed which binding, group, service
     /// account, token, or legacy role, and when (injected clock).
     /// </summary>
-    private void AppendIamAudit(string? actingUserId, string action, string targetKind, string targetId, object? details)
+    private void AppendIamAudit(string? actingUserId, string action, string targetKind, string targetId, object? details, string? sessionId = null)
     {
         Directory.CreateDirectory(SecurityFolder);
         var file = Path.Combine(SecurityFolder, IamAuditFileName);
         var timestamp = Now;
-        var legacy = new { timestamp, actor = actingUserId ?? "system", action, targetKind, targetId, details };
+        var legacy = new { timestamp, actor = actingUserId ?? "system", sessionId, action, targetKind, targetId, details };
         File.AppendAllText(file, JsonSerializer.Serialize(legacy) + Environment.NewLine);
         RestrictPermissions(file);
         ControlPlaneAudit.Append(new ControlPlaneAuditRecord(
             ControlPlaneAuditStreams.Iam, actingUserId is null ? "system" : AgentStudio.Shared.TimelineActors.Human(actingUserId),
-            action, "ok", $"{targetKind}:{targetId}", Details: legacy, At: timestamp,
+            action, "ok", $"{targetKind}:{targetId}", Session: sessionId, Details: legacy, At: timestamp,
             ParameterDigest: details is null ? null : ControlPlaneAuditLog.Sha256Hex(JsonSerializer.Serialize(details))));
     }
 

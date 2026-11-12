@@ -53,7 +53,7 @@ describe('DetailHeaderComponent (smoke)', () => {
     fixture.componentRef.setInput('info', {
       ...taskInfo,
       state: '5e-escalated',
-      integration: { failure: { reason: 'This project needs a server checkout before delivery can integrate.' } },
+      integration: { failure: { code: 'server-checkout-missing', reason: 'This project needs a server checkout before delivery can integrate.' } },
     });
     fixture.detectChanges();
 

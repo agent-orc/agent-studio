@@ -1,5 +1,5 @@
-import { Injectable, inject, signal } from '@angular/core';
-import { Observable, Subject } from 'rxjs';
+import { Injectable, computed, inject, signal } from '@angular/core';
+import { Observable, Subject, timeout } from 'rxjs';
 import { CliType, CLI_TYPES, ComponentRoutingRequest, ComponentRoutingResolution, PromoteToCodingResponse, TaskMode, TaskState, WatchPathEntry } from '../../../models/task.model';
 import type { CliModelInfo } from '../../../features/cli';
 import type { PendingAttachment } from '../components/create-task-dialog/create-task-dialog.component';
@@ -55,10 +55,13 @@ export class CreateTaskFormService {
   newMode: TaskMode = 'coding';
   /** Web access. Default-by-mode lives in the picker (research = on, else off). */
   newAllowWebAccess = false;
-  newCliType: CliType = readDefaultCliPref();
-  newModel: string = readDefaultModelPref(readDefaultCliPref());
-  newThinkingLevel: string | null = readDefaultThinkingLevelPref(readDefaultCliPref());
-  modelSelectionExplicit = false;
+  // Agent draft fields are signals: project defaults, the catalogue default
+  // and the policy suggestion all land asynchronously, and the OnPush shell
+  // only re-renders the agent chip when a signal it reads changes (AGT-3709).
+  readonly newCliType = signal<CliType>(readDefaultCliPref());
+  readonly newModel = signal<string>(readDefaultModelPref(readDefaultCliPref()));
+  readonly newThinkingLevel = signal<string | null>(readDefaultThinkingLevelPref(readDefaultCliPref()));
+  readonly modelSelectionExplicit = signal(false);
   newAttachments: PendingAttachment[] = [];
 
   /** Allowed manual-create lanes (everything before 3-progress). */
@@ -66,6 +69,14 @@ export class CreateTaskFormService {
 
   readonly availableModels = signal<CliModelInfo[]>([]);
   readonly policySuggestion = signal<ModelRoutingRecommendation | null>(null);
+  /** A policy suggestion is in flight; it may still replace the chip's model. */
+  readonly suggestionPending = signal(false);
+  /**
+   * AGT-3709: Create waits while the chip may still change, so the card is
+   * created with the model the chip shows. An operator pick does not wait.
+   */
+  readonly agentPending = computed(() =>
+    this.defaultsPending() || (this.suggestionPending() && !this.modelSelectionExplicit()));
   private suggestionRequest = 0;
   private projectDefaultsRequest = 0;
 
@@ -263,13 +274,13 @@ export class CreateTaskFormService {
   // ---------- ngModel-driven mutators ----------
 
   onCreateCliTypeChange(t: CliType): void {
-    if (this.newCliType === t) return;
+    if (this.newCliType() === t) return;
     this.projectDefaultsRequest++;
     this.defaultsPending.set(false);
-    this.newCliType = t;
-    this.newModel = readDefaultModelPref(t);
-    this.newThinkingLevel = readDefaultThinkingLevelPref(t);
-    this.modelSelectionExplicit = false;
+    this.newCliType.set(t);
+    this.newModel.set(readDefaultModelPref(t));
+    this.newThinkingLevel.set(readDefaultThinkingLevelPref(t));
+    this.modelSelectionExplicit.set(false);
     this.loadCreateModels(t);
     this.refreshPolicySuggestion();
   }
@@ -279,9 +290,9 @@ export class CreateTaskFormService {
     this.newWatchPath = watchPath;
     const request = ++this.projectDefaultsRequest;
     this.defaultsPending.set(true);
-    this.modelSelectionExplicit = false;
+    this.modelSelectionExplicit.set(false);
     this.applyStoredCliDefault();
-    this.loadCreateModels(this.newCliType);
+    this.loadCreateModels(this.newCliType());
     this.refreshPolicySuggestion();
     this.jobService.getRegistryProjects().subscribe({
       next: (projects) => {
@@ -290,14 +301,14 @@ export class CreateTaskFormService {
         const project = projects.find(p => p.storageLocation === watchPath);
         if (!project) return;
         if (project.cliDefault && (CLI_TYPES as readonly string[]).includes(project.cliDefault)) {
-          this.newCliType = project.cliDefault as CliType;
+          this.newCliType.set(project.cliDefault as CliType);
         }
         if (project.modelDefault) {
-          this.newModel = project.modelDefault;
-          this.newThinkingLevel = null;
-          this.modelSelectionExplicit = true;
+          this.newModel.set(project.modelDefault);
+          this.newThinkingLevel.set(null);
+          this.modelSelectionExplicit.set(true);
         }
-        this.loadCreateModels(this.newCliType);
+        this.loadCreateModels(this.newCliType());
         this.refreshPolicySuggestion();
       },
       error: () => {
@@ -307,7 +318,7 @@ export class CreateTaskFormService {
   }
 
   markModelSelectionExplicit(): void {
-    this.modelSelectionExplicit = true;
+    this.modelSelectionExplicit.set(true);
   }
 
   onTaskTypeChange(taskType: string): void {
@@ -316,24 +327,24 @@ export class CreateTaskFormService {
   }
 
   usePolicySelection(): void {
-    this.modelSelectionExplicit = false;
+    this.modelSelectionExplicit.set(false);
     this.applyPolicySuggestion();
   }
 
   /** Mirrors a global "default model for CLI X" change into the form when relevant. */
   onDefaultModelChange(ev: { cliType: CliType; model: string; thinkingLevel: string | null }): void {
-    if (ev.cliType === this.newCliType) {
-      this.newModel = ev.model;
-      this.newThinkingLevel = ev.thinkingLevel;
+    if (ev.cliType === this.newCliType()) {
+      this.newModel.set(ev.model);
+      this.newThinkingLevel.set(ev.thinkingLevel);
     }
   }
 
   /** Apply user's stored CLI default before showing the dialog. */
   applyStoredCliDefault(): void {
     const t = readDefaultCliPref();
-    this.newCliType = t;
-    this.newModel = readDefaultModelPref(t);
-    this.newThinkingLevel = readDefaultThinkingLevelPref(t);
+    this.newCliType.set(t);
+    this.newModel.set(readDefaultModelPref(t));
+    this.newThinkingLevel.set(readDefaultThinkingLevelPref(t));
   }
 
   // ---------- close + submit ----------
@@ -350,12 +361,13 @@ export class CreateTaskFormService {
     this.newTargetState = TaskState.Preparation;
     this.newMode = 'coding';
     this.newAllowWebAccess = false;
-    this.newCliType = readDefaultCliPref();
-    this.newModel = readDefaultModelPref(this.newCliType);
-    this.newThinkingLevel = readDefaultThinkingLevelPref(this.newCliType);
-    this.modelSelectionExplicit = false;
+    this.newCliType.set(readDefaultCliPref());
+    this.newModel.set(readDefaultModelPref(this.newCliType()));
+    this.newThinkingLevel.set(readDefaultThinkingLevelPref(this.newCliType()));
+    this.modelSelectionExplicit.set(false);
     this.availableModels.set([]);
     this.policySuggestion.set(null);
+    this.suggestionPending.set(false);
     this.suggestionRequest++;
     for (const att of this.newAttachments) URL.revokeObjectURL(att.previewUrl);
     this.newAttachments = [];
@@ -370,7 +382,7 @@ export class CreateTaskFormService {
    * fire `submitted$` so the shell can refresh.
    */
   submit(): void {
-    if (this.submitting() || this.defaultsPending()) return;
+    if (this.submitting() || this.agentPending()) return;
     const route = this.routing();
     if (this.routingPending() || route?.requiresQuestion) {
       this.errorDialog.show(new Error(route?.questionReason || 'Ownership routing is still being resolved.'), {
@@ -395,14 +407,14 @@ export class CreateTaskFormService {
     this.jobService.createJob({
       title,
       watchPath,
-      agent: this.newCliType,
+      agent: this.newCliType(),
       promptMarkdown: initialPrompt,
       targetState: this.newTargetState,
-      cliType: this.newCliType,
-      model: this.newModel.trim() || undefined,
-      thinkingLevel: this.newThinkingLevel || undefined,
-      modelExplicit: this.modelSelectionExplicit,
-      thinkingLevelExplicit: this.modelSelectionExplicit,
+      cliType: this.newCliType(),
+      model: this.newModel().trim() || undefined,
+      thinkingLevel: this.newThinkingLevel() || undefined,
+      modelExplicit: this.modelSelectionExplicit(),
+      thinkingLevelExplicit: this.modelSelectionExplicit(),
       taskType: this.newTaskType,
       tags: this.newTags.length > 0 ? [...this.newTags] : undefined,
       kind: 'task',
@@ -442,54 +454,65 @@ export class CreateTaskFormService {
     if (this.catalogStore.hasFresh(cliType)) {
       const models = [...this.catalogStore.modelsFor(cliType)];
       this.availableModels.set(models);
-      if (!this.newModel) {
-        const def = models.find((m) => m.isDefault);
-        if (def) {
-          this.newModel = def.id;
-          this.newThinkingLevel = this.newThinkingLevel ?? def.defaultThinkingLevel ?? null;
-        }
-      }
+      this.applyCatalogueDefaults(models);
       return;
     }
     this.catalogStore.ensure(cliType).subscribe({
       next: (models) => {
-        if (cliType !== this.newCliType) return;
+        if (cliType !== this.newCliType()) return;
         const list = [...models];
         this.availableModels.set(list);
-        if (!this.newModel) {
-          const def = list.find((m) => m.isDefault);
-          if (def) {
-            this.newModel = def.id;
-            this.newThinkingLevel = this.newThinkingLevel ?? def.defaultThinkingLevel ?? null;
-          }
-        }
+        this.applyCatalogueDefaults(list);
       },
       error: () => {
-        if (cliType === this.newCliType) this.availableModels.set([]);
+        if (cliType === this.newCliType()) this.availableModels.set([]);
       },
     });
   }
 
+  /**
+   * AGT-3709: the chip names the model and thinking level the create request
+   * sends. An empty field let the server pick one the chip never showed.
+   */
+  private applyCatalogueDefaults(models: readonly CliModelInfo[]): void {
+    if (!this.newModel()) {
+      const def = models.find((m) => m.isDefault);
+      if (def) this.newModel.set(def.id);
+    }
+    if (!this.newThinkingLevel()) {
+      const selected = models.find((m) => m.id === this.newModel());
+      if (selected?.defaultThinkingLevel) this.newThinkingLevel.set(selected.defaultThinkingLevel);
+    }
+  }
+
   private refreshPolicySuggestion(): void {
     const request = ++this.suggestionRequest;
-    this.routingPolicy.getModelRoutingRecommendation(this.newTaskType, this.newCliType).subscribe({
+    this.suggestionPending.set(true);
+    this.routingPolicy.getModelRoutingRecommendation(this.newTaskType, this.newCliType()).pipe(
+      // A suggestion that never answers must not keep Create disabled.
+      timeout(SUGGESTION_TIMEOUT_MS),
+    ).subscribe({
       next: (suggestion) => {
         if (request !== this.suggestionRequest) return;
+        this.suggestionPending.set(false);
         this.policySuggestion.set(suggestion);
         this.applyPolicySuggestion();
       },
       error: () => {
-        if (request === this.suggestionRequest) this.policySuggestion.set(null);
+        if (request !== this.suggestionRequest) return;
+        this.suggestionPending.set(false);
+        this.policySuggestion.set(null);
       },
     });
   }
 
   private applyPolicySuggestion(): void {
-    if (this.modelSelectionExplicit) return;
+    if (this.modelSelectionExplicit()) return;
     const suggestion = this.policySuggestion();
-    if (!suggestion) return;
-    this.newModel = suggestion.model;
-    this.newThinkingLevel = suggestion.thinkingLevel;
+    if (typeof suggestion?.model !== 'string' || !suggestion.model.trim()) return;
+    this.newModel.set(suggestion.model);
+    this.newThinkingLevel.set(suggestion.thinkingLevel ?? null);
+    this.applyCatalogueDefaults(this.availableModels());
   }
 
   private async uploadCreateAttachments(
@@ -553,6 +576,8 @@ export class CreateTaskFormService {
 }
 
 // ---------- module-private helpers ----------
+
+const SUGGESTION_TIMEOUT_MS = 3000;
 
 function readDefaultCliPref(): CliType {
   const stored = localStorage.getItem('defaultCliType') as CliType | null;

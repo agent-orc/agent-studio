@@ -2932,11 +2932,15 @@ public class TaskMutationService
             var project = _projectRegistry.FindByStorageLocation(watchPath);
             if (project == null) return null;
 
-            var floor = HighestExistingKeyNumber(project.Id, project.ShortCode, residentJobs) + 1;
-            _projectRegistry.EnsureTaskKeyFloor(project.Id, floor);
-
-            var seq = _projectRegistry.IssueNextTaskKey(project.Id);
-            return $"{project.ShortCode}-{seq}";
+            int floor;
+            using (TaskSwitchTrace.Span("mutation.key.floor"))
+                floor = HighestExistingKeyNumber(project.Id, project.ShortCode, residentJobs) + 1;
+            using (TaskSwitchTrace.Span("mutation.key.registry"))
+            {
+                _projectRegistry.EnsureTaskKeyFloor(project.Id, floor);
+                var seq = _projectRegistry.IssueNextTaskKey(project.Id);
+                return $"{project.ShortCode}-{seq}";
+            }
         }
         catch (Exception ex)
         {

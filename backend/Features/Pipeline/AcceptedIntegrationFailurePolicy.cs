@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
@@ -57,6 +58,12 @@ public static class AcceptedIntegrationFailureCodes
 
     /// <summary>The Studio-owned integration worktree could not be prepared (AGT-2832).</summary>
     public const string WorktreeUnavailable = "worktree-unavailable";
+
+    /// <summary>
+    /// The project has no usable checkout on the Studio server, so integration
+    /// cannot prepare its worktree; another coding attempt cannot help (AGT-3673).
+    /// </summary>
+    public const string ServerCheckoutMissing = "server-checkout-missing";
 
     /// <summary>The integration branch could not be synchronized with origin before the merge.</summary>
     public const string BranchSyncFailed = "branch-sync-failed";
@@ -151,6 +158,13 @@ public sealed record AcceptedIntegrationFailure(
     string FailureSignature = RunFailureSignatures.Unclassified)
 {
     public IntegrationConflictReport? ConflictReport { get; init; }
+
+    /// <summary>
+    /// AGT-3695: the failure left the reviewed delivery untouched and only its
+    /// publication is missing, so replaying the integration of the same
+    /// delivery SHA (Retry integration) can finish it without a new review.
+    /// </summary>
+    public bool ReplayAvailable { get; init; }
 }
 
 /// <summary>
@@ -254,6 +268,12 @@ public static class AcceptedIntegrationFailurePolicy
                     verdictSummary,
                     "The accepted coding card had no delivery branch to integrate."),
                 RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.IntegrationPushBlocked
+                when (DescribeApprovedMergeOffLane(reason) ?? DescribeApprovedMergeOffLane(verdictSummary))
+                    is { } offLane => new(code, "Integration push blocked", offLane, RebaseRecoveryAvailable: false)
+                {
+                    ReplayAvailable = true,
+                },
             AcceptedIntegrationFailureCodes.IntegrationPushBlocked => new(
                 code,
                 "Integration push blocked",
@@ -295,6 +315,11 @@ public static class AcceptedIntegrationFailurePolicy
                 code,
                 "Integration worktree unavailable",
                 FirstNonBlank(reason, verdictSummary, "The integration worktree is unavailable."),
+                RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.ServerCheckoutMissing => new(
+                code,
+                "Server checkout needed",
+                FirstNonBlank(reason, verdictSummary, "This project needs a server checkout before delivery can integrate."),
                 RebaseRecoveryAvailable: false),
             AcceptedIntegrationFailureCodes.BranchSyncFailed => new(
                 code,
@@ -462,6 +487,7 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.RepositoryRootUnavailable => AcceptedIntegrationFailureCodes.RepositoryRootUnavailable,
             AcceptedIntegrationFailureCodes.StaleAttempt => AcceptedIntegrationFailureCodes.StaleAttempt,
             AcceptedIntegrationFailureCodes.WorktreeUnavailable => AcceptedIntegrationFailureCodes.WorktreeUnavailable,
+            AcceptedIntegrationFailureCodes.ServerCheckoutMissing => AcceptedIntegrationFailureCodes.ServerCheckoutMissing,
             AcceptedIntegrationFailureCodes.BranchSyncFailed => AcceptedIntegrationFailureCodes.BranchSyncFailed,
             AcceptedIntegrationFailureCodes.GitCredentialUnavailable => AcceptedIntegrationFailureCodes.GitCredentialUnavailable,
             AcceptedIntegrationFailureCodes.LineageBlocked => AcceptedIntegrationFailureCodes.LineageBlocked,
@@ -473,6 +499,32 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.ConceptDossierRejected => AcceptedIntegrationFailureCodes.ConceptDossierRejected,
             _ => null,
         };
+    }
+
+    /// <summary>Start of the plain reason for an approved merge the integration line does not carry.</summary>
+    public const string ApprovedMergeOffLanePrefix = "Publication stopped: the approved merge result";
+
+    private static readonly Regex ApprovedMergeOffLanePattern = new(
+        @"The approved merge result (?<sha>[0-9a-fA-F]{7,64}) is not contained in local (?<branch>[^\s;]+); refusing to push it",
+        RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// AGT-3695: the plain-words reason for a <c>sha-not-on-branch</c> push
+    /// refusal, read from the git refusal itself or from a reason already in
+    /// this form. Null when <paramref name="text"/> describes another failure.
+    /// </summary>
+    public static string? DescribeApprovedMergeOffLane(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var trimmed = text.Trim();
+        if (trimmed.StartsWith(ApprovedMergeOffLanePrefix, StringComparison.Ordinal)) return trimmed;
+        var match = ApprovedMergeOffLanePattern.Match(trimmed);
+        if (!match.Success) return null;
+        var sha = match.Groups["sha"].Value;
+        var branch = match.Groups["branch"].Value;
+        return $"{ApprovedMergeOffLanePrefix} {sha[..Math.Min(9, sha.Length)]} is not on the local {branch} "
+               + $"integration line, so nothing was pushed to origin/{branch}. The reviewed delivery is unchanged; "
+               + "Retry integration replays it without a new review round.";
     }
 
     private static bool HasPrefix(string? text)

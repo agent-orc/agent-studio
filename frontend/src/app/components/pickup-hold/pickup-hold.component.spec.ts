@@ -453,6 +453,35 @@ describe('PickupHoldComponent', () => {
     expect(reason).toContain('task-server:connectivity');
   });
 
+  it('names the model a fresh host has not accepted, and keeps one copy of the refusal (AGT-3709)', () => {
+    const reason = 'Host capability missing on agent-runner-02: model-acceptance:claude:claude-opus-5. Upgrade or repair the host probe.';
+    const hold: PickupHoldStatus = {
+      mechanism: 'host-capability-missing',
+      reason: `Runner agent-runner-02 refused this card (host-capability-missing): ${reason}`,
+      sinceUtc: '2026-09-14T08:50:30Z',
+      unsatisfiable: false,
+      resolutions: [],
+    };
+    let root = render(hold);
+    expect(root.querySelector('[data-testid="pickup-hold-headline"]')?.textContent)
+      .toBe('Held: the host has not accepted claude-opus-5');
+    expect(root.querySelector('[data-testid="pickup-hold-mechanism"]')?.textContent).toContain('Host capability');
+    expect(root.querySelector('[data-testid="pickup-hold-age"]')?.textContent).toContain('held for 9m');
+    // Without the durable record on the card, the block is the only copy.
+    expect(root.querySelector('[data-testid="pickup-hold-reason"]')?.textContent).toContain('model-acceptance');
+
+    fixture.componentRef.setInput('task', {
+      ...task(hold),
+      executionLocation: {
+        state: 'queued-remote', executionKind: 'remote',
+        lastRejection: { code: 'host-capability-missing', runnerId: 'r2', runnerName: 'agent-runner-02', reason, rejectedAtUtc: hold.sinceUtc },
+      },
+    } as TaskInfo);
+    fixture.detectChanges();
+    root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('[data-testid="pickup-hold-reason"]')).toBeNull();
+  });
+
   it('titles an unknown mechanism instead of leaking the kebab-case key', () => {
     const root = render({ ...REFUSED_DISPATCH, mechanism: 'quota-exhausted' });
     expect(root.querySelector('[data-testid="pickup-hold-reason"]')).not.toBeNull();

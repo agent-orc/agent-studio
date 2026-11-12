@@ -30,6 +30,9 @@ public sealed class StudioEndpointsTests
         var bootstrap = await client.PostAsJsonAsync(
             "/api/v1/studio/auth/bootstrap", new StudioBootstrapRequest("owner", "correct horse battery staple"));
         Assert.Equal(HttpStatusCode.Created, bootstrap.StatusCode);
+        Assert.Contains(bootstrap.Headers.GetValues("Set-Cookie"), value =>
+            value.StartsWith("ts-studio-session=", StringComparison.Ordinal)
+            && value.Contains("max-age=604800", StringComparison.OrdinalIgnoreCase));
         var session = await bootstrap.Content.ReadFromJsonAsync<StudioAuthSessionDto>();
         Assert.NotNull(session);
         Assert.Equal(StudioUserRoles.Owner, session!.Status.User!.Role);

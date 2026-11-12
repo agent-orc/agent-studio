@@ -43,6 +43,7 @@ const EVENT_CLASSES = new Map([
   ['batch.running-without-gate', EXIT.EVENT_BATCH],
   ['batch.record-unreadable', EXIT.EVENT_BATCH],
   ['push.pending-overdue', EXIT.EVENT_PUSH],
+  ['push.blocked', EXIT.EVENT_PUSH],
   ['quota.exhausted', EXIT.EVENT_QUOTA],
   ['quota.fallback-active', EXIT.EVENT_QUOTA],
   // The stream lost events older than its retention: re-read triage and capacity.

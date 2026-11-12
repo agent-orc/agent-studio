@@ -18,6 +18,8 @@ export const AUTH_GATE_RECONNECTING = 'Studio is reconnecting; try again.';
  */
 export function authGateFailure(error: unknown, fallback: string): string {
   if (error instanceof HttpErrorResponse && error.status === 0) return AUTH_GATE_RECONNECTING;
+  if (error instanceof HttpErrorResponse && error.error?.code === 'invalid-second-factor')
+    return 'The authenticator code is invalid.';
   if (error instanceof HttpErrorResponse) return error.error?.message ?? fallback;
   return error instanceof Error ? error.message : fallback;
 }
@@ -133,7 +135,12 @@ export class AuthGateComponent implements OnInit {
     this.error.set('');
     this.auth.confirmTotp(this.secondFactorCode).subscribe({
       next: result => { this.recoveryCodes.set(result.recoveryCodes); this.secondFactorCode = ''; this.submitting.set(false); },
-      error: (error: unknown) => { this.error.set(authGateFailure(error, 'Authenticator code is invalid.')); this.submitting.set(false); },
+      error: (error: unknown) => {
+        this.error.set(error instanceof HttpErrorResponse && error.status === 400
+          ? 'The authenticator code is invalid.'
+          : authGateFailure(error, 'Authenticator verification failed.'));
+        this.submitting.set(false);
+      },
     });
   }
 

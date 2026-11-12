@@ -21,6 +21,8 @@ export interface AuthUser {
   projects: string[];
   disabled: boolean;
   mustChangePassword: boolean;
+  hasFactor?: boolean;
+  factorChangedAt?: string | null;
   /**
    * AGT-3670: projects where this user reviews through the Reviewer role and
    * holds no card write; `*` is every project. Absent outside a networked
@@ -37,6 +39,8 @@ export interface AuthStatus {
   bootstrapCodeRequired?: boolean;
   user?: AuthUser | null;
   secondFactorEnrollmentRequired?: boolean;
+  recoveryCodesRemaining?: number | null;
+  recoveryEnrollmentAllowed?: boolean;
   restoreNotice?: { archiveId: string; archiveCreatedAt: string; restoredAt: string } | null;
 }
 

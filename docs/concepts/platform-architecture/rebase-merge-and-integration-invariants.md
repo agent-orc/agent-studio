@@ -194,6 +194,7 @@ eligibility and operator copy cannot drift. Its matrix is pinned directly by
 | persisted `repository-root-unavailable` | `repository-root-unavailable` | Repository unavailable | No |
 | persisted `stale-attempt` | `stale-attempt` | Stale attempt | No |
 | persisted `worktree-unavailable` | `worktree-unavailable` | Integration worktree unavailable | No |
+| persisted `server-checkout-missing` | `server-checkout-missing` | Server checkout needed | No |
 | persisted `branch-sync-failed` | `branch-sync-failed` | Branch sync failed | No |
 | persisted `lineage-blocked` | `lineage-blocked` | Lineage blocked | No |
 | persisted `rebase-attribution-failed` | `rebase-attribution-failed` | Rebase attribution failed | No |
@@ -222,6 +223,7 @@ merge-into-develop project=<p> job=<id> delivery=<ref> integration=<branch> stra
 | The watch path resolves to no repository root | `repository-root-unavailable` |
 | The review subject is not the current settled run attempt | `stale-attempt` (a task-key lookup failure keeps `review-subject-task-key-unavailable`) |
 | No integration worktree slot can be prepared | `worktree-unavailable` |
+| The project has no server checkout, or its integration base is missing after fetch | `server-checkout-missing` (the card offers checkout setup instead of reissue) |
 | The integration branch cannot be synchronized with origin (diverged, fetch or fast-forward failure) | `branch-sync-failed` |
 | `main` is not an ancestor of `develop`, so the release line cannot advance | `lineage-blocked` |
 | A mechanical rebase merged but its attribution could not be persisted; the merge was rolled back | `rebase-attribution-failed` |

@@ -29,7 +29,7 @@ import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../
 import { ProjectDragDropService } from '../../../shell';
 import { ExplorerSectionsService } from '../../services/explorer-sections.service';
 import { ExplorerProjectActionsService } from '../../services/explorer-project-actions.service';
-import { boardLaneCountsLabel, laneCountsFor } from '../../studio-shell.project-rows';
+import { BOARD_ACTIVE_WORK_TOOLTIP, boardLaneCountsLabel, laneCountsFor } from '../../studio-shell.project-rows';
 import { ExplorerLaneDashboardComponent, type ExplorerTreeMetricView } from '../explorer-lane-dashboard/explorer-lane-dashboard.component';
 import {
   aggregateAutoPickup,
@@ -193,9 +193,6 @@ export class ExplorerWorkspaceTreeComponent {
     });
   }
 
-  readonly totalProjectCount = computed(() => this.projectRows().length);
-
-
   readonly groups = computed<ExplorerWorkspaceGroup[]>(() =>
     buildExplorerWorkspaceGroups(
       this.projectRows(),
@@ -273,6 +270,7 @@ export class ExplorerWorkspaceTreeComponent {
   }
   readonly laneCountsFor = laneCountsFor;
   readonly boardLaneCountsLabel = boardLaneCountsLabel;
+  readonly boardActiveWorkTooltip = BOARD_ACTIVE_WORK_TOOLTIP;
 
   autoPickupFor(name: string): ProjectAutoPickupIndicator {
     return this.projectAutoPickupByName().get(name) ?? {

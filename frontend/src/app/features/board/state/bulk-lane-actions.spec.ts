@@ -35,7 +35,7 @@ describe('bulkLaneOffer (AGT-3585)', () => {
 
   it('withholds bulk reissue when a card needs a server checkout', () => {
     const missing = card('missing', '5e-escalated', {
-      integration: { failure: { reason: 'This project needs a server checkout before delivery can integrate.' } },
+      integration: { failure: { code: 'server-checkout-missing', reason: 'This project needs a server checkout before delivery can integrate.' } },
     } as Partial<TaskInfo>);
     expect(bulkLaneOffer([card('a'), missing]).actions.map(action => action.id))
       .toEqual(['manual-resolve-escalated']);

@@ -107,6 +107,7 @@ function buildInfo(state: string, emptyContext = false, checkoutMissing = false)
     integration: checkoutMissing ? {
       status: 'pending', integrationBranch: 'main', deliveryRef: 'task/AGT-1994', sha: null,
       detail: 'Integration failed', failure: {
+        code: 'server-checkout-missing', label: 'Server checkout needed', rebaseRecoveryAvailable: false,
         reason: 'This project needs a server checkout before delivery can integrate.',
       },
     } : null,
@@ -448,12 +449,23 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     await expect(panel.getByTestId('escalation-action-reissue-escalated')).toHaveCount(0);
     await expect(page.getByTestId('triage-action-reissue-escalated')).toHaveCount(0);
     mkdirSync(SHOTS_DIR, { recursive: true });
+    // The studio shell renders the task header toolbar in the tab row; the
+    // standalone detail header shows it otherwise.
+    const header = page.locator('.studio-tab-actions:visible, app-detail-header header.detail__header:visible').first();
+    await expect(header.getByRole('button', { name: 'Continue (reissue)' })).toHaveCount(0);
+    const remedy = panel.getByTestId('server-checkout-remedy');
+    const capture = async (suffix: string) => {
+      await header.screenshot({ path: path.join(SHOTS_DIR, `server-checkout-detail-header-${suffix}.png`), animations: 'disabled' });
+      await panel.screenshot({ path: path.join(SHOTS_DIR, `server-checkout-escalation-summary-${suffix}.png`), animations: 'disabled' });
+      await remedy.screenshot({ path: path.join(SHOTS_DIR, `server-checkout-remedy-${suffix}.png`), animations: 'disabled' });
+    };
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
-      await panel.screenshot({ path: path.join(SHOTS_DIR, `server-checkout-remedy-${theme}.png`) });
+      await capture(theme);
     }
+    await setTheme(page, 'light');
     await page.setViewportSize({ width: 390, height: 844 });
-    await panel.screenshot({ path: path.join(SHOTS_DIR, 'server-checkout-remedy-390.png') });
+    await capture('390');
   });
 
   test.beforeEach(() => test.setTimeout(90_000));

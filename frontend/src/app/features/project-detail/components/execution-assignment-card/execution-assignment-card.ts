@@ -50,6 +50,7 @@ export class ExecutionAssignmentCardComponent implements OnInit {
   readonly integrationBranch = signal('develop');
   readonly saving = signal(false);
   readonly saveError = signal<string | null>(null);
+  readonly saveConfirmation = signal<string | null>(null);
   readonly probing = signal(false);
   readonly checks = signal<ProbeCheck[]>(initialChecks());
   private probeGeneration = 0;
@@ -105,6 +106,7 @@ export class ExecutionAssignmentCardComponent implements OnInit {
     this.pickupMode.set(mode);
     this.saving.set(true);
     this.saveError.set(null);
+    this.saveConfirmation.set(null);
     this.http
       .put<ProjectExecutionSettings>(
         `/api/projects/${encodeURIComponent(this.projectName())}/execution-runner`,
@@ -133,6 +135,7 @@ export class ExecutionAssignmentCardComponent implements OnInit {
     this.resetProbe();
     this.saving.set(true);
     this.saveError.set(null);
+    this.saveConfirmation.set(null);
     this.http
       .put<ProjectExecutionSettings>(
         `/api/projects/${encodeURIComponent(this.projectName())}/execution-runner`,
@@ -144,6 +147,7 @@ export class ExecutionAssignmentCardComponent implements OnInit {
         next: (response) => {
           this.selectedHostId.set(response.executionLocation || response.executionRunner || 'local');
           this.saving.set(false);
+          this.saveConfirmation.set('Execution location saved.');
           this.log('assignment-saved', { hostId: this.selectedHostId() });
         },
         error: () => {

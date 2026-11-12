@@ -43,6 +43,15 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
                 new OperatorWatcherCaseFactSource(cases, _root),
                 new OperatorBatchGateFactSource(batches),
                 new OperatorPendingPushFactSource(pushes, jobId => jobId == "job-8" ? "A-8" : null),
+                new OperatorBlockedPublicationFactSource(() => _tasks, task => task.Id == "A-7"
+                    ? new PipelineStepExecution
+                    {
+                        StepId = PipelineCatalogue.MergeIntoDevelopStepId, Status = PipelineStepStatus.Failed,
+                        Verdict = "error", FailureCode = AcceptedIntegrationFailureCodes.IntegrationPushBlocked,
+                        Reason = "Publication failed (remote-rejected); origin moved.",
+                        CompletedAt = task.EnteredLaneAt,
+                    }
+                    : null),
                 new OperatorProviderLimitFactSource(limits),
             ],
             _options, _clock, NullLogger<OperatorDecisionPublisher>.Instance);
@@ -78,6 +87,7 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
                 QuotaWait = new QuotaWaitStatus("claude", factTime, factTime.AddHours(2), 30, "weekly limit"),
             },
             Card("A-6", TaskStates.Progress, factTime),
+            Card("A-7", TaskStates.AutoReview, factTime),
         ];
         cases.Save(_root, Case("host-offline", factTime));
         cases.Save(_root, Case("idle-capacity", factTime));
@@ -104,6 +114,7 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
             Assert.All(published, item => Assert.InRange(item.Time - expected[type], TimeSpan.Zero, Limit));
         }
         Assert.Equal("A-8", events.Single(item => item.Type == OperatorDecisionTypes.PushPendingOverdue).CardKey);
+        Assert.Equal("A-7", events.Single(item => item.Type == OperatorDecisionTypes.PushBlocked).CardKey);
         Assert.Equal(2, events.Count(item => item.Type == OperatorDecisionTypes.QuotaExhausted));
 
         // Facts that last are not published again by later sweeps.

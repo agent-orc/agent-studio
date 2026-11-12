@@ -269,27 +269,27 @@ export function laneActionsFor(state: string): TriageButton[] {
   return LANE_ACTIONS[state] ?? [];
 }
 
-/** Checkout setup must happen before another coding attempt can help. */
-export function isServerCheckoutFailure(text: string): boolean {
-  return /needs a server checkout|server checkout.*missing|integration worktree base .* unavailable after fetch|could not resolve the project repository for the integration worktree/i.test(text);
+/**
+ * Integration failure codes whose remedy is server checkout setup, not another
+ * coding attempt. Read from the structured failure, never from message text.
+ */
+const SERVER_CHECKOUT_FAILURE_CODES: ReadonlySet<string> = new Set([
+  'server-checkout-missing',
+  'repository-root-unavailable',
+]);
+
+export function isServerCheckoutFailure(code: string | null | undefined): boolean {
+  return !!code && SERVER_CHECKOUT_FAILURE_CODES.has(code);
 }
 
 export function taskNeedsServerCheckout(info: TaskInfo): boolean {
-  return isServerCheckoutFailure([
-    info.integration?.failure?.reason,
-    info.parkedBlocker?.reason,
-  ].filter(Boolean).join(' '));
+  return isServerCheckoutFailure(info.integration?.failure?.code);
 }
 
 /** Lane primary for one task; drops Reissue while the server checkout is missing. */
 export function primaryActionForTask(info: TaskInfo): TriageButton | null {
   const action = primaryActionFor(info.state);
   return action?.id === 'reissue-escalated' && taskNeedsServerCheckout(info) ? null : action;
-}
-
-/** True when any escalation signal names a missing server checkout. */
-export function escalationNeedsServerCheckout(info: TaskInfo, ...texts: (string | null | undefined)[]): boolean {
-  return taskNeedsServerCheckout(info) || isServerCheckoutFailure(texts.filter(Boolean).join(' '));
 }
 
 export function laneLabelFor(state: string): string {

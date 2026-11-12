@@ -1,0 +1,11 @@
+@if (context(); as ctx) {
+  <app-verbose-debug-overlay
+    data-testid="app-verbose-debug-overlay"
+    [lines]="ctx.lines"
+    [runTimeline]="ctx.runTimeline"
+    [screenshots]="ctx.screenshots"
+    [tokenSummary]="ctx.tokenSummary"
+    [job]="ctx.job"
+    [source]="ctx.job?.id ?? 'cli-output.log'"
+    (closeRequest)="closeRequest.emit()" />
+}

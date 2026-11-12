@@ -142,6 +142,21 @@ public sealed class OperatorPendingPushFactSource(
             .ToArray();
 }
 
+/// <summary>
+/// Post Processing cards whose publication was refused (AGT-3695). It reads the
+/// published task index and each Post Processing card's pipeline record; it
+/// starts no scan and no git process.
+/// </summary>
+public sealed class OperatorBlockedPublicationFactSource(
+    Func<IReadOnlyList<TaskInfo>?> tasks,
+    Func<TaskInfo, PipelineStepExecution?> latestMergeOf) : IOperatorDecisionFactSource
+{
+    public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.PushBlocked];
+
+    public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
+        => tasks() is { } published ? OperatorDecisionFacts.FromBlockedPublications(published, latestMergeOf) : null;
+}
+
 /// <summary>Provider limits the runners recorded per CLI.</summary>
 public sealed class OperatorProviderLimitFactSource(ProviderLimitRegistry limits) : IOperatorDecisionFactSource
 {
