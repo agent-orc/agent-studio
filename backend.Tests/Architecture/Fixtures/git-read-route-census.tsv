@@ -184,6 +184,8 @@
 /api/projects/{projectName}/batch-gate/ledger	free	-	-	-
 /api/projects/{projectName}/batch-gate/queue-stalls	free	-	-	-
 /api/projects/{projectName}/batch-gate/report	free	-	-	-
+/api/projects/{projectName}/batch-gate/run-evidence	free	-	-	-
+/api/projects/{projectName}/batch-gate/run-log	free	-	-	-
 /api/projects/{projectName}/batch-gate/state	free	-	-	-
 /api/projects/{projectName}/build-profile	reachable	gap	Pipeline	Pipeline reads from the Git fact store
 /api/projects/{projectName}/chat-metadata	free	-	-	-
