@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { ClientSummary } from '../models/task.model';
-import { AuthService, type AuthUser } from './auth.service';
+import { AuthService } from './auth.service';
 
 /**
  * Reads the registry of client identities (`/api/clients`) and keeps a
@@ -43,13 +43,13 @@ export class ClientService {
     });
   }
 
-  /** Resolve human task owners only when a card needs one; the owner may read the user directory. */
+  /** Resolve human task owners only when a card needs one. */
   loadHumanNames(): void {
-    if (this.humanNamesRequested || this.auth.status()?.profile !== 'networked' || this.auth.status()?.user?.role !== 'owner') return;
+    if (this.humanNamesRequested || this.auth.status()?.profile !== 'networked' || !this.auth.status()?.authenticated) return;
     this.humanNamesRequested = true;
-    this.http.get<AuthUser[]>('/api/auth/users').subscribe({
+    this.http.get<{ id: string; displayName: string }[]>('/api/auth/directory').subscribe({
       next: users => {
-        if (this.auth.status()?.user?.role === 'owner')
+        if (this.auth.status()?.authenticated)
           this.humanNames.set(Object.fromEntries(users.map(user => [user.id, user.displayName])));
       },
       error: () => { this.humanNamesRequested = false; },

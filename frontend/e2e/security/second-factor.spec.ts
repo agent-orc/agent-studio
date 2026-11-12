@@ -58,7 +58,7 @@ test('Owner can inspect and revoke sessions and receives a new-session notice', 
   ];
   await page.route('**/api/**', route => route.fulfill(json([])));
   await page.route('**/api/v1/studio/board**', route => route.fulfill(json({
-    backlog: [], ready: [], progress: [], autoReview: [], humanReview: [],
+    backlog: [], preparation: [], ready: [], progress: [], autoReview: [], humanReview: [],
     escalated: [], completed: [], archive: [],
   })));
   await page.route('**/api/tasks/archive**', route => route.fulfill(json({ items: [], total: 0 })));

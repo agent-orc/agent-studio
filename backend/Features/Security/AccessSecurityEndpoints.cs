@@ -216,6 +216,13 @@ public static class AccessSecurityEndpoints
                 return Results.Ok(store.ListUsers().Select(ToResponse));
             }));
 
+        auth.MapGet("/directory", (HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                RequireHuman(context, store);
+                return Results.Ok(store.ListUsers().Select(user => new { user.Id, user.DisplayName }));
+            }));
+
         auth.MapPost("/users", (CreateUserRequest request, HttpContext context, AccessSecurityStore store) =>
             Execute(() =>
             {
