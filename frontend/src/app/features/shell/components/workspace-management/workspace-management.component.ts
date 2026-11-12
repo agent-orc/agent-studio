@@ -165,16 +165,6 @@ export class WorkspaceManagementComponent implements OnInit {
     this.workspaceManager.openCreate();
   }
 
-  /** F45b — prompt for a new workspace name and create it. */
-  createRegistryWorkspace(): void {
-    const name = window.prompt('New workspace name')?.trim();
-    if (!name) return;
-    this.jobService.createRegistryWorkspace(name).subscribe({
-      next: () => this.reloadRegistryWorkspaces(),
-      error: (err: unknown) => this.registryWorkspacesError.set(this.errMsg(err)),
-    });
-  }
-
   /** F66 — click-to-edit rename (state owned by WorkspaceSettingsService). */
   renameRegistryWorkspace(ws: RegistryWorkspaceListItem): void {
     this.wsSettings.startRename(ws.id, ws.displayName);

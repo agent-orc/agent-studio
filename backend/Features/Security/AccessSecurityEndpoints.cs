@@ -529,20 +529,21 @@ public static class AccessSecurityEndpoints
             || SecurityProfiles.IsNetworked(context.RequestServices.GetRequiredService<IConfiguration>());
         context.Response.Cookies.Append(
             https ? AccessSecurityStore.SessionCookieName : AccessSecurityStore.InsecureSessionCookieName,
-            token, SessionCookieOptions(https));
+            token, SessionCookieOptions(https, context.RequestServices.GetRequiredService<IConfiguration>()));
         context.Response.Cookies.Append(
             https ? "__Host-agentstudio-csrf" : "agentstudio-csrf",
             csrfToken, CsrfCookieOptions(https));
         context.Response.Headers.CacheControl = "no-store";
     }
 
-    private static CookieOptions SessionCookieOptions(bool https) => new()
+    private static CookieOptions SessionCookieOptions(bool https, IConfiguration? configuration = null) => new()
     {
         HttpOnly = true,
         Secure = https,
         SameSite = SameSiteMode.Strict,
         IsEssential = true,
-        Path = "/"
+        Path = "/",
+        MaxAge = configuration is null ? null : TimeSpan.FromMinutes(configuration.GetValue("Security:Session:AbsoluteMinutes", 10080))
     };
 
     private static CookieOptions CsrfCookieOptions(bool https) => new()

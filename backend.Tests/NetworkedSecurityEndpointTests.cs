@@ -362,7 +362,8 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         Assert.Contains(bootstrap.Headers.GetValues("Set-Cookie"), value =>
             value.Contains("HttpOnly", StringComparison.OrdinalIgnoreCase)
             && value.Contains("Secure", StringComparison.OrdinalIgnoreCase)
-            && value.Contains("SameSite=Strict", StringComparison.OrdinalIgnoreCase));
+            && value.Contains("SameSite=Strict", StringComparison.OrdinalIgnoreCase)
+            && value.Contains("max-age=604800", StringComparison.OrdinalIgnoreCase));
         using (var start = new HttpRequestMessage(HttpMethod.Post, "/api/auth/totp/start")
         {
             Content = JsonContent.Create(new { })

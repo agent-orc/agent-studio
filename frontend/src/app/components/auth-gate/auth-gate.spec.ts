@@ -37,6 +37,9 @@ describe('authGateFailure', () => {
   });
 
   it('keeps the server message, then the fallback, for an answered request', () => {
+    expect(authGateFailure(new HttpErrorResponse({ status: 401, error: {
+      code: 'invalid-second-factor', message: 'The second factor is invalid.',
+    } }), 'Sign-in failed.')).toBe('The authenticator code is invalid.');
     expect(authGateFailure(new HttpErrorResponse({ status: 400, error: { message: 'The authenticator code is invalid.' } }),
       'Authenticator code is invalid.')).toBe('The authenticator code is invalid.');
     expect(authGateFailure(new HttpErrorResponse({ status: 500 }), 'Sign-in failed.')).toBe('Sign-in failed.');
@@ -58,7 +61,7 @@ describe('AuthGateComponent second-factor enrollment', () => {
     const gate = mount(() => { const attempt = new Subject<{ recoveryCodes: string[] }>(); attempts.push(attempt); return attempt; });
     gate.secondFactorCode = '000000';
     gate.submit();
-    attempts[0].error(new HttpErrorResponse({ status: 400, error: { message: 'The authenticator code is invalid.' } }));
+    attempts[0].error(new HttpErrorResponse({ status: 400, error: { message: 'Different server wording' } }));
     expect(gate.error()).toBe('The authenticator code is invalid.');
 
     gate.secondFactorCode = '123456';

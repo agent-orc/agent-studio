@@ -18,6 +18,9 @@
     </div>
   </header>
   @if (error()) { <p role="alert">{{ error() }}</p> }
+  @if (loaded() && !error() && !data().nodes.length) {
+    <p class="structure-empty" data-testid="structure-empty">No structure has been recorded yet.</p>
+  }
   @if (library().registries.length || libraryError()) {
     <section class="structure-library" aria-label="Library and registry inventory" data-testid="structure-library">
       <div class="structure-library-head"><div><h2>Libraries and registries</h2>
@@ -58,7 +61,7 @@
       }
     </section>
   }
-  <div class="structure-body">
+  <div class="structure-body" [style.display]="loaded() && !data().nodes.length ? 'none' : null">
     <div class="structure-main" tabindex="0" role="region" aria-label="Structure diagram"
          (keydown)="onCanvasKeydown($event)">
       <div class="structure-canvas" data-testid="structure-canvas" [attr.data-layout-ms]="layout().ms"
@@ -180,5 +183,7 @@
       }
     </aside>
   </div>
-  <p class="structure-shortcuts">Keys 1–3 change detail · H host · C container · Escape clears selection</p>
+  @if (data().nodes.length) {
+    <p class="structure-shortcuts" data-testid="structure-shortcuts">Keys 1–3 change detail · H host · C container · Escape clears selection</p>
+  }
 </section>
