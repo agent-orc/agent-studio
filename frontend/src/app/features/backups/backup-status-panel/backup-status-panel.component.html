@@ -16,7 +16,13 @@
         <ul class="backup-status__warnings" data-testid="operations-backups-warnings">
           @for (warning of o.warnings; track warning.code) {
             <li [attr.data-code]="warning.code" [attr.data-severity]="warning.severity">
-              <app-status-indicator [compact]="true" [wrap]="true" [tone]="warning.severity === 'danger' ? 'danger' : 'warning'" [label]="warning.message" />
+              @if (warning.code === 'backup-not-configured') {
+                <app-status-indicator [compact]="true" tone="warning" label="Backups are off" />
+                <span>The backup key must be stored on the host and configured as <code>Backup:KeyFile</code>. This requires host access.</span>
+                <a href="https://github.com/agent-orc/agent-studio/blob/main/docs/operations/setup/studio-backup-restore.md" target="_blank" rel="noopener noreferrer">Open backup runbook</a>
+              } @else {
+                <app-status-indicator [compact]="true" [wrap]="true" [tone]="warning.severity === 'danger' ? 'danger' : 'warning'" [label]="warning.message" />
+              }
             </li>
           }
         </ul>

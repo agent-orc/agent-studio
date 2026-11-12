@@ -236,7 +236,8 @@ public static class ServerReadinessPolicy
             "No gate worker is configured: no pull worker registered and RemoteGate:SshHost is not set, "
             + "so build gates run on this server or not at all.",
             "Start a pull gate worker against this server, or set RemoteGate__SshHost and RemoteGate__WorkerPath "
-            + "for the api service and recreate the stack.");
+            + "for the api service and recreate the stack. This needs host access because the worker and API service "
+            + "configuration run outside Studio.");
     }
 
     public static IEnumerable<ReadinessCheck> ExecutionHosts(ExecutionHostsFact fact, DateTimeOffset now)

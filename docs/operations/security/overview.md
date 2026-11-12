@@ -1370,7 +1370,7 @@ Dossier's guardrails in code:
 
 ### Installation security view (AGT-3575)
 
-The Operations page has a Security section, and operator agents read the same
+Settings → Operations has the installation Security section. Project Operations pages link to it, and operator agents read the same
 answer from `GET /api/security/posture`. The route declares
 `security.posture.read`, a workspace permission held by the Owner and the
 `operator-agent` role only; Admin, Developer, Viewer, and Product users and
