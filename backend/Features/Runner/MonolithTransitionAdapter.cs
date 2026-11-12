@@ -181,6 +181,45 @@ public static class MonolithTransitionAdapter
     public static IReadOnlyList<string> BatchConflictingFiles(BatchPlannerCard left, BatchPlannerCard right)
         => BatchFormationPolicy.ConflictingFiles(left, right);
 
+    public static BatchCloseSelection BatchCloseSelection(IReadOnlyCollection<string> eligibleKeys,
+        IReadOnlyList<string> proposedKeys, int minimumSize, int maximumSize)
+        => BatchFormationPolicy.CloseSelection(eligibleKeys, proposedKeys, minimumSize, maximumSize);
+
+    public static BatchFormationRoute BatchLookAheadRoute(string decision)
+        => BatchFormationPolicy.LookAheadRoute(decision);
+
+    public static bool BatchConsumesCloseNow(BatchFormationRoute route)
+        => BatchFormationPolicy.ConsumesCloseNow(route);
+
+    public static IReadOnlyList<string> BatchLookAheadCloseKeys(IEnumerable<string> provenGreenKeys,
+        IEnumerable<string> proposedMembers)
+        => BatchFormationPolicy.LookAheadCloseKeys(provenGreenKeys, proposedMembers);
+
+    public static IReadOnlyList<string> BatchSnapshotEligible(IEnumerable<(string TaskKey, bool Excluded)> members)
+        => BatchFormationPolicy.SnapshotEligible(members);
+
+    public static AgentStudio.TaskServer.Contracts.BatchGate.BatchPlanDecision BatchPlanWithExcluded(
+        AgentStudio.TaskServer.Contracts.BatchGate.BatchPlanDecision plan,
+        IReadOnlyList<AgentStudio.TaskServer.Contracts.BatchGate.BatchPlanExcludedMember> excluded)
+        => BatchFormationPolicy.WithExcluded(plan, excluded);
+
+    public static BatchThresholdPlan BatchThresholdPlan(bool closed, bool perTask, string? formationReason,
+        int queuedPartners, int eligibleCount, int currentCount)
+        => BatchFormationPolicy.ThresholdPlan(closed, perTask, formationReason, queuedPartners, eligibleCount,
+            currentCount);
+
+    public static BatchAdmissionVerdict BatchAdmitMember(bool generationSuperseded, bool policyExcluded,
+        bool operatorEject)
+        => BatchFormationPolicy.AdmitMember(generationSuperseded, policyExcluded, operatorEject);
+
+    public static BatchAdmissionReplay BatchAdmitReplay(int conflictedFiles, bool success, bool hasTip,
+        bool mappingComplete, bool unattributableFailure)
+        => BatchFormationPolicy.AdmitReplay(conflictedFiles, success, hasTip, mappingComplete, unattributableFailure);
+
+    public static BatchAdmissionOutcome BatchAdmissionOutcome(bool baseMoved, bool replacement, int rejected,
+        int admitted, int minimumSize)
+        => BatchFormationPolicy.AdmissionOutcome(baseMoved, replacement, rejected, admitted, minimumSize);
+
     public static BatchIntentDecision BatchIntent(BatchIntentFacts facts)
         => BatchFormationPolicy.Decide(facts);
 
