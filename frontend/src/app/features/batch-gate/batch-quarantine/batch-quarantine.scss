@@ -1,0 +1,16 @@
+:host { display: block; padding-bottom: var(--studio-spacing-4); border-bottom: 1px solid var(--studio-border); margin-bottom: var(--studio-spacing-2); }
+.batch-quarantine { display: grid; gap: var(--studio-spacing-2); }
+.batch-quarantine h3 { margin: 0; font-size: inherit; }
+.batch-quarantine p { margin: 0; overflow-wrap: anywhere; }
+.batch-quarantine__rows { display: grid; gap: var(--studio-spacing-2); margin: 0; padding: 0; list-style: none; }
+.batch-quarantine__row {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  margin: 0;
+  padding: var(--studio-spacing-3);
+  border: 1px solid color-mix(in srgb, var(--studio-status-warning) 40%, var(--studio-border));
+  border-radius: var(--studio-action-radius-sm);
+  background: color-mix(in srgb, var(--studio-status-warning) 6%, var(--studio-bg-surface));
+  min-width: 0;
+}
+.batch-quarantine__file, .batch-quarantine__error { font-family: var(--font-mono); font-size: .78rem; color: var(--studio-fg-muted); }
