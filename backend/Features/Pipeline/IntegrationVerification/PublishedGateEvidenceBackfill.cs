@@ -8,10 +8,12 @@ namespace AgentStudio.Pipeline;
 /// A per-task publication that ran before its push recorded the gate leaves a
 /// first-parent commit without an entry, although the card's own pre-develop
 /// build gate passed on exactly that commit. The repair adds an entry only
-/// from such a receipt: verdict <c>Ok</c>, executed (not reused), the full
-/// suite ran, expected and tested SHA are the commit, and the commit is on the
-/// first-parent line of the published integration branch. Containment alone
-/// never creates evidence.
+/// from such a receipt: verdict <c>Ok</c>, executed (not reused), expected and
+/// tested SHA are the commit, and the commit is on the first-parent line of the
+/// published integration branch. Like the inline per-task push, it accepts the
+/// test level the gate's own selection chose for that commit (build-only when
+/// no test is affected) and records it in the entry. Containment alone never
+/// creates evidence.
 /// </summary>
 public sealed class PublishedGateEvidenceBackfill(
     TaskScannerService scanner, GitService git, IHostApplicationLifetime lifetime,
@@ -113,7 +115,7 @@ public sealed class PublishedGateEvidenceBackfill(
     public int Repair(string project, string jobId, string jobFolderPath, string? watchPath)
     {
         if (string.IsNullOrWhiteSpace(watchPath)) return 0;
-        var receipts = PassedFullSuiteReceipts(jobFolderPath);
+        var receipts = PassedReceipts(jobFolderPath);
         if (receipts.Count == 0) return 0;
         var repoRoot = git.ResolveRepoRootForWatchPath(watchPath);
         if (repoRoot is null
@@ -138,12 +140,13 @@ public sealed class PublishedGateEvidenceBackfill(
             if (!PublishedGateEvidenceStore.Append(watchPath, new PublishedGateEvidence(
                     project, branch, receipt.Sha, GatePrefix, jobId,
                     nameof(BuildTestGateVerdict.Ok), receipt.Reason, receipt.Sha,
-                    DateTimeOffset.UtcNow, Backfilled: true, GateLog: $"{jobId}/{gateLog.Replace('\\', '/')}")))
+                    DateTimeOffset.UtcNow, Backfilled: true, GateLog: $"{jobId}/{gateLog.Replace('\\', '/')}",
+                    TestLevel: receipt.TestLevel)))
                 continue;
             added++;
             logger.LogInformation(
-                "published-gate-evidence backfilled project={Project} job={JobId} branch={Branch} tree={Tree} log={Log}",
-                project, jobId, branch, receipt.Sha, gateLog);
+                "published-gate-evidence backfilled project={Project} job={JobId} branch={Branch} tree={Tree} level={Level} log={Log}",
+                project, jobId, branch, receipt.Sha, receipt.TestLevel, gateLog);
         }
         return added;
     }
@@ -157,14 +160,15 @@ public sealed class PublishedGateEvidenceBackfill(
             .Any(commit => string.Equals(commit.Sha, sha, StringComparison.OrdinalIgnoreCase)) == true;
     }
 
-    internal sealed record PassedReceipt(string Path, string Sha, string Reason);
+    internal sealed record PassedReceipt(string Path, string Sha, string Reason, string TestLevel);
 
     /// <summary>
-    /// The card's executed, green, full-suite pre-develop gate receipts whose
-    /// expected and tested SHA agree. Red, cancelled, reused, narrow and
-    /// malformed receipts are skipped.
+    /// The card's executed, green pre-develop gate receipts whose expected and
+    /// tested SHA agree, at whatever test level the gate's selection chose.
+    /// Red, cancelled, reused and malformed receipts, and receipts without a
+    /// test-level header, are skipped.
     /// </summary>
-    internal static IReadOnlyList<PassedReceipt> PassedFullSuiteReceipts(string jobFolderPath)
+    internal static IReadOnlyList<PassedReceipt> PassedReceipts(string jobFolderPath)
     {
         var dir = Path.Combine(jobFolderPath, "post-steps");
         if (!Directory.Exists(dir)) return [];
@@ -186,8 +190,8 @@ public sealed class PublishedGateEvidenceBackfill(
                     || !ReviewSubjectStore.IsValidResultSha(tested)
                     || !string.Equals(expected, tested, StringComparison.OrdinalIgnoreCase)
                     || !reasonLine.StartsWith("reason=", StringComparison.Ordinal)
-                    || !RanFullSuite(reasonLine)) continue;
-                receipts.Add(new(path, tested!.ToLowerInvariant(), reasonLine["reason=".Length..]));
+                    || TestLevel(reasonLine) is not { } level) continue;
+                receipts.Add(new(path, tested!.ToLowerInvariant(), reasonLine["reason=".Length..], level));
             }
             catch (IOException ex)
             {
@@ -197,11 +201,11 @@ public sealed class PublishedGateEvidenceBackfill(
         return receipts;
     }
 
-    private static bool RanFullSuite(string reasonLine)
+    /// <summary>The level the gate's own selection ran, or null when the receipt names none.</summary>
+    private static string? TestLevel(string reasonLine)
     {
-        var suite = HeaderValue(reasonLine, "full-suite=")?.TrimEnd(';');
-        return HeaderValue(reasonLine, "test-level=")?.TrimEnd(';') == "full"
-               && suite is "map-fallback-and-run" or "required-and-run" or "run-conservatively";
+        var level = HeaderValue(reasonLine, "test-level=")?.TrimEnd(';');
+        return string.IsNullOrWhiteSpace(level) ? null : level;
     }
 
     private static string? HeaderValue(string line, string key)

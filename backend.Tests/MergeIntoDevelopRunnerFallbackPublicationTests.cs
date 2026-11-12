@@ -30,6 +30,35 @@ public sealed partial class MergeIntoDevelopRunnerTests
         Assert.Equal(result.MergedSha, publication.PublishedSha);
     }
 
+    [Fact]
+    public async Task Single_parent_net_change_publication_records_the_published_commit_not_its_parent()
+    {
+        // AGT-3747: dd73bd98f got an inline entry on its parent tree and
+        // de9f7a8bf and 140f9c202 got none. A single-parent net change records
+        // the published commit itself.
+        var fixture = SeedSingleParentNetChangeFixture("single-parent-net-change", "single-net");
+        var developBefore = RunGit(fixture.Repo, "rev-parse develop").Out.Trim();
+        var gate = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 10, "", "green", true, false));
+        var runner = PublicationRunner(fixture, gate);
+
+        var result = await runner.RunAsync("Fixture", "single-net", fixture.Folder,
+            fixture.WatchPath, "develop", CancellationToken.None,
+            publicationFence: publish => { publish(); return true; });
+
+        Assert.True(result.Outcome.IsSuccessfulIntegration(), result.Error);
+        var parents = RunGit(fixture.Repo, $"rev-list --parents -n 1 {result.MergedSha}").Out.Trim().Split(' ');
+        Assert.Equal([result.MergedSha!, developBefore], parents);
+        Assert.Contains("Agent-Studio-Net-Change-Of:",
+            RunGit(fixture.Repo, $"show -s --format=%B {result.MergedSha}").Out);
+        Assert.Equal(result.MergedSha, RunGit(fixture.Repo, "rev-parse origin/develop").Out.Trim());
+        var publication = Assert.Single(PublishedGateEvidenceStore.Read(fixture.WatchPath));
+        Assert.Equal(result.MergedSha, publication.TreeSha);
+        Assert.Equal(result.MergedSha, publication.PublishedSha);
+        Assert.NotEqual(developBefore, publication.TreeSha);
+        Assert.False(publication.Backfilled);
+    }
+
     [Theory]
     [InlineData(BuildTestGateVerdict.Fail, false)]
     [InlineData(BuildTestGateVerdict.Ok, true)]
@@ -69,15 +98,55 @@ public sealed partial class MergeIntoDevelopRunnerTests
         Assert.True(entry.Backfilled);
         Assert.Equal("backfill", entry.SourceJobId);
         Assert.Equal("backfill/post-steps/pre-develop-build-gate-1.log", entry.GateLog);
+        Assert.Equal("full", entry.TestLevel);
         Assert.Contains("backfilled", entry.Describe());
+    }
+
+    [Theory]
+    [InlineData("test-level=build-only; selected=0; full-suite=not-run", "build-only")]
+    [InlineData("test-level=work-package; selected=1; full-suite=not-run; omitted=2", "work-package")]
+    public void Backfill_accepts_the_level_the_gate_selection_chose(string coverage, string level)
+    {
+        // AGT-3747: 140f9c202 changed only workflows, docs and scripts; its
+        // passed gate selected no test and ran build-only.
+        var fixture = SeedLateGateFixture($"backfill-level-{level}", "level", publishDelivery: true);
+        var published = RunGit(fixture.Repo, "rev-parse develop").Out.Trim();
+        WriteReceipt(fixture.Folder, 1, published, "Ok", "Executed", coverage);
+        var backfill = Backfill(fixture);
+
+        Assert.Equal(1, backfill.Repair("Fixture", "level", fixture.Folder, fixture.WatchPath));
+        Assert.Equal(0, backfill.Repair("Fixture", "level", fixture.Folder, fixture.WatchPath));
+
+        var entry = Assert.Single(PublishedGateEvidenceStore.Read(fixture.WatchPath));
+        Assert.Equal(published, entry.TreeSha);
+        Assert.True(entry.Backfilled);
+        Assert.Equal(level, entry.TestLevel);
+        Assert.Contains($"test level {level}", entry.Describe());
+    }
+
+    [Fact]
+    public void Backfill_never_overwrites_a_recorded_entry_for_the_tree()
+    {
+        var fixture = SeedLateGateFixture("backfill-keeps-inline", "keeps", publishDelivery: true);
+        var published = RunGit(fixture.Repo, "rev-parse develop").Out.Trim();
+        // clock-independent: the recording time of a kept entry never meets "now".
+        Assert.True(PublishedGateEvidenceStore.Append(fixture.WatchPath, new PublishedGateEvidence(
+            "Fixture", "develop", published, "pre-develop-build-gate", "inline", "Ok",
+            "inline gate", published, new DateTimeOffset(2026, 11, 10, 12, 0, 0, TimeSpan.Zero))));
+        WriteReceipt(fixture.Folder, 1, published, "Ok", "Executed", "test-level=build-only; selected=0; full-suite=not-run");
+
+        Assert.Equal(0, Backfill(fixture).Repair("Fixture", "keeps", fixture.Folder, fixture.WatchPath));
+        var entry = Assert.Single(PublishedGateEvidenceStore.Read(fixture.WatchPath));
+        Assert.False(entry.Backfilled);
+        Assert.Equal("inline", entry.SourceJobId);
     }
 
     [Theory]
     [InlineData("Fail", "Executed", "test-level=full; selected=3; full-suite=required-and-run", false)]
     [InlineData("Ok", "CacheHit", "test-level=full; selected=3; full-suite=required-and-run", false)]
-    [InlineData("Ok", "Executed", "test-level=work-package; selected=1; full-suite=not-run; omitted=2", false)]
+    [InlineData("Ok", "Executed", "selected=0", false)]
     [InlineData("Ok", "Executed", "test-level=full; selected=3; full-suite=required-and-run", true)]
-    public void Backfill_refuses_red_reused_narrow_and_off_line_gates(
+    public void Backfill_refuses_red_reused_levelless_and_off_line_gates(
         string verdict, string source, string coverage, bool offLine)
     {
         var fixture = SeedLateGateFixture($"backfill-refused-{verdict}-{source}-{offLine}", "refused",
@@ -143,6 +212,14 @@ public sealed partial class MergeIntoDevelopRunnerTests
             + $"expectedSha={sha} testedSha={sha}\n"
             + $"reason=Build and tests passed; {coverage}\n"
             + $"verdictSource={source} originalRunId=n/a\n");
+    }
+
+    private LateGateFixture SeedSingleParentNetChangeFixture(string name, string jobId)
+    {
+        // The delivery carries a merge commit and develop moved on, so the
+        // integration replays its final tree as one single-parent commit.
+        var fixture = SeedNetChangeFixture(name, jobId);
+        return fixture;
     }
 
     private LateGateFixture SeedNetChangeFixture(string name, string jobId)

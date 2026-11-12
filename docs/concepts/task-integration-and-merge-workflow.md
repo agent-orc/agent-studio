@@ -552,11 +552,18 @@ now a no-op integration:
   record; no path on current `develop` skips it. Publications made before that
   ordering held are repaired once at startup by `PublishedGateEvidenceBackfill`:
   it adds an entry only from a card's own executed `pre-develop-build-gate-*.log`
-  receipt with verdict `Ok`, `test-level=full` and a run full suite, whose
-  expected and tested SHA are a commit on the first-parent line of the
-  published branch. Such an entry carries `backfilled: true` and `gateLog`
-  (`<card>/post-steps/<log>`); the repair is idempotent and never overwrites an
-  existing entry. Containment alone still creates no evidence.
+  receipt with verdict `Ok`, failure kind `None`, whose expected and tested
+  SHA are a commit on the first-parent line of the published branch. Like the
+  inline push, it accepts the test level the gate's own selection chose for
+  that commit, for example `test-level=build-only; selected=0;
+  full-suite=not-run` when no test is affected (`140f9c202`, a net change of
+  workflows, docs and scripts). A receipt without a `test-level` header, a red,
+  cancelled, missing-source or reused gate is skipped. Such an entry carries
+  `backfilled: true`, `gateLog` (`<card>/post-steps/<log>`) and `testLevel`;
+  the repair is idempotent and never overwrites an existing entry. Containment
+  alone still creates no evidence. On current `develop` a single-parent
+  net-change publication gets its inline entry on the published commit itself,
+  not on its parent as the older entry for `dd73bd98f` (tree `81123540e`) shows.
   Acceptance also counts a passed full-suite batch base verdict as the gate of
   its base commit when its gate profile digest matches the current project
   profile, its evidence file exists, and that commit is on the first-parent
