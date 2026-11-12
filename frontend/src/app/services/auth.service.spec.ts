@@ -3,7 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AuthService } from './auth.service';
+import { AuthService, AuthSessionState, type AuthUser } from './auth.service';
 
 describe('standalone Studio identity projection', () => {
   let auth: AuthService;
@@ -86,5 +86,59 @@ describe('standalone Studio identity projection', () => {
         projects: [], disabled: false, mustChangePassword: false },
     });
     expect(auth.status()?.user?.id).toBe('usr_owner');
+  });
+
+  it('holds the restored Owner at the notice until it is acknowledged', () => {
+    auth.initialize();
+    http.expectOne('/api/auth/status').flush({
+      profile: 'networked', bootstrapRequired: false, authenticated: false,
+    });
+    auth.login('owner', 'password').subscribe();
+    http.expectOne('/api/auth/login').flush({
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr_owner', username: 'owner', displayName: 'Owner', role: 'owner',
+        projects: [], disabled: false, mustChangePassword: false },
+      restoreNotice: { archiveId: 'archive-1', archiveCreatedAt: '2026-11-09T06:00:00Z', restoredAt: '2026-11-10T06:00:00Z' },
+    });
+    expect(auth.studioAllowed()).toBe(false);
+    auth.acknowledgeRestoreNotice('archive-1').subscribe();
+    const request = http.expectOne('/api/auth/restore-notice/acknowledge');
+    expect(request.request.body).toEqual({ archiveId: 'archive-1' });
+    request.flush(null);
+    expect(auth.studioAllowed()).toBe(true);
+  });
+});
+
+describe('AGT-3668 session without a project', () => {
+  const user = (role: AuthUser['role'], projects: string[]): AuthUser => ({
+    id: 'usr-1', username: 'carla', displayName: 'Carla', role, projects, disabled: false, mustChangePassword: false,
+  });
+
+  function state(status: Parameters<AuthSessionState['status']['set']>[0]): AuthSessionState {
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection()] });
+    const session = TestBed.inject(AuthSessionState);
+    session.status.set(status);
+    return session;
+  }
+
+  it('is a Product session bound to a project, not one without a project', () => {
+    const session = state({ profile: 'networked', bootstrapRequired: false, authenticated: true, user: user('contributor', ['PROJ-1']) });
+    expect(session.productSession()).toBe(true);
+    expect(session.withoutProject()).toBe(false);
+  });
+
+  it('reports a non-owner account whose last project binding was removed', () => {
+    expect(state({ profile: 'networked', bootstrapRequired: false, authenticated: true, user: user('viewer', []) })
+      .withoutProject()).toBe(true);
+  });
+
+  it('never reports an owner, a signed-out browser or the local profile', () => {
+    expect(state({ profile: 'networked', bootstrapRequired: false, authenticated: true, user: user('owner', []) })
+      .withoutProject()).toBe(false);
+    TestBed.resetTestingModule();
+    expect(state({ profile: 'networked', bootstrapRequired: false, authenticated: false, user: user('contributor', []) })
+      .withoutProject()).toBe(false);
+    TestBed.resetTestingModule();
+    expect(state({ profile: 'local', bootstrapRequired: false, authenticated: false }).withoutProject()).toBe(false);
   });
 });

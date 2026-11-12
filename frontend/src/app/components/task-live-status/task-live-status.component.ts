@@ -177,7 +177,6 @@ export class TaskLiveStatusComponent {
         attempt: status.attempt,
       };
     }
-
     // AGT-3579: the runner recorded why it is not picking this card (mode,
     // slots, quota defer, load throttle, provider limit). The sentence is the
     // runner's own; the headline names the reason the lane header counts.
@@ -202,8 +201,8 @@ export class TaskLiveStatusComponent {
     }
 
     if (status.queue) {
-      const queueName = status.queue.kind === 'review' ? 'review slot' : 'runner slot';
-      const queuedHeadline = status.queue.kind === 'runner' ? 'Queued for runner' : `Waiting for ${queueName}`;
+      const queuedHeadline = status.queue.kind === 'runner' ? 'Queued for runner'
+        : status.queue.state === 'integration' ? 'Waiting for delivery integration' : 'Waiting for review slot';
       const headline = status.queue.position != null
         ? `${queuedHeadline} · position ${status.queue.position}`
         : status.queue.reason

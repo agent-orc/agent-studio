@@ -21,7 +21,7 @@
                 <span>The backup key must be stored on the host and configured as <code>Backup:KeyFile</code>. This requires host access.</span>
                 <a href="https://github.com/agent-orc/agent-studio/blob/main/docs/operations/setup/studio-backup-restore.md" target="_blank" rel="noopener noreferrer">Open backup runbook</a>
               } @else {
-                <app-status-indicator [compact]="true" [tone]="warning.severity === 'danger' ? 'danger' : 'warning'" [label]="warning.message" />
+                <app-status-indicator [compact]="true" [wrap]="true" [tone]="warning.severity === 'danger' ? 'danger' : 'warning'" [label]="warning.message" />
               }
             </li>
           }
@@ -57,6 +57,7 @@
           <dt>Off-host copy</dt>
           <dd>
             <app-status-indicator [compact]="true" [tone]="offHostTone(o.offHost)" [label]="offHostLabel(o.offHost)" [detail]="o.offHost.lastError" />
+            @if (o.lastGood; as good) { <small data-testid="operations-backups-offhost-id">Newest backup: <code>{{ good.id }}</code></small> }
             @if (o.offHost.target) { <small>{{ o.offHost.target }}</small> }
           </dd>
         </div>

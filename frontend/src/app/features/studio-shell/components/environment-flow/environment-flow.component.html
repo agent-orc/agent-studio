@@ -33,7 +33,7 @@
         </section>
         <section aria-labelledby="environment-lanes-title"><h2 id="environment-lanes-title">Lane flow <small>last 24 h</small></h2>
           <div class="environment-flow__table-wrap"><table><thead><tr><th>Lane</th><th>Entered</th><th>Left</th><th>Median stay</th></tr></thead><tbody>
-            @for (lane of snapshot.lanes; track lane.lane) { <tr><th>{{ lane.lane }} @if (laneMarkers(lane.lane)) { <span class="environment-flow__marker">{{ laneMarkers(lane.lane) }} open</span> }</th><td>{{ lane.entered }}</td><td>{{ lane.left }}</td><td>{{ minutes(lane.medianMinutes) }}</td></tr> }
+            @for (lane of snapshot.lanes; track lane.lane) { <tr><th>{{ laneName(lane.lane) }} @if (laneMarkers(lane.lane)) { <span class="environment-flow__marker">{{ laneMarkers(lane.lane) }} open</span> }</th><td>{{ lane.entered }}</td><td>{{ lane.left }}</td><td>{{ minutes(lane.medianMinutes) }}</td></tr> }
           </tbody></table></div>
         </section>
       </div>
@@ -103,7 +103,7 @@
     </section>
     <section aria-labelledby="environment-events-title"><h2 id="environment-events-title">Open stall events <small>{{ cases().length }}</small></h2>
       @for (item of cases(); track item.id) { <article class="environment-flow__event"><b>{{ item.detectorClass }} · {{ item.project }}</b>
-        <span>{{ item.lastSummary }}</span><small>Cards: {{ item.affectedCards.join(', ') || 'not linked' }}</small>
+        <span>{{ displayCaseSummary(item) }}</span><small>Cards: {{ cardNames(item.affectedCards) }}</small>
         @if (latestReceipt(item); as receipt) { <small>AI Operator: {{ receipt.chosenAction }} · {{ receipt.callStatus }}</small> }
         @else { <small>AI Operator: no receipt linked</small> }
       </article> }

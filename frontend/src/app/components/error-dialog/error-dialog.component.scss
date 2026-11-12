@@ -1,0 +1,42 @@
+@use '../../../styles/mixins' as m;
+
+// AGT-3624: an expected refusal reads as one plain sentence and the next
+// action. The raw payload sits behind the Technical details disclosure.
+.error-dialog__refusal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+  margin: 0;
+}
+
+.error-dialog__reason {
+  margin: 0;
+  font-size: var(--studio-font-size-lg);
+  line-height: 1.5;
+  color: var(--studio-fg-strong);
+}
+
+.error-dialog__next {
+  margin: 0;
+  font-size: var(--studio-font-size-md);
+  line-height: 1.5;
+  color: var(--studio-fg);
+}
+
+.error-dialog__disclosure {
+  @include m.disclosure-control;
+
+  color: var(--studio-fg-muted);
+  font-size: var(--studio-font-size-sm);
+}
+
+.error-dialog__technical {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-3);
+}
+
+.error-dialog__technical-actions {
+  display: flex;
+  justify-content: flex-end;
+}

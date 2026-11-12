@@ -1,8 +1,51 @@
 import { test, expect } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import * as path from 'node:path';
+import { setTheme } from '../helpers/theme';
 
 const screenshotDir = path.join(process.env.JOB_RESULTS_DIR ?? path.resolve(__dirname, '..', '..', '..', 'results'), 'security');
+
+test('first owner sign-in shows the restored archive and security review', async ({ page }) => {
+  const evidence = path.join(process.env.JOB_RESULTS_DIR ?? screenshotDir, 'restore-security');
+  mkdirSync(evidence, { recursive: true });
+  const owner = { id: 'usr_owner', username: 'owner', displayName: 'Owner', role: 'owner',
+    projects: [], disabled: false, mustChangePassword: false };
+  const notice = { archiveId: 'studio-backup-drill', archiveCreatedAt: '2026-11-09T06:00:00Z',
+    restoredAt: '2026-11-10T06:00:00Z' };
+  await page.route('**/api/auth/status', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: false }),
+  }));
+  await page.route('**/api/auth/login', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: owner, restoreNotice: notice }),
+  }));
+  let acknowledged = false;
+  await page.route('**/api/auth/restore-notice/acknowledge', route => {
+    expect(route.request().postDataJSON()).toEqual({ archiveId: notice.archiveId });
+    acknowledged = true;
+    return route.fulfill({ status: 204, body: '' });
+  });
+  await page.goto('/');
+  await page.getByLabel('Username').fill('owner');
+  await page.getByLabel('Password').fill('owner password long enough');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  const gate = page.getByTestId('auth-gate');
+  await expect(gate.getByRole('heading', { name: 'Review security after restore' })).toBeVisible();
+  await expect(gate.getByTestId('restore-archive-id')).toHaveText(notice.archiveId);
+  await expect(gate.getByTestId('restore-security-checks').locator('li')).toHaveCount(5);
+  await setTheme(page, 'light');
+  await page.screenshot({ path: path.join(evidence, 'restore-notice-light.png'), fullPage: true });
+  await setTheme(page, 'dark');
+  await page.screenshot({ path: path.join(evidence, 'restore-notice-dark.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: path.join(evidence, 'restore-notice-390.png'), fullPage: true });
+  await gate.getByTestId('restore-review-access').click();
+  await expect(gate).toHaveCount(0);
+  expect(acknowledged).toBe(true);
+  await expect(page).toHaveURL(/#\/workspace\/settings\/access$/);
+});
 
 test('auth gate follows saved light and dark themes at phone width', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -102,8 +145,8 @@ test('standalone owner form uses the armed code only while bootstrap is open', a
     if (bootstrapAttempts === 1) {
       expect(route.request().postDataJSON()).toMatchObject({ bootstrapCode: 'wrong-code' });
       await route.fulfill({
-        status: 401, contentType: 'application/json',
-        body: JSON.stringify({ message: 'The installer owner code is invalid.' }),
+        status: 400, contentType: 'application/json',
+        body: JSON.stringify({ message: 'Check the owner details and try again.', errors: { bootstrapCode: ['A valid installer owner code is required.'] } }),
       });
       return;
     }
@@ -119,11 +162,30 @@ test('standalone owner form uses the armed code only while bootstrap is open', a
 
   await page.goto('/', { waitUntil: 'commit', timeout: 60_000 });
   await expect(page.getByRole('heading', { name: 'Create the first owner' })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText('Use 12 to 128 characters. Do not include your username.')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Installer guide' })).toHaveAttribute('href', /install\.md$/);
+  await page.setViewportSize({ width: 1280, height: 960 });
+  await setTheme(page, 'light');
+  mkdirSync(screenshotDir, { recursive: true });
+  await page.screenshot({ path: path.join(screenshotDir, 'first-owner-light.png'), fullPage: true });
+  await setTheme(page, 'dark');
+  await page.screenshot({ path: path.join(screenshotDir, 'first-owner-dark.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 720 });
+  await page.getByRole('button', { name: 'Create owner' }).scrollIntoViewIfNeeded();
+  await expect(page.getByRole('button', { name: 'Create owner' })).toBeInViewport();
+  await page.setViewportSize({ width: 390, height: 960 });
+  await page.screenshot({ path: path.join(screenshotDir, 'first-owner-390-dark.png'), fullPage: true });
+  await expect(page.locator('body')).toHaveJSProperty('scrollWidth', 390);
   await page.getByLabel('Username').fill('owner');
-  await page.getByLabel('Installer owner code').fill('wrong-code');
-  await page.getByLabel('Password').fill('owner password long enough');
+  await page.getByLabel('Password').fill('owner');
   await page.getByRole('button', { name: 'Create owner' }).click();
-  await expect(page.getByRole('alert')).toHaveText('The installer owner code is invalid.');
+  await expect(page.getByText('Password must be 12 to 128 characters.')).toBeVisible();
+  await expect(page.getByText('Password must not contain the username.')).toBeVisible();
+  expect(bootstrapAttempts).toBe(0);
+  await page.getByLabel('Installer owner code').fill('wrong-code');
+  await page.getByLabel('Password').fill('correct horse battery staple');
+  await page.getByRole('button', { name: 'Create owner' }).click();
+  await expect(page.getByText('A valid installer owner code is required.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Create the first owner' })).toBeVisible();
   await page.getByLabel('Installer owner code').fill('installer-code');
   await page.getByRole('button', { name: 'Create owner' }).click();

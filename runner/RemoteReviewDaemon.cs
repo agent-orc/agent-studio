@@ -11,6 +11,7 @@ public sealed class RemoteReviewDaemon
     private readonly RunnerOptions _options;
     private readonly TaskServerClient _client;
     private readonly Action<string> _log;
+    private readonly OneShotClaimRouteObservation _oneShotClaimRoute = new();
     private readonly Func<int, TaskServerConnectivitySnapshot?, HostTelemetrySample?>? _telemetryProbe;
     private readonly ReviewPlaneBudgetProbe? _planeBudgetProbe;
 
@@ -57,6 +58,9 @@ public sealed class RemoteReviewDaemon
 
     public async Task RunAsync(CancellationToken shutdown)
     {
+        // Refuse claims before any background work starts if this host cannot
+        // provide an absolute, writable source cache directory.
+        HostSourceObjectCache.EnsureRoot();
         await using var idleWatchdog = new DaemonIdleWatchdog(
             _log,
             TimeSpan.FromMinutes(_options.IdleWatchdogMinutes));
@@ -355,7 +359,8 @@ public sealed class RemoteReviewDaemon
                             connectivity: connectivity.Snapshot),
                         RunnerCapabilityProbe.Telemetry(
                             TakeTelemetry(force: true),
-                            planeBudget),
+                            planeBudget,
+                            oneShotClaimRoute: _oneShotClaimRoute.Current),
                         generation,
                         operationToken);
                 },
@@ -403,7 +408,7 @@ public sealed class RemoteReviewDaemon
                 () => Math.Max(active.Count, persistedAtStartup.Count),
                 shutdown,
                 HonorControlBeforeClaimsAsync);
-            oneShotPoll = new OneShotJobAdmission(_options, _client, _log).PollAsync(auxiliaryStop.Token);
+            oneShotPoll = new OneShotJobAdmission(_options, _client, _log, route: _oneShotClaimRoute).PollAsync(auxiliaryStop.Token);
 
             var startupReconciliation = await reconciler.ReconcileAsync(
                 new HashSet<string>(StringComparer.Ordinal),

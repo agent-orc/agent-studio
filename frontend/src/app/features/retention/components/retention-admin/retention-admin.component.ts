@@ -1,4 +1,4 @@
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, computed, inject, signal, viewChild } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { formatRetentionBytes, type RetentionPlan } from '../../models/retention.model';
@@ -22,7 +22,6 @@ import { RetentionRunHistoryComponent } from '../retention-run-history/retention
   styleUrl: './retention-admin.component.scss',
 })
 export class RetentionAdminComponent {
-  private readonly http = inject(HttpClient);
   private readonly retention = inject(RetentionService);
   readonly available = signal<boolean | null>(null);
   private readonly history = viewChild(RetentionRunHistoryComponent);
@@ -35,7 +34,7 @@ export class RetentionAdminComponent {
   readonly warnings = signal<string[]>([]);
 
   constructor() {
-    this.http.get('/api/v1/management/retention/policy').subscribe({
+    this.retention.getWorkspacePolicy().subscribe({
       next: () => this.available.set(true),
       error: (error: unknown) => this.available.set(!(error instanceof HttpErrorResponse && error.status === 404)),
     });

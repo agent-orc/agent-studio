@@ -1,0 +1,54 @@
+<section class="magazine" data-testid="magazine-view">
+  @if (article(); as current) {
+    <button class="magazine__back" type="button" (click)="back()">← {{ label() }} magazine</button>
+    <article class="magazine__article" data-testid="magazine-article">
+      <header class="magazine__article-head">
+        <p class="magazine__kicker">{{ current.kind }}</p>
+        <h1>{{ current.title }}</h1>
+        <p class="magazine__lede">{{ current.summary }}</p>
+        <div class="magazine__meta"><span>{{ byline(current.author) }}</span><span>Updated {{ relativeTime(current.updatedAt) }}</span><span>Revision {{ current.revision }} of {{ current.currentRevision }}</span></div>
+      </header>
+      @if (current.revision < current.currentRevision) { <p class="magazine__earlier">Earlier revision, read only. <button type="button" (click)="open(current)">Read latest</button></p> }
+      <div #bodyHost class="magazine__body" data-testid="magazine-body" [attr.data-dossier-reference-scope]="scope().startsWith('project:') ? label() : null">
+        <cac-markdown [source]="current.body.replaceAll('<', '&lt;').replaceAll('>', '&gt;')" />
+      </div>
+      <section class="magazine__support" aria-label="Article sources">
+        <h2>Sources</h2>
+        @if (current.sources.length) {
+          <ul>@for (source of current.sources; track source.kind + source.ref) {
+            <li>@if (sourceResolved(source)) { <button type="button" (click)="sourceLink(source)">{{ source.ref }}</button> } @else { {{ source.ref }} }<span>{{ source.kind }}</span></li>
+          }</ul>
+        } @else { <p>No sources cited.</p> }
+      </section>
+      <section class="magazine__support" aria-label="Revision history" data-testid="magazine-history">
+        <h2>Revision history</h2>
+        @if (history(); as revisions) {
+          <ol>@for (entry of revisions.revisions; track entry.revision) {
+            <li><button type="button" (click)="open(current, entry.revision)" [attr.aria-current]="entry.revision === current.revision ? 'true' : null">Revision {{ entry.revision }}</button>
+              <span>{{ entry.title }} · {{ byline(entry.author) }} · {{ relativeTime(entry.at) }}</span></li>
+          }</ol>
+        }
+      </section>
+    </article>
+  } @else {
+    <header class="magazine__header"><p class="magazine__kicker">Agent Studio</p><h1>{{ label() }} magazine</h1><p>Articles that keep the current picture of the work in view.</p></header>
+    @if (busy()) { <p>Loading articles…</p> }
+    @else if (error()) { <p>Magazine could not be loaded.</p> }
+    @else if (!articles().length) { <div class="magazine__empty" data-testid="magazine-empty"><h2>No articles yet</h2><p>This magazine gathers living summaries and decisions. Agents and personas write and refresh its articles as work changes.</p></div> }
+    @else { <div class="magazine__list" data-testid="magazine-list">
+      @for (entry of sortedArticles(); track entry.slug) {
+        <button type="button" class="magazine__entry" (click)="open(entry)" [attr.data-testid]="'magazine-entry-' + entry.slug">
+          <span class="magazine__entry-top"><span class="magazine__kind">{{ entry.kind }}</span>@if (entry.pinned) { <span class="magazine__badge">Pinned</span> }@if (marker(entry); as mark) { <span class="magazine__badge magazine__badge--fresh">{{ mark }}</span> }</span>
+          <strong>{{ entry.title }}</strong><span class="magazine__summary">{{ entry.summary }}</span>
+          <span class="magazine__meta">{{ authors(entry) }} · Updated {{ relativeTime(entry.updatedAt) }} · {{ entry.revision }} {{ entry.revision === 1 ? 'revision' : 'revisions' }}</span>
+        </button>
+      }
+    </div> }
+    @if (children().length) { <section class="magazine__scopes"><h2>Magazines below this scope</h2><div>@for (child of children(); track child.scope) { <button type="button" (click)="openScope(child)">{{ child.label }}</button> }</div></section> }
+  }
+</section>
+@if (batchTarget(); as target) {
+  @if (batchProject(); as project) {
+    <app-batch-panel #batchPanel [project]="project.label" [closed]="closeBatch" />
+  }
+}

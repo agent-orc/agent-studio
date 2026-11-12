@@ -854,7 +854,8 @@ public sealed class BatchGateReviewPlanTests
     private const string ResultRef = "refs/heads/agent-studio/results/task";
     private const string ValidSha = "e21984dc539cdac298866477913e333f27a7154b";
     // An npm lint command plans an `npm ci` preparation step for the tracked
-    // tools/package.json, so the ordinary plan carries a preparation to drop.
+    // tools/package-lock.json, so the ordinary plan carries a preparation to
+    // drop. A package root without a lockfile gets no `npm ci` (AGT-3699).
     private const string LintCommand = "  lint: [npm --prefix tools run lint]\n";
 
     private static readonly string[] ToolAspects = ["build-tests", "lint", "review-verification"];
@@ -939,6 +940,8 @@ public sealed class BatchGateReviewPlanTests
         {
             Directory.CreateDirectory(Path.Combine(repo, "tools"));
             File.WriteAllText(Path.Combine(repo, "tools", "package.json"), "{ \"private\": true }\n");
+            File.WriteAllText(Path.Combine(repo, "tools", "package-lock.json"),
+                "{ \"lockfileVersion\": 3, \"packages\": { \"\": { \"devDependencies\": { \"eslint\": \"9.0.0\" } } } }\n");
         }
         Git(repo, "add", ".");
         Git(repo, "commit", "-qm", "base");

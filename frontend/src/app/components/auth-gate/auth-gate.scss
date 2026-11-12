@@ -4,9 +4,12 @@
 }
 
 .auth-gate {
+  height: 100vh;
   min-height: 100vh;
   display: grid;
   place-items: center;
+  align-items: safe center;
+  overflow-y: auto;
   padding: var(--studio-spacing-6);
   background: var(--studio-bg-editor);
   color: var(--studio-fg);
@@ -32,6 +35,7 @@
 h1, p { margin: 0; }
 h1 { color: var(--studio-fg-strong); font-size: 1.5rem; }
 .auth-gate__muted { color: var(--studio-fg-dim); line-height: 1.5; }
+.auth-gate__checks { margin: 0; padding-inline-start: var(--studio-spacing-6); line-height: 1.6; }
 
 label {
   display: grid;
@@ -65,6 +69,13 @@ button {
 
 button:disabled { opacity: 0.6; cursor: wait; }
 .auth-gate__error { color: var(--studio-error); }
+a { color: var(--studio-accent-strong); }
+code { overflow-wrap: anywhere; }
+
+@media (max-width: 480px) {
+  .auth-gate { place-items: start center; padding: var(--studio-spacing-4); }
+  .auth-gate__panel { padding: var(--studio-spacing-4); }
+}
 
 output {
   display: block;

@@ -53,6 +53,7 @@ export const TIMELINE_KIND = {
   postAcceptanceReviewReportRecorded: 'post_acceptance_review_report_recorded',
   taskReleased: 'task_released',
   laneChanged: 'lane_changed',
+  ownerMoveRefused: 'owner_move_refused',
   mergedIn: 'merged_in',
   readOnlyContainmentViolation: 'read_only_containment_violation',
   executionContext: 'execution_context',

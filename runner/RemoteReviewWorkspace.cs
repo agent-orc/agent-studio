@@ -386,7 +386,7 @@ public sealed class RemoteReviewWorkspace
         finally
         {
             if (candidateCache is not null)
-                foreach (var message in candidateCache.Save()) _log(message);
+                foreach (var message in candidateCache.SaveComplete()) _log(message);
         }
 
         // One planned command. The ledgers are parameters on purpose and shadow
@@ -397,10 +397,7 @@ public sealed class RemoteReviewWorkspace
                 .Select(scope =>
                 {
                     var installRoot = ResolveWorkingDirectory(RepositoryPath, scope.WorkingSubdir);
-                    var decision = DependencyPreparationState.Evaluate(installRoot, scope);
-                    return !Directory.Exists(Path.Combine(installRoot, DependencyPreparationState.DependencyDirectoryName))
-                        ? decision with { State = "miss", Reason = "deps-dir-missing" }
-                        : decision;
+                    return DependencyPreparationState.Evaluate(installRoot, scope);
                 })
                 .Where(decision => decision.State != "hit" && decision.Reason != "no-lockfile")
                 .ToArray();
@@ -699,13 +696,20 @@ public sealed class RemoteReviewWorkspace
                         commands,
                         artifacts,
                         ct);
+                // AGT-3748: a tool or module the restored entry should carry is
+                // gone. Move that entry aside so the next review on this host
+                // prepares a fresh one instead of failing the same way.
+                var quarantined = cliRefusal is null && lostScope is null
+                    ? QuarantineRestoredCache(candidateCache, command.StepId, execution.Process)
+                    : null;
                 throw await InfrastructureFailureAsync(
                     cliRefusal ?? (lostScope is null ? "ToolUnavailable" : "DependencyDirectoryMissing"),
                     lostScope is null
                         ? $"Review command '{command.StepId}' could not use its declared toolchain: " +
                           $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
                           $"cause={cliRefusal ?? "tool unavailable"}; detail={FailureDetail(execution.Process)}; " +
-                          $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}."
+                          $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}." +
+                          (quarantined is null ? "" : $" quarantinedCacheEntry={quarantined}.")
                         : $"Candidate dependency scope '{lostScope.Scope}' disappeared after step " +
                           $"'{remover ?? command.StepId}' while '{command.StepId}' ran; " +
                           $"exit={execution.Process.ExitCode}.",
@@ -768,11 +772,25 @@ public sealed class RemoteReviewWorkspace
                 }
             }
 
+            string? setupChangeReason = null;
+            if (!ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                && execution.Signal is null
+                && ReviewTestReportPolicy.NeedsSetupCheck(command, execution.Process))
+            {
+                var baseline = await ResolveBaselineShaAsync(ct);
+                var diff = await ProcessRunner.RunAsync(
+                    "git", ["diff", "--name-status", baseline, _subject.ExpectedResultSha],
+                    RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+                if (diff.Success)
+                    setupChangeReason = ReviewTestReportPolicy.SetupChangeReason(diff.StdOut.Split(
+                        ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+            }
+
             if (!ReviewCommandKinds.IsAgent(command.ExecutionKind)
                 && execution.Signal is null
                 && (execution.Process.ExitCode == 0
                     || ReviewTestReportPolicy.HasExplicitMissingReport(execution.Process))
-                && ReviewTestReportPolicy.Missing(command, execution.Process))
+                && ReviewTestReportPolicy.Missing(command, execution.Process, setupChangeReason is not null))
             {
                 commands.Add(await AddCommandEvidenceAsync(
                     command.StepId, command.Aspect, command.FileName, command.Arguments,
@@ -787,7 +805,8 @@ public sealed class RemoteReviewWorkspace
                 retryPerformed = true;
                 await EnsureRetryDependenciesAsync(
                     RepositoryPath, "candidate", command.StepId, commands, artifacts, ct);
-                if (execution.Signal is null && ReviewTestReportPolicy.Missing(command, execution.Process))
+                if (execution.Signal is null
+                    && ReviewTestReportPolicy.Missing(command, execution.Process, setupChangeReason is not null))
                 {
                     commands.Add(await AddCommandEvidenceAsync(
                         command.StepId, command.Aspect, command.FileName, command.Arguments,
@@ -795,14 +814,17 @@ public sealed class RemoteReviewWorkspace
                         execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
                         "verification", "candidate", null, null, true, false, null,
                         artifacts, ct, command));
-                    var baseline = await ResolveBaselineShaAsync(ct);
-                    var diff = await ProcessRunner.RunAsync(
-                        "git", ["diff", "--name-status", baseline, _subject.ExpectedResultSha],
-                        RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
-                    var reason = diff.Success
-                        ? ReviewTestReportPolicy.SetupChangeReason(diff.StdOut.Split(
-                            ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
-                        : null;
+                    var reason = setupChangeReason;
+                    if (reason is null)
+                    {
+                        var baseline = await ResolveBaselineShaAsync(ct);
+                        var diff = await ProcessRunner.RunAsync(
+                            "git", ["diff", "--name-status", baseline, _subject.ExpectedResultSha],
+                            RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+                        if (diff.Success)
+                            reason = ReviewTestReportPolicy.SetupChangeReason(diff.StdOut.Split(
+                                ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+                    }
                     var reportPath = ReviewTestReportPolicy.MissingReportPath(
                         execution.Process,
                         Path.Combine(ArtifactPath, ArtifactName("candidate", command.StepId, "stdout")));
@@ -1651,7 +1673,7 @@ public sealed class RemoteReviewWorkspace
             _subject.Plan.PreserveGlobs,
             cacheRole,
             _log);
-        var cacheMessages = restoreCache ? cache.Restore() : [];
+        var cacheMessages = restoreCache ? cache.RestoreComplete() : [];
 
         foreach (var command in preparation)
         {
@@ -1682,6 +1704,14 @@ public sealed class RemoteReviewWorkspace
             CommandExecution execution;
             if (installNeeded)
             {
+                // AGT-3748: an install about to rewrite the tree first drops
+                // the stamp it may have restored, so an interrupted or failed
+                // install never looks like a complete one.
+                foreach (var item in dependencyDecisions)
+                {
+                    var stamp = Path.Combine(item.InstallRoot, DependencyPreparationState.MarkerFileName);
+                    if (File.Exists(stamp)) File.Delete(stamp);
+                }
                 var workingDirectory = ResolveWorkingDirectory(
                     workspacePath,
                     command.WorkingSubdir);
@@ -1759,7 +1789,7 @@ public sealed class RemoteReviewWorkspace
                     commands,
                     artifacts,
                     ct);
-                foreach (var message in cache.Save()) _log(message);
+                foreach (var message in cache.SaveComplete()) _log(message);
                 throw failure;
             }
 
@@ -1778,12 +1808,31 @@ public sealed class RemoteReviewWorkspace
                     commands,
                     artifacts,
                     ct);
-                foreach (var message in cache.Save()) _log(message);
+                foreach (var message in cache.SaveComplete()) _log(message);
                 throw failure;
             }
         }
 
+        var incomplete = cache.RecordComplete();
+        if (incomplete is not null)
+            _log($"dependency-cache prepared workspace not cacheable role={workspaceRole} reason={incomplete}");
         return cache;
+    }
+
+    /// <summary>
+    /// AGT-3748: quarantines the entry this workspace restored when a review
+    /// command then misses a declared tool or module. Returns the quarantine
+    /// path, or null when the dependencies were not restored from the cache.
+    /// </summary>
+    private string? QuarantineRestoredCache(
+        DependencyCacheSession? cache,
+        string stepId,
+        ProcessResult process)
+    {
+        if (cache is null || !cache.Restored || !MissingToolchain(process)) return null;
+        foreach (var message in cache.Quarantine($"missing-tool step={stepId} exit={process.ExitCode}"))
+            _log(message);
+        return cache.QuarantinedPath;
     }
 
     private async Task<ReviewCommandEvidenceDto> AddCommandEvidenceAsync(
@@ -2254,11 +2303,13 @@ public sealed class RemoteReviewWorkspace
                 ct));
             if (MissingToolchain(execution.Process))
             {
+                var quarantined = QuarantineRestoredCache(baselineCache, command.StepId, execution.Process);
                 throw await InfrastructureFailureAsync(
                     "ToolUnavailable",
                     $"Baseline review command '{command.StepId}' could not use its declared toolchain: " +
                     $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
-                    $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
+                    $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}." +
+                    (quarantined is null ? "" : $" quarantinedCacheEntry={quarantined}."),
                     commands,
                     artifacts,
                     ct);
@@ -2310,7 +2361,7 @@ public sealed class RemoteReviewWorkspace
             // The report retry must finish before this move removes the
             // baseline's dependency directories from its workspace.
             if (baselineCache is not null)
-                foreach (var message in baselineCache.Save()) _log(message);
+                foreach (var message in baselineCache.SaveComplete()) _log(message);
         }
         var failures = BaselineFailures(command, execution.Process);
         if (ReviewTestReportPolicy.Missing(command, execution.Process))
@@ -3006,7 +3057,8 @@ public sealed class RemoteReviewWorkspace
                      .SelectMany(command => command.DependencyScopes ?? []))
         {
             var installRoot = ResolveWorkingDirectory(workspacePath, scope.WorkingSubdir);
-            if (Directory.Exists(Path.Combine(
+            if (!DependencyPreparationState.RequiresDependencyDirectory(installRoot, scope.Lockfiles)
+                || Directory.Exists(Path.Combine(
                     installRoot, DependencyPreparationState.DependencyDirectoryName)))
                 continue;
             var name = string.IsNullOrWhiteSpace(scope.WorkingSubdir) ? "." : scope.WorkingSubdir;
@@ -3486,6 +3538,13 @@ public sealed class RemoteReviewWorkspace
             source = await HostSourceObjectCache.MaterializeAsync(sourceUrl,
                 resultRef, _subject.ExpectedResultSha, RepositoryPath, Run, _utcNow, ct, sparsePaths);
         }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
+            or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            throw new ReviewInfrastructureException("SourceUnavailable",
+                $"Review source materialization failed at '{RepositoryPath}' "
+                + $"using cache '{HostSourceObjectCache.Root}': {exception.Message}", exception);
+        }
         catch (ReviewInfrastructureException exception) when (credential is null
             && exception.Classification == "SnapshotUnavailable"
             && LooksLikeMissingReadAccess(exception.Message))
@@ -3706,9 +3765,21 @@ public sealed class RemoteReviewWorkspace
             bool _, CancellationToken token)
             => await ProcessRunner.RunAsync("git", ["-c", "credential.helper=", .. args], cwd,
                 environment: ProcessEnvironment(), clearEnvironment: true, ct: token);
-        var (bytes, ready) = await HostSourceObjectCache.MaterializeBundleAsync(
-            _subject.SourceBundleSha256!, _subject.ExpectedResultSha, RepositoryPath,
-            Download, Run, _utcNow, ct, sparsePaths);
+        (long bytes, TimeSpan ready) source;
+        try
+        {
+            source = await HostSourceObjectCache.MaterializeBundleAsync(
+                _subject.SourceBundleSha256!, _subject.ExpectedResultSha, RepositoryPath,
+                Download, Run, _utcNow, ct, sparsePaths);
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
+            or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            throw new ReviewInfrastructureException("SourceUnavailable",
+                $"Review source materialization failed at '{RepositoryPath}' "
+                + $"using cache '{HostSourceObjectCache.Root}': {exception.Message}", exception);
+        }
+        var (bytes, ready) = source;
         _log($"review_source_ready subject={_subject.SubjectId} bytes={bytes} ready_ms={ready.TotalMilliseconds:F0}");
     }
 
