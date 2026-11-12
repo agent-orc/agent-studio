@@ -82,6 +82,10 @@ public sealed class PersonaActivationStoreTests : IDisposable
             new ScopeComparer());
         Assert.Equal(["observe", "persona.item.publish", "persona.report.publish", "persona.proposal.draft", "persona.decision.request"],
             activation.Operations);
+        Assert.Equal(Warden, activation.RoleId);
+        var principal = _security.FindPersonaPrincipal(Workspace, Warden)!;
+        Assert.Equal(Warden, principal.PersonaRoleId);
+        Assert.Equal(["alpha"], Assert.Single(_security.ListStandingGrants(principal.Id)).Scope.Projects);
         // The step-up is single use.
         Assert.Equal("step-up-required", Refused(() =>
             store.Activate(Workspace, "cost-controller", new PersonaActivateRequest(), owner)).Code);
