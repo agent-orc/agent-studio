@@ -82,6 +82,13 @@ public sealed partial class BatchGatePilotService
     internal const int FallbackGateStartBudget = 2;
     internal const int IsolationFlightRetryLimit = 2;
 
+    /// <summary>
+    /// Identity of this service instance on a charged per-task gate start. A
+    /// replacement instance never shares it, so it can tell a start the restart
+    /// cut from one this instance spent (AGT-3647).
+    /// </summary>
+    internal string ServiceInstanceId { get; } = Guid.NewGuid().ToString("N");
+
     public BatchGatePilotService(ITokenPricing pricing,
         BatchGateStore store, BatchGateLeaseService leases,
         RefMutationLeaseService refLeases, GitService git,
@@ -493,7 +500,12 @@ public sealed partial class BatchGatePilotService
                             "batch-gate push wait exceeded age limit project={Project} job={JobId} approvedSha={ApprovedSha} since={SinceUtc}",
                             project, wait.JobId, wait.ApprovedSha, wait.SinceUtc);
                 }
-            await RecoverGreenBatchesAsync(ct).ConfigureAwait(false);
+            try { await RecoverGreenBatchesAsync(ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // AGT-3647: interrupted batches still return their members below.
+                _logger.LogWarning(ex, "batch-gate green batch recovery failed");
+            }
             RecoverInterrupted();
             RepairBatchInvariants();
             foreach (var project in _store.ListPending().Select(item => item.Subject.Project)
@@ -935,30 +947,52 @@ public sealed partial class BatchGatePilotService
         finally { _leases.Release(rollback); }
     }
 
+    /// <summary>
+    /// Abandons batches whose coordinator is gone and returns their members to
+    /// planning; an abandoned batch charges no member. AGT-3647: each batch is
+    /// recovered on its own, so one unreadable manifest or lease cannot hold
+    /// every other batch's members on every tick (batch 9960e7c6, 9 November 2026).
+    /// </summary>
     private void RecoverInterrupted()
     {
         foreach (var parent in _store.ListManifests().Where(item => item.ParentBatchId is null))
-            DeriveIsolationFindings(parent);
+        {
+            try { DeriveIsolationFindings(parent); }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException)
+            {
+                _logger.LogWarning(ex, "batch-recovery-isolation-findings-failed batch={BatchId}", parent.BatchId);
+            }
+        }
         foreach (var manifest in _store.ListRecoverableManifests())
         {
-            if (_store.LatestState(manifest.BatchId).Phase is BatchPhase.Formed or BatchPhase.Unknown)
-                continue;
-            BatchCoordinatorLease? recovery;
-            try { recovery = _leases.TryAcquire(LeaseScope(manifest), "batch-recovery"); }
-            catch (IOException) { continue; }
-            if (recovery is null) continue;
-            try
+            try { RecoverInterrupted(manifest); }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException
+                                           or InvalidOperationException)
             {
-                if (_store.LatestState(manifest.BatchId).Phase is BatchPhase.Formed or BatchPhase.Unknown)
-                    continue;
-                if (manifest.ParentBatchId is { } parentId)
-                    DeriveIsolationFindings(_store.ReadManifest(parentId));
-                State(manifest, BatchPhase.Abandoned, null, recovery.Fence,
-                    "interrupted before a publishable verdict; reconstruct from the closed snapshot");
-                ReturnToPending(manifest);
+                _logger.LogWarning(ex, "batch-recovery-failed batch={BatchId}; other batches continue", manifest.BatchId);
             }
-            finally { _leases.Release(recovery); }
         }
+    }
+
+    private void RecoverInterrupted(BatchGateManifest manifest)
+    {
+        if (_store.LatestState(manifest.BatchId).Phase is BatchPhase.Formed or BatchPhase.Unknown)
+            return;
+        BatchCoordinatorLease? recovery;
+        try { recovery = _leases.TryAcquire(LeaseScope(manifest), "batch-recovery"); }
+        catch (IOException) { return; }
+        if (recovery is null) return;
+        try
+        {
+            if (_store.LatestState(manifest.BatchId).Phase is BatchPhase.Formed or BatchPhase.Unknown)
+                return;
+            if (manifest.ParentBatchId is { } parentId)
+                DeriveIsolationFindings(_store.ReadManifest(parentId));
+            State(manifest, BatchPhase.Abandoned, null, recovery.Fence,
+                "interrupted before a publishable verdict; reconstruct from the closed snapshot");
+            ReturnToPending(manifest);
+        }
+        finally { _leases.Release(recovery); }
     }
 
     private void CancelOrphanedStacks()
@@ -3079,8 +3113,18 @@ public sealed partial class BatchGatePilotService
             // Starts are counted only across interrupted gates of this review
             // generation; the budget turns a gate that never returns into
             // GateInfra instead of an endless restart.
-            var starts = ownership?.ReviewAttemptId == pending.ReviewAttemptId
-                && ownership.FallbackGateActive ? ownership.FallbackGateStarts : 0;
+            var ownGeneration = ownership?.ReviewAttemptId == pending.ReviewAttemptId
+                && ownership.FallbackGateActive;
+            var starts = ownGeneration ? ownership!.FallbackGateStarts : 0;
+            // AGT-3647: a start charged by an earlier service instance was cut by
+            // the restart, not by the gate. It never counts against the card.
+            var refunded = AgentStudio.Runner.MonolithTransitionAdapter.GateStartsAfterServiceRestart(
+                starts, ownGeneration ? ownership!.FallbackGateRunBy : null, ServiceInstanceId);
+            if (refunded != starts)
+                _logger.LogInformation(
+                    "batch-fallback-gate-restart-refund task={TaskKey} attempt={AttemptId} chargedStarts={Starts} previousInstance={Instance}",
+                    pending.Subject.TaskKey, pending.ReviewAttemptId, refunded, ownership!.FallbackGateRunBy);
+            starts = refunded;
             // AGT-3694: a stalled flight that ignored its cancellation may still
             // hold a gate; its resume escalates instead of starting a second one.
             var detached = DetachedFallback(pending.ReviewAttemptId);
@@ -3131,7 +3175,8 @@ public sealed partial class BatchGatePilotService
                     FallbackGateActive: true, FallbackGateStarts: starts + 1,
                     FallbackBaseSha: subject.BaseSha,
                     FallbackCandidateSha: subject.Merged ? subject.TestedSha : null,
-                    FallbackCandidateTreeSha: subject.TreeSha, FallbackOwnBase: ownBase));
+                    FallbackCandidateTreeSha: subject.TreeSha, FallbackOwnBase: ownBase,
+                    FallbackGateRunBy: ServiceInstanceId));
             // AGT-3414: classify the exact tree this fallback gate tests.
             var level = FallbackTestLevel(pending, subject);
             Lane(pending, "gate-requested", level: level,
@@ -3326,9 +3371,13 @@ public sealed partial class BatchGatePilotService
                 if (charged < FallbackGateStartBudget)
                 {
                     var current = BatchGateOwnershipStore.Read(task.FolderPath);
-                    if (current?.ReviewAttemptId == pending.ReviewAttemptId && current.FallbackGateStarts != charged)
+                    // The refund settles the start in flight, so no later
+                    // instance refunds it a second time.
+                    if (current?.ReviewAttemptId == pending.ReviewAttemptId
+                        && (current.FallbackGateStarts != charged || current.FallbackGateRunBy is not null))
                         BatchGateOwnershipStore.Write(task.FolderPath,
-                            current with { FallbackGateActive = true, FallbackGateStarts = charged });
+                            current with { FallbackGateActive = true, FallbackGateStarts = charged,
+                                FallbackGateRunBy = null });
                     _logger.LogInformation(
                         "batch-fallback-gate-interrupted-by-shutdown task={TaskKey} attempt={AttemptId} chargedStarts={Starts}",
                         pending.Subject.TaskKey, pending.ReviewAttemptId, charged);
