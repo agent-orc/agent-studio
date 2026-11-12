@@ -431,7 +431,28 @@ public sealed record RunnerCapabilitySnapshotDto(
     RunnerReleaseIdentityDto? Release = null,
     int ActiveGateCount = 0,
     IReadOnlyList<ConfiguredModelRouteDto>? ConfiguredModelRoutes = null,
-    IReadOnlyList<HostContainerSummaryDto>? Containers = null);
+    IReadOnlyList<HostContainerSummaryDto>? Containers = null,
+    IReadOnlyList<ReviewDaemonRestartDto>? ReviewRestarts = null);
+
+/// <summary>
+/// AGT-3690: one review daemon restart of a runner identity, with the review
+/// attempts it lost. <see cref="RunnerCapabilitySnapshotDto.RestartedAt"/> and
+/// <see cref="RunnerCapabilitySnapshotDto.ReviewsLost"/> describe only the
+/// newest restart, so a later clean restart used to overwrite the one that
+/// lost a review; the history keeps both.
+/// </summary>
+public sealed record ReviewDaemonRestartDto(
+    DateTime RestartedAt,
+    string HostId,
+    string InstanceId,
+    int ReviewsLost,
+    IReadOnlyList<ReviewRestartLostAttemptDto> LostAttempts);
+
+/// <summary>A review attempt a daemon restart lost, and the card it reviewed.</summary>
+public sealed record ReviewRestartLostAttemptDto(
+    string AttemptId,
+    string TaskKey,
+    string Status);
 
 /// <summary>
 /// The latest non-ready model-acceptance entry a host advertised after the

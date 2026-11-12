@@ -392,6 +392,84 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         Assert.Equal(0, restored.ReviewsLost);
     }
 
+    // AGT-3690 (S5-F14): the host detail said "1 reviews lost" until the next
+    // restart of the same host overwrote it with "0 reviews lost". The history
+    // keeps both restarts, the lost attempt, and the card it reviewed, across
+    // a monolith restart.
+    [Fact]
+    public async Task Restart_history_keeps_a_lost_review_after_a_later_clean_restart()
+    {
+        const string taskKey = "AGT-RESTART-HISTORY";
+        const string lossInstance = "review-host:history-loss";
+        const string cleanInstance = "review-host:history-clean";
+        SeedTask(taskKey);
+        string lostAttemptId;
+        using (var factory = BuildFactory())
+        using (var http = factory.CreateClient())
+        {
+            await RegisterReviewExecutorAsync(http);
+            var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+            var run = authority.AcquireRun(
+                taskKey, "PROJ-RESTART", null, "coding-runner", "coding-host", 120,
+                "restart-history-source").RunAttempt!;
+            Assert.True(authority.SettleRun(new SettleRunAttemptRequest
+            {
+                Write = new AttemptWriteReference(
+                    run.AttemptId, run.LastFence, run.AuthorityEpoch, "restart-history-source-complete"),
+                Outcome = "done",
+                ResultSha = "6f1e0c2a6f1e0c2a6f1e0c2a6f1e0c2a6f1e0c2a",
+            }).Accepted);
+            var review = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+                taskKey, "PROJ-RESTART", "6f1e0c2a6f1e0c2a6f1e0c2a6f1e0c2a6f1e0c2a", run.AttemptId,
+                "requirements", "policy", [], "restart-history-review")).ReviewAttempt!;
+            var claimed = authority.ClaimReview(
+                review.AttemptId, RunnerId, "review-host", 600, "restart-history-claim", Instance).ReviewAttempt!;
+            lostAttemptId = claimed.AttemptId;
+
+            // The killed daemon's replacement reports no worker: the review is lost.
+            (await http.PutAsJsonAsync($"/api/v1/runners/{RunnerId}", Registration(lossInstance, [])))
+                .EnsureSuccessStatusCode();
+            // The replacement settles the lost review, as RemoteReviewExecutor does.
+            Assert.Equal(AttemptWriteStatus.Accepted, authority.SettleReview(new SettleReviewAttemptRequest(
+                new AttemptWriteReference(
+                    claimed.AttemptId, claimed.LastFence, claimed.AuthorityEpoch, "restart-history-settle"),
+                "6f1e0c2a6f1e0c2a6f1e0c2a6f1e0c2a6f1e0c2a",
+                ReviewTerminalOutcome.InfrastructureFailure,
+                "ExecutorRestarted")).Status);
+            // The next restart of the same host loses nothing.
+            (await http.PutAsJsonAsync($"/api/v1/runners/{RunnerId}", Registration(cleanInstance, [])))
+                .EnsureSuccessStatusCode();
+
+            using var hostsRequest = new HttpRequestMessage(HttpMethod.Get, "/api/v1/management/remote-hosts");
+            hostsRequest.Headers.Add("X-Client-Id", DefaultClientIdentity.Id);
+            var hostsResponse = await http.SendAsync(hostsRequest);
+            hostsResponse.EnsureSuccessStatusCode();
+            var host = Assert.Single(
+                (await hostsResponse.Content.ReadFromJsonAsync<Contract.RunnerCapabilitySnapshotDto[]>())!);
+            Assert.Equal(0, host.ReviewsLost);
+            AssertHistory(host.ReviewRestarts);
+        }
+
+        // A fresh process reads the history from durable authority state.
+        using var reopened = BuildFactory();
+        AssertHistory(reopened.Services.GetRequiredService<AttemptAuthorityService>()
+            .ListReviewDaemonRestarts(RunnerId));
+
+        void AssertHistory(IReadOnlyList<Contract.ReviewDaemonRestartDto>? restarts)
+        {
+            Assert.NotNull(restarts);
+            Assert.Equal([cleanInstance, lossInstance], restarts.Select(item => item.InstanceId));
+            Assert.Equal(0, restarts[0].ReviewsLost);
+            Assert.Empty(restarts[0].LostAttempts);
+            Assert.Equal(1, restarts[1].ReviewsLost);
+            Assert.Equal("review-host", restarts[1].HostId);
+            var lost = Assert.Single(restarts[1].LostAttempts);
+            Assert.Equal(lostAttemptId, lost.AttemptId);
+            Assert.Equal(taskKey, lost.TaskKey);
+            Assert.Equal("worker-not-reported", lost.Status);
+        }
+    }
+
     [Fact]
     [Trait("Category", "MachineBound")]
     public async Task Concurrent_registration_and_advertisement_never_hold_the_registry_gate()

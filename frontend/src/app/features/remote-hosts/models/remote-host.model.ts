@@ -309,6 +309,8 @@ export interface TaskServerRunnerCapabilitySnapshot {
   roleMaxParallelism?: number | null;
   restartedAt?: string | null;
   reviewsLost?: number;
+  /** AGT-3690: this runner's review daemon restarts, newest first, with the attempts each lost. */
+  reviewRestarts?: readonly ReviewDaemonRestart[] | null;
   installedClis?: readonly InstalledCli[] | null;
   cliUpdate?: HostCliUpdate | null;
   /** Comparable deployment identity (AGT-2826); absent from pre-2826 daemons. */
@@ -473,6 +475,8 @@ export interface RemoteHost {
   /** Review daemon restart outcome, retained by the Task Server for 24 hours. */
   restartedAt?: string | null;
   reviewsLost?: number;
+  /** AGT-3690: restart history, newest first; a later clean restart no longer hides an earlier loss. */
+  reviewRestarts?: readonly ReviewDaemonRestart[];
   runtimeCapacityAppliedAt?: string | null;
   /** Exact Task Server policy version confirmed by this daemon. */
   runtimeCapacityAppliedVersion?: number | null;
@@ -666,4 +670,20 @@ export function taskServerRouteDetail(host: RemoteHost): string {
     || host.taskServerConnection?.lastError
     || capability?.reason
     || 'No route observation has been reported yet.';
+}
+
+/** AGT-3690: one review daemon restart and the review attempts it lost. */
+export interface ReviewDaemonRestart {
+  restartedAt: string;
+  hostId: string;
+  instanceId: string;
+  reviewsLost: number;
+  lostAttempts: readonly ReviewRestartLostAttempt[];
+}
+
+/** A review attempt a daemon restart lost, and the card it reviewed. */
+export interface ReviewRestartLostAttempt {
+  attemptId: string;
+  taskKey: string;
+  status: string;
 }

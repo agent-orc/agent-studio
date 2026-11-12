@@ -510,6 +510,8 @@ describe('RemoteHostsService client registry hydration', () => {
       roleMaxParallelism: 8,
       restartedAt: now,
       reviewsLost: 2,
+      reviewRestarts: [{ restartedAt: now, hostId: 'agent-runner-01', instanceId: 'i-2', reviewsLost: 2,
+        lostAttempts: [{ attemptId: 'review_a', taskKey: 'AGT-1', status: 'worker-not-reported' }] }],
     }]);
 
     expect(svc.hosts().find(host => host.id === 'agent-runner-01')).toMatchObject({
@@ -518,6 +520,8 @@ describe('RemoteHostsService client registry hydration', () => {
       serviceRole: 'coding',
       restartedAt: now,
       reviewsLost: 2,
+      reviewRestarts: [{ restartedAt: now, hostId: 'agent-runner-01', instanceId: 'i-2', reviewsLost: 2,
+        lostAttempts: [{ attemptId: 'review_a', taskKey: 'AGT-1', status: 'worker-not-reported' }] }],
     });
     flushHostHydration(http);
     flushRunnerInfrastructureFailures(http);
