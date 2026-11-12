@@ -72,6 +72,7 @@ export interface BatchGateState {
     phase: string;
     phaseAtUtc?: string | null;
     phaseReason?: string | null;
+    phaseHistory?: { phase: string; reason?: string | null; atUtc: string }[];
     /** AGT-3710: one-based place of a formed batch in its project's flight queue. */
     queuePosition?: number | null;
     formationReason?: string | null;
@@ -79,7 +80,7 @@ export interface BatchGateState {
     baseSha: string;
     candidateSha?: string | null;
     members: { taskKey: string; replay: BatchReplay; released: boolean }[];
-    runs: { batchRunId: string; host: string; outcome?: string | null; classification?: string | null; startedAtUtc?: string | null; finishedAtUtc?: string | null }[];
+    runs: { batchRunId: string; host: string; outcome?: string | null; classification?: string | null; evidenceAvailable?: boolean; startedAtUtc?: string | null; finishedAtUtc?: string | null }[];
     publication?: BatchPublication | null;
   }[];
   members: Record<string, BatchMemberState>;
@@ -264,6 +265,15 @@ export function batchFallbackWaitLabel(kind: string | null | undefined): string 
 
 export function batchPublishedSha(publication: BatchPublication | null | undefined): string | null {
   return publication?.verifiedRemoteSha ?? publication?.publishedSha ?? null;
+}
+
+export function batchRunStatus(batch: BatchGateBatch, run: BatchGateBatch['runs'][number]): string {
+  if (run.outcome) return run.outcome;
+  return batch.phase === 'running' && !run.finishedAtUtc ? 'running' : 'interrupted';
+}
+
+export function batchRunEvidenceUrl(project: string, batchId: string, runId: string, view: 'evidence' | 'log' = 'evidence'): string {
+  return `/api/projects/${encodeURIComponent(project)}/batch-gate/run-${view}?batchId=${encodeURIComponent(batchId)}&runId=${encodeURIComponent(runId)}`;
 }
 
 export function batchMemberFor(state: BatchGateState | null, ...keys: (string | null | undefined)[]) {
