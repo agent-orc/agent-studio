@@ -131,8 +131,14 @@ with a log entry. Use `--json` when you parse the output.
 
 ### 1. Server-first deploy
 
-Deploy a gate-verified release to the installation.
+Deploy a gate-verified release to the installation. The networked deploy
+script runs this order itself; the steps below are the same order by hand
+([deploy drain procedure](../../../docs/operations/deploy-drain-procedure.md)).
 
+0. `studio-op host drain <client-id>` for every runner identity on the hosts
+   you will update. Repeat `studio-op host status <client-id>` until no review
+   is running, and read `studio-op triage` until no batch is forming,
+   green or publishing.
 1. `studio-op preflight deploy`. On exit 8 stop: each blocker
    (`pending-push`, `flight-publishing`, `card-mid-commit`) must clear first.
    Run the matching runbook or wait, then read preflight again.
@@ -142,9 +148,11 @@ Deploy a gate-verified release to the installation.
 3. Execute the steps in that order inside the window, through the typed host
    operations the Owner granted. Hosts follow the server in the same window; a
    host refuses a protocol newer than its server, so never update a host first.
-4. When the window expired before the last step, the plan is void: run
+4. After each host is updated and verified, `studio-op host resume <client-id>`
+   for its runner identities.
+5. When the window expired before the last step, the plan is void: run
    preflight and make a new plan.
-5. `studio-op log append --kind did --project <project> --text "Deployed <version>: plan <id>, steps done in order."`
+6. `studio-op log append --kind did --project <project> --text "Deployed <version>: plan <id>, steps done in order."`
 
 Overriding a preflight blocker is T2 and stays with the Owner.
 

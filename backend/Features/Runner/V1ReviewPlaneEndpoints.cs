@@ -408,11 +408,22 @@ public static class V1ReviewPlaneEndpoints
             ReviewClaimUnclaimableLog unclaimableLog,
             CauseBreakerService causeBreakers,
             AgentStudio.Projects.ProjectRepositoryVisibility repositoryVisibility,
+            AgentStudio.Clients.ClientIdentityStore clients,
             CancellationToken ct) =>
         {
             if (!RunnerMatches(context, runnerId)
                 || !string.Equals(runnerId, request.ExecutorId, StringComparison.Ordinal))
                 return Results.Unauthorized();
+            // AGT-3647: a drained review executor finishes what it holds and
+            // claims nothing new, like a drained coding runner. On 9 November a
+            // review container on the superseded image claimed during the update.
+            if (clients.Find(runnerId) is { } client
+                && (client.DrainRequestedAt is not null || client.Kind == ClientIdentityKind.Retired))
+                return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
+                    Contract.ReviewClaimEmptyReasons.ExecutorDraining,
+                    client.Kind == ClientIdentityKind.Retired
+                        ? "Review executor is retired."
+                        : "Review executor is draining; no new reviews are admitted."));
             if (request.AvailableSlots <= 0)
                 return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
                     Contract.ReviewClaimEmptyReasons.NoAvailableSlot,

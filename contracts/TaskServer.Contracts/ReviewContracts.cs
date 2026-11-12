@@ -252,6 +252,8 @@ public static class ReviewClaimEmptyReasons
     public const string DifferentHostPreferred = "different-review-host-preferred";
     /// <summary>SM-11: every queued subject was coded by the claiming principal.</summary>
     public const string CodingPrincipalExcluded = "coding-principal-excluded";
+    /// <summary>AGT-3647: the executor is drained for a deploy and admits no new review.</summary>
+    public const string ExecutorDraining = "executor-draining";
 }
 
 public enum ReviewHostPlacementDecision

@@ -38,8 +38,12 @@ public static class BatchGateStateSnapshotReader
                 string.Equals(item.Subject.Project, project, StringComparison.OrdinalIgnoreCase))
             .OrderBy(item => item.Subject.EnqueueSequence).ToArray();
         var preChecks = store.ListPreChecks(project).OrderByDescending(item => item.CompletedAtUtc).ToArray();
-        var fallbackTimelineCauses = store.ListFallbackCauses(project);
+        var fallbackCauses = store.ListFallbackCauses(project);
         var allPending = store.ListAllPending();
+        var pendingByAttempt = allPending.GroupBy(item => item.ReviewAttemptId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        var latestCauseByAttempt = fallbackCauses.GroupBy(cause => cause.ReviewAttemptId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
         var projectManifests = store.ListManifests()
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
             .ToArray();
@@ -79,7 +83,6 @@ public static class BatchGateStateSnapshotReader
         var queuePositions = BatchGateFlightQueue.Positions(store, formedBatches,
             _ => leaseDeadlineDeferredBatchId);
         var flightQueue = formedBatches.OrderBy(manifest => queuePositions[manifest.BatchId]).ToArray();
-        var fallbackCauses = store.ListFallbackCauses(project);
         var planDeadlinePassed = plan.CloseAtUtc is { } closeAt && closeAt <= at;
         var overduePending = pending.Where(item => (item.Subject.ReviewCompletedAtUtc
                 .AddMinutes(settings.DeadlineMinutes) <= at || planDeadlinePassed)
@@ -91,8 +94,7 @@ public static class BatchGateStateSnapshotReader
                 var formed = recoverable.FirstOrDefault(manifest => manifest.Members.Any(member =>
                     member.TaskKey == item.Subject.TaskKey
                     && member.RunAttempt == item.Subject.RunAttempt));
-                var cause = fallbackCauses.LastOrDefault(entry =>
-                    entry.ReviewAttemptId == item.ReviewAttemptId);
+                var cause = latestCauseByAttempt.GetValueOrDefault(item.ReviewAttemptId);
                 var reason = formed is not null
                     ? $"batch {formed.BatchId} is {StateOf(store, formed).Phase.ToString().ToLowerInvariant()}"
                         + (queuePositions.TryGetValue(formed.BatchId, out var queued)
@@ -114,7 +116,7 @@ public static class BatchGateStateSnapshotReader
                         && !recoverable.Any(manifest => manifest.Members.Any(member =>
                             member.TaskKey == item.Subject.TaskKey
                             && member.RunAttempt == item.Subject.RunAttempt))
-                        && !fallbackCauses.Any(cause => cause.ReviewAttemptId == item.ReviewAttemptId))
+                        && !latestCauseByAttempt.ContainsKey(item.ReviewAttemptId))
                     .Select(item => item.Subject.TaskKey))
                     .Distinct(StringComparer.Ordinal).ToArray(),
                 CloseAtUtc = plan.CloseAtUtc is { } deadline && deadline <= at
@@ -205,12 +207,12 @@ public static class BatchGateStateSnapshotReader
         var causes = pending.Select(item => item.Subject.Project)
             .Concat(manifests.Select(manifest => manifest.Scope.Project)).Append(project)
             .Distinct(StringComparer.Ordinal)
-            .SelectMany(store.ListFallbackCauses).ToArray();
+            .SelectMany(name => name == project ? fallbackCauses : store.ListFallbackCauses(name)).ToArray();
         var fallbackItems = pending.Select(item => new
             {
                 item.Subject.TaskKey,
                 item.ReviewAttemptId,
-                Cause = causes.LastOrDefault(entry => entry.ReviewAttemptId == item.ReviewAttemptId),
+                Cause = latestCauseByAttempt.GetValueOrDefault(item.ReviewAttemptId),
                 Ownership = BatchGateOwnershipStore.Read(item.JobFolderPath),
             })
             .Where(item => item.Cause is not null).ToArray();
@@ -241,19 +243,18 @@ public static class BatchGateStateSnapshotReader
             members.TryAdd(check.TaskKey, new { status = "pre-check-red", batchId = (string?)null,
                 phase = (string?)null, position = (int?)null, size = (int?)null,
                 preCheck = check,
-                timeline = allPending.Where(item => item.ReviewAttemptId == check.ReviewAttemptId)
-                    .Select(item => BatchMemberTimelineProjection.Build(store, item.Subject, null,
-                        gateRows, preChecks, fallbackTimelineCauses, allPending)).FirstOrDefault() });
-        foreach (var cause in fallbackTimelineCauses)
+                timeline = pendingByAttempt.TryGetValue(check.ReviewAttemptId, out var checkedPending)
+                    ? BatchMemberTimelineProjection.Build(store, checkedPending.Subject, null,
+                        gateRows, preChecks, fallbackCauses, allPending) : null });
+        foreach (var cause in fallbackCauses)
         {
-            var origin = allPending.FirstOrDefault(item => item.ReviewAttemptId == cause.ReviewAttemptId);
-            if (origin is null) continue;
+            if (!pendingByAttempt.TryGetValue(cause.ReviewAttemptId, out var origin)) continue;
             members[origin.Subject.TaskKey] = new { status = "fallback", batchId = cause.BatchId,
                 phase = (string?)null, position = (int?)null, size = (int?)null,
                 reason = cause.Rule, reasonDetail = cause.Event,
                 fallbackRule = cause.Rule, fallbackEvent = cause.Event,
                 timeline = BatchMemberTimelineProjection.Build(store, origin.Subject, null,
-                    gateRows, preChecks, fallbackTimelineCauses, allPending) };
+                    gateRows, preChecks, fallbackCauses, allPending) };
         }
         foreach (var item in pending)
         {
@@ -269,7 +270,7 @@ public static class BatchGateStateSnapshotReader
                 preCheck = preChecks.FirstOrDefault(check => check.ResultSha == item.Subject.ResultSha
                     && check.GateProfileDigest == item.Subject.GateProfileDigest),
                 timeline = BatchMemberTimelineProjection.Build(store, item.Subject, null,
-                    gateRows, preChecks, fallbackTimelineCauses, allPending) };
+                    gateRows, preChecks, fallbackCauses, allPending) };
         }
         foreach (var manifest in manifests.Reverse())
         {
@@ -323,7 +324,7 @@ public static class BatchGateStateSnapshotReader
                         && check.BaseSha == manifest.BaseSha
                         && check.GateProfileDigest == member.GateProfileDigest),
                     timeline = BatchMemberTimelineProjection.Build(store, member, manifest,
-                        gateRows, preChecks, fallbackTimelineCauses, allPending),
+                        gateRows, preChecks, fallbackCauses, allPending),
                 };
             }
         }
