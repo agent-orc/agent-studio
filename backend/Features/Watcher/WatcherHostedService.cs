@@ -47,6 +47,7 @@ public sealed class WatcherHostedService : BackgroundService
     private readonly ILogger<WatcherHostedService> _logger;
     private readonly TimeProvider _time;
     private readonly PersonaSweepCoordinator? _personas;
+    private readonly PersonaOccurrenceService? _occurrences;
 
     public WatcherRunSnapshot Current { get; private set; } = WatcherRunSnapshot.Idle("Not run yet.");
 
@@ -63,7 +64,7 @@ public sealed class WatcherHostedService : BackgroundService
         IConfiguration configuration,
         ILogger<WatcherHostedService> logger,
         TimeProvider? time = null,
-        PersonaSweepCoordinator? personas = null)
+        PersonaSweepCoordinator? personas = null, PersonaOccurrenceService? occurrences = null)
     {
         _probes = probes;
         _engine = engine;
@@ -78,6 +79,7 @@ public sealed class WatcherHostedService : BackgroundService
         _logger = logger;
         _time = time ?? TimeProvider.System;
         _personas = personas;
+        _occurrences = occurrences;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -142,7 +144,15 @@ public sealed class WatcherHostedService : BackgroundService
         // Persona admission is part of the same Watcher sweep. It only writes
         // occurrence receipts; PT-4 owns the model call and publication.
         if (_personas is not null)
-            try { _personas.Sweep(nowUtc, observations); }
+            try
+            {
+                var receipts = _personas.Sweep(nowUtc, observations);
+                if (_occurrences is not null)
+                {
+                    await _occurrences.PublishRefusalsAsync(receipts, nowUtc, ct);
+                    await _occurrences.RecomputeAllOpenAsync(nowUtc, ct);
+                }
+            }
             catch (Exception ex) { _logger.LogWarning(ex, "Persona admission sweep failed"); }
 
         var previouslyResolved = observations.Where(x => x.Subject is not null)

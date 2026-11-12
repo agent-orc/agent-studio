@@ -230,7 +230,7 @@ public static class RoutePermissionCatalog
         Add("POST", IamPermissions.WorkspaceRead, "/api/v1/protocol/compatibility");
         Add("POST", IamPermissions.RunnerService,
             "/api/runner/claim", "/api/runner/completion", "/api/runner/events", "/api/runner/logs",
-            "/api/runner/orchestrator-decisions/**", "/api/runner/project-chat/claim", "/api/runner/project-chat/renew",
+            "/api/runner/orchestrator-decisions/**", "/api/runner/personas/**", "/api/runner/project-chat/claim", "/api/runner/project-chat/renew",
             "/api/runner/project-chat/complete", "/api/runner/replay/events",
             "/api/runner/post-merge/projects/{}/runs",
             "/api/clients/{}/runner-git-capability", "/api/deploy/jobs/**", "/api/deploy/gate-releases");
