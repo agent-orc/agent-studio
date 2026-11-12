@@ -483,6 +483,8 @@ builder.Services.AddSingleton<CodexSignInCoordinator>();
 builder.Services.AddSingleton<ClaudeSignInCoordinator>();
 builder.Services.AddSingleton<MigrationStateStore>();
 builder.Services.AddSingleton<HostTelemetryStore>();
+builder.Services.AddSingleton<ApiHostDiskService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ApiHostDiskService>());
 builder.Services.AddSingleton<EnvironmentFlowService>();
 builder.Services.AddSingleton<AgentStudio.Persistence.IAtomicJsonFileWriter, AgentStudio.Persistence.AtomicJsonFileWriter>();
 builder.Services.AddSingleton<OrchestratorConfigService>();
@@ -1493,7 +1495,8 @@ if (!publicDemoExecutionProfile)
 // was cleared is reported instead of sitting unnoticed (AGT-2220 lost four days
 // exactly that way). Report-only: it never re-queues a card.
 builder.Services.AddSingleton<AgentStudio.Tasks.IParkedBlockerProbe>(sp =>
-    new AgentStudio.Tasks.ParkedBlockerProbe(sp.GetService<AgentStudio.Git.GitService>()));
+    new AgentStudio.Tasks.ParkedBlockerProbe(sp.GetService<AgentStudio.Git.GitService>(),
+        sp.GetService<AgentStudio.Runner.AttemptAuthorityService>()));
 builder.Services.AddSingleton<AgentStudio.Tasks.ParkedCardRecallSweep>();
 builder.Services.AddHostedService<AgentStudio.Tasks.ParkedCardRecallSweepHostedService>();
 // AGT-2818: the pickup lanes get the same treatment the parked lane got. A card
@@ -1525,6 +1528,7 @@ builder.Services.AddSingleton<WorkbenchCatalogueService>();
 builder.Services.AddSingleton<DossierCardsService>();
 builder.Services.AddSingleton<DossierMaintenanceService>();
 builder.Services.AddSingleton<WorkbenchChangeNotifier>();
+builder.Services.AddSingleton<IWorkbenchSpawnedCardCleanup, WorkbenchSpawnedCardCleanup>();
 builder.Services.AddSingleton<WorkbenchDecisionService>();
 builder.Services.AddSingleton<WorkbenchReviewService>();
 // AGT-2803: the classification vocabulary. The areas registry merges the

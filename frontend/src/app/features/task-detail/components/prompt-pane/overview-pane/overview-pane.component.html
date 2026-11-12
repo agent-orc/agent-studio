@@ -6,10 +6,10 @@
     (titleSaved)="titleSaved.emit()"
     (referencesChanged)="referencesChanged.emit()" />
 
-  <!-- Compact status + agent block -->
   <section class="ov-section studio-measure studio-measure--tabular" data-testid="overview-status">
     <h3 class="ov-section__title">Status + Agent</h3>
     <div class="ov-grid ov-grid--definition">
+      @if (job().lastActivity) {
       <div class="ov-row">
         <span class="ov-label">Last Activity</span>
         <span class="ov-value">
@@ -17,6 +17,8 @@
           <span class="ov-dim">({{ formatAbsoluteTime(job().lastActivity) }})</span>
         </span>
       </div>
+      }
+      @if (job().createdAt) {
       <div class="ov-row">
         <span class="ov-label">Created</span>
         <span class="ov-value">
@@ -24,6 +26,7 @@
           <span class="ov-dim">({{ formatAbsoluteTime(job().createdAt) }})</span>
         </span>
       </div>
+      }
 
       <app-steering-receipt-status />
       <div class="ov-row ov-row--agent" data-testid="overview-agent">
@@ -50,6 +53,7 @@
         </span>
       </div>
 
+      @if (job().ownerClientId) {
       <div class="ov-row">
         <span class="ov-label">Owner</span>
         <span class="ov-value">
@@ -63,6 +67,7 @@
           }
         </span>
       </div>
+      }
     </div>
   </section>
 
@@ -71,12 +76,7 @@
     @placeholder { <div aria-hidden="true"></div> }
   </div>
 
-  <!-- Pipeline block: ordered steps with status, usage, and cost. Configuration of
-       which steps run and on which model lives in project Settings; this
-       block is the read-only "what ran, on which model, what did it cost"
-       view the feature spec asks for. The completion loop (verdict / attempt
-       / re-open counters) is consolidated into this section's header as a
-       strip rather than a separate block — it is the pipeline's outcome. -->
+  <!-- Pipeline steps, costs, and completion loop. -->
   <div class="ov-consumption studio-measure studio-measure--tabular-compact"
        data-testid="overview-consumption">
   @if (hasPipelineSection()) {

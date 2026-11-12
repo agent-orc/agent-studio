@@ -3,7 +3,6 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal, viewChild
 import { firstValueFrom } from 'rxjs';
 import { formatRetentionBytes, type RetentionPlan } from '../../models/retention.model';
 import { RetentionService } from '../../services/retention.service';
-import { RetentionBackupsComponent } from '../retention-backups/retention-backups.component';
 import { RetentionReportTableComponent } from '../retention-report-table/retention-report-table.component';
 import { RetentionRulesTableComponent } from '../retention-rules-table/retention-rules-table.component';
 import { RetentionRunHistoryComponent } from '../retention-run-history/retention-run-history.component';
@@ -15,7 +14,6 @@ import { RetentionRunHistoryComponent } from '../retention-run-history/retention
     RetentionRulesTableComponent,
     RetentionReportTableComponent,
     RetentionRunHistoryComponent,
-    RetentionBackupsComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './retention-admin.component.html',

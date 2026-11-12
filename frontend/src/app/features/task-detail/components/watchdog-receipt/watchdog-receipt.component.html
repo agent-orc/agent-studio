@@ -1,0 +1,10 @@
+@if (receipt(); as row) {
+  <div class="receipt" [attr.id]="'watchdog-receipt-' + row.receipt.id" data-testid="parked-watchdog-receipt">
+    <a [href]="'#watchdog-receipt-' + row.receipt.id" data-testid="parked-watchdog-receipt-link">Watchdog receipt {{ row.receipt.id }}</a>
+    <p>{{ row.receipt.why }}</p>
+    @if (row.receipt.undoable) {
+      <button type="button" data-testid="parked-watchdog-undo" [disabled]="busy()" (click)="undo()">Undo park</button>
+    }
+  </div>
+}
+@if (error(); as message) { <p role="alert">{{ message }}</p> }

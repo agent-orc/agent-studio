@@ -91,6 +91,9 @@ public static class MonolithTransitionAdapter
     public static int GateStartsAfterCancellation(int startsBeforeThisRun, string? reason, bool serviceStopping)
         => GateCancellationPolicy.ChargedStartsAfterCancellation(startsBeforeThisRun, reason, serviceStopping);
 
+    public static int GateStartsAfterServiceRestart(int chargedStarts, string? runByInstance, string currentInstance)
+        => GateCancellationPolicy.ChargedStartsAfterServiceRestart(chargedStarts, runByInstance, currentInstance);
+
     public static PerTaskFallbackWaitDecision PerTaskFallbackEngineWait(EngineDecisionWaitFacts facts)
         => PerTaskFallbackWaitPolicy.EngineDecision(facts);
 

@@ -25,6 +25,7 @@ public sealed class ParkedBlockerPolicyTests
     // subject until the card branch carries the integration branch. That IS a
     // checkable fact, so it must not be filed as a manual decision.
     [InlineData(HumanReviewEscalationCategories.ReviewSubjectUnmaterializable, ParkedBlockerConditionKinds.GitAncestor)]
+    [InlineData(HumanReviewEscalationCategories.AutoReviewStranded, ParkedBlockerConditionKinds.ReviewRetryAvailable)]
     // Everything else is a person's call or a spent budget. Claiming a
     // checkable condition here would recreate the bug: a card that looks
     // handled and is not.
@@ -43,6 +44,7 @@ public sealed class ParkedBlockerPolicyTests
     [Theory]
     [InlineData("[review-subject-unmaterialisierbar] budget exhausted", "review-subject-unmaterialisierbar")]
     [InlineData("[watchdog-kill]", "watchdog-kill")]
+    [InlineData("[environmental] Review host restarted", "environmental")]
     // An operator move carries prose, not a category. Guessing one would put a
     // wrong blocker type on the card.
     [InlineData("Parked for Robert to decide", ParkedBlockerCatalog.OperatorDecision)]
@@ -50,6 +52,17 @@ public sealed class ParkedBlockerPolicyTests
     [InlineData(null, ParkedBlockerCatalog.OperatorDecision)]
     public void ReadBlockerType_RecoversTheCategoryFromAFormattedReason(string? reason, string expected)
         => Assert.Equal(expected, ParkedBlockerCatalog.ReadBlockerType(reason));
+
+    [Fact]
+    public void Auto_review_watchdog_park_keeps_environmental_type_and_checkable_condition()
+    {
+        var marker = ParkedBlockerCatalog.Build(TaskStates.Escalated,
+            "[environmental] Review owner disappeared.", Now,
+            LaneChangeCauses.Escalated, HumanReviewEscalationCategories.AutoReviewStranded);
+        Assert.Equal(HumanReviewEscalationCategories.Environmental, marker?.BlockerType);
+        Assert.Equal(ParkedBlockerConditionKinds.ReviewRetryAvailable, marker?.Condition.Kind);
+        Assert.False(ParkedBlockerCatalog.RequiresDecisionCard(marker?.BlockerType));
+    }
 
     [Theory]
     [InlineData(TaskStates.HumanReview, true)]
