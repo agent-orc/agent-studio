@@ -39,7 +39,8 @@ public static class BackupEndpoints
             LastError = overview.OffHost.LastError is null ? null
                 : overview.OffHost.State == "invalid"
                     ? "The off-host target is misconfigured. Ask an installation operator for details."
-                    : "The off-host copy failed. Ask an installation operator for details."
+                    : "The off-host copy failed. Ask an installation operator for details.",
+            Listing = overview.OffHost.Listing is { } listing ? listing with { Detail = null } : null,
         },
         Warnings = overview.Warnings.Select(warning => warning with
         {

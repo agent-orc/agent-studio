@@ -26,14 +26,15 @@ public sealed record PublishedGateEvidence(
     string PublishedSha,
     DateTimeOffset RecordedAtUtc,
     bool Backfilled = false,
-    string? GateLog = null)
+    string? GateLog = null,
+    string? TestLevel = null)
 {
     public bool Passed => string.Equals(GateVerdict, nameof(BuildTestGateVerdict.Ok), StringComparison.Ordinal);
 
     /// <summary>The line a card that relies on this gate records as its evidence.</summary>
     public string Describe()
         => $"Gate {GateStep} of {SourceJobId} returned {GateVerdict} on {IntegrationBranch} tree {TreeSha}"
-           + (Backfilled ? $" (backfilled {RecordedAtUtc:O} from {GateLog})." : $" (recorded {RecordedAtUtc:O}).");
+           + (Backfilled ? $" (backfilled {RecordedAtUtc:O} from {GateLog}, test level {TestLevel ?? "unknown"})." : $" (recorded {RecordedAtUtc:O}).");
 }
 
 /// <summary>

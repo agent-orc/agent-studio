@@ -43,7 +43,7 @@ async function saveShot(testInfo: TestInfo, name: string, body: Buffer): Promise
   }
 }
 
-function buildInfo(state: string, emptyContext = false) {
+function buildInfo(state: string, emptyContext = false, checkoutMissing = false) {
   return {
     id: JOB_ID,
     taskKey: `${WATCH_PATH}::${JOB_ID}`,
@@ -104,12 +104,18 @@ function buildInfo(state: string, emptyContext = false) {
     tags: [],
     ownerClientId: 'local-default',
     lastUsage: null,
+    integration: checkoutMissing ? {
+      status: 'pending', integrationBranch: 'main', deliveryRef: 'task/AGT-1994', sha: null,
+      detail: 'Integration failed', failure: {
+        reason: 'This project needs a server checkout before delivery can integrate.',
+      },
+    } : null,
   };
 }
 
-function buildDetail(state: string, emptyContext = false) {
+function buildDetail(state: string, emptyContext = false, checkoutMissing = false) {
   return {
-    info: buildInfo(state, emptyContext),
+    info: buildInfo(state, emptyContext, checkoutMissing),
     promptMarkdown: '# Task',
     promptHistory: [],
     titleHistory: [],
@@ -261,9 +267,9 @@ const TIMELINE = [
 ];
 
 async function installRoutes(page: Page, state: string, emptyContext = false, recentAttempt = false,
-  parkedReason = 'Push protection rejected the branch.'): Promise<void> {
+  parkedReason = 'Push protection rejected the branch.', checkoutMissing = false): Promise<void> {
   const info = {
-    ...buildInfo(state, emptyContext),
+    ...buildInfo(state, emptyContext, checkoutMissing),
     ...(recentAttempt ? {
       parkedBlocker: {
         blockerType: 'operator-decision', conditionKind: 'manual',
@@ -275,7 +281,7 @@ async function installRoutes(page: Page, state: string, emptyContext = false, re
       },
     } : {}),
   };
-  const detail = buildDetail(state, emptyContext);
+  const detail = buildDetail(state, emptyContext, checkoutMissing);
   if (recentAttempt) {
     detail.info = info;
   }
@@ -402,9 +408,9 @@ async function setTheme(page: Page, theme: 'dark' | 'light'): Promise<void> {
 }
 
 async function openDetail(page: Page, state: string, emptyContext = false, recentAttempt = false,
-  parkedReason?: string, beforeOpen?: () => Promise<void>): Promise<void> {
+  parkedReason?: string, beforeOpen?: () => Promise<void>, checkoutMissing = false): Promise<void> {
   await page.setViewportSize({ width: 1440, height: 960 });
-  await installRoutes(page, state, emptyContext, recentAttempt, parkedReason);
+  await installRoutes(page, state, emptyContext, recentAttempt, parkedReason, checkoutMissing);
   await beforeOpen?.();
   await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
   await page.addStyleTag({ content: '[data-testid="studio-overlay-root"], [role="alert"] { display: none !important; }' });
@@ -431,7 +437,89 @@ async function shootBothThemes(page: Page, testInfo: TestInfo, baseName: string)
 }
 
 test.describe('Escalation summary panel — collapsible + compact', () => {
+  test('missing server checkout points to setup and cannot be reissued', async ({ page }) => {
+    await openDetail(page, '5e-escalated', false, false, undefined, undefined, true);
+    const panel = page.getByTestId('escalation-summary');
+    await expect(panel.getByTestId('server-checkout-remedy')).toBeVisible();
+    await expect(panel.getByTestId('server-checkout-remedy').getByRole('link', { name: 'Open Project Settings' }))
+      .toHaveAttribute('href', /\/#\/projects\/fixture-escalation\/settings$/);
+    await expect(panel.getByTestId('server-checkout-remedy').getByRole('link', { name: 'Read the setup guide' }))
+      .toHaveAttribute('href', /networked-task-server\.md#project-checkouts$/);
+    await expect(panel.getByTestId('escalation-action-reissue-escalated')).toHaveCount(0);
+    await expect(page.getByTestId('triage-action-reissue-escalated')).toHaveCount(0);
+    mkdirSync(SHOTS_DIR, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await panel.screenshot({ path: path.join(SHOTS_DIR, `server-checkout-remedy-${theme}.png`) });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await panel.screenshot({ path: path.join(SHOTS_DIR, 'server-checkout-remedy-390.png') });
+  });
+
   test.beforeEach(() => test.setTimeout(90_000));
+
+  test('gate infrastructure park offers retry and project switch without coding actions', async ({ page }, testInfo) => {
+    let retries = 0;
+    let enabledOnSave: boolean | null = null;
+    await openDetail(page, '5e-escalated', true, true,
+      '[gate-infrastructure] The verification gate could not run. Check the remote gate host and worker, then retry the gate.',
+      async () => {
+        const info = { ...buildInfo('5e-escalated', true), parkedBlocker: {
+          blockerType: 'gate-infrastructure', conditionKind: 'manual',
+          conditionDescription: 'The remote gate worker needs attention.',
+          lane: '5e-escalated', parkedAt: '2026-10-06T04:22:54Z', parkedForSeconds: 59,
+          reason: '[gate-infrastructure] The verification gate could not run. Check the remote gate host and worker, then retry the gate.',
+          recallStatus: 'blocked', lastEvaluatedAt: null, detail: '', decision: null,
+          needsInputFile: null, evaluationAgeSeconds: null, evaluationStale: false,
+          requiresDecisionCard: false,
+        } };
+        await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), route =>
+          route.fulfill({ status: 200, contentType: 'application/json',
+            body: JSON.stringify({ ...buildDetail('5e-escalated', true), info }) }));
+        const gateSettings = {
+          enabled: true, scope: 'code', planner: 'threshold', minimumSize: 2, maximumSize: 4,
+          deadlineMinutes: 20, lookAheadMinutes: 10, urgentTags: [], riskPolicy: 'balanced',
+          overlap: 'adjacent', reviewTestLevel: 'build-only', gateTimeoutMinutes: 25,
+          preCheckEnabled: false, advisor: { mode: 'off', cliType: 'codex', timeoutSeconds: 30 },
+        };
+        await page.route(`**/api/projects/${PROJECT}/batch-gate`, route => {
+          if (route.request().method() === 'PUT') enabledOnSave = route.request().postDataJSON().enabled;
+          return route.fulfill({ status: 200, contentType: 'application/json',
+            body: JSON.stringify({ settings: gateSettings, limits: { hardMaximumSize: 8 } }) });
+        });
+        await page.route(`**/api/projects/${PROJECT}/batch-gate/infrastructure/${JOB_ID}/retry`, route => {
+          retries++;
+          return route.fulfill({ status: 200, contentType: 'application/json', body: '{"retried":true}' });
+        });
+      });
+    const parked = page.getByTestId('parked-blocker');
+    await expect(parked).toContainText('The verification gate could not run.');
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        const shot = await parked.screenshot();
+        const name = `gate-infrastructure-park-${width}-${theme}--mocked.png`;
+        await saveShot(testInfo, name, shot);
+        writeFileSync(path.join(SHOTS_DIR, name), shot);
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await expect(page.getByTestId('escalation-action-retry-gate')).toBeVisible();
+    await expect(page.getByTestId('escalation-action-disable-batch')).toBeVisible();
+    await expect(page.getByTestId('escalation-action-reissue-escalated')).toHaveCount(0);
+    await expect(page.getByTestId('escalation-action-accept-escalated')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Continue (reissue)' })).toHaveCount(0);
+    await shootBothThemes(page, testInfo, 'gate-infrastructure-actions');
+    await page.setViewportSize({ width: 390, height: 900 });
+    await shootBothThemes(page, testInfo, 'gate-infrastructure-actions-390');
+    await page.getByTestId('escalation-action-retry-gate').click();
+    await expect(page.getByTestId('gate-infrastructure-outcome')).toContainText('returned to verification');
+    expect(retries).toBe(1);
+    await page.getByTestId('escalation-action-disable-batch').click();
+    await expect(page.getByTestId('gate-infrastructure-outcome')).toContainText('off for this project');
+    expect(enabledOnSave).toBe(false);
+  });
 
   test('confirms selected reissue findings and owner note before moving', async ({ page }, testInfo) => {
     await openDetail(page, '5e-escalated');
@@ -480,7 +568,7 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
   test('shows the latest continued attempt in the parked header', async ({ page }, testInfo) => {
     await openDetail(page, '5e-escalated', true, true);
     await expect(page.getByTestId('escalation-essence')).toContainText(
-      'Latest attempt ended 2026-10-06 04:22 UTC: Push protection rejected the branch.',
+      'Latest attempt ended 2026-10-06 04:22 UTC and parked this card.',
     );
     await shootBothThemes(page, testInfo, 'escalation-latest-attempt');
   });

@@ -1,4 +1,4 @@
-@if (auth.studioAllowed()) {
+@if (auth.studioAllowed() && !noProjectAccess()) {
     <app-offline-banner />
     <app-public-demo-banner />
     @defer (when codexSignInRequest() !== null) { <app-codex-sign-in-dialog /> }
@@ -332,7 +332,7 @@
       <!-- Dialogs and overlays follow regardless of the active shell. -->
 <!-- <app-update-banner /> moved into <app-notification-stack> in F40 so
            the update strip docks alongside other banner notifications. -->
-      <app-update-center />
+      @defer (when updateClient.centerOpen()) { <app-update-center /> }
       <app-update-block-modal />
       @defer (when confirmDialog.active() !== null; prefetch on idle) { <app-confirm-dialog /> }
       @if (workspaceManager.createOpen()) {
@@ -424,6 +424,8 @@
       }
       </div>
     } @else {
+    <!-- Legacy layout (VS Code layout switched off): its header chrome loads on demand. -->
+    @defer (on immediate) {
     <div class="app"
          [class.app--vscode-layout]="featureFlags.vsCodeLayout()"
          [class.app--vscode-meta-open]="featureFlags.vsCodeLayout() && featureFlags.vsCodeMetaOpen()"
@@ -447,8 +449,12 @@
           (toggleAuto)="onToggleAuto($event)"
           (openShell)="openProjectShell($event)" />
         <div class="header__actions">
-          <app-task-defaults-control (cliChange)="onDefaultCliChange($event)"
-                                     (modelChange)="onDefaultModelChange($event)" />
+          @if (shellAccess.operator()) {
+            @defer (on immediate) {
+              <app-task-defaults-control (cliChange)="onDefaultCliChange($event)"
+                                         (modelChange)="onDefaultModelChange($event)" />
+            }
+          }
           @if (gitStateAgeLabel(); as age) {
             <span class="git-state-stamp"
                   data-testid="git-state-stamp"
@@ -460,7 +466,9 @@
               Git state: {{ age }}
             </span>
           }
-          <app-auto-review-indicator />
+          @if (shellAccess.operator()) {
+            @defer (on immediate) { <app-auto-review-indicator /> }
+          }
           @if (updateClient.enabled) { <app-update-version-badge /> }
           <label class="client-filter" data-testid="client-filter">
             <span class="client-filter__label">Owner:</span>
@@ -510,7 +518,7 @@
 
 <!-- <app-update-banner /> moved into <app-notification-stack> in F40 so
            the update strip docks alongside other banner notifications. -->
-      <app-update-center />
+      @defer (when updateClient.centerOpen()) { <app-update-center /> }
       <app-update-block-modal />
       <app-workspace-banner [projects]="bannerProjects()" />
 
@@ -802,6 +810,9 @@
       }
     </div>
     }
+    }
+} @else if (noProjectAccess()) {
+  <main data-testid="no-project-access" class="no-project-access"><p>You currently have no access to any project. Ask the owner.</p></main>
 } @else {
-  @defer (on immediate) { <app-auth-gate /> }
+  @defer (on immediate) { <app-auth-gate /> } <!-- Signed-in sessions never render the gate; its forms code loads with it. -->
 }

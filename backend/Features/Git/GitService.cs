@@ -711,6 +711,7 @@ public partial class GitService
     private readonly CommitCandidateGate _commitGate;
     private readonly ProjectSettingsService? _projectSettings;
     private readonly GitRefLockJanitor? _lockJanitor;
+    private readonly StudioCommitIdentity _studioCommitIdentity;
     internal Func<ProcessStartInfo, TimeSpan, CancellationToken, GitProcessResult> IntegrationFetchForTesting { get; set; }
         = (start, timeout, ct) => GitProcessBoundary.Run(start, stdin: null, timeout, ct);
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> IntegrationRemoteGates = new(
@@ -740,6 +741,7 @@ public partial class GitService
         _commitGate = new CommitCandidateGate(logger, commitCandidateScanners);
         _projectSettings = projectSettings;
         _lockJanitor = lockJanitor;
+        _studioCommitIdentity = StudioCommitIdentity.From(config);
         // Give the ambient git-spawn telemetry a logger for out-of-scope
         // slow-spawn warnings (the per-request rollup uses its own logger).
         GitProcessTelemetry.Logger ??= logger;
@@ -4836,6 +4838,16 @@ public partial class GitService
             commits.Add(new(fields[0], fields[1]));
         }
         return commits;
+    }
+
+    /// <summary>The subject line of one commit, or null when it cannot be read.</summary>
+    public string? GetCommitSubject(string repoRoot, string sha)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
+            || !ReviewSubjectStore.IsValidResultSha(sha)) return null;
+        var (output, _, code) = RunGitArgs(repoRoot, "show", "-s", "--format=%s", sha);
+        var subject = output.Trim();
+        return code == 0 && subject.Length > 0 ? subject : null;
     }
 
     /// <summary>
@@ -9059,27 +9071,13 @@ public partial class GitService
     /// passing the message on stdin so it survives newlines and quoting. A clean
     /// tree degrades to a soft failure rather than an error.
     /// </summary>
-    private static GitCommitResult CommitPathspecs(string root, string message, IReadOnlyCollection<string> pathspecs)
+    private GitCommitResult CommitPathspecs(string root, string message, IReadOnlyCollection<string> pathspecs)
     {
         if (string.IsNullOrWhiteSpace(message)) return new GitCommitResult(false, null, "Commit message is required.");
-        // These are Studio-owned document commits. Supply both identities for
-        // this invocation so native services do not need a global git config.
-        const string name = "Agent Studio";
-        const string email = "studio@agent-studio.invalid";
-        var commitArgs = new List<string>
-        {
-            "-c", $"user.name={name}", "-c", $"user.email={email}",
-            "commit", "-F", "-", "--"
-        };
+        var commitArgs = new List<string> { "commit", "-F", "-", "--" };
         commitArgs.AddRange(pathspecs);
         var (_, commitErr, commitCode) = RunGitArgs(root, commitArgs.ToArray(), message,
-            new Dictionary<string, string?>
-            {
-                ["GIT_AUTHOR_NAME"] = name,
-                ["GIT_AUTHOR_EMAIL"] = email,
-                ["GIT_COMMITTER_NAME"] = name,
-                ["GIT_COMMITTER_EMAIL"] = email,
-            });
+            _studioCommitIdentity.GitEnvironment());
         if (commitCode != 0)
         {
             if (commitErr.Contains("nothing to commit", StringComparison.OrdinalIgnoreCase))

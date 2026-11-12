@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Git;
+using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Shared;
 using AgentStudio.TaskServer.Contracts.BatchGate;
 
@@ -172,10 +173,11 @@ public static class BatchGatePolicy
             if (reason is null) eligible[subject.TaskKey] = subject;
             else exclusions.Add(new(subject.TaskKey, reason.Value));
         }
-        var selected = proposedKeys.Distinct(StringComparer.Ordinal)
-            .Where(eligible.ContainsKey).Take(options.MaximumSize)
-            .Select(key => eligible[key]).ToArray();
-        if (selected.Length < options.MinimumSize)
+        // AGT-3568: the planner's close rule chooses the members; this builds the manifest.
+        var selection = AgentStudio.Runner.MonolithTransitionAdapter.BatchCloseSelection(eligible.Keys, proposedKeys,
+            options.MinimumSize, options.MaximumSize);
+        var selected = selection.SelectedKeys.Select(key => eligible[key]).ToArray();
+        if (selection.BelowMinimum)
             return new(null, exclusions, selected.Select(item => item.TaskKey).ToArray(),
                 selected.Length > 0, "close requested below minimum batch size");
         exclusions.AddRange(eligible.Keys.Except(selected.Select(item => item.TaskKey), StringComparer.Ordinal)
@@ -380,17 +382,20 @@ public static class BatchGatePolicy
     /// failure is infrastructure and pauses the batch.
     /// </summary>
     public static BatchReplayDisposition ReplayDisposition(BatchReplayResult replay)
-    {
-        if (replay.Success)
-            return replay.TipSha is not null && replay.Replacements.Count > 0
-                   && replay.Replacements.All(x => !string.IsNullOrWhiteSpace(x.OriginalSha)
-                                                  && !string.IsNullOrWhiteSpace(x.RebasedSha))
-                ? BatchReplayDisposition.Admit
-                : BatchReplayDisposition.EjectUnattributable;
-        return replay.Failure == BatchReplayFailure.Unattributable
-            ? BatchReplayDisposition.EjectUnattributable
-            : BatchReplayDisposition.Pause;
-    }
+        => AdmissionReplay(replay with { ConflictedFiles = [] }) switch
+        {
+            BatchAdmissionReplay.Admit => BatchReplayDisposition.Admit,
+            BatchAdmissionReplay.EjectUnattributable => BatchReplayDisposition.EjectUnattributable,
+            _ => BatchReplayDisposition.Pause,
+        };
+
+    /// <summary>The planner's admission verdict of one member replay, a conflict included (AGT-3568).</summary>
+    public static BatchAdmissionReplay AdmissionReplay(BatchReplayResult replay)
+        => AgentStudio.Runner.MonolithTransitionAdapter.BatchAdmitReplay(replay.ConflictedFiles.Count,
+            replay.Success, replay.TipSha is not null,
+            replay.Replacements.Count > 0 && replay.Replacements.All(x => !string.IsNullOrWhiteSpace(x.OriginalSha)
+                                                                    && !string.IsNullOrWhiteSpace(x.RebasedSha)),
+            replay.Failure == BatchReplayFailure.Unattributable);
 
     public static int DiagnosticRunsPerCycle(int memberCount)
         => memberCount <= 1 ? 0 : (int)Math.Ceiling(Math.Log2(memberCount));

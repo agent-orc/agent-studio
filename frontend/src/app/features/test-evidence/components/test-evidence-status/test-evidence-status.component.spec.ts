@@ -28,6 +28,10 @@ function task(state: string, overrides: Partial<TaskInfo> = {}): TaskInfo {
 }
 
 describe('TestEvidenceStatusComponent', () => {
+  it('hides code build and test evidence on a concept card', () => {
+    expect(visibleTestEvidence(task(TaskState.AutoReview, { mode: 'concept' }))).toBeNull();
+    expect(visibleTestEvidence(task(TaskState.HumanReview, { mode: 'concept' }))).toBeNull();
+  });
   it.each([
     TaskState.Backlog,
     TaskState.Preparation,

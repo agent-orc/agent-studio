@@ -3,6 +3,13 @@
 Version: 2026-11-09
 Status: System-of-record map for frontend changes.
 
+Concept cards and detail views show the dossier and review state without code
+delivery indicators. They omit build and test evidence, delivery integration,
+and checkout context. Concept acceptance remains available when a stale
+integration status says pending. A pending review held by its host shows the
+current load or slot-capacity reason in the live status line instead of a queue
+position.
+
 Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
@@ -43,24 +50,39 @@ settings view (including CLI Management) use this contract. Menus and popovers
 remain stack entries for Escape ordering without a modal focus scope; portaled
 menus also register their interactive root.
 
-## Initial bundle ratchet
+## Initial bundle budget
 
-The production `initial` budget in `frontend/angular.json` is a delivery
-ratchet. A frontend change must fit the current `maximumError`; it must not
-raise that value merely to pass review. Measure the production build with
-`npm --prefix frontend run build -- --stats-json` and inspect
-`frontend/dist/frontend/stats.json` before changing startup imports. The
-reported initial total includes every synchronously imported JavaScript and
-stylesheet. Prefer a deferred component or dynamic import at the feature entry
-point, and check that its code has no second eager path through a feature
-barrel. Verify the view loads in Playwright after splitting it.
+The production `initial` budget in `frontend/angular.json` guards the start
+bundle: every synchronously imported JavaScript chunk plus the global
+stylesheet. Angular counts 1 kB as 1,000 bytes.
 
-Only the release operator may approve a temporary increase to
-`maximumError` to unblock a deployment. That increase needs the measured old
-and new totals, the reason for the emergency, and a follow-up card to restore
-the ratchet. A delivery that reduces the bundle should lower `maximumError`
-to its measured initial size plus a small build-variance margin; preserve the
+| Measured | Revision | Initial total | `maximumWarning` | `maximumError` |
+|---|---|---:|---:|---:|
+| 11 November 2026 (AGT-3745), before | `develop` at `3c3f72609` | 2,100,405 B | 2,050 kB | 2,102 kB |
+| 11 November 2026 (AGT-3745), after | AGT-3745 delivery | 1,922,039 B | 1,980 kB | 2,114 kB |
+
+The rule: `maximumWarning` sits about 3 % and `maximumError` about 10 %
+above the last measured initial total. Ordinary growth from several
+deliveries in one batch then warns instead of failing the gate. A change that
+would cross `maximumError` must first move code out of the start bundle; it
+must not raise the number to pass review. The card that moves code out
+re-measures, records the new total in the table above, and resets both limits
+with the same rule. Only the release operator may approve a temporary increase
+to unblock a deployment; that needs the measured old and new totals, the
+reason, and a follow-up card that moves code out again. Preserve the
 `anyComponentStyle` budgets and component-size baselines.
+
+Measure with `npm --prefix frontend run build -- --stats-json` and inspect
+`frontend/dist/frontend/stats.json` (an esbuild metafile). Walk the
+`import-statement` edges from `main` to list the initial chunks and the input
+modules inside them before changing startup imports. Prefer a deferred block
+or dynamic import at the feature entry point. Feature barrels are the usual
+leak: Angular component definitions keep their module alive, so importing one
+helper from an `index.ts` that also re-exports a component puts that component
+in the start bundle. Keep components that are not on the first screen in the
+feature's `lazy.ts`, and keep services and model helpers that eager code needs
+in `runtime.ts` or `index.ts`. Verify the view loads in Playwright after
+splitting it.
 
 The board shell, columns, and cards stay eager. Workspace settings and the
 orchestrator sheet mount through small hosts when opened. Their view components
@@ -78,6 +100,11 @@ Markdown-capable view roots provide the library's task-reference token locally,
 so Markdown rendering code loads with those views. The app-level media token
 uses the library's shared entry point, leaving composer and conversation
 renderers outside the board startup graph.
+The sign-in gate and its forms code, the Update Center, the crash-recovery
+prompt, and the header chrome of the legacy (non VS Code) layout also load on
+first render or first open. diff2html's stylesheet is a non-injected style
+bundle (`diff2html.css`); `loadDiff2Html()` links it directly after the app
+stylesheet, keeping the cascade order, and waits for it before a diff renders.
 
 ## Environment flow
 
@@ -293,6 +320,27 @@ the domains it broke without hiding the domains that succeeded.
 
 ## Entry Points
 
+### Session-aware board shell
+
+The shell reads the authenticated session's projected role before it starts
+background loaders. Product and other read-only sessions load the board and
+their project collections, but skip runner status, CLI catalogs, usage, host
+health, operator attention, quotas, and their polling loops. The shared
+`ShellAccessService` also stops late-mounted background reads that the role
+cannot use before they reach the network. A refused background runner read
+does not open the generic error dialog. The limited status bar identifies the
+board without showing a fabricated local runner state. The server remains the
+authority for every request.
+
+For restricted sessions, the Explorer groups projects returned by the
+authorized `/api/projects` list under Projects headings. The public demo
+banner skips its environment flag read for restricted signed-in roles. The DEV
+favicon check waits for operator access before reading that endpoint.
+
+Operator-only header controls mount immediately after the first shell paint.
+Their code stays outside the initial bundle, and restricted sessions never
+construct those controls.
+
 ### Product preview and feedback
 
 The Project URL tab keeps its live iframe and places the project chat beside it through the existing Orchestrator side sheet. Its product controls collect a change request in plain language: desired result, page location, optional example, quota estimate, then an explicit Create this change action. The resulting card asks for before and after screenshots of each changed page. Delivery screenshots come from the task screenshot API. A person marks a rectangle or point on a screenshot, writes feedback, and sends its crop, optional element selector, and current preview address to the same card's next round. Acceptance uses the existing Human Review move; production release remains a separate approval.
@@ -335,7 +383,12 @@ Project settings expose the batch gate's scope, planner, bounds, risk policy,
 calibration, stacking, review test level, timeout, and advisor mode. Enabling
 the gate while the scope is Documentation switches the scope to Code and says
 so; the operator can switch it back before saving. A link at the top of the
-project settings page jumps to the section (AGT-3592). Review lane headers summarize
+project settings page jumps to the section (AGT-3592).
+Code scope includes code and documentation follow-ups from concept work;
+Documentation scope includes only documentation follow-ups. A save that enables
+batch verification requires the remote SSH gate host and worker path, and an
+infrastructure park offers Retry gate and Disable batch verification.
+Review lane headers summarize
 waiting and running batches; card badges and task detail read membership from
 `GET /api/projects/{project}/batch-gate/state?history=10`, not from board cards.
 The project batch panel shows the planner, look ahead, advisor verdict, pending
@@ -1052,12 +1105,12 @@ occur. It is not a claim about tunnel transfer time.
   [docs/operations/security/overview.md](../../operations/security/overview.md).
 - The Retention destination at `#/workspace/settings/retention` owns the
   versioned workspace rule table, dry-run and explicit apply reports, run
-  history, and full-backup controls. Project Settings mounts the same rule
+  history, and a pointer to the Task Server backup controls. Project Settings mounts the same rule
   table for sparse overrides. Archived task detail remains navigable from the
   board, global search, and dossier history, then renders the cold manifest and
   hot Markdown excerpts in Docs with one restore action. All retention traffic
-  uses `/api/v1/management/retention` and `/api/v1/management/backups/full`, so
-  the Orchestrator proxy and direct Task Server deployment share one frontend.
+  uses `/api/v1/management/retention`. Installation backup commands live under
+  Settings > Task Server, with backup state on each project's Operations page.
 - The Environment destination at `#/workspace/settings/environment` (old
   `execution-hosts` and `remote-hosts` routes redirect here) persists a per-user
   Hosts, Topology, Installation, or History view. Hosts opens with a grouped

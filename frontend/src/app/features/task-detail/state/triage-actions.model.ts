@@ -269,6 +269,29 @@ export function laneActionsFor(state: string): TriageButton[] {
   return LANE_ACTIONS[state] ?? [];
 }
 
+/** Checkout setup must happen before another coding attempt can help. */
+export function isServerCheckoutFailure(text: string): boolean {
+  return /needs a server checkout|server checkout.*missing|integration worktree base .* unavailable after fetch|could not resolve the project repository for the integration worktree/i.test(text);
+}
+
+export function taskNeedsServerCheckout(info: TaskInfo): boolean {
+  return isServerCheckoutFailure([
+    info.integration?.failure?.reason,
+    info.parkedBlocker?.reason,
+  ].filter(Boolean).join(' '));
+}
+
+/** Lane primary for one task; drops Reissue while the server checkout is missing. */
+export function primaryActionForTask(info: TaskInfo): TriageButton | null {
+  const action = primaryActionFor(info.state);
+  return action?.id === 'reissue-escalated' && taskNeedsServerCheckout(info) ? null : action;
+}
+
+/** True when any escalation signal names a missing server checkout. */
+export function escalationNeedsServerCheckout(info: TaskInfo, ...texts: (string | null | undefined)[]): boolean {
+  return taskNeedsServerCheckout(info) || isServerCheckoutFailure(texts.filter(Boolean).join(' '));
+}
+
 export function laneLabelFor(state: string): string {
   return laneName(state);
 }
@@ -313,6 +336,15 @@ export function mergeAcceptViewFor(
   info: TaskInfo,
   landedStateHint: LandedState | null = null,
 ): MergeAcceptView {
+  if (!acceptanceRequiresIntegration(info)) {
+    return {
+      landed: false,
+      landedState: 'on-branch-only',
+      acceptLabel: 'Accept',
+      statusLabel: null,
+      statusTooltip: `Accept moves the card to ${laneName(TaskState.Completed)}.`,
+    };
+  }
   // Match the card merge-signal contract: only an attributed task commit is a
   // mergeable deliverable. A branch/base without one is a planning, docs,
   // results-only, or no-op outcome, even when its base is in the git graph.
@@ -367,6 +399,11 @@ export function mergeAcceptViewFor(
       ? `This task's work is already merged into develop at ${mergeSha}. Accept moves the card to ${laneName(TaskState.Completed)}; no merge is triggered.`
       : `This task's work is already merged into develop. Accept moves the card to ${laneName(TaskState.Completed)}; no merge is triggered.`,
   };
+}
+
+/** Concept and explicitly branch-free cards can be accepted without delivery integration. */
+export function acceptanceRequiresIntegration(info: TaskInfo): boolean {
+  return info.mode !== 'concept' && info.requiresIntegration !== false;
 }
 
 /** Owner-facing reason while the Human Review action is held. */

@@ -18,6 +18,12 @@ import { dismissDevErrorDialog, setTheme, type Theme } from '../helpers/theme';
  * round never reaches a runner and the refusal does not need a red batch
  * flight; the backend tests cover the route itself. Light and dark captures go
  * to `$JOB_RESULTS_DIR/continue-round/`.
+ *
+ * AGT-3700: on a concept card the code-shaped follow-up reaches the real
+ * backend guard, which refuses it before anything is written. The panel offers
+ * "Keep in concept mode and send" and "Promote to implementation" as buttons,
+ * and Send round stays usable. The resend with `modeOverride` and the concept
+ * promotion are route-mocked so no run starts and no card is created.
  */
 
 interface WatchPath { path: string; name?: string }
@@ -26,6 +32,12 @@ const BASE_SHA = '3f9c2a7b1d4e5f60718293a4b5c6d7e8f9012345';
 const BASE_REF = `refs/heads/agent-studio/results/run_demo_continue/fence-3/${BASE_SHA}`;
 const ISOLATION_MESSAGE = 'This card is a member of batch flight flight-demo-7, which is isolating a red result. '
   + 'Eject it from the batch to change it.';
+
+// The card panels keep reading the card after a test's last assertion, so a
+// lane rewrite can still be fetching when the context closes.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
 
 async function pickWatchPath(): Promise<string> {
   const paths = await api<WatchPath[]>('/api/watch-paths');
@@ -178,3 +190,184 @@ for (const theme of ['light', 'dark'] as Theme[]) {
     }
   });
 }
+
+const CONCEPT_PLAN = {
+  source: { repoRelativePath: 'docs/concepts/result-naming/index.html', title: 'Result file naming' },
+  items: [
+    { title: 'Rename result files to the D3 convention', promptMarkdown: '# Rename' },
+    { title: 'Migrate existing result folders', promptMarkdown: '# Migrate' },
+  ],
+  mode: 'coding', targetState: '1-preparation', watchPath: '', projectName: 'demo',
+};
+
+/**
+ * Lets a continue without `modeOverride` reach the real guard, answers the
+ * confirmed resend with a queued round, and records every POST.
+ */
+async function routeGuardedContinue(page: Page): Promise<Request[]> {
+  const sent: Request[] = [];
+  await page.route(/\/tasks\/[^/]+\/continue(\?|$)/, route => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    sent.push(route.request());
+    if (!(route.request().postDataJSON() as { modeOverride?: string }).modeOverride) return route.fallback();
+    return route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'queued',
+        queued: { reason: 'lane-not-runnable', position: 1, promotedFromState: '5-human-review' },
+        base: { ref: BASE_REF, sha: BASE_SHA, source: 'latest-result', resultAttemptId: 'run_demo_continue' },
+      }),
+    });
+  });
+  return sent;
+}
+
+async function createConceptCard(watchPath: string, label: string): Promise<string> {
+  const { id } = await createJob({
+    title: `continue-round-concept-${label}-${Date.now()}`,
+    watchPath,
+    promptMarkdown: '# Concept card whose Dossier takes a follow-up',
+    targetState: '0-backlog',
+    mode: 'concept',
+  });
+  return id;
+}
+
+const CODE_SHAPED_FOLLOW_UP = 'Fix the result writer so it uses the new file names.';
+const GUARD_REASON = 'Owner follow-up after sight review.';
+
+for (const theme of ['light', 'dark'] as Theme[]) {
+  test(`a refused concept follow-up offers keep-and-send and promote as buttons (${theme})`, async ({ page }, testInfo) => {
+    const watchPath = await pickWatchPath();
+    const id = await createConceptCard(watchPath, theme);
+    await presentInLane(page, id, watchPath, '5-human-review');
+    await routeBase(page);
+    const sent = await routeGuardedContinue(page);
+
+    try {
+      await openCard(page, id, watchPath, theme);
+      const panel = await fillRound(page, 'continue', CODE_SHAPED_FOLLOW_UP, GUARD_REASON);
+      await panel.getByTestId('continue-round-submit').click();
+
+      const refusal = panel.getByTestId('continue-mode-refusal');
+      await expect(refusal).toContainText("This card is in 'concept' mode");
+      await expect(refusal).not.toContainText('/api/');
+      await expect(refusal).not.toContainText('modeOverride');
+      await expect(refusal.getByTestId('continue-mode-keep-and-send')).toHaveText('Keep in concept mode and send');
+      await expect(refusal.getByTestId('continue-mode-promote')).toHaveText('Promote to implementation');
+      // F7: Send round does not stay disabled after the refusal.
+      await expect(panel.getByTestId('continue-round-submit')).toBeEnabled();
+      await panel.screenshot({ path: evidencePath(testInfo, `continue-mode-refusal-${theme}.png`) });
+
+      await refusal.getByTestId('continue-mode-keep-and-send').click();
+
+      await expect(page.getByTestId('notification-success').last())
+        .toContainText(`Round queued. It starts from ${BASE_SHA.slice(0, 12)}.`);
+      expect(sent).toHaveLength(2);
+      expect(sent[0].postDataJSON()).toEqual({ prompt: CODE_SHAPED_FOLLOW_UP, mode: 'continue', reason: GUARD_REASON });
+      expect(sent[1].postDataJSON()).toEqual({
+        prompt: CODE_SHAPED_FOLLOW_UP, mode: 'continue', modeOverride: 'concept', reason: GUARD_REASON,
+      });
+      await expect(panel.getByTestId('continue-round-form')).toHaveCount(0);
+    } finally {
+      await deleteCard(id, watchPath);
+    }
+  });
+}
+
+test('after a refusal Send round re-enables when the text changes', async ({ page }) => {
+  const watchPath = await pickWatchPath();
+  const id = await createConceptCard(watchPath, 'resend');
+  await presentInLane(page, id, watchPath, '5-human-review');
+  await routeBase(page);
+  // Both answers refuse, so nothing reaches a runner: the guard first, then a batch isolation.
+  let calls = 0;
+  await page.route(/\/tasks\/[^/]+\/continue(\?|$)/, route => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    calls += 1;
+    if (calls === 1) return route.fallback();
+    return route.fulfill({
+      status: 409, contentType: 'application/json',
+      body: JSON.stringify({ error: 'batch-isolation-active', message: ISOLATION_MESSAGE, flight: 'flight-demo-7' }),
+    });
+  });
+
+  try {
+    await openCard(page, id, watchPath, 'dark');
+    const panel = await fillRound(page, 'continue', CODE_SHAPED_FOLLOW_UP, GUARD_REASON);
+    const submit = panel.getByTestId('continue-round-submit');
+    await submit.click();
+    await expect(panel.getByTestId('continue-mode-refusal')).toBeVisible();
+    await expect(submit).toBeEnabled();
+
+    await panel.getByTestId('continue-round-prompt').fill('Please write the D3 file naming section of the Dossier.');
+    await expect(panel.getByTestId('continue-mode-refusal')).toHaveCount(0);
+    await expect(submit).toBeEnabled();
+    await submit.click();
+    await expect(panel.getByTestId('continue-round-error')).toHaveText(ISOLATION_MESSAGE);
+    await expect(submit).toBeEnabled();
+
+    await panel.getByTestId('continue-round-prompt').fill('Please write the D3 file naming section, briefly.');
+    await expect(submit).toBeEnabled();
+    expect(calls).toBe(2);
+  } finally {
+    await deleteCard(id, watchPath);
+  }
+});
+
+test('a refused concept follow-up promotes the card from its Dossier proposals (390 px)', async ({ page }, testInfo) => {
+  const watchPath = await pickWatchPath();
+  const id = await createConceptCard(watchPath, 'promote');
+  await presentInLane(page, id, watchPath, '5-human-review');
+  await routeBase(page);
+  await routeGuardedContinue(page);
+  const promotions: Request[] = [];
+  await page.route(/\/api\/tasks\/[^/]+\/promote-concept(\?|$)/, route => {
+    if (route.request().method() === 'GET') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(CONCEPT_PLAN) });
+    }
+    promotions.push(route.request());
+    return route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        source: CONCEPT_PLAN.source,
+        created: [
+          { jobId: 'agt-9001', taskKey: 'AGT-9001', title: CONCEPT_PLAN.items[0].title },
+          { jobId: 'agt-9002', taskKey: 'AGT-9002', title: CONCEPT_PLAN.items[1].title },
+        ],
+      }),
+    });
+  });
+
+  try {
+    await openCard(page, id, watchPath, 'light');
+    await page.setViewportSize({ width: 390, height: 900 });
+    const panel = await fillRound(page, 'continue', CODE_SHAPED_FOLLOW_UP, GUARD_REASON);
+    await panel.getByTestId('continue-round-submit').click();
+    const refusal = panel.getByTestId('continue-mode-refusal');
+    await expect(refusal.getByTestId('continue-mode-promote')).toBeVisible();
+    // Viewport captures: at 390 px the header and the bottom pane are fixed
+    // over the detail, so an element capture would show them on top of it.
+    await refusal.evaluate(el => el.scrollIntoView({ block: 'center' }));
+    await page.screenshot({ path: evidencePath(testInfo, 'continue-mode-refusal-390.png') });
+
+    await refusal.getByTestId('continue-mode-promote').click();
+    await expect(refusal.getByTestId('continue-mode-promote-items')).toContainText(CONCEPT_PLAN.items[0].title);
+    const confirm = refusal.getByTestId('continue-mode-promote-confirm');
+    await expect(confirm).toHaveText('Create 2 implementation cards');
+    const box = await panel.boundingBox();
+    expect(box?.width ?? 0).toBeLessThanOrEqual(390);
+    await confirm.evaluate(el => el.scrollIntoView({ block: 'center' }));
+    await page.screenshot({ path: evidencePath(testInfo, 'continue-mode-promote-390.png') });
+
+    await confirm.click();
+    await expect(page.getByTestId('notification-success').last())
+      .toContainText('Created 2 implementation cards: AGT-9001, AGT-9002.');
+    expect(promotions).toHaveLength(1);
+    expect(promotions[0].postDataJSON()).toEqual({ itemIndexes: [0, 1] });
+    await expect(panel.getByTestId('continue-round-form')).toHaveCount(0);
+  } finally {
+    await deleteCard(id, watchPath);
+  }
+});

@@ -1,0 +1,147 @@
+@use '../../../../../styles/mixins' as m;
+
+:host { display: block; }
+
+.readiness-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+  margin: 0 var(--studio-spacing-2) var(--studio-spacing-2);
+  padding: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-action-radius-sm);
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg);
+  font-size: var(--studio-font-size-sm);
+}
+
+.readiness-bar__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--studio-spacing-2);
+  min-width: 0;
+}
+
+.readiness-bar__count {
+  min-width: 0;
+  color: var(--studio-fg-dim);
+  font-variant-numeric: tabular-nums;
+
+  strong { color: var(--studio-fg-strong); font-weight: 600; }
+}
+
+.readiness-bar__refresh { flex: 0 0 auto; }
+
+.readiness-bar__accept { align-self: stretch; }
+
+// The filter spans the lane, so all three choices stay on one row in a narrow lane.
+.readiness-bar__filter {
+  min-width: 0;
+
+  ::ng-deep .segmented.segmented {
+    display: flex;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  ::ng-deep .segmented.segmented .segmented__option {
+    flex: 1 1 auto;
+    justify-content: center;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+// Action recipe of docs/quality/frontend/style-guide/buttons.md, local because
+// the shell's `.btn` rules do not reach the board lanes.
+.readiness-bar__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--studio-spacing-1);
+  box-sizing: border-box;
+  height: 28px;
+  padding: 0 var(--studio-spacing-3);
+  border: 1px solid transparent;
+  border-radius: var(--studio-action-radius-sm);
+  background: transparent;
+  color: var(--studio-fg-dim);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+
+  &:hover:not(:disabled) { background: var(--studio-bg-hover); color: var(--studio-fg-strong); }
+
+  &:focus-visible {
+    outline: 2px solid var(--studio-accent);
+    outline-offset: 1px;
+  }
+
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+}
+
+.readiness-bar__button--primary {
+  border-color: var(--studio-accent);
+  background: var(--studio-accent);
+  color: var(--studio-on-accent);
+
+  &:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--studio-accent) 88%, var(--studio-fg-strong));
+    color: var(--studio-on-accent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .readiness-bar__button { transition: none; }
+}
+
+.readiness-bar__results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-1);
+  padding-top: var(--studio-spacing-2);
+  border-top: 1px solid var(--studio-border);
+}
+
+.readiness-bar__results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--studio-spacing-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.readiness-bar__result-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+  @include m.thin-scroll;
+}
+
+.readiness-bar__result {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--studio-spacing-2);
+  align-items: baseline;
+}
+
+.readiness-bar__result-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--studio-fg-strong);
+}
+
+.readiness-bar__result-message {
+  grid-column: 2;
+  color: var(--studio-fg-dim);
+  overflow-wrap: anywhere;
+}

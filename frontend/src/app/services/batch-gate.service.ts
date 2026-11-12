@@ -125,8 +125,8 @@ export class BatchGateService {
   closeNow(project: string): Observable<unknown> {
     return this.http.post(this.url(project) + '/close-now', {});
   }
-  eject(project: string, taskKey: string): Observable<unknown> {
-    return this.http.post(`${this.url(project)}/members/${encodeURIComponent(taskKey)}/eject`, {});
+  eject(project: string, taskKey: string, reason: string): Observable<unknown> {
+    return this.http.post(`${this.url(project)}/members/${encodeURIComponent(taskKey)}/eject`, { reason });
   }
   /** Lifetime pilot figures; read-only and served from the batch store without Git. */
   report(project: string): Observable<BatchGateReport> {
@@ -143,6 +143,10 @@ export class BatchGateService {
   }
   releaseQueueStalled(project: string): Observable<GateQueueStallRelease> {
     return this.http.post<GateQueueStallRelease>(`${this.url(project)}/queue-stalls/release`, {});
+  }
+  retryInfrastructureGate(project: string, taskKey: string): Observable<{ retried: boolean }> {
+    return this.http.post<{ retried: boolean }>(
+      `${this.url(project)}/infrastructure/${encodeURIComponent(taskKey)}/retry`, {});
   }
 }
 

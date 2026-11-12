@@ -343,7 +343,8 @@ public sealed class ServerReadinessPolicyTests
 
         Assert.Equal(ReadinessStates.Warn, check.State);
         Assert.Equal("Start a pull gate worker against this server, or set RemoteGate__SshHost and RemoteGate__WorkerPath "
-            + "for the api service and recreate the stack.", check.Remedy);
+            + "for the api service and recreate the stack. This needs host access because the worker and API service "
+            + "configuration run outside Studio.", check.Remedy);
     }
 
     [Fact]

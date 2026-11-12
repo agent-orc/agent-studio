@@ -221,6 +221,8 @@ public class TaskFolderAccessIsolationTest
             // developer checkout.
             ["backend/Features/Git/IntegrationWorktreeProvider.cs"] =
                 "Deletes only the derived, Studio-owned integration worktree slot, never task storage.",
+            ["backend/Features/Registry/NetworkedRepositoryCheckout.cs"] =
+                "Deletes only the server-owned Git checkout beside projects, never a task folder.",
 
             // Hosted wiki publication (AGT-2278): snapshot retention prunes
             // superseded SHA-addressed docs snapshots under the OS temp root.

@@ -1,11 +1,14 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
 /// <summary>Stateful, dependency-free host sampler. Linux reads /proc; Windows uses kernel counters.</summary>
 public sealed class HostTelemetrySampler
 {
+    private readonly RunnerOptions? _options;
+    public HostTelemetrySampler(RunnerOptions? options = null) => _options = options;
     private CpuCounters? _previousCpu;
     private (long InPages, long OutPages, DateTime At)? _previousSwap;
     private DateTime _nextAt = DateTime.MinValue;
@@ -35,7 +38,23 @@ public sealed class HostTelemetrySampler
         var sample = OperatingSystem.IsLinux()
             ? SampleLinux(now, activeSlots)
             : SampleWindows(now, activeSlots);
-        return WithConnectivity(sample, connectivity);
+        var paths = new List<(string Purpose, string Path)>
+        {
+            ("runner work", _options?.WorkDir ?? Environment.CurrentDirectory),
+            ("runner state", _options?.StateDir ?? Environment.CurrentDirectory),
+            ("review work", _options?.ReviewWorkDir ?? Environment.CurrentDirectory),
+        };
+        if (!string.IsNullOrWhiteSpace(_options?.SalvageDir))
+            paths.Add(("salvage", _options.SalvageDir));
+        foreach (var containerPath in new[] { "/var/lib/docker", "/var/lib/containers" }.Where(Directory.Exists))
+            paths.Add(("container storage", containerPath));
+        var filesystems = HostFilesystemProbe.Measure(paths);
+        if (HostDiskPressurePolicy.Decide(filesystems, new HostDiskPressureThresholds()).Level != HostDiskPressureLevel.Healthy)
+            filesystems = HostFilesystemProbe.Measure(paths,
+                [("runner worktrees", _options?.WorkDir ?? Environment.CurrentDirectory),
+                 ("logs", _options?.StateDir ?? Environment.CurrentDirectory),
+                 ("result archives", _options?.SalvageDir ?? Environment.CurrentDirectory)]);
+        return WithConnectivity(sample with { Filesystems = filesystems }, connectivity);
     }
 
     private HostTelemetrySample SampleLinux(DateTime now, int activeSlots)
@@ -67,7 +86,7 @@ public sealed class HostTelemetrySampler
         _previousSwap = currentSwap;
 
         return new HostTelemetrySample(now, cpu, ParseDouble(loads[0]), ParseDouble(loads[1]), ParseDouble(loads[2]),
-            Math.Max(0, total - available), total, swapIn, swapOut, steal, ioWait, Environment.ProcessorCount, activeSlots);
+            Math.Max(0, total - available), total, swapIn, swapOut, steal, ioWait, LinuxHostCpuCount(), activeSlots);
     }
 
     private HostTelemetrySample SampleWindows(DateTime now, int activeSlots)
@@ -95,6 +114,16 @@ public sealed class HostTelemetrySampler
         return new CpuCounters(fields.Aggregate(0UL, (sum, value) => sum + value), fields.ElementAtOrDefault(3) + fields.ElementAtOrDefault(4),
             fields.ElementAtOrDefault(7), fields.ElementAtOrDefault(4));
     }
+
+    // /proc/loadavg counts runnable work across the host. ProcessorCount may
+    // be reduced by this process's cgroup quota, so it cannot normalize loadavg.
+    internal static int LinuxHostCpuCount()
+        => ParseLinuxHostCpuCount(File.ReadLines("/proc/stat"));
+
+    internal static int ParseLinuxHostCpuCount(IEnumerable<string> lines)
+        => Math.Max(1, lines.Count(line =>
+            line.Length > 3 && line.StartsWith("cpu", StringComparison.Ordinal)
+            && char.IsAsciiDigit(line[3])));
 
     private static CpuCounters? ReadWindowsCpu()
     {

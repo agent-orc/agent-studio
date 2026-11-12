@@ -15,8 +15,11 @@ namespace AgentStudio.Management;
 /// --studio-backup inspect --key &lt;file&gt; --archive &lt;file&gt;
 /// --studio-backup decrypt --key &lt;file&gt; --archive &lt;file&gt; --output &lt;file.tar.gz&gt;
 /// --studio-backup restore --key &lt;file&gt; --archive &lt;file&gt; --target &lt;source&gt;=&lt;dir&gt; ...
-///                         [--secret-key &lt;escrowed copy&gt; --secret-key-target &lt;path&gt;] [--no-clone]
+///                         [--secret-key &lt;escrowed copy&gt; --secret-key-target &lt;path&gt;] [--restored-by &lt;name&gt;] [--no-clone]
 /// </code>
+/// A restore writes a receipt into the restored workspace (AGT-3734,
+/// <see cref="BackupRestoreReceipts"/>): the Operations page and the
+/// management audit show which archive came back, from when, and by whom.
 /// <c>decrypt</c> and <c>restore</c> also take <c>--actor &lt;name&gt;</c>
 /// (default <c>offline:&lt;account&gt;</c>) and <c>--audit-workspace &lt;dir&gt;</c>,
 /// and append their outcome to that workspace's control plane audit chain
@@ -29,7 +32,8 @@ public static class StudioBackupCommand
 {
     public const string Flag = "--studio-backup";
 
-    public static int Run(string[] args, TextWriter output, TextWriter error, IConfiguration? configuration = null)
+    public static int Run(string[] args, TextWriter output, TextWriter error, IConfiguration? configuration = null,
+        TimeProvider? clock = null)
     {
         try
         {
@@ -39,7 +43,8 @@ public static class StudioBackupCommand
                 ["key-id", var path] => Print(output, BackupKey.Load(path).Id),
                 ["inspect", .. var rest] => Inspect(Options(rest), output),
                 ["decrypt", .. var rest] => Audited(BackupAudit.Decrypt, Options(rest), output, error, configuration, Decrypt),
-                ["restore", .. var rest] => Audited(BackupAudit.Restore, Options(rest), output, error, configuration, Restore),
+                ["restore", .. var rest] => Audited(BackupAudit.Restore, Options(rest), output, error, configuration,
+                    (options, writer) => Restore(options, writer, clock ?? TimeProvider.System)),
                 _ => Usage(error),
             };
         }
@@ -169,7 +174,7 @@ public static class StudioBackupCommand
         return $"Decrypted {Path.GetFileName(archive)} to a plain gzip tar outside the server.";
     }
 
-    private static string Restore(Dictionary<string, List<string>> options, TextWriter output)
+    private static string Restore(Dictionary<string, List<string>> options, TextWriter output, TimeProvider clock)
     {
         var (archive, key) = Open(options);
         var destinations = Targets(options, strict: true);
@@ -186,11 +191,12 @@ public static class StudioBackupCommand
         if (manifest is null) throw new BackupException("backup-corrupt", "The archive has no manifest.");
 
         byte[]? secretMaterial = null;
+        string? secretCopyId = null;
         var secretTarget = options.GetValueOrDefault("secret-key-target")?.SingleOrDefault();
         if (options.GetValueOrDefault("secret-key")?.SingleOrDefault() is { } secretCopy)
         {
             secretMaterial = Convert.FromBase64String(File.ReadAllText(secretCopy).Trim());
-            var copyId = new KeyEncryptionKey(secretMaterial, "restore").Id;
+            var copyId = secretCopyId = new KeyEncryptionKey(secretMaterial, "restore").Id;
             if (manifest.SecretKeyId is not null && copyId != manifest.SecretKeyId)
                 throw new BackupException("restore-secret-key-mismatch",
                     $"The secret store key copy has fingerprint {copyId}; the backup was made with {manifest.SecretKeyId}.");
@@ -216,7 +222,41 @@ public static class StudioBackupCommand
                       + $"{result.CheckoutsCloned} checkouts cloned, skipped sources: "
                       + (result.SkippedSources.Count == 0 ? "none" : string.Join(", ", result.SkippedSources)) + ".";
         output.WriteLine(summary);
+        WriteReceipt(options, destinations, archive, key, secretCopyId, result, clock, output);
         return summary;
+    }
+
+    /// <summary>
+    /// The restore is complete when this runs, so a receipt that cannot be
+    /// written is a warning, not a failed restore: the targets stay restored.
+    /// </summary>
+    private static void WriteReceipt(Dictionary<string, List<string>> options, Dictionary<string, string> destinations,
+        string archive, BackupKey key, string? secretCopyId, BackupRestoreResult result, TimeProvider clock, TextWriter output)
+    {
+        if (!destinations.TryGetValue("workspace", out var workspace))
+        {
+            output.WriteLine("warning: no workspace target, so no restore receipt was written.");
+            return;
+        }
+        var restoredBy = (options.GetValueOrDefault("restored-by") ?? options.GetValueOrDefault("actor"))?.SingleOrDefault() is { Length: > 0 } named
+            ? named.Trim()
+            : $"{Environment.UserName}@{Environment.MachineName}";
+        var manifest = result.Manifest;
+        try
+        {
+            string sha256;
+            using (var stream = File.OpenRead(archive)) sha256 = Convert.ToHexStringLower(SHA256.HashData(stream));
+            var receipt = new BackupRestoreReceipt(manifest.Id, Path.GetFileName(archive), sha256, manifest.CreatedAt, manifest.Host,
+                manifest.StudioVersion, clock.GetUtcNow().ToString("O"), restoredBy, key.Id, manifest.SecretKeyId, secretCopyId,
+                result.FilesRestored, result.CheckoutsCloned, result.SkippedSources);
+            BackupRestoreReceipts.Write(Path.GetFullPath(workspace), receipt);
+            output.WriteLine($"Wrote the restore receipt to {BackupRestoreReceipts.ReceiptPath(workspace)}. "
+                             + $"Work after {manifest.CreatedAt} is not in this installation.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            output.WriteLine($"warning: the restore receipt could not be written: {ex.Message}");
+        }
     }
 
     private static (string Archive, BackupKey Key) Open(Dictionary<string, List<string>> options)
@@ -262,8 +302,8 @@ public static class StudioBackupCommand
     {
         error.WriteLine("usage: --studio-backup key-create <file> | key-id <file> | inspect --key <file> --archive <file>");
         error.WriteLine("       | decrypt --key <file> --archive <file> --output <file> [--actor <name>] [--audit-workspace <dir>]");
-        error.WriteLine("       | restore --key <file> --archive <file> --target <source>=<dir>... [--secret-key <file> --secret-key-target <path>] [--no-clone]");
-        error.WriteLine("                 [--actor <name>] [--audit-workspace <dir>]");
+        error.WriteLine("       | restore --key <file> --archive <file> --target <source>=<dir>... [--secret-key <file> --secret-key-target <path>]");
+        error.WriteLine("         [--restored-by <name>] [--no-clone] [--actor <name>] [--audit-workspace <dir>]");
         return 2;
     }
 

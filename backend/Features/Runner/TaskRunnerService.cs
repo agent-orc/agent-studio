@@ -784,7 +784,7 @@ public class TaskRunnerService : BackgroundService
         // refused here, before the follow-up is ever written to disk below.
         var guard = ContinueModeGuardPolicy.Decide(new ContinueModeGuardFacts(jobId, info.Mode, followupPrompt, modeOverride));
         if (guard.Action == ContinueModeGuardAction.Reject)
-            throw new TaskOperationException(guard.Message!, 409);
+            throw new TaskOperationException(guard.Message!, 409, ContinueModeGuardDecision.RefusalCode);
 
         var runner = _runners.Values.FirstOrDefault(r => r.Entry.Name == info.ProjectName);
         if (runner == null) throw new TaskOperationException($"No runner configured for project '{info.ProjectName}'", 400);
