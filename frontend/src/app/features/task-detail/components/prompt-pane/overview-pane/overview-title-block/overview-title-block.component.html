@@ -73,6 +73,6 @@
   <app-delivery-claim-panel [job]="job()" />
   <app-human-review-decision-panel [job]="job()" />
   @if (!reviewsOnly()) {
-    <app-continue-round-panel [job]="job()" />
+    <app-continue-round-panel [job]="job()" (promoteToCoding)="promote()" />
   }
 </section>
