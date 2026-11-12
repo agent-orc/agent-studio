@@ -16,6 +16,7 @@ export class OrchestratorFeedEntryComponent {
   private readonly projectLookup = inject(ProjectLookupService);
 
   readonly entry = input.required<OrchestratorLogEntry>();
+  readonly summary = input('');
   readonly projectFallback = input('Workspace');
   readonly selected = input(false);
   readonly selectRequest = output<OrchestratorLogEntry>();

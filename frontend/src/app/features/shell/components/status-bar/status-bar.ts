@@ -253,12 +253,9 @@ export class StatusBarComponent implements OnInit, OnDestroy {
 
   readonly projectCount = computed(() => this.projectNames().length || Object.keys(this.jobService.runnerStatus().projects).length);
 
-  readonly activeFallback = computed(() => {
-    for (const project of Object.values(this.jobService.runnerStatus().projects)) {
-      if (project.activeJobId && project.quotaFallbackModel) return project;
-    }
-    return null;
-  });
+  /** Count every project whose active run is on a quota fallback. */
+  readonly fallbackCount = computed(() => Object.values(this.jobService.runnerStatus().projects)
+    .filter(project => project.activeJobId && project.quotaFallbackModel).length);
 
   ngOnInit(): void {
     this.remoteHosts.refresh();

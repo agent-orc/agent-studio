@@ -2033,7 +2033,22 @@ public sealed class BatchGatePilotPublicationTests : BatchGatePilotServiceTests
                 ParentBatchId = parent.BatchId,
             };
             store.CloseManifest(child);
-            BatchGateStates.Reach(store, new BatchGateState(child.BatchId, digest, phase, null, 1, _clock));
+            if (phase == BatchPhase.Red)
+            {
+                var runId = Guid.NewGuid().ToString("N");
+                var evidence = Path.Combine(_workspace, runId + ".jsonl");
+                File.WriteAllText(evidence, JsonSerializer.Serialize(Red(child.BaseSha)));
+                BatchGateStates.Reach(store, new BatchGateState(child.BatchId, digest,
+                    BatchPhase.Assembled, child.BaseSha, 1, _clock));
+                store.RecordRun(new BatchGateRunRecord(runId, child.BatchId, digest,
+                    child.BaseSha, child.BaseSha, child.Scope.GateProfile,
+                    child.Scope.GateProfileDigest, "fixture", 1, ["echo test"], _clock, evidence));
+                store.RecordVerdict(new BatchGateRunVerdict(runId, child.BatchId, digest,
+                    child.BaseSha, child.Scope.GateProfileDigest, "red",
+                    "DeterministicSuiteRed", evidence, _clock));
+            }
+            BatchGateStates.Reach(store, new BatchGateState(child.BatchId, digest, phase,
+                phase == BatchPhase.Red ? child.BaseSha : null, 1, _clock));
         }
     }
 

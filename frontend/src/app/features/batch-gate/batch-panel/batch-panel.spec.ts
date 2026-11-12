@@ -8,6 +8,37 @@ import { isolatedRedState, redHalvingState } from '../testing/batch-fixtures';
 import { ModalStackService } from '../../../services/modal-stack.service';
 
 describe('BatchPanelComponent', () => {
+  it('lists the per-task handoff in queue order without counting it as batch waiting', async () => {
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
+    const fixture = TestBed.createComponent(BatchPanelComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('closed', vi.fn());
+    await fixture.whenStable();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush({ ...redHalvingState,
+      batches: [{ ...redHalvingState.batches[0], phase: 'abandoned',
+        phaseReason: 'paused-to-per-task-gate: fresh gate verdict required' }],
+      pending: [redHalvingState.pending[0], { ...redHalvingState.pending[0], taskKey: 'AGT-2', reviewAttemptId: 'review-2' }],
+      perTaskGates: [{ taskKey: 'AGT-1', reviewAttemptId: 'review-1', position: 1, total: 2,
+        batchId: 'batch-9', reason: 'batch batch-9 paused: fresh gate verdict required', running: false },
+        { taskKey: 'AGT-2', reviewAttemptId: 'review-2', position: 2, total: 2,
+          batchId: 'batch-9', reason: 'batch batch-9 paused: fresh gate verdict required',
+          running: true, host: 'gate-01', startedAtUtc: '2026-11-10T12:00:00Z' }],
+    });
+    http.expectOne('/api/projects/Demo/batch-gate/failed-tests?windowDays=7').flush({ project: 'Demo', windowDays: 7, tests: [] });
+    await Promise.resolve();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(fixture.nativeElement.querySelector('#batch-pending-title').textContent).toContain('Waiting cards (0)');
+    const rows = [...fixture.nativeElement.querySelectorAll('[data-testid="batch-per-task-gate"]')] as HTMLElement[];
+    expect(rows.map(row => row.querySelector('strong')?.textContent)).toEqual(['AGT-1', 'AGT-2']);
+    expect(rows[0].textContent).toContain('Queued');
+    expect(rows[1].textContent).toContain('Running on gate-01 since');
+    expect(fixture.nativeElement.querySelector('[data-testid="batch-per-task-gates"]').textContent)
+      .toContain('Red escalates the card; green integrates it.');
+    expect(fixture.nativeElement.textContent).toContain('Moved to per-task gates after pause: fresh gate verdict required');
+    http.verify();
+  });
   it('lists formed batch members only under their batch', async () => {
     TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
     const fixture = TestBed.createComponent(BatchPanelComponent);
