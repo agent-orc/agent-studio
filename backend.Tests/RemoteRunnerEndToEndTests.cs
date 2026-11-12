@@ -5437,7 +5437,275 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
     }
 
     [Fact]
-    public async Task Review_daemon_restart_reports_non_adoptable_process_with_loss_extent_and_retry_reason()
+    public async Task Review_daemon_restart_during_preparation_completes_the_same_attempt_without_charging_the_card()
+    {
+        // AGT-3647: the 9 November variant "no persisted review process
+        // identity". The old daemon stopped before it launched a worker; the
+        // replacement prepares again under the same lease and the review passes.
+        const string reviewRunnerId = "review-runner-cut-preparation";
+        var origin = await SeedOriginAsync();
+        var resultSha = (await GitAsync(origin, "rev-parse", "refs/heads/main")).StdOut.Trim();
+        var marker = Path.Combine(_workspace, "cut-preparation-marker.txt");
+        SeedTask(
+            TaskStates.AutoReview,
+            TaskKey,
+            "Relaunch a cut review preparation",
+            "A restart never ends the review.");
+
+        using var factory = BuildFactory();
+        using var firstHttp = factory.CreateClient();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var created = SeedSettledReview(authority, origin, resultSha, "cut-preparation",
+            [AppendLineCommand("only-command", marker, "ran")]);
+
+        var options = ReviewRunnerOptions(reviewRunnerId, claimMaxLoadPerCore: double.MaxValue);
+        using (var firstClient = new RClient(
+                   firstHttp,
+                   reviewRunnerId,
+                   usesDurableTaskServer: true,
+                   options: options,
+                   runnerInstanceId: "review-host:cut-generation"))
+        {
+            await firstClient.RegisterAsync(reviewRunnerId, "review-executor", CancellationToken.None);
+            var claim = await firstClient.ClaimReviewAsync(
+                new Contract.ReviewClaimRequest(reviewRunnerId, "review-host:cut-generation", 120),
+                CancellationToken.None);
+            Assert.Equal("claimed", claim.Status);
+            var repositoryPath = Path.Combine(
+                options.ReviewWorkDir, claim.Lease!.ResourceNamespace, "repository");
+            // Half a preparation: the attempt root exists, no worker was started.
+            Directory.CreateDirectory(repositoryPath);
+            new RReviewStateStore(options.StateDir).Create(claim, repositoryPath);
+        }
+
+        using var replacementHttp = factory.CreateClient();
+        var logs = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        using var replacementClient = new RClient(
+            replacementHttp,
+            reviewRunnerId,
+            usesDurableTaskServer: true,
+            options: options,
+            runnerInstanceId: "review-host:replacement-generation");
+        using var stop = new CancellationTokenSource();
+        var replacement = new RReviewDaemon(options, replacementClient, logs.Enqueue,
+                telemetryProbe: (activeSlots, _) => IdleHostTelemetry(activeSlots))
+            .RunAsync(stop.Token);
+
+        await WaitUntilAsync(
+            () => authority.GetReview(created.AttemptId)?.Outcome is not null,
+            () => "relaunched review did not settle; daemon log:\n" + string.Join("\n", logs),
+            attempts: 1200);
+        stop.Cancel();
+        await replacement.WaitAsync(TimeSpan.FromSeconds(30));
+
+        var terminal = authority.GetReview(created.AttemptId)!;
+        Assert.Equal(ReviewTerminalOutcome.Pass, terminal.Outcome);
+        Assert.NotEqual("ExecutorRestarted", terminal.FailureClassification);
+        Assert.Single(terminal.Reports);
+        Assert.Equal(["ran"], File.ReadAllLines(marker));
+        Assert.Contains(logs, line => line.Contains("relaunching within the same attempt", StringComparison.Ordinal));
+        Assert.Contains(logs, line => line.Contains("prepareAgain=True", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, line => line.Contains("settling visible restart loss", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Review_worker_killed_by_a_restart_resumes_the_same_attempt_without_repeating_commands()
+    {
+        // AGT-3647: the 9 November variant "Process with an Id of ... is not
+        // running". A container recreate or a forced restart killed the worker
+        // after one of two commands; the replacement daemon relaunches it and
+        // the worker resumes from its checkpoint.
+        const string reviewRunnerId = "review-runner-killed-worker";
+        var origin = await SeedOriginAsync();
+        var resultSha = (await GitAsync(origin, "rev-parse", "refs/heads/main")).StdOut.Trim();
+        var marker = Path.Combine(_workspace, "killed-worker-marker.txt");
+        var release = Path.Combine(_workspace, "killed-worker-release");
+        SeedTask(
+            TaskStates.AutoReview,
+            TaskKey,
+            "Resume a killed review worker",
+            "A restart never ends the review.");
+
+        using var factory = BuildFactory();
+        using var firstHttp = factory.CreateClient();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var created = SeedSettledReview(authority, origin, resultSha, "killed-worker",
+            [
+                AppendLineCommand("completed-before-kill", marker, "first"),
+                AwaitFileThenAppendLineCommand("in-flight-during-kill", release, marker, "second"),
+            ]);
+
+        var options = ReviewRunnerOptions(reviewRunnerId, claimMaxLoadPerCore: double.MaxValue);
+        var firstLogs = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        using var firstClient = new RClient(
+            firstHttp,
+            reviewRunnerId,
+            usesDurableTaskServer: true,
+            options: options,
+            runnerInstanceId: "review-host:killed-generation");
+        await firstClient.RegisterAsync(reviewRunnerId, "review-executor", CancellationToken.None);
+        var claim = await firstClient.ClaimReviewAsync(
+            new Contract.ReviewClaimRequest(reviewRunnerId, "review-host:killed-generation", 120),
+            CancellationToken.None);
+        Assert.Equal("claimed", claim.Status);
+        using var firstStop = new CancellationTokenSource();
+        // The first generation runs the claimed attempt the way its daemon does.
+        var first = new Runner::AgentRunner.RemoteReviewExecutor(
+                options, firstClient, new RReviewStateStore(options.StateDir), firstLogs.Enqueue)
+            .RunClaimedAsync(claim, firstStop.Token);
+        await WaitUntilAsync(
+            () => TryReadAllLines(marker) is { } lines && lines.SequenceEqual(["first"]),
+            () => "first review command did not complete; daemon log:\n" + string.Join("\n", firstLogs),
+            attempts: 1200);
+        var slot = Assert.Single(new RReviewStateStore(options.StateDir).LoadAll());
+        var fence = slot.Claim.Lease!.Fence;
+        firstStop.Cancel();
+        await first.WaitAsync(TimeSpan.FromSeconds(30));
+        using (var worker = Process.GetProcessById(slot.ProcessId!.Value))
+        {
+            worker.Kill(entireProcessTree: true);
+            await worker.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        }
+
+        using var replacementHttp = factory.CreateClient();
+        var logs = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        using var replacementClient = new RClient(
+            replacementHttp,
+            reviewRunnerId,
+            usesDurableTaskServer: true,
+            options: options,
+            runnerInstanceId: "review-host:replacement-generation");
+        using var stop = new CancellationTokenSource();
+        var replacement = new RReviewDaemon(options, replacementClient, logs.Enqueue,
+                telemetryProbe: (activeSlots, _) => IdleHostTelemetry(activeSlots))
+            .RunAsync(stop.Token);
+        await WaitUntilAsync(
+            () => logs.Any(line => line.Contains("review worker relaunch", StringComparison.Ordinal)),
+            () => "replacement daemon did not relaunch the worker; daemon log:\n" + string.Join("\n", logs),
+            attempts: 1200);
+        await File.WriteAllTextAsync(release, "continue");
+        await WaitUntilAsync(
+            () => authority.GetReview(created.AttemptId)?.Outcome is not null,
+            () => "resumed review did not settle; daemon log:\n" + string.Join("\n", logs),
+            attempts: 1200);
+        stop.Cancel();
+        await replacement.WaitAsync(TimeSpan.FromSeconds(30));
+
+        var terminal = authority.GetReview(created.AttemptId)!;
+        Assert.Equal(ReviewTerminalOutcome.Pass, terminal.Outcome);
+        Assert.Equal(fence, terminal.LastFence);
+        Assert.Single(terminal.Reports);
+        Assert.Equal(["first", "second"], File.ReadAllLines(marker));
+        Assert.Contains(logs, line => line.Contains("resumeCompleted=1", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, line => line.Contains("settling visible restart loss", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Draining_review_executor_claims_nothing_new_and_reports_drained_when_its_review_ends()
+    {
+        // AGT-3647: deploy drain. A drained executor keeps its running review,
+        // gets no new one, and reports drained once the running review ends.
+        const string reviewRunnerId = "review-runner-draining";
+        var origin = await SeedOriginAsync();
+        var resultSha = (await GitAsync(origin, "rev-parse", "refs/heads/main")).StdOut.Trim();
+        SeedTask(TaskStates.AutoReview, TaskKey, "Drain the review host", "Finish, then stop claiming.");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var management = factory.CreateClient();
+        management.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var marker = Path.Combine(_workspace, "draining-marker.txt");
+        var running = SeedSettledReview(authority, origin, resultSha, "draining-first",
+            [AppendLineCommand("only-command", marker, "ran")]);
+        // The drain is set on the runner's client identity, as on a real host.
+        var identity = factory.Services.GetRequiredService<AgentStudio.Clients.ClientIdentityStore>()
+            .Register(new RegisterClientRequest { DisplayName = reviewRunnerId, Kind = "service" });
+        Assert.Equal(reviewRunnerId, identity.Id);
+        var options = ReviewRunnerOptions(reviewRunnerId);
+        using var client = new RClient(http, reviewRunnerId, usesDurableTaskServer: true,
+            options: options, runnerInstanceId: "review-host:draining");
+        await client.RegisterAsync(reviewRunnerId, "review-executor", CancellationToken.None);
+        var claim = await client.ClaimReviewAsync(
+            new Contract.ReviewClaimRequest(reviewRunnerId, "review-host:draining", 120), CancellationToken.None);
+        Assert.Equal("claimed", claim.Status);
+        Assert.Equal(running.AttemptId, claim.Attempt!.AttemptId);
+
+        (await management.PostAsync($"/api/clients/{reviewRunnerId}/drain", null)).EnsureSuccessStatusCode();
+        var draining = (await management.GetFromJsonAsync<AgentStudio.Clients.ClientDrainStatus>(
+            $"/api/clients/{reviewRunnerId}/drain-status", ApiJson))!;
+        Assert.True(draining.Draining);
+        Assert.False(draining.Drained);
+        var work = Assert.Single(draining.Running);
+        Assert.Equal("review", work.Kind);
+        Assert.Equal(running.AttemptId, work.AttemptId);
+
+        // A second queued review stays unclaimed while the executor drains.
+        const string secondTask = TaskKey + "-QUEUED";
+        SeedTask(TaskStates.AutoReview, secondTask, "Queued behind the drain", "Wait for resume.", order: 2);
+        SeedSettledReview(authority, origin, resultSha, "draining-second",
+            [AppendLineCommand("only-command", marker, "second")], secondTask);
+        var refused = await client.ClaimReviewAsync(
+            new Contract.ReviewClaimRequest(reviewRunnerId, "review-host:draining", 120), CancellationToken.None);
+        Assert.NotEqual("claimed", refused.Status);
+        Assert.Equal(Contract.ReviewClaimEmptyReasons.ExecutorDraining, refused.Reason);
+
+        var settled = authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(running.AttemptId, claim.Lease!.Fence, claim.Lease.AuthorityEpoch,
+                "draining-first-settle"),
+            resultSha, ReviewTerminalOutcome.InfrastructureFailure, "ReviewWorkerFailed", "test settles the review"));
+        Assert.Equal(AttemptWriteStatus.Accepted, settled.Status);
+        var drained = (await management.GetFromJsonAsync<AgentStudio.Clients.ClientDrainStatus>(
+            $"/api/clients/{reviewRunnerId}/drain-status", ApiJson))!;
+        Assert.True(drained.Drained);
+        Assert.Empty(drained.Running);
+
+        (await management.PostAsync($"/api/clients/{reviewRunnerId}/resume", null)).EnsureSuccessStatusCode();
+        var resumed = (await management.GetFromJsonAsync<AgentStudio.Clients.ClientDrainStatus>(
+            $"/api/clients/{reviewRunnerId}/drain-status", ApiJson))!;
+        Assert.False(resumed.Draining);
+    }
+
+    /// <summary>A coding run settled with a result and one review attempt over it.</summary>
+    private static ReviewAttemptDto SeedSettledReview(
+        AttemptAuthorityService authority,
+        string origin,
+        string resultSha,
+        string key,
+        IReadOnlyList<Contract.ReviewCommandDto> commands,
+        string taskKey = TaskKey)
+    {
+        var repositoryId = Contract.RepositoryIdentityContract.FromUrl(origin)!;
+        var run = authority.AcquireRun(
+            taskKey, repositoryId, null, RunnerId, "coding-host", 120, $"{key}-run").RunAttempt!;
+        authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(
+                run.AttemptId, run.LastFence, run.AuthorityEpoch, $"{key}-run-complete"),
+            Outcome = "done",
+            ResultSha = resultSha,
+            Reason = null,
+            ResultEnvelope = new Contract.ImmutableResultEnvelope(
+                repositoryId, run.AttemptId, resultSha, resultSha, "refs/heads/main", null,
+                new string('b', 64), RepositoryUrl: origin),
+        });
+        var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            taskKey,
+            repositoryId,
+            resultSha,
+            run.AttemptId,
+            "requirements",
+            $"{key}-policy",
+            [],
+            $"{key}-create",
+            RepositoryUrl: origin,
+            ResultRef: "refs/heads/main",
+            Plan: new Contract.ReviewPlanDto([.. commands], ["build-tests"])));
+        Assert.True(created.Accepted);
+        return created.ReviewAttempt!;
+    }
+
+    [Fact]
+    public async Task Review_daemon_restart_reports_non_adoptable_process_once_the_relaunch_budget_is_spent()
     {
         const string reviewRunnerId = "review-runner-lost-process";
         var origin = await SeedOriginAsync();
@@ -5514,7 +5782,12 @@ public sealed partial class RemoteRunnerEndToEndTests : IDisposable
                 options.ReviewWorkDir,
                 claim.Lease!.ResourceNamespace,
                 "repository");
-            new RReviewStateStore(options.StateDir).Create(claim, repositoryPath);
+            // AGT-3647: a worker that already died twice is settled as lost.
+            var store = new RReviewStateStore(options.StateDir);
+            store.Save(store.Create(claim, repositoryPath) with
+            {
+                WorkerRelaunches = Runner::AgentRunner.DurableReviewProcess.MaximumWorkerRelaunches,
+            });
         }
 
         using var replacementHttp = factory.CreateClient();

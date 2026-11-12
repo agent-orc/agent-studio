@@ -30,6 +30,11 @@ public static class LeaseEndpoints
     internal static readonly SemaphoreSlim ClaimGate = new(1, 1);
     private static readonly AgentStudio.Shared.RemoteRequeueLogLimiter DeferredLeaseLogs = new();
 
+    internal static RunnerClaimResponse DiskFullClaim(string host) => new(
+        RunnerClaimStatus.Empty,
+        Message: $"Infrastructure disk full on {host}; claims are paused for recovery.",
+        AdmissionReason: "infrastructure:disk-full");
+
     private static void RecordModelHealthEvent(ModelSelectionLedger ledger, TimelineLog timeline,
         TaskInfo task, string runnerId, string? attemptId, string kind, string rule,
         string provider, string model, string reason, DateTime? expiresAt = null)
@@ -455,6 +460,7 @@ public static class LeaseEndpoints
             HttpContext context,
             AgentStudio.Clients.ClientIdentityStore clients,
             AgentStudio.Clients.HostTelemetryStore telemetry,
+            AgentStudio.Clients.ApiHostDiskService apiHostDisk,
             AccessSecurityStore accessSecurity,
             HumanReviewEscalation humanReviewEscalation,
             AgentStudio.Runner.V1ReviewExecutorRegistry capabilityRegistry,
@@ -497,7 +503,39 @@ public static class LeaseEndpoints
             var runnerPrincipal = context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] as RunnerPrincipal;
             var clientId = context.Items["ClientId"] as string ?? context.Request.Headers["X-Client-Id"].ToString();
             if (req.Telemetry is not null && !string.IsNullOrWhiteSpace(clientId))
-                telemetry.Append(clientId, req.Telemetry);
+            {
+                try { telemetry.Append(clientId, req.Telemetry); }
+                catch (IOException ex) when (HostDiskWriteFailure.IsDiskFull(ex))
+                {
+                    logger.LogError(ex, "runner-claim-infrastructure-disk-full host={Host}", req.Hostname);
+                    return Results.Ok(DiskFullClaim(req.Hostname));
+                }
+            }
+            var runnerDiskPressure = telemetry.DiskPressure(clientId ?? req.RunnerId,
+                req.Telemetry?.Filesystems);
+            var apiDiskPressure = apiHostDisk.Admission();
+            var diskPressure = runnerDiskPressure.Level == AgentStudio.TaskServer.Contracts.HostDiskPressureLevel.Critical
+                ? runnerDiskPressure : apiDiskPressure;
+            if (diskPressure.Level == AgentStudio.TaskServer.Contracts.HostDiskPressureLevel.Critical)
+            {
+                try
+                {
+                    foreach (var waiting in scanner.ScanAllJobs().Where(task =>
+                        task.State == TaskStates.Ready
+                        && ProjectExecutionPolicy.IsAssignedRemote(
+                            settings.Get(task.ProjectName), req.RunnerId, req.RunnerName)))
+                    {
+                        try { RecordRejection(waiting, "host-disk-pressure", diskPressure.Reason); }
+                        catch (IOException error)
+                        { logger.LogWarning(error, "disk-pressure-card-reason-write-failed task={Task}", waiting.Key ?? waiting.Id); }
+                    }
+                }
+                catch (IOException error)
+                { logger.LogWarning(error, "disk-pressure-card-inventory-unavailable host={Host}", req.Hostname); }
+                return Results.Ok(new RunnerClaimResponse(RunnerClaimStatus.Empty,
+                    Message: $"Claims paused on {req.Hostname}: {diskPressure.Reason}",
+                    AdmissionReason: "infrastructure:disk-pressure"));
+            }
             int? activeSlots = req.ActiveSlots is not null
                 ? Math.Max(0, req.ActiveSlots.Value)
                 : req.Telemetry is null
@@ -1642,6 +1680,11 @@ public static class LeaseEndpoints
                     PreviousSession: AgentStudio.Runner.SessionContinuationLedgerStore.Latest(claimedFolderPath),
                     MechanicalDelta: AgentStudio.Runner.SessionContinuationLedgerStore.ConsumeDelta(claimedFolderPath),
                     FreshRunReason: AgentStudio.Runner.SessionContinuationLedgerStore.ConsumeFreshReason(claimedFolderPath)), admission.ReasonCode));
+            }
+            catch (Exception ex) when (HostDiskWriteFailure.IsDiskFull(ex))
+            {
+                logger.LogError(ex, "runner-claim-infrastructure-disk-full host={Host}", req.Hostname);
+                return Results.Ok(DiskFullClaim(req.Hostname));
             }
             finally
             {

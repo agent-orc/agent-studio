@@ -125,6 +125,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | ChatNoteHostedService | !PD | report | Authority host |
 | PipelineHealthService | always | report | Authority host |
 | ApiStallDetector | always | report | Every API host. Logs an `api-stall` warning when its own timer tick runs late (GC pause or starved thread pool); no lane transition (AGT-3369). |
+| ApiHostDiskService | always | report | API host. Measures instance data and gate evidence mounts, reports disk pressure, and supplies claim admission; makes no lane transition decision. |
 | PublishEnvironmentReconciliationService | always | infra | Authority host. Polls website deployment state and releases stopped hosting reservations; no lane transition. |
 | StructureRegistryRefreshService | always | infra | Authority host. Refreshes cached registry metadata every six hours; no lane transition. |
 | RemoteGateOrphanSweepService | always | infra | Authority host. Cancels unowned SSH gate runs from prior Studio process instances and clears their durable records once the remote run directory is gone. |
