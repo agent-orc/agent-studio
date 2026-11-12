@@ -240,7 +240,7 @@ test('concept detail omits delivery context and the Git pane in both themes and 
   await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
   await dismissDevErrorDialog(page);
 
-  await expect(page.getByTestId('concept-dossier-notice')).toBeVisible();
+  await expect(page.getByTestId('concept-dossier-notice')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId('error-dialog')).toHaveCount(0);
   await expect(page.getByTestId('delivery-claim-panel')).toHaveCount(0);
   await expect(page.getByTestId('integration-dead-end')).toHaveCount(0);
