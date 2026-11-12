@@ -109,6 +109,18 @@ public sealed class BatchGateStorageRootTests : IDisposable
         }
     }
 
+    [Fact]
+    public void Missing_workspace_keeps_the_path_derived_instance_without_failing_startup()
+    {
+        var workspace = Path.Combine(_root, "absent-workspace");
+        var state = Path.Combine(_root, "state");
+
+        BatchGateStorageRoot.Prepare(Path.Combine(_root, "app"), workspace, new ListLogger(), state);
+
+        Assert.False(Directory.Exists(workspace));
+        Assert.False(Directory.Exists(state));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);

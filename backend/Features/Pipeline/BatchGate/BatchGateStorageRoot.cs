@@ -25,6 +25,9 @@ public static class BatchGateStorageRoot
     {
         if (string.IsNullOrWhiteSpace(taskRepository)) return;
         var workspace = Path.GetFullPath(taskRepository);
+        // A workspace that does not exist yet has no identity to carry; its
+        // state stays under the path-derived key until the folder is created.
+        if (!Directory.Exists(workspace)) return;
         var identityPath = Path.Combine(workspace, "." + IdentityFile);
         var legacyKey = LegacyKey(contentRoot, taskRepository);
         if (!File.Exists(identityPath))
