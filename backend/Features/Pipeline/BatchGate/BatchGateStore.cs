@@ -539,36 +539,17 @@ public sealed partial class BatchGateStore
     }
 
     /// <summary>
-    /// Closed manifests in formation order: close time, then batch id. Batch
+    /// Every readable closed manifest in formation order: close time, then
+    /// batch id; an unreadable one is quarantined and skipped (AGT-3681). Batch
     /// folders are named by hash, so their enumeration order carries no meaning
     /// and no caller may depend on it (AGT-3710).
     /// </summary>
     public IReadOnlyList<BatchGateManifest> ListManifests()
-        => !Directory.Exists(_root) ? []
-            : InFormationOrder(Directory.EnumerateDirectories(_root)
-                .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
-                .Select(TryReadManifest)
-                .OfType<BatchGateManifest>());
-
-    private static BatchGateManifest? TryReadManifest(string folder)
     {
-        var path = Path.Combine(folder, "manifest.json");
-        try
-        {
-            var manifest = Read<BatchGateManifest>(path);
-            if (string.IsNullOrWhiteSpace(manifest.BatchId) || manifest.Scope is null
-                || string.IsNullOrWhiteSpace(manifest.Scope.Project)
-                || manifest.Members is null || manifest.Exclusions is null
-                || manifest.EligibleKeys is null)
-                throw new InvalidDataException("Batch gate manifest is incomplete.");
-            return manifest;
-        }
-        catch (Exception ex) when (ex is JsonException or InvalidDataException
-            or IOException or UnauthorizedAccessException)
-        {
-            Log.Warning(ex, "Skipping unreadable batch gate manifest at {Path}", path);
-            return null;
-        }
+        var manifests = new List<BatchGateManifest>();
+        foreach (var folder in ListManifestFolders())
+            if (TryReadManifestIn(folder, out var manifest)) manifests.Add(manifest);
+        return InFormationOrder(manifests);
     }
 
     private static BatchGateManifest[] InFormationOrder(IEnumerable<BatchGateManifest> manifests)
@@ -586,7 +567,22 @@ public sealed partial class BatchGateStore
                 .Order(StringComparer.Ordinal).ToArray();
 
     public BatchGateManifest ReadManifestIn(string folder)
-        => Read<BatchGateManifest>(Path.Combine(folder, "manifest.json"));
+        => ReadRecord<BatchGateManifest>(Path.Combine(folder, "manifest.json"),
+            BatchGateRecordKinds.Manifest, null);
+
+    /// <summary>False, with the record quarantined, when the folder's manifest does not read.</summary>
+    public bool TryReadManifestIn(string folder, out BatchGateManifest manifest)
+        => TryReadRecord(Path.Combine(folder, "manifest.json"), BatchGateRecordKinds.Manifest, null, out manifest,
+            RequireCompleteManifest);
+
+    private static void RequireCompleteManifest(BatchGateManifest manifest)
+    {
+        if (string.IsNullOrWhiteSpace(manifest.BatchId) || manifest.Scope is null
+            || string.IsNullOrWhiteSpace(manifest.Scope.Project)
+            || manifest.Members is null || manifest.Exclusions is null
+            || manifest.EligibleKeys is null)
+            throw new InvalidDataException("Batch gate manifest is incomplete.");
+    }
 
     public IReadOnlyList<BatchGateRunRecord> ListRuns(string batchId)
     {
@@ -594,7 +590,9 @@ public sealed partial class BatchGateStore
         return Directory.Exists(folder)
             ? Directory.EnumerateFiles(folder, "*.json")
                 .Where(path => !path.EndsWith(".verdict.json", StringComparison.Ordinal))
-                .Select(Read<BatchGateRunRecord>).ToArray()
+                .Select(path => TryReadRecord<BatchGateRunRecord>(path, BatchGateRecordKinds.Run, batchId,
+                    out var run) ? run : null)
+                .OfType<BatchGateRunRecord>().ToArray()
             : [];
     }
 
@@ -790,18 +788,14 @@ public sealed partial class BatchGateStore
 
     /// <summary>Formed or in-flight manifests in formation order, as <see cref="ListManifests"/>.</summary>
     public IReadOnlyList<BatchGateManifest> ListRecoverableManifests()
-    {
-        if (!Directory.Exists(_root)) return [];
-        return InFormationOrder(Directory.EnumerateDirectories(_root)
-            .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
-            .Select(TryReadManifest).OfType<BatchGateManifest>()
-            .Where(manifest => IsRecoverable(manifest)));
-    }
+        => ListManifests().Where(IsRecoverable).ToArray();
 
     private bool IsRecoverable(BatchGateManifest manifest)
     {
-        var phase = LatestState(manifest.BatchId).Phase;
-        if (phase == BatchPhase.Unknown)
+        var state = LatestState(manifest.BatchId);
+        var phase = state.Phase;
+        // An unreadable state row is reported by the quarantine, not as missing state.
+        if (phase == BatchPhase.Unknown && state.Reason != StateUnreadableReason)
         {
             lock (_missingStateWarnings)
             {
@@ -870,7 +864,8 @@ public sealed partial class BatchGateStore
     }
 
     public BatchGateManifest ReadManifest(string batchId)
-        => Read<BatchGateManifest>(Path.Combine(BatchDirectory(batchId), "manifest.json"));
+        => ReadRecord<BatchGateManifest>(Path.Combine(BatchDirectory(batchId), "manifest.json"),
+            BatchGateRecordKinds.Manifest, batchId);
 
     /// <summary>
     /// Changes the batch phase through <see cref="TryTransition"/>; a change
@@ -891,17 +886,43 @@ public sealed partial class BatchGateStore
     /// </summary>
     public BatchGateState LatestState(string batchId)
     {
-        if (ReadPhaseRecord(batchId) is { } record) return record.State;
+        // An unreadable phase record decides nothing; an older history row
+        // could name a phase the batch already left, so the batch reads Unknown.
+        if (!TryReadPhaseRecord(batchId, out var record))
+        {
+            var phasePath = Path.Combine(BatchDirectory(batchId), PhaseRecordName);
+            return new BatchGateState(batchId, ManifestDigestOrEmpty(batchId), BatchPhase.Unknown, null, 0,
+                new DateTimeOffset(File.GetLastWriteTimeUtc(phasePath), TimeSpan.Zero), StateUnreadableReason);
+        }
+        if (record is not null) return record.State;
         var folder = Path.Combine(BatchDirectory(batchId), "state");
         var path = Directory.Exists(folder)
             ? Directory.EnumerateFiles(folder, "*.json")
                 .OrderBy(x => x, StringComparer.Ordinal).LastOrDefault()
             : null;
-        if (path is not null) return Read<BatchGateState>(path);
+        if (path is not null)
+        {
+            if (TryReadRecord<BatchGateState>(path, BatchGateRecordKinds.State, batchId, out var state))
+                return state;
+            // The newest row decides the phase; an older readable row could
+            // name a phase the batch already left, so the batch reads Unknown.
+            return new BatchGateState(batchId, ManifestDigestOrEmpty(batchId), BatchPhase.Unknown, null, 0,
+                new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero), StateUnreadableReason);
+        }
         var manifestPath = Path.Combine(BatchDirectory(batchId), "manifest.json");
-        var manifest = File.Exists(manifestPath) ? Read<BatchGateManifest>(manifestPath) : null;
+        var manifest = File.Exists(manifestPath)
+            && TryReadRecord<BatchGateManifest>(manifestPath, BatchGateRecordKinds.Manifest, batchId, out var owner)
+            ? owner : null;
         return new BatchGateState(batchId, manifest?.MembershipDigest ?? string.Empty,
             BatchPhase.Unknown, null, 0, manifest?.ClosedAtUtc ?? DateTimeOffset.MinValue);
+    }
+
+    private string ManifestDigestOrEmpty(string batchId)
+    {
+        var path = Path.Combine(BatchDirectory(batchId), "manifest.json");
+        return File.Exists(path)
+            && TryReadRecord<BatchGateManifest>(path, BatchGateRecordKinds.Manifest, batchId, out var owner)
+            ? owner.MembershipDigest : string.Empty;
     }
 
     public void RecordRun(BatchGateRunRecord run)
@@ -926,7 +947,8 @@ public sealed partial class BatchGateStore
     }
 
     public BatchGateRunRecord ReadRun(string batchId, string runId)
-        => Read<BatchGateRunRecord>(Path.Combine(BatchDirectory(batchId), "runs", SafeName(runId) + ".json"));
+        => ReadRecord<BatchGateRunRecord>(Path.Combine(BatchDirectory(batchId), "runs", SafeName(runId) + ".json"),
+            BatchGateRecordKinds.Run, batchId);
 
     public void RecordReplay(BatchGateReplayRecord replay)
     {
