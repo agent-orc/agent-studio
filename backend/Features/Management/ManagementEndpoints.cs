@@ -60,6 +60,21 @@ public static class ManagementEndpoints
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             return Results.Ok(backups.Overview());
         });
+        group.MapGet("/backups/{id}/contents", (HttpContext context, string id,
+            StudioBackupService backups, IConfiguration configuration) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            try
+            {
+                var contents = backups.ReadContents(id);
+                return contents is null ? Results.NotFound() : Results.Ok(contents);
+            }
+            catch (Exception ex) when (ex is BackupException or IOException or UnauthorizedAccessException)
+            {
+                return Results.Problem("The archive content list could not be read.", statusCode: 422);
+            }
+        });
         group.MapGet("/diagnostics", (HttpContext context, ManagementService service, IConfiguration configuration) =>
         {
             context.Response.Headers.CacheControl = "no-store";

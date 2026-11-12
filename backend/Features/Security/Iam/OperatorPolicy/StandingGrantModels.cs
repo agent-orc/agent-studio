@@ -4,7 +4,8 @@ namespace AgentStudio.Security;
 /// Where a standing grant applies: the workspace, one project, one environment
 /// kind of one project (<see cref="IamEnvironments"/>), or one host.
 /// </summary>
-public sealed record StandingGrantScope(string Kind, string? Project = null, string? Environment = null, string? Host = null);
+public sealed record StandingGrantScope(string Kind, string? Project = null, string? Environment = null,
+    string? Host = null, IReadOnlyList<string>? Projects = null);
 
 /// <summary>A daily window in UTC, <c>HH:mm</c> each; a start after the end wraps past midnight.</summary>
 public sealed record StandingGrantWindow(string StartUtc, string EndUtc);
