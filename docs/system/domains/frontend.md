@@ -43,24 +43,39 @@ settings view (including CLI Management) use this contract. Menus and popovers
 remain stack entries for Escape ordering without a modal focus scope; portaled
 menus also register their interactive root.
 
-## Initial bundle ratchet
+## Initial bundle budget
 
-The production `initial` budget in `frontend/angular.json` is a delivery
-ratchet. A frontend change must fit the current `maximumError`; it must not
-raise that value merely to pass review. Measure the production build with
-`npm --prefix frontend run build -- --stats-json` and inspect
-`frontend/dist/frontend/stats.json` before changing startup imports. The
-reported initial total includes every synchronously imported JavaScript and
-stylesheet. Prefer a deferred component or dynamic import at the feature entry
-point, and check that its code has no second eager path through a feature
-barrel. Verify the view loads in Playwright after splitting it.
+The production `initial` budget in `frontend/angular.json` guards the start
+bundle: every synchronously imported JavaScript chunk plus the global
+stylesheet. Angular counts 1 kB as 1,000 bytes.
 
-Only the release operator may approve a temporary increase to
-`maximumError` to unblock a deployment. That increase needs the measured old
-and new totals, the reason for the emergency, and a follow-up card to restore
-the ratchet. A delivery that reduces the bundle should lower `maximumError`
-to its measured initial size plus a small build-variance margin; preserve the
+| Measured | Revision | Initial total | `maximumWarning` | `maximumError` |
+|---|---|---:|---:|---:|
+| 11 November 2026 (AGT-3745), before | `develop` at `3c3f72609` | 2,100,405 B | 2,050 kB | 2,102 kB |
+| 11 November 2026 (AGT-3745), after | AGT-3745 delivery | 1,922,039 B | 1,980 kB | 2,114 kB |
+
+The rule: `maximumWarning` sits about 3 % and `maximumError` about 10 %
+above the last measured initial total. Ordinary growth from several
+deliveries in one batch then warns instead of failing the gate. A change that
+would cross `maximumError` must first move code out of the start bundle; it
+must not raise the number to pass review. The card that moves code out
+re-measures, records the new total in the table above, and resets both limits
+with the same rule. Only the release operator may approve a temporary increase
+to unblock a deployment; that needs the measured old and new totals, the
+reason, and a follow-up card that moves code out again. Preserve the
 `anyComponentStyle` budgets and component-size baselines.
+
+Measure with `npm --prefix frontend run build -- --stats-json` and inspect
+`frontend/dist/frontend/stats.json` (an esbuild metafile). Walk the
+`import-statement` edges from `main` to list the initial chunks and the input
+modules inside them before changing startup imports. Prefer a deferred block
+or dynamic import at the feature entry point. Feature barrels are the usual
+leak: Angular component definitions keep their module alive, so importing one
+helper from an `index.ts` that also re-exports a component puts that component
+in the start bundle. Keep components that are not on the first screen in the
+feature's `lazy.ts`, and keep services and model helpers that eager code needs
+in `runtime.ts` or `index.ts`. Verify the view loads in Playwright after
+splitting it.
 
 The board shell, columns, and cards stay eager. Workspace settings and the
 orchestrator sheet mount through small hosts when opened. Their view components
@@ -78,6 +93,11 @@ Markdown-capable view roots provide the library's task-reference token locally,
 so Markdown rendering code loads with those views. The app-level media token
 uses the library's shared entry point, leaving composer and conversation
 renderers outside the board startup graph.
+The sign-in gate and its forms code, the Update Center, the crash-recovery
+prompt, and the header chrome of the legacy (non VS Code) layout also load on
+first render or first open. diff2html's stylesheet is a non-injected style
+bundle (`diff2html.css`); `loadDiff2Html()` links it directly after the app
+stylesheet, keeping the cascade order, and waits for it before a diff renders.
 
 ## Environment flow
 
