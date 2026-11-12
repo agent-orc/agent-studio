@@ -115,6 +115,12 @@ export async function startFakeStudio({ cards = {}, preflightBlockers = [] } = {
         lastVerification: { at: '2026-11-05T00:05:00+00:00', outcome: 'verified' },
         offHost: { kind: 'sftp', state: 'current' },
         warnings: [{ code: 'backup-stale', severity: 'danger', message: 'The newest good backup is 13 hours old.' }] });
+    if (method === 'POST' && /^\/api\/clients\/[^/]+\/(drain|resume)$/.test(path))
+      return send(200, { id: decodeURIComponent(path.split('/')[3]) });
+    if (method === 'GET' && /^\/api\/clients\/[^/]+\/drain-status$/.test(path))
+      return send(200, { clientId: decodeURIComponent(path.split('/')[3]), draining: true, drained: false,
+        reportedActiveSlots: 1, running: [{ kind: 'review', attemptId: 'review-1', taskKey: 'DEMO-4',
+          acquiredAt: '2026-11-05T10:00:00Z' }] });
     if (method === 'GET' && path === '/api/operator/capacity')
       return send(200, { quota: [], activeFallbacks: [], waitingCards: [], modelRoutingPins: [] });
     if (method === 'GET' && path === '/api/security/posture')

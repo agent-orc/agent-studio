@@ -191,6 +191,7 @@ public static class RoutePermissionCatalog
             "/api/auth/bootstrap", "/api/auth/login", "/api/auth/invite/accept", "/api/auth/runner-enroll",
             "/api/auth/passkeys/assertion-options");
         Add("R", IamPermissions.SelfSession, "/api/auth/session");
+        Add("R", IamPermissions.SelfSession, "/api/auth/directory");
         Add("POST", IamPermissions.SelfSession, "/api/auth/logout", "/api/auth/change-password");
         Add("R", IamPermissions.SelfSession, "/api/auth/sessions");
         Add("W", IamPermissions.SelfSession, "/api/auth/sessions/**", "/api/auth/totp/**", "/api/auth/step-up");
@@ -390,6 +391,7 @@ public static class RoutePermissionCatalog
         // recovery and operational records without per-project filtering.
         Add("R", IamPermissions.WorkspaceOperate,
             "/api/admin/prompts/**", "/api/admin/config/**", "/api/admin/git-telemetry/**", "/api/clients/**",
+            "/api/host/filesystems",
             "/api/watcher/**", "/api/crash-recovery/**", "/api/cause-breakers/**",
             "/api/workspace/summary", "/api/workspaces/{}/quota/**",
             "/api/workspaces/{}/projects/{}/quota", "/api/auto-review/status",
@@ -438,7 +440,7 @@ public static class RoutePermissionCatalog
 
         // --- Runs, pipeline, integration, and project actions --------------
         Under("W", IamPermissions.ProjectRunsOperate, "/api/tasks/{}",
-            "start", "stop", "continue", "failure/continue", "re-evaluate", "restore-from-failed-pickup", "dispatch-rejection",
+            "start", "stop", "continue", "failure/continue", "review/retry", "re-evaluate", "restore-from-failed-pickup", "dispatch-rejection",
             "pipeline/**", "review-results", "integration/**", "integration-records", "commits/integration", "git/**", "code-review",
             "external-completion", "summary/**", "context-usage/refresh", "conversation/invalidate",
             "older-brief-delivery/decision", "open-in-vscode", "review-evidence/**", "preview-feedback",

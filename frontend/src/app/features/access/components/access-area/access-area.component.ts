@@ -20,6 +20,7 @@ import { AccessServiceAccountsComponent } from '../access-service-accounts/acces
 import { AccessStandingGrantsComponent } from '../access-standing-grants/access-standing-grants.component';
 import { SessionManagerComponent } from '../session-manager/session-manager.component';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 
 /**
  * The one Access area: users with their role bindings, groups, service
@@ -43,6 +44,7 @@ import { StatusIndicatorComponent, type StatusTone } from '../../../../component
 })
 export class AccessAreaComponent implements OnInit {
   readonly access = inject(AccessService);
+  private readonly confirmDialog = inject(ConfirmDialogService);
   readonly operators = inject(OperatorAgentsService);
   readonly standingGrants = inject(StandingGrantsService);
   readonly approvals = inject(OperatorApprovalsService);
@@ -117,9 +119,10 @@ export class AccessAreaComponent implements OnInit {
     return status === 'Active' ? 'success' : status === 'Invited' ? 'info' : 'neutral';
   }
 
-  status(user: AccessUser): 'Disabled' | 'Invited' | 'Active' {
+  status(user: AccessUser): 'Disabled' | 'Invited' | 'Active' | 'No access' {
     if (user.disabled) return 'Disabled';
-    return this.access.pendingInvitations().has(user.id) ? 'Invited' : 'Active';
+    if (this.access.pendingInvitations().has(user.id)) return 'Invited';
+    return this.grants(user).length ? 'Active' : 'No access';
   }
 
   async resetPassword(user: AccessUser): Promise<void> {
@@ -129,7 +132,19 @@ export class AccessAreaComponent implements OnInit {
   }
 
   async toggleDisabled(user: AccessUser): Promise<void> {
-    if (!this.access.busy()) await this.access.setUserDisabled(user.id, !user.disabled);
+    if (this.access.busy()) return;
+    if (!user.disabled) {
+      const confirmed = await this.confirmDialog.confirm({
+        eyebrow: 'Confirm disable',
+        title: 'Disable this user?',
+        message: 'Open sessions end immediately. The user cannot sign in until enabled again.',
+        detail: user.displayName,
+        confirmLabel: 'Disable',
+        kind: 'danger',
+      });
+      if (!confirmed) return;
+    }
+    await this.access.setUserDisabled(user.id, !user.disabled);
   }
 
   private roleName(id: string): string {

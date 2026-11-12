@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
 import { RemoteHostsService } from '../../services/remote-hosts.service';
+import { hydrateApiHost } from '../../services/api-host-disk';
 import { ReviewQueueService } from '../../services/review-queue.service';
 import { RemoteHostCardComponent } from '../remote-host-card/remote-host-card';
 import type { HostActionKind, HostProjectSlots, RemoteHost } from '../../models/remote-host.model';
@@ -83,6 +84,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   private readonly feed = inject(OrchestratorFeedStore);
   private readonly tableState = new RemoteHostTableState();
   readonly hosts = this.service.hosts;
+  private readonly profileDiskRefresh = effect(() => this.refreshApiHost());
   readonly infrastructureReload = signal(0);
   readonly loading = this.service.loading;
   readonly error = this.service.error;
@@ -220,7 +222,10 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     this.loadEnvironment();
     this.service.refreshInteractiveUsage();
     this.reviewQueue.refresh();
-    this.tickHandle = setInterval(() => this.now.set(Date.now()), 30_000);
+    this.tickHandle = setInterval(() => {
+      this.now.set(Date.now());
+      this.refreshApiHost();
+    }, 30_000);
     window.addEventListener('hashchange', this.onHashChange);
     this.usageHandle = setInterval(() => this.service.refreshInteractiveUsage(), 5_000);
   }
@@ -232,10 +237,15 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   }
   reload(): void {
     this.service.reload();
+    this.refreshApiHost();
     if (this.view() === 'history') this.service.loadClaimGateEvents();
     this.infrastructureReload.update(value => value + 1);
     this.loadEnvironment();
     this.credentials.load();
+  }
+  private refreshApiHost(): void {
+    const profile = this.auth.status()?.profile;
+    if (profile) hydrateApiHost(this.http, this.hosts, profile !== 'networked');
   }
   private loadEnvironment(): void {
     this.http.get<EnvironmentSnapshot>('/api/v1/management/environment').subscribe({

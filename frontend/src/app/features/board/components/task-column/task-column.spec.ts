@@ -5,6 +5,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TaskColumnComponent } from './task-column';
+import { AuthService } from '../../../../services/auth.service';
 import type { ArchivedTaskInfo, CliExecution, TaskInfo, ProjectRunnerStatus } from '../../../../models/task.model';
 
 /**
@@ -562,6 +563,23 @@ describe('TaskColumnComponent archive lane (ASS-1727)', () => {
   }
 
   const isArchiveReq = (url: string) => url === '/api/tasks/archive';
+
+  it('refreshes access after a refused archive read and leaves no generic archive error when bindings are gone', async () => {
+    const { fixture, httpMock } = await buildArchiveColumn();
+    const auth = TestBed.inject(AuthService);
+    auth.status.set({ profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr_rui', username: 'rui', displayName: 'Rui', role: 'viewer', projects: ['Token Economy'],
+        disabled: false, mustChangePassword: false } });
+    httpMock.expectOne((request) => isArchiveReq(request.url)).flush({ error: 'access-denied' },
+      { status: 403, statusText: 'Forbidden' });
+    httpMock.expectOne('/api/auth/status').flush({ profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr_rui', username: 'rui', displayName: 'Rui', role: 'viewer', projects: [],
+        disabled: false, mustChangePassword: false } });
+    fixture.detectChanges();
+    expect(auth.status()?.user?.projects).toEqual([]);
+    expect(fixture.componentInstance.archiveError()).toBeNull();
+    httpMock.verify();
+  });
 
   it('fetches the paged archive endpoint on init and renders rows', async () => {
     const { fixture, httpMock } = await buildArchiveColumn();

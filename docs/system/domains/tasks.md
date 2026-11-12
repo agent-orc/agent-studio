@@ -1461,6 +1461,13 @@ decision of whoever parked the card, and re-queueing remains the operator lane
 move that opens a fresh review-attempt epoch. A condition no probe can decide is
 reported as `undeterminable` rather than optimistically as resolved.
 
+An Auto Review watchdog park is typed `environmental` with the
+`auto-review-stranded` cause detail and a
+`review-retry-available` condition checked against the current immutable run.
+The card offers Retry review on that delivery and links the watchdog receipt;
+the receipt's Undo restores Auto Review only if the parked card and delivery
+have not changed since that intervention.
+
 `TaskInfo.ParkedBlocker` is a read-time projection of that marker, never
 persisted on `task.json`. It carries the lane age (`parkedForSeconds`), so a card
 that has sat unlooked-at for days is visible as such. The board card leaves the

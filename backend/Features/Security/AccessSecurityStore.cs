@@ -95,7 +95,8 @@ public sealed partial class AccessSecurityStore
         get { lock (_gate) return StateLocked().Users.Count == 0; }
     }
 
-    public (StudioUser User, string SessionToken, string CsrfToken) Bootstrap(BootstrapRequest request, bool publicEntry = false)
+    public (StudioUser User, string SessionToken, string CsrfToken) Bootstrap(BootstrapRequest request, bool publicEntry = false,
+        string? device = null, string? address = null)
     {
         ValidateUsername(request.Username);
         ValidatePassword(request.Password, request.Username);
@@ -119,7 +120,7 @@ public sealed partial class AccessSecurityStore
                 new IamGrantRequest(IamRoles.Owner, IamScope.Workspace), IamBindingSources.Bootstrap, user.Id);
             state.RoleBindings.Add(binding);
             state.IamVersion = CurrentIamVersion;
-            var created = CreateSessionLocked(state, user, enrollmentOnly: publicEntry);
+            var created = CreateSessionLocked(state, user, device, address, enrollmentOnly: publicEntry);
             SaveLocked(state);
             AuditBindings(user.Id, "binding.add", [binding]);
             return (user, created.Token, created.Csrf);
@@ -255,7 +256,9 @@ public sealed partial class AccessSecurityStore
                     if (usernameRecorded && _usernameLoginAttempts[normalized].Failures >= _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20)
                         && EnsureLoginCapacityLocked(_usernameClientDelays, loginKey!, MaxDelayEntries))
                         _usernameClientDelays[loginKey!] = now + TimeSpan.FromSeconds(_configuration.GetValue("Security:LoginThrottle:UsernameDelaySeconds", 2));
-                    throw new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
+                    throw current?.Disabled == true && ReferenceEquals(current, candidate) && passwordMatches
+                        ? new SecurityOperationException(403, "account-disabled", "This account is disabled. Ask the owner.")
+                        : new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
                 }
 
                 var hasFactor = !string.IsNullOrEmpty(current.TotpSecret) || current.Passkeys.Count > 0;
@@ -719,7 +722,8 @@ public sealed partial class AccessSecurityStore
         }
     }
 
-    public (StudioUser User, string SessionToken, string CsrfToken) AcceptInvitation(AcceptInvitationRequest request, bool publicEntry = false)
+    public (StudioUser User, string SessionToken, string CsrfToken) AcceptInvitation(AcceptInvitationRequest request, bool publicEntry = false,
+        string? device = null, string? address = null)
     {
         if (!TryTokenParts(request.Token, "inv", out var id))
             throw new SecurityOperationException(401, "invalid-invitation", "Invitation is invalid or expired.");
@@ -740,7 +744,7 @@ public sealed partial class AccessSecurityStore
             };
             state.Users[state.Users.IndexOf(user)] = updated;
             state.Invitations[state.Invitations.IndexOf(invitation)] = invitation with { UsedAt = Now };
-            var session = CreateSessionLocked(state, updated,
+            var session = CreateSessionLocked(state, updated, device, address,
                 enrollmentOnly: publicEntry && RequiresSecondFactor(state, updated.Id));
             SaveLocked(state);
             return (updated, session.Token, session.Csrf);
@@ -1125,7 +1129,9 @@ public sealed partial class AccessSecurityStore
         var session = new StudioSession
         {
             Id = id, UserId = user.Id, TokenHash = PasswordSecretHasher.HashSecret(token), CsrfHash = PasswordSecretHasher.HashSecret(csrf),
-            CreatedAt = now, LastSeenAt = now, Device = device, Address = address,
+            CreatedAt = now, LastSeenAt = now,
+            Device = string.IsNullOrWhiteSpace(device) ? "Browser" : device,
+            Address = string.IsNullOrWhiteSpace(address) ? "Local connection" : address,
             SecondFactorEnrollmentOnly = enrollmentOnly,
             ExpiresAt = Min(now.AddMinutes(_configuration.GetValue("Security:Session:IdleMinutes", 480)), absolute), AbsoluteExpiresAt = absolute
         };

@@ -875,3 +875,13 @@ select option:hover {
   border-color: var(--studio-border);
   color: var(--studio-text-primary);
 }
+
+.no-project-access {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--studio-spacing-6);
+  background: var(--studio-bg-editor);
+  color: var(--studio-fg);
+  text-align: center;
+}
