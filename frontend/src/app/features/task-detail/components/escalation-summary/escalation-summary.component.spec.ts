@@ -177,6 +177,7 @@ describe('EscalationSummaryComponent', () => {
     blocked.info.integration = {
       status: 'pending', integrationBranch: 'main', deliveryRef: null, sha: null,
       detail: 'Delivery could not integrate.', failure: {
+        code: 'server-checkout-missing',
         reason: 'This project needs a server checkout before delivery can integrate.',
       },
     } as TaskDetail['info']['integration'];
@@ -188,6 +189,21 @@ describe('EscalationSummaryComponent', () => {
     expect(links[0]?.getAttribute('href')).toBe('/#/projects/agent-studio/settings');
     expect(links[1]?.getAttribute('href')).toContain('networked-task-server.md#project-checkouts');
     expect(el.querySelector('[data-testid="escalation-action-reissue-escalated"]')).toBeNull();
+  });
+
+  it('keeps reissue when a failure only mentions a checkout in its message', () => {
+    const conflicted = detail();
+    conflicted.info.integration = {
+      status: 'pending', integrationBranch: 'main', deliveryRef: null, sha: null,
+      detail: 'Delivery could not integrate.', failure: {
+        code: 'merge-conflict',
+        reason: 'The server checkout is missing a merge: integration worktree base refs/heads/main is unavailable after fetch.',
+      },
+    } as TaskDetail['info']['integration'];
+    const fixture = mount({ detail: conflicted });
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('[data-testid="server-checkout-remedy"]')).toBeNull();
+    expect(fixture.componentInstance.serverCheckoutMissing()).toBe(false);
   });
 
   it('puts the latest ended attempt in the header and leaves the reason to the park panel', () => {

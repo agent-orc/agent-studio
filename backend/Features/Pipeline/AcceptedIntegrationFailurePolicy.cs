@@ -58,6 +58,12 @@ public static class AcceptedIntegrationFailureCodes
     /// <summary>The Studio-owned integration worktree could not be prepared (AGT-2832).</summary>
     public const string WorktreeUnavailable = "worktree-unavailable";
 
+    /// <summary>
+    /// The project has no usable checkout on the Studio server, so integration
+    /// cannot prepare its worktree; another coding attempt cannot help (AGT-3673).
+    /// </summary>
+    public const string ServerCheckoutMissing = "server-checkout-missing";
+
     /// <summary>The integration branch could not be synchronized with origin before the merge.</summary>
     public const string BranchSyncFailed = "branch-sync-failed";
 
@@ -296,6 +302,11 @@ public static class AcceptedIntegrationFailurePolicy
                 "Integration worktree unavailable",
                 FirstNonBlank(reason, verdictSummary, "The integration worktree is unavailable."),
                 RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.ServerCheckoutMissing => new(
+                code,
+                "Server checkout needed",
+                FirstNonBlank(reason, verdictSummary, "This project needs a server checkout before delivery can integrate."),
+                RebaseRecoveryAvailable: false),
             AcceptedIntegrationFailureCodes.BranchSyncFailed => new(
                 code,
                 "Branch sync failed",
@@ -462,6 +473,7 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.RepositoryRootUnavailable => AcceptedIntegrationFailureCodes.RepositoryRootUnavailable,
             AcceptedIntegrationFailureCodes.StaleAttempt => AcceptedIntegrationFailureCodes.StaleAttempt,
             AcceptedIntegrationFailureCodes.WorktreeUnavailable => AcceptedIntegrationFailureCodes.WorktreeUnavailable,
+            AcceptedIntegrationFailureCodes.ServerCheckoutMissing => AcceptedIntegrationFailureCodes.ServerCheckoutMissing,
             AcceptedIntegrationFailureCodes.BranchSyncFailed => AcceptedIntegrationFailureCodes.BranchSyncFailed,
             AcceptedIntegrationFailureCodes.GitCredentialUnavailable => AcceptedIntegrationFailureCodes.GitCredentialUnavailable,
             AcceptedIntegrationFailureCodes.LineageBlocked => AcceptedIntegrationFailureCodes.LineageBlocked,
