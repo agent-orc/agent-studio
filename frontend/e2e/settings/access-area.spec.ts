@@ -140,7 +140,16 @@ test('Owner sees factor changes and verifies the current factor before replaceme
   await access.getByRole('button', { name: 'Add authenticator' }).click();
   const challenge = access.getByTestId('enrollment-step-up');
   await expect(challenge).toBeVisible();
-  await page.screenshot({ path: join(resultDir, 'owner-factor-step-up.png') });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await challenge.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(resultDir, `owner-factor-step-up-${theme}.png`) });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await challenge.scrollIntoViewIfNeeded();
+  await expect(challenge.getByRole('button', { name: 'Verify', exact: true })).toBeInViewport();
+  await page.screenshot({ path: join(resultDir, 'owner-factor-step-up-390px.png') });
+  await page.setViewportSize({ width: 1440, height: 900 });
   await expect(access.getByTestId('session-totp-secret')).toHaveCount(0);
   await challenge.getByLabel('Authenticator or recovery code').fill('123456');
   await challenge.getByRole('button', { name: 'Verify', exact: true }).click();
