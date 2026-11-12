@@ -71,6 +71,10 @@ export CopilotCli__Path="${PW_E2E_WORKSPACE}/bin/copilot"
 export GeminiCli__Path="${PW_E2E_WORKSPACE}/bin/gemini"
 export AntigravityCli__Path="${PW_E2E_WORKSPACE}/bin/antigravity"
 export Runner__Role=test-subject
+# Enabling the batch gate requires a remote gate host (AGT-3708). The .invalid
+# host never resolves, so no gate leaves the isolated stack.
+export RemoteGate__SshHost=gate-e2e.invalid
+export RemoteGate__WorkerPath=/opt/agentstudio-e2e/worker
 export WatchPaths__0__Name='Agent Studio Worktree'
 export WatchPaths__0__Path="${PW_E2E_WORKSPACE}/projects/agent-studio-worktree"
 export WatchPaths__0__RootPath="${PW_E2E_CHECKOUT}"

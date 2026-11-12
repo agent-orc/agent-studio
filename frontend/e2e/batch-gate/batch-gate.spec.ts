@@ -2,7 +2,6 @@ import { test, expect } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as nodePath from 'node:path';
 import { createHash } from 'node:crypto';
-import { homedir } from 'node:os';
 import { auditModal } from '../helpers/audit-modal';
 
 test.use({ serviceWorkers: 'block' });
@@ -148,7 +147,8 @@ function seedStaleRunningBatch(seedProject: string): () => void {
   // api.sh starts the published process with this worktree's backend/ as its content root.
   const contentRoot = nodePath.resolve(process.cwd(), '..', 'backend');
   const instance = hash(`${contentRoot}\n${nodePath.resolve(workspace)}`).slice(0, 20);
-  const dataRoot = process.env.XDG_DATA_HOME ?? nodePath.join(homedir(), '.local', 'share');
+  // The webServer process receives the isolated XDG root; Playwright itself does not.
+  const dataRoot = nodePath.join(workspace, 'data');
   const root = nodePath.join(dataRoot, 'agentstudio', 'instances', instance);
   const batchId = `e2e-stale-${Date.now()}`;
   const scope = { project: seedProject, repository: path, integrationBranch: 'develop', gateProfile: 'full',

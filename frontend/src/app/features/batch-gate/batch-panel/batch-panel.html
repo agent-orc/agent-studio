@@ -193,7 +193,7 @@
               @if (batch.runs.length) {
                 <ul>@for (run of batch.runs; track run.batchRunId) {
                   <li>{{ run.host }} · <app-status-indicator [tone]="runTone(runStatus(batch, run))" [label]="runStatus(batch, run)" [compact]="true" /> @if (run.classification) { · {{ run.classification }} }
-                    · {{ runDuration(batch, run) }} · {{ timeLine(run.startedAtUtc, run.finishedAtUtc) }}
+                    · @if (!runIsRunning(batch, run)) { {{ runDuration(batch, run) }} · }{{ timeLine(run.startedAtUtc, run.finishedAtUtc) }}
                     · <a [href]="runEvidenceUrl(project(), batch.batchId, run.batchRunId)" target="_blank" rel="noopener">Evidence</a>
                     · <a [href]="runEvidenceUrl(project(), batch.batchId, run.batchRunId, 'log')" target="_blank" rel="noopener">Run log</a>
                     @if (run.evidenceAvailable === false) { · Artifacts pending }

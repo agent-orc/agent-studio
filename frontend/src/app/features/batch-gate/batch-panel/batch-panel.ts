@@ -93,6 +93,7 @@ export class BatchPanelComponent implements OnDestroy {
     }
   }
   readonly runStatus = batchRunStatus;
+  readonly runIsRunning = batchRunIsRunning;
   readonly runEvidenceUrl = batchRunEvidenceUrl;
   private readonly references = inject(TaskReferenceNavigationService);
   private readonly body = viewChild<ElementRef<HTMLDivElement>>('body');
