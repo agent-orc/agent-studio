@@ -9,6 +9,25 @@ public sealed class BatchGateFailureRankingTests
     private static readonly DateTimeOffset Now = new(2026, 11, 5, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public void Fact_without_gate_run_id_is_unattributed_and_never_retried()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var store = new BatchGateStore(root);
+            store.RecordExecution(new BatchGateExecutionFact("Project", "one", "one-run", "sha", "fail", "host",
+                Now, Now, 0, 0, Path.Combine(root, "missing.jsonl"), MemberKeys: ["AGT-1"]));
+
+            var ranking = store.FailedTestRanking("Project", Now);
+
+            Assert.Empty(ranking.Tests);
+            Assert.Equal(0, ranking.PendingEvidenceRuns);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public void Evidence_retry_is_dropped_after_ninety_days()
     {
         var root = Path.Combine(Path.GetTempPath(), "failure-ranking-" + Guid.NewGuid().ToString("N"));

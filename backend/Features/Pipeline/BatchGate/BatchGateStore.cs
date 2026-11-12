@@ -597,9 +597,8 @@ public sealed partial class BatchGateStore
 
     private void AppendFailureEvidence(FailureRankingProjection projection, BatchGateExecutionFact fact)
     {
-        // Older execution facts did not record the gate's own ID. Their batch
-        // run ID cannot identify a gate result generated with a separate GUID.
-        if (string.IsNullOrWhiteSpace(fact.EvidenceGateRunId)) return;
+        // The default reader returns no failures, without throwing, for facts
+        // that lack the gate's own ID, so they stay out of UnreadableFacts.
         try { projection.Failures.AddRange(_readFailureEvidence(WithMembers(fact))); }
         catch (Exception exception) when (exception is not OperationCanceledException and not OutOfMemoryException)
         {
