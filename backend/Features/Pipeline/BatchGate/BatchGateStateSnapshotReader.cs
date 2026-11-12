@@ -206,6 +206,7 @@ public static class BatchGateStateSnapshotReader
                         run.BatchRunId, run.Host,
                         outcome = verdict?.Outcome,
                         classification = verdict?.Classification,
+                        hang = verdict?.Hang,
                         evidenceAvailable = store.StoredEvidenceFile(run.EvidencePath) is not null,
                         startedAtUtc = (DateTimeOffset?)run.StartedAtUtc,
                         finishedAtUtc = verdict?.CompletedAtUtc,

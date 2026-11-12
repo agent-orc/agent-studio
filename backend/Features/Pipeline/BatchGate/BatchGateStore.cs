@@ -43,7 +43,7 @@ public sealed record BatchGateRunVerdict(
     string TestedCandidateSha, string GateProfileDigest,
     string Outcome, string Classification, string EvidencePath,
     DateTimeOffset CompletedAtUtc, string? BaseCheck = null,
-    double? BaseCheckMinutes = null);
+    double? BaseCheckMinutes = null, string? Hang = null);
 
 public sealed record BatchGatePublication(
     string BatchId, string MembershipDigest, string BatchRunId,

@@ -191,7 +191,8 @@
                     · {{ runDuration(batch, run) }}
                     · <a [href]="runEvidenceUrl(project(), batch.batchId, run.batchRunId)" target="_blank" rel="noopener">Evidence</a>
                     · <a [href]="runEvidenceUrl(project(), batch.batchId, run.batchRunId, 'log')" target="_blank" rel="noopener">Run log</a>
-                    @if (run.evidenceAvailable === false) { · Artifacts pending }</li>
+                    @if (run.evidenceAvailable === false) { · Artifacts pending }
+                    @if (run.hang) { · <span data-testid="batch-shard-hang">{{ run.hang }}</span> }</li>
                 }</ul>
               }
             </article>
