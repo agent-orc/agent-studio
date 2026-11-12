@@ -17,3 +17,4 @@
 }
 .batch-isolation__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--studio-spacing-2); }
 .batch-isolation__head strong { overflow-wrap: anywhere; }
+.batch-isolation__row p { margin: 0; color: var(--studio-fg-muted); }

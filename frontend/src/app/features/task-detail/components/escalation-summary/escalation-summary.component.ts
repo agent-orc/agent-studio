@@ -11,6 +11,7 @@ import {
 import { HttpClient, HttpParams } from '@angular/common/http';
 
 import { TaskState } from '../../../../models/task.model';
+import { ServerCheckoutRemedyComponent } from '../server-checkout-remedy/server-checkout-remedy.component';
 import { CdkTrapFocus } from '@angular/cdk/a11y';
 import type { TaskDetail, TaskInfo } from '../../../../models/task.model';
 import { CodeReviewListEntry, TaskService } from '../../../../services/task.service';
@@ -30,6 +31,7 @@ import { EscalationDetailsComponent } from '../escalation-details/escalation-det
 import { GateQueueReleaseComponent } from '../gate-queue-release/gate-queue-release.component';
 import {
   laneActionsFor,
+  escalationNeedsServerCheckout,
   type TriageActionPayload,
   type TriageButton,
 } from '../../state/triage-actions.model';
@@ -61,6 +63,7 @@ import {
     EscalationDetailsComponent,
     DisclosureMarkerComponent,
     GateQueueReleaseComponent,
+    ServerCheckoutRemedyComponent,
     CdkTrapFocus,
   ],
   templateUrl: './escalation-summary.component.html',
@@ -100,10 +103,14 @@ export class EscalationSummaryComponent {
       this.selectedFindings().length ? this.ownerNote().trim() : `- [ ] ${this.ownerNote().trim()}`] : []),
   ].join('\n'));
 
+  readonly serverCheckoutMissing = computed(() => escalationNeedsServerCheckout(this.detail().info, this.detail().statusMarkdown,
+    this.view().reason, this.view().escalation?.reason, ...this.view().gateItems.flatMap(item => [item.text, item.detail])));
+
   /** The three terminal operator choices shown beside NEEDS DECISION. */
   readonly decisionActions = computed(() =>
     this.detail().info.state === TaskState.Escalated && !this.gateInfrastructure()
-      ? laneActionsFor(TaskState.Escalated).filter((action) => DECISION_ACTION_IDS.has(action.id))
+      ? laneActionsFor(TaskState.Escalated).filter((action) => DECISION_ACTION_IDS.has(action.id)
+          && (!this.serverCheckoutMissing() || !action.id.includes('reissue')))
         .map(action => this.watchdogPark() && action.id === 'reissue-escalated'
           ? { ...action, variant: 'secondary' as const } : action)
       : [],

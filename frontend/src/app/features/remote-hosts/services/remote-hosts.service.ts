@@ -125,6 +125,7 @@ export class RemoteHostsService {
     return seedRemoteHosts(Date.now(), this.auth?.status()?.profile ?? 'local');
   }
   private capabilityRunnerIds = new Set<string>(['api-host']);
+  private monolithClients: ClientSummary[] = [];
 
   /** Every mount revalidates live state; cached cards are never authoritative. */
   ensureLoaded(): void {
@@ -177,6 +178,7 @@ export class RemoteHostsService {
     const startedAt = performance.now();
     this.http.get<ClientSummary[]>('/api/clients').subscribe({
       next: clients => {
+        this.monolithClients = clients ?? [];
         this.identityDiagnostics.set((clients ?? []).filter(client => !!client.identityFileError));
         const byId = new Map((clients ?? []).map(client => [client.id, client]));
         const now = Date.now();
@@ -398,7 +400,36 @@ export class RemoteHostsService {
         });
         this.log('capabilities-hydrated', { runners: snapshots?.length ?? 0 });
       },
-      error: error => this.log('capabilities-hydrate-failed', { message: error?.message ?? 'unknown' }),
+      error: error => {
+        if (error?.status === 404 && this.auth?.status()?.profile === 'networked') {
+          this.hydrateNetworkedMonolithRunners();
+          return;
+        }
+        this.log('capabilities-hydrate-failed', { message: error?.message ?? 'unknown' });
+      },
+    });
+  }
+
+  /** Legacy networked monoliths expose enrolled runners but no Task Server capability route. */
+  private hydrateNetworkedMonolithRunners(): void {
+    this.http?.get<{ id: string; name: string; revokedAt?: string | null }[]>('/api/auth/runners').subscribe({
+      next: runners => {
+        const enrolled = new Map((runners ?? []).filter(runner => !runner.revokedAt)
+          .map(runner => [runner.id, runner]));
+        this.capabilityRunnerIds = new Set(enrolled.keys());
+        const now = Date.now();
+        this.hosts.set(this.monolithClients.filter(client => enrolled.has(client.id)).map(client => {
+          const runner = enrolled.get(client.id)!;
+          return projectClient({
+            id: client.id, name: runner.name, role: 'remote', address: null,
+            clientId: client.id, serviceRole: /review/i.test(runner.name) ? 'review' : 'coding',
+            status: 'offline', os: 'Remote runner', lastHeartbeatAt: null,
+            uptimeLabel: null, capabilities: [], cliQuotas: [], stats: null,
+          }, client, client.kind === 'retired' ? 'retired'
+            : client.drainRequestedAt ? 'draining' : statusFor(client.lastSeenAt, now));
+        }));
+      },
+      error: error => this.log('monolith-runners-hydrate-failed', { message: error?.message ?? 'unknown' }),
     });
   }
 

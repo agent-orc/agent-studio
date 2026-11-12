@@ -6,6 +6,7 @@ using System.Text.Json;
 using AgentStudio.Management;
 using AgentStudio.Secrets;
 using AgentStudio.Security;
+using AgentStudio.TaskServer.Contracts;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -300,6 +301,99 @@ public sealed class StudioBackupTests : IDisposable
         Assert.All(files.Values, content => Assert.DoesNotContain(secretText, Encoding.UTF8.GetString(content)));
         Assert.Equal(3, record.Consistency.KeyFilesExcluded);
         Assert.Equal($"{record.Sha256}  {record.FileName}\n", File.ReadAllText(_fixture.Catalog.ChecksumPath(record.Id)));
+    }
+
+    [Fact]
+    public async Task Backup_key_alone_opens_neither_authenticator_seed_nor_sealed_secret_value()
+    {
+        var configuration = _fixture.Configuration();
+        var access = new AccessSecurityStore(configuration, NullLogger<AccessSecurityStore>.Instance, _clock);
+        var password = "backup test phrase " + Guid.NewGuid().ToString("N");
+        var owner = access.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
+        var principal = access.AuthenticateSession(owner.SessionToken)!;
+        var seed = access.BeginTotpEnrollment(principal);
+        access.ConfirmTotpEnrollment(principal, SecondFactorCodes.CurrentTotp(seed, _clock.GetUtcNow().UtcDateTime));
+        var secretValue = "sealed-value-" + Guid.NewGuid().ToString("N");
+        var kek = _fixture.CreateSecretKey().Load(false);
+        var sealedPath = Path.Combine(_fixture.Workspace, ".security", "secrets", "items", "test", "v000001.sealed.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(sealedPath)!);
+        File.WriteAllText(sealedPath, JsonSerializer.Serialize(SecretEnvelope.Seal(kek, "test", 1, Encoding.UTF8.GetBytes(secretValue))));
+
+        var record = await _fixture.Service(_clock, null, secretKey: _fixture.CreateSecretKey()).CreateAsync("test", CancellationToken.None);
+        using (var encryptedArchive = File.OpenRead(_fixture.Catalog.ArchivePath(record.Id)))
+        using (var decrypted = BackupCipher.Decrypt(encryptedArchive, BackupKey.Load(_fixture.KeyFile)))
+        using (var gzip = new GZipStream(decrypted, CompressionMode.Decompress))
+        using (var plainTar = new MemoryStream())
+        {
+            gzip.CopyTo(plainTar);
+            var archiveText = Encoding.UTF8.GetString(plainTar.ToArray());
+            Assert.DoesNotContain(seed, archiveText, StringComparison.Ordinal);
+            Assert.DoesNotContain(secretValue, archiveText, StringComparison.Ordinal);
+        }
+        var files = _fixture.ReadArchive(record.Id);
+        Assert.Contains("workspace/.security/access-state.json", files.Keys);
+        Assert.All(files.Values, bytes =>
+        {
+            var content = Encoding.UTF8.GetString(bytes);
+            Assert.DoesNotContain(seed, content, StringComparison.Ordinal);
+            Assert.DoesNotContain(secretValue, content, StringComparison.Ordinal);
+        });
+        using var archive = File.OpenRead(_fixture.Catalog.ArchivePath(record.Id));
+        var (_, contents) = BackupArchive.Read(archive, BackupKey.Load(_fixture.KeyFile), null, null, null);
+        var servedContents = _fixture.Service(_clock, null).ReadContents(record.Id)!;
+        Assert.Equal(contents.Files.Count, servedContents.Files.Count);
+        Assert.Equal(contents.CredentialFiles!["totp-seeds-sealed"], servedContents.CredentialFiles!["totp-seeds-sealed"]);
+        Assert.Equal(1, contents.CredentialFiles!["totp-seeds-sealed"]);
+        Assert.Equal(1, contents.CredentialFiles["secret-store-values-sealed"]);
+        Assert.Contains("sealed:v1:", Encoding.UTF8.GetString(files["workspace/.security/access-state.json"]));
+
+        var restoredRoot = Path.Combine(_fixture.Root, "restored-auth");
+        var restoredWorkspace = Path.Combine(restoredRoot, "workspace");
+        var restoredState = Path.Combine(restoredWorkspace, ".security", "access-state.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(restoredState)!);
+        File.WriteAllBytes(restoredState, files["workspace/.security/access-state.json"]);
+        var restoredKey = Path.Combine(restoredRoot, "secrets.kek");
+        File.Copy(_fixture.SecretKeyFile, restoredKey);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(restoredKey, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        var restoredConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = restoredWorkspace, ["Secrets:KeyFile"] = restoredKey
+        }).Build();
+        _clock.Advance(TimeSpan.FromSeconds(30));
+        var restoredAccess = new AccessSecurityStore(restoredConfig, NullLogger<AccessSecurityStore>.Instance, _clock);
+        var restoredLogin = restoredAccess.Login("owner", password, "restored", SecondFactorCodes.CurrentTotp(seed, _clock.GetUtcNow().UtcDateTime),
+            requireSecondFactor: true);
+        Assert.False(restoredAccess.AuthenticateSession(restoredLogin.SessionToken)!.Session.SecondFactorEnrollmentOnly);
+    }
+
+    [Fact]
+    public void Credential_inventory_counts_files_per_class_including_shared_access_state()
+    {
+        var names = new[]
+        {
+            "workspace/.security/access-state.json", "workspace/.security/secrets/items/a/v000001.sealed.json",
+            "stack/.env", "stack/backup-target/ssh.key", "home/.ssh/id_ed25519",
+            "home/.claude/credentials.json", "home/.local/share/AgentStudio/github-app/git-credentials",
+            "caddy-data/caddy/acme/acme.json", "host-certificates/host.key", "origin-pull/ca.key"
+        };
+        var files = names.Select(name => new BackupContentEntry(name, 1, "hash", "Stable"));
+        var counts = BackupCredentialInventory.Count(files);
+        Assert.Equal(11, counts.Count);
+        Assert.All(counts.Values, count => Assert.Equal(1, count));
+    }
+
+    [Fact]
+    public async Task Backup_refuses_a_legacy_access_state_snapshot_with_a_plaintext_seed()
+    {
+        var security = Path.Combine(_fixture.Workspace, ".security");
+        Directory.CreateDirectory(security);
+        var seed = SecondFactorCodes.NewTotpSecret();
+        File.WriteAllText(Path.Combine(security, "access-state.v0.old.json"),
+            JsonSerializer.Serialize(new { Users = new[] { new { TotpSecret = seed } } }));
+        var error = await Assert.ThrowsAsync<BackupException>(() =>
+            _fixture.Service(_clock, null).CreateAsync("test", CancellationToken.None));
+        Assert.Equal("backup-plaintext-factor", error.Code);
+        Assert.Empty(_fixture.Catalog.List());
     }
 
     [Fact]
