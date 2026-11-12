@@ -390,6 +390,7 @@ public static class RoutePermissionCatalog
         // recovery and operational records without per-project filtering.
         Add("R", IamPermissions.WorkspaceOperate,
             "/api/admin/prompts/**", "/api/admin/config/**", "/api/admin/git-telemetry/**", "/api/clients/**",
+            "/api/host/filesystems",
             "/api/watcher/**", "/api/crash-recovery/**", "/api/cause-breakers/**",
             "/api/workspace/summary", "/api/workspaces/{}/quota/**",
             "/api/workspaces/{}/projects/{}/quota", "/api/auto-review/status",

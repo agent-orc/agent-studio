@@ -215,6 +215,7 @@ public static class V1ReviewPlaneEndpoints
             V1ReviewExecutorRegistry registry,
             AdaptiveReviewParallelismAdvisor reviewParallelism,
             AgentStudio.Clients.ClientIdentityStore clients,
+            AgentStudio.Clients.HostTelemetryStore telemetryStore,
             CliQuotaFallbackService quotaRoutes,
             AttemptAuthorityService authority,
             TaskScannerService scanner,
@@ -238,6 +239,25 @@ public static class V1ReviewPlaneEndpoints
                             scanner.ScanAllAutomationJobs()),
                 };
                 clients.RecordSeen(runnerId);
+                if (request.Telemetry is { } hostTelemetry)
+                {
+                    try
+                    {
+                        telemetryStore.Append(runnerId, new AgentStudio.Clients.HostTelemetrySample(
+                            hostTelemetry.ObservedAt, hostTelemetry.CpuPercent,
+                            hostTelemetry.Load1, hostTelemetry.Load5, hostTelemetry.Load15,
+                            hostTelemetry.MemoryUsedBytes, hostTelemetry.MemoryTotalBytes,
+                            hostTelemetry.SwapInBytesPerSecond, hostTelemetry.SwapOutBytesPerSecond,
+                            hostTelemetry.CpuStealPercent, hostTelemetry.IoWaitPercent,
+                            hostTelemetry.CpuCores, hostTelemetry.ActiveSlots,
+                            Filesystems: hostTelemetry.Filesystems));
+                    }
+                    catch (IOException error) when (AgentStudio.Tasks.HostDiskWriteFailure.IsDiskFull(error))
+                    {
+                        System.Diagnostics.Trace.TraceWarning(
+                            $"host-disk-telemetry-write-failed runner={runnerId}: {error.Message}");
+                    }
+                }
                 // AGT-2820: the review plane's parallelism recommendation used to
                 // be an unread number on a diagnostics endpoint - it answered
                 // "2" while four reviews deadlocked the host. It now rides the

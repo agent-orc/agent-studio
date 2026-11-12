@@ -12,6 +12,7 @@ public static class ClientEndpoints
     public static void MapClientEndpoints(this WebApplication app)
     {
         var clients = app.MapGroup("/api/clients");
+        app.MapGet("/api/host/filesystems", (ApiHostDiskService disk) => Results.Ok(disk.Snapshot()));
 
         clients.MapPost("/register", (RegisterClientRequest request, ClientIdentityStore store) =>
         {

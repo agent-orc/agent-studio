@@ -483,6 +483,8 @@ builder.Services.AddSingleton<CodexSignInCoordinator>();
 builder.Services.AddSingleton<ClaudeSignInCoordinator>();
 builder.Services.AddSingleton<MigrationStateStore>();
 builder.Services.AddSingleton<HostTelemetryStore>();
+builder.Services.AddSingleton<ApiHostDiskService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ApiHostDiskService>());
 builder.Services.AddSingleton<EnvironmentFlowService>();
 builder.Services.AddSingleton<AgentStudio.Persistence.IAtomicJsonFileWriter, AgentStudio.Persistence.AtomicJsonFileWriter>();
 builder.Services.AddSingleton<OrchestratorConfigService>();
