@@ -1,6 +1,6 @@
 <section class="pp" data-testid="project-detail-pipeline">
   <header class="pp__head">
-    <app-pipeline-type-picker [value]="pipelineType()" (valueChange)="pipelineType.set($event)" />
+    <app-pipeline-type-picker [value]="pipelineType()" [disabled]="aspectBulkBusy()" (valueChange)="pipelineType.set($event)" />
     <h2 class="pp__title">Pipeline</h2>
     <p class="pp__sub">
       Per-type project order, agent, prompt binding, and gates. Each step

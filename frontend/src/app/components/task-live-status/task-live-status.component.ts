@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, Injector, computed, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Injector, computed, effect, inject, input, signal } from '@angular/core';
 import type { TaskInfo } from '../../models/task.model';
 import { TaskState } from '../../models/task.model';
 import { NowTickService } from '../../services/now-tick.service';
@@ -12,6 +12,7 @@ import { BatchGateService } from '../../services/batch-gate.service';
 import { batchMemberFor } from '../../models/batch-gate.model';
 import { batchAction, humanReviewAction, nextForHold, nextForTask, postProcessingAction,
   type CauseHold } from './task-live-next';
+import { clock, perTaskGateFor, perTaskGateView, timestamp } from './task-live-per-task-gate';
 
 export type TaskLiveStatusVariant = 'card' | 'detail';
 type LiveTone = 'active' | 'waiting' | 'idle' | 'stalled';
@@ -21,6 +22,7 @@ interface LiveStatusView {
   headline: string;
   detail: string | null;
   next: string[];
+  perTaskGate?: boolean;
   /** Null when the card has no live status yet, so no attempt is claimed. */
   attempt: number | null;
   /** AGT-3579: runner reason code when the runner is not picking this card. */
@@ -57,6 +59,13 @@ export class TaskLiveStatusComponent {
       task.taskKey, task.key, task.displayKey, task.id);
   });
 
+  constructor() {
+    effect(onCleanup => {
+      const task = this.task();
+      if (task.state === TaskState.AutoReview) onCleanup(this.batchGate.watch(task.projectName));
+    });
+  }
+
   switchToAuto(event: MouseEvent): void {
     event.stopPropagation();
     if (this.switchingToAuto()) return;
@@ -82,6 +91,8 @@ export class TaskLiveStatusComponent {
     const task = this.task();
     const status = task.liveStatus;
     const causeHeld = causeHold(task);
+    const perTask = perTaskGateFor(this.batchGate.state(task.projectName)(), task);
+    if (perTask && task.state === TaskState.AutoReview) return { ...perTaskGateView(perTask), attempt: status?.attempt ?? null };
     if (!status) {
       if (causeHeld) return holdView(task, causeHeld, null, nextForHold(causeHeld), this.now());
       return task.state === TaskState.HumanReview || task.state === TaskState.Escalated
@@ -380,16 +391,6 @@ function idleHeadline(state: string): string {
     case TaskState.AutoReview: return 'Waiting for review';
     default: return 'Waiting for the next step';
   }
-}
-
-function timestamp(value: string | null | undefined): number | null {
-  if (!value) return null;
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-function clock(epochMs: number): string {
-  return new Date(epochMs).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
 function latestActivityAt(task: TaskInfo, projected: string | null | undefined): number | null {

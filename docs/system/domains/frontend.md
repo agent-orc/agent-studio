@@ -81,9 +81,10 @@ renderers outside the board startup graph.
 
 ## Environment flow
 
-Environment > Installation shows a single one shot claim route status for the
-local monolith, where that Task Server route is unavailable. The runner retries
-the route every five minutes without filling its log with repeated 404 entries.
+Environment > Installation shows one one shot claim route status line only
+while a live host reports `telemetry.oneShotClaimRoute`: the oldest reporting
+host, since when, the retry interval and the operator action. Without a report
+nothing extra is shown, also on a local monolith.
 
 DP-S6 renders canary attempt rows beneath their physical host using
 `GET /api/v1/management/attempt-visibility`. Active occupancy follows the
@@ -115,6 +116,12 @@ distinct cards with a completed build/test step and the batch gate uses members
 in verified publications. Gate waiting comes from the active auto-review gate
 queue, and batch gate waiting from its pending store. Deployment card counts
 have no global attribution source yet, so that value remains unavailable.
+Ready-card waiting reasons use the pickup hold policy before aggregation, so
+execution placement and other holds count under their actual mechanism. Lane
+labels in Environment and Activity use `laneName()`; Activity alert summaries
+show affected card keys and titles when available, and a linked next step opens
+the affected card. The Activity message column remains readable at 1280 px and
+wraps on narrow screens.
 
 The view also lists application health for every declared environment from
 `GET /api/environment/health`: status, uptime over 24 hours, 7 days and
@@ -692,9 +699,12 @@ occur. It is not a claim about tunnel transfer time.
   viewport for reading. Standalone task keys become microcards, while paths,
   refs, URLs, and code stay literal. Long artifact blocks scroll within their
   own container. The park block has a per-task persisted disclosure and keeps
-  its badge, age, and one-line reason visible when closed. The reissue action
-  is primary beside the recommendation; accept-as-is and abort are secondary
-  decisions. When findings, review artifacts,
+  its badge, age, and one-line reason visible when closed. Continue (reissue)
+  opens a confirmation with selectable findings, an optional owner note, and
+  the next agent's instructions before the move to Ready. The saved selection
+  survives review-artifact rotation. Accept with reason records an operator
+  override for the completion gate; abort is the destructive alternative.
+  When findings, review artifacts,
   and delivery context are absent, the section renders one compact empty line.
   The Runs modal also shows the current operator-owned review-attempt epoch and
   the closed cycle history, including requeue reason, lane crossing, and rotated

@@ -106,6 +106,8 @@ public sealed class OperationalStallDetectorTests
             && x.BlockedCount == 19 && x.Details["completedCount"] == "1");
         Assert.Contains(findings, x => x.FingerprintKey.Contains("deploy-drift")
             && x.Details["logExcerpt"] == "ENGINE_SERVER_URL missing");
+        Assert.Contains(findings, x => x.FingerprintKey.Contains("lane-stall")
+            && x.SuggestedAction == "Open the card and resolve the blocked lane action.");
     }
 
     [Fact]
