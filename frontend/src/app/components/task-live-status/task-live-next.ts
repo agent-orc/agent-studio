@@ -18,21 +18,35 @@ export function nextForTask(task: TaskInfo, status: TaskLiveStatus, causeHeld: C
   if (causeHeld) return nextForHold(causeHeld);
   if (task.waitsOn?.blocked) return ['Dependency resolution', 'Runner pickup'];
   if (task.pickupHold) return ['Resolve pickup hold', 'Runner pickup'];
-  if (task.state === TaskState.AutoReview && status.queue?.state === 'reviewing') return ['Review verdict'];
-  if (task.state === TaskState.AutoReview && status.queue?.state === 'stalled') return ['Operator decision'];
-  if (batch) return [batch];
+  const wait = postProcessingWait(task, status.queue, batch);
+  if (wait) return [wait.action];
   if (task.state === TaskState.Ready) {
     return ['Runner pickup', ...status.nextSteps.slice(0, 2).map(step => step.displayName)];
-  }
-  if (task.state === TaskState.AutoReview) {
-    const workflowWait = postProcessingAction(status.queue?.reason);
-    if (workflowWait) return [workflowWait];
-    return ['Review'];
   }
   if (task.state === TaskState.HumanReview || task.state === TaskState.Escalated) {
     return [humanReviewAction(task)];
   }
   return status.nextSteps.slice(0, 3).map(step => step.displayName);
+}
+
+export type PostProcessingWaitKind = 'reviewing' | 'stalled' | 'batch' | 'workflow' | 'review';
+
+export interface PostProcessingWait {
+  kind: PostProcessingWaitKind;
+  action: string;
+}
+
+/** The one place that decides which review, operator, batch or workflow wait
+ * a card is in. CURRENT and NEXT both read it so their answers agree. */
+export function postProcessingWait(task: TaskInfo, queue: TaskLiveStatus['queue'],
+  batch: string | null): PostProcessingWait | null {
+  const autoReview = task.state === TaskState.AutoReview;
+  if (autoReview && queue?.state === 'reviewing') return { kind: 'reviewing', action: 'Review verdict' };
+  if (autoReview && queue?.state === 'stalled') return { kind: 'stalled', action: 'Operator decision' };
+  if (batch) return { kind: 'batch', action: batch };
+  if (!autoReview) return null;
+  const workflow = postProcessingAction(queue?.reason);
+  return workflow ? { kind: 'workflow', action: workflow } : { kind: 'review', action: 'Review' };
 }
 
 export function batchAction(member: BatchMemberState | null): string | null {

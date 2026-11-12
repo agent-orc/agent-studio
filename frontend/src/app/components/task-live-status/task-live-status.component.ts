@@ -11,7 +11,7 @@ import { ErrorDialogService } from '../../services/error-dialog.service';
 import { openReviewLossHost, reviewLossHeadline, type ReviewLossHeadline } from './review-loss-headline';
 import { BatchGateService } from '../../services/batch-gate.service';
 import { batchMemberFor } from '../../models/batch-gate.model';
-import { batchAction, humanReviewAction, nextForHold, nextForTask, postProcessingAction,
+import { batchAction, humanReviewAction, nextForHold, nextForTask, postProcessingWait,
   type CauseHold } from './task-live-next';
 import { perTaskGateFor, perTaskGateView } from './task-live-per-task-gate';
 import {
@@ -212,12 +212,13 @@ export class TaskLiveStatusComponent {
       };
     }
 
-    if (batchWorkflow) {
+    const wait = postProcessingWait(task, status.queue, batchWorkflow);
+    if (wait?.kind === 'batch') {
       return {
         tone: 'waiting',
-        headline: `Waiting for ${batchWorkflow.toLowerCase()}`,
+        headline: `Waiting for ${wait.action.toLowerCase()}`,
         detail: activityDetail(task, status.latestEventAt, this.now()),
-        next: [batchWorkflow],
+        next: [wait.action],
         attempt: status.attempt,
       };
     }
@@ -248,7 +249,7 @@ export class TaskLiveStatusComponent {
     if (status.queue) {
       const queuedHeadline = status.queue.kind === 'runner' ? 'Queued for runner'
         : status.queue.state === 'integration' ? 'Waiting for delivery integration' : 'Waiting for review slot';
-      const workflowWait = task.state === TaskState.AutoReview && status.queue.state !== 'integration' ? postProcessingAction(status.queue.reason) : null;
+      const workflowWait = wait?.kind === 'workflow' && status.queue.state !== 'integration' ? wait.action : null;
       const headline = workflowWait ? `Waiting for ${workflowWait.toLowerCase()}` : (status.queue.position != null
         ? `${queuedHeadline} · position ${status.queue.position}`
         : status.queue.reason
