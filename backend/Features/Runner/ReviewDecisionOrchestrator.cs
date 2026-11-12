@@ -1571,7 +1571,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             review = new ConceptWorkbenchReview(
                 false, null, null, null,
-                ["Dossier placement did not publish a source document."]);
+                ["Dossier placement has no record for this card. A concept Dossier is placed by the reviewed task-branch merge of a Remote delivery; local concept runs are not admitted."]);
         }
         else if (string.IsNullOrWhiteSpace(repositoryRoot) || !Directory.Exists(repositoryRoot))
         {
@@ -1594,18 +1594,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             ProjectPipelineOrder.Apply(PipelineCatalogue.Concept, settings),
             entry.Name,
             current.Id);
-        var now = DateTime.UtcNow;
-        _pipelineLog?.RecordStep(current.FolderPath, new PipelineStepExecution
-        {
-            StepId = PipelineCatalogue.ConceptReviewStepId,
-            Kind = StepKind.Orchestrator,
-            Status = review.IsComplete ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
-            StartedAt = now,
-            CompletedAt = now,
-            Verdict = review.IsComplete ? "concept-complete" : "concept-incomplete",
-            VerdictSummary = review.Summary,
-            Reason = review.IsComplete ? null : review.Summary,
-        });
+        ConceptSightReviewHandoff.Record(_pipelineLog, _chatLog, _logger, current, review, stored);
+        if (review.IsComplete)
+            _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(current.FolderPath));
 
         if (!review.IsComplete)
         {
@@ -1631,28 +1622,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return Task.CompletedTask;
         }
 
-        SteerPendingMarker.Write(current.FolderPath, new SteerPendingRecord
-        {
-            WaitStartedAt = now,
-            Kind = SteerPendingKinds.ConceptSightReview,
-            Question = "Review the concept Dossier, then promote its implementation cards or finish with no implementation.",
-            CliType = current.CliType,
-        }, _logger);
-        _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(current.FolderPath));
-        _pipelineLog?.RecordStep(current.FolderPath, new PipelineStepExecution
-        {
-            StepId = PipelineCatalogue.ConceptSightReviewGateStepId,
-            Kind = StepKind.Orchestrator,
-            Status = PipelineStepStatus.Running,
-            StartedAt = now,
-            Verdict = "awaiting-sight-review",
-            VerdictSummary = "Concept delivered successfully; awaiting human sight review.",
-        });
-        _chatLog.Append(
-            current,
-            OrchestratorMessageKind.Decision,
-            $"Concept delivered: `{stored!.RepoRelativeEntrypoint}`. Awaiting sight review; NeedsInput is expected and is not an escalation.");
-
         var move = GuardedMoveJob(
             current.Id, TaskStates.HumanReview, entry.Path,
             transitionCause: LaneChangeCauses.ReviewVerdict, transitionDetail: "concept-sight-review");
@@ -1667,7 +1636,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             _statusSnapshot.RecordAccept();
             _logger.LogInformation(
                 "concept_delivered project={Project} job={JobId} path={Path} outcome=success-awaiting-sight-review",
-                entry.Name, current.Id, stored.RepoRelativeEntrypoint);
+                entry.Name, current.Id, stored!.RepoRelativeEntrypoint);
         }
         return Task.CompletedTask;
     }

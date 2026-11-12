@@ -117,6 +117,7 @@ public sealed class BatchGateReviewPlanTests
     [InlineData("off", "The project batch gate was off when the review plan was sealed.")]
     [InlineData("post-merge", "The project integrates post-merge, so no batch gate runs.")]
     [InlineData("report-only", "A report-only or card-less review has no batch gate.")]
+    [InlineData("concept", "A concept Dossier requires per-delivery placement and review before sight review.")]
     [InlineData("diff-unavailable", "The changed paths against the integration branch were unavailable when the review plan was sealed.")]
     [InlineData("no-change", "The delivery changes no path against the integration branch.")]
     [InlineData("documentation-scope", "The batch gate scope is documentation only and this delivery changes code.")]
@@ -137,7 +138,8 @@ public sealed class BatchGateReviewPlanTests
             noCodingTask: fact == "report-only",
             batchScope: fact == "documentation-scope" ? "documentation" : "code", paths,
             resultRef: fact == "no-result-ref" ? null : "refs/heads/agent-studio/results/one",
-            resultSha: fact == "bad-result-sha" ? "not-a-sha" : sha));
+            resultSha: fact == "bad-result-sha" ? "not-a-sha" : sha,
+            concept: fact == "concept"));
     }
 
     [Theory]
@@ -263,6 +265,51 @@ public sealed class BatchGateReviewPlanTests
                 [".agent-studio/project.yml"],
                 "refs/heads/agent-studio/results/code-task");
             Assert.False(changedInventory.BuildTestDeferredToBatch);
+        }
+        finally
+        {
+            DeleteDirectory(fixture.Root);
+        }
+    }
+
+    /// <summary>
+    /// AGT-3696 and AGT-3698: a Dossier-only concept skips tool gates, and no
+    /// concept delivery joins a batch. Placement and review run around the
+    /// per-delivery merge, which a batch candidate would bypass.
+    /// </summary>
+    [Fact]
+    public void ConceptDossierDeliveryIsNeverDeferredToTheBatch()
+    {
+        var fixture = CreateFixture();
+        var (repo, builder, task) = (fixture.Repo, fixture.Builder, fixture.Task);
+        try
+        {
+            Git(repo, "switch", "-qc", "agent-studio/results/task");
+            Directory.CreateDirectory(Path.Combine(repo, "docs", "pilot"));
+            File.WriteAllText(Path.Combine(repo, "docs", "pilot", "index.html"), "<!DOCTYPE html>\n");
+            Git(repo, "add", ".");
+            Git(repo, "commit", "-qm", "dossier");
+            var resultSha = Git(repo, "rev-parse", "HEAD").Trim();
+            Git(repo, "switch", "-q", "develop");
+
+            var plan = builder.Build(task with { Mode = TaskModes.Concept }, repo,
+                new ProjectSettings { BatchGate = new(Enabled: true) }, "develop",
+                resultSha, ["docs/pilot/index.html"], "refs/heads/agent-studio/results/task");
+
+            Assert.False(plan.BuildTestDeferredToBatch);
+            Assert.Equal(TaskModes.Concept, plan.TaskMode);
+            Assert.Equal(RemoteReviewPlanBuilder.ConceptDossierSkipReason("docs/pilot"),
+                plan.BuildTestDeferralDisabledReason);
+            Assert.Contains(plan.Commands, command => command.Aspect == "concept-fit");
+            Assert.DoesNotContain(plan.Commands, command => command.Aspect == "build-tests");
+
+            var invalidShape = builder.Build(task with { Mode = TaskModes.Concept }, repo,
+                new ProjectSettings { BatchGate = new(Enabled: true) }, "develop",
+                resultSha, ["docs/pilot/index.html", "backend/Changed.cs"],
+                "refs/heads/agent-studio/results/task");
+            Assert.False(invalidShape.BuildTestDeferredToBatch);
+            Assert.Equal("A concept Dossier requires per-delivery placement and review before sight review.",
+                invalidShape.BuildTestDeferralDisabledReason);
         }
         finally
         {

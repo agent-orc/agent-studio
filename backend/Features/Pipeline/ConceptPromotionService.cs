@@ -79,59 +79,84 @@ public sealed class ConceptPromotionService
         if (string.IsNullOrWhiteSpace(relative))
             throw new InvalidOperationException("The concept Dossier path is unavailable.");
         var descriptorRelative = relative + "/workbench.json";
+        var actor = source.Key ?? source.Id;
+        var checkoutReview = ConceptWorkbenchContract.ReviewDirectory(
+            root, relative, actor, allowAccepted: true);
+        if (!checkoutReview.IsComplete)
+        {
+            // A Remote merge lands in the integration worktree. Until the
+            // developer checkout reaches that commit, promotion reads the
+            // Dossier copy placed on the card and records acceptance there.
+            var placedCopy = ConceptWorkbenchStore.SnapshotRoot(source.FolderPath);
+            var placedDescriptor = Path.Combine(placedCopy, descriptorRelative);
+            if (!File.Exists(placedDescriptor))
+                throw new InvalidOperationException("The placed concept Dossier copy is unavailable.");
+            (bool Changed, string? WorkbenchId, string PreviousStatus) placed;
+            lock (_gate)
+                placed = WriteAcceptedDescriptor(placedDescriptor, actor);
+            PublishAcceptance(source.ProjectName, placed);
+            return;
+        }
+
         var descriptorPath = Path.Combine(root, descriptorRelative);
-        var changed = false;
-        string? workbenchId = null;
-        var previousStatus = "decision-pending";
+        (bool Changed, string? WorkbenchId, string PreviousStatus) accepted = default;
         var result = _repositoryMutations.Execute(
             source.ProjectName,
             root,
-            $"concept-accepted-{source.Key ?? source.Id}",
-            $"chore(dossier): accept concept {source.Key ?? source.Id}",
+            $"concept-accepted-{actor}",
+            $"chore(dossier): accept concept {actor}",
             [descriptorRelative],
-            () =>
-            {
-                var descriptor = JsonNode.Parse(File.ReadAllText(descriptorPath))?.AsObject()
-                    ?? throw new InvalidDataException("The concept Dossier descriptor is invalid.");
-                workbenchId = descriptor["id"]?.GetValue<string>();
-                var schema = descriptor["schemaVersion"]?.GetValue<int>() ?? 1;
-                if (schema >= 2) previousStatus = "active";
-                else previousStatus = descriptor["status"]?.GetValue<string>() ?? "decision-pending";
-                var alreadyAccepted = schema >= 2
-                    ? descriptor["lifecycleState"]?.GetValue<string>() == "decided"
-                    : descriptor["status"]?.GetValue<string>() == "decided";
-                if (alreadyAccepted) return;
-                changed = true;
-                var now = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
-                var actor = source.Key ?? source.Id;
-                if (schema >= 2)
-                {
-                    descriptor["lifecycleState"] = "decided";
-                    descriptor["editedAt"] = now;
-                    descriptor["editedBy"] = actor;
-                    if (descriptor["lifecycleHistory"] is not JsonArray history)
-                    {
-                        history = [];
-                        descriptor["lifecycleHistory"] = history;
-                    }
-                    history.Add(AgentStudio.Docs.DecisionRecordService.HistoryEntry(
-                        "decided", actor, now, "Concept accepted and implementation slices created."));
-                }
-                else
-                {
-                    descriptor["status"] = "decided";
-                    descriptor["updatedAt"] = now;
-                    descriptor["editedBy"] = actor;
-                }
-                File.WriteAllText(descriptorPath, descriptor.ToJsonString(
-                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
-            });
+            () => accepted = WriteAcceptedDescriptor(descriptorPath, actor));
         if (!result.Success)
             throw new InvalidOperationException(
                 result.Error ?? "The concept Dossier could not be marked in implementation.");
-        if (changed && !string.IsNullOrWhiteSpace(workbenchId))
+        PublishAcceptance(source.ProjectName, accepted);
+    }
+
+    private static (bool Changed, string? WorkbenchId, string PreviousStatus) WriteAcceptedDescriptor(
+        string path, string actor)
+    {
+        var descriptor = JsonNode.Parse(File.ReadAllText(path))?.AsObject()
+            ?? throw new InvalidDataException("The concept Dossier descriptor is invalid.");
+        var workbenchId = descriptor["id"]?.GetValue<string>();
+        var schema = descriptor["schemaVersion"]?.GetValue<int>() ?? 1;
+        var previousStatus = schema >= 2
+            ? "active" : descriptor["status"]?.GetValue<string>() ?? "decision-pending";
+        var alreadyAccepted = schema >= 2
+            ? descriptor["lifecycleState"]?.GetValue<string>() == "decided"
+            : descriptor["status"]?.GetValue<string>() == "decided";
+        if (alreadyAccepted) return (false, workbenchId, previousStatus);
+        var now = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
+        if (schema >= 2)
+        {
+            descriptor["lifecycleState"] = "decided";
+            descriptor["editedAt"] = now;
+            descriptor["editedBy"] = actor;
+            if (descriptor["lifecycleHistory"] is not JsonArray history)
+            {
+                history = [];
+                descriptor["lifecycleHistory"] = history;
+            }
+            history.Add(AgentStudio.Docs.DecisionRecordService.HistoryEntry(
+                "decided", actor, now, "Concept accepted and implementation slices created."));
+        }
+        else
+        {
+            descriptor["status"] = "decided";
+            descriptor["updatedAt"] = now;
+            descriptor["editedBy"] = actor;
+        }
+        File.WriteAllText(path, descriptor.ToJsonString(
+            new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        return (true, workbenchId, previousStatus);
+    }
+
+    private void PublishAcceptance(
+        string project, (bool Changed, string? WorkbenchId, string PreviousStatus) accepted)
+    {
+        if (accepted.Changed && !string.IsNullOrWhiteSpace(accepted.WorkbenchId))
             _workbenchChanges.PublishDecisionRecorded(
-                source.ProjectName, workbenchId, previousStatus, "decided");
+                project, accepted.WorkbenchId, accepted.PreviousStatus, "decided");
     }
 
     /// <summary>
