@@ -21,7 +21,7 @@ import { SectionHeaderComponent } from '../../../../components/section-header/se
 import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../../components/menu';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
 import { WorkspaceSettingsService } from '../../state/workspace-settings.service';
-import { WorkspaceQuotaDisclosureComponent } from '../../../quota';
+import { WorkspaceQuotaDisclosureComponent } from '../../../quota/lazy';
 
 interface WorkspaceProjectDragData {
   projectId: string;
