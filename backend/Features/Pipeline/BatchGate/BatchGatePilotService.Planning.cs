@@ -70,7 +70,7 @@ public sealed partial class BatchGatePilotService
         var owner = OwnerOfBatchPlan(_configuration, out var refusal);
         if (refusal is not null && Interlocked.Exchange(ref _batchPlanRefusalLogged, 1) == 0)
             _logger.LogError("batch-plan-engine-ownership-refused: {Refusal}", refusal);
-        var occurrences = _services?.GetService<MonolithOrchestrationStore>();
+        var occurrences = Service<MonolithOrchestrationStore>();
         var prior = _store.LatestPlanDecision(project);
         if (owner == OrchestrationExecutionMode.Engine)
         {

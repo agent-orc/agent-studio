@@ -58,16 +58,25 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
     }
 
     [Fact]
-    public void Unknown_security_profile_refuses_server_startup()
+    public async Task Unknown_security_profile_refuses_server_startup()
     {
-        using var factory = BuildFactory(new Dictionary<string, string?>
+        using var probe = new UnobservedTaskExceptionProbe();
+        var factory = BuildFactory(new Dictionary<string, string?>
         {
             ["Security:Profile"] = "public-demo-typo",
         });
 
         var error = Assert.ThrowsAny<Exception>(() => factory.CreateClient());
+        await factory.DisposeAsync();
 
         Assert.Contains("Unsupported Security:Profile", error.ToString(), StringComparison.Ordinal);
+        // AGT-3755: WebApplicationFactory keeps the entry point's exception in
+        // a task it never reads. Finalize that task here, while this test owns
+        // it, so it does not surface on a later test's finalizer pass; any
+        // other leaked failure of this boot still fails the test.
+        probe.AssertNoLeak("public-demo-typo", leaked =>
+            leaked.InnerException is InvalidOperationException startup
+            && startup.Message.Contains("Unsupported Security:Profile", StringComparison.Ordinal));
     }
 
     [Fact]

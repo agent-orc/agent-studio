@@ -1523,7 +1523,9 @@ public sealed partial class TaskServerStore
             .Select(command => (
                 command.StepId,
                 Owner: command.Diagnosis is { } diagnosis
-                    ? diagnosis.ChargesCard
+                    ? ReviewUnattributedTestFailurePolicy.IsNonBlocking(diagnosis)
+                        ? ReviewFailureOwner.Tolerated
+                        : diagnosis.ChargesCard
                         ? ReviewFailureOwner.Delivery
                         : command.BaselineExitCode != 0
                             ? ReviewFailureOwner.IntegrationBranch

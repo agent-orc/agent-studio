@@ -71,11 +71,15 @@ public static class ReviewFailureAttributionPolicy
         if (evidence.Diagnosis is { } diagnosis
             && !string.IsNullOrWhiteSpace(evidence.BaselineSha)
             && evidence.BaselineExitCode is not null)
+        {
+            if (ReviewUnattributedTestFailurePolicy.IsNonBlocking(diagnosis))
+                return ReviewFailureOwner.Tolerated;
             return diagnosis.ChargesCard
                 ? ReviewFailureOwner.Delivery
                 : evidence.BaselineExitCode != 0
                     ? ReviewFailureOwner.IntegrationBranch
                     : ReviewFailureOwner.Tolerated;
+        }
         if (planned?.CompareToBaseline != true) return ReviewFailureOwner.Delivery;
         return Attribute(
             commandFailed: true,

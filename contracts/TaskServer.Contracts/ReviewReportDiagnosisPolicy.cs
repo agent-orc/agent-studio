@@ -70,6 +70,7 @@ public static class ReviewReportDiagnosisPolicy
         string? nonProduct = null;
         var confirmedProduct = false;
         var integrationBranchDefect = false;
+        var unattributedTestConcern = false;
         foreach (var command in failed)
         {
             var clean = request.Commands.FirstOrDefault(repeat => repeat.StepId == command.StepId
@@ -136,6 +137,8 @@ public static class ReviewReportDiagnosisPolicy
             }
             if (command.Diagnosis.ChargesCard)
                 confirmedProduct = true;
+            else if (ReviewUnattributedTestFailurePolicy.IsNonBlocking(command.Diagnosis))
+                unattributedTestConcern = true;
             else
                 nonProduct ??= command.Diagnosis.Classification;
         }
@@ -156,6 +159,10 @@ public static class ReviewReportDiagnosisPolicy
                 Outcome = "IntegrationBranchDefect",
                 FailureClassification = "IntegrationBranchDefect",
             };
+        if (unattributedTestConcern
+            && ReviewGradingPolicy.Grade(verdicts.Select(verdict => verdict.Status))
+                != ReviewGrade.ProductFailure)
+            return request with { Outcome = "Pass", FailureClassification = null };
         if (string.Equals(request.Outcome, "ProductFailure", StringComparison.OrdinalIgnoreCase)
             && failed.Length == 0
             && ReviewGradingPolicy.Grade(verdicts

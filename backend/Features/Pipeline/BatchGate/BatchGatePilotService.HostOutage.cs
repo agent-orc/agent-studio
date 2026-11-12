@@ -51,7 +51,7 @@ public sealed partial class BatchGatePilotService
         _logger.LogError(
             "gate-host-outage-escalated since={Since} failed_probes={FailedProbes} affected={Affected}",
             outage.SinceUtc, outage.FailedProbes, outage.AffectedRuns.Count);
-        _services?.GetService<OrchestratorLog>()?.Append(watchPath, new OrchestratorLogEntry
+        Service<OrchestratorLog>()?.Append(watchPath, new OrchestratorLogEntry
         {
             Ts = _time.GetUtcNow().UtcDateTime,
             Kind = OrchestratorLogKinds.Alert,
@@ -73,7 +73,7 @@ public sealed partial class BatchGatePilotService
         _logger.LogWarning(
             "gate-host-outage-ended since={Since} ended={Ended} failed_probes={FailedProbes} affected={Affected}",
             ended.SinceUtc, ended.EndedUtc, ended.FailedProbes, string.Join(",", ended.AffectedRuns));
-        _services?.GetService<OrchestratorLog>()?.Append(watchPath, new OrchestratorLogEntry
+        Service<OrchestratorLog>()?.Append(watchPath, new OrchestratorLogEntry
         {
             Ts = ended.EndedUtc.UtcDateTime,
             Kind = OrchestratorLogKinds.Alert,
