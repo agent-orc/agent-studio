@@ -193,7 +193,7 @@ public static class TimelineActors
     public static string Human(string email) => string.IsNullOrWhiteSpace(email) ? "human"
         // A caller that passes the request's client id for an operator session
         // already holds the session actor; it never becomes a person.
-        : IsOperatorAgent(email) ? email.Trim()
+        : IsOperatorAgent(email) || IsPersona(email) ? email.Trim()
         : $"human:{email}";
 
     /// <summary>
@@ -219,6 +219,11 @@ public static class TimelineActors
 
     public static bool IsOperatorAgent(string? actor)
         => actor?.Trim().StartsWith(OperatorAgentPrefix, StringComparison.Ordinal) == true;
+
+    public const string PersonaPrefix = "persona:";
+    public static string Persona(string personaId, string sessionId) => $"{PersonaPrefix}{personaId}/session:{sessionId}";
+    public static bool IsPersona(string? actor)
+        => actor?.Trim().StartsWith(PersonaPrefix, StringComparison.Ordinal) == true;
 
     /// <summary>
     /// True when an actor or lane-change cause names a person rather than an

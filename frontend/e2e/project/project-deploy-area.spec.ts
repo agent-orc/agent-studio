@@ -360,6 +360,7 @@ test.describe('Project Deploy area (mocked)', () => {
     await page.getByTestId('project-operations').getByRole('link', { name: 'Settings → Operations' }).click();
     await expect(page.getByTestId('workspace-operations')).toBeVisible();
     const backups = page.getByTestId('operations-backups');
+    await expect(backups.getByTestId('operations-backups-content-list')).toHaveAttribute('href', /studio-backup-restore\.md#credential-content-list$/);
     await expect(backups.getByTestId('operations-backups-state')).toHaveAttribute('data-state', 'failing');
     await expect(backups.getByTestId('operations-backups-warnings').locator('[data-code="backup-stale"]')).toContainText('26 hours old');
     await expect(backups.getByTestId('operations-backups-warnings').locator('[data-code="host-ca-mismatch"]')).toContainText('escrowed CA');
@@ -371,6 +372,8 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(backups.getByTestId('operations-backups-offhost-id')).toContainText(newest.id);
     await expect(backups.getByTestId('operations-backups-offhost')).toContainText('sftp://studio@backup.example');
     await expect(backups.getByTestId('operations-backups-list').locator('tbody tr')).toHaveCount(2);
+    await expect(backups.getByTestId('operations-backups-list').locator('tbody tr').first().getByRole('link', { name: /Archive content list/ }))
+      .toHaveAttribute('href', `/api/v1/management/backups/${newest.id}/contents`);
     // The runbook compares the escrowed copies against these ids (AGT-3738).
     await expect(backups.getByTestId('operations-backups-key-id')).toContainText('3f2a9c0d11e4b7a8');
     await expect(backups.getByTestId('operations-backups-secret-key-id')).toContainText('0b1c2d3e4f5a6b7c');
@@ -396,6 +399,8 @@ test.describe('Project Deploy area (mocked)', () => {
     await setTheme(page, 'light');
     await expect(backups.getByTestId('operations-backups-secret-key-id')).toBeVisible();
     await backups.screenshot({ path: path.join(results, 'operations-backups-current-390-light--mocked.png') });
+    await setTheme(page, 'dark');
+    await backups.screenshot({ path: path.join(results, 'operations-backups-current-390-dark--mocked.png') });
   });
 
   test('Operations shows the restore receipt, unknown off-host archives and the verification scope after a restore (AGT-3734)', async ({ page }) => {

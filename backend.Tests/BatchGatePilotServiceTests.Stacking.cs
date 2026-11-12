@@ -326,6 +326,10 @@ public sealed class BatchGatePilotStackingTests : BatchGatePilotServiceTests
                 item.BatchId != oldStack.BatchId && item.BaseSha == realTip
                 && item.Members.Any(member => member.TaskKey == "DOC-RESTART-STACK-3")));
         }
-        finally { oldGateRelease.TrySetResult(); }
+        finally
+        {
+            oldGateRelease.TrySetResult();
+            await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
+        }
     }
 }

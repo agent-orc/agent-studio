@@ -71,7 +71,8 @@ public sealed class ControlPlaneAuditLog
         if (AgentStudio.Shared.OperatorActorScope.Current is { } op)
         {
             if (!string.IsNullOrWhiteSpace(actor) && actor != op.Actor
-                && !AgentStudio.Shared.TimelineActors.IsHuman(actor) && !AgentStudio.Shared.TimelineActors.IsOperatorAgent(actor))
+                && !AgentStudio.Shared.TimelineActors.IsHuman(actor) && !AgentStudio.Shared.TimelineActors.IsOperatorAgent(actor)
+                && !AgentStudio.Shared.TimelineActors.IsPersona(actor))
                 reported = actor;
             actor = op.Actor;
             session = op.SessionId;
