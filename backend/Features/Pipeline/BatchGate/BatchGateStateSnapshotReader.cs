@@ -81,7 +81,7 @@ public static class BatchGateStateSnapshotReader
                 store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
             .DistinctBy(manifest => manifest.BatchId, StringComparer.Ordinal).ToArray();
         var queuePositions = BatchGateFlightQueue.Positions(store, formedBatches,
-            _ => leaseDeadlineDeferredBatchId);
+            _ => leaseDeadlineDeferredBatchId, at, _ => settings.MaximumWaitMinutes);
         var flightQueue = formedBatches.OrderBy(manifest => queuePositions[manifest.BatchId]).ToArray();
         var planDeadlinePassed = plan.CloseAtUtc is { } closeAt && closeAt <= at;
         bool OwnDeadlinePassed(BatchGatePendingRecord item) =>

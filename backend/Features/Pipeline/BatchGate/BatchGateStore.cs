@@ -327,6 +327,8 @@ public sealed partial class BatchGateStore
         var folder = Path.Combine(_root, "plans");
         Directory.CreateDirectory(folder);
         var path = Path.Combine(folder, SafeName(project) + ".jsonl");
+        // Two planners of one project append one line at a time (AGT-3568).
+        using var guard = ExclusiveGuard(folder, SafeName(project) + ".lock");
         using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
         JsonSerializer.Serialize(stream, decision, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         stream.WriteByte((byte)'\n');
