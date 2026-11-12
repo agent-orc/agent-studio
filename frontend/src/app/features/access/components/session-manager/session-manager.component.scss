@@ -13,11 +13,16 @@
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
   cursor: pointer;
 }
+.session-manager__toggle-narrow { display: none; }
+@media (max-width: 720px) {
+  .session-manager__toggle-wide { display: none; }
+  .session-manager__toggle-narrow { display: inline; }
+}
 .session-manager__panel {
   position: absolute;
   z-index: 100;
   right: 0;
-  bottom: calc(100% + var(--studio-spacing-2));
+  top: calc(100% + var(--studio-spacing-2));
   width: min(440px, calc(100vw - 32px));
   max-height: min(60vh, 520px);
   overflow: auto;
@@ -28,6 +33,7 @@
   padding: var(--studio-spacing-3);
 }
 .session-manager--access .session-manager__panel { top: calc(100% + var(--studio-spacing-2)); bottom: auto; }
+.session-manager--self-access .session-manager__panel { right: auto; left: 0; }
 :host-context(app-account-control) .session-manager__panel { top: calc(100% + var(--studio-spacing-2)); bottom: auto; }
 .session-manager__panel header { display: flex; align-items: center; justify-content: space-between; gap: var(--studio-spacing-2); }
 .session-manager__panel h3 { margin: 0; font-size: 1rem; }

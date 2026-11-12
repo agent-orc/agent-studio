@@ -23,6 +23,8 @@ public static class AccessSecurityEndpoints
                 principal is null ? null : SessionUser(principal.User, store, context),
                 BootstrapCodeRequired: store.BootstrapRequired && RequiresBootstrapCode(context, configuration),
                 SecondFactorEnrollmentRequired: principal?.Session.SecondFactorEnrollmentOnly == true,
+                RecoveryCodesRemaining: principal?.Session.RecoveryCodesRemaining,
+                RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(principal?.Session),
                 RestoreNotice: principal?.User.Role == StudioRoles.Owner ? RestoreSecurityNotice.Read(store.SecurityFolder) : null));
         });
 
@@ -88,8 +90,11 @@ public static class AccessSecurityEndpoints
                     address: SessionAddress(context), passkey: request.Passkey,
                     origin: RequestOrigin(context), rpId: context.Request.Host.Host);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);
+                var session = store.AuthenticateSession(result.SessionToken, touch: false)?.Session;
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, SessionUser(result.User, store, context), result.CsrfToken,
-                    SecondFactorEnrollmentRequired: store.AuthenticateSession(result.SessionToken, touch: false)?.Session.SecondFactorEnrollmentOnly == true,
+                    SecondFactorEnrollmentRequired: session?.SecondFactorEnrollmentOnly == true,
+                    RecoveryCodesRemaining: session?.RecoveryCodesRemaining,
+                    RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(session),
                     RestoreNotice: result.User.Role == StudioRoles.Owner ? RestoreSecurityNotice.Read(store.SecurityFolder) : null));
             });
         });
@@ -127,6 +132,8 @@ public static class AccessSecurityEndpoints
                 : Results.Ok(new AuthStatusResponse(
                     SecurityProfiles.ActiveProfile(configuration), false, true, SessionUser(principal.User, store, context),
                     SecondFactorEnrollmentRequired: principal.Session.SecondFactorEnrollmentOnly,
+                    RecoveryCodesRemaining: principal.Session.RecoveryCodesRemaining,
+                    RecoveryEnrollmentAllowed: store.IsRecoveryEnrollmentAllowed(principal.Session),
                     RestoreNotice: principal.User.Role == StudioRoles.Owner ? RestoreSecurityNotice.Read(store.SecurityFolder) : null));
         });
 
@@ -465,7 +472,8 @@ public static class AccessSecurityEndpoints
 
     internal static AuthUserResponse ToResponse(StudioUser user)
         => new(user.Id, user.Username, user.DisplayName, user.Role, user.Projects, user.Disabled, user.MustChangePassword,
-            user.ProductionApprovalProjects);
+            user.ProductionApprovalProjects, user.TotpSecret is not null || user.Passkeys.Count > 0,
+            user.FactorChangedAt ?? user.Passkeys.OrderByDescending(passkey => passkey.CreatedAt).FirstOrDefault()?.CreatedAt);
 
     /// <summary>
     /// The signed-in user's own record, with the projects where it reviews

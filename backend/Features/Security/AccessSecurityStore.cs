@@ -267,6 +267,7 @@ public sealed partial class AccessSecurityStore
                         : new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
                 }
 
+                int? recoveryRemaining = null;
                 var hasFactor = !string.IsNullOrEmpty(current.TotpSecret) || current.Passkeys.Count > 0;
                 var needsEnrollment = requireSecondFactor && RequiresSecondFactor(state, current.Id) && !hasFactor;
                 if (hasFactor)
@@ -275,7 +276,7 @@ public sealed partial class AccessSecurityStore
                     {
                         if (passkey is not null)
                             VerifyPasskeyLocked(state, current, passkey, normalized + "|" + clientKey, origin, rpId);
-                        else VerifySecondFactorLocked(state, current, secondFactorCode);
+                        else recoveryRemaining = VerifySecondFactorLocked(state, current, secondFactorCode);
                     }
                     catch (SecurityOperationException ex) when (ex.Code is "invalid-second-factor" or "invalid-passkey")
                     {
@@ -294,6 +295,16 @@ public sealed partial class AccessSecurityStore
                 _recentSuccessfulLogins[loginKey!] = now;
                 _usernameClientDelays.Remove(loginKey!);
                 var created = CreateSessionLocked(state, current, device, address, needsEnrollment);
+                if (recoveryRemaining is { } remaining)
+                {
+                    state.Sessions[state.Sessions.IndexOf(created.Session)] = created.Session with
+                    {
+                        RecoveryCodeUsedAt = now, RecoveryCodesRemaining = remaining,
+                        RecoveryEnrollmentAllowed = true
+                    };
+                    AppendIamAudit(current.Id, "recovery-code.used", "user", current.Id,
+                        new { sessionId = created.Session.Id, remaining }, created.Session.Id);
+                }
                 SaveLocked(state);
                 return (current, created.Token, created.Csrf);
             }
@@ -359,10 +370,12 @@ public sealed partial class AccessSecurityStore
         lock (_gate)
         {
             var state = StateLocked();
-            if (!state.Users.Any(x => x.Id == principal.User.Id && !x.Disabled))
+            var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled);
+            if (user is null)
                 throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+            RequireEnrollmentStepUpLocked(state, principal, user);
             var secret = SecondFactorCodes.NewTotpSecret();
-            _pendingTotpSecrets[principal.User.Id] = secret;
+            _pendingTotpSecrets[principal.Session.Id] = secret;
             return secret;
         }
     }
@@ -374,21 +387,30 @@ public sealed partial class AccessSecurityStore
             var state = StateLocked();
             var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
                 ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
-            if (!_pendingTotpSecrets.TryGetValue(user.Id, out var secret)
+            RequireEnrollmentStepUpLocked(state, principal, user);
+            if (!_pendingTotpSecrets.TryGetValue(principal.Session.Id, out var secret)
                 || SecondFactorCodes.MatchTotpStep(secret, code, Now) is not { } acceptedStep)
                 throw new SecurityOperationException(400, "invalid-second-factor", "The authenticator code is invalid.");
             var recovery = SecondFactorCodes.NewRecoveryCodes();
+            var replacing = user.TotpSecret is not null;
             state.Users[state.Users.IndexOf(user)] = user with
             {
                 TotpSecret = secret,
+                FactorChangedAt = Now,
                 LastAcceptedTotpStep = acceptedStep,
                 RecoveryCodeHashes = recovery.Select(SecondFactorCodes.HashRecoveryCode).ToList()
             };
-            _pendingTotpSecrets.Remove(user.Id);
+            _pendingTotpSecrets.Remove(principal.Session.Id);
             var session = state.Sessions.FirstOrDefault(x => x.Id == principal.Session.Id);
             if (session is not null)
-                state.Sessions[state.Sessions.IndexOf(session)] = session with { SecondFactorEnrollmentOnly = false };
+                state.Sessions[state.Sessions.IndexOf(session)] = session with
+                { SecondFactorEnrollmentOnly = false, StepUpVerifiedAt = null, RecoveryEnrollmentAllowed = false,
+                    RecoveryCodesRemaining = null };
             SaveLocked(state);
+            AppendIamAudit(user.Id, replacing ? "factor.replaced" : "factor.bound", "user", user.Id,
+                new { sessionId = principal.Session.Id, factor = "totp" }, principal.Session.Id);
+            AppendIamAudit(user.Id, "recovery-codes.regenerated", "user", user.Id,
+                new { sessionId = principal.Session.Id, remaining = recovery.Count }, principal.Session.Id);
             return recovery;
         }
     }
@@ -400,7 +422,7 @@ public sealed partial class AccessSecurityStore
             var state = StateLocked();
             var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
                 ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
-            VerifySecondFactorLocked(state, user, code);
+            VerifySecondFactorLocked(state, user, code, principal.Session.Id);
             MarkStepUpLocked(state, principal);
             SaveLocked(state);
         }
@@ -410,6 +432,10 @@ public sealed partial class AccessSecurityStore
     {
         lock (_gate)
         {
+            var state = StateLocked();
+            var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
+                ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+            RequireEnrollmentStepUpLocked(state, principal, user);
             var challenge = WebAuthnProofs.NewChallenge();
             StorePasskeyChallengeLocked("register:" + principal.Session.Id, challenge);
             return challenge;
@@ -424,6 +450,7 @@ public sealed partial class AccessSecurityStore
             var state = StateLocked();
             var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
                 ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+            RequireEnrollmentStepUpLocked(state, principal, user);
             var key = "register:" + principal.Session.Id;
             if (!_passkeyChallenges.Remove(key, out var pending) || pending.ExpiresAt <= Now)
                 throw new SecurityOperationException(400, "passkey-challenge-expired", "Start passkey setup again.");
@@ -445,12 +472,20 @@ public sealed partial class AccessSecurityStore
             {
                 Passkeys = [.. user.Passkeys, new StudioPasskey(proof.CredentialId,
                     name.Length > 80 ? name[..80] : name, publicKey, 0, Now)],
+                FactorChangedAt = Now,
                 RecoveryCodeHashes = recovery.Count == 0 ? user.RecoveryCodeHashes : recovery.Select(SecondFactorCodes.HashRecoveryCode).ToList()
             };
             var session = state.Sessions.FirstOrDefault(x => x.Id == principal.Session.Id);
             if (session is not null)
-                state.Sessions[state.Sessions.IndexOf(session)] = session with { SecondFactorEnrollmentOnly = false };
+                state.Sessions[state.Sessions.IndexOf(session)] = session with
+                { SecondFactorEnrollmentOnly = false, StepUpVerifiedAt = null, RecoveryEnrollmentAllowed = false,
+                    RecoveryCodesRemaining = null };
             SaveLocked(state);
+            AppendIamAudit(user.Id, "factor.bound", "user", user.Id,
+                new { sessionId = principal.Session.Id, factor = "passkey" }, principal.Session.Id);
+            if (recovery.Count > 0)
+                AppendIamAudit(user.Id, "recovery-codes.regenerated", "user", user.Id,
+                    new { sessionId = principal.Session.Id, remaining = recovery.Count }, principal.Session.Id);
             return recovery;
         }
     }
@@ -586,7 +621,21 @@ public sealed partial class AccessSecurityStore
         state.Sessions[state.Sessions.IndexOf(session)] = session with { StepUpVerifiedAt = null };
     }
 
-    private void VerifySecondFactorLocked(SecurityState state, StudioUser user, string? code)
+    private void RequireEnrollmentStepUpLocked(SecurityState state, HumanPrincipal principal, StudioUser user)
+    {
+        if (user.TotpSecret is null && user.Passkeys.Count == 0) return;
+        var session = state.Sessions.FirstOrDefault(x => x.Id == principal.Session.Id && x.UserId == user.Id);
+        if (session is null || session.ExpiresAt <= Now || session.AbsoluteExpiresAt <= Now
+            || !(IsRecoveryEnrollmentAllowed(session)
+                || session.StepUpVerifiedAt is { } verifiedAt && verifiedAt <= Now && Now - verifiedAt <= TimeSpan.FromMinutes(5)))
+            throw new SecurityOperationException(403, "step-up-required", "Verify your current factor before adding an authenticator or passkey.");
+    }
+
+    public bool IsRecoveryEnrollmentAllowed(StudioSession? session)
+        => session is { RecoveryEnrollmentAllowed: true, RecoveryCodeUsedAt: { } usedAt }
+           && usedAt <= Now && Now - usedAt <= TimeSpan.FromMinutes(5);
+
+    private int? VerifySecondFactorLocked(SecurityState state, StudioUser user, string? code, string? sessionId = null)
     {
         if (string.IsNullOrEmpty(user.TotpSecret) && user.Passkeys.Count == 0)
             throw new SecurityOperationException(403, "second-factor-required", "Register a second factor before signing in.");
@@ -597,17 +646,23 @@ public sealed partial class AccessSecurityStore
             && (user.LastAcceptedTotpStep is null || acceptedStep > user.LastAcceptedTotpStep))
         {
             state.Users[state.Users.IndexOf(user)] = user with { LastAcceptedTotpStep = acceptedStep };
-            return;
+            return null;
         }
         var recoveryHash = user.RecoveryCodeHashes.FirstOrDefault(hash => SecondFactorCodes.VerifyRecoveryCode(code, hash));
         if (recoveryHash is not null)
         {
+            var remaining = user.RecoveryCodeHashes.Count - 1;
             state.Users[state.Users.IndexOf(user)] = user with
             {
                 RecoveryCodeHashes = user.RecoveryCodeHashes.Where(hash => hash != recoveryHash).ToList()
             };
             SaveLocked(state);
-            return;
+            if (sessionId is not null)
+            {
+                AppendIamAudit(user.Id, "recovery-code.used", "user", user.Id,
+                    new { sessionId, remaining }, sessionId);
+            }
+            return remaining;
         }
         throw new SecurityOperationException(401, "invalid-second-factor", "The second factor is invalid.");
     }

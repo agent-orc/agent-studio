@@ -93,7 +93,7 @@ import {
 import { E2ECleanupDialogComponent, TagManagerDialogComponent } from './features/dev-tools/lazy';
 import { UpdateBlockModalComponent } from './features/update';
 import { UpdateCenterComponent, UpdateVersionBadgeComponent } from './features/update/lazy';
-import { VerboseDebugOverlayComponent } from './features/verbose-debug/lazy';
+import { VerboseDebugHostComponent, type VerboseDebugContext } from './features/verbose-debug/lazy';
 import {
   StudioShellComponent, TaskDefaultsControlComponent,
   StudioTabActionsComponent,
@@ -136,6 +136,7 @@ import { NotificationStackComponent } from './components/app-dialog/notification
 import { MediaLightboxComponent } from './components/media-lightbox/media-lightbox.component';
 import { MediaLightboxService } from './services/media-lightbox.service';
 import { OfflineBannerComponent } from './components/offline-banner/offline-banner.component';
+import { RecoverySignInNoticeComponent } from './components/recovery-sign-in-notice/recovery-sign-in-notice.component';
 import { PublicDemoBannerComponent } from './components/public-demo-banner/public-demo-banner.component';
 import { UpdateClientService } from './services/update.service';
 import { UpdateNotificationBridge } from './services/update-notification-bridge.service';
@@ -150,12 +151,10 @@ import { TaskCompletionSoundService } from './services/task-completion-sound.ser
 import { TagRegistryStore } from './services/tag-registry.store';
 import { ReviewerSession } from './services/reviewer-session.service';
 import { CliCatalogStore } from './features/cli';
-import type { CliOutputLine } from './models/task.model';
-import type { RunTimeline } from './features/run-timeline';
 import type { TaskScreenshot } from './features/screenshots';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { MenuComponent, MenuItem, MenuItemClickEvent } from './components/menu';
-import { CostBreakdownService, type TaskTokenSummary } from './features/tokens'; // verbose-debug overlay context types
+import { CostBreakdownService } from './features/tokens';
 import { CostBreakdownDialogComponent } from './features/tokens/lazy';
 import { LoadingSurfaceComponent } from './components/async-feedback';
 import { AuthService } from './services/auth.service';
@@ -163,13 +162,6 @@ import { AuthGateComponent } from './components/auth-gate/auth-gate';
 import { CodexSignInDialogService, ClaudeSignInDialogService } from './features/remote-hosts';
 import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts/lazy';
 import { ScrollMemoryDirective } from './directives/scroll-memory.directive';
-interface VerboseDebugContext {
-  lines: CliOutputLine[];
-  runTimeline: RunTimeline | null;
-  screenshots: TaskScreenshot[];
-  tokenSummary: TaskTokenSummary | null;
-  job: TaskInfo | null;
-}
 const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   prompt: false,
   protocol: false,
@@ -197,6 +189,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     MediaLightboxComponent,
     OfflineBannerComponent,
     PublicDemoBannerComponent,
+    RecoverySignInNoticeComponent,
     ProjectTabsComponent,
     E2ECleanupDialogComponent,
     TagManagerDialogComponent,
@@ -206,7 +199,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     UpdateVersionBadgeComponent,
     UpdateCenterComponent,
     UpdateBlockModalComponent,
-    VerboseDebugOverlayComponent,
+    VerboseDebugHostComponent,
     FiltersDropdownComponent,
     KanbanFilterSidesheetComponent, ActiveBoardFiltersComponent, TagFiltersComponent, TagChipsComponent,
     TooltipDirective,

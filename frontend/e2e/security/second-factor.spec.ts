@@ -5,6 +5,53 @@ import { setTheme } from '../helpers/theme';
 
 const resultDir = process.env.JOB_RESULTS_DIR ?? 'test-results';
 
+test('Recovery sign-in shows the remaining count and offers factor registration in both themes', async ({ page }) => {
+  mkdirSync(resultDir, { recursive: true });
+  const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+  await page.route('**/api/**', route => route.fulfill(json([])));
+  await page.route('**/api/v1/studio/board**', route => route.fulfill(json({
+    backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
+    failedPickup: [], review: [], autoReview: [], humanReview: [], completed: [], archive: [],
+  })));
+  await page.route('**/api/tasks/archive**', route => route.fulfill(json({ items: [], total: 0 })));
+  await page.route('**/api/v1/workspaces**', route => route.fulfill(json([])));
+  await page.route('**/api/v1/projects', route => route.fulfill(json([])));
+  await page.route('**/api/environment**', route => route.fulfill(json({ isDev: false, devTools: {} })));
+  await page.route('**/api/cli/usage**', route => route.fulfill(json({ at: '2026-11-02T09:00:00Z', sessions: [] })));
+  await page.route('**/api/cli/quota**', route => route.fulfill(json({ at: '2026-11-02T09:00:00Z', ttlSeconds: 600, snapshots: [] })));
+  await page.route('**/api/usage/cockpit**', route => route.fulfill(json({
+    snapshotVersion: 1, workspaceId: null, generatedAt: '2026-11-02T09:00:00Z',
+    timeZone: 'UTC', weekStart: 1, clis: [], cost: null, runs: [], slots: [], sources: {},
+  })));
+  await page.route('**/api/v1/studio/runner/status**', route => route.fulfill(json({ projects: {} })));
+  await page.route('**/api/auth/status', route => route.fulfill(json({
+    profile: 'networked', bootstrapRequired: false, authenticated: true, recoveryCodesRemaining: 2,
+    recoveryEnrollmentAllowed: true,
+    user: { id: 'usr_owner', username: 'owner', displayName: 'Owner', role: 'owner', projects: [],
+      disabled: false, mustChangePassword: false, hasFactor: true },
+  })));
+  await page.route('**/api/auth/sessions', route => route.fulfill(json([])));
+  await page.route('**/api/auth/totp/start', route => route.fulfill(json({ secret: 'TESTSECRET' })));
+  await page.route('**/api/auth/totp/confirm', route => route.fulfill(json({ recoveryCodes: ['CODE1', 'CODE2'] })));
+  await page.goto('/');
+  const notice = page.getByTestId('recovery-sign-in-notice');
+  await expect(notice).toContainText('You signed in with a recovery code; 2 remain');
+  await expect(page.getByRole('button', { name: 'Register a new authenticator' })).toBeVisible();
+  await setTheme(page, 'light');
+  await page.screenshot({ path: join(resultDir, 'recovery-sign-in-light.png'), fullPage: true });
+  await setTheme(page, 'dark');
+  await page.screenshot({ path: join(resultDir, 'recovery-sign-in-dark.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: join(resultDir, 'recovery-sign-in-390px.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Register a new authenticator' }).click();
+  await page.getByRole('button', { name: 'Add authenticator' }).click();
+  await expect(page.getByTestId('session-totp-secret')).toHaveText('TESTSECRET');
+  await expect(page.getByTestId('enrollment-step-up')).toHaveCount(0);
+  await page.getByLabel('Authenticator code').fill('123456');
+  await page.getByRole('button', { name: 'Verify authenticator' }).click();
+  await expect(page.getByTestId('factor-bound-notice')).toContainText('New authenticator registered');
+});
+
 test('Owner enrollment requires a verified authenticator and shows recovery codes once', async ({ page }) => {
   mkdirSync(resultDir, { recursive: true });
   const secret = Array.from({ length: 32 }, (_, index) => String.fromCharCode(65 + index % 26)).join('');

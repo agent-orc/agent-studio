@@ -22,6 +22,7 @@
 /api/audits/{runId}	free	-	-	-
 /api/auth/api-tokens	free	-	-	-
 /api/auth/audit/backups	free	-	-	-
+/api/auth/audit/factors	free	-	-	-
 /api/auth/audit/operator-activity	free	-	-	-
 /api/auth/directory	free	-	-	-
 /api/auth/invite/preview	free	-	-	-

@@ -144,6 +144,13 @@ that is already allowed to edit that project's checkout.
   Disabling a person asks for confirmation and revokes open sessions immediately.
   A correct-password sign-in to a disabled account explains its state. A signed-in
   person with no project access sees a single instruction to ask the owner.
+- Adding or replacing an authenticator or passkey on an account with an existing
+  factor requires a fresh, session-bound step-up. A recovery-code sign-in grants
+  one factor enrollment within five minutes and Studio displays the number of
+  remaining codes. Factor binding, replacement, recovery-code use, and recovery
+  code regeneration are recorded in the IAM audit with actor, session, and time.
+  The Owner sees factor presence and last change for each user in Access, along
+  with the factor activity history.
 - The standalone Task Server Studio session uses the same 10-failure client
   lockout, 20-failure username budget, 15-minute window, 8-hour idle expiry,
   and 7-day absolute expiry as the networked monolith defaults.
