@@ -11,7 +11,7 @@ import {
 import { HttpClient, HttpParams } from '@angular/common/http';
 
 import { TaskState } from '../../../../models/task.model';
-import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
+import { ServerCheckoutRemedyComponent } from '../server-checkout-remedy/server-checkout-remedy.component';
 import { CdkTrapFocus } from '@angular/cdk/a11y';
 import type { TaskDetail, TaskInfo } from '../../../../models/task.model';
 import { CodeReviewListEntry, TaskService } from '../../../../services/task.service';
@@ -31,7 +31,7 @@ import { EscalationDetailsComponent } from '../escalation-details/escalation-det
 import { GateQueueReleaseComponent } from '../gate-queue-release/gate-queue-release.component';
 import {
   laneActionsFor,
-  isServerCheckoutFailure,
+  escalationNeedsServerCheckout,
   type TriageActionPayload,
   type TriageButton,
 } from '../../state/triage-actions.model';
@@ -63,13 +63,13 @@ import {
     EscalationDetailsComponent,
     DisclosureMarkerComponent,
     GateQueueReleaseComponent,
+    ServerCheckoutRemedyComponent,
     CdkTrapFocus,
   ],
   templateUrl: './escalation-summary.component.html',
   styleUrl: './escalation-summary.component.scss',
 })
 export class EscalationSummaryComponent {
-  readonly studioProjectSlug = studioProjectSlug;
   readonly detail = input.required<TaskDetail>();
   readonly mutationsBlocked = input(false);
   readonly triageActingId = input<string | null>(null);
@@ -103,13 +103,8 @@ export class EscalationSummaryComponent {
       this.selectedFindings().length ? this.ownerNote().trim() : `- [ ] ${this.ownerNote().trim()}`] : []),
   ].join('\n'));
 
-  readonly serverCheckoutMissing = computed(() => {
-    const text = [this.detail().info.integration?.failure?.reason,
-      this.detail().info.parkedBlocker?.reason, this.detail().statusMarkdown,
-      this.view().reason, this.view().escalation?.reason,
-      ...this.view().gateItems.flatMap(item => [item.text, item.detail])].filter(Boolean).join(' ');
-    return isServerCheckoutFailure(text);
-  });
+  readonly serverCheckoutMissing = computed(() => escalationNeedsServerCheckout(this.detail().info, this.detail().statusMarkdown,
+    this.view().reason, this.view().escalation?.reason, ...this.view().gateItems.flatMap(item => [item.text, item.detail])));
 
   /** The three terminal operator choices shown beside NEEDS DECISION. */
   readonly decisionActions = computed(() =>

@@ -96,14 +96,7 @@
 
     @if (!collapsed()) {
       <div class="escalation__body" id="escalation-body" data-testid="escalation-body">
-        @if (serverCheckoutMissing()) {
-          <p data-testid="server-checkout-remedy" role="status">
-            This project needs a checkout on the Studio server before integration can finish.
-            <a [attr.href]="'/#/projects/' + studioProjectSlug(detail().info.projectName) + '/settings'">Open Project Settings</a>
-            to set the checkout path. <a href="https://github.com/agent-orc/agent-studio/blob/main/docs/operations/setup/networked-task-server.md#project-checkouts"
-               target="_blank" rel="noopener noreferrer">Read the setup guide</a>, then retry integration.
-          </p>
-        }
+        @if (serverCheckoutMissing()) { <app-server-checkout-remedy [projectName]="detail().info.projectName" /> }
         <app-gate-queue-release [info]="detail().info" />
         @if (detail().info.needsInput; as needsInput) {
           <section class="escalation__needs-input" data-testid="needs-input-question" aria-label="Agent question">
@@ -122,20 +115,12 @@
               </div>
             } @else {
               <label class="escalation__answer-label" for="needs-input-answer">Your answer</label>
-              <textarea
-                id="needs-input-answer"
-                data-testid="needs-input-answer"
-                rows="4"
-                [value]="answerDraft()"
-                [disabled]="answering() || mutationsBlocked()"
-                (input)="updateAnswer($event)"></textarea>
+              <textarea id="needs-input-answer" data-testid="needs-input-answer" rows="4" [value]="answerDraft()"
+                [disabled]="answering() || mutationsBlocked()" (input)="updateAnswer($event)"></textarea>
               @if (answerError(); as error) {
                 <p class="escalation__answer-error" role="alert">{{ error }}</p>
               }
-              <button
-                type="button"
-                class="escalation__submit-answer"
-                data-testid="needs-input-submit"
+              <button type="button" class="escalation__submit-answer" data-testid="needs-input-submit"
                 [disabled]="!answerDraft().trim() || answering() || mutationsBlocked()"
                 [appPendingButton]="answering()"
                 pendingLabel="Queueing answer…"
