@@ -617,10 +617,30 @@ public sealed partial class BatchGatePilotService
                     .StartsWith("isolation flight ", StringComparison.Ordinal) == true)
                 .SelectMany(manifest => manifest.Members)
                 .Select(member => (member.TaskKey, member.RunAttempt)).ToHashSet();
-            waiting = _store.ListPending().Select(Refresh)
+            var allPendingForPlan = _store.ListPending().Select(Refresh).ToArray();
+            waiting = allPendingForPlan
                 .Where(item => _snapshots.PendingExclusion(item) is null
                     && !isolationRetryMembers.Contains((item.Subject.TaskKey, item.Subject.RunAttempt))
                     && !HeldOnRedBase(item)).ToArray();
+            foreach (var projectPending in allPendingForPlan.GroupBy(item => item.Subject.Project,
+                         StringComparer.OrdinalIgnoreCase))
+            {
+                if (waiting.Any(item => string.Equals(item.Subject.Project, projectPending.Key,
+                        StringComparison.OrdinalIgnoreCase))) continue;
+                var optionsForProject = _settings.Get(projectPending.Key).BatchGate;
+                var excluded = projectPending.Select(item => new BatchPlanExcludedMember(item.Subject.TaskKey,
+                        _snapshots.PendingExclusion(item)
+                        ?? BatchGatePolicy.Exclusion(item.Subject,
+                            BatchGatePilotService.Scope(item.Subject), optionsForProject)?.ToString()
+                        ?? string.Empty))
+                    .Where(item => item.Rule.Length > 0).ToArray();
+                if (excluded.Length == 0) continue;
+                var previous = _store.LatestPlanDecision(projectPending.Key);
+                if (previous is { Decision: "wait" } && previous.ProposedMembers.Count == 0
+                    && (previous.ExcludedMembers ?? []).SequenceEqual(excluded)) continue;
+                _store.AppendPlanDecision(projectPending.Key, new BatchPlanDecision("wait",
+                    "all pending members excluded", null, [], 0, [], ExcludedMembers: excluded));
+            }
             ObserveQueueEpisodes(waiting);
             // A running or formed manifest owns its members even if a task's
             // ownership marker is temporarily absent during a lane move.
@@ -649,6 +669,25 @@ public sealed partial class BatchGatePilotService
                 // AGT-3746: no batch forms while the gate host outage holds runs.
                 if (_hostOutage.RunsHeld) continue;
                 var scope = Scope(first.Subject);
+                BatchPlanDecision WithExclusions(BatchPlanDecision plan)
+                {
+                    var excluded = _store.ListPending().Select(Refresh)
+                        .Where(item => string.Equals(item.Subject.Project, first.Subject.Project,
+                            StringComparison.OrdinalIgnoreCase))
+                        .Select(item => new BatchPlanExcludedMember(item.Subject.TaskKey,
+                            _snapshots.PendingExclusion(item)
+                            ?? BatchGatePolicy.Exclusion(item.Subject,
+                                BatchGatePilotService.Scope(item.Subject), options)?.ToString()
+                            ?? string.Empty))
+                        .Where(item => item.Rule.Length > 0)
+                        .ToArray();
+                    return plan with
+                    {
+                        ExcludedMembers = excluded,
+                        ProposedMembers = plan.ProposedMembers.Where(key =>
+                            !excluded.Any(item => item.TaskKey == key)).ToArray(),
+                    };
+                }
                 var baseSha = FetchBaseOnce(fetchedBases, first.RepositoryPath,
                     scope.IntegrationBranch, ct);
                 // AGT-3103: a member the branch already carries (for example
@@ -727,6 +766,7 @@ public sealed partial class BatchGatePilotService
                         ScopeKey(group.Key), snapshot, ct).ConfigureAwait(false);
                     // An engine-owned decision is pending; the scope waits for its intent.
                     if (decision is null) continue;
+                    decision = WithExclusions(decision);
                     _store.AppendPlanDecision(first.Subject.Project, decision);
                     planReason = decision.Reason;
                     if (decision.Decision is "close" or "per-task")
@@ -781,7 +821,7 @@ public sealed partial class BatchGatePilotService
                         : queuedPartners > 0 ? BatchGateLookAheadPlanner.QueuedPartnersReason
                         : "waiting for threshold or deadline";
                     _store.AppendPlanDecision(first.Subject.Project,
-                        new BatchPlanDecision(
+                        WithExclusions(new BatchPlanDecision(
                             formed.Manifest is not null ? "close"
                                 : formed.UsePerTaskGate ? "per-task"
                                 : formed.EligibleKeys.Count == 0 && current.Length == 0
@@ -792,7 +832,7 @@ public sealed partial class BatchGatePilotService
                                     .AddMinutes(options.DeadlineMinutes) : null,
                             formed.Manifest?.Members.Select(member => member.TaskKey).ToArray()
                                 ?? formed.EligibleKeys,
-                            options.CloseSize, []));
+                            options.CloseSize, [])));
                 }
                 if (formed.UsePerTaskGate)
                 {

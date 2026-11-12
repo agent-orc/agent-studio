@@ -336,4 +336,3 @@ function holdView(task: TaskInfo, hold: CauseHold, attempt: number | null, next:
     hold,
   };
 }
-

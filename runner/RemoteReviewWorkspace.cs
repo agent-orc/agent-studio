@@ -673,8 +673,10 @@ public sealed class RemoteReviewWorkspace
                     ct);
             }
 
-            var cliRefusal = ReviewCliRefusalPolicy.Classify(command, execution.Process);
-            if (MissingToolchain(execution.Process)
+            var modelUnknown = AgentModelUnknownToCli(command, execution.Process);
+            var cliRefusal = ReviewCliRefusalPolicy.Classify(command, execution.Process,
+                execution.AgentUsage is not null);
+            if (modelUnknown || MissingToolchain(execution.Process)
                 || AgentCommandUnavailable(command, execution.Process)
                 || cliRefusal is not null)
             {
@@ -706,7 +708,7 @@ public sealed class RemoteReviewWorkspace
                 var remover = lostScope is null ? null : candidateDependencyRemovers.GetValueOrDefault(lostScope.Scope);
                 // AGT-3420: a CLI that refuses its model failed on the
                 // project's review setting, not on this host's toolchain.
-                if (cliRefusal is null && AgentModelUnknownToCli(command, execution.Process))
+                if (modelUnknown)
                     throw await InfrastructureFailureAsync(
                         ReviewModelConfigurationPolicy.Classification,
                         ReviewModelConfigurationPolicy.Summary(command.StepId, command.CliType, command.Model) +

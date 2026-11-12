@@ -71,7 +71,9 @@ and limits the total diff to 580,000 characters. Visual review includes at
 most 12 screenshots of at most 2 MiB each. The prompt names omissions, and
 the command's review evidence carries a `review-input-budget-<step>.txt`
 artifact when material was omitted. A CLI refusal before a model verdict,
-including `input_too_large`, is `ReviewInfra` with a named cause.
+including `input_too_large`, is `ReviewInfra` with a named cause only when the
+CLI error stream has the refusal and no verdict marker or model usage exists.
+An unknown model is a `ModelConfigurationFault` first.
 
 The four stock Claude aspects freeze a common review-context prefix containing
 the brief, delivery acceptance scope, project and card context, diff summary,
@@ -249,6 +251,8 @@ at most 4 members, within the material budget, never waiting for coding).
   and thinking level of the members' per-card plan. Only the cross-card prompt
   carries the Dossier excerpt, once. The grade is computed per member from the
   package verdicts, as the remote per-card grade is.
+  The excerpt uses its own `DossierExcerptCharacters` budget and keeps its
+  truncation marker in the final prompt.
 - **Structured output.** Every aspect ends with one `package-review` JSON block:
   one verdict per member with its acceptance criteria, and findings with file
   and line. A finding without both is discarded. The line's hunk owner owns the

@@ -23,6 +23,7 @@ import {
   TriageButton,
   laneLabelFor,
   mergeAcceptViewFor,
+  acceptanceRequiresIntegration,
   acceptanceHoldReason,
   overflowActionsFor,
   primaryActionFor,
@@ -249,11 +250,13 @@ export class DetailHeaderComponent {
   /** A fresh verdict releases Accept even if provenance is still loading. */
   readonly primaryAwaitingGit = computed(() => {
     const p = this.triagePrimary();
+    if (!acceptanceRequiresIntegration(this.info())) return false;
     const status = this.info().integration?.status;
     return !!p && this.GIT_DEPENDENT_PRIMARY_IDS.has(p.id) && this.gitInfoLoading()
       && status !== 'integrated' && status !== 'not-applicable';
   });
   readonly primaryBlockedByIntegration = computed(() => {
+    if (!acceptanceRequiresIntegration(this.info())) return false;
     const status = this.info().integration?.status;
     return this.triagePrimary()?.id === 'mark-done' && status !== 'integrated' && status !== 'not-applicable';
   });

@@ -21,6 +21,9 @@ app-mobile-pane-switcher { display: none; }
     grid-template-columns: repeat(3, minmax(0, 1fr));
     width: 100%;
   }
+  .detail__mobile-pane-switcher[data-show-git='false'] .segmented.segmented {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .detail__mobile-pane-switcher .segmented__option {
     min-width: 0;
     min-height: var(--studio-target-coarse-min);
