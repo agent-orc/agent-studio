@@ -8,7 +8,7 @@
            [class.task-live--per-task]="live.perTaskGate"
            data-testid="task-live-status"
            [attr.data-live-tone]="live.tone"
-           [attr.data-attempt]="live.attempt"
+           [attr.data-attempt]="hasRecordedAttempt() ? live.attempt : null"
            [attr.data-wait-reason]="live.waitReason ?? null"
            aria-live="polite">
     <div class="task-live__current" data-testid="task-live-current">
@@ -36,7 +36,7 @@
                 data-testid="task-live-detail-inline">· {{ live.detail }}</span>
         }
       </span>
-      @if (variant() === 'detail' && live.attempt !== null) {
+      @if (variant() === 'detail' && live.attempt !== null && hasRecordedAttempt()) {
         <span class="task-live__attempt">Attempt {{ live.attempt }}</span>
       }
     </div>

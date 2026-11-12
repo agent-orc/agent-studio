@@ -187,6 +187,17 @@ async function installMocks(
   };
   await page.route('**/healthz', (route) => route.fulfill({ status: 200, body: 'Healthy' }));
   await page.route('**/api/**', (route) => json(route, []));
+  await page.route('**/api/usage/cockpit**', route => json(route, {
+    workspaceId: null, clis: [], cost: null,
+  }));
+  await page.route('**/api/workspaces/*/quota/admission**', route => json(route, {
+    workspaceId: 'ws-viewer-evidence',
+    workspace: {
+      projectId: null, project: null, status: 'ok', message: null,
+      overrideActive: false, codingAllowed: true, hostingAllowed: true, limited: false,
+    },
+    projects: [],
+  }));
   await page.route('**/api/v1/studio/auth/status', (route) =>
     json(route, {
       profile: 'local',
@@ -580,6 +591,29 @@ for (const dossier of HEIGHT_DOSSIERS) {
   });
 }
 
+test('Dossier iframe follows the Studio theme switch while OS stays light', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await installMocks(page, { dossier: HEIGHT_DOSSIERS[0]!.fixture });
+  await page.goto(`/#/projects/viewer-header-evidence/workbenches/${encodeURIComponent(WORKBENCH_ID)}`);
+  const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
+  await expect(frame.getByTestId('dossier-start')).toBeVisible();
+  await setTheme(page, 'light');
+  await expect.poll(() => frame.locator('body').evaluate(body =>
+    getComputedStyle(body).backgroundColor)).toBe('rgb(252, 252, 251)');
+  await page.screenshot({ path: evidencePath(testInfo, 'dossier-theme-light--mocked.png') });
+  await page.getByTestId('studio-titlebar-theme').click();
+  await expect.poll(() => frame.locator('body').evaluate(body =>
+    getComputedStyle(body).backgroundColor)).toBe('rgb(26, 26, 25)');
+  await page.screenshot({ path: evidencePath(testInfo, 'dossier-theme-dark--mocked.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: evidencePath(testInfo, 'dossier-theme-dark-390--mocked.png') });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByTestId('studio-titlebar-theme').click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: evidencePath(testInfo, 'dossier-theme-light-390--mocked.png') });
+});
+
 test('overview entry settles without a persistent loading surface', async ({
   page,
 }, testInfo) => {
@@ -658,6 +692,7 @@ test('compact viewer head centers controls and exposes honest live status with o
 }, testInfo) => {
   const capture = await installMocks(page);
   await seedWorkbench(page);
+  await page.route('**/hubs/v1/studio**', route => route.abort());
   await page.goto('/');
   await page.addStyleTag({
     content: '[data-testid="offline-banner"] { display: none !important; }',
@@ -685,7 +720,8 @@ test('compact viewer head centers controls and exposes honest live status with o
   await page.getByTestId('workbench-viewer-task-VHE-11').hover();
   const laneTooltip = page.getByTestId('workbench-viewer-task-VHE-11-tooltip');
   await expect(laneTooltip).toContainText(primaryTask.title);
-  await expect(laneTooltip).toContainText('In Progress · Viewer Header Evidence');
+  await expect(laneTooltip).toContainText('Lane: In Progress');
+  await expect(laneTooltip).toContainText('Project: Viewer Header Evidence');
   await expect(laneTooltip).toContainText('develop: merged · main: open');
   const laneTooltipBox = await laneTooltip.boundingBox();
   const initialViewport = page.viewportSize();

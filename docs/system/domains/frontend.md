@@ -845,7 +845,10 @@ occur. It is not a claim about tunnel transfer time.
   the viewport-safe shared tooltip instead of a second tree line. The Dossiers
   count is the number of Dossier leaves under the branch, excluding the
   separately promoted Style Guide. Open-decision counts remain on pending
-  leaves and reconcile with the list and viewer header after acceptance.
+  leaves and reconcile with the list and viewer header after acceptance. A
+  decision-pending status or decision-ready phase opens that count; unsaved
+  browser selections do not close it. An active Dossier with open decisions
+  stays under `Needs a decision` until the recorded decision closes them.
   Dossier overview and Explorer lifecycle headers are keyboard-accessible disclosures whose per-project collapsed state persists locally; a newly populated section opens once with its quiet count visible.
   Lifecycle-group counts equal
   their visible leaves and zero counts stay hidden. The catalogue's
@@ -873,7 +876,9 @@ occur. It is not a claim about tunnel transfer time.
   in an opaque-origin `srcdoc` iframe with the Dossier CSP. A source-checked
   message boundary maps docs-relative links to the in-app Wiki and opens absolute
   HTTP(S) links in a new tab without exposing host APIs or credentials. An inert
-  DOM parse moves artifact nodes into a fixed policy-first wrapper. Dossier
+  DOM parse moves artifact nodes into a fixed policy-first wrapper. Studio's
+  theme selects the article's inline light and dark CSS rules when the sandboxed
+  document loads; switching themes reloads the frame. Dossier
   pages expose a Maximize action, and dirty working-tree
   content is labelled as uncommitted instead of receiving the current HEAD
   revision. Canonical entries expose their stable project reference key as a
