@@ -3645,8 +3645,11 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         else
         {
             Assert.Equal(MoveJobStatus.IntegrationFailed, accepted.Status);
-            Assert.Contains("`.agent-studio/project.yml`", accepted.Message);
-            Assert.DoesNotContain(gateSecondPublication ? first : second, accepted.Message);
+            // AGT-3753: the refusal names the newest uncovered commit, not project.yml.
+            var uncovered = gateSecondPublication ? first : second;
+            Assert.Contains($"{uncovered[..7]} \"later published delivery\" has none", accepted.Message);
+            Assert.Contains("no published gate evidence for that tree", accepted.Message);
+            Assert.DoesNotContain("`.agent-studio/project.yml`", accepted.Message);
         }
     }
 
@@ -3743,8 +3746,9 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
-        Assert.DoesNotContain(ungated, refused.Message);
+        // AGT-3753: the refusal names the uncovered commit instead of project.yml.
+        Assert.Contains($"{ungated[..7]} \"", refused.Message);
+        Assert.DoesNotContain("`.agent-studio/project.yml`", refused.Message);
     }
 
     [Theory]
@@ -3759,8 +3763,9 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
-        Assert.DoesNotContain(missingGateSha, refused.Message);
+        // AGT-3753: the refusal names the uncovered commit instead of project.yml.
+        Assert.Contains($"{missingGateSha[..7]} \"", refused.Message);
+        Assert.DoesNotContain("`.agent-studio/project.yml`", refused.Message);
     }
 
     [Fact]
@@ -3771,8 +3776,9 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
-        Assert.DoesNotContain(keySha, refused.Message);
+        // AGT-3753: the refusal names the uncovered commit instead of project.yml.
+        Assert.Contains($"{keySha[..7]} \"", refused.Message);
+        Assert.DoesNotContain("`.agent-studio/project.yml`", refused.Message);
     }
 
     private (Deps Deps, string KeySha) PublishVerifiedDescriptorAndKey(
