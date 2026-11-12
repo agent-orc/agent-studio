@@ -127,12 +127,18 @@ public static class V1ReviewPlaneEndpoints
                         request.InstanceId,
                         restartedAt,
                         restartObservations);
+                    var lostReviews = restartObservations
+                        .Where(ReviewRestartOutcomePolicy.IsDefinitiveLoss)
+                        .Select(item => new Contract.ReviewRestartLostAttemptDto(
+                            item.AttemptId, item.TaskKey, item.Status))
+                        .ToArray();
                     authority.RecordReviewDaemonRestart(
                         runnerId,
                         request.HostId,
                         request.InstanceId,
                         restartedAt,
-                        restartObservations.Count(ReviewRestartOutcomePolicy.IsDefinitiveLoss));
+                        lostReviews.Length,
+                        lostReviews);
                     AppendReviewRestartAdvisories(
                         runnerId,
                         request.InstanceId,
@@ -215,6 +221,7 @@ public static class V1ReviewPlaneEndpoints
             V1ReviewExecutorRegistry registry,
             AdaptiveReviewParallelismAdvisor reviewParallelism,
             AgentStudio.Clients.ClientIdentityStore clients,
+            AgentStudio.Clients.HostTelemetryStore telemetryStore,
             CliQuotaFallbackService quotaRoutes,
             AttemptAuthorityService authority,
             TaskScannerService scanner,
@@ -238,6 +245,25 @@ public static class V1ReviewPlaneEndpoints
                             scanner.ScanAllAutomationJobs()),
                 };
                 clients.RecordSeen(runnerId);
+                if (request.Telemetry is { } hostTelemetry)
+                {
+                    try
+                    {
+                        telemetryStore.Append(runnerId, new AgentStudio.Clients.HostTelemetrySample(
+                            hostTelemetry.ObservedAt, hostTelemetry.CpuPercent,
+                            hostTelemetry.Load1, hostTelemetry.Load5, hostTelemetry.Load15,
+                            hostTelemetry.MemoryUsedBytes, hostTelemetry.MemoryTotalBytes,
+                            hostTelemetry.SwapInBytesPerSecond, hostTelemetry.SwapOutBytesPerSecond,
+                            hostTelemetry.CpuStealPercent, hostTelemetry.IoWaitPercent,
+                            hostTelemetry.CpuCores, hostTelemetry.ActiveSlots,
+                            Filesystems: hostTelemetry.Filesystems));
+                    }
+                    catch (IOException error) when (AgentStudio.Tasks.HostDiskWriteFailure.IsDiskFull(error))
+                    {
+                        System.Diagnostics.Trace.TraceWarning(
+                            $"host-disk-telemetry-write-failed runner={runnerId}: {error.Message}");
+                    }
+                }
                 // AGT-2820: the review plane's parallelism recommendation used to
                 // be an unread number on a diagnostics endpoint - it answered
                 // "2" while four reviews deadlocked the host. It now rides the
@@ -388,11 +414,22 @@ public static class V1ReviewPlaneEndpoints
             ReviewClaimUnclaimableLog unclaimableLog,
             CauseBreakerService causeBreakers,
             AgentStudio.Projects.ProjectRepositoryVisibility repositoryVisibility,
+            AgentStudio.Clients.ClientIdentityStore clients,
             CancellationToken ct) =>
         {
             if (!RunnerMatches(context, runnerId)
                 || !string.Equals(runnerId, request.ExecutorId, StringComparison.Ordinal))
                 return Results.Unauthorized();
+            // AGT-3647: a drained review executor finishes what it holds and
+            // claims nothing new, like a drained coding runner. On 9 November a
+            // review container on the superseded image claimed during the update.
+            if (clients.Find(runnerId) is { } client
+                && (client.DrainRequestedAt is not null || client.Kind == ClientIdentityKind.Retired))
+                return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
+                    Contract.ReviewClaimEmptyReasons.ExecutorDraining,
+                    client.Kind == ClientIdentityKind.Retired
+                        ? "Review executor is retired."
+                        : "Review executor is draining; no new reviews are admitted."));
             if (request.AvailableSlots <= 0)
                 return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
                     Contract.ReviewClaimEmptyReasons.NoAvailableSlot,
@@ -2292,9 +2329,14 @@ public static class V1ReviewPlaneEndpoints
                     // harder failure cannot be hidden behind the majority class
                     // (AGT-2220).
                     var chain = BuildAttemptChainSummary(authority, review.TaskKey);
+                    // AGT-3690: a chain lost to review host restarts names the
+                    // restarts. "Cannot be materialized" sent the operator after
+                    // the subject (and parked the card on a git-ancestry
+                    // condition) when the host was what kept failing.
+                    var hostRestarts = chain.HostRestartSentence(AttemptAuthorityService.ReviewInfrastructureRetryBudget);
                     var category = intervention is not null
                         ? HumanReviewEscalationCategories.FailureIntervention
-                        : aspectRetryExhausted || diagnosisContractUnsupported
+                        : aspectRetryExhausted || diagnosisContractUnsupported || hostRestarts is not null
                             ? HumanReviewEscalationCategories.Environmental
                             : HumanReviewEscalationCategories.ReviewSubjectUnmaterializable;
                     var escalationReason = intervention?.WaitReason
@@ -2302,7 +2344,9 @@ public static class V1ReviewPlaneEndpoints
                             ? $"Remote Review retried the malformed aspect once, but it still produced no parseable verdict. {chain.Headline}"
                             : diagnosisContractUnsupported
                                 ? $"{Contract.ReviewReportDiagnosisPolicy.DiagnosisContractUnsupportedReason(request.ExecutorId, request.Environment.Worker?.WorkerReleaseId)} {chain.Headline}"
-                                : $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. {chain.Headline}");
+                                : hostRestarts is not null
+                                    ? $"{hostRestarts} {chain.Headline}"
+                                    : $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. {chain.Headline}");
                     var moved = await escalation.EscalateAsync(
                         task.Id,
                         task.WatchPath,

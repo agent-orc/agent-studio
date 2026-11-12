@@ -303,18 +303,86 @@ public sealed class TaskLiveStatusProjection(
                     Reason = "waiting for delivery integration" };
 
         var outcome = OutcomeToken(review);
+        // AGT-3690: an infrastructure failure names its classification and the
+        // host it happened on. The outcome enum alone ("infrastructureFailure")
+        // hid that the review host had restarted, and the retry it scheduled
+        // was visible only as a timeline row.
+        var lost = LossOf(review);
         if (review.PendingInfrastructureRetryAt is { } retryAt)
         {
+            if (lost is null)
+            {
+                return new TaskLiveQueue
+                {
+                    Kind = "review",
+                    Outcome = outcome,
+                    Reason = $"review ended ({outcome}); retry scheduled for {Utc(retryAt)}",
+                };
+            }
+            var retry = new TaskLiveReviewRetry
+            {
+                Number = review.PendingInfrastructureRetryNumber,
+                Budget = AttemptAuthorityService.ReviewInfrastructureRetryBudget,
+                DueAt = retryAt,
+            };
             return new TaskLiveQueue
             {
                 Kind = "review",
+                State = TaskLiveQueueStates.RetryScheduled,
                 Outcome = outcome,
-                Reason = $"review ended ({outcome}); retry scheduled for {Utc(retryAt)}",
+                Lost = lost,
+                Retry = retry,
+                Reason = $"{LossSentence(lost)} {RetrySentence(retry)}",
             };
         }
 
-        return Stalled($"review ended ({outcome}); no new review attempt; operator decision needed", outcome);
+        return lost is null
+            ? Stalled($"review ended ({outcome}); no new review attempt; operator decision needed", outcome)
+            : Stalled($"{LossSentence(lost)} No automatic retry is scheduled; operator decision needed.", outcome) with
+            {
+                Lost = lost,
+            };
     }
+
+    private static TaskLiveReviewLoss? LossOf(BoardReviewActivity review)
+    {
+        if (review.Outcome != ReviewTerminalOutcome.InfrastructureFailure) return null;
+        var classification = string.IsNullOrWhiteSpace(review.FailureClassification)
+            ? null
+            : review.FailureClassification.Trim();
+        return new TaskLiveReviewLoss
+        {
+            Cause = string.Equals(
+                    classification, ReviewAttemptChainEntry.ExecutorRestartedClassification,
+                    StringComparison.OrdinalIgnoreCase)
+                ? TaskLiveReviewLossCauses.HostRestarted
+                : TaskLiveReviewLossCauses.Infrastructure,
+            Classification = classification,
+            HostId = review.HostId,
+            ExecutorId = review.ExecutorId,
+            At = review.TerminalAt,
+        };
+    }
+
+    private static string LossSentence(TaskLiveReviewLoss lost)
+    {
+        var where = string.Join(", ", new[]
+        {
+            lost.HostId ?? lost.ExecutorId,
+            lost.At is { } at ? Utc(at) : null,
+        }.Where(part => !string.IsNullOrWhiteSpace(part)));
+        var cause = lost.Cause == TaskLiveReviewLossCauses.HostRestarted
+            ? "review host restarted"
+            : lost.Classification is null
+                ? "review infrastructure failed"
+                : $"review infrastructure failed ({lost.Classification})";
+        return where.Length == 0 ? $"Review lost: {cause}." : $"Review lost: {cause} ({where}).";
+    }
+
+    private static string RetrySentence(TaskLiveReviewRetry retry)
+        => retry.Number is { } number
+            ? $"Automatic retry {number} of {retry.Budget} at {Utc(retry.DueAt)}."
+            : $"Automatic retry at {Utc(retry.DueAt)}.";
 
     private static TaskLiveQueue? LocalReviewQueue(int? localPosition, AutoReviewQueueWaitState? localWait,
         bool postReview = false)

@@ -1,4 +1,4 @@
-@if (auth.studioAllowed()) {
+@if (auth.studioAllowed() && !noProjectAccess()) {
     @if (auth.status()?.recoveryCodesRemaining !== null && auth.status()?.recoveryCodesRemaining !== undefined) {
       <section class="recovery-sign-in" role="status" data-testid="recovery-sign-in-notice">
         <span>You signed in with a recovery code; {{ auth.status()?.recoveryCodesRemaining }} remain.</span>
@@ -808,6 +808,8 @@
       }
     </div>
     }
+} @else if (noProjectAccess()) {
+  <main data-testid="no-project-access" class="no-project-access"><p>You currently have no access to any project. Ask the owner.</p></main>
 } @else {
   @defer (on immediate) { <app-auth-gate /> }
 }

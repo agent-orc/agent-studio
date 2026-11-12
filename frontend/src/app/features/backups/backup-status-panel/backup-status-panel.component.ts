@@ -9,7 +9,7 @@ import {
 } from '../backup-status.model';
 
 /**
- * Installation backups on the Operations page (AGT-3574): the last good
+ * Installation backups in Settings → Operations (AGT-3574): the last good
  * backup with its age and size, the last restore verification, the
  * off-host copy, the ids of the two escrowed keys (AGT-3738), and the
  * warnings of `GET /api/v1/management/backups`.

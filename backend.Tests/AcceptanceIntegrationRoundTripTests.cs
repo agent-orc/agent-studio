@@ -30,7 +30,7 @@ namespace AgentStudio.Tests;
 /// ref and SHA, while acceptance validates current lineage, Git ancestry, and
 /// exact-tree gate evidence.
 /// </summary>
-public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
+public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
 {
     // Generous on purpose: several call sites wait on a WebApplicationFactory's
     // first HTTP round trip, which JITs and spins up the whole app in-process.
@@ -1021,6 +1021,87 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Contains(deps.Timeline.ReadAll(card.FolderPath), entry =>
             entry.Kind == TimelineEventKinds.StallInterventionRecorded
             && entry.Summary.Contains("ReviewInfra/ToolUnavailable"));
+    }
+
+    [Fact]
+    public async Task Stranding_park_receipt_can_be_undone_and_review_retried_for_unchanged_delivery()
+    {
+        var clock = VerificationFixtureAtUtc;
+        var deliverySha = PublishDelivery("stranded-review-retry.txt", "delivered work\n");
+        var deps = Build(deliverySha, initialState: TaskStates.AutoReview,
+            seedContent: false, authorityClock: () => clock);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.True(TaskJsonFile.UpdateField(card.FolderPath, "enteredLaneAt",
+            clock.AddMinutes(-90), NullLogger.Instance));
+        deps.Scanner.InvalidateCache();
+        var run = deps.Authority.GetTaskProjection(TaskKey).CurrentRunAttempt!;
+        var created = deps.Authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            TaskKey, run.RepositoryId, deliverySha, run.AttemptId,
+            AttemptAuthorityService.Hash("requirements"), AttemptAuthorityService.Hash("policy"),
+            run.EvidenceDigests, "initial-failed-review"));
+        Assert.True(created.Accepted);
+        var claimed = deps.Authority.ClaimReview(created.AttemptId, "reviewer", "host", 60,
+            "claim-failed-review").ReviewAttempt!;
+        Assert.True(deps.Authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(claimed.AttemptId, claimed.LastFence,
+                claimed.AuthorityEpoch, "settle-failed-review"),
+            deliverySha, ReviewTerminalOutcome.ProductFailure,
+            "ReviewFailed", "Review host failed to finish.")).Accepted);
+        clock = VerificationFixtureAtUtc.AddMinutes(45);
+
+        var lifecycle = new ReviewAttemptTaskLifecycleService(deps.Authority,
+            deps.Scanner, deps.Timeline, NullLogger<ReviewAttemptTaskLifecycleService>.Instance);
+        var records = new StallInterventionStore(() => _tempDir);
+        var log = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
+        var projector = new WatcherActivityProjector(log, deps.Scanner, deps.Configuration,
+            NullLogger<WatcherActivityProjector>.Instance);
+        var receipts = new StallInterventionReceipts(log, projector, deps.Scanner, deps.Timeline,
+            NullLogger<StallInterventionReceipts>.Instance);
+        var escalation = new HumanReviewEscalation(deps.States, deps.Transitions,
+            _tempDir, NullLogger.Instance, deps.Scanner);
+        var watchdog = new AutoReviewStrandingWatchdog(deps.Scanner, deps.Authority,
+            lifecycle, new BatchGateStore(_tempDir), null!, deps.Settings,
+            deps.Pipeline, new AutoReviewPostProcessingQueue(), deps.Transitions,
+            null!, escalation, records, receipts, deps.Configuration,
+            NullLogger<AutoReviewStrandingWatchdog>.Instance);
+
+        Assert.Equal(1, await watchdog.RunOnceAsync());
+        var first = Assert.Single(records.All());
+        var parked = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.Escalated, parked.State);
+        Assert.Equal(HumanReviewEscalationCategories.Environmental,
+            parked.ParkedBlocker?.BlockerType);
+        Assert.Equal(ParkedBlockerConditionKinds.ReviewRetryAvailable,
+            parked.ParkedBlocker?.ConditionKind);
+        var recall = new ParkedBlockerProbe(attempts: deps.Authority).Evaluate(
+            ParkedBlockerCatalog.ConditionFor(HumanReviewEscalationCategories.AutoReviewStranded),
+            new ParkedBlockerContext(TaskKey: TaskKey), clock);
+        Assert.Equal(ParkedBlockerStatuses.Recallable, recall.Status);
+        Assert.True(first.Undoable);
+        Assert.Contains("Last run completed at", parked.ParkedBlocker?.Reason);
+        Assert.Contains("Last review ended as ReviewFailed", parked.ParkedBlocker?.Reason);
+
+        var undone = await watchdog.UndoParkAsync(first.Id, "operator");
+        Assert.True(undone.Undone, undone.Message);
+        Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        Assert.False((await watchdog.UndoParkAsync(first.Id, "operator")).Undone);
+
+        // A second visit gets a distinct receipt, then Retry review mints a
+        // successor from the same immutable run without a coding attempt.
+        card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.True(TaskJsonFile.UpdateField(card.FolderPath, "enteredLaneAt",
+            clock.AddMinutes(-90), NullLogger.Instance));
+        deps.Scanner.InvalidateCache();
+        Assert.Equal(1, await watchdog.RunOnceAsync());
+        var second = records.All().Single(record => record.Id != first.Id);
+        var result = await watchdog.RetryParkedReviewAsync(deps.Scanner.FindJob(Slug, _watchPath)!);
+        Assert.True(result.Started, result.Reason);
+        var projection = deps.Authority.GetTaskProjection(TaskKey);
+        Assert.Equal(run.AttemptId, projection.CurrentRunAttempt?.AttemptId);
+        Assert.NotEqual(claimed.AttemptId, projection.CurrentReviewAttempt?.AttemptId);
+        Assert.Equal(AttemptLifecycleState.Pending, projection.CurrentReviewAttempt?.State);
+        Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        Assert.False((await watchdog.UndoParkAsync(second.Id, "operator")).Undone);
     }
 
     [Fact]
@@ -4736,7 +4817,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         bool guarded = false,
         bool engineMode = false,
         Func<DateTime>? authorityClock = null,
-        BatchGateStore? batchGates = null)
+        BatchGateStore? batchGates = null,
+        string contentStatus = "pass",
+        string contentSummary = "The fixture delivery answers its brief.")
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -4874,7 +4957,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         }
         if (seedContent)
             SeedPassedContentReview(authority, sourceRun, jobFolder, deliverySha, deliveryBriefVersion,
-                reviewPlan, reviewVerdicts);
+                reviewPlan, reviewVerdicts, contentStatus, contentSummary);
         pipeline.Begin(jobFolder, PipelineCatalogue.Standard, Project, Slug);
         Assert.NotNull(scanner.FindJob(Slug, _watchPath));
         // AGT-3076: the 11.10. crash rebuilt the attempt authority store into
@@ -4942,7 +5025,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     private void SeedPassedContentReview(
         AttemptAuthorityService authority, RunAttemptDto sourceRun,
         string folder, string deliverySha, string briefVersion,
-        Contract.ReviewPlanDto? plan = null, IReadOnlyList<Contract.ReviewVerdictDto>? verdicts = null)
+        Contract.ReviewPlanDto? plan = null, IReadOnlyList<Contract.ReviewVerdictDto>? verdicts = null,
+        string contentStatus = "pass", string contentSummary = "The fixture delivery answers its brief.")
     {
         var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
             TaskKey, "PROJ-FIXTURE", deliverySha, sourceRun.AttemptId,
@@ -4961,8 +5045,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             new Contract.ReviewEnvironmentDto("fixture-host", "fixture-reviewer", "fixture-instance",
                 "fixture-os", "fixture-arch", "fixture-runtime",
                 new Dictionary<string, string>(), new Dictionary<string, string>()),
-            [], [], verdicts ?? [new Contract.ReviewVerdictDto("requirement-fit", "pass", "Product",
-                "The fixture delivery answers its brief.")],
+            [], [], verdicts ?? [new Contract.ReviewVerdictDto("requirement-fit", contentStatus, "Product",
+                contentSummary, Missing: contentStatus == "pass" ? null : "The fixture names no missing file.")],
             AuthorityEpoch: review.AuthorityEpoch, BriefSha256: briefVersion);
         var entry = new RemoteReviewSettlementEntry
         {

@@ -630,7 +630,8 @@ public sealed record TaskLiveQueue
     /// AGT-3094: one of the <see cref="TaskLiveQueueStates"/> tokens. Runner
     /// queues and review waits are <c>queued</c>; a post-review delivery wait
     /// is <c>integration</c>; a canonical
-    /// review card says whether its ReviewAttempt is leased (<c>reviewing</c>)
+    /// review card says whether its ReviewAttempt is leased (<c>reviewing</c>),
+    /// was lost and waits for its automatic retry (<c>retry-scheduled</c>),
     /// or needs an operator because nothing will review it (<c>stalled</c>).
     /// </summary>
     public string State { get; init; } = TaskLiveQueueStates.Queued;
@@ -640,6 +641,45 @@ public sealed record TaskLiveQueue
     public DateTime? Since { get; init; }
     /// <summary>Terminal review outcome token (e.g. <c>infrastructureFailure</c>) behind a <c>stalled</c> or retrying review.</summary>
     public string? Outcome { get; init; }
+    /// <summary>AGT-3690: why the current review attempt ended without a verdict; set with <c>retry-scheduled</c> and <c>stalled</c>.</summary>
+    public TaskLiveReviewLoss? Lost { get; init; }
+    /// <summary>AGT-3690: the automatic retry that comes next; set only while <c>retry-scheduled</c>.</summary>
+    public TaskLiveReviewRetry? Retry { get; init; }
+}
+
+/// <summary>
+/// AGT-3690: the cause of a lost review attempt, as the card names it. The
+/// classification is the review report's own token (<c>ExecutorRestarted</c>);
+/// <see cref="Cause"/> is one of <see cref="TaskLiveReviewLossCauses"/>.
+/// </summary>
+public sealed record TaskLiveReviewLoss
+{
+    public string Cause { get; init; } = TaskLiveReviewLossCauses.Infrastructure;
+    public string? Classification { get; init; }
+    /// <summary>Host that held the lost lease, for the host link.</summary>
+    public string? HostId { get; init; }
+    /// <summary>Runner identity that held the lost lease.</summary>
+    public string? ExecutorId { get; init; }
+    /// <summary>UTC instant the attempt ended.</summary>
+    public DateTime? At { get; init; }
+}
+
+/// <summary>Wire tokens for <see cref="TaskLiveReviewLoss.Cause"/>.</summary>
+public static class TaskLiveReviewLossCauses
+{
+    /// <summary>The review host's daemon restarted and could not adopt the review.</summary>
+    public const string HostRestarted = "host-restarted";
+    /// <summary>Any other infrastructure failure; the classification names it.</summary>
+    public const string Infrastructure = "infrastructure";
+}
+
+/// <summary>AGT-3690: the scheduled automatic review retry, numbered within its budget.</summary>
+public sealed record TaskLiveReviewRetry
+{
+    /// <summary>One-based retry number; null on an attempt scheduled before the number was recorded.</summary>
+    public int? Number { get; init; }
+    public int Budget { get; init; }
+    public DateTime DueAt { get; init; }
 }
 
 /// <summary>Wire tokens for <see cref="TaskLiveQueue.State"/>.</summary>
@@ -649,6 +689,8 @@ public static class TaskLiveQueueStates
     public const string Reviewing = "reviewing";
     public const string Stalled = "stalled";
     public const string Integration = "integration";
+    /// <summary>AGT-3690: the review attempt was lost and an automatic retry is due.</summary>
+    public const string RetryScheduled = "retry-scheduled";
 }
 
 /// <summary>

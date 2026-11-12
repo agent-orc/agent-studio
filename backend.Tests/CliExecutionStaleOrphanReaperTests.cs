@@ -172,12 +172,13 @@ public sealed class CliExecutionStaleOrphanReaperTests : IDisposable
         TaskKey = taskKey,
         JobId = taskKey,
         ProcessId = proc.Id,
-        ProcessName = SafeName(proc),
+        // Process metadata can lag behind Start() on a loaded host. This test
+        // launches a known executable, so record its name without that race.
+        ProcessName = Path.GetFileNameWithoutExtension(proc.StartInfo.FileName),
         ProcessStartTimeUtc = SafeStart(proc),
         StartedAt = DateTime.UtcNow
     };
 
-    private static string? SafeName(Process p) { try { return p.ProcessName; } catch { return null; } }
     private static DateTime? SafeStart(Process p) { try { return p.StartTime.ToUniversalTime(); } catch { return null; } }
 
     public void Dispose()

@@ -450,6 +450,14 @@ the existing authority scheduler while its two-retry budget remains. A scheduled
 retry counts as an owner. Once the budget is spent, escalation names the review
 classification and summary.
 
+The watchdog park uses the `environmental` category with the
+`auto-review-stranded` cause detail and records the completed run time, last
+review outcome and retry state. Its recall
+condition checks whether the immutable delivery is still available for review.
+On an unchanged parked card, `POST /api/tasks/{jobId}/review/retry` moves the
+same delivery back to Auto Review and mints a fresh ReviewAttempt. The card also
+links the intervention receipt. Its Undo restores Auto Review only while the
+park's lane entry, card write and attempt identities still match the receipt.
 A passed review that ran its own build and tests (its frozen plan has
 `BuildTestDeferredToBatch: false`) never re-enters the batch gate: batch
 admission refuses it with `BuildTestNotDeferred` (AGT-3740).
@@ -1511,6 +1519,32 @@ The drain decision reuses `ReviewSlotAdmissionDecision` with its
 incapable of cancelling a running review. Operator procedure and the log lines
 to check live in
 [linux-runner-host.md](../../operations/setup/linux-runner-host.md#which-release-grades-an-adopted-review).
+
+## Review host restarts stay visible (AGT-3690)
+
+A replacement daemon that cannot prove a review worker alive settles the
+attempt as `ReviewInfra / ExecutorRestarted` and the server counts it as a
+`worker-not-reported` loss. Three surfaces say so:
+
+- **Card.** The Auto Review queue line reads the failure classification, the
+  lease host, the loss time and the scheduled retry from the board snapshot:
+  "Review lost: review host restarted (lab-review-host, 02:27). Automatic
+  retry 1 of 2 at 02:28." The host name links to the host detail.
+- **Host detail.** `AttemptAuthorityService` keeps the newest 20 restarts per
+  review runner identity, each with its lost attempts and their task keys.
+  `GET /api/v1/management/remote-hosts` returns them as `reviewRestarts`, and
+  the host detail lists them with a link to each lost card. `restartedAt` and
+  `reviewsLost` still describe the newest restart only. The standalone Task
+  Server keeps only that newest restart for now.
+- **Escalation.** When the retry budget is spent and the newest cause is a
+  restart, the card escalates as `environmental` and the reason names every
+  restart (host, time, attempt) instead of "cannot be materialized".
+
+Covered by `TaskLiveStatusProjectionTests`, `ReviewAttemptChainSummaryTests`,
+`V1ReviewPlaneDiagnosticsEndpointTests.Restart_history_keeps_a_lost_review_after_a_later_clean_restart`,
+`RemoteRunnerEndToEndTests.Monolith_v1_review_host_restart_names_the_host_and_retry_then_escalates_on_the_restarts`,
+and `frontend/e2e/settings/first-run-review-host-restart.spec.ts`, which kills
+the real `first-run-review` daemon mid-review twice.
 
 ## Terminal slot deletion is final (AGT-2864)
 

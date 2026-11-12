@@ -115,7 +115,7 @@ Check a new target with the management command `backup-upload` (below); it copie
 
 ## Watching backups
 
-The **Operations** page of every project shows an **Installation backups** panel to owners and operators: the state, the last good backup with its time, age and size, the last restore verification, the off-host copy state and target, the schedule and the recent archives. It warns when:
+**Settings → Operations** shows one **Installation backups** panel to owners and operators: the state, the last good backup with its time, age and size, the last restore verification, the off-host copy state and target, the schedule and the recent archives. Project Operations pages link to this installation view. When the backup key is absent, the warning links this runbook. The key file and API configuration require host access; Studio does not create or escrow a backup key through the browser. The panel warns when:
 
 | Code | Meaning |
 |---|---|

@@ -169,6 +169,14 @@ export class AuthService {
     });
   }
 
+  /** Refresh the networked user's current binding projection after a refused board read. */
+  refreshAccessStatus(): Observable<AuthStatus> {
+    return this.http.get<AuthStatus>('/api/auth/status').pipe(
+      map(normalizeStatus),
+      tap(status => this.status.set(status)),
+    );
+  }
+
   private loadStandaloneStatus(localStatus: AuthStatus | null): void {
     this.http.get<AuthStatus | StandaloneAuthStatus>('/api/v1/studio/auth/status').subscribe({
       next: status => { this.status.set(normalizeStatus(status)); this.loading.set(false); },

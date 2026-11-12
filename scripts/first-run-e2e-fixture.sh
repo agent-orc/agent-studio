@@ -56,11 +56,25 @@ GIT
 set -euo pipefail
 fixture_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ "${1:-}" == '--version' ]]; then printf 'codex 1.0.0\n'; exit 0; fi
+# AGT-3690: while <workspace>/review-hold exists a review aspect waits, so a
+# spec can kill the review host mid-review. review-held tells it the wait began.
+# Only an aspect inside a review workspace waits; provider probes never do.
+first_run_review_hold() {
+  local root
+  root="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+  [[ -f "${root}/review-hold" && "$PWD" == "${root}/review-attempts/"* ]] || return 0
+  : > "${root}/review-held"
+  for _ in $(seq 1 900); do
+    [[ -f "${root}/review-hold" ]] || return 0
+    sleep 1
+  done
+}
 if [[ "${1:-}" == login && "${2:-}" == status ]]; then
   printf 'Logged in using ChatGPT\n'
   exit 0
 fi
 if [[ "${RUNNER_ROLE:-}" == review || "$0" == */review/* ]]; then
+  first_run_review_hold
   printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"[[ASPECT_VERDICT: status=pass; summary=Demo change verified.]]"}}'
 else
   if [[ "$PWD" != "${fixture_root}/coding-work/"* ]]; then
@@ -80,11 +94,25 @@ CODEX
 set -euo pipefail
 fixture_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ "${1:-}" == '--version' ]]; then printf 'claude 1.0.0\n'; exit 0; fi
+# AGT-3690: while <workspace>/review-hold exists a review aspect waits, so a
+# spec can kill the review host mid-review. review-held tells it the wait began.
+# Only an aspect inside a review workspace waits; provider probes never do.
+first_run_review_hold() {
+  local root
+  root="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+  [[ -f "${root}/review-hold" && "$PWD" == "${root}/review-attempts/"* ]] || return 0
+  : > "${root}/review-held"
+  for _ in $(seq 1 900); do
+    [[ -f "${root}/review-hold" ]] || return 0
+    sleep 1
+  done
+}
 if [[ "${1:-}" == auth && "${2:-}" == status ]]; then
   printf 'Logged in\n'
   exit 0
 fi
 if [[ "${RUNNER_ROLE:-}" == review || "$0" == */review/* ]]; then
+  first_run_review_hold
   printf '[[ASPECT_VERDICT: status=pass; summary=Demo change verified.]]\n'
 else
   if [[ "$PWD" != "${fixture_root}/coding-work/"* ]]; then printf 'OK\n'; exit 0; fi

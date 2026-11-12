@@ -73,6 +73,7 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof accessS
     : route.continue());
   await page.route('**/api/auth/iam', route => json(route, state));
   await page.route('**/api/auth/iam/operator-approvals', route => json(route, []));
+  await page.route('**/api/auth/users', route => json(route, state.users));
   // Operator agents and standing grants have their own spec (operator-agents.spec.ts); this server answers without them.
   await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-agents') || url.pathname.startsWith('/api/auth/iam/operator-approvals')
     || url.pathname.startsWith('/api/auth/audit/')
@@ -142,6 +143,35 @@ test('Owner sees factor changes and verifies the current factor before replaceme
   await challenge.getByLabel('Authenticator or recovery code').fill('123456');
   await challenge.getByRole('button', { name: 'Verify', exact: true }).click();
   await expect(access.getByTestId('session-totp-secret')).toHaveText('TESTSECRET');
+});
+
+test('disabling a user confirms that open sessions end', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const state = await stubNetworkedOwner(page);
+  let updates = 0;
+  await page.route('**/api/auth/users/usr_product', route => {
+    updates++;
+    state.users[1].disabled = true;
+    return json(route, state.users[1]);
+  });
+  const access = await openAccess(page);
+  await access.getByTestId('access-user-toggle-product.lead').click();
+  const dialog = page.getByTestId('confirm-dialog');
+  await expect(dialog).toContainText('Open sessions end immediately');
+  expect(updates).toBe(0);
+  mkdirSync(resultDir, { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(resultDir, `access-disable-confirm-${theme}.png`) });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: join(resultDir, 'access-disable-confirm-390.png') });
+  await page.getByTestId('confirm-dialog-cancel').click();
+  expect(updates).toBe(0);
+  await access.getByTestId('access-user-toggle-product.lead').click();
+  await page.getByTestId('confirm-dialog-confirm').click();
+  await expect(access.getByTestId('access-user-status-product.lead')).toContainText('Disabled');
+  expect(updates).toBe(1);
 });
 
 test('owner sees users, groups, service accounts with API tokens, runners, and role bindings per scope', async ({ page }) => {

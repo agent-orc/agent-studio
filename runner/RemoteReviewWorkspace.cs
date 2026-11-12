@@ -260,7 +260,7 @@ public sealed class RemoteReviewWorkspace
     /// start commands unless the persisted workspace still proves the same
     /// immutable subject and a clean tree.
     /// </summary>
-    internal async Task<ReviewWorkspaceProofDto> AdoptPreparedAsync(CancellationToken ct)
+    internal async Task<ReviewWorkspaceProofDto> AdoptPreparedAsync(CancellationToken ct, bool relaunched = false)
     {
         if (!Directory.Exists(RepositoryPath))
             throw new ReviewInfrastructureException(
@@ -278,7 +278,13 @@ public sealed class RemoteReviewWorkspace
                 $"Prepared review HEAD '{head}' does not match expected Result-SHA '{_subject.ExpectedResultSha}'.");
         _initialTree = await GitValueAsync("rev-parse", "HEAD^{tree}", ct);
         _dirtyBefore = (await GitValueAsync("status", "--porcelain", "--untracked-files=all", ct)).Length > 0;
-        if (_dirtyBefore)
+        if (_dirtyBefore && relaunched)
+        {
+            // The earlier worker's commands wrote these changes after the
+            // daemon proved the tree clean; the plan still owns them.
+            _dirtyBefore = false;
+        }
+        else if (_dirtyBefore)
             throw new ReviewInfrastructureException(
                 "DirtyBefore",
                 "Prepared review workspace became dirty before the detached worker adopted it.");
@@ -3469,6 +3475,18 @@ public sealed class RemoteReviewWorkspace
                 ["credentials"] = "review-read-only",
             },
             worker);
+    }
+
+    /// <summary>
+    /// Reaps processes still rooted in this attempt without removing it, so a
+    /// relaunched worker resumes in the same workspace alone (AGT-3647).
+    /// </summary>
+    internal async Task ReapResidentProcessesAsync(string attemptId)
+    {
+        if (Directory.Exists(AttemptRoot))
+            await CliProcessReaper.ReapWorkspaceAsync(AttemptRoot, attemptId, _log, CancellationToken.None);
+        if (Directory.Exists(TempRoot))
+            await CliProcessReaper.ReapWorkspaceAsync(TempRoot, attemptId, _log, CancellationToken.None);
     }
 
     public async Task<bool> CleanupAsync(string attemptId = "unknown")

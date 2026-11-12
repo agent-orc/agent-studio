@@ -348,6 +348,38 @@ files, so every dispatch left its full fetched pack behind - 681 folders and
    card with the prefix, the count and the owning component rather than adding a
    cron job.
 
+## Host disk pressure and owned retention
+
+The API samples the file systems holding `TaskRepository` and batch gate
+evidence once a minute. Set
+`DiskPressure:RunnerWorkRoot` and `DiskPressure:ContainerStoragePath` when those
+paths are on other mounts. Runner heartbeats measure their work, state, review,
+salvage, and visible container-storage mounts. Operations shows each file system
+with free bytes and percentage. A low-space finding includes measured product
+consumers when the directory scan can finish.
+
+The warning defaults are 30 GiB or 15% free. The critical defaults are 8 GiB
+or 5% free. Either limit crossing is enough. Critical space pauses new coding,
+review and gate claims on that host, and the API batch planner reports
+`diskPauseReason`. Existing attempts continue. Admission reopens when every
+measured file system rises above both warning limits. The four limits can be
+set with `DiskPressure:WarningFreeBytes`, `WarningFreePercent`,
+`CriticalFreeBytes`, and `CriticalFreePercent`.
+
+`DiskPressure:RetentionDays` defaults to 14. Every six hours, the API removes
+old `gate-evidence.jsonl` from published or abandoned batches whose members
+are terminal, and rotated `cli-output.log.1` on completed or archived cards.
+Pending batches, nonterminal members, and isolation evidence references are
+kept. The runner's existing salvage sweep also removes clean worktrees and
+runner result copies for
+completed or archived cards after its configured `SalvageRetentionDays`, while
+active attempts, lease markers, retained worktree markers, dirty worktrees, and
+commits without a remote tracking copy are kept. Unknown card state is a keep
+decision.
+
+Container image and build-cache pruning belongs to the deployment tooling;
+the product reports that mount but does not delete container images.
+
 ## Related
 
 - [Linux runner host runbook](./setup/linux-runner-host.md) - service setup,
