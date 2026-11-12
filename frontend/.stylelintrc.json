@@ -252,6 +252,7 @@
         "src/app/features/batch-gate/batch-member/batch-member.scss",
         "src/app/features/batch-gate/batch-lane-indicator/batch-lane-indicator.scss",
         "src/app/features/batch-gate/batch-detail/batch-detail.scss",
+        "src/app/features/batch-gate/batch-quarantine/batch-quarantine.scss",
         "src/app/features/board/components/review-queue-pill/review-queue-pill.scss",
         "src/app/features/orchestrator/components/orchestrator-feed-entry/orchestrator-feed-entry.scss",
         "src/app/features/task-detail/components/prompt-pane/overview-pane/steering-receipt-status/steering-receipt-status.component.scss",

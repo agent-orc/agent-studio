@@ -32,10 +32,29 @@ public sealed partial class BatchGateStore
     private const int PhaseLockAttempts = 6000;
     private static readonly TimeSpan PhaseLockRetry = TimeSpan.FromMilliseconds(10);
 
+    /// <summary>
+    /// The phase record, or null before the first one. An unreadable record is
+    /// quarantined and throws <see cref="BatchGateRecordUnreadableException"/>.
+    /// </summary>
     public BatchPhaseRecord? ReadPhaseRecord(string batchId)
     {
         var path = Path.Combine(BatchDirectory(batchId), PhaseRecordName);
-        return File.Exists(path) ? Read<BatchPhaseRecord>(path) : null;
+        return File.Exists(path) ? ReadRecord<BatchPhaseRecord>(path, BatchGateRecordKinds.Phase, batchId) : null;
+    }
+
+    /// <summary>
+    /// False when the phase record exists but does not read; it is then
+    /// quarantined (AGT-3681). <paramref name="record"/> is null before the
+    /// first record.
+    /// </summary>
+    public bool TryReadPhaseRecord(string batchId, out BatchPhaseRecord? record)
+    {
+        var path = Path.Combine(BatchDirectory(batchId), PhaseRecordName);
+        record = null;
+        if (!File.Exists(path)) return true;
+        if (!TryReadRecord<BatchPhaseRecord>(path, BatchGateRecordKinds.Phase, batchId, out var read)) return false;
+        record = read;
+        return true;
     }
 
     /// <summary>True once the batch has a phase record or a state history entry.</summary>
