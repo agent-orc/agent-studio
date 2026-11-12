@@ -24,8 +24,15 @@ internal static class RunnerEnrollmentCommand
             return 2;
         }
 
-        var directory = configDirectory ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "agent-host");
+        var directory = configDirectory
+            ?? Environment.GetEnvironmentVariable("RUNNER_ENROLLMENT_CONFIG_DIR")
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".config", "agent-host");
+        if (!Path.IsPathFullyQualified(directory))
+        {
+            error.WriteLine("RUNNER_ENROLLMENT_CONFIG_DIR must be an absolute path.");
+            return 2;
+        }
         var credentialPath = Path.Combine(directory, "runner.token");
         var environmentPath = Path.Combine(directory, "installation.env");
         if (File.Exists(credentialPath) || File.Exists(environmentPath))
@@ -47,7 +54,18 @@ internal static class RunnerEnrollmentCommand
                 new Uri(uri, "/api/auth/runner-enroll"), new { code }, ct);
             if (!response.IsSuccessStatusCode)
             {
-                error.WriteLine($"Enrollment was refused (HTTP {(int)response.StatusCode}).");
+                string? refusalCode = null;
+                try
+                {
+                    using var refusal = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+                    if (refusal.RootElement.TryGetProperty("error", out var property))
+                        refusalCode = property.GetString();
+                    else if (refusal.RootElement.TryGetProperty("code", out property))
+                        refusalCode = property.GetString();
+                }
+                catch (JsonException) { /* A proxy may return a plain-text refusal. */ }
+                error.WriteLine($"Enrollment was refused (HTTP {(int)response.StatusCode}"
+                    + (string.IsNullOrWhiteSpace(refusalCode) ? "" : $", {refusalCode}") + ").");
                 return 4;
             }
             var enrolled = await response.Content.ReadFromJsonAsync<EnrolledIdentity>(cancellationToken: ct);

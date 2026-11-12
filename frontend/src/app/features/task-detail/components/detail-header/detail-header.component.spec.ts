@@ -44,6 +44,23 @@ const taskInfo: TaskInfo = {
  * stable across template tweaks.
  */
 describe('DetailHeaderComponent (smoke)', () => {
+  it('does not offer reissue when integration needs a server checkout', async () => {
+    await TestBed.configureTestingModule({
+      imports: [DetailHeaderComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(DetailHeaderComponent);
+    fixture.componentRef.setInput('info', {
+      ...taskInfo,
+      state: '5e-escalated',
+      integration: { failure: { reason: 'This project needs a server checkout before delivery can integrate.' } },
+    });
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.triagePrimary()).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="triage-action-reissue-escalated"]')).toBeNull();
+  });
+
   it('renders the last run effective thinking level beside the model', async () => {
     await TestBed.configureTestingModule({
       imports: [DetailHeaderComponent],
