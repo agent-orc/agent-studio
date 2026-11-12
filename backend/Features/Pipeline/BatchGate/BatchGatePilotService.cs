@@ -1010,8 +1010,10 @@ public sealed partial class BatchGatePilotService
         // Red is a verdict, but isolation is still work in progress. A restart
         // loses the bisection's in-memory frontier, so close the parent and
         // return every unresolved member to planning as one recovery action.
+        // An operator eject releases a red batch itself (ReleaseEjectedTerminalBatches).
         foreach (var parent in _store.ListManifests().Where(item => item.ParentBatchId is null
-                     && _store.LatestState(item.BatchId).Phase == BatchPhase.Red))
+                     && _store.LatestState(item.BatchId).Phase == BatchPhase.Red
+                     && !item.Members.Any(member => _store.HasEject(item.Scope.Project, member.TaskKey))))
         {
             var waiting = _store.ListPending();
             var hasPendingMember = parent.Members.Any(member => waiting.Any(item =>
