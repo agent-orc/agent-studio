@@ -71,7 +71,7 @@ describe('buildCardCtxMenuItems — delete row (AGT-2020)', () => {
 
   it('keeps only copy and filter rows for a Reviewer (AGT-3670)', () => {
     for (const state of [TaskState.HumanReview, TaskState.Ready, TaskState.AutoReview]) {
-      const items = buildCardCtxMenuItems(makeJob({ state }), false, undefined, null, true);
+      const items = buildCardCtxMenuItems(makeJob({ state }), false, undefined, null, { reviewsOnly: true });
       expect(items.filter(isRow).map(item => item.id)).toEqual(['copy-name', 'copy-id', 'copy-key', 'filter-dependents']);
       expect(items.some(item => item.kind === 'separator')).toBe(false);
     }
@@ -132,6 +132,27 @@ describe('card move rows (AGT-3588)', () => {
   it('disables every move when blocked', () => {
     expect(moves(TaskState.Ready, true).every((row) => row.disabled)).toBe(true);
   });
+
+  it('shows only Product-permitted moves for each lane', () => {
+    const productMoves = (state: string) => buildCardCtxMenuItems(
+      makeJob({ state }), false, undefined, null, { productSession: true },
+    ).filter(isRow).filter((row) => row.id.startsWith(MOVE_PREFIX)).map((row) => row.label);
+    expect(productMoves(TaskState.Backlog)).toEqual(['Move to Ready']);
+    expect(productMoves(TaskState.Ready)).toEqual(['Move to Backlog']);
+    expect(productMoves(TaskState.HumanReview)).toEqual(['Move to Accepted']);
+    for (const state of [TaskState.Preparation, TaskState.Progress, TaskState.Completed, '2-ready-intake']) {
+      expect(productMoves(state)).toEqual([]);
+    }
+    const rows = buildCardCtxMenuItems(makeJob({ state: TaskState.HumanReview }), false, undefined, null,
+      { productSession: true }).filter(isRow);
+    expect(rows.some((row) => row.id === DELETE_ID || row.id === REVIEW_FIRST_ID)).toBe(false);
+  });
+
+  it('shows no moves for a read-only viewer', () => {
+    const rows = buildCardCtxMenuItems(makeJob({ state: TaskState.HumanReview }), false, undefined, null,
+      { readOnlySession: true }).filter(isRow);
+    expect(rows.some((row) => row.id.startsWith(MOVE_PREFIX) || row.id === DELETE_ID)).toBe(false);
+  });
 });
 
 describe('Ready queue position rows (AGT-3588)', () => {
@@ -151,6 +172,13 @@ describe('Ready queue position rows (AGT-3588)', () => {
     expect(queueRows(TaskState.Ready, false, { first: false, last: true }).map((row) => !!row.disabled))
       .toEqual([false, true]);
     expect(queueRows(TaskState.Ready, true).every((row) => row.disabled)).toBe(true);
+  });
+
+  it('disables queue moves with a Manual hint under an automatic sort', () => {
+    const rows = buildCardCtxMenuItems(makeJob(), false, undefined, null, { canReorder: false })
+      .filter(isRow).filter(row => row.id === MOVE_TOP_ID || row.id === MOVE_BOTTOM_ID);
+    expect(rows).toHaveLength(2);
+    expect(rows.every(row => row.disabled && row.hint === 'Switch this lane to Manual')).toBe(true);
   });
 });
 

@@ -1,4 +1,5 @@
 <div class="statusbar" data-testid="status-bar">
+  @if (shellAccess.operator()) {
   <div class="statusbar__group statusbar__group--left">
     <app-crash-recovery-prompt />
     <app-statusbar-item
@@ -35,12 +36,12 @@
         testid="status-bar-cli-repair" />
     }
 
-    @if (activeFallback(); as fallback) {
+    @if (fallbackCount() > 0) {
       <app-statusbar-item
         [button]="false"
         icon="warn"
-        [label]="'fallback: ' + fallback.quotaFallbackModel"
-        [tooltip]="'Quota fallback active: ' + fallback.quotaFallbackReason"
+        [label]="'fallback: ' + fallbackCount() + (fallbackCount() === 1 ? ' project' : ' projects')"
+        tooltip="Quota fallback active"
         testid="status-bar-quota-fallback" />
     }
   </div>
@@ -78,4 +79,7 @@
       }
       <app-usage-alarm-status />
   </div>
+  } @else {
+    <span class="statusbar__item" data-testid="status-bar-limited">Board</span>
+  }
 </div>

@@ -134,7 +134,7 @@ describe('ParkedBlockerComponent', () => {
   const text = (el: HTMLElement, testId: string): string =>
     el.querySelector(`[data-testid="${testId}"]`)?.textContent?.trim() ?? '';
 
-  beforeEach(() => {
+  beforeEach(async () => {
     opened.length = 0;
     localStorage.clear();
     timelineEvents.set([]);
@@ -155,6 +155,7 @@ describe('ParkedBlockerComponent', () => {
         { provide: NowTickService, useValue: { now: signal(Date.parse('2026-09-14T14:44:00.000Z')) } },
       ],
     });
+    await TestBed.compileComponents();
   });
 
   it('renders nothing when the card is not parked', () => {
@@ -274,6 +275,28 @@ describe('ParkedBlockerComponent', () => {
     expect(text(el, 'parked-blocker-next-step')).toBe(
       'Use Send back to Ready (re-do) to build and deliver the work again.',
     );
+  });
+
+  it('hides a park receipt from an earlier lane after the card reaches Human Review', () => {
+    const el = render(auditPark({ lane: '5e-escalated' }), '5-human-review');
+    expect(el.querySelector('[data-testid="parked-blocker"]')).toBeNull();
+  });
+
+  it('omits a cause-free park placeholder from an otherwise reviewable card', () => {
+    const el = render(auditPark({
+      lane: '5-human-review', reason: 'operator-move: Parked with no recorded cause.',
+      cause: 'operator-decision', causeDetail: null, decision: null,
+      conditionDescription: 'Only a person can clear this park; no automatic precondition is recorded.',
+    }), '5-human-review');
+    expect(el.querySelector('[data-testid="parked-blocker"]')).toBeNull();
+  });
+
+  it('keeps a recorded decision visible even with a generic park reason', () => {
+    const el = render(auditPark({
+      lane: '5-human-review', reason: 'Parked with no recorded cause.',
+      decision: park().decision,
+    }), '5-human-review');
+    expect(el.querySelector('[data-testid="parked-blocker"]')).not.toBeNull();
   });
 
   it('reads the cause from the lane-change row when the marker predates it', () => {

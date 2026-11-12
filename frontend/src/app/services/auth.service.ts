@@ -40,6 +40,16 @@ export interface AuthStatus {
   restoreNotice?: { archiveId: string; archiveCreatedAt: string; restoredAt: string } | null;
 }
 
+export interface InvitationPreview {
+  username: string;
+  displayName: string;
+  inviter: string;
+  role: string;
+  projects: string[];
+  expiresAt: string;
+  secondFactorRequired: boolean;
+}
+
 interface StandaloneAuthUser {
   userId: string;
   username: string;
@@ -93,6 +103,7 @@ export class AuthSessionState {
   readonly loading = signal(true);
   /** One-time owner recovery code; memory only until the owner acknowledges custody. */
   readonly ownerRecoveryCode = signal<string | null>(null);
+  readonly factorRecommendation = signal(false);
   readonly studioAllowed = computed(() => {
     const status = this.status();
     // public-demo-readonly has no sign-in flow at all - every visitor is an
@@ -100,7 +111,7 @@ export class AuthSessionState {
     // server edge (PublicDemoEdgeMiddleware) is the actual boundary; letting
     // the shell render here is what makes the demo browsable in the first
     // place.
-    return !this.ownerRecoveryCode() && !status?.restoreNotice && (status?.profile === 'local'
+    return !this.ownerRecoveryCode() && !this.factorRecommendation() && !status?.restoreNotice && (status?.profile === 'local'
       || status?.profile === 'public-demo-readonly'
       || (status?.authenticated === true && !status.user?.mustChangePassword && !status.secondFactorEnrollmentRequired));
   });
@@ -142,6 +153,7 @@ export class AuthService {
   readonly studioAllowed = this.session.studioAllowed;
   readonly networkedAuthenticated = this.session.networkedAuthenticated;
   readonly ownerRecoveryCode = this.session.ownerRecoveryCode;
+  readonly factorRecommendation = this.session.factorRecommendation;
 
   acknowledgeRestoreNotice(archiveId: string): Observable<void> {
     return this.http.post<void>('/api/auth/restore-notice/acknowledge', { archiveId }).pipe(tap(() => {
@@ -163,6 +175,14 @@ export class AuthService {
       },
       error: () => this.loadStandaloneStatus(null),
     });
+  }
+
+  /** Refresh the networked user's current binding projection after a refused board read. */
+  refreshAccessStatus(): Observable<AuthStatus> {
+    return this.http.get<AuthStatus>('/api/auth/status').pipe(
+      map(normalizeStatus),
+      tap(status => this.status.set(status)),
+    );
   }
 
   private loadStandaloneStatus(localStatus: AuthStatus | null): void {
@@ -204,6 +224,14 @@ export class AuthService {
 
   finishFactorEnrollment(): void {
     this.status.update(status => status ? { ...status, secondFactorEnrollmentRequired: false } : status);
+    this.factorRecommendation.set(false);
+  }
+
+  dismissFactorRecommendation(): void { this.factorRecommendation.set(false); }
+
+  previewInvitation(token: string): Observable<InvitationPreview> {
+    return this.http.get<InvitationPreview>(
+      `/api/v1/studio/auth/invite/preview?token=${encodeURIComponent(token)}`);
   }
 
   listSessions(userId?: string | null): Observable<AuthSessionSummary[]> {
@@ -231,7 +259,10 @@ export class AuthService {
 
   acceptInvitation(token: string, newPassword: string): Observable<AuthStatus> {
     return this.http.post<AuthStatus | StandaloneAuthSession>('/api/v1/studio/auth/invite/accept', { token, newPassword })
-      .pipe(map(normalizeSession), tap((status) => this.status.set(status)));
+      .pipe(map(normalizeSession), tap(status => {
+        this.status.set(status);
+        if (!status.secondFactorEnrollmentRequired) this.factorRecommendation.set(true);
+      }));
   }
 
   bootstrap(username: string, password: string, displayName: string, bootstrapCode?: string): Observable<AuthStatus> {

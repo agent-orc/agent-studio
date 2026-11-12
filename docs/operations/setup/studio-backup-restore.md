@@ -11,19 +11,22 @@ An older, host-level backup with a systemd timer and age encryption (AGT-3365) i
 | Workspace (`/data/workspace`): cards, `.metadata` (registries, batch gate and engine state, management audit), the workspace Git repository, `.security` (users and IAM, sessions, API tokens, runner credentials) and the sealed secret store | Yes, as source `workspace`; Git repositories are staged with Git under the repository gate before their files enter the archive | The archive |
 | Data home (`/data/home`): CLI logins, SSH keys and known hosts, `.local/share` (batch gate store and leases, gate cache, model routing, prompt overrides, project settings) | Yes, as source `home`, without package caches (`node_modules`, `.cache`, `.npm`, `.nuget`) and `cache` folders | The archive |
 | Task storage under `/data/projects` outside checkouts, and registered task storage inside a checkout | Yes, as source `projects` | The archive |
-| `refs/agent-studio/*` of each project checkout; all refs of a checkout without `origin` | Yes, as a Git bundle per checkout | The archive |
-| Project checkouts (working tree, branches, history) | No; the manifest records each checkout's `origin` URL without credentials and its branch | The project remote |
-| Task worktrees | No | Their branches, through the checkout and the remote |
+| All local Git refs of each project checkout, including `task/*`, `runner/*`, unpushed integration branches, and `refs/agent-studio/*` | Yes, as a Git bundle per checkout | The archive; refs are fetched after cloning the remote, including when the remote no longer has a result or salvage ref |
+| Project checkout working trees and uncommitted files | No; the manifest records each checkout's `origin` URL without credentials and its branch | The project remote and bundled refs; uncommitted files are accepted loss |
+| Task worktree directories | No | Recreated from their bundled branches when needed |
 | Host certificate state (`/data/host-certificates`) | Yes, as source `host-certificates` | The archive |
 | Stack configuration: `.env`, Caddyfiles, `backup-target/` credentials | Yes, as source `stack`, without the `keys/` and `restored-stack/` directories | The archive, into `restored-stack/` for comparison |
 | Caddy data (`caddy-data`: certificates and ACME account) and the origin-pull CA (`origin-pull`) | Yes, as sources `caddy-data` and `origin-pull` | The archive |
+| Operations Server named volumes (`operations-data`, `operations-principals`, `operations-agent-secret`, `operations-client-secret`, `operations-agent-data`): principals, tokens, host and operator revocations, agent spool | No | Re-bootstrap Operations Server on the new host, then re-enrol each remote host agent; old server history and revocation records are accepted loss |
+| Quality Studio `/srv/agent-studio/quality/data` and `/srv/agent-studio/quality/registry` | No | Recreate the directories, start the optional Quality Studio profile, and re-register repositories; its previous data and registry are accepted loss |
+| Backend file logs (`/app/logs/backend` in the API container) | No | Accepted loss; new logs start when the API starts |
 | Secret store key (`STUDIO_SECRETS_KEY_FILE`) | Never; the manifest records only its fingerprint | The owner's escrowed copy |
 | Backup key (`keys/backup/backup.key`) | Never | The owner's escrowed copy |
 | Host CA private and public keys (`STUDIO_HOST_CA_DIR`) | No | The owner's escrowed copy, installed with `restore-backup.sh --host-ca` |
 | `api-tmp`, `caddy-config`, `frontend-data`, `frontend-config` | No | Recreated at start |
 | Control plane lock (`workspace/.security/control-plane.lock`) | No; the running API holds it exclusively | Recreated at start |
 
-With the archive, the backup and secret store keys, the escrowed host CA and the Git remotes, a new host comes back to the state of the backup. URL passwords and tokens are removed from recorded `origin` URLs. A file whose content is the secret store key or the backup key, or whose name ends in `.kek`, is left out of every source whatever its path; the archive's content list counts such files.
+With the archive, the backup and secret store keys, the escrowed host CA and the Git remotes, a new host comes back to the state of the backup. Recover excluded services and review security changes made since the backup using the steps below. URL passwords and tokens are removed from recorded `origin` URLs. A file whose content is the secret store key or the backup key, or whose name ends in `.kek`, is left out of every source whatever its path; the archive's content list counts such files.
 
 ### Credential content list
 
@@ -57,6 +60,8 @@ The API's `BackupHostedService` checks once a minute, five minutes after start:
 - **Retention** after every backup: the newest 12 local archives stay (`Backup__RetentionCount`, `STUDIO_BACKUP_RETENTION`). Retention at the off-host target is configured there, because the host has no right to delete there.
 - **Off-host copy** of every archive and its `.sha256` file before creation completes when a target is configured. A failed copy is reported as failed and retried after 15 minutes, doubling up to six hours.
 - **Restore verification** of the newest good backup once a day (`Backup__VerifyIntervalHours`), and at once when the last verification failed and a newer backup exists. It checks the archive against the checksum recorded at creation, decrypts it, restores every source into an empty staging host below the backup directory with the real restore code, checks every file against the SHA-256 list in the archive, runs `git fsck --connectivity-only` on restored repositories, and deletes the staging host again.
+
+A **Verified** result proves four things: the archive matches its recorded checksum, the backup key on this host opens and authenticates it, every restored file matches its hash, and restored repositories pass the Git connectivity check. It does not prove that the project checkouts can be cloned from their origins (the staging restore skips the clone), and it does not check the owner's escrowed copies of the backup key and the secret store key. The Operations page lists both halves under **What the last verification shows**; the [periodic owner check](#periodic-owner-check-of-the-escrowed-keys) covers the escrowed copies.
 
 Local archives live in `$STUDIO_DATA_DIR/backups` (`Backup__Directory`) as `studio-backup-<UTC time>-<id>.tar.gz.sbk` with a `.sha256` file and a non-secret `.json` record (size, hash, key fingerprints, consistency figures, verification and copy state). The backup directory must lie outside every source; the API refuses to back up otherwise.
 Default machine-local state folders use distinct archive source names. A folder that resolves to a source already listed is skipped, and duplicate configured source names are rejected.
@@ -119,6 +124,17 @@ bash secret-key.sh id studio-secrets.kek   # must equal "Secret store key id" on
 
 Each command prints a 16-character fingerprint, or fails on a file that is not base64 of 32 bytes, such as an empty one. If an id is missing or differs, the copy is no escrow: delete it and repeat `print`. When both match, move the files off the host and delete them here.
 
+### Periodic owner check of the escrowed keys
+
+The daily verification uses the keys on the host, never the escrowed copies. A lost or replaced copy only shows up during a restore, when it is too late. Once a quarter, and after every key rotation, the owner brings each escrowed copy to the host for a moment and compares fingerprints:
+
+```sh
+bash backup-key.sh id studio-backup.key      # must equal the key id on the Operations page
+bash secret-key.sh id studio-secrets.kek     # must equal the secret key id on the Operations page
+```
+
+Delete the copies from the host again afterwards. A different fingerprint means the escrowed copy does not open the current backups or secrets: escrow a new copy with `print` at once. Record the date of the check where the owner keeps the copies.
+
 ## Off-host target
 
 Set the target in `.env` and recreate the API container (`docker compose up -d api`). Credentials go into `backup-target/` in the stack directory, owned by UID 10001 with mode 600 (`bash backup-key.sh create` prepares the folder); the API mounts it read-only. Give the Studio host write access only: no read, list or delete, so a compromised host cannot remove the off-host copies.
@@ -136,7 +152,7 @@ Check a new target with the management command `backup-upload` (below); it copie
 
 ## Watching backups
 
-The **Operations** page of every project shows an **Installation backups** panel to owners and operators: the state, the last good backup with its time, age and size, the last restore verification, the off-host copy state and target, the schedule and the recent archives. It warns when:
+**Settings → Operations** shows one **Installation backups** panel to owners and operators: the state, the last good backup with its time, age and size, the last restore verification, the off-host copy state and target, the schedule and the recent archives. Project Operations pages link to this installation view. When the backup key is absent, the warning links this runbook. The key file and API configuration require host access; Studio does not create or escrow a backup key through the browser. The panel warns when:
 
 | Code | Meaning |
 |---|---|
@@ -148,7 +164,13 @@ The **Operations** page of every project shows an **Installation backups** panel
 | `offhost-not-configured`, `offhost-invalid`, `offhost-pending`, `offhost-failed` | The newest backup is not, or not yet, off the host. |
 | `host-ca-mismatch` | The configured host CA differs from the fingerprint in host certificate state, its public key is unreadable, or older issued state has no recorded fingerprint. Install the escrowed CA before issuing certificates. |
 
-Owners and operators read the same state from `GET /api/v1/management/backups` (`no-store`). Operator agents, whose credentials never reach `/api/v1`, read it from `GET /api/operator/backups` or `studio-op backups`; a caller without installation-wide operate permission does not see the target or the key fingerprints, and host paths in its error text read `<path>`. Off-host errors and warning text in that scoped view contain no target detail. The management commands of `POST /api/v1/management/commands` run the same engine: `backup-create`, `restore-verify` (optional `backupId`), `backup-retention` (optional `retentionCount`) and `backup-upload`. Each needs `dryRun: false` and `confirmation` equal to the kind for a real run; `backup-create` no longer needs maintenance mode. A `backup-retention` run that keeps fewer archives than `Backup__RetentionCount` needs the Owner role; operators may preview it and may apply the configured count.
+The panel also shows (AGT-3734):
+
+- **Restored from a backup**, after an offline restore: the archive, when it was made and on which host, when and by whom it was restored, the backup key and secret store key fingerprints, and that work done on the old host after the archive time is not in this installation. The receipt comes from `<workspace>/.audit/restore-receipts.jsonl`; the same restore is a `backup-restore` row in the management audit `<workspace>/.audit/management.jsonl`.
+- **Archives at the off-host target that this host does not know**, for example those of a lost host. A `directory` target is listed (complete `studio-backup-*.tar.gz.sbk` files only, bounded at 5 seconds). An `sftp` or `s3` target is write-only for the host by design, so the panel says that it cannot list the target; list it there with an account that may read it.
+- **What the last verification shows**: what a verified run proved and what it did not (see [Schedule, retention and verification](#schedule-retention-and-verification)).
+
+Owners and operators read the same state from `GET /api/v1/management/backups` (`no-store`). Operator agents, whose credentials never reach `/api/v1`, read it from `GET /api/operator/backups` or `studio-op backups`; a caller without installation-wide operate permission does not see the target or the key fingerprints, and host paths in its error text read `<path>`. Off-host errors and warning text in that scoped view contain no target detail. In the UI, **Settings > Task Server** offers **Create backup**, **Verify restore**, **Apply retention**, and **Copy off-host**. Preview an action there, then confirm it to run. Settings > Retention covers task and artifact retention and points to these installation controls; it does not list full backup sets. The management commands of `POST /api/v1/management/commands` run the same engine: `backup-create`, `restore-verify` (optional `backupId`), `backup-retention` (optional `retentionCount`) and `backup-upload`. Each needs `dryRun: false` and `confirmation` equal to the kind for a real run; `backup-create` no longer needs maintenance mode. A `backup-retention` run that keeps fewer archives than `Backup__RetentionCount` needs the Owner role; operators may preview it and may apply the configured count.
 
 Before retiring or moving a host, run `backup-create` and wait until the newest backup shows **Copied** in the Installation backups panel. The command result reports whether that archive was copied, whether its copy failed, or whether no target is configured. If the copy failed, keep the host available and retry with `backup-upload`; a locally created archive is not yet safe from host loss.
 
@@ -163,12 +185,14 @@ Restore needs the archive with its `.sha256` file, the backup key copy, the secr
 1. On the new host, extract the matching release's `deploy/compose/monolith-networked` directory and run `bash setup.sh [--cloudflare | --private] <version> <hostname> <data-directory>`. Do not start the stack. Use the version that made the backup or a newer one.
 2. Fetch the archive and its `.sha256` file from the off-host target with an account that may read it. Bring both key copies and the escrowed host CA private key with its `.pub` file to the host temporarily.
 3. Load an SSH agent with a key that can clone each project remote (`ssh-add`), or use HTTPS remotes that need no credentials.
-4. Run `bash restore-backup.sh --key <backup-key-copy> --secret-key <secret-key-copy> --host-ca <escrowed-ca-private-key> <archive>` in the stack directory. Place the matching public key at `<escrowed-ca-private-key>.pub`. A one-shot container of the stack's API image checks the checksum and both key fingerprints, clones every checkout from its recorded origin and branch, and only then writes the workspace, home, task storage, host certificates, Caddy data and origin-pull CA, fetches the Studio refs from the bundles, and checks every file against its hash. It refuses a running stack and any target that already holds a file; the only exception is the workspace repository that `setup.sh` initialized (its single installer commit of `.gitignore` and a clean working tree), which the archived workspace and its repository replace. It installs both key copies and the host CA, checks the CA fingerprint against restored certificate state when recorded, and writes the archived stack configuration into `restored-stack/`.
+4. Run `bash restore-backup.sh --key <backup-key-copy> --secret-key <secret-key-copy> --host-ca <escrowed-ca-private-key> <archive>` in the stack directory. Place the matching public key at `<escrowed-ca-private-key>.pub`. A one-shot container of the stack's API image checks the checksum and both key fingerprints, clones every checkout from its recorded origin and branch, and only then writes the workspace, home, task storage, host certificates, Caddy data and origin-pull CA, fetches all local refs from the bundles, and checks every file against its hash. It refuses a running stack and any target that already holds a file; the only exception is the workspace repository that `setup.sh` initialized (its single installer commit of `.gitignore` and a clean working tree), which the archived workspace and its repository replace. It installs both key copies and the host CA, checks the CA fingerprint against restored certificate state when recorded, and writes the archived stack configuration into `restored-stack/`. Last, it writes a restore receipt into the workspace (archive id and checksum, archive time and host, restore time, the operator as `user@host`, the key fingerprints, files restored and checkouts cloned) and a `backup-restore` row into the management audit; the Operations page shows it after the start.
 5. Delete the temporary key and CA copies from the host again. Keep the installed CA in `STUDIO_HOST_CA_DIR`.
 6. Compare `restored-stack/.env` with the new `.env`: carry over the backup target settings and `backup-target/` credentials; keep the new installer code, which is not needed because the restored access state already has an owner.
 7. For a public installation, install the Docker firewall as in the [install steps](./studio-website.md#install). Point DNS at the host.
-8. Run `docker compose up -d` (with `-f compose.yaml -f compose.runner-host.yaml` on a runner host) and sign in with an existing account. All browser sessions from the archive have been ended, so every person signs in again with their existing second factor. The first Owner sign-in shows the archive id and creation time with a security review notice. Check that runners reconnect, that the Operations page shows a new good backup after the first schedule tick, and that it reaches the off-host target, before retiring the old host.
-9. Compare the archive creation time in that notice with the security changes made since then. In [Access](/#/workspace/settings/access), revoke or rotate **every** API or service account token and runner credential changed after the archive; reapply user disables, password resets, role reductions and other access changes. In [Secrets](/#/workspace/settings/secrets), rotate secrets changed after the archive and update their external copies. A token revoked after the backup can become valid again on the restored host until you revoke it again. Review the affected Access and Secrets records before retiring the old host.
+8. Start with `docker compose up -d` (with `-f compose.yaml -f compose.runner-host.yaml` on a runner host). The empty Operations named volumes are created and `operations-bootstrap` makes new principals and secrets. Confirm `docker compose ps operations-bootstrap operations-server operations-agent` shows a successful bootstrap and running services. The old Operations Server principals, revocations and history do not return. If remote host agents exist, stop their old services, issue new scoped agent credentials through the Operations enrollment procedure in [host access migration](./operator-agent.md#8-host-access-migration-sm-6), update each host's `OPERATIONS_TOKEN_FILE` and private tunnel, then restart its agent and confirm a typed host inspection. Recheck host certificate revocations against the restored Studio CA and reissue or revoke certificates as needed before granting operator access.
+9. If Quality Studio was enabled, recreate `/srv/agent-studio/quality/data` and `/srv/agent-studio/quality/registry` with the ownership and permissions in [Studio website](./studio-website.md#quality-studio-profile), start `docker compose --profile quality up -d`, then re-register its repositories and check the Studio project mappings. Its previous runs and registry do not return.
+10. Sign in with an existing account. All browser sessions from the archive have been ended, so every person signs in again with their existing second factor. The first Owner sign-in shows the archive id and creation time with a security review notice. Check that runners reconnect, that the Operations page shows a new good backup after the first schedule tick, and that it reaches the off-host target, before retiring the old host.
+11. Compare the archive creation time in that notice with the security changes made since then. In [Access](/#/workspace/settings/access), revoke or rotate **every** API or service account token and runner credential changed after the archive; reapply user disables, password resets, role reductions and other access changes. In [Secrets](/#/workspace/settings/secrets), rotate secrets changed after the archive and update their external copies. A token revoked after the backup can become valid again on the restored host until you revoke it again. Review the affected Access and Secrets records before retiring the old host.
 
 If the archive does not open, a clone fails or a later step fails, the restore empties its targets again, puts the workspace repository from `setup.sh` back and stops. Fix the cause and run it again on the same data directory.
 
@@ -187,7 +211,7 @@ The API binary has offline backup commands that run without starting the host, f
 ```sh
 dotnet OrchestratorApi.dll --studio-backup inspect --key backup.key --archive <archive>         # manifest, file count, credential counts, consistency
 dotnet OrchestratorApi.dll --studio-backup decrypt --key backup.key --archive <archive> --output backup.tar.gz
-dotnet OrchestratorApi.dll --studio-backup restore --key backup.key --archive <archive> --target workspace=<dir> ... [--no-clone]
+dotnet OrchestratorApi.dll --studio-backup restore --key backup.key --archive <archive> --target workspace=<dir> ... [--restored-by <name>] [--no-clone]
 dotnet OrchestratorApi.dll --studio-backup key-create <file> | key-id <file>
 ```
 
@@ -197,7 +221,7 @@ A decrypted `tar.gz` holds credential material; delete it when done.
 
 ### Tested restore
 
-`backend.Tests/StudioBackupTests.cs` restores a backup onto an empty fake host: a workspace with access state and an empty lane, a home with an owner-only SSH key and a package cache, a checkout with a remote, a Studio-only ref, task storage inside it, a worktree and an untracked file, a checkout without a remote, and task storage outside checkouts. The new host's data directory is laid out as `setup.sh` leaves it, including the initialized workspace repository; a variant refuses that workspace once it holds another file, a second commit or an edited `.gitignore`, and another keeps it in place when the archive is missing, the backup key is wrong or a clone fails. It checks the restored files and modes, the cloned checkout with its branch and Studio ref, that the worktree, the untracked file and the cache stay out, the installed secret store key, and that a second restore, a wrong secret store key and a wrong backup key are refused. The same class covers the schedule, retention, consistency while JSON, journal and SQLite stores are written, the key material guard, the off-host copy with fake, directory, SFTP and S3 targets, and the stale warning.
+`backend.Tests/StudioBackupTests.cs` restores a backup onto an empty fake host: a workspace with access state and an empty lane, a home with an owner-only SSH key and a package cache, a checkout with a remote, a Studio-only ref, unpushed local branches, task storage inside it, a worktree and an untracked file, a checkout without a remote, and task storage outside checkouts. The new host's data directory is laid out as `setup.sh` leaves it, including the initialized workspace repository; a variant refuses that workspace once it holds another file, a second commit or an edited `.gitignore`, and another keeps it in place when the archive is missing, the backup key is wrong or a clone fails. It checks the restored files and modes, the cloned checkout with its branch and local refs, that the worktree, the untracked file and the cache stay out, the installed secret store key, and that a second restore, a wrong secret store key and a wrong backup key are refused. The same class covers the schedule, retention, consistency while JSON, journal and SQLite stores are written, the key material guard, the off-host copy with fake, directory, SFTP and S3 targets, and the stale warning.
 
 ## Decisions
 
@@ -209,6 +233,12 @@ AGT-3574 implemented these options:
 - **Targets:** SFTP through the OpenSSH client in the image, S3-compatible storage through a signed PUT without a new package, and a mounted directory. All need only write access.
 - **Backup audit (AGT-3737):** backup operations write to the existing hash-chained control plane audit trail instead of a second, unread ledger, and the Owner reads them in the Access area next to operator activity. Retention below the configured count needs the Owner; a preview stays open to operators, because it deletes nothing.
 - **Coverage:** the data home, host certificates, stack configuration and Caddy data join the workspace and task storage; checkouts still come back from their remotes; the secret store key, the backup key and the host CA key stay with the owner.
+
+AGT-3734 (restore playthrough AGT-3711, finding F6) added:
+
+- **Restore receipt in the workspace:** the offline restore writes `.audit/restore-receipts.jsonl` and a `backup-restore` row in `.audit/management.jsonl` of the restored workspace, not into the backup directory, which is not a backup source. The receipt therefore travels with every later backup.
+- **Listing the target only where the host may read it:** a `directory` target is listed; SFTP and S3 targets keep write-only credentials, and the panel says that it cannot list them instead of widening the host's rights.
+- **Verification scope stated, not widened:** the daily verification still restores with the key on the host and without cloning; the panel and the record say so, and the escrowed copies get a periodic owner check.
 
 ## Host-level backup with the systemd timer
 
@@ -225,6 +255,10 @@ The AGT-3365 scripts back the data up from the host with age encryption to an SS
 | Project checkouts (working tree, branches, history) | No; the archive records each checkout's `origin` URL and branch | The project remote |
 | Checkouts without an `origin` remote | Yes, all refs as a Git bundle | The archive |
 | Task worktrees | No | Their branches, through the checkout and the remote |
+| Local-only branches and unpushed checkout commits | No | Accepted loss for this optional host-level backup; use the scheduled backup above to retain them |
+| Operations Server named volumes (`operations-data`, `operations-principals`, `operations-agent-secret`, `operations-client-secret`, `operations-agent-data`) | No | Re-bootstrap and re-enrol remote host agents as in the new-host restore steps above; prior server state is accepted loss |
+| Quality Studio `/srv/agent-studio/quality/data` and registry | No | Recreate and re-register as in the new-host restore steps above; prior Quality Studio state is accepted loss |
+| Backend file logs under `/app/logs/backend` | No | Accepted loss |
 | Secret store key (`STUDIO_SECRETS_KEY_FILE`, outside the data directory) | No; the manifest records only its fingerprint | Its separate copy, see below |
 | `home` (CLI logins), `caddy-data`, `caddy-config`, `origin-pull`, `.env` | No | Sign the CLIs in again, Caddy issues certificates again, the origin-pull CA comes from its owner copy, `setup.sh` writes a new `.env` |
 

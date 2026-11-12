@@ -12,10 +12,30 @@ public sealed record BackupOverviewItem(
     string Id, string CreatedAt, long SizeBytes, string Sha256, int FileCount,
     string Verification, string OffHost, int UnsettledFiles);
 
-public sealed record BackupVerificationOverview(string At, string? BackupId, string Outcome, string? Detail);
+/// <summary>
+/// The last restore verification. <c>Proved</c> and <c>NotProved</c> state the
+/// scope of a verified run (AGT-3734): it restores with the key on this host
+/// and does not clone from the origins or check the escrowed key copies.
+/// </summary>
+public sealed record BackupVerificationOverview(
+    string At, string? BackupId, string Outcome, string? Detail,
+    IReadOnlyList<string>? Proved = null, IReadOnlyList<string>? NotProved = null);
 
 public sealed record BackupOffHostOverview(
-    string Kind, string? Target, string State, string? LastUploadedId, string? LastUploadedAt, string? LastError);
+    string Kind, string? Target, string State, string? LastUploadedId, string? LastUploadedAt, string? LastError,
+    BackupOffHostListing? Listing = null);
+
+/// <summary>An archive at the off-host target that the local catalog does not know.</summary>
+public sealed record BackupOffHostArchive(string Id, string FileName, long SizeBytes, string ModifiedAt);
+
+/// <summary>
+/// What the off-host target holds (AGT-3734). <c>State</c> is <c>listed</c>,
+/// <c>not-listable</c> (the host may only write there), <c>unreachable</c> or
+/// <c>not-configured</c>. <c>NotInCatalog</c> are archives this host's catalog
+/// does not know, for example those of a lost host before a restore.
+/// </summary>
+public sealed record BackupOffHostListing(
+    string State, string? Detail, int ArchiveCount, IReadOnlyList<BackupOffHostArchive> NotInCatalog);
 
 /// <summary>
 /// Backup state for the Operations page and operator agents
@@ -41,7 +61,8 @@ public sealed record BackupOverview(
     BackupOffHostOverview OffHost,
     IReadOnlyList<BackupWarning> Warnings,
     IReadOnlyList<BackupOverviewItem> Backups,
-    string GeneratedAt);
+    string GeneratedAt,
+    BackupRestoreReceipt? LastRestore = null);
 
 /// <summary>
 /// Installation backups (AGT-3574): creates consistent encrypted archives,
@@ -56,6 +77,9 @@ public sealed record BackupOverview(
 /// </summary>
 public sealed class StudioBackupService
 {
+    /// <summary>How long the overview waits for a mounted target directory to list.</summary>
+    public static readonly TimeSpan ListTimeout = TimeSpan.FromSeconds(5);
+
     private readonly IConfiguration _configuration;
     private readonly BackupWritePause _pause;
     private readonly IKeyEncryptionKeySource? _secretKey;
@@ -245,7 +269,11 @@ public sealed class StudioBackupService
         var offHost = new BackupOffHostOverview(
             target?.Kind ?? options.Target.Kind, target?.Description, offHostState,
             lastUploaded?.Id, lastUploaded?.Upload?.UploadedAt,
-            targetProblem ?? newestGood?.Upload?.Error);
+            targetProblem ?? newestGood?.Upload?.Error,
+            Listing(target, targetProblem, records));
+        var lastRestore = options.Sources.FirstOrDefault(source => source.Name == "workspace") is { } workspace
+            ? BackupRestoreReceipts.Latest(workspace.Path)
+            : null;
 
         var warnings = new List<BackupWarning>();
         if (HostCertificateAuthority.FingerprintWarning(_configuration) is { } caWarning)
@@ -261,7 +289,10 @@ public sealed class StudioBackupService
         if (options.Configured)
         {
             if (newestGood is null)
-                warnings.Add(new("backup-missing", state.LastRun is null ? "warning" : "danger", "No good backup exists yet."));
+                warnings.Add(new("backup-missing", state.LastRun is null ? "warning" : "danger",
+                    lastRestore is null
+                        ? "No good backup exists yet."
+                        : $"No good backup exists on this host since the restore of {lastRestore.BackupId}."));
             else if (stale)
                 warnings.Add(new("backup-stale", "danger",
                     $"The newest good backup is {ageHours:0.#} hours old; the threshold is {options.StaleAfter.TotalHours:0.#} hours."));
@@ -300,7 +331,11 @@ public sealed class StudioBackupService
             : warnings.Count > 0 ? "warning"
             : "ok";
         BackupVerificationOverview? verification = state.LastVerification is { } last
-            ? new(last.At, last.BackupId, last.Outcome, last.Error)
+            ? last.Outcome == "verified"
+                ? new(last.At, last.BackupId, last.Outcome, last.Error,
+                    VerificationProved(last.BackupId, records.FirstOrDefault(record => record.Id == last.BackupId)?.KeyId),
+                    VerificationNotProved)
+                : new(last.At, last.BackupId, last.Outcome, last.Error)
             : null;
         return new BackupOverview(
             overall, options.Configured, IsRunning, SafeKeyId(options), SecretKeyId(),
@@ -309,7 +344,54 @@ public sealed class StudioBackupService
             BackupSchedulePolicy.NextBackupAt(options, state, records.FirstOrDefault()) is { } next
                 ? (next < now ? now : next).ToString("O") : null,
             lastGood, ageHours, stale, state.LastRun, verification, offHost, warnings,
-            records.Take(20).Select(Item).ToArray(), now.ToString("O"));
+            records.Take(20).Select(Item).ToArray(), now.ToString("O"), lastRestore);
+    }
+
+    /// <summary>What a verified restore verification does not show; the runbook's periodic owner check covers the keys.</summary>
+    public static readonly IReadOnlyList<string> VerificationNotProved =
+    [
+        "Project checkouts were not cloned from their origins; a real restore needs read access to every remote.",
+        "The owner's escrowed copies of the backup key and the secret store key were not checked; "
+        + "compare their fingerprints with backup-key.sh id and secret-key.sh id.",
+    ];
+
+    public static IReadOnlyList<string> VerificationProved(string? backupId, string? keyId) =>
+    [
+        $"The archive {backupId ?? "(unknown)"} matches the checksum recorded when it was made.",
+        keyId is null
+            ? "The backup key on this host opens and authenticates it."
+            : $"The backup key on this host (fingerprint {keyId}) opens and authenticates it.",
+        "Every restored file matches its recorded SHA-256 hash in an empty staging folder.",
+        "Every restored Git repository passes git fsck --connectivity-only.",
+    ];
+
+    private static BackupOffHostListing Listing(IBackupTarget? target, string? targetProblem, IReadOnlyList<BackupRecord> records)
+    {
+        if (target is null)
+            return new("not-configured", targetProblem ?? "No off-host target is configured.", 0, []);
+        IReadOnlyList<BackupTargetFile>? files;
+        try
+        {
+            // A hung network mount must not hang the Operations page.
+            var listing = Task.Run(target.ListArchives);
+            if (!listing.Wait(ListTimeout))
+                return new("unreachable", $"The off-host target did not answer within {ListTimeout.TotalSeconds:0} seconds.", 0, []);
+            files = listing.Result;
+        }
+        catch (AggregateException ex) when (ex.InnerException is BackupException or IOException or UnauthorizedAccessException)
+        {
+            return new("unreachable", ex.InnerException!.Message, 0, []);
+        }
+        if (files is null)
+            return new("not-listable",
+                $"This host may only write to the {target.Kind} target, so it cannot list the archives there. "
+                + "List them at the target with an account that may read it.", 0, []);
+        var known = records.Select(record => record.Id).ToHashSet(StringComparer.Ordinal);
+        var unknown = files
+            .Select(file => new BackupOffHostArchive(file.Name[..^BackupCatalog.ArchiveSuffix.Length], file.Name, file.SizeBytes, file.ModifiedAt))
+            .Where(archive => !known.Contains(archive.Id))
+            .ToArray();
+        return new("listed", null, files.Count, unknown);
     }
 
     private async Task<BackupRecord> CreateLockedAsync(string trigger, CancellationToken cancellationToken)
@@ -440,7 +522,9 @@ public sealed class StudioBackupService
                         $"Restored repository {head.Path} failed git fsck: {checkedRepository.StandardError.Trim()}");
             }
             verification = new BackupVerificationRecord(started.ToString("O"), "verified",
-                $"Restored {result.FilesRestored} files and {result.Manifest.Checkouts.Count} checkout records into an empty staging host; every hash matched and Git connectivity passed.",
+                $"Restored {result.FilesRestored} files and {result.Manifest.Checkouts.Count} checkout records into an empty staging host "
+                + $"with the backup key on this host ({key.Id}); every hash matched and Git connectivity passed. Checkouts were not cloned from their origins "
+                + "and the escrowed key copies were not checked.",
                 result.FilesRestored);
         }
         catch (Exception ex) when (ex is BackupException or IOException or UnauthorizedAccessException

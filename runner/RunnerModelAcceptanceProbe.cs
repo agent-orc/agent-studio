@@ -189,6 +189,12 @@ internal sealed class RunnerModelAcceptanceProbe
                         $"Model acceptance probe failed: {exception.GetType().Name}.");
                 }
 
+                // Another host-local real probe (the provider auth canary) held
+                // the shared lock, so this model was never asked. Recording that
+                // as "unknown" would cache a non-verdict for ten minutes; leave
+                // the route unprobed so the next refresh retries it.
+                if (result.ExitCode != 0
+                    && result.StdErr == ProviderRealRequestHostFlight.InProgress) continue;
                 var status = result.ExitCode == 0 ? "ready" :
                     IsModelRejection(result, model) ? "unavailable" : "unknown";
                 lock (_sync)

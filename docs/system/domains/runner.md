@@ -3,6 +3,11 @@
 Version: 2026-11-02
 Status: System-of-record map for runner-side changes.
 
+Review host load per core divides the host load average by the host CPU count.
+The review role's cgroup quota is a separate capacity limit and is never used
+as the denominator for host load. A known load or slot-capacity hold keeps a
+pending Auto Review card out of the ownerless-card escalation path.
+
 Task Server connectivity stays capability-ready until three consecutive failed
 requests span at least 60 seconds. The capability detail retains the failure
 count, and the route advertises structured `since`, `httpStatus`, and `request`
@@ -925,9 +930,13 @@ unreported claim expires with its lease and is queued again.
   Changing a remotely placed project to local execution requires the Owner.
 - `runner/OneShotJobAdmission.cs`: coding and review hosts poll bounded model
   jobs independently of task claims. The review host starts this poll after
-  client registration. A missing claim route (HTTP 404) is logged once and
-  retried every five minutes; a successful poll logs restoration and returns
-  to the normal three-second interval.
+  client registration. A missing claim route (HTTP 404) or a refusal saying
+  networked one-shot execution requires the standalone Task Server is logged
+  once and retried every five minutes. `OneShotClaimRouteObservation` keeps the
+  condition with first and last seen time and the backoff, and the daemon sends
+  it as `HostTelemetrySnapshotDto.OneShotClaimRoute` with its minutely
+  capability advertisement. A successful poll clears it, logs restoration and
+  returns to the normal three-second interval.
 - `backend/Features/Runner/RemoteChatWorkBroker.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteProjectChatRunner.cs`: assignment-aware remote side-sheet chat
@@ -1842,9 +1851,14 @@ unreported claim expires with its lease and is queued again.
   identity. Each persisted Coding slot emits one startup reconciliation line:
   `reattached`, `purged` with the process-proof reason, or fail-closed
   `retained`. Missing or mismatched coding processes are actively released and
-  returned to Ready. A non-adoptable review is settled as `ReviewInfra` with
-  classification `ExecutorRestarted`, the completed-command count and duration,
-  the failed process proof, and the retry reason. DB lease presence alone is
+  returned to Ready. A review whose worker is gone while its lease is still
+  valid is relaunched within the same attempt and resumes from
+  `review-progress.json`; a stop during workspace preparation hands the slot
+  over and the replacement prepares again (AGT-3647). Only after
+  `DurableReviewProcess.MaximumWorkerRelaunches` relaunches is a non-adoptable
+  review settled as `ReviewInfra` with classification `ExecutorRestarted`, the
+  completed-command count and duration, the failed process proof, and the
+  retry reason. DB lease presence alone is
   never process-liveness evidence. systemd must use `KillMode=process`. It must
   also use `PrivateTmp=false`: a private-`/tmp` unit unmounts its namespace-scoped
   `/tmp` on every restart even though `KillMode=process` leaves the detached
@@ -1989,6 +2003,11 @@ unreported claim expires with its lease and is queued again.
   and does not shift the positions of eligible cards.
 - A re-open starts a new run. It must rerun pre steps, core, post steps, and
   append run history instead of flattening earlier evidence.
+- An operator's Escalated to Ready reissue carries the confirmed findings and
+  owner note in `operator-reissue.json`, written after the old review artifacts
+  rotate into history. The first pickup in that review epoch reads this handoff
+  even without the automatic reissue tag or an active prior pipeline record.
+  A later automatic reissue reads its new follow-up and review findings instead.
 - Before any automatic auto-review follow-up is persisted,
   `ReviewDecisionOrchestrator` compares its whitespace- and case-normalized
   base text with every prompt under `orchestrator-follow-up-history/`. A match

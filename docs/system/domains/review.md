@@ -15,6 +15,23 @@ delivery.
 Version: 2026-11-11
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
+## Target-branch plan and older deliveries (AGT-3743)
+
+The target branch remains the only source of the frozen review command plan.
+New plans record the target commit SHA. Legacy plans without it use the fetched
+target ref tip. Before preparation or verification, the
+review host checks relative file references in declared tool and preparation
+commands against that commit and the delivery's Git tree. If the plan commit
+contains a file that the delivery tree lacks, the attempt ends as
+`DeliveryPredatesReviewPlan`. Option **(b)** is implemented: the card receives
+an automatic merge round whose prompt names the full immutable result ref and
+asks the agent to merge the target branch, resolve conflicts, and submit the
+new delivery. A merge conflict is handled by that round. The attempt runs no
+review commands and spends no review infrastructure retry. A shell exit 127
+with no such Git-tree skew remains `ReviewInfra/ToolUnavailable` when the host
+lacks the declared binary. A delivery that contains the file runs its plan as
+before.
+
 ## Host source cache startup
 
 The review daemon creates and validates an absolute host source cache root before
@@ -54,7 +71,9 @@ and limits the total diff to 580,000 characters. Visual review includes at
 most 12 screenshots of at most 2 MiB each. The prompt names omissions, and
 the command's review evidence carries a `review-input-budget-<step>.txt`
 artifact when material was omitted. A CLI refusal before a model verdict,
-including `input_too_large`, is `ReviewInfra` with a named cause.
+including `input_too_large`, is `ReviewInfra` with a named cause only when the
+CLI error stream has the refusal and no verdict marker or model usage exists.
+An unknown model is a `ModelConfigurationFault` first.
 
 The four stock Claude aspects freeze a common review-context prefix containing
 the brief, delivery acceptance scope, project and card context, diff summary,
@@ -232,6 +251,8 @@ at most 4 members, within the material budget, never waiting for coding).
   and thinking level of the members' per-card plan. Only the cross-card prompt
   carries the Dossier excerpt, once. The grade is computed per member from the
   package verdicts, as the remote per-card grade is.
+  The excerpt uses its own `DossierExcerptCharacters` budget and keeps its
+  truncation marker in the final prompt.
 - **Structured output.** Every aspect ends with one `package-review` JSON block:
   one verdict per member with its acceptance criteria, and findings with file
   and line. A finding without both is discarded. The line's hunk owner owns the
@@ -450,6 +471,14 @@ the existing authority scheduler while its two-retry budget remains. A scheduled
 retry counts as an owner. Once the budget is spent, escalation names the review
 classification and summary.
 
+The watchdog park uses the `environmental` category with the
+`auto-review-stranded` cause detail and records the completed run time, last
+review outcome and retry state. Its recall
+condition checks whether the immutable delivery is still available for review.
+On an unchanged parked card, `POST /api/tasks/{jobId}/review/retry` moves the
+same delivery back to Auto Review and mints a fresh ReviewAttempt. The card also
+links the intervention receipt. Its Undo restores Auto Review only while the
+park's lane entry, card write and attempt identities still match the receipt.
 A passed review that ran its own build and tests (its frozen plan has
 `BuildTestDeferredToBatch: false`) never re-enters the batch gate: batch
 admission refuses it with `BuildTestNotDeferred` (AGT-3740).
@@ -729,8 +758,15 @@ either. Two paths are deliberately outside the attempt directory (AGT-3429):
   scratch folder holds NuGet's extraction locks. See
   [pipeline.md](pipeline.md) for what a dependency-cache hit may skip.
 
+The conventional Node preparation plan runs `npm ci` only for selected package
+roots with a tracked `package-lock.json` or `npm-shrinkwrap.json`. It records
+roots without a tracked lockfile in `PreparationSkips` with reason
+`no-tracked-lockfile`; an explicit build-profile install command still runs.
+An npm lockfile with no installed packages may complete without `node_modules`.
+For that scope, a matching install marker is sufficient preparation.
+
 Before each candidate tool command, the review workspace checks every prepared
-dependency scope for its directory and lockfile marker. A missing scope reruns
+dependency scope for its required directory and lockfile marker. A missing scope reruns
 preparation and records the miss in command evidence. An environment diagnosis
 evicts the candidate cache entry and invalidates its scope markers, then the
 next candidate command prepares those scopes again. It keeps the dependency
@@ -1504,6 +1540,32 @@ The drain decision reuses `ReviewSlotAdmissionDecision` with its
 incapable of cancelling a running review. Operator procedure and the log lines
 to check live in
 [linux-runner-host.md](../../operations/setup/linux-runner-host.md#which-release-grades-an-adopted-review).
+
+## Review host restarts stay visible (AGT-3690)
+
+A replacement daemon that cannot prove a review worker alive settles the
+attempt as `ReviewInfra / ExecutorRestarted` and the server counts it as a
+`worker-not-reported` loss. Three surfaces say so:
+
+- **Card.** The Auto Review queue line reads the failure classification, the
+  lease host, the loss time and the scheduled retry from the board snapshot:
+  "Review lost: review host restarted (lab-review-host, 02:27). Automatic
+  retry 1 of 2 at 02:28." The host name links to the host detail.
+- **Host detail.** `AttemptAuthorityService` keeps the newest 20 restarts per
+  review runner identity, each with its lost attempts and their task keys.
+  `GET /api/v1/management/remote-hosts` returns them as `reviewRestarts`, and
+  the host detail lists them with a link to each lost card. `restartedAt` and
+  `reviewsLost` still describe the newest restart only. The standalone Task
+  Server keeps only that newest restart for now.
+- **Escalation.** When the retry budget is spent and the newest cause is a
+  restart, the card escalates as `environmental` and the reason names every
+  restart (host, time, attempt) instead of "cannot be materialized".
+
+Covered by `TaskLiveStatusProjectionTests`, `ReviewAttemptChainSummaryTests`,
+`V1ReviewPlaneDiagnosticsEndpointTests.Restart_history_keeps_a_lost_review_after_a_later_clean_restart`,
+`RemoteRunnerEndToEndTests.Monolith_v1_review_host_restart_names_the_host_and_retry_then_escalates_on_the_restarts`,
+and `frontend/e2e/settings/first-run-review-host-restart.spec.ts`, which kills
+the real `first-run-review` daemon mid-review twice.
 
 ## Terminal slot deletion is final (AGT-2864)
 

@@ -10,9 +10,8 @@ public sealed record GateShardHostResult(string Host, GateShardPart Part, BuildT
 ///   <item>Every shard must pass. A shard is green when its run passed, when
 ///   only actively quarantined tests failed, or when its one targeted re-run
 ///   passed (the names stay recorded as flaky).</item>
-///   <item>A red test anywhere is a code failure, even when another shard or
-///   host failed for infrastructure reasons: the red is evidence about the
-///   subject.</item>
+///   <item>A shard hang prevents attribution, even when another shard reported
+///   a red test. Other infrastructure failures do not hide a confirmed red.</item>
 ///   <item>Without a red test, any infrastructure failure (timeout,
 ///   cancellation, launch, toolchain, transport, incomplete shard evidence)
 ///   makes the run an infrastructure verdict, never a code failure, even when
@@ -28,6 +27,8 @@ public static class GateShardVerdictPolicy
     public static BuildTestGateFailureKind MergeShards(IEnumerable<GateShardEvidence> shards)
     {
         var ordered = shards.OrderBy(shard => shard.Index).ToArray();
+        if (ordered.Any(shard => shard.Hang is not null))
+            return BuildTestGateFailureKind.Environment;
         if (ordered.Any(shard => shard.Outcome == GateShardOutcomes.Failed))
             return BuildTestGateFailureKind.Code;
         var infrastructure = ordered.FirstOrDefault(shard => shard.Outcome == GateShardOutcomes.Infrastructure);
@@ -47,9 +48,11 @@ public static class GateShardVerdictPolicy
         var ordered = hosts.OrderBy(host => host.Part.Index).ToArray();
         var primary = ordered[0];
         var suites = MergeSuites(ordered);
-        var codeRed = ordered.FirstOrDefault(host => IsCodeRed(host.Result));
+        var hung = ordered.FirstOrDefault(host => host.Result.TestShards
+            .SelectMany(suite => suite.Shards).Any(shard => shard.Hang is not null));
+        var codeRed = hung is null ? ordered.FirstOrDefault(host => IsCodeRed(host.Result)) : null;
         // A share stopped because a sibling failed first is a consequence, not the cause.
-        var infra = ordered.FirstOrDefault(host => host.Result.IsInfrastructureFailure
+        var infra = hung ?? ordered.FirstOrDefault(host => host.Result.IsInfrastructureFailure
                         && host.Result.FailureKind != BuildTestGateFailureKind.Cancellation)
                     ?? ordered.FirstOrDefault(host => host.Result.IsInfrastructureFailure);
         // A share that is neither green nor classified fails the run all the same.

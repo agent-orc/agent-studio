@@ -32,12 +32,17 @@ public static class AccessSecurityEndpoints
                 // The address is the client the edge resolved (Cloudflare or
                 // direct), forwarded by the trusted frontend hop (AGT-3230).
                 var audit = loggers.CreateLogger("AgentStudio.Security.Bootstrap");
+                var errors = AccessSecurityStore.BootstrapFieldErrors(request);
                 if (RequiresBootstrapCode(context, configuration) && !MatchesBootstrapCode(request.BootstrapCode, configuration))
                 {
                     audit.LogWarning("Owner bootstrap without a valid installer code from client {ClientAddress}", context.Connection.RemoteIpAddress);
-                    throw new SecurityOperationException(403, "bootstrap-code-required", "A valid installer owner code is required.");
+                    errors["bootstrapCode"] = ["A valid installer owner code is required."];
                 }
-                var created = store.Bootstrap(request, publicEntry: true);
+                if (errors.Count > 0)
+                    return Results.Json(new { error = "bootstrap-validation", message = "Check the owner details and try again.", errors },
+                        statusCode: StatusCodes.Status400BadRequest);
+                var created = store.Bootstrap(request, publicEntry: true,
+                    device: SessionDevice(context), address: SessionAddress(context));
                 audit.LogInformation("Owner {Username} bootstrapped from client {ClientAddress}", created.User.Username, context.Connection.RemoteIpAddress);
                 SetSessionCookies(context, created.SessionToken, created.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, SessionUser(created.User, store, context), created.CsrfToken,
@@ -79,8 +84,8 @@ public static class AccessSecurityEndpoints
                 var key = ClientThrottleKey(context.Connection.RemoteIpAddress);
                 var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key,
                     request.SecondFactorCode, requireSecondFactor: true,
-                    device: context.Request.Headers.UserAgent.ToString()[..Math.Min(context.Request.Headers.UserAgent.ToString().Length, 160)],
-                    address: context.Connection.RemoteIpAddress?.ToString(), passkey: request.Passkey,
+                    device: SessionDevice(context),
+                    address: SessionAddress(context), passkey: request.Passkey,
                     origin: RequestOrigin(context), rpId: context.Request.Host.Host);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, SessionUser(result.User, store, context), result.CsrfToken,
@@ -92,12 +97,16 @@ public static class AccessSecurityEndpoints
         auth.MapPost("/invite/accept", (AcceptInvitationRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
             Execute(() =>
             {
-                var accepted = store.AcceptInvitation(request, publicEntry: true);
+                var accepted = store.AcceptInvitation(request, publicEntry: true,
+                    device: SessionDevice(context), address: SessionAddress(context));
                 SetSessionCookies(context, accepted.SessionToken, accepted.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true,
                     SessionUser(accepted.User, store, context), accepted.CsrfToken,
                     SecondFactorEnrollmentRequired: store.AuthenticateSession(accepted.SessionToken, touch: false)?.Session.SecondFactorEnrollmentOnly == true));
             }));
+
+        auth.MapGet("/invite/preview", (string token, AccessSecurityStore store, AgentStudio.Registry.ProjectRegistry registry)
+            => Execute(() => Results.Ok(store.PreviewInvitation(token, registry))));
 
         // The local profile treats X-Client-Id as attribution only, so it must not
         // become an alternate credential for any auth administration endpoint.
@@ -208,6 +217,13 @@ public static class AccessSecurityEndpoints
             {
                 RequireOwner(context, store);
                 return Results.Ok(store.ListUsers().Select(ToResponse));
+            }));
+
+        auth.MapGet("/directory", (HttpContext context, AccessSecurityStore store) =>
+            Execute(() =>
+            {
+                RequireHuman(context, store);
+                return Results.Ok(store.ListUsers().Select(user => new { user.Id, user.DisplayName }));
             }));
 
         auth.MapPost("/users", (CreateUserRequest request, HttpContext context, AccessSecurityStore store) =>
@@ -428,6 +444,15 @@ public static class AccessSecurityEndpoints
     // forwarded 127.0.0.1 comes from whoever controls the proxy header.
     private static bool RequiresBootstrapCode(HttpContext context, IConfiguration configuration)
         => SecurityProfiles.IsNetworked(configuration) && !ConnectionPeer.IsDirectLoopback(context);
+
+    private static string SessionDevice(HttpContext context)
+    {
+        var userAgent = context.Request.Headers.UserAgent.ToString();
+        return string.IsNullOrWhiteSpace(userAgent) ? "Browser" : userAgent[..Math.Min(userAgent.Length, 160)];
+    }
+
+    private static string SessionAddress(HttpContext context)
+        => context.Connection.RemoteIpAddress?.ToString() ?? "Local connection";
 
     private static bool MatchesBootstrapCode(string? candidate, IConfiguration configuration)
     {

@@ -1,9 +1,11 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, OnInit, signal } from '@angular/core';
+import { DomSanitizer } from '@angular/platform-browser';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Observable, firstValueFrom } from 'rxjs';
-import { AuthService } from '../../services/auth.service';
+import { AuthService, type InvitationPreview } from '../../services/auth.service';
 import { createPasskey, getPasskey } from '../../services/webauthn';
+import { totpProvisioningUri, totpQrDataUrl } from '../../services/totp-provisioning';
 export { AuthService } from '../../services/auth.service';
 
 /** Shown when a gate request never reached the server. */
@@ -27,8 +29,9 @@ export function authGateFailure(error: unknown, fallback: string): string {
   styleUrl: './auth-gate.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class AuthGateComponent {
+export class AuthGateComponent implements OnInit {
   readonly auth = inject(AuthService);
+  private readonly sanitizer = inject(DomSanitizer);
   readonly inviteToken = new URLSearchParams(window.location.search).get('invite');
   username = '';
   displayName = '';
@@ -37,15 +40,55 @@ export class AuthGateComponent {
   newPassword = '';
   secondFactorCode = '';
   readonly totpSecret = signal('');
+  readonly totpUri = signal('');
+  readonly totpLink = computed(() => this.sanitizer.bypassSecurityTrustUrl(this.totpUri()));
+  readonly totpQr = signal('');
   readonly recoveryCodes = signal<string[]>([]);
   readonly submitting = signal(false);
   readonly error = signal('');
+  readonly invitation = signal<InvitationPreview | null>(null);
+  readonly invitationExpiry = signal('');
+  readonly invitationLoading = signal(false);
+
+  ngOnInit(): void {
+    if (!this.inviteToken) return;
+    this.invitationLoading.set(true);
+    this.auth.previewInvitation(this.inviteToken).subscribe({
+      next: preview => {
+        this.invitation.set(preview);
+        this.invitationExpiry.set(new Intl.DateTimeFormat('en-GB', {
+          day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+          hour12: false, timeZone: 'UTC',
+        }).format(new Date(preview.expiresAt)) + ' UTC');
+        this.invitationLoading.set(false);
+      },
+      error: error => { this.error.set(authGateFailure(error, 'Invitation is invalid or expired.')); this.invitationLoading.set(false); },
+    });
+  }
+  readonly bootstrapErrors = signal<Partial<Record<string, string[]>>>({});
 
   submit(): void {
     const status = this.auth.status();
-    if (status?.secondFactorEnrollmentRequired && !status.user?.mustChangePassword) {
+    if ((status?.secondFactorEnrollmentRequired || this.auth.factorRecommendation()) && !status?.user?.mustChangePassword) {
       this.confirmTotp();
       return;
+    }
+    this.error.set('');
+    this.bootstrapErrors.set({});
+    if (status?.bootstrapRequired && !this.inviteToken) {
+      const errors: Record<string, string[]> = {};
+      const username = this.username.trim();
+      if (!/^[\p{L}\p{N}._-]{3,64}$/u.test(username))
+        errors['username'] = ['Username must be 3 to 64 letters, digits, dots, underscores, or hyphens.'];
+      const passwordErrors: string[] = [];
+      if (this.password.length < 12 || this.password.length > 128)
+        passwordErrors.push('Password must be 12 to 128 characters.');
+      if (username && this.password.toLowerCase().includes(username.toLowerCase()))
+        passwordErrors.push('Password must not contain the username.');
+      if (passwordErrors.length) errors['password'] = passwordErrors;
+      if (status.bootstrapCodeRequired && !this.bootstrapCode.trim())
+        errors['bootstrapCode'] = ['Installer owner code is required.'];
+      if (Object.keys(errors).length) { this.bootstrapErrors.set(errors); return; }
     }
     this.submitting.set(true);
     this.error.set('');
@@ -62,6 +105,8 @@ export class AuthGateComponent {
         this.password = ''; this.newPassword = ''; this.bootstrapCode = ''; this.secondFactorCode = ''; this.submitting.set(false);
       },
       error: (error: unknown) => {
+        if (status?.bootstrapRequired && error instanceof HttpErrorResponse && error.error?.errors)
+          this.bootstrapErrors.set(error.error.errors);
         this.error.set(authGateFailure(error, 'Sign-in failed.'));
         this.submitting.set(false);
       },
@@ -72,7 +117,13 @@ export class AuthGateComponent {
     this.submitting.set(true);
     this.error.set('');
     this.auth.beginTotp().subscribe({
-      next: result => { this.totpSecret.set(result.secret); this.submitting.set(false); },
+      next: result => {
+        this.totpSecret.set(result.secret);
+        const uri = totpProvisioningUri(result.secret, this.auth.status()?.user?.username ?? this.username);
+        this.totpUri.set(uri);
+        void totpQrDataUrl(uri).then(qr => this.totpQr.set(qr)).catch(() => this.error.set('QR code could not be created. Use the link or secret.'));
+        this.submitting.set(false);
+      },
       error: (error: unknown) => { this.error.set(authGateFailure(error, 'Authenticator setup failed.')); this.submitting.set(false); },
     });
   }
@@ -90,6 +141,8 @@ export class AuthGateComponent {
     this.recoveryCodes.set([]);
     this.auth.finishFactorEnrollment();
   }
+
+  skipRecommendedFactor(): void { this.auth.dismissFactorRecommendation(); }
 
   async registerPasskey(): Promise<void> {
     this.submitting.set(true);

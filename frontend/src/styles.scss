@@ -806,7 +806,8 @@ select option:hover {
 .app-pending-button--pending {
   cursor: wait;
   opacity: 0.78;
-  font-size: 0;
+  // Scoped button font shorthands must not reveal the original text while busy.
+  font-size: 0 !important;
 }
 
 .app-pending-button--pending::before {
@@ -873,4 +874,14 @@ select option:hover {
   background: var(--studio-bg-elevated);
   border-color: var(--studio-border);
   color: var(--studio-text-primary);
+}
+
+.no-project-access {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--studio-spacing-6);
+  background: var(--studio-bg-editor);
+  color: var(--studio-fg);
+  text-align: center;
 }

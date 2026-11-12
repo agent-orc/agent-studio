@@ -125,8 +125,8 @@ export class BatchGateService {
   closeNow(project: string): Observable<unknown> {
     return this.http.post(this.url(project) + '/close-now', {});
   }
-  eject(project: string, taskKey: string): Observable<unknown> {
-    return this.http.post(`${this.url(project)}/members/${encodeURIComponent(taskKey)}/eject`, {});
+  eject(project: string, taskKey: string, reason: string): Observable<unknown> {
+    return this.http.post(`${this.url(project)}/members/${encodeURIComponent(taskKey)}/eject`, { reason });
   }
   /** Lifetime pilot figures; read-only and served from the batch store without Git. */
   report(project: string): Observable<BatchGateReport> {
@@ -143,6 +143,10 @@ export class BatchGateService {
   }
   releaseQueueStalled(project: string): Observable<GateQueueStallRelease> {
     return this.http.post<GateQueueStallRelease>(`${this.url(project)}/queue-stalls/release`, {});
+  }
+  retryInfrastructureGate(project: string, taskKey: string): Observable<{ retried: boolean }> {
+    return this.http.post<{ retried: boolean }>(
+      `${this.url(project)}/infrastructure/${encodeURIComponent(taskKey)}/retry`, {});
   }
 }
 
@@ -216,6 +220,13 @@ export function isBatchGateState(value: unknown): value is BatchGateState {
         optionalString(run['classification']) && optionalString(run['startedAtUtc']) &&
         optionalString(run['finishedAtUtc'])) &&
       (batch['publication'] == null || record(batch['publication'])))) return false;
+  if (value['perTaskGates'] != null && (!Array.isArray(value['perTaskGates']) ||
+      !value['perTaskGates'].every(gate => record(gate) && typeof gate['taskKey'] === 'string' &&
+        typeof gate['reviewAttemptId'] === 'string' &&
+        typeof gate['position'] === 'number' && typeof gate['total'] === 'number' &&
+        typeof gate['reason'] === 'string' && typeof gate['running'] === 'boolean' &&
+        optionalString(gate['batchId']) && optionalString(gate['host']) &&
+        optionalString(gate['startedAtUtc'])))) return false;
   return Object.values(value['members']).every(member => record(member) &&
     ['pending', 'in-batch', 'published', 'fallback', 'pre-check-red', 'review-fix'].includes(String(member['status'])) &&
     optionalString(member['batchId']) && optionalString(member['phase']) &&

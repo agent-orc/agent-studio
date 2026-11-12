@@ -1,0 +1,47 @@
+<div class="refusal" data-testid="continue-mode-refusal" role="alert">
+  <p class="refusal__message" data-testid="continue-mode-refusal-message">{{ message() }}</p>
+
+  @if (plan(); as plan) {
+    @if (plan.items.length > 0) {
+      <p class="refusal__note">
+        The Dossier <span class="refusal__source">{{ plan.source.title }}</span>
+        proposes these implementation cards. Creating them completes this concept card.
+      </p>
+      <ol class="refusal__items" data-testid="continue-mode-promote-items">
+        @for (item of plan.items; track $index) {
+          <li>{{ item.title }}</li>
+        }
+      </ol>
+      <div class="round__actions">
+        <button type="button" class="round__button round__button--primary" data-testid="continue-mode-promote-confirm"
+          [disabled]="working()" [appPendingButton]="creating()" pendingLabel="Creating…"
+          (click)="createCards()">Create {{ plan.items.length }} implementation {{ plan.items.length === 1 ? 'card' : 'cards' }}</button>
+        <button type="button" class="round__button round__button--ghost" data-testid="continue-mode-promote-back"
+          [disabled]="creating()" (click)="back()">Back</button>
+      </div>
+    } @else {
+      <p class="refusal__note" data-testid="continue-mode-promote-empty">
+        The Dossier proposes no implementation cards yet. Keep the card in concept mode and ask for them first.
+      </p>
+      <div class="round__actions">
+        <button type="button" class="round__button round__button--ghost" data-testid="continue-mode-promote-back"
+          (click)="back()">Back</button>
+      </div>
+    }
+  } @else {
+    @if (promotion().state === 'loading') {
+      <p class="refusal__note" data-testid="continue-mode-promote-loading">Reading the implementation proposals of the Dossier…</p>
+    }
+    @if (promoteError(); as failure) {
+      <p class="refusal__error" data-testid="continue-mode-promote-error">{{ failure }}</p>
+    }
+    <div class="round__actions">
+      <button type="button" class="round__button" data-testid="continue-mode-keep-and-send"
+        [disabled]="working()" [appPendingButton]="busy()" pendingLabel="Sending…"
+        (click)="keepAndSend.emit()">Keep in {{ mode() }} mode and send</button>
+      <button type="button" class="round__button" data-testid="continue-mode-promote"
+        [disabled]="working()" [appPendingButton]="promotion().state === 'loading'" pendingLabel="Reading…"
+        (click)="promote()">Promote to implementation</button>
+    </div>
+  }
+</div>

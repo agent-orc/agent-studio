@@ -19,7 +19,7 @@ public sealed record ContinuationBase(string ResultRef, string ResultSha, string
 public sealed record AttemptFacts(string Id, bool HasSettledEnvelope, ContinuationBase? ReviewedDelivery = null);
 public sealed record ReviewFacts(string Outcome, IReadOnlyList<ReviewFollowUpFinding> Findings,
     ReviewPlanDto? Plan = null, IReadOnlyList<ReviewVerdictDto>? Verdicts = null,
-    string? FailureClassification = null);
+    string? FailureClassification = null, string? Summary = null);
 public sealed record DecisionSettings(int MaximumRounds = 4, int MaximumConcernRounds = 0,
     int MaximumDeliveredRounds = 4, int ConsecutiveBlockRounds = 2, int MaximumReissues = 2);
 public sealed record TimelineCounters(int AutomaticRounds = 0, int ConcernRounds = 0, int Reissues = 0);
@@ -70,6 +70,16 @@ public static class TransitionDecisionPolicy
                 ReviewReportDiagnosisPolicy.RetriesOnUnchangedSubject(facts.Review.FailureClassification))
                 ? TransitionAction.ReviewInfrastructureRetry : TransitionAction.Escalate;
             reason = "Review infrastructure requires a bounded retry or operator intervention.";
+        }
+        else if (string.Equals(facts.Review.Outcome,
+                     ReviewOutcomeKinds.DeliveryPredatesReviewPlan, StringComparison.OrdinalIgnoreCase))
+        {
+            action = facts.Attempt.ReviewedDelivery is null
+                ? TransitionAction.HumanReview : TransitionAction.FindingRound;
+            reason = facts.Attempt.ReviewedDelivery is null
+                ? "The delivery predates the review plan and has no result ref for an automatic merge round."
+                : facts.Review.Summary
+                  ?? "The delivery predates the review plan; merge the target branch into the full result ref and review again.";
         }
         else if (IsDeferredAcceptance(facts.Gate.DeferredToBatch, facts.Review.Outcome))
         {

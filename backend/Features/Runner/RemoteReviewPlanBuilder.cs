@@ -133,10 +133,11 @@ public sealed class RemoteReviewPlanBuilder
     /// </summary>
     internal static string? BatchDeferralBlocker(bool batchGateEnabled, bool postMerge,
         bool noCodingTask, string? batchScope, IReadOnlyList<string>? changedPaths,
-        string? resultRef, string? resultSha)
+        string? resultRef, string? resultSha, bool concept = false)
     {
         if (!batchGateEnabled) return "The project batch gate was off when the review plan was sealed.";
         if (postMerge) return "The project integrates post-merge, so no batch gate runs.";
+        if (concept) return "A concept Dossier requires per-delivery placement and review before sight review.";
         if (noCodingTask) return "A report-only or card-less review has no batch gate.";
         if (changedPaths is null)
             return "The changed paths against the integration branch were unavailable when the review plan was sealed.";
@@ -201,6 +202,9 @@ public sealed class RemoteReviewPlanBuilder
                 PrivateRepository = task is not null && _visibility is not null
                     ? _visibility.IsPrivate(task, projectSettings)
                     : Contract.ReviewRepositoryAccessPolicy.IsPrivate(projectSettings?.RepositoryVisibility),
+                PlanCommitSha = repositoryPath is not null && integrationRef is not null
+                    ? Git(repositoryPath, "rev-parse", "--verify", integrationRef + "^{commit}")
+                    : null,
             }, repositoryPath, projectSettings?.BuildProfile, integrationRef,
             changedFiles, immutableResultRef ?? (task is null ? null : ReviewSubjectStore.Read(task.FolderPath)?.ImmutableResultRef));
 
@@ -271,6 +275,8 @@ public sealed class RemoteReviewPlanBuilder
         // AGT-3698: a concept delivery confined to one docs/<topic>/ Dossier is
         // judged by concept-fit alone. Installing and testing the repository
         // proves nothing about the Dossier and let unrelated tooling block it.
+        // All concept deliveries still use the per-delivery merge so Dossier
+        // placement and review run before sight review (AGT-3696).
         var conceptDossier = task is not null && TaskModes.IsConcept(task.Mode)
             ? ConceptWorkbenchContract.SingleDossierDirectory(changedPaths)
             : null;
@@ -279,10 +285,11 @@ public sealed class RemoteReviewPlanBuilder
             : BatchDeferralBlocker(
                 projectSettings?.BatchGate.Enabled == true,
                 projectSettings is not null
-                    && (_postMergeMode?.Resolve(task?.ProjectName ?? string.Empty, projectSettings)
-                        ?? IntegrationTestModes.Resolve(projectSettings)) == IntegrationTestModes.PostMerge,
+                && (_postMergeMode?.Resolve(task?.ProjectName ?? string.Empty, projectSettings)
+                    ?? IntegrationTestModes.Resolve(projectSettings)) == IntegrationTestModes.PostMerge,
                 task is null || TaskModes.IsReportOnly(task.Mode),
-                projectSettings?.BatchGate.EffectiveScope, changedPaths, resultRef, resultSha);
+                projectSettings?.BatchGate.EffectiveScope, changedPaths, resultRef, resultSha,
+                concept: task is not null && TaskModes.IsConcept(task.Mode));
         var deferBuildTest = deferralDisabledReason is null;
         var noChange = IsNoChangeResult(changedPaths, resultSha, resultRef);
         string? testLevel = null;

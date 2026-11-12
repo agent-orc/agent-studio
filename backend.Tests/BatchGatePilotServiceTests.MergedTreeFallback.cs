@@ -232,6 +232,45 @@ public sealed class BatchGatePilotMergedTreeFallbackTests : BatchGatePilotServic
     }
 
     [Fact]
+    public async Task Per_task_fallback_hand_off_of_a_net_change_publication_records_its_published_gate()
+    {
+        // AGT-3747: de9f7a8bf was a single-parent net-change publication made
+        // after the batch handed the card to the per-task fallback; its green
+        // gate on the exact published commit never reached the evidence.
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        RequireMergeGate(factory);
+        var oldBase = RemoteTip();
+        PushToOriginDevelop("docs/before-fix-round.md", "landed before the fix round\n");
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-NET-CHANGE", "docs/net-change.md",
+            parentSha: oldBase, mergeFrom: "refs/remotes/origin/develop");
+        factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetBatchGate(ProjectName, new BatchGateFormationOptions(Enabled: false));
+        PushToOriginDevelop("docs/after-fix-round.md", "landed after the fix round\n");
+        _gate.Fallback = request => Green(request.ExpectedSha);
+        _gate.Merge = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+
+        await pilot.TickAsync(CancellationToken.None);
+        Assert.True(Ownership(member.Key)?.FallbackIntegrated);
+        await PublishAndTickAsync(factory, pilot, member.Key);
+
+        AssertLane(member.Key, TaskStates.HumanReview);
+        var published = RemoteTip();
+        Assert.StartsWith("Integrate net change from ", Git(_origin, "log", "-1", "--format=%s", published));
+        Assert.Equal(2, Git(_origin, "rev-list", "--parents", "-n", "1", published).Split(' ').Length);
+        var card = Card(factory, member.Key);
+        Assert.Contains(IntegrationLaneEvents.Read(card.FolderPath),
+            item => item.Kind == "handed-off" && item.Reason == "per-task-fallback");
+        var evidence = Assert.Single(PublishedGateEvidenceStore.Read(_watchPath));
+        Assert.Equal(published, evidence.TreeSha);
+        Assert.Equal(published, evidence.PublishedSha);
+        Assert.Equal(nameof(BuildTestGateVerdict.Ok), evidence.GateVerdict);
+        Assert.False(evidence.Backfilled);
+    }
+
+    [Fact]
     public async Task Red_candidate_on_a_green_tip_escalates_without_an_own_base_retest()
     {
         using var factory = BuildFactory();

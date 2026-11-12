@@ -164,8 +164,15 @@ public sealed class TaskIntegrationStatusService
 
     /// <summary>Acceptance also checks gates on publications after the delivery's verified tree.</summary>
     public TaskIntegrationStatus BuildForAcceptance(TaskInfo job)
+        => WithLaterPublicationGates(job, BuildForCompletion(job));
+
+    /// <summary>
+    /// The acceptance check of <see cref="BuildForAcceptance"/> on an already
+    /// computed status. The board projection applies it to Human Review cards,
+    /// so the card detail shows the reason acceptance would give (AGT-3753).
+    /// </summary>
+    private TaskIntegrationStatus WithLaterPublicationGates(TaskInfo job, TaskIntegrationStatus status)
     {
-        var status = BuildForCompletion(job);
         var verification = status.Verification;
         if (status.Status != IntegrationStatuses.Integrated
             || verification?.State != IntegrationVerificationStates.Verified
@@ -194,22 +201,39 @@ public sealed class TaskIntegrationStatusService
             var publications = new List<IntegrationPublicationGatePolicy.Publication>();
             var laterBySha = laterCommits.ToDictionary(item => item.Sha,
                 item => item.ParentSha, StringComparer.OrdinalIgnoreCase);
+            // Why a source on a later commit was not counted, per commit, so a
+            // refusal can name the uncovered commit and each source's answer.
+            var uncountedGates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var gate in PublishedGateEvidenceStore.Read(job.WatchPath))
             {
-                if (!gate.Passed || !IntegrationVerificationProjection.SameBranch(gate.IntegrationBranch, branch)
-                    || !ReviewSubjectStore.IsValidResultSha(gate.TreeSha)
-                    || !string.Equals(gate.TreeSha, gate.PublishedSha, StringComparison.OrdinalIgnoreCase)
+                if (!ReviewSubjectStore.IsValidResultSha(gate.TreeSha)
                     || !laterBySha.TryGetValue(gate.TreeSha, out var parent)) continue;
+                var uncounted = !gate.Passed ? $"gate {gate.GateStep} of {gate.SourceJobId} returned {gate.GateVerdict}"
+                    : !IntegrationVerificationProjection.SameBranch(gate.IntegrationBranch, branch)
+                        ? $"gate {gate.GateStep} of {gate.SourceJobId} was recorded for branch {gate.IntegrationBranch}"
+                    : !string.Equals(gate.TreeSha, gate.PublishedSha, StringComparison.OrdinalIgnoreCase)
+                        ? $"gate {gate.GateStep} of {gate.SourceJobId} names published SHA {gate.PublishedSha}, not this tree"
+                    : null;
+                if (uncounted is not null)
+                {
+                    uncountedGates.TryAdd(gate.TreeSha, uncounted);
+                    continue;
+                }
                 publications.Add(new(gate.TreeSha, parent, gate.Describe()));
             }
             var batches = _batchGates;
             var currentProfile = BatchGatePilotService.GateProfile(
                 _settings.Get(job.ProjectName).BuildProfile, root);
             var uncountedBaseChecks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var failedBaseChecks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var verdict in batches.ListBaseVerdicts(job.ProjectName))
             {
-                if (verdict.Outcome != "pass"
-                    || !laterBySha.TryGetValue(verdict.BaseSha, out var parent)) continue;
+                if (!laterBySha.TryGetValue(verdict.BaseSha, out var parent)) continue;
+                if (verdict.Outcome != "pass")
+                {
+                    failedBaseChecks.TryAdd(verdict.BaseSha, verdict.Outcome);
+                    continue;
+                }
                 var uncounted = verdict.Provisional ? "it is provisional"
                     : verdict.Source is not (BatchGateBaseCheckSources.FullSuite or null)
                         ? $"its source is {verdict.Source}, not the full suite"
@@ -229,20 +253,34 @@ public sealed class TaskIntegrationStatusService
                     $"full-suite batch base gate on {verdict.BaseSha}"));
             }
             IntegrationPublicationGatePolicy.Publication? mappedBatchGate = null;
+            var uncountedBatches = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var manifest in batches.ListManifests()
                 .Where(item => string.Equals(item.Scope.Project, job.ProjectName, StringComparison.Ordinal)
                     && IntegrationVerificationProjection.SameBranch(item.Scope.IntegrationBranch, branch)))
             {
                 var publication = batches.ReadPublication(manifest.BatchId);
-                if (publication is null || publication.MembershipDigest != manifest.MembershipDigest
-                    || publication.PreTipSha != manifest.BaseSha
-                    || !laterBySha.ContainsKey(publication.TestedCandidateSha)
-                    || publication.VerifiedRemoteSha != publication.TestedCandidateSha
-                    || batches.ReadVerdict(manifest.BatchId, publication.BatchRunId) is not { Outcome: "pass" } verdict
-                    || verdict.BatchRunId != publication.BatchRunId
-                    || verdict.MembershipDigest != publication.MembershipDigest
-                    || verdict.TestedCandidateSha != publication.TestedCandidateSha
-                    || !File.Exists(verdict.EvidencePath)) continue;
+                if (publication is null || !laterBySha.ContainsKey(publication.TestedCandidateSha)) continue;
+                var verdict = batches.ReadVerdict(manifest.BatchId, publication.BatchRunId);
+                var uncountedBatch = publication.MembershipDigest != manifest.MembershipDigest
+                        ? "its publication membership differs from the manifest"
+                    : publication.PreTipSha != manifest.BaseSha
+                        ? $"its publication base {Short(publication.PreTipSha)} differs from the manifest base {Short(manifest.BaseSha)}"
+                    : publication.VerifiedRemoteSha != publication.TestedCandidateSha
+                        ? $"the remote was verified at {Short(publication.VerifiedRemoteSha ?? "nothing")}, not at the tested candidate"
+                    : verdict is null ? $"run {publication.BatchRunId} has no verdict"
+                    : verdict.Outcome != "pass" ? $"run {publication.BatchRunId} verdict is {verdict.Outcome}"
+                    : verdict.BatchRunId != publication.BatchRunId
+                        || verdict.MembershipDigest != publication.MembershipDigest
+                        || verdict.TestedCandidateSha != publication.TestedCandidateSha
+                        ? $"run {publication.BatchRunId} verdict belongs to another run, membership or candidate"
+                    : !File.Exists(verdict.EvidencePath) ? $"run {publication.BatchRunId} evidence file is missing"
+                    : null;
+                if (uncountedBatch is not null)
+                {
+                    uncountedBatches.TryAdd(publication.TestedCandidateSha,
+                        $"batch gate {manifest.BatchId} is not counted: {uncountedBatch}");
+                    continue;
+                }
                 var baseSha = publication.PreTipSha;
                 var crossesMappedTree = !laterBySha.ContainsKey(baseSha)
                     && !string.Equals(baseSha, verification.Sha, StringComparison.OrdinalIgnoreCase)
@@ -274,12 +312,35 @@ public sealed class TaskIntegrationStatusService
                     laterCommits, publications, neutralCommits);
             }
             if (!decision.Verified)
+            {
+                var hole = decision.MissingTree!;
+                var subject = _git.GetCommitSubject(root, hole);
+                var named = subject is null ? Short(hole) : $"{Short(hole)} \"{subject}\"";
+                var published = publications.LastOrDefault(item =>
+                    string.Equals(item.TreeSha, hole, StringComparison.OrdinalIgnoreCase));
+                var gateAnswer = uncountedGates.TryGetValue(hole, out var gateWhy)
+                    ? $"published gate evidence is not counted: {gateWhy}"
+                    : "no published gate evidence for that tree";
+                var baseAnswer = uncountedBaseChecks.TryGetValue(hole, out var why)
+                    ? $"a batch base check passed on it but is not counted: {why}"
+                    : failedBaseChecks.TryGetValue(hole, out var outcome)
+                        ? $"a batch base check on it did not pass (outcome {outcome})"
+                    : "no batch base verdict on it";
+                var batchAnswer = published is not null
+                    ? $"{published.Gate} on it starts at {Short(published.BaseSha)}, which is not on the first-parent line "
+                        + $"between the verified tree {Short(verification.Sha!)} and it"
+                    : uncountedBatches.TryGetValue(hole, out var batchWhy) ? batchWhy
+                    : "no batch publication covering it";
                 return status with { Verification = UnverifiedAcceptance(tip,
-                    $"The later publication {decision.MissingTree} has no passed gate on the first-parent integration line. "
-                    + (decision.MissingTree is { } hole && uncountedBaseChecks.TryGetValue(hole, out var why)
-                        ? $"A batch base check passed on it but is not counted: {why}. " : string.Empty)
+                    $"The later publication {hole} has no passed gate on the first-parent integration line. "
+                    + $"First uncovered commit after verified tree {Short(verification.Sha!)} up to {Short(tip!)}: {named}; "
+                    + $"{gateAnswer}; {baseAnswer}; {batchAnswer}. "
                     + "A passed per-task gate on that published tree or a full-suite batch base verdict "
-                    + "for the current gate profile with its evidence would cover it.") };
+                    + "for the current gate profile with its evidence would cover it.") with
+                {
+                    UncoveredPublication = named,
+                } };
+            }
             var neutralEvidence = neutralCommits.Count == 0 ? string.Empty
                 : $" Gate-neutral document-key commits: {string.Join(", ", neutralCommits.Order(StringComparer.OrdinalIgnoreCase))}.";
             if (mappedBatchGate is not null)
@@ -344,7 +405,8 @@ public sealed class TaskIntegrationStatusService
         {
             if (TestStatusOverride?.Invoke(job) is { } testStatus)
             {
-                result[job.TaskKey] = testStatus;
+                result[job.TaskKey] = memoizeVerification && job.State == TaskStates.HumanReview
+                    ? WithLaterPublicationGates(job, testStatus) : testStatus;
                 continue;
             }
             var primaryRoot = RootFor(job);
@@ -413,6 +475,10 @@ public sealed class TaskIntegrationStatusService
                         BranchHistory(classified, card, reaches), memoizeVerification)
                     : null,
             };
+            // AGT-3753: the card detail of a Human Review card answers what
+            // acceptance answers, including a later publication without a gate.
+            if (memoizeVerification && job.State == TaskStates.HumanReview)
+                result[job.TaskKey] = WithLaterPublicationGates(job, result[job.TaskKey]);
         }
 
         return result;

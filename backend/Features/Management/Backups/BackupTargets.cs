@@ -7,6 +7,9 @@ using AgentStudio.Security;
 
 namespace AgentStudio.Management;
 
+/// <summary>One archive found at the off-host target.</summary>
+public sealed record BackupTargetFile(string Name, long SizeBytes, string ModifiedAt);
+
 /// <summary>
 /// The off-host copy of every backup. A target receives the encrypted archive
 /// and its <c>.sha256</c> file; it never needs read, list or delete rights,
@@ -21,6 +24,12 @@ public interface IBackupTarget
 
     /// <summary>Uploads <paramref name="localPath"/> as <paramref name="remoteName"/>; completes only when the copy is whole.</summary>
     Task UploadAsync(string localPath, string remoteName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The archives at the target (AGT-3734), or null when this host may not
+    /// list it: SFTP and S3 targets are write-only for the host by design.
+    /// </summary>
+    IReadOnlyList<BackupTargetFile>? ListArchives() => null;
 }
 
 /// <summary>Runs a non-Git helper process (sftp) with a bounded time.</summary>
@@ -86,6 +95,17 @@ public sealed class DirectoryBackupTarget(string directory) : IBackupTarget
             to.Flush(flushToDisk: true);
         }
         File.Move(partial, final, overwrite: true);
+    }
+
+    /// <summary>A mount the host writes to can also be read: lists complete archives, not <c>.partial</c> leftovers.</summary>
+    public IReadOnlyList<BackupTargetFile>? ListArchives()
+    {
+        if (!Directory.Exists(directory))
+            throw new BackupException("backup-target-unreachable", $"The backup target directory {directory} does not exist.");
+        return new DirectoryInfo(directory).EnumerateFiles("studio-backup-*" + BackupCatalog.ArchiveSuffix)
+            .Select(file => new BackupTargetFile(file.Name, file.Length, new DateTimeOffset(file.LastWriteTimeUtc).ToString("O")))
+            .OrderByDescending(file => file.Name, StringComparer.Ordinal)
+            .ToArray();
     }
 }
 

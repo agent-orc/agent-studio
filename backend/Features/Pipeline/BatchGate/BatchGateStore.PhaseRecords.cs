@@ -32,10 +32,29 @@ public sealed partial class BatchGateStore
     private const int PhaseLockAttempts = 6000;
     private static readonly TimeSpan PhaseLockRetry = TimeSpan.FromMilliseconds(10);
 
+    /// <summary>
+    /// The phase record, or null before the first one. An unreadable record is
+    /// quarantined and throws <see cref="BatchGateRecordUnreadableException"/>.
+    /// </summary>
     public BatchPhaseRecord? ReadPhaseRecord(string batchId)
     {
         var path = Path.Combine(BatchDirectory(batchId), PhaseRecordName);
-        return File.Exists(path) ? Read<BatchPhaseRecord>(path) : null;
+        return File.Exists(path) ? ReadRecord<BatchPhaseRecord>(path, BatchGateRecordKinds.Phase, batchId) : null;
+    }
+
+    /// <summary>
+    /// False when the phase record exists but does not read; it is then
+    /// quarantined (AGT-3681). <paramref name="record"/> is null before the
+    /// first record.
+    /// </summary>
+    public bool TryReadPhaseRecord(string batchId, out BatchPhaseRecord? record)
+    {
+        var path = Path.Combine(BatchDirectory(batchId), PhaseRecordName);
+        record = null;
+        if (!File.Exists(path)) return true;
+        if (!TryReadRecord<BatchPhaseRecord>(path, BatchGateRecordKinds.Phase, batchId, out var read)) return false;
+        record = read;
+        return true;
     }
 
     /// <summary>True once the batch has a phase record or a state history entry.</summary>
@@ -202,10 +221,13 @@ public sealed partial class BatchGateStore
     /// One writer per batch across processes. FileShare.None takes an
     /// exclusive lock on the lock file, so a contended open fails and retries.
     /// </summary>
-    private static FileStream PhaseGuard(string directory)
+    private static FileStream PhaseGuard(string directory) => ExclusiveGuard(directory, "phase.lock");
+
+    /// <summary>An exclusive cross-process lock on <paramref name="name"/> in <paramref name="directory"/>.</summary>
+    private static FileStream ExclusiveGuard(string directory, string name)
     {
         Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, "phase.lock");
+        var path = Path.Combine(directory, name);
         for (var attempt = 1; ; attempt++)
         {
             try

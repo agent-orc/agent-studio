@@ -320,7 +320,7 @@ test.describe('Project Deploy area (mocked)', () => {
     await capture(page, 'operations-older-release');
   });
 
-  test('Operations shows backup and host CA warnings in both themes and at 390 px (AGT-3736)', async ({ page }) => {
+  test('project Operations links to installation backups in Settings with backup and host CA warnings in both themes and at 390 px (AGT-3574, AGT-3736)', async ({ page }) => {
     await openDeploy(page, fullMocks());
     await page.route(`**${DEPLOY}/operations`, route => answer(route, {
       project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z', environments: [],
@@ -354,7 +354,11 @@ test.describe('Project Deploy area (mocked)', () => {
       backups: [stale ? newest : { ...newest, offHost: 'uploaded' }, backup('studio-backup-20261019T000000Z-9f8e7d', '2026-10-19T00:00:00+00:00', 'unverified', 'uploaded')],
       generatedAt: '2026-10-20T08:00:00+00:00',
     }));
+    await page.route('**/api/security/posture', route => route.fulfill(json({ error: 'permission-denied' }, 403)));
     await page.getByTestId('deploy-tab-operations').click();
+    await expect(page.getByTestId('project-operations').getByTestId('operations-backups')).toHaveCount(0);
+    await page.getByTestId('project-operations').getByRole('link', { name: 'Settings → Operations' }).click();
+    await expect(page.getByTestId('workspace-operations')).toBeVisible();
     const backups = page.getByTestId('operations-backups');
     await expect(backups.getByTestId('operations-backups-content-list')).toHaveAttribute('href', /studio-backup-restore\.md#credential-content-list$/);
     await expect(backups.getByTestId('operations-backups-state')).toHaveAttribute('data-state', 'failing');
@@ -397,6 +401,94 @@ test.describe('Project Deploy area (mocked)', () => {
     await backups.screenshot({ path: path.join(results, 'operations-backups-current-390-light--mocked.png') });
     await setTheme(page, 'dark');
     await backups.screenshot({ path: path.join(results, 'operations-backups-current-390-dark--mocked.png') });
+  });
+
+  test('Operations shows the restore receipt, unknown off-host archives and the verification scope after a restore (AGT-3734)', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-10-11T00:00:00Z', until: '2026-11-10T00:00:00Z', environments: [],
+      dora: { successfulProductionDeploys: 0, deploysPerWeek: null, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: null, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    }));
+    const lostArchive = (stamp: string, suffix: string) => ({
+      id: `studio-backup-${stamp}-${suffix}`, fileName: `studio-backup-${stamp}-${suffix}.tar.gz.sbk`,
+      sizeBytes: 412 * 1024 * 1024, modifiedAt: `${stamp.slice(0, 4)}-${stamp.slice(4, 6)}-${stamp.slice(6, 8)}T${stamp.slice(9, 11)}:01:00+00:00`,
+    });
+    const restored = 'studio-backup-20261109T120000Z-c3d4e5';
+    let listable = true;
+    await page.route('**/api/v1/management/backups', route => answer(route, {
+      state: 'warning', configured: true, running: false, keyId: '3f2a9c0d11e4b7a8', secretKeyId: '0b1c2d3e4f5a6b7c',
+      intervalHours: 6, verifyIntervalHours: 24, staleAfterHours: 12, retentionCount: 12,
+      nextBackupAt: '2026-11-10T09:05:00+00:00',
+      lastGood: null, lastGoodAgeHours: null, stale: false, lastRun: null,
+      lastVerification: { at: '2026-11-09T12:10:00+00:00', backupId: restored, outcome: 'verified', detail: null,
+        proved: [
+          `The archive ${restored} matches the checksum recorded when it was made.`,
+          'The backup key on this host (fingerprint 3f2a9c0d11e4b7a8) opens and authenticates it.',
+          'Every restored file matches its recorded SHA-256 hash in an empty staging folder.',
+        ],
+        notProved: [
+          'Project checkouts were not cloned from their origins; a real restore needs read access to every remote.',
+          "The owner's escrowed copies of the backup key and the secret store key were not checked; compare their fingerprints with backup-key.sh id and secret-key.sh id.",
+        ] },
+      offHost: listable
+        ? { kind: 'directory', target: '/mnt/studio-backups', state: 'idle', lastUploadedId: null, lastUploadedAt: null, lastError: null,
+            listing: { state: 'listed', detail: null, archiveCount: 3, notInCatalog: [
+              lostArchive('20261109T120000Z', 'c3d4e5'), lostArchive('20261109T060000Z', 'b2c3d4'), lostArchive('20261109T000000Z', 'a1b2c3'),
+            ] } }
+        : { kind: 'sftp', target: 'sftp://studio@backup.example:22/srv/studio-backups', state: 'idle', lastUploadedId: null,
+            lastUploadedAt: null, lastError: null,
+            listing: { state: 'not-listable', archiveCount: 0, notInCatalog: [],
+              detail: 'This host may only write to the sftp target, so it cannot list the archives there. List them at the target with an account that may read it.' } },
+      warnings: [{ code: 'backup-missing', severity: 'warning', message: `No good backup exists on this host since the restore of ${restored}.` }],
+      backups: [],
+      generatedAt: '2026-11-10T09:00:00+00:00',
+      lastRestore: {
+        backupId: restored, archiveFileName: `${restored}.tar.gz.sbk`, archiveSha256: 'b'.repeat(64),
+        archiveCreatedAt: '2026-11-09T12:00:00+00:00', archiveHost: 'studio-host-a', archiveStudioVersion: '1.42.0',
+        restoredAt: '2026-11-10T08:40:00+00:00', restoredBy: 'owner@studio-host-b', keyId: '3f2a9c0d11e4b7a8',
+        secretKeyId: '0b1c2d3e4f5a6b7c', secretKeyCopyId: '0b1c2d3e4f5a6b7c', filesRestored: 18_240, checkoutsCloned: 3, skippedSources: [],
+      },
+    }));
+    await page.getByTestId('deploy-tab-operations').click();
+    const backups = page.getByTestId('operations-backups');
+    const receipt = backups.getByTestId('operations-backups-restore');
+    await expect(receipt).toContainText('owner@studio-host-b');
+    await expect(receipt).toContainText(restored);
+    await expect(receipt).toContainText('studio-host-a');
+    await expect(receipt).toContainText('3f2a9c0d11e4b7a8');
+    await expect(backups.getByTestId('operations-backups-restore-loss')).toContainText('is not in this installation');
+    await expect(backups.getByTestId('operations-backups-offhost-listing')).toContainText('3 of 3 archives that this host does not know');
+    await expect(backups.getByTestId('operations-backups-offhost-unknown').locator('tbody tr')).toHaveCount(3);
+    await expect(backups.getByTestId('operations-backups-verification-proved')).toContainText('key on this host');
+    await expect(backups.getByTestId('operations-backups-verification-not-proved')).toContainText('backup-key.sh id');
+    fs.mkdirSync(results, { recursive: true });
+    // Tall viewports, so the screenshots hold the whole panel instead of the scrolled part.
+    await page.setViewportSize({ width: 1280, height: 1800 });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await backups.screenshot({ path: path.join(results, `operations-backups-restored-${theme}--mocked.png`) });
+    }
+    await page.setViewportSize({ width: 390, height: 3000 });
+    await expect(receipt).toBeVisible();
+    // The panel fits its column: long archive names and warnings wrap instead of widening it.
+    const widths = await backups.evaluate(element => ({
+      panel: element.getBoundingClientRect().width, column: element.parentElement!.parentElement!.getBoundingClientRect().width,
+    }));
+    expect(widths.panel).toBeLessThanOrEqual(widths.column + 1);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await backups.screenshot({ path: path.join(results, `operations-backups-restored-390-${theme}--mocked.png`) });
+    }
+
+    listable = false;
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await backups.getByTestId('operations-backups-refresh').click();
+    await expect(backups.getByTestId('operations-backups-offhost-listing')).toHaveAttribute('data-listing-state', 'not-listable');
+    await expect(backups.getByTestId('operations-backups-offhost-listing-detail')).toContainText('cannot list the archives');
+    await expect(backups.getByTestId('operations-backups-offhost-unknown')).toHaveCount(0);
+    await setTheme(page, 'light');
+    await backups.screenshot({ path: path.join(results, 'operations-backups-write-only-target-light--mocked.png') });
   });
 
   test('Operations shows deploy markers, DORA and telemetry empty state in both themes', async ({ page }) => {

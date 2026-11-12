@@ -8,7 +8,26 @@ import { isolatedRedState, redHalvingState } from '../testing/batch-fixtures';
 import { BatchLaneIndicatorComponent } from './batch-lane-indicator';
 
 describe('BatchLaneIndicatorComponent', () => {
-  it('counts unfinished runs and hides disabled or unavailable projects', async () => {
+  it('counts per-task fallback gates separately from batch waits', async () => {
+    const state = signal<BatchGateState | null>({ ...redHalvingState,
+      pending: [{ ...redHalvingState.pending[0], taskKey: 'AGT-2', reviewAttemptId: 'r2' },
+        { ...redHalvingState.pending[0], taskKey: 'AGT-3', reviewAttemptId: 'r3' }],
+      perTaskGates: [{ taskKey: 'AGT-2', reviewAttemptId: 'r2', position: 1, total: 2,
+        reason: 'batch b1 paused: fresh gate verdict required', running: false },
+        { taskKey: 'AGT-3', reviewAttemptId: 'r3', position: 2, total: 2,
+          reason: 'batch b1 paused: fresh gate verdict required', running: true, host: 'gate-01' }],
+    });
+    await TestBed.configureTestingModule({ imports: [BatchLaneIndicatorComponent], providers: [provideZonelessChangeDetection(), {
+      provide: BatchGateService, useValue: { state: () => state.asReadonly(), watch: () => vi.fn() },
+    }] }).compileComponents();
+    const fixture = TestBed.createComponent(BatchLaneIndicatorComponent);
+    fixture.componentRef.setInput('laneState', '4-auto-review');
+    fixture.componentRef.setInput('projectScope', 'Demo');
+    await fixture.whenStable();
+    expect(fixture.nativeElement.textContent).toContain('Batch: 0 waiting');
+    expect(fixture.nativeElement.textContent).toContain('Per-task gates: 1 queued · 1 running');
+  });
+  it('counts batches in the running phase, not unfinished runs in abandoned batches', async () => {
     const state = signal<BatchGateState | null>(redHalvingState);
     const watch = vi.fn(() => vi.fn());
     await TestBed.configureTestingModule({ imports: [BatchLaneIndicatorComponent], providers: [provideZonelessChangeDetection(), {
@@ -19,6 +38,9 @@ describe('BatchLaneIndicatorComponent', () => {
     fixture.componentRef.setInput('jobs', [{ projectName: 'Demo' }] as TaskInfo[]);
     await fixture.whenStable();
     expect(fixture.nativeElement.textContent).toContain('1 running');
+    state.set({ ...redHalvingState, batches: redHalvingState.batches.map(batch => ({ ...batch, phase: 'abandoned' })) });
+    await fixture.whenStable();
+    expect(fixture.nativeElement.textContent).toContain('0 running');
     expect(watch).toHaveBeenCalledOnce();
     state.set({ ...redHalvingState, plan: { ...redHalvingState.plan, decision: 'disabled' } });
     await fixture.whenStable();

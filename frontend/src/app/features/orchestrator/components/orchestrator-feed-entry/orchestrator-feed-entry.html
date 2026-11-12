@@ -28,7 +28,7 @@
       <span>{{ projectCode(item.project || projectFallback()) }}</span>
     </button>
     <span class="feed-entry__kind" data-testid="orchestrator-entry-kind">{{ kindLabel(item.kind) }}</span>
-    <span class="feed-entry__summary" data-testid="orchestrator-entry-summary">{{ item.summary }}</span>
+    <span class="feed-entry__summary" data-testid="orchestrator-entry-summary">{{ summary() || item.summary }}</span>
     <span class="feed-entry__context" data-testid="orchestrator-entry-context" [cacTooltip]="item.topic">
       @if (item.dossierId) {
         <a class="feed-entry__task-link" [href]="dossierHref(item)" data-testid="orchestrator-entry-dossier">{{ item.dossierId }}</a>

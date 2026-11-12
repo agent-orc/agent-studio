@@ -88,6 +88,7 @@ public static class GateFailureClasses
     public const string LostLease = "LostLease";
     public const string SnapshotUnavailable = "SnapshotUnavailable";
     public const string ToolFailure = "ToolFailure";
+    public const string DiskFull = "DiskFull";
     public const string CleanupFailure = "CleanupFailure";
     public const string GateInfra = "GateInfra";
 }

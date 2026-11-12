@@ -181,7 +181,7 @@ export class TaskDetailComponent implements OnDestroy {
   readonly navigateLaneRequested = output<string>();
   /** Lane-move requested via the triage panel. Parent runs the API call so
    *  it can advance to the next peer on success. */
-  readonly triageMoveRequested = output<{ targetState: string; actionId: string }>();
+  readonly triageMoveRequested = output<{ targetState: string; actionId: string; reissueInstructions?: { findings: string[]; note: string }; operatorOverride?: boolean; reason?: string }>();
   /** "Move to top" via the triage panel. */
   readonly triageMoveToTopRequested = output<{ actionId: string }>();
   /** "Delete" via the triage panel (already destructive-confirmed inside). */
@@ -371,6 +371,7 @@ export class TaskDetailComponent implements OnDestroy {
   readonly laneSize = computed(() => this.lanePeers().length);
 
   @ViewChild('detailHeader') private detailHeaderRef?: DetailHeaderComponent;
+  @ViewChild(EscalationSummaryComponent) private escalationSummaryRef?: EscalationSummaryComponent;
 
   // Wall-clock tick used by relative-time formatters (e.g. formatResetIn).
   // Sourced from NowTickService — keeps the formatter stable within one
@@ -488,7 +489,7 @@ export class TaskDetailComponent implements OnDestroy {
     this.currentJobKey = d.info.taskKey;
     // Keep GitPaneService in sync with the open job; resets internal
     // state on actual job changes, no-ops on same-job refreshes.
-    this.git.setJob(d.info, this.panesVisible().git);
+    this.git.setJob(d.info, this.panesVisible().git && d.info.mode !== 'concept');
 
     if (isJobSwitch) {
       this.outputLoadedFor = null;
@@ -691,8 +692,8 @@ export class TaskDetailComponent implements OnDestroy {
     this.runTimelinePoll.syncTo(this.detail()?.info ?? null);
   });
 
-  // Clear the previous task's event ledger on navigation. The Timeline tab
-  // starts its own first read when selected and reuses the polled snapshot.
+  // Clear the previous task's event ledger on navigation. The Timeline tab or
+  // escalation summary starts the first read when displayed.
   private readonly taskTimelinePoll = inject(TaskTimelinePollService);
   private readonly taskTimelineEffect = effect(() =>
     this.taskTimelinePoll.prepareTask(this.detail()?.info.taskKey ?? null));
@@ -1125,19 +1126,18 @@ export class TaskDetailComponent implements OnDestroy {
     return this.detail().info.state === TaskState.Progress;
   }
 
-  /**
-   * Triage panel: route a typed lane action to the right handler. Move /
-   * delete / move-to-top go to the parent (it owns the optimistic-paint and
-   * auto-advance to the next peer); start / stop / editPrompt / showActivity
-   * are local operations against the open job.
-   */
+  /** Route lane decisions to the parent and local controls to this detail view. */
   onTriageAction(payload: TriageActionPayload): void {
     if (this.mutationsBlocked() || this.triageActingId() !== null) return;
     const { id, intent } = payload;
+    if ((id === 'reissue-escalated' || id === 'accept-escalated') && !payload.reissueInstructions && !payload.operatorOverride) {
+      this.escalationSummaryRef?.openDecision(id);
+      return;
+    }
     switch (intent.kind) {
       case 'move':
         this.triageActingId.set(id);
-        this.triageMoveRequested.emit({ targetState: intent.targetState, actionId: id });
+        this.triageMoveRequested.emit({ targetState: intent.targetState, actionId: id, reissueInstructions: payload.reissueInstructions, operatorOverride: payload.operatorOverride, reason: payload.reason });
         return;
       case 'moveToTop':
         this.triageActingId.set(id);

@@ -1,4 +1,4 @@
-@if (auth.studioAllowed()) {
+@if (auth.studioAllowed() && !noProjectAccess()) {
     <app-offline-banner />
     <app-public-demo-banner />
     @defer (when codexSignInRequest() !== null) { <app-codex-sign-in-dialog /> }
@@ -447,8 +447,12 @@
           (toggleAuto)="onToggleAuto($event)"
           (openShell)="openProjectShell($event)" />
         <div class="header__actions">
-          <app-task-defaults-control (cliChange)="onDefaultCliChange($event)"
-                                     (modelChange)="onDefaultModelChange($event)" />
+          @if (shellAccess.operator()) {
+            @defer (on immediate) {
+              <app-task-defaults-control (cliChange)="onDefaultCliChange($event)"
+                                         (modelChange)="onDefaultModelChange($event)" />
+            }
+          }
           @if (gitStateAgeLabel(); as age) {
             <span class="git-state-stamp"
                   data-testid="git-state-stamp"
@@ -460,7 +464,9 @@
               Git state: {{ age }}
             </span>
           }
-          <app-auto-review-indicator />
+          @if (shellAccess.operator()) {
+            @defer (on immediate) { <app-auto-review-indicator /> }
+          }
           @if (updateClient.enabled) { <app-update-version-badge /> }
           <label class="client-filter" data-testid="client-filter">
             <span class="client-filter__label">Owner:</span>
@@ -802,6 +808,8 @@
       }
     </div>
     }
+} @else if (noProjectAccess()) {
+  <main data-testid="no-project-access" class="no-project-access"><p>You currently have no access to any project. Ask the owner.</p></main>
 } @else {
   @defer (on immediate) { <app-auth-gate /> }
 }

@@ -7,6 +7,7 @@
   <div #body class="batch-panel__body" tabindex="0" (keydown)="onBodyKeydown($event)">
     @if (error(); as message) { <p class="batch-panel__error" role="alert">{{ message }} <button type="button" (click)="gate.refresh(project())">Retry</button></p> }
     @if (state(); as data) {
+      @if (data.quarantined?.length) { <app-batch-quarantine [records]="data.quarantined!" /> }
       @if (data.gateSlots; as slots) {
         <p data-testid="batch-gate-slot-usage">Gate slots: {{ slots.busy }}/{{ slots.total }} busy</p>
       }
@@ -70,7 +71,9 @@
         <p>Target {{ data.plan.targetSize }} · Closes {{ data.plan.closeAtUtc ? date(data.plan.closeAtUtc) : 'when ready' }}</p>
         <p>Proposed: {{ data.plan.proposedMembers.length ? data.plan.proposedMembers.join(', ') : 'No members yet' }}</p>
         @if (data.plan.decision !== 'disabled') {
-          <button type="button" data-testid="batch-close-now" (click)="showConfirm('close')">Close batch now</button>
+          <button type="button" data-testid="batch-close-now" [disabled]="!data.pending.length"
+            [attr.title]="data.pending.length ? null : 'No eligible cards to close.'" (click)="showConfirm('close')">Close batch now</button>
+          @if (!data.pending.length) { <p data-testid="batch-close-unavailable">No eligible cards to close.</p> }
         }
       </section>
       <section aria-labelledby="batch-upcoming-title">
@@ -97,11 +100,38 @@
             <li class="batch-panel__row"><span><strong>{{ item.taskKey }}</strong> · {{ formatDurationMinutes(item.waitMinutes) }} · {{ riskLabel(item.risk) }} risk
               @if (item.preCheck; as check) { · pre-check {{ check.outcome }} }
               @if (item.exclusion) { · {{ item.exclusion }} }</span>
-              <button type="button" [attr.aria-label]="'Eject ' + item.taskKey" (click)="showConfirm(item.taskKey)">Eject</button>
+              <button type="button" [attr.aria-label]="'Eject ' + item.taskKey"
+                [disabled]="ejectRequests().some(request => request.taskKey === item.taskKey && request.status === 'pending')"
+                (click)="showConfirm(item.taskKey)">Eject</button>
             </li>
           }</ul>
         } @else { <p>No cards are waiting for a batch.</p> }
       </section>
+      @if (ejectRequests().length) {
+        <section aria-label="Eject requests" data-testid="batch-eject-requests">
+          <h3>Eject requests</h3>
+          <ul>@for (request of ejectRequests(); track request.taskKey) {
+            <li [attr.data-testid]="'batch-eject-' + request.taskKey" role="status">
+              <strong>{{ request.taskKey }}</strong> · {{ request.status === 'pending' ? 'Pending eject' : 'Released from batch' }}
+              · {{ request.actor }}: {{ request.reason }}
+            </li>
+          }</ul>
+        </section>
+      }
+      @if (data.perTaskGates?.length) {
+        <section aria-labelledby="batch-per-task-title" data-testid="batch-per-task-gates">
+          <h3 id="batch-per-task-title">Per-task gates ({{ data.perTaskGates?.length }})</h3>
+          <p>Each member runs a full suite as a gate slot opens. Red escalates the card; green integrates it.</p>
+          <ol class="batch-panel__per-task-gates">@for (gate of data.perTaskGates ?? []; track gate.reviewAttemptId) {
+            <li data-testid="batch-per-task-gate">
+              <strong>{{ gate.taskKey }}</strong> · {{ gate.position }} of {{ gate.total }} ·
+              @if (gate.running) { Running on {{ gate.host || 'gate host' }} since {{ date(gate.startedAtUtc) }} }
+              @else { Queued }
+              <p>{{ gate.reason }}</p>
+            </li>
+          }</ol>
+        </section>
+      }
       @if (data.detachedFlights?.length) {
         <section aria-label="Detached flights" data-testid="batch-detached-flights">
           <h3>Detached flights</h3>
@@ -136,11 +166,13 @@
           @for (batch of batches(); track batch.batchId) {
             <article class="batch-panel__batch" [id]="'batch-' + batch.batchId" [attr.data-phase]="batch.phase">
               <h4>Batch {{ batch.batchId }} @if (batch.parentBatchId) { <small>from {{ batch.parentBatchId }}</small> }</h4>
-              <p class="batch-panel__timeline" aria-label="Batch phases">@for (phase of phases; track phase) {
-                <span [class.batch-panel__phase-current]="batch.phase === phase">{{ phaseLabel(phase) }}</span>
-              }</p>
-              @if (!phases.includes(batch.phase)) { <p>Phase: {{ batch.phase }}</p> }
-              <p><strong>{{ batch.phase }}</strong>@if (batch.queuePosition) { · <span data-testid="batch-queue-position">flight queue position {{ batch.queuePosition }} of {{ data.flightQueue?.length ?? batch.queuePosition }}</span> }@if (batch.phaseReason) { · {{ batch.phaseReason }} }</p>
+              <p data-testid="batch-phase">Phase: <app-status-indicator [tone]="phaseTone(batch.phase)" [label]="batch.phase" [compact]="true" />@if (batch.queuePosition) { · <span data-testid="batch-queue-position">flight queue position {{ batch.queuePosition }} of {{ data.flightQueue?.length ?? batch.queuePosition }}</span> }@if (phaseReasonLabel(batch.phaseReason); as reason) { · {{ reason }} }</p>
+              @if (batch.phaseHistory?.length) {
+                <details class="batch-panel__history"><summary>Phase history</summary>
+                  <ol>@for (step of batch.phaseHistory; track step.atUtc + step.phase) { <li>{{ date(step.atUtc) }} · {{ step.phase }}@if (step.reason) { · {{ step.reason }} }</li> }</ol>
+                </details>
+              }
+              @if (batch.phase === 'red') { <p data-testid="batch-red-next">Next: {{ redNext(batch) }}</p> }
               @if (batch.formationReason) { <p>{{ batch.formationReason }}</p> }
               @if (batch.exclusions?.length) {
                 <ul aria-label="Cards placed in another batch">
@@ -149,15 +181,19 @@
                   }
                 </ul>
               }
-              <p>Members: @for (member of batch.members; track member.taskKey) { <span>{{ member.taskKey }} ({{ replayLabel(member.replay) }}{{ member.released ? ', released' : '' }}) </span> }</p>
+              <p>Members: @for (member of batch.members; track member.taskKey) { <span><a [href]="memberHref(member.taskKey)" (click)="openMember($event, member.taskKey)">{{ member.taskKey }}@if (memberTitle(member.taskKey); as title) { · {{ title }} }</a> ({{ replayLabel(member.replay) }}{{ member.released ? ', released' : '' }}) </span> }</p>
               @if (isolationRows(batch); as rows) { <app-batch-isolation [project]="project()" [batchId]="batch.batchId" [rows]="rows" /> }
               <p>Base {{ batch.baseSha }} · Candidate {{ batch.candidateSha ?? 'not created' }}
                 @if (publishedSha(batch.publication); as sha) { · Published {{ sha }} }
               </p>
               @if (batch.runs.length) {
                 <ul>@for (run of batch.runs; track run.batchRunId) {
-                  <li>{{ run.host }} · {{ runOutcome(batch, run) }} @if (run.classification) { · {{ run.classification }} }
-                    · {{ runDuration(batch, run) }}</li>
+                  <li>{{ run.host }} · <app-status-indicator [tone]="runTone(runStatus(batch, run))" [label]="runStatus(batch, run)" [compact]="true" /> @if (run.classification) { · {{ run.classification }} }
+                    · {{ runDuration(batch, run) }}
+                    · <a [href]="runEvidenceUrl(project(), batch.batchId, run.batchRunId)" target="_blank" rel="noopener">Evidence</a>
+                    · <a [href]="runEvidenceUrl(project(), batch.batchId, run.batchRunId, 'log')" target="_blank" rel="noopener">Run log</a>
+                    @if (run.evidenceAvailable === false) { · Artifacts pending }
+                    @if (run.hang) { · <span data-testid="batch-shard-hang">{{ run.hang }}</span> }</li>
                 }</ul>
               }
             </article>
@@ -169,8 +205,13 @@
   @if (confirm(); as target) {
     <div class="batch-panel__confirm" role="group" aria-label="Confirm batch action" data-testid="batch-confirm">
       <p>{{ target === 'close' ? 'Close the current batch now?' : 'Eject ' + target + ' from the batch?' }}</p>
+      @if (target !== 'close') {
+        <label for="batch-eject-reason">Reason</label>
+        <textarea #ejectReasonInput id="batch-eject-reason" data-testid="batch-eject-reason" [value]="ejectReason()"
+          (input)="ejectReason.set($any($event.target).value)"></textarea>
+      }
       @if (actionError()) { <p role="alert">{{ actionError() }}</p> }
-      <button #confirmButton type="button" [disabled]="busy()" (click)="act()">Confirm</button>
+      <button #confirmButton type="button" [disabled]="busy() || (target !== 'close' && !ejectReason().trim())" (click)="act()">Confirm</button>
       <button type="button" [disabled]="busy()" (click)="confirm.set(null)">Cancel</button>
     </div>
   }

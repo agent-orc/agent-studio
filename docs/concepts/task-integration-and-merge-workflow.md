@@ -539,6 +539,31 @@ now a no-op integration:
   this project-level evidence, so a single-parent net-change publication keeps
   its gate on the exact published SHA. A net-change publication whose green
   gate did not pass on that exact commit is rolled back with `gate-unavailable`.
+  The per-task fallback (a card handed off from the batch gate, lane reason
+  `per-task-fallback`) publishes through `RemoteDeliveryIntegration` with a
+  publication fence; the push runs inside that fence as the same inline push
+  and records the same entry, tree SHA equal to the published SHA; a red,
+  cancelled or missing-source gate records nothing (AGT-3747). Cause of the
+  missing `de9f7a8bf` entry: release `9041f2620` recorded the published gate
+  only inside `PushIntegrationBranchAsync`, which the fenced inline push runs
+  before `RecordFreshMergeVerification` writes the card's `Verified` record, so
+  the lookup found no passed own gate and skipped the entry. Commit `1ea24203f`
+  (10 November, after that publication) added the call after the verification
+  record; no path on current `develop` skips it. Publications made before that
+  ordering held are repaired once at startup by `PublishedGateEvidenceBackfill`:
+  it adds an entry only from a card's own executed `pre-develop-build-gate-*.log`
+  receipt with verdict `Ok`, failure kind `None`, whose expected and tested
+  SHA are a commit on the first-parent line of the published branch. Like the
+  inline push, it accepts the test level the gate's own selection chose for
+  that commit, for example `test-level=build-only; selected=0;
+  full-suite=not-run` when no test is affected (`140f9c202`, a net change of
+  workflows, docs and scripts). A receipt without a `test-level` header, a red,
+  cancelled, missing-source or reused gate is skipped. Such an entry carries
+  `backfilled: true`, `gateLog` (`<card>/post-steps/<log>`) and `testLevel`;
+  the repair is idempotent and never overwrites an existing entry. Containment
+  alone still creates no evidence. On current `develop` a single-parent
+  net-change publication gets its inline entry on the published commit itself,
+  not on its parent as the older entry for `dd73bd98f` (tree `81123540e`) shows.
   Acceptance also counts a passed full-suite batch base verdict as the gate of
   its base commit when its gate profile digest matches the current project
   profile, its evidence file exists, and that commit is on the first-parent

@@ -141,6 +141,7 @@
       @if (state() === '2-ready') { <app-ready-wait-split [jobs]="jobs()" /> }
       @if (state() === '5-human-review') {
         <app-decision-backlog-hint [tasks]="jobs()" [allTasks]="allBoardJobs()" (taskClick)="jobClick.emit($event)" />
+        @defer (on immediate) { <app-acceptance-readiness-bar [jobs]="jobs()" [mutationsBlocked]="mutationsBlocked()" /> }
       }
       @if (perProjectNote(); as note) { <p class="column__order-note" data-testid="lane-per-project-note">{{ note }}</p> }
       <div class="column__body" #laneBody role="region" tabindex="0" [attr.aria-label]="title() + ' cards'"

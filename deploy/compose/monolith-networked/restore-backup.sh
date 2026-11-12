@@ -10,8 +10,10 @@
 # it checks the checksum and both key fingerprints, clones every project
 # checkout from its recorded origin (through this account's SSH agent when
 # SSH_AUTH_SOCK is set), and only then writes the workspace, home, task
-# storage, Studio refs, host certificates and Caddy data. The archived stack
+# storage, local Git refs, host certificates and Caddy data. The archived stack
 # configuration lands in restored-stack/ for comparison; the new .env stays.
+# A restore receipt (archive, archive time, restore time, operator, key
+# fingerprints) goes into the workspace audit and onto the Operations page.
 set -euo pipefail
 
 stack_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -101,6 +103,7 @@ docker run --rm --user 10001:10001 "${agent[@]}" \
     --target workspace=/data/workspace --target home=/data/home --target projects=/data/projects \
     --target host-certificates=/data/host-certificates --target caddy-data=/data/caddy-data \
     --target origin-pull=/data/origin-pull --target stack=/data/restored-stack \
+    --restored-by "$(id -un)@$(hostname)" \
   || { rmdir "$restored_stack" 2>/dev/null || true
        fail 'the restore did not complete; see the message above. The targets are empty again and the workspace repository from setup.sh is back; fix the cause and run restore-backup.sh again.'; }
 
