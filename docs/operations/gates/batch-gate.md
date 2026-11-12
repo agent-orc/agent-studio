@@ -83,13 +83,21 @@ routes, keyed by batch and run ID; both serve only files inside the batch store.
 ## Formation planner and intents (AGT-3568)
 
 Step 02 of the AGT-3552 split. `BatchFormationPolicy` in the decision library
-owns the planner's decisions: repack membership (which formed batches of one
-scope and base merge, which members a successor takes, why the others wait),
-the commit check of each formation or replacement, and how an interrupted
-one completes. The pilot collects facts and applies the result. Formation
-snapshots (`BatchGateSnapshotBuilder`), admission (`AdmitFormationAsync`) and
-the close rule (`BatchGatePolicy.Close`) feed it unchanged; moving those three
-into the library is left to a later step.
+owns the planner's decisions: the snapshot (which pending members a planning
+snapshot or a close-now considers, and which excluded members a plan names),
+the close rule (which proposed members a batch takes, look-ahead and threshold
+plan routes), formation admission (the order of the member checks, the replay
+verdict, and whether a probed formation stays, shrinks, waits on a moved base
+or falls below the minimum size), repack membership (which formed batches of
+one scope and base merge, which members a successor takes, why the others
+wait), the commit check of each formation or replacement, and how an
+interrupted one completes. The planner's host side
+(`BatchGatePilotService.FormationPlanner.cs`, `PlanScopeFormationAsync` and
+`AdmitFormationAsync`) collects facts, calls these decisions through
+`MonolithTransitionAdapter` and commits the result as one intent; the rest of
+`BatchGatePilotService` only executes intents. `BatchGatePolicy.Close` builds
+the manifest of the chosen members and `BatchGateSnapshotBuilder` caches the
+risk facts.
 
 Every formation and every replacement of formed batches (repack, re-formation
 on a moved base, documentation successor, stacked successor) is one durable

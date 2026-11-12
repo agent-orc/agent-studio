@@ -629,12 +629,7 @@ public sealed partial class BatchGatePilotService
                 if (waiting.Any(item => string.Equals(item.Subject.Project, projectPending.Key,
                         StringComparison.OrdinalIgnoreCase))) continue;
                 var optionsForProject = _settings.Get(projectPending.Key).BatchGate;
-                var excluded = projectPending.Select(item => new BatchPlanExcludedMember(item.Subject.TaskKey,
-                        _snapshots.PendingExclusion(item)
-                        ?? BatchGatePolicy.Exclusion(item.Subject,
-                            BatchGatePilotService.Scope(item.Subject), optionsForProject)?.ToString()
-                        ?? string.Empty))
-                    .Where(item => item.Rule.Length > 0).ToArray();
+                var excluded = ExcludedMembers(projectPending, optionsForProject);
                 if (excluded.Length == 0) continue;
                 var previous = _store.LatestPlanDecision(projectPending.Key);
                 if (previous is { Decision: "wait" } && previous.ProposedMembers.Count == 0
@@ -670,25 +665,6 @@ public sealed partial class BatchGatePilotService
                 // AGT-3746: no batch forms while the gate host outage holds runs.
                 if (_hostOutage.RunsHeld) continue;
                 var scope = Scope(first.Subject);
-                BatchPlanDecision WithExclusions(BatchPlanDecision plan)
-                {
-                    var excluded = _store.ListPending().Select(Refresh)
-                        .Where(item => string.Equals(item.Subject.Project, first.Subject.Project,
-                            StringComparison.OrdinalIgnoreCase))
-                        .Select(item => new BatchPlanExcludedMember(item.Subject.TaskKey,
-                            _snapshots.PendingExclusion(item)
-                            ?? BatchGatePolicy.Exclusion(item.Subject,
-                                BatchGatePilotService.Scope(item.Subject), options)?.ToString()
-                            ?? string.Empty))
-                        .Where(item => item.Rule.Length > 0)
-                        .ToArray();
-                    return plan with
-                    {
-                        ExcludedMembers = excluded,
-                        ProposedMembers = plan.ProposedMembers.Where(key =>
-                            !excluded.Any(item => item.TaskKey == key)).ToArray(),
-                    };
-                }
                 var baseSha = FetchBaseOnce(fetchedBases, first.RepositoryPath,
                     scope.IntegrationBranch, ct);
                 // AGT-3103: a member the branch already carries (for example
@@ -751,151 +727,10 @@ public sealed partial class BatchGatePilotService
                         ScheduleFallback(item, ct, new PerTaskFallbackCause(PerTaskFallbackRules.DocumentationScope,
                             "a code delivery under a documentation-only batch scope"));
                 if (baseSha is null || current.Length == 0 && queuedPartners == 0) continue;
-                // The state route reads risk from this cache and starts no Git (AGT-3413).
-                _snapshots.Refresh(scope.IntegrationBranch, current, _time.GetUtcNow());
-                BatchGateFormation formed;
-                string planReason;
-                if (options.Planner == "look-ahead")
-                {
-                    var eligible = current.Where(item => BatchGatePolicy.Exclusion(
-                        item.Subject, scope, options) is null).ToArray();
-                    var snapshot = _snapshots.Build(first.Subject.Project,
-                        scope.IntegrationBranch, eligible, options, _time.GetUtcNow(),
-                        _store.HasCloseNow(first.Subject.Project),
-                        GateHostIdle(), gateBacklog, queuedPartners);
-                    var decision = await PlanLookAheadAsync(first.Subject.Project,
-                        ScopeKey(group.Key), snapshot, ct).ConfigureAwait(false);
-                    // An engine-owned decision is pending; the scope waits for its intent.
-                    if (decision is null) continue;
-                    decision = WithExclusions(decision);
-                    _store.AppendPlanDecision(first.Subject.Project, decision);
-                    planReason = decision.Reason;
-                    if (decision.Decision is "close" or "per-task")
-                        _store.ClearCloseNow(first.Subject.Project);
-                    formed = decision.Decision switch
-                    {
-                        "close" => BatchGatePolicy.Close(current.Select(item => item.Subject),
-                            scope, baseSha, options,
-                            current.Where(item => provenGreenKeys.Contains(item.Subject.TaskKey))
-                                .Select(item => item.Subject.TaskKey)
-                                .Concat(decision.ProposedMembers).Distinct(StringComparer.Ordinal).ToArray(),
-                            _time.GetUtcNow()),
-                        "per-task" => new BatchGateFormation(null, [],
-                            decision.ProposedMembers, true),
-                        _ => new BatchGateFormation(null, [], [], false),
-                    };
-                }
-                else
-                {
-                    var closeNow = _store.HasCloseNow(first.Subject.Project);
-                    if (closeNow)
-                    {
-                        var eligible = current.Where(item => BatchGatePolicy.Exclusion(
-                                item.Subject, scope, options) is null)
-                            .Select(item => item.Subject.TaskKey).ToArray();
-                        formed = BatchGatePolicy.Close(current.Select(item => item.Subject),
-                            scope, baseSha, options, eligible, _time.GetUtcNow());
-                        _store.ClearCloseNow(first.Subject.Project);
-                    }
-                    else
-                    {
-                        formed = BatchGatePolicy.Form(current.Select(item => item.Subject),
-                            scope, baseSha, options, _time.GetUtcNow(),
-                            _authority.ListPendingReviewAttempts().Count(review =>
-                                string.Equals(_scanner.FindJob(review.TaskKey)?.ProjectName,
-                                    first.Subject.Project, StringComparison.OrdinalIgnoreCase)),
-                            _load?.Current.Throttle == true, gateBacklog,
-                            _store.ReadBaseVerdict(first.Subject.Project, baseSha,
-                                first.Subject.GateProfileDigest)?.Outcome == "fail",
-                            provenGreenKeys, queuedPartners,
-                            ProjectGateBusy(scope) && (!_store.ListRecoverableManifests()
-                                .Any(manifest => manifest.Scope == scope
-                                    && manifest.BaseSha == baseSha
-                                    && _store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
-                                || current.Any(item => CanJoinWaitingBatch(item,
-                                    scope, baseSha, options))));
-                    }
-                    formed = SeparateThresholdOverlap(formed, current, scope,
-                        baseSha, options);
-                    planReason = formed.Manifest is not null ? "threshold reached"
-                        : formed.UsePerTaskGate ? formed.Reason ?? "per-task gate selected"
-                        : queuedPartners > 0 ? BatchGateLookAheadPlanner.QueuedPartnersReason
-                        : "waiting for threshold or deadline";
-                    _store.AppendPlanDecision(first.Subject.Project,
-                        WithExclusions(new BatchPlanDecision(
-                            formed.Manifest is not null ? "close"
-                                : formed.UsePerTaskGate ? "per-task"
-                                : formed.EligibleKeys.Count == 0 && current.Length == 0
-                                    && queuedPartners == 0 ? "idle" : "wait",
-                            planReason,
-                            formed.Manifest is null && current.Length > 0
-                                ? current.Min(item => item.Subject.ReviewCompletedAtUtc)
-                                    .AddMinutes(options.DeadlineMinutes) : null,
-                            formed.Manifest?.Members.Select(member => member.TaskKey).ToArray()
-                                ?? formed.EligibleKeys,
-                            options.CloseSize, [])));
-                }
-                if (formed.UsePerTaskGate)
-                {
-                    foreach (var item in current.Where(item =>
-                                 formed.EligibleKeys.Contains(item.Subject.TaskKey)))
-                    {
-                        // Only a batch that can actually absorb this card holds
-                        // its per-task fallback while repacking runs.
-                        if (options.Planner == "threshold" && CanJoinWaitingBatch(item,
-                                scope, baseSha, options)) continue;
-                        ScheduleFallback(item, ct, new PerTaskFallbackCause(PerTaskFallbackRules.PlannerPerTask,
-                            $"{options.Planner} plan: {planReason}"));
-                    }
-                    continue;
-                }
-                if (formed.Manifest is null) continue;
-                BeforeFormationAdmissionForTesting?.Invoke();
-                var proposed = formed.Manifest;
-                formed = await AdmitFormationAsync(formed, current, options, ct)
-                    .ConfigureAwait(false);
-                if (formed.Manifest is null)
-                {
-                    if (formed.Reason == "integration base moved before formation")
-                        baseMovedDuringPlanning = true;
-                    _store.AppendPlanDecision(first.Subject.Project,
-                        new BatchPlanDecision("wait", formed.Reason ?? "formation admission changed",
-                            null, [], options.CloseSize, []));
-                    continue;
-                }
-                if (formed.Manifest.MembershipDigest != proposed.MembershipDigest)
-                    _store.AppendPlanDecision(first.Subject.Project,
-                        new BatchPlanDecision("close", "formation admission removed: "
-                            + string.Join("; ", formed.Exclusions.Except(proposed.Exclusions)
-                                .Select(item => item.TaskKey + " " + item.Reason)),
-                            null, formed.Manifest.Members.Select(item => item.TaskKey).ToArray(),
-                            options.CloseSize, []));
-                var formationRisks = _snapshots.Cached(first.Subject.Project, current);
-                formed = formed with { Manifest = formed.Manifest with
-                {
-                    FormationReason = WaitingFormationReason(formed.Manifest, options),
-                    PlanningCards = formed.Manifest.Members.Select(member =>
-                    {
-                        return formationRisks.TryGetValue(member.TaskKey, out var risk)
-                            ? new BatchPlanCard(member.TaskKey, member.ReviewCompletedAtUtc,
-                                risk.Risk, risk.Paths, [])
-                            : new BatchPlanCard(member.TaskKey, member.ReviewCompletedAtUtc,
-                                BatchGateRiskModel.Unknown(false, false, false), [], []);
-                    }).ToArray(),
-                } };
-                // AGT-3568: the formation is one intent that owns its members.
-                var refused = CommitIntent(FormationIntent(BatchIntentKind.Formation, "planner",
-                    formed.Manifest, current));
-                if (refused is not null)
-                {
-                    _store.AppendPlanDecision(first.Subject.Project,
-                        new BatchPlanDecision("wait", "formation intent refused: " + refused,
-                            null, [], options.CloseSize, []));
-                    continue;
-                }
-                if (options.Planner == "look-ahead"
-                    && _store.LatestPlanDecision(first.Subject.Project)?.Advisor is { } advice)
-                    _store.RecordAdvice(formed.Manifest.BatchId, advice);
+                if (await PlanScopeFormationAsync(new ScopeFormationFacts(first, ScopeKey(group.Key), scope,
+                        baseSha, options, current, queuedPartners, gateBacklog, provenGreenKeys), ct)
+                        .ConfigureAwait(false))
+                    baseMovedDuringPlanning = true;
             }
             await RepackFormedBatchesAsync(ct).ConfigureAwait(false);
             StartClosedBatches(ct);
