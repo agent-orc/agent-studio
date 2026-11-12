@@ -46,6 +46,7 @@ public sealed partial class BatchGatePilotService
     private readonly PipelineHealthDetector? _pipelineHealth;
     private readonly PipelineHealthService? _healthAlerts;
     private readonly ConcurrentDictionary<string, string> _activeBatchGates = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _runHangs = new(StringComparer.Ordinal);
     private readonly IServiceProvider? _services;
     private readonly IConfiguration? _configuration;
     private readonly TimelineLog? _timeline;
@@ -2737,6 +2738,7 @@ public sealed partial class BatchGatePilotService
                 durationMs: result.DurationMs, queueWaitMs: result.GateQueueWaitMs,
                 outcome: result.Verdict.ToString(), reuseToken: run.BatchRunId,
                 reason: $"batch:{run.BatchId}");
+        await EmitBatchShardHangsAsync(project, run, result).ConfigureAwait(false);
         return result;
     }
 
@@ -2750,20 +2752,40 @@ public sealed partial class BatchGatePilotService
         _activeBatchGates[run.BatchRunId] = project;
         foreach (var member in gated ?? [])
             Lane(member, "gate-token-acquired", level: level);
-        return await claimed.RunAsync(_store.ReadManifest(run.BatchId), run, repo, verify,
+        var result = await claimed.RunAsync(_store.ReadManifest(run.BatchId), run, repo, verify,
             TimeSpan.FromMinutes(settings.BatchGate.GateTimeoutMinutes), ct).ConfigureAwait(false);
+        await EmitBatchShardHangsAsync(project, run, result).ConfigureAwait(false);
+        return result;
+    }
+
+    private async Task EmitBatchShardHangsAsync(string project, BatchGateRunRecord run,
+        BuildTestGateResult result)
+    {
+        var bus = _services?.GetService<AgentMessageBusBridge>();
+        foreach (var hang in result.TestShards.SelectMany(suite => suite.Shards)
+                     .Select(shard => shard.Hang).Where(item => item is not null))
+        {
+            _runHangs.TryAdd(run.BatchRunId, hang!.Summary());
+            if (bus is not null)
+                await bus.EmitBatchShardHangAsync(project, run.BatchId, run.BatchRunId, hang!)
+                    .ConfigureAwait(false);
+        }
     }
 
     private BatchGateRunVerdict RecordVerdict(BatchGateRunRecord run,
         BuildTestGateResult gate, string classification, BaseAnswer? baseAnswer = null)
     {
+        var hang = gate.TestShards.SelectMany(suite => suite.Shards)
+            .Select(shard => shard.Hang).FirstOrDefault(item => item is not null);
+        _runHangs.TryRemove(run.BatchRunId, out var earlierHang);
         var verdict = new BatchGateRunVerdict(
             run.BatchRunId, run.BatchId, run.MembershipDigest,
             gate.TestedSha ?? run.CandidateSha, run.GateProfileDigest,
             classification is "pass" or "flaky-quarantined-pass"
                 ? "pass" : "fail", classification,
             run.EvidencePath, _time.GetUtcNow(),
-            baseAnswer?.Source, baseAnswer?.Minutes);
+            baseAnswer?.Source, baseAnswer?.Minutes,
+            hang?.Summary() ?? earlierHang);
         _store.RecordVerdict(verdict);
         RecordFirstCandidateOutcome(_store, run.BatchId, verdict, _logger);
         return verdict;

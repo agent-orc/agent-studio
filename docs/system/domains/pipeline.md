@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-10
+Version: 2026-11-12
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -1238,6 +1238,13 @@ as before.
   `Category!=MachineBound` and every other category filter therefore apply
   exactly as in the unsharded run. The complement filter names hundreds of
   classes, which is why it is not passed on the command line.
+- **Hang bound.** A shard with no result or output ends after the larger of ten
+  minutes and twice its own estimated duration. VSTest blame-hang starts at
+  90% of that bound and records the test sequence without a dump. A complete
+  TRX report starts a separate two-minute host-exit grace. The shard evidence
+  names the stall and recent tests; the gate treats it as infrastructure red.
+  The [batch gate operations page](../../operations/gates/batch-gate.md#test-shard-hang-bound-and-operator-evidence-agt-3751)
+  describes what the operator sees.
 - **Parallel lanes on one host.** The gate's own machine slot is one lane. It
   takes additional slots that are free at that moment for more lanes, so
   `RemoteGate:GateSlots` times `RemoteGate:ProcessorCount` still bounds the

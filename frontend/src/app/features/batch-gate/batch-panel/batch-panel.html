@@ -171,7 +171,7 @@
               @if (batch.runs.length) {
                 <ul>@for (run of batch.runs; track run.batchRunId) {
                   <li>{{ run.host }} · {{ runOutcome(batch, run) }} @if (run.classification) { · {{ run.classification }} }
-                    · {{ runDuration(batch, run) }}</li>
+                    · {{ runDuration(batch, run) }}@if (run.hang) { · <span data-testid="batch-shard-hang">{{ run.hang }}</span> }</li>
                 }</ul>
               }
             </article>

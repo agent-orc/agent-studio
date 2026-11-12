@@ -42,6 +42,26 @@ const state = {
 const task = { id: 'AGT-2', key: 'AGT-2', taskKey: key, title: 'Batch fixture task', state: '4-auto-review', order: 1,
   agent: 'codex', cliType: 'codex', createdAt: '2026-10-11T12:00:00Z', watchPath: path, projectName: project,
   folderPath: `${path}/tasks/AGT-2`, lastActivity: '2026-10-11T13:00:00Z', commits: [], ownerClientId: 'local-default', tags: [] };
+
+test('batch history names an infrastructure shard hang', async ({ page }) => {
+  const hang = 'infrastructure hang: backend-routine shard 4/4, completed report but host still alive for 0:02:00; tests or fixtures: Product.Tests.FlakyTests.Sometimes';
+  const hungState = { ...state, batches: [{ ...state.batches[0], phase: 'paused',
+    phaseReason: 'GateInfra: second infrastructure red',
+    runs: [{ ...state.batches[0].runs[0], classification: 'infrastructure-red', hang }] }] };
+  await routeBoard(page, hungState);
+  await page.goto('/?includeFixtures=true');
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
+  await page.getByTestId('batch-lane-indicator').first().click();
+  const panel = page.getByTestId('batch-panel');
+  const hangDetail = panel.getByTestId('batch-shard-hang');
+  await expect(hangDetail).toHaveText(hang);
+  await hangDetail.scrollIntoViewIfNeeded();
+  for (const theme of ['light', 'dark'] as const) {
+    await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+    if (process.env.JOB_RESULTS_DIR)
+      await panel.screenshot({ path: nodePath.join(process.env.JOB_RESULTS_DIR, `batch-shard-hang-${theme}.png`) });
+  }
+});
 const grouped = { backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [], codeNotComplete: [], review: [], autoReview: [task], humanReview: [], escalated: [], completed: [], archive: [] };
 const json = (route: import('@playwright/test').Route, body: unknown, status = 200) =>
   route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });

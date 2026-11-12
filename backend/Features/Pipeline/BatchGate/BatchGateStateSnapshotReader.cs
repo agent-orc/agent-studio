@@ -196,6 +196,7 @@ public static class BatchGateStateSnapshotReader
                         run.BatchRunId, run.Host,
                         outcome = verdict?.Outcome,
                         classification = verdict?.Classification,
+                        hang = verdict?.Hang,
                         startedAtUtc = (DateTimeOffset?)run.StartedAtUtc,
                         finishedAtUtc = verdict?.CompletedAtUtc,
                     };

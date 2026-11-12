@@ -79,7 +79,7 @@ export interface BatchGateState {
     baseSha: string;
     candidateSha?: string | null;
     members: { taskKey: string; replay: BatchReplay; released: boolean }[];
-    runs: { batchRunId: string; host: string; outcome?: string | null; classification?: string | null; startedAtUtc?: string | null; finishedAtUtc?: string | null }[];
+    runs: { batchRunId: string; host: string; outcome?: string | null; classification?: string | null; hang?: string | null; startedAtUtc?: string | null; finishedAtUtc?: string | null }[];
     publication?: BatchPublication | null;
   }[];
   members: Record<string, BatchMemberState>;

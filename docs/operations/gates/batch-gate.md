@@ -1,5 +1,25 @@
 # Batch gate delivery state
 
+## Test shard hang bound and operator evidence (AGT-3751)
+
+Each sharded .NET suite has an independent silence bound of the larger of ten
+minutes and twice that shard's estimated duration. Silence means no test result
+and no process output. VSTest blame-hang runs with a per-test timeout at 90%
+of that bound and no memory dump; the gate watchdog ends the process tree at
+the bound if VSTest has not already done so. Once a complete TRX report is
+written, a host that remains alive for two minutes is ended even if the outer
+gate budget has time left. The worker's outer timeout remains the final limit
+for the whole gate.
+
+The shard evidence records `infrastructure-hang`, the suite and one-based
+shard, stall duration, and the test in progress or recent result names. If no
+test name reached the console, it lists the shard's assigned test classes.
+The batch panel's run history shows the same summary, and Activity receives a
+`batch-test-shard-hang` event. The run is infrastructure red: the normal
+same-candidate infrastructure retry or bounded isolation retry applies, and
+the hang alone does not prove a member red. The operator can inspect the gate
+evidence for the full process output and shard records.
+
 ## Batch phase record and invariants (AGT-3563)
 
 Step 01 of the AGT-3552 split. Each closed manifest has one versioned phase
