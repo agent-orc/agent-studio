@@ -21,6 +21,10 @@ public sealed record BatchGateState(
 public sealed record BatchGateWithdrawal(string BatchId, string TaskKey,
     string Actor, string Reason, DateTimeOffset AtUtc);
 
+public sealed record BatchGateEjectRequest(string Project, string TaskKey,
+    string Actor, string Reason, DateTimeOffset RequestedAtUtc,
+    string Status = "pending", DateTimeOffset? ReleasedAtUtc = null);
+
 public sealed record BatchGateRunRecord(
     string BatchRunId, string BatchId, string MembershipDigest, string BaseSha,
     string CandidateSha, string GateProfile, string GateProfileDigest,
@@ -361,11 +365,79 @@ public sealed partial class BatchGateStore
         if (File.Exists(path)) File.Delete(path);
     }
 
-    public void RequestEject(string project, string taskKey)
+    public void RequestEject(string project, string taskKey, string actor = "operator",
+        string reason = "Operator requested eject")
     {
         var folder = Path.Combine(_root, "requests", "eject", SafeName(project));
         Directory.CreateDirectory(folder);
-        File.WriteAllText(Path.Combine(folder, SafeName(taskKey)), DateTimeOffset.UtcNow.ToString("O"));
+        var path = Path.Combine(folder, SafeName(taskKey));
+        if (File.Exists(path)) return;
+        WriteOnce(path, new BatchGateEjectRequest(
+            project, taskKey, actor, reason, DateTimeOffset.UtcNow));
+    }
+
+    public BatchGateEjectRequest? ReadEject(string project, string taskKey)
+    {
+        var pending = Path.Combine(_root, "requests", "eject", SafeName(project), SafeName(taskKey));
+        var released = Path.Combine(_root, "requests", "eject-released", SafeName(project), SafeName(taskKey));
+        BatchGateEjectRequest? ReadPath(string path)
+        {
+            if (!File.Exists(path)) return null;
+            var raw = File.ReadAllText(path);
+            return raw.StartsWith('{') ? JsonSerializer.Deserialize<BatchGateEjectRequest>(raw, Json)
+                : new BatchGateEjectRequest(project, taskKey, "operator", "Legacy eject request",
+                    DateTimeOffset.TryParse(raw, out var at) ? at : DateTimeOffset.MinValue);
+        }
+        var queued = ReadPath(pending);
+        var done = ReadPath(released);
+        return done is not null && (queued is null || done.RequestedAtUtc >= queued.RequestedAtUtc)
+            ? done : queued;
+    }
+
+    public IReadOnlyList<BatchGateEjectRequest> ListEjects(string project)
+    {
+        var requests = new Dictionary<string, BatchGateEjectRequest>(StringComparer.Ordinal);
+        foreach (var kind in new[] { "eject", "eject-released" })
+        {
+            var folder = Path.Combine(_root, "requests", kind, SafeName(project));
+            if (Directory.Exists(folder))
+                foreach (var path in Directory.EnumerateFiles(folder))
+                {
+                    if (Path.GetFileName(path).Length != 64) continue;
+                    var raw = File.ReadAllText(path);
+                    if (!raw.StartsWith('{')) continue;
+                    var request = JsonSerializer.Deserialize<BatchGateEjectRequest>(raw, Json);
+                    if (request is not null && (!requests.TryGetValue(request.TaskKey, out var earlier)
+                        || request.RequestedAtUtc >= earlier.RequestedAtUtc))
+                        requests[request.TaskKey] = request;
+                }
+        }
+        foreach (var pending in ListPending().Where(item => item.Subject.Project == project
+                     && HasEject(project, item.Subject.TaskKey)))
+        {
+            if (!requests.ContainsKey(pending.Subject.TaskKey)
+                && ReadEject(project, pending.Subject.TaskKey) is { } legacy)
+                requests[pending.Subject.TaskKey] = legacy;
+        }
+        return requests.Values.Where(request => request.Status == "pending")
+            .Concat(requests.Values.Where(request => request.Status == "released")
+                .OrderByDescending(request => request.ReleasedAtUtc).Take(20))
+            .OrderByDescending(request => request.ReleasedAtUtc ?? request.RequestedAtUtc).ToArray();
+    }
+
+    public void MarkEjectReleased(BatchGateEjectRequest request)
+    {
+        var folder = Path.Combine(_root, "requests", "eject-released", SafeName(request.Project));
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, SafeName(request.TaskKey));
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, JsonSerializer.Serialize(request with
+            { Status = "released", ReleasedAtUtc = DateTimeOffset.UtcNow }, Json));
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
     public void RecordWithdrawal(BatchGateWithdrawal withdrawal)
@@ -830,6 +902,15 @@ public sealed partial class BatchGateStore
         var manifest = File.Exists(manifestPath) ? Read<BatchGateManifest>(manifestPath) : null;
         return new BatchGateState(batchId, manifest?.MembershipDigest ?? string.Empty,
             BatchPhase.Unknown, null, 0, manifest?.ClosedAtUtc ?? DateTimeOffset.MinValue);
+    }
+
+    public IReadOnlyList<BatchGateState> StateHistory(string batchId)
+    {
+        var folder = Path.Combine(BatchDirectory(batchId), "state");
+        return Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json").OrderBy(path => path, StringComparer.Ordinal)
+                .Select(Read<BatchGateState>).ToArray()
+            : [];
     }
 
     public void RecordRun(BatchGateRunRecord run)

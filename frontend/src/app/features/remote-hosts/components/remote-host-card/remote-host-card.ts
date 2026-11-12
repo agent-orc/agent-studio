@@ -11,6 +11,7 @@ import { HostFilesystemListComponent } from '../host-filesystem-list/host-filesy
 import { HostReleaseIdentityComponent } from '../host-release-identity/host-release-identity';
 import { RemoteHostDetailSummaryComponent } from '../remote-host-detail-summary/remote-host-detail-summary';
 import { HostCredentialsComponent } from '../host-credentials/host-credentials';
+import { ReviewRestartHistoryComponent } from '../review-restart-history/review-restart-history';
 import { roleSlotTotal } from '../../models/role-slots';
 import {
   RuntimeCapacityEditorComponent,
@@ -87,6 +88,7 @@ interface Meter {
     HostCredentialsComponent,
     HostCredentialBadgeComponent,
     StatusIndicatorComponent,
+    ReviewRestartHistoryComponent,
   ],
   templateUrl: './remote-host-card.html',
   styleUrl: './remote-host-card.scss',
@@ -108,6 +110,12 @@ export class RemoteHostCardComponent {
   readonly readiness = computed(() => hostReadiness(this.host(), this.now()));
   readonly repositoryAccess = input('Unknown');
   readonly roles = input<readonly RemoteHost[]>([]);
+  /** AGT-3690: restarts are recorded per role identity, so the machine reads all of them. */
+  readonly restartHosts = computed(() => [this.host(), ...this.roles()]);
+  /** The newest restart of any role; the machine row otherwise shows only its coding role's. */
+  readonly latestRestart = computed(() => this.restartHosts()
+    .filter(role => !!role.restartedAt)
+    .sort((left, right) => Date.parse(right.restartedAt ?? '') - Date.parse(left.restartedAt ?? ''))[0] ?? null);
   readonly rolesShareRelease = computed(() => {
     const roles = this.roles();
     const key = (role: RemoteHost) => role.release?.releaseId ?? role.releaseId ?? role.release?.version ?? null;

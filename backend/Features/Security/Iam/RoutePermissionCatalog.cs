@@ -186,11 +186,12 @@ public static class RoutePermissionCatalog
         AddProjectChecked("R", IamPermissions.ProjectRead, "/api/integrations/quality-studio/status",
             "/api/integrations/quality-studio/open");
         Add("*", IamPermissions.Anonymous, "/healthz/**");
-        Add("R", IamPermissions.Anonymous, "/api/auth/status", "/recovery");
+        Add("R", IamPermissions.Anonymous, "/api/auth/status", "/api/auth/invite/preview", "/recovery");
         Add("POST", IamPermissions.Anonymous,
             "/api/auth/bootstrap", "/api/auth/login", "/api/auth/invite/accept", "/api/auth/runner-enroll",
             "/api/auth/passkeys/assertion-options");
         Add("R", IamPermissions.SelfSession, "/api/auth/session");
+        Add("R", IamPermissions.SelfSession, "/api/auth/directory");
         Add("POST", IamPermissions.SelfSession, "/api/auth/logout", "/api/auth/change-password");
         Add("R", IamPermissions.SelfSession, "/api/auth/sessions");
         Add("W", IamPermissions.SelfSession, "/api/auth/sessions/**", "/api/auth/totp/**", "/api/auth/step-up");
@@ -423,6 +424,8 @@ public static class RoutePermissionCatalog
 
         // --- Cards ---------------------------------------------------------
         Add("POST", IamPermissions.ProjectRead, "/api/tasks/reference-status");
+        // A dry run of the completion checks; the handler checks read access to every card.
+        AddProjectChecked("POST", IamPermissions.ProjectRead, "/api/tasks/acceptance-readiness");
         // Creation, reorder, and batch-move check every affected project in
         // the handler; title and prompt helpers touch no project.
         AddProjectChecked("POST", IamPermissions.ProjectCardsWrite, "/api/tasks", "/api/tasks/reorder", "/api/tasks/batch-move",
@@ -458,6 +461,8 @@ public static class RoutePermissionCatalog
         Add("POST", IamPermissions.ProjectRunsOperate, "/api/projects/{}/batch-gate/queue-stalls/release");
         Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/failed-tests");
         Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/isolation-evidence");
+        Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/run-evidence");
+        Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/run-log");
         Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/execution/proposal-preview");
 
         // --- Documents -----------------------------------------------------

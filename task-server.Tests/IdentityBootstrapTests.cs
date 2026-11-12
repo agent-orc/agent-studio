@@ -495,9 +495,20 @@ public sealed class IdentityBootstrapTests
         Assert.Equal(HttpStatusCode.Created, invitedResponse.StatusCode);
         var invited = (await invitedResponse.Content.ReadFromJsonAsync<StudioInviteResult>())!;
         var token = new Uri("https://studio.example" + invited.SignInLink).Query.Split('=', 2)[1];
+        var preview = (await (await edge.GetAsync("/api/v1/studio/auth/invite/preview?token=" + Uri.EscapeDataString(token)))
+            .Content.ReadFromJsonAsync<StudioInvitationPreview>())!;
+        Assert.Equal("product", preview.Username);
+        Assert.Equal("owner", preview.Inviter);
+        Assert.Equal("Product", preview.Role);
+        Assert.Equal(["Assigned"], preview.Projects);
+        Assert.False(preview.SecondFactorRequired);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await edge.GetAsync(
+            "/api/v1/studio/auth/invite/preview?token=" + Uri.EscapeDataString(token + "x"))).StatusCode);
         var accept = await edge.PostAsJsonAsync("/api/v1/studio/auth/invite/accept",
             new StudioAcceptInvitationRequest(token, "product password long enough"));
         Assert.Equal(HttpStatusCode.OK, accept.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await edge.GetAsync(
+            "/api/v1/studio/auth/invite/preview?token=" + Uri.EscapeDataString(token))).StatusCode);
         var session = (await accept.Content.ReadFromJsonAsync<StudioAuthSessionDto>())!;
         Assert.Equal(StudioUserRoles.Contributor, session.Status.User!.Role);
         Assert.Equal(HttpStatusCode.Unauthorized, (await edge.PostAsJsonAsync("/api/v1/studio/auth/invite/accept",

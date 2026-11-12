@@ -8,6 +8,7 @@ import { runnerWaitCode, runnerWaitHeadline } from '../../models/ready-wait-reas
 import { TaskReferenceNavigationService } from '../../services/task-reference-navigation.service';
 import { TaskService } from '../../services/task.service';
 import { ErrorDialogService } from '../../services/error-dialog.service';
+import { openReviewLossHost, reviewLossHeadline, type ReviewLossHeadline } from './review-loss-headline';
 import { BatchGateService } from '../../services/batch-gate.service';
 import {
   activityDetail, cliLabel, clock, dependencyWaitHeadline, elapsed, holdHeadline, idleHeadline, latestActivityAt, stepPrefix, timestamp,
@@ -26,6 +27,7 @@ interface LiveStatusView {
   attempt: number | null;
   /** AGT-3579: runner reason code when the runner is not picking this card. */
   waitReason?: string;
+  loss?: ReviewLossHeadline;
   /** AGT-3617: the cause card this card is held behind, linked from the headline. */
   hold?: CauseHold;
 }
@@ -88,6 +90,7 @@ export class TaskLiveStatusComponent {
     });
   }
 
+  readonly openHost = openReviewLossHost;
   readonly view = computed<LiveStatusView | null>(() => {
     const task = this.task();
     const status = task.liveStatus;
@@ -201,6 +204,10 @@ export class TaskLiveStatusComponent {
         attempt: status.attempt,
       };
     }
+    // AGT-3690: a lost review names the cause, the host (a link) and the retry.
+    const loss = reviewLossHeadline(status.queue, clock);
+    const lossTone = status.queue?.state === 'retry-scheduled' ? 'waiting' : 'stalled';
+    if (loss) return { tone: lossTone, headline: loss.text, loss, detail: activityDetail(task, status.latestEventAt, this.now()), next, attempt: status.attempt };
     if (status.queue?.state === 'stalled') {
       // The headline carries the call to action; the reason names the outcome.
       return {

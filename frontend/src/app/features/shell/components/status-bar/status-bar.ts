@@ -11,6 +11,7 @@ import {
   output,
 } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
+import { ShellAccessService } from '../../../../services/shell-access.service';
 import {
   clearVisibleInterval,
   setVisibleInterval,
@@ -60,6 +61,7 @@ export function formatRunningLabel(
   styleUrl: './status-bar.scss',
 })
 export class StatusBarComponent implements OnInit, OnDestroy {
+  readonly shellAccess = inject(ShellAccessService);
   private readonly jobService = inject(TaskService);
   private readonly remoteHosts = inject(RemoteHostsService);
   private readonly reviewQueue = inject(ReviewQueueService);
@@ -258,6 +260,7 @@ export class StatusBarComponent implements OnInit, OnDestroy {
     .filter(project => project.activeJobId && project.quotaFallbackModel).length);
 
   ngOnInit(): void {
+    if (!this.shellAccess.operator()) return;
     this.remoteHosts.refresh();
     this.reviewQueue.refresh();
     this.hostLoadRefreshHandle = setVisibleInterval(

@@ -417,8 +417,17 @@ public sealed class MonolithOrchestrationApplier(
                     ? GateReason(occurrence.Run.PayloadJson)
                     : string.Join("\n", decision.Findings.Select(finding =>
                         $"- {finding.Aspect}: {finding.Summary}"));
+                using var reviewPayload = JsonDocument.Parse(occurrence.Run.PayloadJson);
+                var planSkew = reviewPayload.RootElement.TryGetProperty("reviewOutcome", out var reportedOutcome)
+                    && reportedOutcome.GetString()
+                        == AgentStudio.TaskServer.Contracts.ReviewOutcomeKinds.DeliveryPredatesReviewPlan;
+                var followUp = planSkew
+                    ? $"{decision.Reason} Start from the full result ref "
+                      + $"{decision.ContinuationBase?.ResultRef ?? "missing"}, merge the target branch into it, "
+                      + "resolve any conflicts, and submit the merged delivery for review."
+                    : $"{(decision.Action == TransitionAction.ReturnToReady ? "Fix the build and test gate failure:" : "Fix the reviewed findings on the reviewed delivery:")}\n{findings}";
                 if (!mutations.AppendContinuationNote(task.Id,
-                    $"{marker}\n{(decision.Action == TransitionAction.ReturnToReady ? "Fix the build and test gate failure:" : "Fix the reviewed findings on the reviewed delivery:")}\n{findings}", task.WatchPath))
+                    $"{marker}\n{followUp}", task.WatchPath))
                     throw new IOException("The engine follow-up prompt could not be appended.");
             }
         }

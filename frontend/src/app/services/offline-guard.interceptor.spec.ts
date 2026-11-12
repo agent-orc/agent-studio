@@ -102,6 +102,7 @@ describe('offlineGuardInterceptor', () => {
       [`${root}/passkeys/register`, () => auth.registerPasskey(passkey).subscribe()],
       ['/api/v1/studio/auth/invite/accept', () => auth.acceptInvitation('token', 'new').subscribe()],
       [`${root}/logout`, () => auth.logout().subscribe()],
+      ['/api/auth/restore-notice/acknowledge', () => auth.acknowledgeRestoreNotice('archive-id').subscribe()],
     ];
     for (const [url, call] of calls) {
       call();

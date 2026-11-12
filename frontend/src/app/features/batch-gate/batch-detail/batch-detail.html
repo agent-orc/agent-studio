@@ -42,7 +42,7 @@
       }
     }
     @if (record(); as batch) {
-      <p>Phase: {{ batch.phase }} · Latest run: {{ batch.runs[batch.runs.length - 1]?.outcome ?? 'waiting' }}</p>
+      <p>Phase: {{ batch.phase }} · Latest run: {{ batch.runs[batch.runs.length - 1]?.outcome ?? (batch.phase === 'running' ? 'running' : 'interrupted') }}</p>
       @if (publishedSha(batch.publication); as sha) { <p>Published candidate: <code>{{ sha }}</code></p> }
     }
     @if (isolation(); as isolation) {
