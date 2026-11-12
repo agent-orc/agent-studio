@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as nodePath from 'node:path';
+import { createHash } from 'node:crypto';
 import { auditModal } from '../helpers/audit-modal';
 
 test.use({ serviceWorkers: 'block' });
@@ -52,10 +53,11 @@ async function captureThemes(page: import('@playwright/test').Page, evidence: st
   }
 }
 
-async function routeBoard(page: import('@playwright/test').Page, batchState: unknown,
+async function routeBoard(page: import('@playwright/test').Page, batchState: unknown | null,
   onSave: () => void = () => undefined, board: unknown = grouped): Promise<void> {
   await page.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({ v: 1, tabs: [{ kind: 'board', projectName: '__all__' }], activeKey: 'board:__all__' })));
-  await page.route('**/api/**', route => json(route, []));
+  await page.route('**/api/**', route => batchState === null && route.request().url().includes('/batch-gate/state?history=10')
+    ? route.continue() : json(route, []));
   await page.route('**/api/v1/studio/auth/status', route => json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
   await page.route('**/api/v1/management/credential-inventory', route => json(route, { items: [] }));
   await page.route('**/api/v1/studio/board**', route => json(route, board));
@@ -92,7 +94,7 @@ async function routeBoard(page: import('@playwright/test').Page, batchState: unk
   await page.route('**/api/v1/management/retention/policy', route => json(route, { rules: [], revision: 1 }));
   await page.route('**/api/v1/management/credential-inventory', route => json(route, { items: [] }));
   await page.route('**/api/v1/studio/runner/status**', route => json(route, { projects: { [project]: { projectName: project, mode: 'manual', activeJobId: null, queuedJobIds: [] } } }));
-  await page.route('**/api/projects/*/batch-gate/state?history=10', route => json(route, batchState));
+  if (batchState !== null) await page.route('**/api/projects/*/batch-gate/state?history=10', route => json(route, batchState));
   await page.route('**/api/projects/*/batch-gate/failed-tests?windowDays=7', route => json(route, {
     project, windowDays: 7, tests: [{ testName: 'Product.Tests.Unstable', batches: 4, runs: 5,
       distinctMemberSets: 4, firstFailureUtc: '2026-10-09T12:00:00Z', lastFailureUtc: '2026-10-11T13:00:00Z',
@@ -315,6 +317,152 @@ test('ejected batch member badge names why it went to the per-task gate', async 
   for (const theme of ['light', 'dark'] as const) {
     await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
     await card.screenshot({ path: nodePath.join(evidence, `batch-member-ejected-${theme}.png`) });
+  }
+});
+
+test('paused batch shows its ordered per-task handoff on the board', async ({ page }) => {
+  const evidence = process.env.JOB_RESULTS_DIR;
+  if (evidence) fs.mkdirSync(evidence, { recursive: true });
+  const reason = 'batch batch-9 paused: flaky quarantine requires a fresh gate verdict';
+  const batchState = {
+    ...state,
+    plan: { ...state.plan, closeAtUtc: null },
+    pending: Array.from({ length: 4 }, (_, index) => ({
+      taskKey: index === 1 ? key : `${path}::AGT-${index + 1}`,
+      reviewAttemptId: `review-${index + 1}`, resultSha: 'a'.repeat(40),
+      waitMinutes: index, risk: 0.2,
+    })),
+    batches: [{ batchId: 'batch-9', phase: 'abandoned', phaseReason: 'paused-to-per-task-gate: flaky quarantine requires a fresh gate verdict',
+      baseSha: 'b'.repeat(40), members: [{ taskKey: key, replay: 'applied', released: false }], runs: [] }],
+    members: { [key]: { status: 'fallback', batchId: 'batch-9', phase: 'abandoned',
+      position: 2, size: 4, fallbackRule: 'batch-paused', fallbackEvent: reason } },
+    perTaskGates: Array.from({ length: 4 }, (_, index) => ({
+      taskKey: index === 1 ? key : `${path}::AGT-${index + 1}`,
+      reviewAttemptId: `review-${index + 1}`, position: index + 1, total: 4,
+      batchId: 'batch-9', reason, running: false,
+    })),
+  };
+  await routeBoard(page, batchState, () => undefined, { ...grouped,
+    autoReview: [{ ...task, liveStatus: { attempt: 1, activeStep: null, nextSteps: [], queue: { kind: 'review' } } }],
+  });
+  await page.goto('/?includeFixtures=true');
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
+  await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
+  const card = page.getByTestId('task-card').filter({ hasText: 'Batch fixture task' });
+  await expect(card.getByTestId('task-live-current')).toContainText(
+    'Per-task gate queued (2 of 4) after batch batch-9 paused: flaky quarantine requires a fresh gate verdict');
+  await expect(card.getByTestId('batch-member-badge')).toContainText('Per-task fallback · batch paused');
+  await expect(card.getByTestId('batch-member-event')).toContainText(reason);
+  await expect(card.getByTestId('batch-member-event')).toContainText('Red escalates; green integrates.');
+  await expect(page.getByTestId('batch-lane-indicator').first()).toContainText('Per-task gates: 4 queued · 0 running');
+  await page.getByTestId('batch-lane-indicator').first().click();
+  await expect(page.getByTestId('batch-per-task-gates')).toContainText('AGT-2 · 2 of 4 · Queued');
+  await expect(page.getByTestId('batch-panel')).toContainText('Waiting cards (0)');
+  await expect(page.getByTestId('batch-panel')).toContainText('Moved to per-task gates after pause: flaky quarantine requires a fresh gate verdict');
+  await page.getByRole('button', { name: 'Close batch panel' }).click();
+  for (const theme of ['light', 'dark'] as const) {
+    await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+    if (evidence) await page.screenshot({ path: nodePath.join(evidence, `paused-batch-board-${theme}.png`) });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addStyleTag({ content: '.dialog__overlay { display: none !important; }' });
+  await page.getByRole('combobox', { name: 'Board lane' }).selectOption({ label: 'Post Processing' });
+  await card.scrollIntoViewIfNeeded();
+  if (evidence) await page.screenshot({ path: nodePath.join(evidence, 'paused-batch-board-390.png') });
+});
+
+test('paused batch handoff is read from the real backend store', async ({ page, request }) => {
+  const workspace = process.env.PW_E2E_WORKSPACE;
+  const backendUrl = process.env.PW_BACKEND_URL;
+  expect(workspace, 'The isolated Playwright backend is required.').toBeTruthy();
+  expect(backendUrl, 'The isolated Playwright backend is required.').toBeTruthy();
+  const projectName = 'Agent Studio Worktree';
+  const batchId = 'batch-real-paused';
+  const pauseReason = 'flaky quarantine requires a fresh gate verdict';
+  const event = `batch ${batchId} paused: ${pauseReason}`;
+  const digest = createHash('sha256').update(`${nodePath.resolve('..', 'backend')}\n${nodePath.resolve(workspace!)}`)
+    .digest('hex').slice(0, 20);
+  // The webServer process receives the isolated XDG root; Playwright itself does not.
+  const dataHome = nodePath.join(workspace!, 'data');
+  const storeRoot = nodePath.join(dataHome, 'agentstudio', 'instances', digest, 'batch-gates');
+  const safeName = (value: string) => createHash('sha256').update(value).digest('hex');
+  const write = (relative: string, value: unknown) => {
+    const file = nodePath.join(storeRoot, relative);
+    fs.mkdirSync(nodePath.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(value));
+  };
+  const closedAt = '2026-11-10T12:00:00Z';
+  const recordedAt = '2026-11-10T12:01:00Z';
+  const sha = 'a'.repeat(40);
+  const subjects = Array.from({ length: 4 }, (_, index) => ({
+    taskKey: index === 1 ? key : `${path}::AGT-${index + 1}`,
+    project: projectName, repository: path, integrationBranch: 'develop', gateProfile: 'full',
+    gateProfileDigest: 'profile', platformVersion: 'v1', resultRef: `refs/heads/results/${index + 1}`,
+    resultSha: sha, runAttempt: `run-${index + 1}`, deliveryEpoch: 1, fencingToken: 1,
+    reviewSubjectSha: sha, settledEnvelope: true, modelReviewPassed: true,
+    buildTestDeferredToBatch: true, currentGeneration: true, activePerTaskGate: false,
+    owningBatchId: batchId, documentationOnly: false,
+    reviewCompletedAtUtc: closedAt, enqueueSequence: index + 1,
+  }));
+  const batchFolder = safeName(batchId);
+  write(`${batchFolder}/manifest.json`, {
+    batchId, scope: { project: projectName, repository: path, integrationBranch: 'develop',
+      gateProfile: 'full', gateProfileDigest: 'profile', platformVersion: 'v1' },
+    baseSha: 'b'.repeat(40), membershipDigest: 'members-4', closedAtUtc: closedAt,
+    members: subjects, exclusions: [], eligibleKeys: subjects.map(subject => subject.taskKey),
+  });
+  write(`${batchFolder}/state/00000001.json`, {
+    batchId, membershipDigest: 'members-4', phase: 9, candidateSha: null,
+    coordinatorFence: 1, recordedAtUtc: recordedAt,
+    reason: `paused-to-per-task-gate: ${pauseReason}`,
+  });
+  for (const [index, subject] of subjects.entries()) {
+    const reviewAttemptId = `review-real-${index + 1}`;
+    write(`pending/${safeName(reviewAttemptId)}.json`, {
+      reviewAttemptId, subject, repositoryPath: path, watchPath: path,
+      jobFolderPath: nodePath.join(workspace!, `fallback-${index + 1}`),
+      integrationStrategy: 'direct-merge', pipelineType: 'task', enqueuedAtUtc: recordedAt,
+    });
+    write(`fallback-causes/${safeName(projectName)}/0634300000000000000-${safeName(reviewAttemptId)}.json`, {
+      project: projectName, taskKey: subject.taskKey, reviewAttemptId,
+      runAttempt: subject.runAttempt, rule: 'batch-paused', event, batchId,
+      recordedAtUtc: recordedAt,
+    });
+  }
+  try {
+    const response = await request.get(`${backendUrl}/api/projects/${encodeURIComponent(projectName)}/batch-gate/state?history=10`);
+    expect(response.ok(), await response.text()).toBeTruthy();
+    const actual = await response.json() as { batches: { batchId: string; phase: string }[];
+      perTaskGates: { taskKey: string; position: number; total: number }[] };
+    expect(actual.batches).toContainEqual(expect.objectContaining({ batchId, phase: 'abandoned' }));
+    expect(actual.perTaskGates).toHaveLength(4);
+    expect(actual.perTaskGates[1]).toMatchObject({ taskKey: key, position: 2, total: 4 });
+
+    await routeBoard(page, null, () => undefined, { ...grouped, autoReview: [{ ...task,
+      projectName, liveStatus: { attempt: 1, activeStep: null, nextSteps: [], queue: { kind: 'review' } },
+    }] });
+    await page.goto('/?includeFixtures=true');
+    await page.getByRole('tab', { name: 'All projects · Board' }).click();
+    const card = page.getByTestId('task-card').filter({ hasText: 'Batch fixture task' });
+    await expect(card.getByTestId('task-live-current')).toContainText(
+      `Per-task gate queued (2 of 4) after ${event}`);
+    await expect(card.getByTestId('batch-member-event')).toContainText(event);
+    await expect(card.getByTestId('batch-member-event')).toContainText('Red escalates; green integrates.');
+    const evidence = process.env.JOB_RESULTS_DIR;
+    if (evidence) {
+      fs.mkdirSync(evidence, { recursive: true });
+      for (const theme of ['light', 'dark'] as const) {
+        await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+        await page.screenshot({ path: nodePath.join(evidence, `paused-batch-real-${theme}.png`) });
+      }
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.addStyleTag({ content: '.dialog__overlay { display: none !important; }' });
+      await page.getByRole('combobox', { name: 'Board lane' }).selectOption({ label: 'Post Processing' });
+      await card.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: nodePath.join(evidence, 'paused-batch-real-390.png') });
+    }
+  } finally {
+    fs.rmSync(storeRoot, { recursive: true, force: true });
   }
 });
 

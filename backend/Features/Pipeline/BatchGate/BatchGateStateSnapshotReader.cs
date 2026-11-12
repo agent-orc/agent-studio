@@ -24,6 +24,7 @@ public static class BatchGateStateSnapshotReader
         IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null,
         string? leaseDeadlineDeferredBatchId = null,
         IReadOnlyList<BatchGateFallbackWait>? fallbackWaits = null,
+        IReadOnlySet<string>? activePerTaskFlights = null,
         BatchGateInvariantReport? invariants = null)
     {
         // AGT-3694: what each per-task fallback waits for, so an overdue member
@@ -204,6 +205,30 @@ public static class BatchGateStateSnapshotReader
             .Concat(manifests.Select(manifest => manifest.Scope.Project)).Append(project)
             .Distinct(StringComparer.Ordinal)
             .SelectMany(name => name == project ? fallbackCauses : store.ListFallbackCauses(name)).ToArray();
+        var fallbackItems = pending.Select(item => new
+            {
+                item.Subject.TaskKey,
+                item.ReviewAttemptId,
+                Cause = latestCauseByAttempt.GetValueOrDefault(item.ReviewAttemptId),
+                Ownership = BatchGateOwnershipStore.Read(item.JobFolderPath),
+            })
+            .Where(item => item.Cause is not null).ToArray();
+        var perTaskGates = fallbackItems
+            .Select((item, index) => new
+            {
+                item.TaskKey,
+                item.ReviewAttemptId,
+                position = fallbackItems.Take(index + 1).Count(other =>
+                    other.Cause!.BatchId == item.Cause!.BatchId),
+                total = fallbackItems.Count(other => other.Cause!.BatchId == item.Cause!.BatchId),
+                batchId = item.Cause!.BatchId,
+                reason = item.Cause.Event,
+                running = activePerTaskFlights?.Contains(item.ReviewAttemptId) == true
+                    && item.Ownership?.ReviewAttemptId == item.ReviewAttemptId
+                    && item.Ownership.FallbackGateActive && item.Ownership.FallbackGateStartedAtUtc is not null,
+                host = item.Ownership?.FallbackGateHost,
+                startedAtUtc = item.Ownership?.FallbackGateStartedAtUtc,
+            }).ToArray();
         var members = new Dictionary<string, object>(StringComparer.Ordinal);
         foreach (var wait in reviewFixWaits ?? [])
             members[wait.TaskKey] = new { status = "review-fix", batchId = (string?)null,
@@ -333,6 +358,7 @@ public static class BatchGateStateSnapshotReader
                 };
             }).ToArray(),
             batches,
+            perTaskGates,
             flightQueue = flightQueue.Select(manifest => new
             {
                 manifest.BatchId,
@@ -357,6 +383,8 @@ public static class BatchGateStateSnapshotReader
             fallbackWaits = fallbackWaits ?? [],
             fallbackStalls = store.ListFallbackStalls(project, 20),
             isolationFindings = store.ListIsolationFindings(project)
+                .Where(finding => finding.Status != "proven-red"
+                    || DeterministicIsolationFinding(store, projectManifests, finding))
                 .Select(finding => IsolationFinding(store, projectManifests, finding)).ToArray(),
             // AGT-3563: the last invariant check of the pilot tick; null before the first tick.
             invariants = invariants is null ? null : new
@@ -413,6 +441,16 @@ public static class BatchGateStateSnapshotReader
             evidenceAvailable = finding.Status == "proven-red"
                 && store.StoredEvidenceFile(finding.EvidencePath) is not null,
         };
+    }
+
+    private static bool DeterministicIsolationFinding(BatchGateStore store,
+        IReadOnlyList<BatchGateManifest> manifests, BatchGateIsolationFinding finding)
+    {
+        var proving = ProvingRun(store, manifests, finding);
+        var batchId = finding.ProvingBatchId ?? proving?.BatchId;
+        var runId = finding.ProvingRunId ?? proving?.RunId;
+        return batchId is not null && runId is not null
+            && store.ReadVerdict(batchId, runId)?.Classification == "DeterministicSuiteRed";
     }
 
     // Findings written before AGT-3577 name only the evidence path: the proving

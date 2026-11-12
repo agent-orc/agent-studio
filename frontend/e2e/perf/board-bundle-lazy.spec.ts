@@ -101,11 +101,13 @@ test('cold board assets, detail open, and route reuse', async ({ browser }) => {
     await page.waitForFunction(() => Boolean((window as any).__boardFirstPaint), undefined, { timeout: 30_000 });
     await expect(page.getByTestId('task-card').first()).toBeVisible();
     const firstPaintMs = await page.evaluate(() => (window as any).__boardFirstPaint as number);
-    const boardEvents = events.length;
+    const boardPaintAt = await page.evaluate(() => performance.timeOrigin + (window as any).__boardFirstPaint as number);
+    await page.waitForTimeout(1200);
     await page.getByTestId('task-card').first().click();
     await expect(page.getByTestId('studio-task')).toBeVisible({ timeout: 15_000 });
     await page.waitForFunction(() => Boolean((window as any).__detailFirstPaint));
     const detailOpenMs = await page.evaluate(() => (window as any).__detailFirstPaint - (window as any).__detailClickAt);
+    const detailClickAt = await page.evaluate(() => performance.timeOrigin + (window as any).__detailClickAt as number);
     await page.waitForTimeout(500);
     const detailEvents = events.length;
     if (count === 20 && samples.length === 0) {
@@ -124,8 +126,19 @@ test('cold board assets, detail open, and route reuse', async ({ browser }) => {
     if (output && (samples.length === 1 || (count === 830 && samples.filter(sample => sample.count === 830).length === 1))) {
       mkdirSync(output, { recursive: true });
       const label = count === 830 ? '830' : '20';
-      writeFileSync(join(output, `chrome-network-${phase}-${label}-cold.json`), JSON.stringify(events.slice(0, boardEvents)));
-      writeFileSync(join(output, `chrome-network-${phase}-${label}-detail.json`), JSON.stringify(events.slice(boardEvents, detailEvents)));
+      const timeline = events.slice(0, detailEvents);
+      const requestPhase = new Map<string, 'cold' | 'idle' | 'detail'>();
+      for (const item of timeline) {
+        if (item.event !== 'Network.requestWillBeSent') continue;
+        const data = item.data as { requestId: string; wallTime: number };
+        const start = data.wallTime * 1000;
+        requestPhase.set(data.requestId, start < boardPaintAt ? 'cold' : start < detailClickAt ? 'idle' : 'detail');
+      }
+      for (const segment of ['cold', 'idle', 'detail'] as const) {
+        const segmentEvents = timeline.filter(item => requestPhase.get((item.data as { requestId: string }).requestId) === segment);
+        writeFileSync(join(output, `chrome-network-${phase}-${label}-${segment}.json`), JSON.stringify(segmentEvents));
+      }
+      writeFileSync(join(output, `chrome-network-${phase}-${label}-markers.json`), JSON.stringify({ boardPaintAt, detailClickAt }));
     }
     await context.close();
   }
@@ -137,6 +150,32 @@ test('cold board assets, detail open, and route reuse', async ({ browser }) => {
   console.log(`${phase}: 20-card median first paint ${median.toFixed(1)} ms; first detail ${samples[0].detailOpenMs} ms; 830-card median first paint ${largeMedian.toFixed(1)} ms`);
 });
 
+test('profile main-thread costs through first card insertion', async ({ browser }) => {
+  test.skip(process.env.BUNDLE_PROFILE !== '1', 'Run only for a focused CPU profile.');
+  const context = await browser.newContext({ serviceWorkers: 'block' });
+  const page = await context.newPage();
+  await installFixture(page, 20);
+  const cdp = await context.newCDPSession(page);
+  await cdp.send('Profiler.enable');
+  await cdp.send('Profiler.start');
+  await page.goto('/');
+  await page.waitForFunction(() => Boolean(document.querySelector('[data-testid="task-card"]')));
+  const { profile } = await cdp.send('Profiler.stop');
+  if (output) writeFileSync(join(output, 'chrome-cpu-after-20-first-card.json'), JSON.stringify(profile));
+  const nodes = new Map(profile.nodes.map(node => [node.id, node.callFrame]));
+  const costs = new Map<string, number>();
+  profile.samples?.forEach((id, index) => {
+    const frame = nodes.get(id);
+    if (!frame) return;
+    const label = `${frame.functionName || '(anonymous)'} ${frame.url}:${frame.lineNumber + 1}`;
+    costs.set(label, (costs.get(label) ?? 0) + (profile.timeDeltas?.[index] ?? 0) / 1000);
+  });
+  const top = [...costs].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  console.log(`Main-thread costs through first card insertion: ${JSON.stringify(top)}`);
+  if (output) writeFileSync(join(output, 'chrome-cpu-after-20-top-five.json'), JSON.stringify(top, null, 2) + '\n');
+  await context.close();
+});
+
 test('create task, chat, and workspace settings mount on first use', async ({ page }) => {
   const assetRequests: string[] = [];
   page.on('request', request => {
@@ -145,6 +184,9 @@ test('create task, chat, and workspace settings mount on first use', async ({ pa
   await installFixture(page, 20);
   await page.goto('/');
   await expect(page.getByTestId('task-card').first()).toBeVisible();
+  await page.getByTestId('cockpit-header-more').click();
+  await expect(page.getByRole('menuitem', { name: 'Orchestrator configuration' })).toBeVisible();
+  await page.keyboard.press('Escape');
   await expect(page.locator('app-orchestrator-side-sheet')).toHaveCount(0);
   if (output && phase === 'after') await page.screenshot({ path: join(output, 'board-first-paint.png') });
   await page.getByTestId('studio-board-add-task').click();

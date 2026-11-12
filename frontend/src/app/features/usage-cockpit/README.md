@@ -16,6 +16,8 @@ The Studio footer is the only persistent subscription usage display. It reads `G
 
 `UsageDetailSurfaceComponent` is one native `<dialog>`. Desktop opens a nonmodal popover anchored to the footer trigger. Phone width opens a bottom sheet. The shared panel lists every provider, including unavailable providers, all quota windows, current model routes, today's and this week's cost, and ledger links. It also gives the full account quota context without splitting an account's allowance among hosts or models.
 
-Percentages mean quota used, keep at most one decimal, and are never clamped. An unreported window remains `N/A` in detail. Cost comes from the USD ledger projection rather than from quota percentages. `usage-chip.util.ts` and `usage-detail.util.ts` own these format and detail rules.
+The Capacity section reads `GET /api/operator/capacity` only while the detail is open and lists the Ready cards whose configured model would fall back, wait or be held at the current quota, with the target route, the reason and the reset. A configured model that the installed CLI's catalog marks unavailable is flagged `Not offered`; the card model badge uses the same flag instead of "update available". `capacity-detail.util.ts` owns that view.
+
+Percentages mean quota used, keep at most one decimal, and are never clamped. Each window also states what is left, derived from the same rounded value so the two add up to 100; at or above 100% used it reads `None left`. An unreported window remains `N/A` in detail. Cost comes from the USD ledger projection rather than from quota percentages. `usage-chip.util.ts` and `usage-detail.util.ts` own these format and detail rules.
 
 The historical header placement and its supersession are recorded in [the Dossier](../../../../../docs/header-usage-cockpit/README.md).
