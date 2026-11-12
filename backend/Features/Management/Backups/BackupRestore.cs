@@ -109,7 +109,7 @@ public static class BackupRestore
                         var bundle = Path.Combine(bundleScratch, Path.GetFileName(member));
                         using (var output = File.Create(bundle)) data.CopyTo(output);
                         var repository = Resolve(destinations[projectsSource], checkout.Path);
-                        BackupCheckouts.FetchBundle(repository, bundle, allRefs: checkout.Origin is null, checkout.Branch);
+                        BackupCheckouts.FetchBundle(repository, bundle, checkout.Branch);
                         return;
                     }
                     var (source, relative) = Split(member);

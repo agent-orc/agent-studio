@@ -1021,6 +1021,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   The target ref fingerprint is diagnostic evidence, not an acceptance boundary.
   A new delivery epoch or result SHA, or a delivery no longer integrated in the
   published branch, makes the verdict stale and returns the card to Auto Review.
+  Stale-verdict recovery records the integration request and returns from the
+  delivery-chain pass before the per-project merge gate finishes. Its completion
+  requests a fresh review or queues a merge round. After a restart, the
+  reconciler resumes a returned Auto Review card whose latest lane change was
+  the stale-verdict transition and whose review is still pending recovery.
   Older claims without these delivery fields remain accepted while Git reports
   the delivery integrated. An explicit operator override remains accepted for
   its recorded delivery; advancing the target branch does not reopen it.
@@ -1163,6 +1168,13 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   leaving a parked lane always clears the marker (see Parked-card blocker and
   recall below). Both hooks are best-effort primes: a missed one still
   self-heals on the next watch event or periodic sweep.
+- After a successful integration push, `GitService` advances the local
+  `origin/<branch>` tracking ref to the pushed SHA with a compare-and-swap. A
+  newer tracking ref stays ahead. This gives integration status the publication
+  fact even when `url.insteadOf` prevents Git from updating the tracking ref
+  during the push. The resume retry record always has a due time, including
+  waits owned by integration; the post-processing backstop rechecks those cards
+  without a GET route fetching from origin (AGT-3620).
 - A move may set `operatorOverride: true` only when targeting `6-completed`.
   This is an explicit, one-shot operator waiver, never a default. Pipeline
   history and `status.md` retain the override and reason. Concept and other
@@ -1395,6 +1407,13 @@ with `403` and no body. Task Server denies with `403` and
 `backend.Tests/ContributorAccessTests.cs` and
 `task-server.Tests/IdentityBootstrapTests.cs`. The role summary is in
 [security overview](../../operations/security/overview.md).
+
+A Reviewer session (AGT-3670) is not a Product session. It reads cards like a
+Viewer and decides a card in Human Review through
+`POST /api/tasks/{jobId}/human-review/accept` and
+`POST /api/tasks/{jobId}/human-review/send-back`; the note of a send back
+becomes the next run's follow-up. The decision and its audit are described in
+[Who reviews cards](../../operations/security/overview.md#who-reviews-cards-the-reviewer-role-agt-3670).
 
 ## Parked-card blocker and recall
 
@@ -1946,6 +1965,9 @@ from completion backfill, cycle time, throughput, and environment flow metrics.
   option IDs, rationale, operator and decision time, but projects no settled
   promotion decision. The descriptor keeps its current status, and the normal
   prepare and confirm path remains available for a later promotion decision.
+  Concept promotion marks the descriptor `decided` after creating its slice
+  cards, retains those recorded choices, and can be retried without duplicating
+  the cards or lifecycle transition.
 - A delivering card resolved through `references.workbenches` or a descriptor
   `sourceTaskKeys` back edge receives the Dossier maintenance prompt contract.
   It appends only its own dated implementation entry between the canonical log

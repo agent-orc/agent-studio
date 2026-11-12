@@ -81,9 +81,10 @@ renderers outside the board startup graph.
 
 ## Environment flow
 
-Environment > Installation shows a single one shot claim route status for the
-local monolith, where that Task Server route is unavailable. The runner retries
-the route every five minutes without filling its log with repeated 404 entries.
+Environment > Installation shows one one shot claim route status line only
+while a live host reports `telemetry.oneShotClaimRoute`: the oldest reporting
+host, since when, the retry interval and the operator action. Without a report
+nothing extra is shown, also on a local monolith.
 
 DP-S6 renders canary attempt rows beneath their physical host using
 `GET /api/v1/management/attempt-visibility`. Active occupancy follows the
@@ -115,6 +116,12 @@ distinct cards with a completed build/test step and the batch gate uses members
 in verified publications. Gate waiting comes from the active auto-review gate
 queue, and batch gate waiting from its pending store. Deployment card counts
 have no global attribution source yet, so that value remains unavailable.
+Ready-card waiting reasons use the pickup hold policy before aggregation, so
+execution placement and other holds count under their actual mechanism. Lane
+labels in Environment and Activity use `laneName()`; Activity alert summaries
+show affected card keys and titles when available, and a linked next step opens
+the affected card. The Activity message column remains readable at 1280 px and
+wraps on narrow screens.
 
 The view also lists application health for every declared environment from
 `GET /api/environment/health`: status, uptime over 24 hours, 7 days and
@@ -560,6 +567,12 @@ occur. It is not a claim about tunnel transfer time.
   auto-review status snapshot into a compact current-step or elapsed-wait
   indicator; the lane header reconciles those visible cards as active versus
   waiting, with machine-lock gate queueing remaining a distinct waiting state.
+  The status bar counts only queued or stalled review attempts as review
+  attention; passed reviews waiting for delivery integration have a separate
+  count. The create dialog treats a model as pinned only after a user choice
+  or a project model default; other prefilled values remain routing suggestions.
+  The extra status state adds under 1 kB to the initial bundle, so the
+  production error budget is 2101 kB.
 - Project Explorer entries follow Board, Dossiers, Deploy, Operations, Wiki,
   Deck (NV-D1 option A). Deploy hosts the BD-3 Deploy area (Overview,
   Releases, Pipeline, History, the existing deployment tools) plus a Run steps view with
@@ -821,12 +834,15 @@ occur. It is not a claim about tunnel transfer time.
   branch rather than exposing the descriptor's physical `operations/` path.
   Current entries are grouped as `Needs a decision` and `In implementation`;
   `Documented` and `Discarded` stay under a History branch. Every
-  lifecycle header and leaf uses one compact 24 px tree row: its pattern icon
+  lifecycle header and leaf uses one compact 32 px tree row: its pattern icon
   aligns with every sibling at that depth, its title receives the flexible
   width, and only a quiet status dot or compact open-decision count trails it.
+  Tags stay in the leaf tooltip so they cannot wrap the narrow tree row.
   Catalogue key, complete title, lifecycle state, phase, and freshness stay in
   the viewport-safe shared tooltip instead of a second tree line. The Dossiers
-  count is the number of open decisions, not the number of documents.
+  count is the number of Dossier leaves under the branch, excluding the
+  separately promoted Style Guide. Open-decision counts remain on pending
+  leaves and reconcile with the list and viewer header after acceptance.
   Dossier overview and Explorer lifecycle headers are keyboard-accessible disclosures whose per-project collapsed state persists locally; a newly populated section opens once with its quiet count visible.
   Lifecycle-group counts equal
   their visible leaves and zero counts stay hidden. The catalogue's
