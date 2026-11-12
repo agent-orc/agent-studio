@@ -98,10 +98,11 @@ internal sealed class PackageReviewExecutor
         string? dossier = null;
         foreach (var command in subject.Plan.Commands)
         {
-            var appended = string.Empty;
+            var dossierSection = string.Empty;
             if (command.Aspect == ReviewPackageAspects.CrossCardConsistency)
-                appended += "\n" + (dossier ??= await workspace.DossierAsync(stack.CandidateSha!, ct));
-            var input = ReviewAspectInputBudget.Compose(command.Prompt ?? string.Empty, material.Text, appended);
+                dossierSection = "\n" + (dossier ??= await workspace.DossierAsync(stack.CandidateSha!, ct));
+            var input = ReviewAspectInputBudget.Compose(command.Prompt ?? string.Empty, material.Text,
+                string.Empty, dossierSection, subject.Plan.DossierExcerptCharacters);
             var prompt = input.Prompt;
             if (input.Report != "No review input omitted.")
                 inputOmissions.Add($"{command.Aspect}: {input.Report}");
@@ -109,8 +110,19 @@ internal sealed class PackageReviewExecutor
                 ReviewAspectBudgetPolicy.MaterialCharacters(prompt));
             var run = await _agent(workspace, lease,
                 command with { Prompt = prompt, TimeoutSeconds = Math.Max(command.TimeoutSeconds, budget.Seconds) }, ct);
-            var refusal = ReviewCliRefusalPolicy.Classify(command,
-                new ProcessResult(run.ExitCode ?? 1, run.Output, run.Error));
+            var process = new ProcessResult(run.ExitCode ?? 1, run.Output, run.Error);
+            if (RemoteReviewWorkspace.AgentModelUnknownToCli(command, process))
+            {
+                evidence.Add(new ReviewPackageCommandEvidenceDto(command.StepId, command.Aspect, command.CliType,
+                    run.Usage?.Model ?? command.Model, command.ThinkingLevel, run.StartedAt, run.FinishedAt,
+                    run.ExitCode, ReviewModelConfigurationPolicy.Classification,
+                    run.Usage?.InputTokens ?? 0, run.Usage?.OutputTokens ?? 0,
+                    run.Usage?.CacheReadTokens ?? 0, run.Usage?.CacheCreationTokens ?? 0, Sha256(run.Output)));
+                return Report(lease, ReviewPackageOutcomes.Infrastructure,
+                    ReviewModelConfigurationPolicy.Summary(command.StepId, command.CliType, command.Model),
+                    tip, stack.CandidateSha, stack.Steps, verdicts, findings, evidence, material.Files, material.Lines);
+            }
+            var refusal = ReviewCliRefusalPolicy.Classify(command, process, run.Usage is not null);
             if (refusal is not null)
             {
                 evidence.Add(new ReviewPackageCommandEvidenceDto(command.StepId, command.Aspect, command.CliType,

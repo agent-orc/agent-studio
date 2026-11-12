@@ -10,11 +10,13 @@ namespace AgentStudio.OrchestrationDecisions;
 /// bisection or successor child that continues its parent's flight.
 /// <paramref name="DeferredAfterLeaseDeadline"/> marks the batch
 /// whose last flight was cancelled before its coordinator lease, so the next
-/// formed batch takes the slot first.
+/// formed batch takes the slot first. <paramref name="MaximumWaitMinutes"/> is
+/// the project's maximum wait (AGT-3568).
 /// </summary>
 public sealed record BatchGateStartCandidate(
     string BatchId, DateTimeOffset QueuedSinceUtc, long FirstEnqueueSequence, bool Stacked,
-    bool Child, bool DeferredAfterLeaseDeadline);
+    bool Child, bool DeferredAfterLeaseDeadline,
+    int MaximumWaitMinutes = BatchGateStartPolicy.DefaultMaximumWaitMinutes);
 
 /// <summary>
 /// Start order and pre-lease deadline of batch flights (AGT-3562). Only one
@@ -24,8 +26,8 @@ public static class BatchGateStartPolicy
 {
     /// <summary>
     /// Default maximum wait of a formed batch: the 45-minute planning deadline.
-    /// Since AGT-3710 the start order is first in, first out, so this value no
-    /// longer reorders batches; it remains a validated project setting.
+    /// An ordinary batch that has waited this long starts before child batches
+    /// (AGT-3568); it never reorders ordinary batches among themselves.
     /// </summary>
     public const int DefaultMaximumWaitMinutes = 45;
 
@@ -40,24 +42,40 @@ public static class BatchGateStartPolicy
     public const string LeaseDeadlineEventKind = "batch-flight-lease-deadline";
 
     /// <summary>
-    /// Orders formed batches for start, first in, first out (AGT-3710). A
-    /// stacked successor has already claimed the next place in the train, and
-    /// a child continues its parent's flight, so both start first. A batch
-    /// deferred after a lease deadline follows the others. All other batches
-    /// start in formation order: the oldest <see cref="BatchGateStartCandidate.QueuedSinceUtc"/>
-    /// first, then the lowest member enqueue sequence, then the batch id.
-    /// Size never reorders the queue, and the order never depends on how the
-    /// store enumerates its folders.
+    /// Orders formed batches for start: an explicit fairness rule, first in,
+    /// first out, with a maximum wait (AGT-3710, AGT-3568).
+    /// <list type="number">
+    /// <item>A stacked successor has already claimed the next place in the train and starts first.</item>
+    /// <item>An ordinary batch that has waited its maximum wait since <see cref="BatchGateStartCandidate.QueuedSinceUtc"/>
+    /// starts next, so child batches cannot hold it back beyond that wait.</item>
+    /// <item>A child continues its parent's flight.</item>
+    /// <item>Every other ordinary batch follows in formation order.</item>
+    /// <item>A batch deferred after a lease deadline goes last, overdue or not, so a refused flight cannot hold the slot again.</item>
+    /// </list>
+    /// Within a tier the oldest <see cref="BatchGateStartCandidate.QueuedSinceUtc"/>
+    /// starts first, then the lowest member enqueue sequence, then the batch
+    /// id. Size never reorders the queue, and the order never depends on how
+    /// the store enumerates its folders.
     /// </summary>
-    public static IReadOnlyList<string> Order(IEnumerable<BatchGateStartCandidate> formed)
+    public static IReadOnlyList<string> Order(IEnumerable<BatchGateStartCandidate> formed, DateTimeOffset nowUtc)
         => formed
-            .OrderByDescending(batch => batch.Stacked)
-            .ThenByDescending(batch => batch.Child)
-            .ThenBy(batch => batch.DeferredAfterLeaseDeadline)
+            .OrderBy(batch => Tier(batch, nowUtc))
             .ThenBy(batch => batch.QueuedSinceUtc)
             .ThenBy(batch => batch.FirstEnqueueSequence)
             .ThenBy(batch => batch.BatchId, StringComparer.Ordinal)
             .Select(batch => batch.BatchId).ToArray();
+
+    /// <summary>True once an ordinary formed batch has waited its maximum wait.</summary>
+    public static bool Overdue(BatchGateStartCandidate batch, DateTimeOffset nowUtc)
+        => !batch.Stacked && !batch.Child && !batch.DeferredAfterLeaseDeadline
+           && nowUtc - batch.QueuedSinceUtc >= TimeSpan.FromMinutes(Math.Max(1, batch.MaximumWaitMinutes));
+
+    private static int Tier(BatchGateStartCandidate batch, DateTimeOffset nowUtc)
+        => batch.Stacked ? 0
+            : Overdue(batch, nowUtc) ? 1
+            : batch.Child ? (batch.DeferredAfterLeaseDeadline ? 3 : 2)
+            : batch.DeferredAfterLeaseDeadline ? 5
+            : 4;
 
     /// <summary>
     /// True when a flight that has not reached its coordinator lease has run

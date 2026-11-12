@@ -36,6 +36,8 @@ public sealed class TransitionDecisionBoundaryTests
         "BatchPhaseTransitionPolicy", "BatchGateInvariantPolicy",
         // AGT-3562: batch flight start order and pre-lease deadline.
         "BatchGateStartPolicy",
+        // AGT-3568: formation planner (repack, formation intents, intent recovery).
+        "BatchFormationPolicy",
     ];
 
     [Fact]

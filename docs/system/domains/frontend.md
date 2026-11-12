@@ -3,6 +3,13 @@
 Version: 2026-11-09
 Status: System-of-record map for frontend changes.
 
+Concept cards and detail views show the dossier and review state without code
+delivery indicators. They omit build and test evidence, delivery integration,
+and checkout context. Concept acceptance remains available when a stale
+integration status says pending. A pending review held by its host shows the
+current load or slot-capacity reason in the live status line instead of a queue
+position.
+
 Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
@@ -356,7 +363,12 @@ Project settings expose the batch gate's scope, planner, bounds, risk policy,
 calibration, stacking, review test level, timeout, and advisor mode. Enabling
 the gate while the scope is Documentation switches the scope to Code and says
 so; the operator can switch it back before saving. A link at the top of the
-project settings page jumps to the section (AGT-3592). Review lane headers summarize
+project settings page jumps to the section (AGT-3592).
+Code scope includes code and documentation follow-ups from concept work;
+Documentation scope includes only documentation follow-ups. A save that enables
+batch verification requires the remote SSH gate host and worker path, and an
+infrastructure park offers Retry gate and Disable batch verification.
+Review lane headers summarize
 waiting and running batches; card badges and task detail read membership from
 `GET /api/projects/{project}/batch-gate/state?history=10`, not from board cards.
 The project batch panel shows the planner, look ahead, advisor verdict, pending

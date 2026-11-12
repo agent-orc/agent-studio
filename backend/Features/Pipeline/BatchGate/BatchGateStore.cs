@@ -327,6 +327,8 @@ public sealed partial class BatchGateStore
         var folder = Path.Combine(_root, "plans");
         Directory.CreateDirectory(folder);
         var path = Path.Combine(folder, SafeName(project) + ".jsonl");
+        // Two planners of one project append one line at a time (AGT-3568).
+        using var guard = ExclusiveGuard(folder, SafeName(project) + ".lock");
         using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
         JsonSerializer.Serialize(stream, decision, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         stream.WriteByte((byte)'\n');
@@ -645,8 +647,9 @@ public sealed partial class BatchGateStore
         if (windowDays is < 1 or > 90) throw new ArgumentOutOfRangeException(nameof(windowDays));
         lock (_failureRankingLock)
         {
-            var projection = FailureProjection(project);
+            var projection = FailureProjection(project, now: now);
             projection.Failures.RemoveAll(failure => failure.AtUtc < now.AddDays(-90));
+            projection.UnreadableFacts.RemoveAll(fact => fact.CompletedAtUtc < now.AddDays(-90));
             return new BatchTestFailureReport(project, windowDays,
                 BatchGateFailureRanking.Rank(projection.Failures, now, windowDays),
                 projection.UnreadableFacts.Count(fact => fact.CompletedAtUtc >= now.AddDays(-windowDays)
@@ -668,12 +671,14 @@ public sealed partial class BatchGateStore
     }
 
     // Callers hold _failureRankingLock.
-    private FailureRankingProjection FailureProjection(string project, bool retryUnreadable = true)
+    private FailureRankingProjection FailureProjection(string project, bool retryUnreadable = true,
+        DateTimeOffset? now = null)
     {
         if (!_failureRanking.TryGetValue(project, out var projection))
         {
             projection = new FailureRankingProjection();
-            foreach (var fact in ListExecutions(project).Where(fact => fact.BatchId is not null))
+            foreach (var fact in ListExecutions(project).Where(fact => fact.BatchId is not null
+                         && (now is null || fact.CompletedAtUtc >= now.Value.AddDays(-90))))
                 AppendFailureEvidence(projection, fact);
             _failureRanking[project] = projection;
         }
@@ -681,13 +686,17 @@ public sealed partial class BatchGateStore
         {
             var retry = projection.UnreadableFacts.ToArray();
             projection.UnreadableFacts.Clear();
-            foreach (var fact in retry) AppendFailureEvidence(projection, fact);
+            foreach (var fact in retry.Where(fact => now is null
+                         || fact.CompletedAtUtc >= now.Value.AddDays(-90)))
+                AppendFailureEvidence(projection, fact);
         }
         return projection;
     }
 
     private void AppendFailureEvidence(FailureRankingProjection projection, BatchGateExecutionFact fact)
     {
+        // The default reader returns no failures, without throwing, for facts
+        // that lack the gate's own ID, so they stay out of UnreadableFacts.
         try { projection.Failures.AddRange(_readFailureEvidence(WithMembers(fact))); }
         catch (Exception exception) when (exception is not OperationCanceledException and not OutOfMemoryException)
         {

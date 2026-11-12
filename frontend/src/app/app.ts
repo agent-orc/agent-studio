@@ -54,6 +54,7 @@ import {
   overflowActionsFor,
   primaryActionFor,
   mergeAcceptViewFor,
+  acceptanceRequiresIntegration,
   acceptanceHoldReason,
   triageDecisionRefusal,
   triageDecisionRowState,
@@ -1280,11 +1281,15 @@ export class App implements OnInit, OnDestroy {
   // review panel carries its one decision.
   readonly studioTriagePrimary = computed<TriageButton | null>(() => {
     const sel = this.selectedJob();
-    return sel && !this.reviewerSession.reviewsOnly(sel.info.projectName) ? primaryActionFor(sel.info.state) : null;
+    return sel && sel.info.parkedBlocker?.blockerType !== 'gate-infrastructure'
+      && !this.reviewerSession.reviewsOnly(sel.info.projectName)
+      ? primaryActionFor(sel.info.state) : null;
   });
   readonly studioTriageOverflow = computed<TriageButton[]>(() => {
     const sel = this.selectedJob();
-    return sel && !this.reviewerSession.reviewsOnly(sel.info.projectName) ? overflowActionsFor(sel.info.state) : [];
+    return sel && sel.info.parkedBlocker?.blockerType !== 'gate-infrastructure'
+      && !this.reviewerSession.reviewsOnly(sel.info.projectName)
+      ? overflowActionsFor(sel.info.state) : [];
   });
   /**
    * State-dependent presentation for the studio Human Review acceptance primary
@@ -1313,12 +1318,14 @@ export class App implements OnInit, OnDestroy {
   readonly studioPrimaryAwaitingGit = computed(() => {
     const p = this.studioTriagePrimary();
     if (!p || p.id !== 'mark-done') return false;
+    if (!acceptanceRequiresIntegration(this.selectedJob()!.info)) return false;
     const status = this.selectedJob()?.info.integration?.status;
     if (status === 'integrated' || status === 'not-applicable') return false;
     return this.jobDetailSig()?.gitInfoLoading() ?? false;
   });
   readonly studioPrimaryBlockedByIntegration = computed(() => {
     if (this.studioTriagePrimary()?.id !== 'mark-done') return false;
+    if (!acceptanceRequiresIntegration(this.selectedJob()!.info)) return false;
     const status = this.selectedJob()?.info.integration?.status;
     return status !== 'integrated' && status !== 'not-applicable';
   });
