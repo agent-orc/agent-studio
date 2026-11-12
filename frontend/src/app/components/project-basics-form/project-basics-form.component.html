@@ -139,7 +139,9 @@
                [ngModel]="repositoryUrl()"
                (ngModelChange)="repositoryUrl.set($event)"
                (blur)="markTouched('repositoryUrl')" />
-        <span class="pbf__hint">An http(s) URL used for navigation and remote checkout.</span>
+        <span class="pbf__hint">{{ networked()
+          ? 'Studio clones this URL on the server when you create the project without a checkout path. The server must have Git read access.'
+          : 'An http(s) URL used for navigation and remote checkout.' }}</span>
         @if (errorFor('repositoryUrl'); as error) {
           <span class="pbf__error" role="alert">{{ error }}</span>
         }

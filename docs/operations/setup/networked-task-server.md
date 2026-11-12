@@ -54,6 +54,28 @@ The backend networked profile rejects cleartext application requests even if a
 proxy is misconfigured. The health endpoint returns only `ok`. Debug, internal
 probe, and filesystem diagnostic endpoints are not mapped.
 
+## Project checkouts
+
+When an Owner registers a project with a repository URL and no checkout path,
+the networked monolith clones that URL into a server owned checkout beside the
+Task Repository's `projects` directory. It records the checkout as both
+`repositoryPath` and `rootPath` before the project is available to cards. The
+backend service user needs read access to the URL and write access to that
+directory. A failed clone rejects registration with `server-checkout-required`;
+give the service user Git access and retry. Registration does not leave a
+project that can start a card without its checkout.
+Deleting the project removes this managed checkout. Studio leaves manually
+supplied checkout paths untouched.
+
+For a private repository, arrange Git access for the backend service user before
+registration, or have the Owner enter an existing absolute checkout path on the
+Studio server in the project form. The path must name a Git checkout that the
+backend service user can read and write. The project settings page also lets an
+Owner repair the path of a project registered before this checkout step existed.
+Use the project's repository URL as its origin and ensure the integration branch
+exists on that remote. A Runner checkout on another host does not replace the
+monolith checkout, which owns integration worktrees and refs.
+
 ## Fail-closed deployment check
 
 Run these checks from a machine with no Studio cookies. Expected status is in
@@ -112,6 +134,9 @@ service's `runner.env`, preserving the credential-file path. The enrolled
 display name. Enrollment registers that id as a service client, so assign each
 project's execution location to the enrolled id before expecting claims.
 `RUNNER_CLIENT_ID` remains optional attribution only.
+Set `RUNNER_ENROLLMENT_CONFIG_DIR` to an absolute path before enrollment when
+the service uses a different private configuration directory; both files are
+written there.
 
 For an existing host, stop only its daemon, have the owner issue a code for its
 existing display name and required scopes, enroll on that host, switch

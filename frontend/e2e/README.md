@@ -97,6 +97,17 @@ the disconnected live-update hub), then enrolls an authenticator with a code it
 computes from the shown secret (AGT-3614). With `JOB_RESULTS_DIR` set, it
 writes light, dark and 390 px screenshots to `owner-second-factor/`.
 
+### Networked project checkout journey
+
+Run `npm --prefix frontend run e2e -- e2e/security/networked-project-checkout.spec.ts`.
+The isolated `networked-checkout` profile uses the networked HTTPS monolith and
+a disposable Git origin. The browser creates the Owner and runner enrollment
+codes; the test starts coding and review hosts from those codes. It registers
+a project by URL, creates its first card, and verifies the integrated file on
+the origin. The spec makes no direct application API calls.
+With `JOB_RESULTS_DIR` set, it writes light, dark and 390 px checkout screenshots
+and an integration screenshot to `networked-project-checkout/`.
+
 ### Product card detail check
 
 Run `npm --prefix frontend run e2e -- e2e/security/product-card-detail.spec.ts`.
