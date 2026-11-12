@@ -5,6 +5,24 @@ import { setTheme } from '../helpers/theme';
 
 const screenshotDir = path.join(process.env.JOB_RESULTS_DIR ?? path.resolve(__dirname, '..', '..', '..', 'results'), 'security');
 
+test('signed-in user without project access sees one explanation', async ({ page }) => {
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'usr_rui', username: 'rui', displayName: 'Rui', role: 'viewer', projects: [], disabled: false, mustChangePassword: false } }),
+  }));
+  mkdirSync(screenshotDir, { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await page.addInitScript(value => localStorage.setItem('atp.studio.theme', value), theme);
+    await page.goto('/');
+    await expect(page.getByTestId('no-project-access')).toHaveText('You currently have no access to any project. Ask the owner.');
+    await expect(page.getByText('Failed to load archived tasks.')).toHaveCount(0);
+    await page.screenshot({ path: path.join(screenshotDir, `no-project-access-${theme}.png`) });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: path.join(screenshotDir, 'no-project-access-390.png') });
+});
+
 test('first owner sign-in shows the restored archive and security review', async ({ page }) => {
   const evidence = path.join(process.env.JOB_RESULTS_DIR ?? screenshotDir, 'restore-security');
   mkdirSync(evidence, { recursive: true });
@@ -86,6 +104,7 @@ test('networked Studio gates the workspace behind same-origin login', async ({ p
     body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: false, user: null }),
   }));
   await page.route('**/api/v1/studio/auth/logout', route => route.fulfill({ status: 204, body: '' }));
+  await page.route('**/api/auth/users', route => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
 
   await page.goto('/');
   await expect(page.getByTestId('auth-gate')).toBeVisible();

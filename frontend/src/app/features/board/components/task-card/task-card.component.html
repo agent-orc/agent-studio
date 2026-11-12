@@ -35,7 +35,7 @@
               [style.color]="oc.foreground"
               [cacTooltip]="oc.tooltip">
           <span class="task-card__owner-icon" aria-hidden="true">👤</span>
-          <span class="task-card__owner-name">{{ oc.initials }}</span>
+          <span class="task-card__owner-name">{{ oc.label }}</span>
         </span>
       }
       @if (isPickupNext()) {

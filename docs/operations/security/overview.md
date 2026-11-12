@@ -120,13 +120,17 @@ that is already allowed to edit that project's checkout.
   session cookie and sends it with `Secure`, `Path=/`, and no `Domain` attribute.
   Studio exposes an explicit sign-out action; a logout or API 401 tears
   down browser polling and SignalR before returning to the login gate.
+  Bootstrap, invitation acceptance, and login record the resolved client address
+  and a bounded browser device label on every new session.
 - Owner, Admin, Developer, Approver, and Viewer must enroll an authenticator or a
   WebAuthn passkey. Their permissions include run operation, deployment or
-  approval, secrets, or access; Viewer holds `secrets.read` for metadata. An account without a factor receives a limited
-  session for factor setup. Once any user registers a factor, every password
-  sign-in requires its authenticator code, a one-use recovery code, or a
-  WebAuthn passkey assertion, including Product sign-ins. Every
-  step-up requires a registered second factor. TOTP enrollment returns recovery codes once; store them away from
+  approval, secrets, or access; Viewer holds `secrets.read` for metadata. An
+  account without a factor receives a limited session for factor setup. Once
+  any user registers a factor, every password sign-in requires its
+  authenticator code, a one-use recovery code, or a WebAuthn passkey assertion,
+  including Product sign-ins. Every step-up requires a registered second
+  factor. TOTP setup presents the secret, a locally generated QR code, and an
+  `otpauth://` link. Enrollment returns recovery codes once; store them away from
   the browser. Passkey ceremonies require user verification and bind the
   challenge to the current origin and relying party. Each user can list active
   sessions with device, address, creation, and last-use times, revoke one, or
@@ -137,6 +141,9 @@ that is already allowed to edit that project's checkout.
   authenticator code, recovery code, or passkey assertion. Verification grants
   one session administration action and expires after five minutes. Sign-in
   itself does not grant step-up authority.
+  Disabling a person asks for confirmation and revokes open sessions immediately.
+  A correct-password sign-in to a disabled account explains its state. A signed-in
+  person with no project access sees a single instruction to ask the owner.
 - The standalone Task Server Studio session uses the same 10-failure client
   lockout, 20-failure username budget, 15-minute window, 8-hour idle expiry,
   and 7-day absolute expiry as the networked monolith defaults.
@@ -149,7 +156,8 @@ that is already allowed to edit that project's checkout.
   viewer is read-only. A contributor cannot access
   credentials, hosts, settings, quotas, merges, promotions, or raw logs.
   Product cards carry no run controls: project defaults choose the CLI, model,
-  and mode, and the card records the signed-in user as creator. Product
+  and mode, and the card records the signed-in user as creator. Signed-in viewers
+  receive only user IDs and display names for card attribution. Product
   sessions read only screenshot, HTML, and Markdown result files and never run
   conversations, session events, or agent work detail. The shell lists a
   Product session's workspaces, projects, and watch paths through the same

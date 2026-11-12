@@ -191,6 +191,7 @@ public static class RoutePermissionCatalog
             "/api/auth/bootstrap", "/api/auth/login", "/api/auth/invite/accept", "/api/auth/runner-enroll",
             "/api/auth/passkeys/assertion-options");
         Add("R", IamPermissions.SelfSession, "/api/auth/session");
+        Add("R", IamPermissions.SelfSession, "/api/auth/directory");
         Add("POST", IamPermissions.SelfSession, "/api/auth/logout", "/api/auth/change-password");
         Add("R", IamPermissions.SelfSession, "/api/auth/sessions");
         Add("W", IamPermissions.SelfSession, "/api/auth/sessions/**", "/api/auth/totp/**", "/api/auth/step-up");
