@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, ElementRef, OnDestroy, computed, in
 import { RemoteHostsService } from '../../../remote-hosts/services/remote-hosts.service';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 
+import { UsageCapacityDetailComponent } from '../usage-capacity-detail/usage-capacity-detail';
 import { UsageCostDetailComponent } from '../usage-cost-detail/usage-cost-detail';
 import type { UsageCockpitResponse } from '../../models/usage-cockpit.model';
 import {
@@ -13,8 +14,8 @@ import {
 
 /**
  * Usage detail content (HUC-S3): every CLI's quota windows and observed
- * models, then today's and this week's cost with project split, live runs and
- * slot pools. The desktop popover and the phone sheet render this same
+ * models, the Ready cards that would fall back or wait, then today's and this
+ * week's cost with project split, live runs and slot pools. The desktop popover and the phone sheet render this same
  * component; only the surface around it differs.
  *
  * The panel always holds every section, so one footer entry reaches all usage
@@ -23,7 +24,7 @@ import {
 @Component({
   selector: 'app-usage-detail-panel',
   standalone: true,
-  imports: [UsageCostDetailComponent, DisclosureMarkerComponent],
+  imports: [UsageCapacityDetailComponent, UsageCostDetailComponent, DisclosureMarkerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './usage-detail-panel.html',
   styleUrl: './usage-detail-panel.scss',
@@ -65,6 +66,7 @@ export class UsageDetailPanelComponent implements OnDestroy {
     return { kind: 'cli', cliId };
   }
 
+  readonly capacityFocus: UsageDetailFocus = { kind: 'capacity' };
   readonly costFocus: UsageDetailFocus = { kind: 'cost' };
 
   isSelected(focus: UsageDetailFocus): boolean {

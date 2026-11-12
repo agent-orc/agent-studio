@@ -909,26 +909,9 @@ public class ProjectRunner
         var pending = info.PendingIntent?.ModelFallback;
         var (cli, model, thinking) = RequestedRoute(
             info.CliType, info.Model, info.ThinkingLevel, pending);
-        var plan = _modelSelection?.Select(new ModelSelectionCall(
-               new AgentStudio.TaskServer.Contracts.SelectionRequest
-               {
-                   Consumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.Coding,
-                   Project = ProjectName,
-                   TaskKey = info.Key ?? (string.IsNullOrEmpty(info.TaskKey) ? info.Id : info.TaskKey),
-                   Pins = new AgentStudio.TaskServer.Contracts.SelectionPins(
-                       cli,
-                       pending is not null ? model : info.PinMode != "hard" && info.PreferenceExpiresAt > DateTime.UtcNow
-                           ? info.PreferenceModel ?? info.Model : info.Model,
-                       pending is not null ? thinking : info.PinMode != "hard" && info.PreferenceExpiresAt > DateTime.UtcNow
-                           ? info.PreferenceThinkingLevel ?? info.ThinkingLevel : info.ThinkingLevel,
-                       info.PinMode == "hard" ? AgentStudio.TaskServer.Contracts.SelectionPinMode.Hard
-                           : AgentStudio.TaskServer.Contracts.SelectionPinMode.Preference),
-                   IsExplicitPin = info.ModelExplicit,
-                   TaskType = info.TaskType,
-               },
-               "local-coding-launch",
-               _activeRuns.Count,
-               CorrectnessFloor: _modelQualification is null ? null : () =>
+        var plan = _modelSelection?.Select(CodingSelectionCalls.For(
+               info, ProjectName, _activeRuns.Count, DateTime.UtcNow,
+               _modelQualification is null ? null : () =>
                    _modelQualification.CorrectnessFloor(info,
                        ReadPromptText(Path.Combine(info.FolderPath, "prompt.md"))))).Admission
            ?? QuotaAdmissionPlanner.Plan(
@@ -1709,7 +1692,7 @@ public class ProjectRunner
     {
         if (_globalBreakerCooldownUntil is { } until)
             return new RunnerPickupWait(RunnerPickupWaitCodes.BreakerCooldown,
-                $"Auto-pickup is cooling down after a circuit-breaker trip and resumes at {until:O}.");
+                $"Auto-pickup is cooling down after a circuit-breaker trip ({_globalBreakerReason ?? "unknown cause"}) and resumes at {until:O}.");
         return _mode == "paused"
             ? new RunnerPickupWait(RunnerPickupWaitCodes.Paused,
                 "The runner is paused; no card is picked until auto-pickup is enabled again.")
@@ -2769,7 +2752,10 @@ public class ProjectRunner
                     jobId, info.WatchPath, ProjectName,
                     HumanReviewEscalationCategories.UiIterationCap, reason, ct);
                 if (escalation.Status == MoveJobStatus.Success && !string.IsNullOrWhiteSpace(escalation.NewFolderPath))
+                {
                     SteerPendingMarker.Clear(escalation.NewFolderPath!, _logger);
+                    _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(escalation.NewFolderPath!));
+                }
                 _logger.LogWarning(
                     "ui_pipeline_cap project={Project} job={JobId} iteration={Iteration}/{MaxIterations} action=escalate status={Status}",
                     ProjectName, jobId, ui.Iteration, ui.MaxIterations, escalation.Status);
@@ -3726,6 +3712,7 @@ public class ProjectRunner
             // Only a confirmed process start ends a visible no-slot wait. Early
             // admission/quota/spawn failures intentionally leave the wait visible.
             SteerPendingMarker.Clear(info.FolderPath, _logger);
+            _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(info.FolderPath));
             _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.ExecutionRunning);
             PostProcessingLifecycleStore.ResetForExecution(
                 info.FolderPath,
@@ -5266,6 +5253,7 @@ public class ProjectRunner
                 Ask = string.IsNullOrWhiteSpace(ask) ? null : Truncate(ask, 2000),
                 CliType = info.CliType,
             }, _logger);
+            _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(info.FolderPath));
             _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.SteerPending);
             _timeline?.Append(
                 info.FolderPath,
@@ -5584,6 +5572,13 @@ public class ProjectRunner
 
             var followUpPath = Path.Combine(info.FolderPath, "orchestrator-follow-up.md");
             var followUpText = File.Exists(followUpPath) ? File.ReadAllText(followUpPath) : string.Empty;
+            // This handoff belongs to the first run after the operator epoch.
+            // A later automatic reissue must use its own fresh review findings.
+            var operatorInstructions = priorRunExists
+                ? null
+                : OperatorReviewRequeueService.ReadInstructions(info.FolderPath);
+            if (operatorInstructions is not null)
+                followUpText = OperatorReviewRequeueService.PromptText(operatorInstructions);
 
             // Foreground BOTH the auto-review aspect concerns AND the user-run
             // code-review findings (code-review-*.md). The latter were the
@@ -5592,7 +5587,7 @@ public class ProjectRunner
             // re-run only saw the old prompt and not "what the review said was
             // wrong". Both feed the same open-items channel - the pre-check
             // treats them generically as items to resolve before anything else.
-            var reviewFindings = GatherAspectConcernSummaries(info.FolderPath)
+            List<string> reviewFindings = operatorInstructions is not null ? [] : GatherAspectConcernSummaries(info.FolderPath)
                 .Concat(GatherCodeReviewFindings(info.FolderPath))
                 .ToList();
             var reissueCause = ResolveLatestReissueCause(info.FolderPath);
@@ -5600,6 +5595,7 @@ public class ProjectRunner
             return ReissueOpenItemsPreCheck.Evaluate(new ReissueOpenItemsPreCheck.PreCheckInput
             {
                 HasReissueTag = hasReissueTag,
+                HasOperatorInstructions = operatorInstructions is not null,
                 PriorRunCompleted = priorRunExists,
                 PriorRunCount = prior?.Attempt ?? 0,
                 FollowUpText = followUpText,
@@ -7725,6 +7721,7 @@ public class ProjectRunner
                 CliType = info.CliType,
                 UiIterationReview = contract,
             }, _logger);
+            _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(info.FolderPath));
             _mutations.SetJobPhase(info.FolderPath, LifecyclePhases.AwaitingReview);
             _pipelineLog?.RecordStep(info.FolderPath, new PipelineStepExecution
             {
@@ -8868,7 +8865,7 @@ public class ProjectRunner
             : rendered;
     }
 
-    private static RunPlan BuildReissueChangePlan(
+    internal static RunPlan BuildReissueChangePlan(
         RunPlan plan,
         ReissueOpenItemsPreCheck.PreCheckDecision decision,
         string projectName,
@@ -9014,7 +9011,7 @@ public class ProjectRunner
         catch { return path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar); }
     }
 
-    private static string ReadPromptText(string promptPath)
+    internal static string ReadPromptText(string promptPath)
     {
         try
         {

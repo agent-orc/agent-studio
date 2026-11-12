@@ -1,5 +1,5 @@
 <main class="auth-gate" data-testid="auth-gate">
-  <form class="auth-gate__panel" (ngSubmit)="submit()">
+  <form class="auth-gate__panel" (ngSubmit)="submit()" [attr.novalidate]="auth.status()?.bootstrapRequired ? '' : null">
     <div class="auth-gate__brand">Agent Software Studio</div>
     @if (auth.loading()) {
       <p class="auth-gate__muted">Connecting securely...</p>
@@ -8,6 +8,19 @@
       <p class="auth-gate__muted">This code is shown once. Keep it with the installation recovery set, outside this browser.</p>
       <output data-testid="owner-recovery-code">{{ recoveryCode }}</output>
       <button type="button" data-testid="owner-recovery-acknowledge" (click)="acknowledgeRecoveryCode()">I stored the code</button>
+    } @else if (auth.status()?.restoreNotice; as notice) {
+      <h1>Review security after restore</h1>
+      <p class="auth-gate__muted">Studio was restored from archive <strong data-testid="restore-archive-id">{{ notice.archiveId }}</strong>, created <time [attr.datetime]="notice.archiveCreatedAt">{{ notice.archiveCreatedAt }}</time>. Security changes made after that time may have been undone.</p>
+      <p>Re-check and revoke or rotate anything changed since the archive:</p>
+      <ul class="auth-gate__checks" data-testid="restore-security-checks">
+        <li>API and service account tokens</li>
+        <li>Users and disabled accounts</li>
+        <li>Role bindings and permissions</li>
+        <li>Runner credentials</li>
+        <li>Secrets and their external copies</li>
+      </ul>
+      <p class="auth-gate__muted">All earlier browser sessions were ended. Everyone must sign in again. Your authenticator seed still works.</p>
+      <button type="button" data-testid="restore-review-access" [disabled]="submitting()" (click)="reviewRestoreNotice(notice.archiveId)">Review Access</button>
     } @else if (recoveryCodes().length) {
       <h1>Store your recovery codes</h1>
       <p class="auth-gate__muted">Each code works once. Keep these codes outside this browser.</p>
@@ -39,11 +52,16 @@
       <h1>Create the first owner</h1>
       <p class="auth-gate__muted">This one-time step closes bootstrap and creates the organization owner.</p>
       <label>Username<input name="username" autocomplete="username" [(ngModel)]="username" required></label>
+      @for (message of bootstrapErrors()['username'] ?? []; track message) { <p class="auth-gate__error" role="alert">{{ message }}</p> }
       <label>Display name<input name="displayName" autocomplete="name" [(ngModel)]="displayName"></label>
       @if (auth.status()?.bootstrapCodeRequired) {
         <label>Installer owner code<input name="bootstrapCode" type="password" autocomplete="off" [(ngModel)]="bootstrapCode" required></label>
+        <p class="auth-gate__muted">Docker Compose: <code>/run/agent-studio-secrets/owner_bootstrap_code</code> in the task-server container. Native Linux: <code>&lt;orchestrator-config-root&gt;/owner_bootstrap_code</code>. Native Windows: <code>%ProgramData%\AgentOrchestrator\owner-bootstrap.code</code>. Read it as the installation administrator. <a href="https://github.com/agent-orc/agent-studio/blob/develop/docs/operations/setup/install.md" target="_blank" rel="noopener noreferrer">Installer guide</a></p>
+        @for (message of bootstrapErrors()['bootstrapCode'] ?? []; track message) { <p class="auth-gate__error" role="alert">{{ message }}</p> }
       }
-      <label>Password<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" [(ngModel)]="password" required></label>
+      <label>Password<input name="password" type="password" autocomplete="new-password" [(ngModel)]="password" required></label>
+      <p class="auth-gate__muted">Use 12 to 128 characters. Do not include your username.</p>
+      @for (message of bootstrapErrors()['password'] ?? []; track message) { <p class="auth-gate__error" role="alert">{{ message }}</p> }
       <button type="submit" [disabled]="submitting()">Create owner</button>
     } @else {
       <h1>Sign in</h1>

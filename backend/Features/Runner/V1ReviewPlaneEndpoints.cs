@@ -976,10 +976,7 @@ public static class V1ReviewPlaneEndpoints
             {
                 if (TaskModes.IsConcept(reviewTask.Mode))
                 {
-                    var briefPath = Path.Combine(reviewTask.FolderPath, "prompt.md");
-                    var currentBriefHash = File.Exists(briefPath)
-                        ? AttemptAuthorityService.Hash(File.ReadAllText(briefPath))
-                        : null;
+                    var currentBriefHash = BriefVersionStore.ReadCurrent(reviewTask.FolderPath);
                     request = frozenPlan is null
                         ? request with
                         {
@@ -2434,7 +2431,7 @@ public static class V1ReviewPlaneEndpoints
         }
     }
 
-    private static bool HasSettledResultEnvelope(RunAttemptDto? run)
+    internal static bool HasSettledResultEnvelope(RunAttemptDto? run)
     {
         if (run is not
             {
@@ -2899,10 +2896,11 @@ public static class V1ReviewPlaneEndpoints
                     .Concat(verify.Commands.Skip(firstTest)).ToArray(),
             };
         }
-        var preparation = GatePreparationPlanner.Plan(
+        var preparationPlan = GatePreparationPlanner.PlanWithSkips(
                 repositoryPath ?? string.Empty,
                 profile,
-                verify.Commands)
+                verify.Commands);
+        var preparation = preparationPlan.Commands
             .Select((command, index) => new Contract.ReviewPreparationCommandDto(
                 $"prepare-{index + 1}",
                 "bash",
@@ -2971,6 +2969,9 @@ public static class V1ReviewPlaneEndpoints
                 .ToList(),
             IntegrationRef: integrationRef,
             Preparation: preparation,
+            PreparationSkips: preparationPlan.Skips
+                .Select(skip => new Contract.ReviewPreparationSkipDto(skip.WorkingSubdir, skip.Reason))
+                .ToArray(),
             PreserveGlobs: profile?.PreserveGlobs,
             BuildProfileFingerprint: BuildProfileValidationFingerprint.Create(profile),
             LibraryVersion: Contract.ReviewLibraryStepPolicy.Version);
@@ -4175,7 +4176,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     0,
                     activeSlots,
                     TaskServerConnectionStatus: "connected",
-                    TaskServerConnectionObservedAt: now),
+                    TaskServerConnectionObservedAt: now,
+                    OneShotClaimRoute: existing?.Telemetry?.OneShotClaimRoute),
                 existing?.ModelAcceptanceAdvertised ?? false);
         }
     }

@@ -3,7 +3,7 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, input, si
 import type { TaskInfo } from '../../../models/task.model';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { StatusIndicatorComponent } from '../../../components/status-indicator/status-indicator.component';
-import { batchAlert, batchShortId, type BatchAlert } from '../../../models/batch-gate.model';
+import { batchAlert, batchRunIsRunning, batchShortId, batchWaitingCards, type BatchAlert } from '../../../models/batch-gate.model';
 import { BatchPanelComponent } from '../batch-panel/batch-panel';
 
 @Component({
@@ -44,6 +44,11 @@ export class BatchLaneIndicatorComponent {
     return `Batch ${alert.batchId} ${alert.state === 'red' ? 'is red' : 'is isolating the red member'}${culprits}`;
   }
   runningFor(project: string): number {
-    return this.stateFor(project)?.batches.filter(batch => batch.runs.some(run => !!run.startedAtUtc && !run.finishedAtUtc)).length ?? 0;
+    return this.stateFor(project)?.batches.filter(batch => batch.runs.some(run => batchRunIsRunning(batch, run))).length ?? 0;
   }
+  perTaskFor(project: string): { queued: number; running: number } {
+    const gates = this.stateFor(project)?.perTaskGates ?? [];
+    return { queued: gates.filter(gate => !gate.running).length, running: gates.filter(gate => gate.running).length };
+  }
+  waitingFor(project: string): number { return batchWaitingCards(this.stateFor(project)).length; }
 }

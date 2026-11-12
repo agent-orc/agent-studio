@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input } from '@angular/core';
 import { BatchGateService } from '../../../services/batch-gate.service';
-import { batchEjectionLabel, batchMemberFor } from '../../../models/batch-gate.model';
+import { batchEjectionLabel, batchFallbackWaitLabel, batchMemberFor } from '../../../models/batch-gate.model';
 
 @Component({
   selector: 'app-batch-member',
@@ -23,7 +23,8 @@ export class BatchMemberComponent {
     return state.pushWaits?.find(wait => wait.jobId === this.taskId())
       ?? (state.pushWait?.jobId === this.taskId() ? state.pushWait : null);
   });
-  readonly ejection = computed(() => batchEjectionLabel(this.member()?.reason));
+  readonly ejection = computed(() => batchEjectionLabel(this.member()?.fallbackRule ?? this.member()?.reason));
+  readonly fallbackWait = computed(() => batchFallbackWaitLabel(this.member()?.waitKind));
   constructor() {
     effect(onCleanup => {
       const project = this.project();

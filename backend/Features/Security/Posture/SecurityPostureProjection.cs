@@ -294,6 +294,11 @@ public static class SecurityPostureProjection
                     $"{host.Name} runs agent host {host.Release?.Version ?? host.RunnerVersion}, behind the server",
                     $"The server runs {facts.Stable?.Version ?? facts.Server.Version}. {verdict.Reason}", verdict.AlarmDue,
                     Subject: host.HostId));
+            else if (verdict.State == HostReleaseDriftStates.Differs)
+                drafts.Add(new Draft($"versions:host:{host.RunnerId}", verdict.AlarmDue ? 65 : 50, SecurityPostureAreas.Versions,
+                    $"{host.Name} runs agent host {host.Release?.Version ?? host.RunnerVersion} from another commit than the server",
+                    $"The server runs {facts.Stable?.Version ?? facts.Server.Version}. {verdict.Reason}", verdict.AlarmDue,
+                    Subject: host.HostId));
             else if (verdict.State == HostReleaseDriftStates.Unknown)
                 drafts.Add(new Draft($"versions:host:{host.RunnerId}", 20, SecurityPostureAreas.Versions,
                     $"{host.Name} reports no comparable release", verdict.Reason, false, Subject: host.HostId));

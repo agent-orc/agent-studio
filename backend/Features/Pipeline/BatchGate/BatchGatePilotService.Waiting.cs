@@ -11,7 +11,7 @@ public sealed partial class BatchGatePilotService
                 && !flight.IsCompleted) return true;
         string[] fallbackAttempts;
         lock (_fallbackFlights)
-            fallbackAttempts = _fallbackFlights.Where(pair => !pair.Value.IsCompleted)
+            fallbackAttempts = _fallbackFlights.Where(pair => !pair.Value.Task.IsCompleted)
                 .Select(pair => pair.Key).ToArray();
         if (_store.ListPending().Any(item => item.Subject.Project == scope.Project
             && fallbackAttempts.Contains(item.ReviewAttemptId, StringComparer.Ordinal)))

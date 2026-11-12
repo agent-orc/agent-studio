@@ -558,9 +558,9 @@ export interface PlanningSpawnSummary {
 }
 
 /**
- * Interim concept-dossier projection. The path is detected from
- * results/deliverables.md or status.md until references.workbenches provides
- * the structured carrier.
+ * Concept Dossier projection from the same primary task.dossier link used by
+ * the board and the Dossier card list. A deliberate no-Dossier choice is
+ * carried separately.
  */
 export interface ConceptDossierSummary {
   repoRelativePath?: string | null;
@@ -1790,6 +1790,7 @@ export interface CreateTaskRequest {
   /** Ownership-routing input. The backend resolves and validates the destination. */
   routing?: ComponentRoutingRequest;
   requestedTaskPrefix?: string;
+  dossier?: { path: string; section?: string | null; decision?: string | null; implementationIndex?: number | null };
 }
 
 /**
@@ -2176,8 +2177,8 @@ export interface TaskLiveQueue {
   reasonCode?: RunnerPickupWaitCode | string | null;
   /**
    * AGT-3094: `reviewing` while a review executor holds the ReviewAttempt lease,
-   * `stalled` when nothing will review the delivery without an operator, else
-   * `queued`. Runner queues and legacy review queues are always `queued`.
+   * `stalled` when nothing will review the delivery without an operator,
+   * `integration` after review passes, else `queued`.
    * Absent on payloads from older servers; read it as `queued`.
    */
   state?: TaskLiveQueueState;
@@ -2189,7 +2190,7 @@ export interface TaskLiveQueue {
   outcome?: string | null;
 }
 
-export type TaskLiveQueueState = 'queued' | 'reviewing' | 'stalled';
+export type TaskLiveQueueState = 'queued' | 'reviewing' | 'stalled' | 'integration';
 
 export interface TaskLiveStatus {
   attempt: number;
@@ -2557,6 +2558,12 @@ export interface ReviewAttempt {
    * produced this verdict; null otherwise. Reporting only - the verdict stands.
    */
   workerReleaseSuperseded?: string | null;
+  /**
+   * `graded by release <id> (commit <sha>), which differs from Stable <version>
+   * (<sha>)` when the grading host did not run the Stable build when the report
+   * arrived (AGT-3689); null otherwise. Reporting only - the verdict stands.
+   */
+  workerReleaseStable?: string | null;
 }
 
 /** A blocking aspect on the latest review attempt, with its quoted reason. */

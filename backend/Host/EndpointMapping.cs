@@ -1,4 +1,5 @@
 using AgentStudio.Operator;
+using AgentStudio.Magazine;
 using AgentStudio.Deploy;
 using AgentStudio.GitHubApp;
 using AgentStudio.HostSetup;
@@ -47,6 +48,7 @@ public static class EndpointMapping
         tasks.MapTaskGitEndpoints();
         tasks.MapTaskClaudeEndpoints();
         tasks.MapTaskReviewEvidenceEndpoints();
+        tasks.MapHumanReviewDecisionEndpoints();
         tasks.MapTaskReviewObservationEndpoints();
         tasks.MapTaskExternalCompletionEndpoints();
         tasks.MapTaskCodeReviewEndpoints();
@@ -78,6 +80,7 @@ public static class EndpointMapping
         app.MapOperatorCapacityEndpoints();
         app.MapOperatorBackupEndpoints();
         app.MapOperatorLogEndpoints();
+        app.MapMagazineEndpoints();
         app.MapDeployPreflightEndpoints();
         app.MapOrchestratorSessionEndpoints();
         app.MapOrchestratorContextEndpoints();
@@ -157,6 +160,7 @@ public static class EndpointMapping
         AgentStudio.Readiness.ServerReadinessEndpoints.MapServerReadinessEndpoints(app);
         app.MapCliEndpoints();
         if (SecurityProfiles.IsLocal(app.Configuration)) app.MapDevToolsEndpoints();
+        if (SecurityProfiles.IsLocal(app.Configuration)) app.MapUpdateServiceTokenEndpoints();
         app.MapAdminConfigEndpoints();
         app.MapGitTelemetryAdminEndpoints();
         app.MapBoardSourceEndpoints();

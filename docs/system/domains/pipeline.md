@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-05
+Version: 2026-11-10
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -29,12 +29,27 @@ pipeline view.
 
 ## Gate economics and integration lane
 
-The batch gate state read reports `phaseReason` for a stopped batch and
+The batch gate state read reports `phaseReason` and `phaseAtUtc` for a stopped batch and
 `causedByTaskKey` when a member eject or lost review generation caused
 abandonment. Explicit operator withdrawals are retained as batch withdrawal
 records with the actor, card, reason, and time. The existing eject path returns
 the remaining members to planning; the operator move requests a close on the
 next planner tick.
+The batch panel lists pending cards that have not joined a formed or running
+batch. A run without a finish event counts as running only while its batch is
+in the running phase; after interruption, the panel uses `phaseAtUtc` to show
+the elapsed run time. Detached flights include their batch, detach time, and
+lease deadline in the state response and panel.
+
+When a paused batch hands its members to per-task verification, the state read
+reports `perTaskGates` in queue order. Each row names the review generation,
+one-based position, total handoffs, batch, cause, and current gate host and
+start time while its flight is active. The board uses this projection for the
+card CURRENT line and lane counts. Each member receives a full suite as a gate
+slot opens; a red gate escalates that card, and a green gate integrates it. The
+batch panel lists the queue in order and excludes its members from cards waiting
+for another batch. The handoff writes one operator-feed event per paused batch
+with its members.
 
 ### Gate run ledger (AGT-3500)
 
@@ -57,6 +72,20 @@ median and nearest-rank p90 batch gate minutes. Its reconciliation percentage
 compares ledger durations with existing execution facts for the same day; a
 missing host total is Unknown. Historical days before the ledger was enabled
 cannot be reconstructed from card receipts.
+
+The state route reconstructs each member's UTC timeline from the saved review
+subject, pre-check ledger and verdict, closed manifest, batch run and verdict,
+publication, replay, and fallback cause. Released member receipts retain that
+timeline; older receipts are projected from the same facts after a restart.
+The daily summary reports p50 and nearest-rank p90 minutes for review pass to
+pre-check finish, pre-check finish to batch start, batch run, and verdict to
+publication. Each phase has its own sample count; cards without both boundaries
+are omitted from that phase. Only published batch members enter these
+percentiles. Diagnostic rerun share uses the same member set, while per-task
+fallback stays separately labelled. Pre-check yield counts red checks that
+actually resolved a pending member as `pre-check-red`, plus that day's pre-check
+host minutes. It is evidence of avoided admission, not a counterfactual proof
+that the combined batch would certainly have failed.
 
 Each gate-economics row also carries the grouping figures of its window
 (AGT-3399): `batchesClosed` (distinct batches whose gate ran), `meanBatchSize`
@@ -480,7 +509,9 @@ The batch gate state lists the queue as `flightQueue` (`batchId`, `position`,
 `queuedSinceUtc`, `size`, `taskKeys`; position 1 starts next), gives each
 formed batch its `queuePosition`, and the overdue plan reason names it as
 `flight queue position <n> of <m>`. The batch panel shows the queue and the
-position of each formed batch.
+position of each formed batch. The state reader takes every position from
+`BatchGateFlightQueue.Positions`, which numbers the same `Order` the start
+pass uses, so the shown position cannot drift from the start order (AGT-3712).
 
 The batch panel reads `GET /api/projects/{projectName}/batch-gate/failed-tests`
 to rank failed test names over a seven-day sliding window (`windowDays` may be
@@ -656,7 +687,7 @@ The routes use the project's configured name in place of `{projectName}`.
 
 | Route | Result | Errors |
 |---|---|---|
-| `GET /api/projects/{projectName}/batch-gate/queue-stalls` | HTTP 200 with `project`, `releasable`, `openEpisode`, and `recentEvents`. `releasable` is an array of task keys eligible for release. `openEpisode` is the current stall event or `null`; `recentEvents` is the latest ten events, oldest first. | HTTP 404 for an unknown project. |
+| `GET /api/projects/{projectName}/batch-gate/queue-stalls` | HTTP 200 with `project`, `releasable`, `openEpisode`, and `recentEvents`. `releasable` is an array of task keys eligible for release. `openEpisode` is the current stall event or `null`; `recentEvents` is the latest ten events, oldest first. `fallbackStalls` lists the latest ten per-task fallback waits that passed their bound (AGT-3694): `kind`, `sinceUtc`, `raisedAtUtc`, `reason`, `outcome` (`escalated`, `cancelled`, `detached` or `reported`), and for an engine decision `engineRunId`, `engineStatus` and `occurrenceKey`. | HTTP 404 for an unknown project. |
 | `POST /api/projects/{projectName}/batch-gate/queue-stalls/release` | HTTP 200 with `released` (task keys) and `refused` (objects with `taskKey` and `reason`). The request has no body. A partial release is still HTTP 200; inspect both arrays. | HTTP 400 when `X-Client-Id` is missing or blank; HTTP 404 for an unknown project. |
 
 The POST requires `X-Client-Id`, as do the other batch gate mutations. Each
@@ -774,7 +805,26 @@ review report or a tick that meets a running fallback waits for it instead of
 starting a second gate. The card marker records that per-card gate as active
 with a start count; a marker still active with no gate running in the process
 (restart, or a gate that threw) is resumed on the next tick, and after two
-interrupted starts the card escalates as `GateInfra`. Across all review
+interrupted starts the card escalates as `GateInfra`; the reason names the
+starts, the base and the merged candidate they ran on. Every wait of a
+per-task fallback is bounded by `PerTaskFallbackWaitPolicy` (AGT-3694). An
+engine-owned GateResult decision on the gate outcome (release or red) that
+stays `pending`, `leased` or `applying` for 30 minutes, or whose lease expired
+two minutes ago, is superseded under the card gate (`batch-fallback-engine-stall`)
+and the card escalates as `GateInfra` with the run id; the monolith never
+takes the engine's release. A flight stage the fallback owns (preparing the
+subject, the running gate) that outlives the gate timeout by 15 minutes is
+cancelled with its start charged, and a flight that has not stopped two
+minutes later is detached, so its resume escalates instead of starting a
+second gate. Queue stages (per-task slot, batch slot, machine gate slot) wait
+for work with its own bound; past four gate timeouts they are reported only.
+Each bound raises one `batch-fallback-stalled` event into the batch store,
+the card timeline and the operator feed; `GET .../batch-gate/queue-stalls`
+lists them as `fallbackStalls`. The batch state names what each fallback
+waits for (`fallbackWaits`, and `waitKind`, `waitingFor`, `engineRunId` and
+`engineStatus` on the member), the overdue plan reason appends it, and the
+card badge reads, for example, "Per-task fallback · batch-ejected · waits
+for engine decision". Across all review
 generations of the process, at most one gate slot fewer than the gate host has
 runs a per-task fallback gate at once (AGT-3466). The other fallbacks wait for a
 slot before they choose their merged candidate, so the batch slot stays free. A

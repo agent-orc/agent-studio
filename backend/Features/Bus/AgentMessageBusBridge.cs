@@ -752,6 +752,25 @@ public sealed class AgentMessageBusBridge
         return EmitAsync(msg, ct);
     }
 
+    /// <summary>Records a paused batch's one handoff to individual full-suite gates.</summary>
+    public Task EmitBatchPauseHandoffAsync(string project, string batchId, string reason,
+        IReadOnlyList<string> members, CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: ParticipantOrchestratorFor(project),
+            role: "system",
+            kind: "lifecycle",
+            severity: "Warn",
+            project: project,
+            topic: "batch-paused-per-task-handoff",
+            summary: TruncateSummary($"Batch {batchId} paused; {members.Count} members moved to per-task gates"),
+            body: $"Reason: {reason}\nMembers: {string.Join(", ", members)}\n"
+                + "Each member runs a full suite as a gate slot opens. Red escalates; green integrates.",
+            payload: new { batchId, reason, members },
+            tags: ["batch-gate", "per-task-fallback", $"batch:{batchId}"]);
+        return EmitAsync(msg, ct);
+    }
+
     public Task EmitQualityChangeReviewDeliveryExpiredAsync(string cardKey, string repositoryId,
         string key, CancellationToken ct = default)
     {
@@ -896,11 +915,15 @@ public sealed class AgentMessageBusBridge
         string stableVersion,
         double behindHours,
         string reason,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool differs = false)
     {
         var age = behindHours >= 48
             ? $"{Math.Round(behindHours / 24)} days"
             : $"{Math.Round(behindHours)} hours";
+        var summary = differs
+            ? $"{hostId} ({role}) runs release {releaseId}, a different build than Stable {stableVersion}, for {age}."
+            : $"{hostId} ({role}) runs release {releaseId}, {age} behind Stable {stableVersion}.";
         var msg = NewMessage(
             participantId: ParticipantRuntime,
             role: "system",
@@ -909,10 +932,9 @@ public sealed class AgentMessageBusBridge
             project: null,
             jobId: null,
             topic: "host_release_drift",
-            summary: TruncateSummary(
-                $"{hostId} ({role}) runs release {releaseId}, {age} behind Stable {stableVersion}."),
+            summary: TruncateSummary(summary),
             body: reason,
-            payload: new { hostId, runnerId, role, releaseId, stableVersion, behindHours },
+            payload: new { hostId, runnerId, role, releaseId, stableVersion, behindHours, differs },
             tags: new[] { "host-release-drift", $"host:{hostId}", $"runner:{runnerId}" });
         // This producer retries failed alarms, so it must observe append failures.
         var workspace = Workspace();

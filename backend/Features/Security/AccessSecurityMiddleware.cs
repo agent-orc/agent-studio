@@ -489,8 +489,11 @@ public sealed class AccessSecurityMiddleware
             await RejectPermission(context, decision, required.Permission);
             return;
         }
+        // Approver and Reviewer project as viewer; each keeps its one decision
+        // route, which declares the permission only that role adds.
         if (!safeMethod && projected.LegacyRole == StudioRoles.Viewer
-            && required.Permission != IamPermissions.EnvironmentProductionDeployApprove)
+            && required.Permission is not (IamPermissions.EnvironmentProductionDeployApprove
+                or IamPermissions.ProjectCardsReview))
         {
             await Reject(context, 403, "role-denied", "Viewer role is read-only.");
             return;
@@ -1371,6 +1374,18 @@ public sealed class AccessSecurityMiddleware
                 if (contextKey.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                     return ProjectRouteAddress.Addressed(Uri.UnescapeDataString(contextKey[prefix.Length..].Split('/', 2)[0]));
             return ProjectRouteAddress.WorkspaceWide;
+        }
+        // Magazine routes (MAG-1) name their scope in the segment after
+        // /api/magazine. project:{id} addresses that project; the installation
+        // and workspace magazines and the list (scope in the query) are checked
+        // by the handler against the captured RequestAccess.
+        if (path.Equals("/api/magazine", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/magazine/", StringComparison.OrdinalIgnoreCase))
+        {
+            var scope = Uri.UnescapeDataString(path["/api/magazine".Length..].TrimStart('/').Split('/', 2)[0]);
+            return scope.StartsWith(AgentStudio.Magazine.MagazineScope.ProjectPrefix, StringComparison.OrdinalIgnoreCase)
+                ? ProjectRouteAddress.Addressed(scope[AgentStudio.Magazine.MagazineScope.ProjectPrefix.Length..])
+                : ProjectRouteAddress.DeferredToHandler;
         }
         // The task collection filters per task; creation checks its body
         // project against the route's permission in the handler.

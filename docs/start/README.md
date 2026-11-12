@@ -50,7 +50,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 
 | Topic | Start here |
 |---|---|
-| Product installer for Windows and Linux | [operations/setup/install.md](../operations/setup/install.md) |
+| Product installer for Windows and Linux (for published releases; none exists yet) | [operations/setup/install.md](../operations/setup/install.md) |
 | Hosted app database binding, retained volumes, scheduled backups and restore (IP-D5 option A) | [operations/hosted-data/](../operations/hosted-data/README.md) |
 | Studio website on a dedicated VM | [operations/setup/studio-website.md](../operations/setup/studio-website.md) |
 | Server-first networked deploy, duration journal and rollback | [operations/setup/networked-deploy.md](../operations/setup/networked-deploy.md) |
@@ -99,6 +99,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Card detail deferred loading: interleaved DEMO-9 fixture and live seeded API comparisons (AGT-3536) | [measurement](../operations/performance/card-detail-deferred-loading-2026-11-05.md) |
 | Tokens | [domains/tokens.md](../system/domains/tokens.md) |
 | Areas and tags (classification vocabulary, glossaries, tag filters; AGT-2803) | [domains/areas-and-tags.md](../system/domains/areas-and-tags.md) |
+| Magazine (agent-maintained articles per installation, workspace and project, revisions, API and permissions; MAG-1, AGT-3714) | [domains/magazine.md](../system/domains/magazine.md) |
 | Proposed tagging golden set: 60 cards, 20 Dossiers, item rationales and area glossaries (AGT-2804) | [quality/tagging-golden-set/index.html](../quality/tagging-golden-set/index.html) |
 | Operator decision on the proposed tagging golden set and glossaries (AGT-2804) | [operations/tagging-golden-set-approval/index.html](../operations/tagging-golden-set-approval/index.html) |
 | Remote execution outcome and recovery | [contracts/run-outcome.md](../system/contracts/run-outcome.md#remote-execution-outcome-adapter) |
@@ -219,8 +220,9 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Model escalation and companion routing concept | [concepts/model-escalation-and-companion-routing.md](../concepts/model-escalation-and-companion-routing.md) |
 | Supported CLIs | [cli/supported-clis.md](../system/cli/supported-clis.md) |
 | CLI frame compatibility and capture corpus | [cli/frame-compatibility-matrix.md](../system/cli/frame-compatibility-matrix.md) |
-| Getting started (new install, step by step) | [operations/setup/getting-started.md](../operations/setup/getting-started.md) |
-| Docker one-box install and operations | [operations/setup/docker.md](../operations/setup/docker.md) |
+| Getting started: the recommended installation path per situation | [operations/setup/README.md#choose-your-path](../operations/setup/README.md#choose-your-path) · [getting-started.md](../operations/setup/getting-started.md) |
+| Your first task: checklist, project creation, execution location, pickup mode, `project.yml`, review and Accept | [operations/setup/your-first-task.md](../operations/setup/your-first-task.md) |
+| Docker one-box install from source (recommended until the first release) and operations | [operations/setup/docker.md](../operations/setup/docker.md) |
 | Identity and project bootstrap: first owner, recovery, host enrolment, project registration and repository probe (standalone Task Server, I05) | [operations/setup/identity-and-project-bootstrap.md](../operations/setup/identity-and-project-bootstrap.md) |
 | Operator agent: own Studio identity and sessions, own OS user without the Owner's SSH keys, off-host audit sink (security model SM-1) | [operations/setup/operator-agent.md](../operations/setup/operator-agent.md) |
 | Operator agent level Dossier (OP-1 to OP-9 delivered, AGT-3481 to AGT-3489; OP-10 website page in progress) | [decision Dossier](../operator-agent-level/index.html) |
@@ -228,6 +230,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | studio-op operator CLI: installation, Owner token file setup, commands and their routes, watcher lock and lease, accept check, stable exit codes (AGT-3462 OP-8) | [operations/setup/studio-op.md](../operations/setup/studio-op.md) |
 | Installation connectivity manifest, resolved ports and single RunnerLinks owner (I04) | [operations/setup/connectivity-manifest.md](../operations/setup/connectivity-manifest.md) |
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
+| Update Service operations: loopback bind, owner-only trigger token file, allowed Studio origins, forced triggers (AGT-3713) | [operations/setup/update-service.md](../operations/setup/update-service.md) |
 | Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |
 | Application telemetry intake: OTLP metrics and logs per project environment, ingest tokens, retention, query API (IP-15) | [operations/setup/app-telemetry-intake.md](../operations/setup/app-telemetry-intake.md) |
 | Project definition v2 proposal (inactive; shared AGT/QS/Voice properties, quality applicability and rollout) | [plan](../operations/docker-ausfuehrungswelt-migration/project-definition-v2-plan.md) · [draft schema](../operations/docker-ausfuehrungswelt-migration/project-execution.v2.draft.schema.json) |

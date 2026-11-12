@@ -9,6 +9,9 @@ legacy networked backend keeps its own runbook in
 [networked-task-server.md](./networked-task-server.md); its cookies, `enr.*`
 codes and `/api/auth/*` routes are a different contract and do not work
 against the standalone Studio BFF.
+The legacy monolith `/api/auth/bootstrap` profile does not issue an installation
+recovery code. The `recoveryCode` below belongs only to the standalone Task
+Server profile.
 
 `X-Client-Id` and `X-Actor-Id` are attribution hints only. They never
 authenticate anything and are ignored by every route on this page.
@@ -50,7 +53,8 @@ provide host, credential, merge, or promotion access.
    `%ProgramData%\AgentOrchestrator` with restricted host permissions.
 2. While no owner exists the server arms that code. Read it over the
    administration channel only. For Compose, use
-   `docker compose exec task-server cat /run/agent-studio-secrets/owner_bootstrap_code`.
+   `docker compose exec task-server cat /run/agent-studio-secrets/owner_bootstrap_code`
+   (`task-server-dev` for the source-built stack).
    On a native Linux host, read the file directly as the installation
    administrator. Do not paste it into task text or logs.
 3. Sign in through the Studio edge and call
@@ -63,8 +67,18 @@ provide host, credential, merge, or promotion access.
    WebAuthn passkey in Studio. Store the one-use factor recovery codes outside
    the browser. They are separate from the installation recovery code. Owner
    and operator sign-in require a registered factor; every step-up requires one
-   regardless of role. A new
-   operator accepts an invitation in the same limited setup session.
+   regardless of role. A new operator accepts an invitation in the same
+   limited setup session.
+
+An authenticator code is accepted once. Sign-in and step-up require a code
+from a later 30-second step than the last accepted code, including the
+enrollment confirmation. A reused code counts as a failed sign-in.
+
+The networked backend has a separate IAM role model: **Owner, Admin,
+Developer, Approver, and Viewer** must register a factor because their permissions
+include run operation, deployment or approval, secrets, or access. Viewer holds
+`secrets.read` for metadata. **Product (Contributor)** may enroll voluntarily. The networked policy is
+described in the [security overview](../security/overview.md#rights-model-role-bindings-per-scope-ip-8).
 
 Studio lists each user's active sessions with device, address, creation time,
 and last use. A user can revoke one or all other sessions; the Owner can revoke

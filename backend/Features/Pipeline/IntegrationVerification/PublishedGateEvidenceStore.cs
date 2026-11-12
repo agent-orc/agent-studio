@@ -13,6 +13,8 @@ namespace AgentStudio.Pipeline;
 /// <param name="GateVerdict">The gate verdict; only <see cref="BuildTestGateVerdict.Ok"/> is recorded or read.</param>
 /// <param name="GateReason">The verdict line the source card recorded.</param>
 /// <param name="PublishedSha">The published branch tip that carried the tree when it was recorded.</param>
+/// <param name="Backfilled">AGT-3747: added later from the source card's own gate receipt, not by its push.</param>
+/// <param name="GateLog">For a backfilled entry, the source card's gate receipt the entry was read from.</param>
 public sealed record PublishedGateEvidence(
     string Project,
     string IntegrationBranch,
@@ -22,14 +24,16 @@ public sealed record PublishedGateEvidence(
     string GateVerdict,
     string GateReason,
     string PublishedSha,
-    DateTimeOffset RecordedAtUtc)
+    DateTimeOffset RecordedAtUtc,
+    bool Backfilled = false,
+    string? GateLog = null)
 {
     public bool Passed => string.Equals(GateVerdict, nameof(BuildTestGateVerdict.Ok), StringComparison.Ordinal);
 
     /// <summary>The line a card that relies on this gate records as its evidence.</summary>
     public string Describe()
         => $"Gate {GateStep} of {SourceJobId} returned {GateVerdict} on {IntegrationBranch} tree {TreeSha}"
-           + $" (recorded {RecordedAtUtc:O}).";
+           + (Backfilled ? $" (backfilled {RecordedAtUtc:O} from {GateLog})." : $" (recorded {RecordedAtUtc:O}).");
 }
 
 /// <summary>

@@ -200,7 +200,12 @@ public static class TimelineActors
     /// A service account or API token acting through the Studio API. It is
     /// never a human actor, so guards that need a person do not accept it.
     /// </summary>
-    public static string ServiceAccount(string accountId) => $"service-account:{accountId}";
+    public static string ServiceAccount(string accountId) => $"{ServiceAccountPrefix}{accountId}";
+
+    public const string ServiceAccountPrefix = "service-account:";
+
+    public static bool IsServiceAccount(string? actor)
+        => actor?.Trim().StartsWith(ServiceAccountPrefix, StringComparison.Ordinal) == true;
 
     /// <summary>
     /// One session of an operator agent (security model SM-1). The Owner who

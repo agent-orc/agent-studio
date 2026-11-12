@@ -61,6 +61,8 @@ public sealed record ReviewDependencyScopeDto(
     string WorkingSubdir,
     IReadOnlyList<string> Lockfiles);
 
+public sealed record ReviewPreparationSkipDto(string WorkingSubdir, string Reason);
+
 /// <param name="CoveredByDependencyScopes">
 /// True only when the scopes' lockfiles cover everything the command prepares,
 /// so a dependency-cache hit on every scope may skip it. A plan without the
@@ -140,7 +142,8 @@ public sealed record ReviewPlanDto(
     // example. The delivery is not integrated while it is set.
     string? VerifyDefinitionMissing = null,
     /// <summary>Rule that required a per-card verify gate instead of batch deferral.</summary>
-    string? BuildTestDeferralDisabledReason = null);
+    string? BuildTestDeferralDisabledReason = null,
+    IReadOnlyList<ReviewPreparationSkipDto>? PreparationSkips = null);
 
 /// <summary>Frozen engine decision visible with the review subject before any review command runs.</summary>
 public sealed record DeepReviewDecisionDto(string ReceiptId, string Mode, bool Selected,
@@ -423,7 +426,27 @@ public sealed record ReviewCommandEvidenceDto(
     /// (AGT-3430). The full logs are deleted with the attempt; this tail is
     /// what survives in the settled report. Null for a passed command.
     /// </summary>
-    ReviewCommandOutputTailDto? OutputTail = null);
+    ReviewCommandOutputTailDto? OutputTail = null,
+    /// <summary>
+    /// How a clean repeat that exited zero showed it ran the previously failed
+    /// tests (AGT-3650), one of <see cref="ReviewRepeatObservation"/>. Null when
+    /// the failure names had no shape the repeat output could be checked for.
+    /// </summary>
+    string? RepeatObservation = null);
+
+/// <summary>
+/// Evidence levels for a passing clean repeat (AGT-3650). A test-name proof
+/// saw each previously failed test reported as passed. A test-file proof saw
+/// only the test files that held them reported as passed, which is what a
+/// reporter that names failing tests alone (Vitest's default) leaves.
+/// </summary>
+public static class ReviewRepeatObservation
+{
+    public const string TestNames = "test-names";
+    public const string TestFiles = "test-files";
+
+    public static bool IsKnown(string? value) => value is TestNames or TestFiles;
+}
 
 /// <summary>
 /// The last <see cref="MaximumCharacters"/> characters of one failed

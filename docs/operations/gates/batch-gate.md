@@ -261,6 +261,15 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   `reasonDetail`. The first cause of a review generation is kept until the
   review returns to the batch queue. A member of an abandoned batch that is
   queued again shows `pending` with reason `requeued`, not `fallback`.
+  AGT-3694: the member also names what its fallback waits for: `waitKind`
+  (`engine-decision`, `per-task-slot`, `batch-slot`, `machine-gate-slot`,
+  `preparing`, `gate-running`, `integration`, `resume-pending`), `waitingFor`,
+  `waitSinceUtc`, and for an engine decision `engineRunId` and
+  `engineStatus`. An overdue plan reason appends the same text. A wait past
+  its bound is a `batch-fallback-stalled` event (state `fallbackStalls`, the
+  queue stall report, the card timeline and the operator feed); a stalled
+  engine decision or a flight that would not stop escalates the card as
+  `GateInfra`.
 - AGT-3498: when a formed batch's base moves before replay, the worker checks
   each member's current review and immutable delivery against the new base.
   Compatible members close together in one successor linked by
@@ -277,7 +286,8 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   batch, and a batch deferred after a lease deadline goes last. All other
   formed batches start first in, first out: the oldest formation time first
   (a re-formed or repacked batch keeps its place), then the lowest member
-  enqueue sequence, then the batch ID. Size does not reorder the queue. The state reports `flightQueue` and each formed batch's
+  enqueue sequence, then the batch ID. Size does not reorder the queue. The
+  state reports `flightQueue` and each formed batch's
   `queuePosition`. On 5 November 2026 batches 24991efe (12:59 UTC) and
   baddb7f9 (15:11 UTC) stayed formed for hours while later, larger batches
   ran; on 10 November 2026 four batches formed from 03:47 UTC waited behind
@@ -353,6 +363,9 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   (the phase is never stored); recovery skips it and logs the missing state
   once per manifest per store instance until the next tick writes its first
   `Formed` record (AGT-3563).
+  A missing manifest and missing state also reads as `Unknown`. The auto-review
+  watchdog keeps ownership with a visible manifest whose state is `Unknown`,
+  avoiding a second review pass while state visibility is unresolved.
   A queued code push keeps its project batch reservation pending until origin
   verifies the merged SHA. The pending marker is a durable recovery job, so a
   startup sweep re-drives it even if the card remains in Auto Review and the

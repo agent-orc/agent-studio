@@ -8,7 +8,8 @@ namespace AgentStudio.Pipeline;
 /// <summary>Releasable cards, the open stall episode and recent stall events of one project.</summary>
 public sealed record GateQueueStallReport(
     string Project, IReadOnlyList<string> Releasable,
-    GateQueueStallEvent? OpenEpisode, IReadOnlyList<GateQueueStallEvent> RecentEvents);
+    GateQueueStallEvent? OpenEpisode, IReadOnlyList<GateQueueStallEvent> RecentEvents,
+    IReadOnlyList<BatchGateFallbackStall>? FallbackStalls = null);
 
 public sealed record GateQueueStallRefusal(string TaskKey, string Reason);
 
@@ -168,7 +169,16 @@ public sealed partial class BatchGatePilotService
         var action = MonolithTransitionAdapter.GateQueueOverrun(gate.ViolatedBudget?.Name,
             gate.ViolatedBudget?.Phase, live?.State, current, TimeSpan.FromMilliseconds(priorWaitMs + waitedMs), cap);
         if (action == GateQueueOverrunAction.Settle)
+        {
+            // AGT-3746: a run that never reached the gate host judged nothing.
+            if (GateHostUnavailable(gate) && live is not null)
+            {
+                await HoldFallbackForGateHostAsync(live, pending, gate, ct).ConfigureAwait(false);
+                return true;
+            }
+            RecordGateHostReachable(live?.WatchPath ?? pending.WatchPath);
             return false;
+        }
         if (action == GateQueueOverrunAction.Supersede)
         {
             _logger.LogWarning(
@@ -327,7 +337,9 @@ public sealed partial class BatchGatePilotService
         => new(project, QueueStalledEscalations(project).Where(item => item.Refusal is null)
                 .Select(item => item.Task.Key ?? item.Task.Id).ToArray(),
             _queueStalls.OpenEpisode(project),
-            _store.ListQueueStalls(project, RecentQueueStalls));
+            _store.ListQueueStalls(project, RecentQueueStalls),
+            // AGT-3694: per-task fallback waits past their bound.
+            _store.ListFallbackStalls(project, RecentQueueStalls));
 
     /// <summary>
     /// Returns every card of the project that was escalated for a machine gate

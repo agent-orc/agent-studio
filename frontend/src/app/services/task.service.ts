@@ -98,6 +98,7 @@ import type {
 import type { TaskPlanView } from '../features/plan-strip/plan.model';
 import type { RegressionRadarResult } from '../features/regression-radar';
 import { ErrorDialogService } from './error-dialog.service';
+import { AuthSessionState } from './auth.service';
 import { JobsHubClient } from './jobs-hub-client.service';
 import type {
   ProjectDeploymentSummary,
@@ -381,9 +382,18 @@ function invalidOrchestratorContextKey<T>(): Observable<T> {
   }));
 }
 
+/** Answer of the Human Review decision routes (AGT-3670). */
+export interface HumanReviewDecisionResponse {
+  decision: 'accept' | 'send-back';
+  state: string;
+  /** For a send back: whether the follow-up is queued or only saved. */
+  followUp?: string | null;
+}
+
 @Injectable({ providedIn: 'root' })
 export class TaskService {
   private http = inject(HttpClient);
+  private readonly authSession = inject(AuthSessionState);
   private errorDialog = inject(ErrorDialogService);
   private jobsHub = inject(JobsHubClient);
 
@@ -932,6 +942,7 @@ export class TaskService {
     operatorOverride = false,
     runIntent: 'revoke' | 'steer' = 'revoke',
     withdrawFromBatch = false,
+    reissueInstructions?: { findings: string[]; note: string },
   ) {
     const body: {
       targetState: string;
@@ -940,11 +951,13 @@ export class TaskService {
       operatorOverride?: boolean;
       runIntent: 'revoke' | 'steer';
       withdrawFromBatch?: boolean;
+      reissueInstructions?: { findings: string[]; note: string };
     } = { targetState, runIntent };
     if (typeof targetIndex === 'number') body.targetIndex = targetIndex;
     if (reason?.trim()) body.reason = reason.trim();
     if (operatorOverride) body.operatorOverride = true;
     if (withdrawFromBatch) body.withdrawFromBatch = true;
+    if (reissueInstructions) body.reissueInstructions = reissueInstructions;
     return this.http.post(
       `${this.taskV1Url(jobId)}/move`,
       body,
@@ -1757,10 +1770,13 @@ export class TaskService {
     ).pipe(this.afterRemoval(jobId, watchPath));
   }
 
-  deleteJob(jobId: string, watchPath?: string) {
+  /** `reason` (AGT-3624) is the written reason for deleting unintegrated work. */
+  deleteJob(jobId: string, watchPath?: string, reason?: string | null) {
+    const options = this.withWatchPath(watchPath);
+    const params = reason ? (options.params ?? new HttpParams()).set('reason', reason) : options.params;
     return this.http.delete(
       this.taskV1Url(jobId),
-      this.withWatchPath(watchPath),
+      params ? { params } : {},
     ).pipe(this.afterRemoval(jobId, watchPath));
   }
 
@@ -2137,6 +2153,28 @@ export class TaskService {
     return this.http.post<ContinueTaskResponse>(
       `${this.taskV1Url(jobId)}/continue`,
       body,
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /**
+   * AGT-3670: the Human Review decision. Accept moves the card to Accepted;
+   * send back moves it to Ready and queues the note as the next run's
+   * follow-up. Both routes need `project.cards.review`, which the Reviewer
+   * role holds without any card write or run control.
+   */
+  acceptHumanReview(jobId: string, watchPath?: string, note?: string) {
+    return this.http.post<HumanReviewDecisionResponse>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/human-review/accept`,
+      note ? { note } : {},
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  sendBackHumanReview(jobId: string, note: string, watchPath?: string) {
+    return this.http.post<HumanReviewDecisionResponse>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/human-review/send-back`,
+      { note },
       this.withWatchPath(watchPath),
     );
   }
@@ -3103,6 +3141,8 @@ export class TaskService {
   }
 
   refreshRunnerStatus(silent = false): void {
+    // AGT-3668: runner status is installation-wide; the Product role never reads it.
+    if (this.authSession.productSession()) return;
     if (this.runnerRefreshInFlight) {
       this.runnerRefreshQueued = true;
       this.runnerRefreshQueuedSilent &&= silent;

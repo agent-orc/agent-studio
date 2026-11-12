@@ -11,6 +11,9 @@ public static class MonolithTransitionAdapter
 {
     public static AutoReviewStrandingAction AutoReviewStranding(AutoReviewStrandingFacts facts)
         => AutoReviewStrandingPolicy.Decide(facts);
+    public static AutoReviewStrandingAction AutoReviewBatchRoute(AutoReviewStrandingAction decided,
+        AutoReviewStrandingFacts facts, AutoReviewBatchRouteFacts route)
+        => AutoReviewStrandingPolicy.RouteBatch(decided, facts, route);
 
     public static TransitionDecision Decide(TransitionFacts facts) => TransitionDecisionPolicy.Decide(facts);
     public static RedDevelopRepairDecision RedDevelopRepair(RedDevelopRepairFacts facts)
@@ -88,6 +91,18 @@ public static class MonolithTransitionAdapter
     public static int GateStartsAfterCancellation(int startsBeforeThisRun, string? reason, bool serviceStopping)
         => GateCancellationPolicy.ChargedStartsAfterCancellation(startsBeforeThisRun, reason, serviceStopping);
 
+    public static PerTaskFallbackWaitDecision PerTaskFallbackEngineWait(EngineDecisionWaitFacts facts)
+        => PerTaskFallbackWaitPolicy.EngineDecision(facts);
+
+    public static PerTaskFallbackWaitDecision PerTaskFallbackFlight(FallbackFlightFacts facts)
+        => PerTaskFallbackWaitPolicy.Flight(facts);
+
+    public static bool PerTaskFallbackCancelsStalledStage(string stage)
+        => PerTaskFallbackWaitPolicy.CancelsStalledStage(stage);
+
+    public static bool PerTaskFallbackDetachesCancelledFlight(DateTimeOffset cancelledAtUtc, DateTimeOffset nowUtc)
+        => PerTaskFallbackWaitPolicy.DetachesCancelledFlight(cancelledAtUtc, nowUtc);
+
     public static bool GateCancellationOwnsResult(string? expectedSha, string? currentSha,
         string? expectedAttempt, string? currentAttempt,
         string? expectedLane, string? currentLane, bool continuePending)
@@ -117,6 +132,20 @@ public static class MonolithTransitionAdapter
 
     public static bool IsGateQueueOverrun(string? budgetName, string? budgetPhase)
         => GateQueueStallPolicy.IsQueueOverrun(budgetName, budgetPhase);
+
+    public static bool GateHostUnavailable(bool failed, bool cancelled, string? evidence, int failingItems)
+        => GateHostOutagePolicy.IsHostUnavailable(failed, cancelled, evidence, failingItems);
+
+    public static bool GateHostMayStartRun(DateTimeOffset? outageSinceUtc, DateTimeOffset lastAttemptUtc,
+        int failedProbes, DateTimeOffset nowUtc)
+        => GateHostOutagePolicy.MayStartRun(outageSinceUtc, lastAttemptUtc, failedProbes, nowUtc);
+
+    public static bool GateHostOutageEscalates(DateTimeOffset outageSinceUtc, DateTimeOffset nowUtc,
+        TimeSpan escalateAfter, bool alreadyEscalated)
+        => GateHostOutagePolicy.EscalatesGate(outageSinceUtc, nowUtc, escalateAfter, alreadyEscalated);
+
+    public static string GateHostWaitingReason(DateTimeOffset outageSinceUtc)
+        => GateHostOutagePolicy.WaitingReason(outageSinceUtc);
 
     public static bool GateQueueStallReminds(DateTimeOffset lastRaisedAtUtc, DateTimeOffset nowUtc)
         => GateQueueStallPolicy.RemindsStall(lastRaisedAtUtc, nowUtc);
