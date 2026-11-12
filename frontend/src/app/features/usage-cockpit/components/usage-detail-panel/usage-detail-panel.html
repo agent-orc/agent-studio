@@ -9,6 +9,11 @@
          (click)="$event.preventDefault(); jumpTo(cliFocus(cli.cliId))">{{ cli.name }}</a>
     }
     <a class="usage-detail__jump-link"
+       [href]="'#' + sectionId(capacityFocus)"
+       [attr.aria-current]="isSelected(capacityFocus) ? 'location' : null"
+       data-testid="usage-detail-jump-capacity"
+       (click)="$event.preventDefault(); jumpTo(capacityFocus)">Capacity</a>
+    <a class="usage-detail__jump-link"
        [href]="'#' + sectionId(costFocus)"
        [attr.aria-current]="isSelected(costFocus) ? 'location' : null"
        data-testid="usage-detail-jump-cost"
@@ -56,15 +61,16 @@
       </p>
 
       <table class="usage-detail__table" [attr.data-testid]="'usage-detail-windows-' + cli.cliId">
-        <caption class="usage-detail__caption">Quota windows, percentage used</caption>
+        <caption class="usage-detail__caption">Quota windows, percentage used and left</caption>
         <thead>
-          <tr><th scope="col">Window</th><th scope="col" class="usage-detail__num">Used</th><th scope="col">Resets ({{ v.timeZone }})</th><th scope="col">UTC</th></tr>
+          <tr><th scope="col">Window</th><th scope="col" class="usage-detail__num">Used</th><th scope="col" class="usage-detail__num">Left</th><th scope="col">Resets ({{ v.timeZone }})</th><th scope="col">UTC</th></tr>
         </thead>
         <tbody>
           @for (w of cli.windows; track w.id) {
             <tr [attr.data-window-id]="w.id">
               <th scope="row">{{ w.label }}</th>
               <td class="usage-detail__num" [class.usage-detail__muted]="!w.reported">{{ w.value }}</td>
+              <td class="usage-detail__num" [class.usage-detail__muted]="!w.reported" data-testid="usage-detail-window-left">{{ w.remaining }}</td>
               <td>
                 @if (w.reset; as r) {
                   <time [attr.datetime]="r.iso" data-testid="usage-detail-reset-local">{{ r.local }}</time>
@@ -82,10 +88,10 @@
               </td>
             </tr>
             @if (w.suspiciousReason) {
-              <tr><td colspan="4" class="usage-detail__note">Unverified: {{ w.suspiciousReason }}</td></tr>
+              <tr><td colspan="5" class="usage-detail__note">Unverified: {{ w.suspiciousReason }}</td></tr>
             }
           } @empty {
-            <tr><td colspan="4" class="usage-detail__muted">No quota window reported</td></tr>
+            <tr><td colspan="5" class="usage-detail__muted">No quota window reported</td></tr>
           }
         </tbody>
       </table>
@@ -153,6 +159,8 @@
       </ul>
     </section>
   }
+
+  <app-usage-capacity-detail [sectionId]="sectionId(capacityFocus)" [timeZone]="v.timeZone" [now]="now()" />
 
   @defer (on viewport) {
     <app-usage-cost-detail [cost]="v.cost" [sectionId]="sectionId(costFocus)" />

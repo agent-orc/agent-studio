@@ -909,26 +909,9 @@ public class ProjectRunner
         var pending = info.PendingIntent?.ModelFallback;
         var (cli, model, thinking) = RequestedRoute(
             info.CliType, info.Model, info.ThinkingLevel, pending);
-        var plan = _modelSelection?.Select(new ModelSelectionCall(
-               new AgentStudio.TaskServer.Contracts.SelectionRequest
-               {
-                   Consumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.Coding,
-                   Project = ProjectName,
-                   TaskKey = info.Key ?? (string.IsNullOrEmpty(info.TaskKey) ? info.Id : info.TaskKey),
-                   Pins = new AgentStudio.TaskServer.Contracts.SelectionPins(
-                       cli,
-                       pending is not null ? model : info.PinMode != "hard" && info.PreferenceExpiresAt > DateTime.UtcNow
-                           ? info.PreferenceModel ?? info.Model : info.Model,
-                       pending is not null ? thinking : info.PinMode != "hard" && info.PreferenceExpiresAt > DateTime.UtcNow
-                           ? info.PreferenceThinkingLevel ?? info.ThinkingLevel : info.ThinkingLevel,
-                       info.PinMode == "hard" ? AgentStudio.TaskServer.Contracts.SelectionPinMode.Hard
-                           : AgentStudio.TaskServer.Contracts.SelectionPinMode.Preference),
-                   IsExplicitPin = info.ModelExplicit,
-                   TaskType = info.TaskType,
-               },
-               "local-coding-launch",
-               _activeRuns.Count,
-               CorrectnessFloor: _modelQualification is null ? null : () =>
+        var plan = _modelSelection?.Select(CodingSelectionCalls.For(
+               info, ProjectName, _activeRuns.Count, DateTime.UtcNow,
+               _modelQualification is null ? null : () =>
                    _modelQualification.CorrectnessFloor(info,
                        ReadPromptText(Path.Combine(info.FolderPath, "prompt.md"))))).Admission
            ?? QuotaAdmissionPlanner.Plan(
@@ -1709,7 +1692,7 @@ public class ProjectRunner
     {
         if (_globalBreakerCooldownUntil is { } until)
             return new RunnerPickupWait(RunnerPickupWaitCodes.BreakerCooldown,
-                $"Auto-pickup is cooling down after a circuit-breaker trip and resumes at {until:O}.");
+                $"Auto-pickup is cooling down after a circuit-breaker trip ({_globalBreakerReason ?? "unknown cause"}) and resumes at {until:O}.");
         return _mode == "paused"
             ? new RunnerPickupWait(RunnerPickupWaitCodes.Paused,
                 "The runner is paused; no card is picked until auto-pickup is enabled again.")
@@ -9020,7 +9003,7 @@ public class ProjectRunner
         catch { return path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar); }
     }
 
-    private static string ReadPromptText(string promptPath)
+    internal static string ReadPromptText(string promptPath)
     {
         try
         {

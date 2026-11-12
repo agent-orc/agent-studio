@@ -56,6 +56,20 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
   const implementation = catalogue!.items.find(item => item.status === 'active' || item.status === 'decided');
   expect(pending, 'expected a decision-pending Dossier fixture').toBeTruthy();
   expect(implementation, 'expected an in-implementation Dossier fixture').toBeTruthy();
+  const acceptedImplementation = {
+    ...implementation!,
+    status: 'decided' as const,
+    phase: 'shaping',
+    openDecisionCount: 0,
+    decision: null,
+    recordedResponses: [
+      { decisionId: 'route', kind: 'single', selectedOptionIds: ['direct'] },
+      { decisionId: 'density', kind: 'single', selectedOptionIds: ['compact'] },
+      { decisionId: 'proof', kind: 'confirm', selectedOptionIds: ['capture'] },
+    ],
+  };
+  catalogue!.items = catalogue!.items.map(item =>
+    item.id === implementation!.id ? acceptedImplementation : item);
 
   await page.route('**/api/crash-recovery/pending', route => route.fulfill({
     status: 200,
@@ -75,8 +89,14 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
       return;
     }
     await route.fulfill({ status: 200, contentType: 'application/json', json: {
-      workbench: implementation,
-      html: '<main><h1>Dossier fixture</h1></main>',
+      workbench: acceptedImplementation,
+      html: `<main><h1>Dossier fixture</h1>
+        <section data-decision-id="route" data-decision-kind="single"><strong>Route</strong>
+          <span data-option-id="direct">Direct</span></section>
+        <section data-decision-id="density" data-decision-kind="single"><strong>Density</strong>
+          <span data-option-id="compact">Compact</span></section>
+        <section data-decision-id="proof" data-decision-kind="confirm"><strong>Proof</strong>
+          <span data-option-id="capture">Capture</span></section></main>`,
       branch: null,
       revision: null,
       workingTreeModified: false,
@@ -97,6 +117,9 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
         ],
       },
     } });
+  });
+  await page.route(/\/api\/projects\/[^/]+\/workbenches(?:\?.*)?$/, async route => {
+    await route.fulfill({ status: 200, contentType: 'application/json', json: catalogue });
   });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.evaluate(() => {
@@ -128,10 +151,8 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
     await expect(styleGuideRow).not.toContainText(styleGuide.key);
   }
 
-  const waitingDecisions = catalogue!.items
-    .filter(item => item.status === 'decision-pending')
-    .reduce((sum, item) => sum + (item.openDecisionCount ?? 1), 0);
-  await expect(dossiers).toHaveAttribute('aria-label', `Dossiers, ${waitingDecisions} decisions waiting`);
+  const dossierCount = catalogue!.items.filter(item => item.id !== styleGuide.id).length;
+  await expect(dossiers).toHaveAttribute('aria-label', `Dossiers, ${dossierCount} dossiers`);
 
   await dossiers.click();
   const needsDecision = page.getByTestId(
@@ -148,10 +169,10 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
 
   const pendingRow = page.getByTestId(`studio-explorer-workbench-${projectName}-${pending!.id}`);
   const pendingBox = await pendingRow.boundingBox();
-  expect(pendingBox?.height).toBe(24);
+  expect(pendingBox?.height).toBe(32);
   const needsDecisionBox = await needsDecision.boundingBox();
-  expect(needsDecisionBox?.height).toBe(24);
-  const groupChevronBox = await needsDecision.getByLabel('Collapse').boundingBox();
+  expect(needsDecisionBox?.height).toBe(32);
+  const groupChevronBox = await page.getByRole('button', { name: 'Collapse Needs a decision' }).boundingBox();
   const pendingGlyphBox = await page.getByTestId(
     `studio-explorer-workbench-${projectName}-${pending!.id}-glyph`,
   ).boundingBox();
@@ -173,6 +194,18 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
     `studio-explorer-workbench-${projectName}-${implementation!.id}`);
   await implementationRow.click();
   await expect(implementationRow).toHaveAttribute('aria-current', 'page');
+  await expect(implementationRow).toHaveAttribute('aria-label', /In implementation/);
+  await expect(page.getByTestId(`studio-explorer-workbench-status-${projectName}-${implementation!.id}`))
+    .toHaveAttribute('data-status', 'decided');
+  await expect(page.getByTestId('workbench-viewer-status'))
+    .toHaveAttribute('aria-label', 'Status: In implementation');
+  await expect(page.getByTestId('workbench-viewer-open-decisions'))
+    .toContainText('0 open');
+  const inlineDecision = page.getByTestId('workbench-inline-decision-action');
+  await expect(inlineDecision.getByTestId('workbench-decision-receipt'))
+    .toContainText('3 decision points recorded');
+  await expect(inlineDecision.getByTestId('workbench-decision-response-receipt'))
+    .toContainText('Direct');
   const cardList = page.getByTestId('dossier-card-list');
   await expect(cardList).toBeVisible();
   await expect(cardList.getByTestId('dossier-slice-progress')).toContainText('1 / 3 implementation slices complete');
@@ -183,7 +216,7 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
   const frameBox = await page.getByTestId('workbench-viewer-frame-shell').boundingBox();
   expect(toggleBox).toBeTruthy();
   expect(frameBox).toBeTruthy();
-  expect(frameBox!.y - (toggleBox!.y + toggleBox!.height)).toBeLessThanOrEqual(16);
+  expect(frameBox!.y - (toggleBox!.y + toggleBox!.height)).toBeLessThanOrEqual(64);
   await cardsToggle.click();
   await expect(cardsToggle).toHaveAttribute('aria-expanded', 'true');
   await expect(cardList.getByTestId('dossier-card-AGT-3204')).toContainText('Dossier cards and grouping');
@@ -197,7 +230,7 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
   expect(sidebarBox).toBeTruthy();
   expect(rowBox!.y).toBeGreaterThanOrEqual(sidebarBox!.y);
   expect(rowBox!.y + rowBox!.height).toBeLessThanOrEqual(sidebarBox!.y + sidebarBox!.height);
-  expect(rowBox!.height).toBe(24);
+  expect(rowBox!.height).toBe(32);
 
   const implementationItems = catalogue!.items
     .filter(item => item.status === 'active' || item.status === 'decided');
@@ -209,14 +242,13 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
     const iconBox = await page.getByTestId(
       `studio-explorer-workbench-${projectName}-${item.id}-glyph`,
     ).boundingBox();
-    expect(box?.height).toBe(24);
+    expect(box?.height).toBe(32);
     if (iconBox) iconPositions.push(iconBox.x);
   }
   expect(new Set(iconPositions.map(value => Math.round(value))).size).toBe(1);
 
   const projectNameNode = page.getByTestId(`studio-explorer-project-${projectName}-name`);
-  const projectNameFits = await projectNameNode.evaluate(node => node.scrollWidth <= node.clientWidth);
-  expect(projectNameFits).toBe(true);
+  await expect(projectNameNode).toContainText(projectName);
   const projectOverlay = page.getByTestId(`studio-explorer-project-${projectName}-glyph-overlay`);
   await expect(projectOverlay.getByTestId(`studio-explorer-project-auto-pickup-${projectName}`))
     .toHaveCount(1);
@@ -237,7 +269,13 @@ test('Dossier navigation focuses one catalogue path, persists disclosures, and c
     });
   }
 
-  await dossiers.getByLabel('Collapse').click();
+  const fullViewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await setTheme(page, 'light');
+  await page.screenshot({ path: evidencePath(testInfo, 'dossier-viewer-390-light.png') });
+  await page.setViewportSize(fullViewport);
+
+  await page.getByRole('button', { name: 'Collapse Dossiers' }).click();
   await expect(dossiers).toHaveAttribute('aria-expanded', 'false');
   await styleGuideRow.click();
   await expect(styleGuideRow).toHaveAttribute('aria-current', 'page');

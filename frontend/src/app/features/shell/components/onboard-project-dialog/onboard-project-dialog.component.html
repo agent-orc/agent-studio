@@ -84,10 +84,10 @@
                   [ngModel]="executionRunner()"
                   (ngModelChange)="executionRunner.set($event)">
             <option value="" disabled>Select an execution runner</option>
-            <option value="local">{{ localCodingAdmitted() ? 'Local host' : 'Local (board and orchestration only)' }}</option>
+            <option value="local" [disabled]="!localCodingAdmitted()">Local host{{ localCodingAdmitted() ? '' : ' (Local coding is disabled)' }}</option>
             @for (host of hostRegistry.hosts(); track host.id) {
               @if (codingRunner(host) && host.status !== 'retired') {
-                <option [value]="host.id" [disabled]="runnerUnavailable(host)">
+                <option [value]="host.id" [disabled]="runnerUnavailable(host)" [attr.title]="runnerUnavailableReason(host) || null">
                   {{ runnerLabel(host) }}
                 </option>
               }
@@ -98,7 +98,7 @@
           } @else if (codingNeedsRunner() && !executionRunner()) {
             <span class="opd__hint" role="alert" data-testid="onboard-project-runner-required">Start a runner host next to the source checkout, then select it here before creating this project.</span>
           }
-          <span class="opd__hint">Offline and draining runners stay visible for context but cannot be selected.</span>
+          <span class="opd__hint">Unavailable coding runners stay visible with a reason and cannot be selected.</span>
         </label>
       </section>
 
