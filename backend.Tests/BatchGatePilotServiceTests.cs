@@ -1931,7 +1931,9 @@ public sealed class BatchGatePilotPublicationTests : BatchGatePilotServiceTests
             var hasA = TreeHas(request.ExpectedSha!, "docs/iso-a.md");
             var hasB = TreeHas(request.ExpectedSha!, "docs/iso-b.md");
             var hasC = TreeHas(request.ExpectedSha!, "docs/iso-c.md");
-            if (hasB && hasC && !hasA && !changed)
+            // AGT-3752: after A publishes, later children start on its tip.
+            var ownA = hasA && TreeHas(RemoteTip(), "docs/iso-a.md");
+            if (hasB && hasC && (!hasA || ownA) && !changed)
             {
                 changed = true;
                 Supersede(authority, b.Key);

@@ -202,7 +202,8 @@ public sealed partial class BatchGatePilotService
     private InvariantAssessment? Assess(BatchGateManifest manifest, IReadOnlyList<BatchGatePendingRecord> pending,
         bool leaseIsLiveness)
     {
-        var record = _store.ReadPhaseRecord(manifest.BatchId);
+        // A quarantined phase record is the quarantine's attention item, not an invariant breach.
+        if (!_store.TryReadPhaseRecord(manifest.BatchId, out var record)) return null;
         BatchPhase? phase = record?.State.Phase
             ?? (_store.HasState(manifest.BatchId) ? _store.LatestState(manifest.BatchId).Phase : null);
         if (phase is not (null or BatchPhase.Formed or BatchPhase.Abandoned

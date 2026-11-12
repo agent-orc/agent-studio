@@ -13,7 +13,7 @@ import { DecisionRulesPanelComponent, OrchestratorLogicPanelComponent, PromptAdm
 // Direct path (not the studio-shell barrel) so we don't pull StudioShellComponent
 // and re-form the shell <-> studio-shell import cycle (AGT-2035).
 import { AppearanceSettingsComponent } from '../../../studio-shell/components/appearance-settings/appearance-settings.component';
-import { UpdatesSettingsComponent } from '../../../update';
+import { UpdatesSettingsComponent } from '../../../update/lazy';
 import { WorkspaceManagementComponent } from '../workspace-management/workspace-management.component';
 import { RetentionAdminComponent } from '../../../retention';
 import { BackupStatusPanelComponent } from '../../../backups/backup-status-panel/backup-status-panel.component';

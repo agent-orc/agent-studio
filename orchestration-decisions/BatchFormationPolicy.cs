@@ -116,7 +116,7 @@ public enum BatchIntentStep
 /// pending generations, and decides how an interrupted intent completes.
 /// A replacement retires its predecessors only after its successor is durable.
 /// </summary>
-public static class BatchFormationPolicy
+public static partial class BatchFormationPolicy
 {
     public const string GenerationOwned = "generation-owned";
     public const string PredecessorNotFormed = "predecessor-not-formed";

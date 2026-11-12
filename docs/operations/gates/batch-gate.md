@@ -1,5 +1,25 @@
 # Batch gate delivery state
 
+## Test shard hang bound and operator evidence (AGT-3751)
+
+Each sharded .NET suite has an independent silence bound of the larger of ten
+minutes and twice that shard's estimated duration. Silence means no test result
+and no process output. VSTest blame-hang runs with a per-test timeout at 90%
+of that bound and no memory dump; the gate watchdog ends the process tree at
+the bound if VSTest has not already done so. Once a complete TRX report is
+written, a host that remains alive for two minutes is ended even if the outer
+gate budget has time left. The worker's outer timeout remains the final limit
+for the whole gate.
+
+The shard evidence records `infrastructure-hang`, the suite and one-based
+shard, stall duration, and the test in progress or recent result names. If no
+test name reached the console, it lists the shard's assigned test classes.
+The batch panel's run history shows the same summary, and Activity receives a
+`batch-test-shard-hang` event. The run is infrastructure red: the normal
+same-candidate infrastructure retry or bounded isolation retry applies, and
+the hang alone does not prove a member red. The operator can inspect the gate
+evidence for the full process output and shard records.
+
 ## Batch phase record and invariants (AGT-3563)
 
 Step 01 of the AGT-3552 split. Each closed manifest has one versioned phase
@@ -83,13 +103,21 @@ routes, keyed by batch and run ID; both serve only files inside the batch store.
 ## Formation planner and intents (AGT-3568)
 
 Step 02 of the AGT-3552 split. `BatchFormationPolicy` in the decision library
-owns the planner's decisions: repack membership (which formed batches of one
-scope and base merge, which members a successor takes, why the others wait),
-the commit check of each formation or replacement, and how an interrupted
-one completes. The pilot collects facts and applies the result. Formation
-snapshots (`BatchGateSnapshotBuilder`), admission (`AdmitFormationAsync`) and
-the close rule (`BatchGatePolicy.Close`) feed it unchanged; moving those three
-into the library is left to a later step.
+owns the planner's decisions: the snapshot (which pending members a planning
+snapshot or a close-now considers, and which excluded members a plan names),
+the close rule (which proposed members a batch takes, look-ahead and threshold
+plan routes), formation admission (the order of the member checks, the replay
+verdict, and whether a probed formation stays, shrinks, waits on a moved base
+or falls below the minimum size), repack membership (which formed batches of
+one scope and base merge, which members a successor takes, why the others
+wait), the commit check of each formation or replacement, and how an
+interrupted one completes. The planner's host side
+(`BatchGatePilotService.FormationPlanner.cs`, `PlanScopeFormationAsync` and
+`AdmitFormationAsync`) collects facts, calls these decisions through
+`MonolithTransitionAdapter` and commits the result as one intent; the rest of
+`BatchGatePilotService` only executes intents. `BatchGatePolicy.Close` builds
+the manifest of the chosen members and `BatchGateSnapshotBuilder` caches the
+risk facts.
 
 Every formation and every replacement of formed batches (repack, re-formation
 on a moved base, documentation successor, stacked successor) is one durable
@@ -386,6 +414,15 @@ batch verification is re-enabled, and its gate is retried.
   (the phase is never stored); recovery skips it and logs the missing state
   once per manifest per store instance until the next tick writes its first
   `Formed` record (AGT-3563).
+  A manifest, state or run record that does not deserialize (for example one an
+  older or newer binary wrote) is quarantined per record (AGT-3681): listings
+  skip it, a batch whose newest state row is unreadable reads `Unknown`, and
+  recovery, planning, the state route, triage, the stall probe and the
+  stranding watchdog keep working for every other batch. The quarantine raises
+  one `batch.record-unreadable` attention item ("Batch record unreadable")
+  naming the batch, project, file, parse error and next step, and
+  `GET /api/projects/{p}/batch-gate/state` lists it under `quarantined` for the
+  batch panel. It clears once the file reads again, is replaced, or is removed.
   A missing manifest and missing state also reads as `Unknown`. The auto-review
   watchdog keeps ownership with a visible manifest whose state is `Unknown`,
   avoiding a second review pass while state visibility is unresolved.
@@ -415,6 +452,19 @@ batch verification is re-enabled, and its gate is retried.
   first on the same base. Restart reconstruction uses these findings and the
   closed child verdicts. The state route and report expose the findings as
   `proven-red`, `proven-green`, and `superseded`.
+- Isolation base after a partial publication (AGT-3752). Diagnostic children
+  start on the red batch's base. When a child of the same isolation publishes,
+  every later child is assembled on the SHA that publication verified, so it
+  can still fast-forward; the exact-SHA rule holds because each child
+  publishes the candidate it tested. The base follows only the isolation's own
+  publications. If the tip moves for any other reason, later green children
+  end as `StaleBase` and their members return to pending, as before. Rebasing
+  was chosen over ending the isolation: the remaining split still proves the
+  culprit and its evidence in the same flight, and green members publish
+  without being gated again in a new batch. The isolation cost fact
+  (`isolation-costs/<batch>.json`) records `discardedPasses`, the green
+  children abandoned as `StaleBase`. Plan observations expose it as
+  `isolationDiscardedPasses` for the batch panel.
 - Isolation in the UI (AGT-3577). Each finding names the child batch run that
   decided it (`provingBatchId`, `provingRunId`). On the state route a
   proven-red finding also carries that run's `failures` (test name and error

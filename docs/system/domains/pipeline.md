@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-10
+Version: 2026-11-12
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -479,6 +479,19 @@ example after a crash between the two writes or external file loss, reads as
 phase `Unknown` and is skipped by recovery until a state exists. The next pilot
 tick writes its first record. The recovery scan logs this condition once per
 manifest and store instance.
+
+A record that does not deserialize is quarantined per record (AGT-3681,
+`BatchGateStore.Quarantine.cs`). `ListManifests` and `ListRecoverableManifests`
+skip an unreadable manifest, `ListRuns` skips an unreadable run record, and
+`LatestState` answers `Unknown` with reason `batch-state-record-unreadable` when
+the newest state row is unreadable; it never falls back to an older row, whose
+phase the batch may already have left. A direct read of one named record
+(`ReadManifest`, `ReadRun`) raises `BatchGateRecordUnreadableException`, a
+`JsonException`, and the pilot's recovery skips that batch. The quarantine is an
+in-memory projection of the files: `ListQuarantined` drops a record whose file
+is removed, superseded by a newer state row, or reads again after a change. The
+decision stream publishes each record once as `batch.record-unreadable`, and the
+state route lists them under `quarantined`.
 
 ### Flight queue order (AGT-3710, AGT-3568)
 
@@ -1261,6 +1274,13 @@ as before.
   `Category!=MachineBound` and every other category filter therefore apply
   exactly as in the unsharded run. The complement filter names hundreds of
   classes, which is why it is not passed on the command line.
+- **Hang bound.** A shard with no result or output ends after the larger of ten
+  minutes and twice its own estimated duration. VSTest blame-hang starts at
+  90% of that bound and records the test sequence without a dump. A complete
+  TRX report starts a separate two-minute host-exit grace. The shard evidence
+  names the stall and recent tests; the gate treats it as infrastructure red.
+  The [batch gate operations page](../../operations/gates/batch-gate.md#test-shard-hang-bound-and-operator-evidence-agt-3751)
+  describes what the operator sees.
 - **Parallel lanes on one host.** The gate's own machine slot is one lane. It
   takes additional slots that are free at that moment for more lanes, so
   `RemoteGate:GateSlots` times `RemoteGate:ProcessorCount` still bounds the

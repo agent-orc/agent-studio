@@ -14,8 +14,13 @@ import { ensureReviewHost, killReviewHost, reviewHostGone, startReviewHost, stop
  * Same method as the playthrough, on the real backend and the real runner
  * pair of the `first-run` profile: a proof card reaches review, the review
  * aspect is held, the review daemon and its worker are SIGKILLed, and the
- * daemon is started again with the same identity and state directory. That
- * twice, so the host keeps two restarts and the second retry waits 3 minutes.
+ * daemon is started again with the same identity and state directory. The
+ * replacement daemon relaunches a vanished worker within the same attempt up
+ * to DurableReviewProcess.MaximumWorkerRelaunches times, so the playthrough
+ * kill is repeated until the backend reports the review as lost. That
+ * twice, so the host keeps two restarts and the second retry waits 3 minutes,
+ * then once more after the budget the backend reports is spent, so the
+ * escalation names the restarts.
  */
 
 interface LiveQueue {
@@ -52,6 +57,28 @@ async function restartReviewHost(workspace: string, held: string): Promise<numbe
   return startReviewHost(launch, workspace);
 }
 
+/**
+ * Kill the review host until the attempt is lost and the backend schedules
+ * `retry`; a relaunched worker holds the aspect again before the next kill.
+ * Returns the replacement daemon, the kills it took and the live queue that names the loss.
+ */
+async function loseReview(page: Page, cardId: string, workspace: string, held: string, retry: number | null):
+  Promise<{ replacement: number; kills: number; queue: LiveQueue }> {
+  for (let kill = 1; ; kill++) {
+    const replacement = await restartReviewHost(workspace, held);
+    const lost = async () => {
+      const queue = await liveQueue(page, cardId);
+      return retry === null ? queue?.state !== 'reviewing' && queue?.state !== 'retry-scheduled'
+        : queue?.state === 'retry-scheduled' && queue.retry?.number === retry;
+    };
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline && !(await lost()) && !existsSync(held)) await page.waitForTimeout(500);
+    if (await lost()) return { replacement, kills: kill, queue: (await liveQueue(page, cardId))! };
+    expect(kill, 'the review host relaunched the worker more often than the relaunch budget allows').toBeLessThan(4);
+    await waitForHeldReview(page, cardId, held);
+  }
+}
+
 function clock(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
@@ -62,7 +89,7 @@ async function shot(target: Page | Locator, results: string | undefined, name: s
 }
 
 test('a killed review host is named on the card with its automatic retry and stays in the host history', async ({ page }) => {
-  test.setTimeout(30 * 60_000);
+  test.setTimeout(60 * 60_000);
   const workspace = process.env.PW_E2E_WORKSPACE;
   expect(workspace).toBeTruthy();
   const hold = join(workspace!, 'review-hold');
@@ -90,32 +117,34 @@ test('a killed review host is named on the card with its automatic retry and sta
     const card = page.getByTestId('task-card').filter({ hasText: /Reviewing on first-run-review/ });
     await expect(card).toHaveCount(1, { timeout: 30_000 });
 
-    // 2. Kill the review host and start it again: the review is lost, retry 1 of 3.
-    replacement = await restartReviewHost(workspace!, held);
-    await expect.poll(async () => (await liveQueue(page, cardId))?.state,
-      { timeout: 60_000, intervals: [500] }).toBe('retry-scheduled');
-    const first = (await liveQueue(page, cardId))!;
+    // 2. Kill the review host and start it again: the review is lost, retry 1 of the backend budget.
+    let lost = await loseReview(page, cardId, workspace!, held, 1);
+    replacement = lost.replacement;
+    let kills = lost.kills;
+    const first = lost.queue;
     expect(first.lost?.cause).toBe('host-restarted');
     expect(first.lost?.executorId).toBe('first-run-review');
     expect(first.retry?.number).toBe(1);
-    expect(first.retry?.budget).toBe(3);
+    // Read the budget the backend reports, so this spec cannot drift from AttemptAuthorityService.
+    const budget = first.retry!.budget;
+    expect(budget).toBeGreaterThanOrEqual(2);
     const host = first.lost!.hostId!;
     // `has` resolves relative to each card, so it takes the bare line locator.
     const lostCard = page.getByTestId('task-card').filter({ has: page.getByTestId('task-live-review-loss') });
     const lossLine = lostCard.getByTestId('task-live-review-loss');
     await expect(lossLine).toHaveText(new RegExp(
       `^\\s*Review lost: review host restarted \\(${host}, \\d\\d:\\d\\d [AP]M\\)\\. `
-      + `Automatic retry 1 of 3 at ${clock(first.retry!.dueAt)}\\.\\s*$`), { timeout: 30_000 });
+      + `Automatic retry 1 of ${budget} at ${clock(first.retry!.dueAt)}\\.\\s*$`), { timeout: 30_000 });
     await shot(lostCard, results, 'card-retry-1-light');
 
-    // 3. The retry claims the review again; kill the host once more: retry 2 of 3, 3 minutes out.
+    // 3. The retry claims the review again; kill the host once more: retry 2 of the budget, 3 minutes out.
     // killReviewHost SIGKILLs the replacement too; a SIGTERM would hand the review off instead.
     await waitForHeldReview(page, cardId, held);
-    replacement = await restartReviewHost(workspace!, held);
-    await expect.poll(async () => (await liveQueue(page, cardId))?.retry?.number,
-      { timeout: 60_000, intervals: [500] }).toBe(2);
-    const second = (await liveQueue(page, cardId))!;
-    const retryLine = new RegExp(`Automatic retry 2 of 3 at ${clock(second.retry!.dueAt)}\\.`);
+    lost = await loseReview(page, cardId, workspace!, held, 2);
+    replacement = lost.replacement;
+    kills += lost.kills;
+    const second = lost.queue;
+    const retryLine = new RegExp(`Automatic retry 2 of ${budget} at ${clock(second.retry!.dueAt)}\\.`);
     await expect(lossLine).toHaveText(retryLine, { timeout: 30_000 });
     await shot(lostCard, results, 'card-retry-2-light');
     await setTheme(page, 'dark');
@@ -135,11 +164,9 @@ test('a killed review host is named on the card with its automatic retry and sta
     await expect(page).toHaveURL(/#\/workspace\/settings\/environment\?host=first-run-review/);
     const history = page.getByTestId('remote-host-restart-history');
     await expect(history).toBeVisible({ timeout: 30_000 });
-    const rows = history.getByTestId('remote-host-restart-row');
-    await expect(rows.nth(1)).toBeVisible();
-    await expect(rows.nth(0)).toHaveAttribute('data-reviews-lost', '1');
-    await expect(rows.nth(1)).toHaveAttribute('data-reviews-lost', '1');
-    await expect(history.getByTestId('remote-host-restart-lost-attempt')).toHaveCount(2);
+    // Every kill interrupted the review in flight, so each restart row names it.
+    await expect(history.locator('[data-testid="remote-host-restart-row"][data-reviews-lost="1"]')).toHaveCount(kills);
+    await expect(history.getByTestId('remote-host-restart-lost-attempt')).toHaveCount(kills);
     await expect(page.getByTestId('remote-host-role-restart')).toContainText('1 review lost');
     await history.scrollIntoViewIfNeeded();
     await shot(history, results, 'host-history-light');
@@ -156,6 +183,28 @@ test('a killed review host is named on the card with its automatic retry and sta
     await history.getByTestId('remote-host-restart-lost-attempt').first()
       .getByTestId('remote-host-restart-lost-card').click();
     await expect(page).toHaveURL(/#\/tasks\//);
+
+    // 6. Spend the rest of the budget; the escalation names every restart instead of "cannot be materialized".
+    for (let retry = 3; retry <= budget; retry++) {
+      await waitForHeldReview(page, cardId, held);
+      replacement = (await loseReview(page, cardId, workspace!, held, retry)).replacement;
+    }
+    await waitForHeldReview(page, cardId, held);
+    replacement = (await loseReview(page, cardId, workspace!, held, null)).replacement;
+    await page.goto(`/#/tasks/${cardId}`);
+    const escalation = page.getByText(new RegExp(
+      `The review was lost to ${budget + 1} review host restarts: .*The automatic retry budget of ${budget} is spent`)).first();
+    await expect(escalation).toBeVisible({ timeout: 2 * 60_000 });
+    await expect(page.getByText(/cannot be materiali[sz]ed/)).toHaveCount(0);
+    await escalation.scrollIntoViewIfNeeded();
+    await shot(page, results, 'escalation-light');
+    await setTheme(page, 'dark');
+    await shot(page, results, 'escalation-dark');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await escalation.scrollIntoViewIfNeeded();
+    await shot(page, results, 'escalation-390-dark');
+    await setTheme(page, 'light');
+    await shot(page, results, 'escalation-390-light');
   } finally {
     rmSync(hold, { force: true });
     stopReviewHost(replacement);
