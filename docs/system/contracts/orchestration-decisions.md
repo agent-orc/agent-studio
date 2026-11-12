@@ -161,6 +161,15 @@ the findings the batch gate state reports and the repair the pilot applies.
 The legal phases and the findings are listed in
 [batch gate](../../operations/gates/batch-gate.md#batch-phase-record-and-invariants-agt-3563).
 
+AGT-3568: `BatchFormationPolicy` is the formation planner's rule. The pilot
+collects the formed batches of one scope and base, their pending members and
+the eligible queued cards with their changed paths. The rule returns the
+repack plan, the commit check of one formation or replacement intent against
+the pending generations other batches and open intents own, and the recovery
+step of an intent a dead host left open. `BatchGateStartPolicy.Order` is first
+in, first out with a maximum wait. Details are in
+[batch gate](../../operations/gates/batch-gate.md#formation-planner-and-intents-agt-3568).
+
 ## Decision grounds, shadow receipts and active coding choice
 
 AGT-3063 implements AGT-W73 OD-S1 for the `CodingCompletion` profile while it

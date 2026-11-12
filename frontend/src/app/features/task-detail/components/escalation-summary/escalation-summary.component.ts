@@ -14,6 +14,8 @@ import { TaskState } from '../../../../models/task.model';
 import { CdkTrapFocus } from '@angular/cdk/a11y';
 import type { TaskDetail, TaskInfo } from '../../../../models/task.model';
 import { CodeReviewListEntry, TaskService } from '../../../../services/task.service';
+import { BatchGateService } from '../../../../services/batch-gate.service';
+import { EscalationGateActions } from './escalation-gate-actions';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
 import { RunTimelinePollService } from '../../../polling/services/run-timeline-poll.service';
 import {
@@ -72,6 +74,8 @@ export class EscalationSummaryComponent {
   readonly answerDraft = signal('');
   readonly answering = signal(false);
   readonly answerError = signal<string | null>(null);
+  readonly gateInfrastructure = computed(() => this.detail().info.state === TaskState.Escalated
+    && this.detail().info.parkedBlocker?.blockerType === 'gate-infrastructure');
   readonly reviewRetrying = signal(false);
   readonly reviewRetryMessage = signal<string | null>(null);
   readonly watchdogPark = computed(() => this.detail().info.state === TaskState.Escalated
@@ -98,7 +102,7 @@ export class EscalationSummaryComponent {
 
   /** The three terminal operator choices shown beside NEEDS DECISION. */
   readonly decisionActions = computed(() =>
-    this.detail().info.state === TaskState.Escalated
+    this.detail().info.state === TaskState.Escalated && !this.gateInfrastructure()
       ? laneActionsFor(TaskState.Escalated).filter((action) => DECISION_ACTION_IDS.has(action.id))
         .map(action => this.watchdogPark() && action.id === 'reissue-escalated'
           ? { ...action, variant: 'secondary' as const } : action)
@@ -124,6 +128,7 @@ export class EscalationSummaryComponent {
   }
 
   private readonly jobs = inject(TaskService);
+  readonly gate = new EscalationGateActions(inject(BatchGateService), () => this.detail().info, this.mutationsBlocked);
   private readonly http = inject(HttpClient);
   private readonly timelinePoll = inject(TaskTimelinePollService);
   private readonly runTimelinePoll = inject(RunTimelinePollService);
@@ -150,6 +155,10 @@ export class EscalationSummaryComponent {
   private collapseJobId: string | null = null;
 
   constructor() {
+    // The summary needs the ledger for reissue history and the parked reason
+    // even when the operator has not opened the Timeline tab.
+    effect(() => this.timelinePoll.syncTo(this.detail().info));
+
     // Seed the collapse state whenever the open task changes: the stored
     // per-task preference wins; absent that, the lane picks the default.
     effect(() => {

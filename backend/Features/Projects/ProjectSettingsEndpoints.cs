@@ -1325,6 +1325,23 @@ public static class ProjectSettingsEndpoints
             }
             if (options.InvalidField is { } field)
                 return Results.BadRequest(new { error = $"Invalid batch gate setting: {field}.", field });
+            if (options.Enabled)
+            {
+                try
+                {
+                    // A lone reviewed card still needs the SSH fallback gate. Claimed
+                    // batch execution does not replace that transport.
+                    _ = RemoteGateOptions.Read(configuration);
+                }
+                catch (InvalidOperationException)
+                {
+                    return Results.BadRequest(new
+                    {
+                        error = "Batch verification needs a remote gate host. Set RemoteGate:SshHost to an approved remote host and RemoteGate:WorkerPath to its absolute worker path, then save again.",
+                        field = "enabled",
+                    });
+                }
+            }
             settings.SetBatchGate(projectName, options);
             _ = Task.Run(() =>
             {
@@ -1494,6 +1511,26 @@ public static class ProjectSettingsEndpoints
                 return Results.BadRequest(new { error = "X-Client-Id is required.", field = "X-Client-Id" });
             return Results.Ok(await pilot.ReleaseQueueStalledAsync(projectName,
                 AgentStudio.Tasks.TaskCrudEndpoints.OperatorActor(context), context.RequestAborted));
+        });
+        app.MapPost("/api/projects/{projectName}/batch-gate/infrastructure/{taskKey}/retry", async (
+            string projectName, string taskKey, HttpContext context, BatchGatePilotService pilot,
+            TaskScannerService scanner, ProjectSettingsService settings, IConfiguration configuration) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (string.IsNullOrWhiteSpace(context.Request.Headers["X-Client-Id"]))
+                return Results.BadRequest(new { error = "X-Client-Id is required.", field = "X-Client-Id" });
+            try { _ = RemoteGateOptions.Read(configuration); }
+            catch (InvalidOperationException)
+            {
+                return Results.Conflict(new { error = "Set RemoteGate:SshHost and an absolute RemoteGate:WorkerPath on an approved remote host before retrying the gate." });
+            }
+            if (!settings.Get(projectName).BatchGate.Enabled)
+                return Results.Conflict(new { error = "Re-enable batch verification after restoring the remote gate host, then retry this card's gate." });
+            return await pilot.RetryInfrastructureGateAsync(projectName, taskKey,
+                AgentStudio.Tasks.TaskCrudEndpoints.OperatorActor(context), context.RequestAborted)
+                ? Results.Ok(new { retried = true })
+                : Results.Conflict(new { error = "This card no longer has a current reviewed delivery waiting on gate infrastructure." });
         });
 
         app.MapGet("/api/projects/{projectName}/gate-result-cache", (

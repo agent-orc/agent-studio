@@ -144,6 +144,10 @@ export class BatchGateService {
   releaseQueueStalled(project: string): Observable<GateQueueStallRelease> {
     return this.http.post<GateQueueStallRelease>(`${this.url(project)}/queue-stalls/release`, {});
   }
+  retryInfrastructureGate(project: string, taskKey: string): Observable<{ retried: boolean }> {
+    return this.http.post<{ retried: boolean }>(
+      `${this.url(project)}/infrastructure/${encodeURIComponent(taskKey)}/retry`, {});
+  }
 }
 
 const record = (value: unknown): value is Record<string, unknown> =>
