@@ -1425,7 +1425,7 @@ export class TaskService {
 
   /** AGT-3580: run project intake on one Ready card now instead of waiting for the next tick. */
   runTaskIntake(jobId: string, watchPath?: string) {
-    return this.http.post<{ outcome: string; reason: string }>(
+    return this.http.post<{ outcome: string; reason: string; details: string }>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/intake`,
       { watchPath: watchPath ?? '' },
     );
