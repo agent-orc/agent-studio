@@ -333,7 +333,7 @@
       <!-- Dialogs and overlays follow regardless of the active shell. -->
 <!-- <app-update-banner /> moved into <app-notification-stack> in F40 so
            the update strip docks alongside other banner notifications. -->
-      <app-update-center />
+      @defer (when updateClient.centerOpen()) { <app-update-center /> }
       <app-update-block-modal />
       @defer (when confirmDialog.active() !== null; prefetch on idle) { <app-confirm-dialog /> }
       @if (workspaceManager.createOpen()) {
@@ -425,6 +425,8 @@
       }
       </div>
     } @else {
+    <!-- Legacy layout (VS Code layout switched off): its header chrome loads on demand. -->
+    @defer (on immediate) {
     <div class="app"
          [class.app--vscode-layout]="featureFlags.vsCodeLayout()"
          [class.app--vscode-meta-open]="featureFlags.vsCodeLayout() && featureFlags.vsCodeMetaOpen()"
@@ -517,7 +519,7 @@
 
 <!-- <app-update-banner /> moved into <app-notification-stack> in F40 so
            the update strip docks alongside other banner notifications. -->
-      <app-update-center />
+      @defer (when updateClient.centerOpen()) { <app-update-center /> }
       <app-update-block-modal />
       <app-workspace-banner [projects]="bannerProjects()" />
 
@@ -809,8 +811,9 @@
       }
     </div>
     }
+    }
 } @else if (noProjectAccess()) {
   <main data-testid="no-project-access" class="no-project-access"><p>You currently have no access to any project. Ask the owner.</p></main>
 } @else {
-  @defer (on immediate) { <app-auth-gate /> }
+  @defer (on immediate) { <app-auth-gate /> } <!-- Signed-in sessions never render the gate; its forms code loads with it. -->
 }

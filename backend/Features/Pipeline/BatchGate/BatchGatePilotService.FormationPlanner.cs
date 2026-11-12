@@ -1,6 +1,8 @@
 using System.Text.Json;
+using AgentStudio.Git;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Runner;
+using AgentStudio.TaskServer.Contracts.BatchGate;
 
 namespace AgentStudio.Pipeline;
 
@@ -214,6 +216,156 @@ public sealed partial class BatchGatePilotService
         }
     }
 
+    /// <summary>
+    /// The facts the tick collected for one planning scope: its candidates in
+    /// start preference order, the pre-check partners still queued, and the
+    /// members proven green on <paramref name="BaseSha"/>.
+    /// </summary>
+    private sealed record ScopeFormationFacts(BatchGatePendingRecord First, string ScopeKey, BatchGateScope Scope,
+        string BaseSha, BatchGateFormationOptions Options, BatchGatePendingRecord[] Current, int QueuedPartners,
+        bool GateBacklog, IReadOnlySet<string> ProvenGreenKeys);
+
+    /// <summary>
+    /// The planner's formation pass over one scope (AGT-3568): it takes the
+    /// snapshot, decides close, per-task or wait, admits the proposed order
+    /// and commits the formation as one durable intent. Returns true when the
+    /// integration base moved during admission.
+    /// </summary>
+    private async Task<bool> PlanScopeFormationAsync(ScopeFormationFacts facts, CancellationToken ct)
+    {
+        var (first, _, scope, baseSha, options, current, queuedPartners, gateBacklog, provenGreenKeys) = facts;
+        var project = first.Subject.Project;
+        // The state route reads risk from this cache and starts no Git (AGT-3413).
+        _snapshots.Refresh(scope.IntegrationBranch, current, _time.GetUtcNow());
+        var eligibleKeys = MonolithTransitionAdapter.BatchSnapshotEligible(current.Select(item =>
+            (item.Subject.TaskKey, BatchGatePolicy.Exclusion(item.Subject, scope, options) is not null)));
+        BatchGateFormation formed;
+        string planReason;
+        if (options.Planner == "look-ahead")
+        {
+            var eligible = current.Where(item => eligibleKeys.Contains(item.Subject.TaskKey)).ToArray();
+            var snapshot = _snapshots.Build(project, scope.IntegrationBranch, eligible, options,
+                _time.GetUtcNow(), _store.HasCloseNow(project), GateHostIdle(), gateBacklog, queuedPartners);
+            var decision = await PlanLookAheadAsync(project, facts.ScopeKey, snapshot, ct).ConfigureAwait(false);
+            // An engine-owned decision is pending; the scope waits for its intent.
+            if (decision is null) return false;
+            decision = WithExclusions(decision, project, options);
+            _store.AppendPlanDecision(project, decision);
+            planReason = decision.Reason;
+            var route = MonolithTransitionAdapter.BatchLookAheadRoute(decision.Decision);
+            if (MonolithTransitionAdapter.BatchConsumesCloseNow(route)) _store.ClearCloseNow(project);
+            formed = route switch
+            {
+                BatchFormationRoute.Close => BatchGatePolicy.Close(current.Select(item => item.Subject),
+                    scope, baseSha, options,
+                    MonolithTransitionAdapter.BatchLookAheadCloseKeys(current
+                        .Where(item => provenGreenKeys.Contains(item.Subject.TaskKey))
+                        .Select(item => item.Subject.TaskKey), decision.ProposedMembers),
+                    _time.GetUtcNow()),
+                BatchFormationRoute.PerTask => new BatchGateFormation(null, [], decision.ProposedMembers, true),
+                _ => new BatchGateFormation(null, [], [], false),
+            };
+        }
+        else
+        {
+            if (_store.HasCloseNow(project))
+            {
+                formed = BatchGatePolicy.Close(current.Select(item => item.Subject),
+                    scope, baseSha, options, eligibleKeys, _time.GetUtcNow());
+                _store.ClearCloseNow(project);
+            }
+            else
+            {
+                formed = BatchGatePolicy.Form(current.Select(item => item.Subject),
+                    scope, baseSha, options, _time.GetUtcNow(),
+                    _authority.ListPendingReviewAttempts().Count(review =>
+                        string.Equals(_scanner.FindJob(review.TaskKey)?.ProjectName,
+                            project, StringComparison.OrdinalIgnoreCase)),
+                    _load?.Current.Throttle == true, gateBacklog,
+                    _store.ReadBaseVerdict(project, baseSha, first.Subject.GateProfileDigest)?.Outcome == "fail",
+                    provenGreenKeys, queuedPartners,
+                    ProjectGateBusy(scope) && (!_store.ListRecoverableManifests()
+                        .Any(manifest => manifest.Scope == scope
+                            && manifest.BaseSha == baseSha
+                            && _store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
+                        || current.Any(item => CanJoinWaitingBatch(item, scope, baseSha, options))));
+            }
+            formed = SeparateThresholdOverlap(formed, current, scope, baseSha, options);
+            var plan = MonolithTransitionAdapter.BatchThresholdPlan(formed.Manifest is not null,
+                formed.UsePerTaskGate, formed.Reason, queuedPartners, formed.EligibleKeys.Count, current.Length);
+            planReason = plan.Reason;
+            _store.AppendPlanDecision(project, WithExclusions(new BatchPlanDecision(plan.Decision, planReason,
+                    formed.Manifest is null && current.Length > 0
+                        ? current.Min(item => item.Subject.ReviewCompletedAtUtc).AddMinutes(options.DeadlineMinutes)
+                        : null,
+                    formed.Manifest?.Members.Select(member => member.TaskKey).ToArray() ?? formed.EligibleKeys,
+                    options.CloseSize, []), project, options));
+        }
+        if (formed.UsePerTaskGate)
+        {
+            foreach (var item in current.Where(item => formed.EligibleKeys.Contains(item.Subject.TaskKey)))
+            {
+                // Only a batch that can actually absorb this card holds
+                // its per-task fallback while repacking runs.
+                if (options.Planner == "threshold" && CanJoinWaitingBatch(item, scope, baseSha, options)) continue;
+                ScheduleFallback(item, ct, new PerTaskFallbackCause(PerTaskFallbackRules.PlannerPerTask,
+                    $"{options.Planner} plan: {planReason}"));
+            }
+            return false;
+        }
+        if (formed.Manifest is null) return false;
+        BeforeFormationAdmissionForTesting?.Invoke();
+        var proposed = formed.Manifest;
+        formed = await AdmitFormationAsync(formed, current, options, ct).ConfigureAwait(false);
+        if (formed.Manifest is null)
+        {
+            _store.AppendPlanDecision(project, new BatchPlanDecision("wait",
+                formed.Reason ?? "formation admission changed", null, [], options.CloseSize, []));
+            return formed.Reason == BaseMovedBeforeFormation;
+        }
+        if (formed.Manifest.MembershipDigest != proposed.MembershipDigest)
+            _store.AppendPlanDecision(project, new BatchPlanDecision("close", "formation admission removed: "
+                    + string.Join("; ", formed.Exclusions.Except(proposed.Exclusions)
+                        .Select(item => item.TaskKey + " " + item.Reason)),
+                null, formed.Manifest.Members.Select(item => item.TaskKey).ToArray(), options.CloseSize, []));
+        var formationRisks = _snapshots.Cached(project, current);
+        formed = formed with { Manifest = formed.Manifest with
+        {
+            FormationReason = WaitingFormationReason(formed.Manifest, options),
+            PlanningCards = formed.Manifest.Members.Select(member => formationRisks.TryGetValue(member.TaskKey,
+                    out var risk)
+                ? new BatchPlanCard(member.TaskKey, member.ReviewCompletedAtUtc, risk.Risk, risk.Paths, [])
+                : new BatchPlanCard(member.TaskKey, member.ReviewCompletedAtUtc,
+                    BatchGateRiskModel.Unknown(false, false, false), [], [])).ToArray(),
+        } };
+        // AGT-3568: the formation is one intent that owns its members.
+        var refused = CommitIntent(FormationIntent(BatchIntentKind.Formation, "planner", formed.Manifest, current));
+        if (refused is not null)
+        {
+            _store.AppendPlanDecision(project, new BatchPlanDecision("wait", "formation intent refused: " + refused,
+                null, [], options.CloseSize, []));
+            return false;
+        }
+        if (options.Planner == "look-ahead" && _store.LatestPlanDecision(project)?.Advisor is { } advice)
+            _store.RecordAdvice(formed.Manifest.BatchId, advice);
+        return false;
+    }
+
+    /// <summary>The pending members of <paramref name="items"/> a pending or scope rule excludes, with that rule.</summary>
+    private BatchPlanExcludedMember[] ExcludedMembers(IEnumerable<BatchGatePendingRecord> items,
+        BatchGateFormationOptions options)
+        => items.Select(item => new BatchPlanExcludedMember(item.Subject.TaskKey,
+                _snapshots.PendingExclusion(item)
+                ?? BatchGatePolicy.Exclusion(item.Subject, Scope(item.Subject), options)?.ToString()
+                ?? string.Empty))
+            .Where(item => item.Rule.Length > 0).ToArray();
+
+    private BatchPlanDecision WithExclusions(BatchPlanDecision plan, string project,
+        BatchGateFormationOptions options)
+        => MonolithTransitionAdapter.BatchPlanWithExcluded(plan, ExcludedMembers(_store.ListPending().Select(Refresh)
+            .Where(item => string.Equals(item.Subject.Project, project, StringComparison.OrdinalIgnoreCase)),
+            options));
+
     private BatchPlannerCard Card(BatchGatePendingRecord item)
         => new(item.Subject.TaskKey, _snapshots.Paths(item, _time.GetUtcNow()));
 
@@ -311,5 +463,171 @@ public sealed partial class BatchGatePilotService
             if (state.Phase == BatchPhase.Formed && state.Reason != reason)
                 State(manifest, BatchPhase.Formed, null, 0, reason);
         }
+    }
+
+    private const string BaseMovedBeforeFormation = "integration base moved before formation";
+
+    /// <summary>
+    /// Admission of a proposed formation (AGT-3568: planner-owned; the order
+    /// of the checks and the outcome are <see cref="BatchFormationPolicy"/>).
+    /// Probe the exact proposed order before writing a closed manifest. Git replay
+    /// is side effect free with respect to the integration ref; assembly repeats
+    /// it under the coordinator lease because the result can still move later.
+    /// </summary>
+    private async Task<BatchGateFormation> AdmitFormationAsync(
+        BatchGateFormation formation, IReadOnlyList<BatchGatePendingRecord> candidates,
+        BatchGateFormationOptions options, CancellationToken ct,
+        IReadOnlySet<string>? replaceableBatchIds = null,
+        bool routeRejected = true)
+    {
+        var manifest = formation.Manifest;
+        if (manifest is null) return formation;
+        var byKey = candidates.ToDictionary(item => item.Subject.TaskKey, StringComparer.Ordinal);
+        var pendingAttempts = _store.ListPending().Select(item => item.ReviewAttemptId)
+            .ToHashSet(StringComparer.Ordinal);
+        var admitted = new List<BatchGateSubject>();
+        var rejected = new List<BatchGateExclusion>();
+        var actions = new List<(BatchGatePendingRecord Pending, BatchReplayResult? Replay,
+            BatchExclusionReason Reason)>();
+        var tip = manifest.BaseSha;
+        foreach (var member in manifest.Members)
+        {
+            if (!byKey.TryGetValue(member.TaskKey, out var candidate)
+                || !pendingAttempts.Contains(candidate.ReviewAttemptId))
+            {
+                rejected.Add(new(member.TaskKey, BatchExclusionReason.NoLongerPending));
+                continue;
+            }
+            var item = Refresh(candidate);
+            var subject = item.Subject;
+            if (subject.OwningBatchId is { } owner
+                && replaceableBatchIds?.Contains(owner) == true)
+                subject = subject with { OwningBatchId = null };
+            var pendingReason = _snapshots.PendingExclusion(item);
+            var policyReason = pendingReason is null
+                ? BatchGatePolicy.Exclusion(subject, manifest.Scope, options) : null;
+            var memberVerdict = MonolithTransitionAdapter.BatchAdmitMember(pendingReason is not null,
+                policyReason is not null,
+                pendingReason is null && policyReason is null
+                && _store.HasEject(manifest.Scope.Project, member.TaskKey));
+            if (memberVerdict != BatchAdmissionVerdict.Admit)
+            {
+                rejected.Add(memberVerdict switch
+                {
+                    BatchAdmissionVerdict.SupersededGeneration => new(member.TaskKey,
+                        BatchExclusionReason.SupersededGeneration, pendingReason),
+                    BatchAdmissionVerdict.PolicyExcluded => new(member.TaskKey, policyReason!.Value),
+                    _ => new(member.TaskKey, BatchExclusionReason.OtherBatchOwnsMember, "operator eject"),
+                });
+                continue;
+            }
+            if (options.PreCheckFor(manifest.Scope.Project))
+            {
+                var verdict = _store.ReadPreCheck(manifest.Scope.Project, subject.ResultSha,
+                    manifest.BaseSha, subject.GateProfileDigest);
+                var preCheck = BatchGatePreCheckPolicy.Decide(true, verdict?.Outcome,
+                    item.EnqueuedAtUtc, _time.GetUtcNow(), options.DeadlineMinutes,
+                    item.Subject.OwningBatchId is { } owned
+                    && replaceableBatchIds?.Contains(owned) == true);
+                if (preCheck != BatchGatePreCheckAction.Admit)
+                {
+                    rejected.Add(new(member.TaskKey, BatchExclusionReason.PreCheckNotAdmitted,
+                        verdict?.Outcome ?? "waiting"));
+                    actions.Add((item, null, BatchExclusionReason.PreCheckNotAdmitted));
+                    continue;
+                }
+            }
+            if (_git.IsDeliveryPublished(candidate.RepositoryPath, subject.ResultSha,
+                    manifest.BaseSha))
+            {
+                rejected.Add(new(member.TaskKey, BatchExclusionReason.AlreadyIntegrated));
+                actions.Add((item, null, BatchExclusionReason.AlreadyIntegrated));
+                continue;
+            }
+            var replay = _git.ReplayBatchMember(candidate.RepositoryPath,
+                subject.ResultRef, subject.ResultSha, tip);
+            var replayVerdict = BatchGatePolicy.AdmissionReplay(replay);
+            if (replayVerdict == BatchAdmissionReplay.Conflict)
+            {
+                rejected.Add(new(member.TaskKey, BatchExclusionReason.ReplayConflict,
+                    string.Join(", ", replay.ConflictedFiles)));
+                actions.Add((item, replay, BatchExclusionReason.ReplayConflict));
+                continue;
+            }
+            switch (replayVerdict)
+            {
+                case BatchAdmissionReplay.Pause:
+                    _logger.LogWarning("batch-formation-replay-unavailable task={TaskKey} reason={Reason}",
+                        member.TaskKey, replay.Error);
+                    return formation with { Manifest = null, UsePerTaskGate = false,
+                        Reason = "member replay unavailable before formation: " + member.TaskKey };
+                case BatchAdmissionReplay.EjectUnattributable:
+                    rejected.Add(new(member.TaskKey, BatchExclusionReason.UnattributableReplay,
+                        replay.Error));
+                    actions.Add((item, replay, BatchExclusionReason.UnattributableReplay));
+                    continue;
+                default:
+                    admitted.Add(subject);
+                    tip = replay.TipSha!;
+                    break;
+            }
+        }
+        // A remote push may have changed the base while planning or probing.
+        // Leave the queue untouched; the next tick plans on the fetched tip.
+        var latestBase = _git.FetchBatchIntegrationTip(byKey[manifest.Members[0].TaskKey]
+            .RepositoryPath, manifest.Scope.IntegrationBranch, ct);
+        var outcome = MonolithTransitionAdapter.BatchAdmissionOutcome(latestBase is null
+                || !string.Equals(latestBase, manifest.BaseSha, StringComparison.OrdinalIgnoreCase),
+            !routeRejected, rejected.Count, admitted.Count, options.MinimumSize);
+        if (outcome == BatchAdmissionOutcome.BaseMoved)
+            return formation with { Manifest = null, UsePerTaskGate = false, Reason = BaseMovedBeforeFormation };
+        if (outcome == BatchAdmissionOutcome.ReplacementChanged)
+            return formation with { Manifest = null, UsePerTaskGate = false,
+                Reason = "replacement members changed before formation" };
+        foreach (var (item, replay, reason) in actions)
+        {
+            if (reason == BatchExclusionReason.PreCheckNotAdmitted)
+            {
+                var verdict = _store.ReadPreCheck(manifest.Scope.Project, item.Subject.ResultSha,
+                    manifest.BaseSha, item.Subject.GateProfileDigest);
+                if (verdict?.Outcome == "red") SchedulePreCheckRed(item, verdict, ct);
+                else SchedulePreCheck(item, manifest.BaseSha, ct);
+            }
+            else if (reason == BatchExclusionReason.AlreadyIntegrated)
+                ScheduleFallback(item, ct, new PerTaskFallbackCause(
+                    PerTaskFallbackRules.AlreadyIntegrated,
+                    $"the integration branch at {Short(manifest.BaseSha)} already contains the result"),
+                    containedInSha: manifest.BaseSha);
+            else if (reason == BatchExclusionReason.ReplayConflict)
+                await StartConflictRoundAsync(item, new BatchGateReplayRecord(
+                    manifest.BatchId, manifest.MembershipDigest, item.Subject.TaskKey,
+                    item.Subject.ResultSha, manifest.BaseSha, null, replay!.Replacements,
+                    replay.ConflictedFiles, "conflict", _time.GetUtcNow())).ConfigureAwait(false);
+            else
+                ScheduleFallback(item, ct, new PerTaskFallbackCause(
+                    PerTaskFallbackRules.UnattributableReplay,
+                    "batch formation could not attribute the replay: "
+                    + (replay?.Error ?? "no commit mapping")));
+        }
+        if (outcome == BatchAdmissionOutcome.BelowMinimum)
+            return formation with { Manifest = null, UsePerTaskGate = false,
+                Exclusions = formation.Exclusions.Concat(rejected).ToArray(),
+                EligibleKeys = admitted.Select(item => item.TaskKey).ToArray(),
+                Reason = "admitted members below minimum batch size: "
+                    + string.Join("; ", rejected.Select(item =>
+                        item.TaskKey + " " + item.Reason + (item.Detail is null ? "" : " (" + item.Detail + ")"))) };
+        if (outcome == BatchAdmissionOutcome.Unchanged) return formation;
+        var kept = admitted.ToArray();
+        return formation with { Manifest = manifest with
+        {
+            Members = kept,
+            EligibleKeys = manifest.EligibleKeys.Except(rejected.Select(item => item.TaskKey),
+                StringComparer.Ordinal).ToArray(),
+            MembershipDigest = BatchGatePolicy.MembershipDigest(manifest.BaseSha,
+                manifest.Scope, kept),
+            Exclusions = manifest.Exclusions.Concat(rejected).ToArray(),
+        }, Exclusions = formation.Exclusions.Concat(rejected).ToArray(),
+            EligibleKeys = formation.EligibleKeys.Except(rejected.Select(item => item.TaskKey),
+                StringComparer.Ordinal).ToArray() };
     }
 }

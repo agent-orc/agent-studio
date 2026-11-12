@@ -22,6 +22,7 @@ public static class BatchGateStateSnapshotReader
         IReadOnlyList<BatchGateReviewFixWait>? reviewFixWaits = null,
         GateCapacity? gateCapacity = null,
         IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null,
+        IReadOnlySet<string>? activeIsolationFlights = null,
         string? leaseDeadlineDeferredBatchId = null,
         IReadOnlyList<BatchGateFallbackWait>? fallbackWaits = null,
         IReadOnlySet<string>? activePerTaskFlights = null,
@@ -44,8 +45,11 @@ public static class BatchGateStateSnapshotReader
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
         var latestCauseByAttempt = fallbackCauses.GroupBy(cause => cause.ReviewAttemptId, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        // An unreadable newest state is reported under quarantined, not as a
+        // readable batch with a phase inferred from an older state row.
         var projectManifests = store.ListManifests()
-            .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
+            .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase)
+                && store.LatestState(item.BatchId).Reason != BatchGateStore.StateUnreadableReason)
             .ToArray();
         var relevantManifests = projectManifests.OrderByDescending(item => item.ClosedAtUtc)
             .Take(Math.Clamp(history, 0, 500))
@@ -174,6 +178,12 @@ public static class BatchGateStateSnapshotReader
                 phase = phase.Phase.ToString().ToLowerInvariant(),
                 phaseAtUtc = phase.RecordedAtUtc,
                 phaseReason = phase.Reason,
+                isolationActive = phase.Phase == BatchPhase.Red
+                    && activeIsolationFlights?.Contains(manifest.BatchId) == true,
+                isolationPending = phase.Phase == BatchPhase.Red
+                    && manifest.Members.Any(member => pending.Any(item =>
+                        item.Subject.TaskKey == member.TaskKey
+                        && item.Subject.RunAttempt == member.RunAttempt)),
                 phaseHistory = store.StateHistory(manifest.BatchId).Select(item => new {
                     phase = item.Phase.ToString().ToLowerInvariant(), reason = item.Reason, atUtc = item.RecordedAtUtc,
                 }).ToArray(),
@@ -206,6 +216,7 @@ public static class BatchGateStateSnapshotReader
                         run.BatchRunId, run.Host,
                         outcome = verdict?.Outcome,
                         classification = verdict?.Classification,
+                        hang = verdict?.Hang,
                         evidenceAvailable = store.StoredEvidenceFile(run.EvidencePath) is not null,
                         startedAtUtc = (DateTimeOffset?)run.StartedAtUtc,
                         finishedAtUtc = verdict?.CompletedAtUtc,
@@ -303,7 +314,10 @@ public static class BatchGateStateSnapshotReader
                 var ejected = replay is { Outcome: "unattributable" };
                 var fallbackCause = causes.LastOrDefault(entry => entry.TaskKey == member.TaskKey
                     && entry.RunAttempt == member.RunAttempt && entry.RecordedAtUtc >= manifest.ClosedAtUtc);
-                var left = phase == BatchPhase.Abandoned || ejected || fallbackCause is not null;
+                var left = phase == BatchPhase.Abandoned
+                    || phase == BatchPhase.Paused
+                       && StateOf(store, manifest).Reason == "isolation interrupted"
+                    || ejected || fallbackCause is not null;
                 var baseMoveReason = StateOf(store, manifest)
                     .BaseMoveMemberReasons?.GetValueOrDefault(member.TaskKey);
                 var cause = left ? fallbackCause : null;
@@ -418,8 +432,24 @@ public static class BatchGateStateSnapshotReader
             preChecksRed = preChecks.Count(check => check.Outcome == "red"),
             preCheckMinutesSaved = preChecks.Sum(check => check.MinutesSaved),
             dailySummary,
+            quarantined = Quarantined(store, project),
         };
     }
+
+    /// <summary>
+    /// The project's quarantined batch records, read after the route's own
+    /// reads so it lists what they met. A record whose project cannot be read
+    /// may belong to any project, so every project lists it.
+    /// </summary>
+    private static object[] Quarantined(BatchGateStore store, string project)
+        => store.ListQuarantined()
+            .Where(record => record.Project is null
+                || string.Equals(record.Project, project, StringComparison.OrdinalIgnoreCase))
+            .Select(record => (object)new
+            {
+                record.BatchId, record.Project, record.Kind, record.File, record.Error,
+                record.DetectedAtUtc, record.NextStep,
+            }).ToArray();
 
     /// <summary>
     /// A manifest the snapshot reads between the manifest write and its first

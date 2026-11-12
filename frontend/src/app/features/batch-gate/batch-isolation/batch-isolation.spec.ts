@@ -21,5 +21,6 @@ describe('BatchIsolationComponent', () => {
     expect(tones).toEqual([['success', 'Proven green'], ['danger', 'Proven red'], ['success', 'Proven green'], ['neutral', 'Not yet isolated']]);
     expect(host.querySelectorAll('app-batch-proven-red')).toHaveLength(1);
     expect(host.querySelector('[data-task-key="AGT-2"] app-batch-proven-red')).not.toBeNull();
+    expect(host.querySelector('[data-task-key="AGT-4"]')?.textContent).toContain('Waiting for: An isolation verdict');
   });
 });

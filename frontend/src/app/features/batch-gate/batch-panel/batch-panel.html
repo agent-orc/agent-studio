@@ -7,6 +7,7 @@
   <div #body class="batch-panel__body" tabindex="0" (keydown)="onBodyKeydown($event)">
     @if (error(); as message) { <p class="batch-panel__error" role="alert">{{ message }} <button type="button" (click)="gate.refresh(project())">Retry</button></p> }
     @if (state(); as data) {
+      @if (data.quarantined?.length) { <app-batch-quarantine [records]="data.quarantined!" /> }
       @if (data.gateSlots; as slots) {
         <p data-testid="batch-gate-slot-usage">Gate slots: {{ slots.busy }}/{{ slots.total }} busy</p>
       }
@@ -166,6 +167,7 @@
             <article class="batch-panel__batch" [id]="'batch-' + batch.batchId" [attr.data-phase]="batch.phase">
               <h4>Batch {{ batch.batchId }} @if (batch.parentBatchId) { <small>from {{ batch.parentBatchId }}</small> }</h4>
               <p data-testid="batch-phase">Phase: <app-status-indicator [tone]="phaseTone(batch.phase)" [label]="batch.phase" [compact]="true" />@if (batch.queuePosition) { · <span data-testid="batch-queue-position">flight queue position {{ batch.queuePosition }} of {{ data.flightQueue?.length ?? batch.queuePosition }}</span> }@if (phaseReasonLabel(batch.phaseReason); as reason) { · {{ reason }} }</p>
+              @if (isolationState(batch); as state) { <p data-testid="batch-isolation-state">{{ state }}</p> }
               @if (batch.phaseHistory?.length) {
                 <details class="batch-panel__history"><summary>Phase history</summary>
                   <ol>@for (step of batch.phaseHistory; track step.atUtc + step.phase) { <li>{{ date(step.atUtc) }} · {{ step.phase }}@if (step.reason) { · {{ step.reason }} }</li> }</ol>
@@ -191,7 +193,8 @@
                     · {{ runDuration(batch, run) }}
                     · <a [href]="runEvidenceUrl(project(), batch.batchId, run.batchRunId)" target="_blank" rel="noopener">Evidence</a>
                     · <a [href]="runEvidenceUrl(project(), batch.batchId, run.batchRunId, 'log')" target="_blank" rel="noopener">Run log</a>
-                    @if (run.evidenceAvailable === false) { · Artifacts pending }</li>
+                    @if (run.evidenceAvailable === false) { · Artifacts pending }
+                    @if (run.hang) { · <span data-testid="batch-shard-hang">{{ run.hang }}</span> }</li>
                 }</ul>
               }
             </article>

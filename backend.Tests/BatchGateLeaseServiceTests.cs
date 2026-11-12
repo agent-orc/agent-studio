@@ -1,10 +1,34 @@
 using AgentStudio.Pipeline;
+using System.Text.Json;
 using Xunit;
 
 namespace AgentStudio.Tests;
 
 public sealed class BatchGateLeaseServiceTests
 {
+    [Fact]
+    public void Restart_reclaims_a_lease_from_an_exited_local_process()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "batch-lease-test-" + Guid.NewGuid().ToString("N"));
+        var scope = new BatchGateScope("p", "r", "develop", "full", "digest", "v1");
+        try
+        {
+            var leases = new BatchGateLeaseService(root);
+            var first = leases.TryAcquire(scope, "old-process")!;
+            var folder = Assert.Single(Directory.GetDirectories(root));
+            var path = Path.Combine(folder, "lease.json");
+            File.WriteAllText(path, JsonSerializer.Serialize(first with { ProcessId = int.MaxValue }));
+            Assert.False(leases.IsBusy(scope));
+            var recovered = leases.TryAcquire(scope, "new-process")!;
+            Assert.True(recovered.Fence > first.Fence);
+            Assert.False(leases.IsCurrent(first));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
     [Fact]
     public void ExpiredCoordinatorCannotPublishAfterSuccessorTakesFence()
     {
