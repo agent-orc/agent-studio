@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { mkdirSync } from 'fs';
 import { SNAPSHOT } from '../../src/mockups/usage-chips/app/usage-chips.fixtures';
 
 test.use({ serviceWorkers: 'block', trace: 'off', video: 'off' });
@@ -268,6 +269,8 @@ test.describe('Card mode badge (planning / research / concept recognizable on th
 
   test('concept review card names the host hold and omits code-delivery chips', async ({ page }) => {
     await gotoBoard(page);
+    const resultPath = process.env.JOB_RESULTS_DIR ?? 'test-results';
+    mkdirSync(resultPath, { recursive: true });
     const card = cardByTitle(page, CONCEPT_REVIEW_TASK.title);
     await expect(card.getByTestId('task-live-current')).toContainText('Review host saturated: load/core 3.2 > 1.0');
     await expect(card.getByTestId('task-card-test-evidence')).toHaveCount(0);
@@ -277,12 +280,12 @@ test.describe('Card mode badge (planning / research / concept recognizable on th
     await expect(card).not.toContainText('Delivery pending');
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
-      await card.screenshot({ path: `${process.env.JOB_RESULTS_DIR ?? 'test-results'}/concept-review-host-hold-${theme}.png` });
+      await card.screenshot({ path: `${resultPath}/concept-review-host-hold-${theme}--mocked.png` });
     }
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByTestId('mobile-lane-picker').locator('select').selectOption('4-auto-review');
     await expect(card).toBeVisible();
-    await card.screenshot({ path: `${process.env.JOB_RESULTS_DIR ?? 'test-results'}/concept-review-host-hold-390px.png` });
+    await card.screenshot({ path: `${resultPath}/concept-review-host-hold-390px--mocked.png` });
   });
 
   test('coding card stays quiet (no mode pill for the default mode)', async ({ page }) => {

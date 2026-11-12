@@ -208,7 +208,8 @@ test('concept Dossier shows its stage before publication', async ({ page }) => {
   await expect(page.getByTestId('concept-dossier-path')).toHaveText(DOSSIER_PATH);
   await expect(page.getByTestId('concept-dossier-publication'))
     .toHaveText('Not published yet · Awaiting integration');
-  await expect(page.getByTestId('studio-triage-action-mark-done')).toContainText('Await integration');
+  await expect(page.getByTestId('studio-triage-action-mark-done')).toContainText('Accept');
+  await expect(page.getByTestId('studio-triage-action-mark-done')).toBeEnabled();
 
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
@@ -247,8 +248,8 @@ test('concept detail omits delivery context and the Git pane in both themes and 
   await expect(page.locator('app-git-pane')).toHaveCount(0);
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
-    await page.screenshot({ path: path.join(RESULTS_DIR, `concept-review-detail-${theme}.png`) });
+    await page.screenshot({ path: path.join(RESULTS_DIR, `concept-review-detail-${theme}--mocked.png`) });
   }
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: path.join(RESULTS_DIR, 'concept-review-detail-390px.png') });
+  await page.screenshot({ path: path.join(RESULTS_DIR, 'concept-review-detail-390px--mocked.png') });
 });
