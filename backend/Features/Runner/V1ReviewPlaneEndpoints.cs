@@ -1042,6 +1042,7 @@ public static class V1ReviewPlaneEndpoints
                     CardRoundBudget.ResolveAllowed(configuration));
                 var payload = new StagePayload(
                     ReviewOutcome: request.Outcome,
+                    ReviewSummary: request.Summary,
                     RunAttemptId: currentReview.SourceRunAttemptId,
                     ReviewSubjectId: currentReview.Subject.SubjectId,
                     ReviewAttemptId: attemptId,
@@ -1254,7 +1255,24 @@ public static class V1ReviewPlaneEndpoints
             RemoteReviewContinuation? continuation = null;
             if (!acceptedReplay && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
-                if (budgetDecision.Escalate)
+                if (outcome == ReviewTerminalOutcome.DeliveryPredatesReviewPlan)
+                {
+                    var mergeBase = ReviewFixRoundBase.ForReview(
+                        currentReview, ReviewSubjectStore.Read(preparedTask.FolderPath), DateTime.UtcNow);
+                    if (mergeBase is not null)
+                    {
+                        var branch = currentReview.Subject.Plan?.IntegrationRef ?? "the target branch";
+                        continuation = new RemoteReviewContinuation(
+                            RemoteReviewContinuationKind.PlanMergeRound,
+                            $"{request.Summary}\n\nStart from the full result ref `{mergeBase.Ref}` "
+                            + $"at `{mergeBase.CommitSha}`. Merge `{branch}` into that delivery, "
+                            + "resolve any conflicts, and submit the merged result for review. "
+                            + "Do not treat the previous review as a product failure.",
+                            [], settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds,
+                            cardBudget, Base: mergeBase);
+                    }
+                }
+                else if (budgetDecision.Escalate)
                     continuation = new RemoteReviewContinuation(
                         RemoteReviewContinuationKind.BudgetEscalation, string.Empty,
                         blockingAspects, settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds,
@@ -1301,7 +1319,8 @@ public static class V1ReviewPlaneEndpoints
             // A batch-deferred pass owes no per-card integration: the batch gate
             // publishes it, so no delivery record may tell recovery to integrate
             // or to settle it as a failed gate.
-            if (!replay && continuation is null && outcome != ReviewTerminalOutcome.InfrastructureFailure
+            if (!replay && continuation is null && outcome is not (
+                    ReviewTerminalOutcome.InfrastructureFailure or ReviewTerminalOutcome.DeliveryPredatesReviewPlan)
                 && !deferToBatch && !waitForConcernFix
                 && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
@@ -1403,6 +1422,7 @@ public static class V1ReviewPlaneEndpoints
             {
                 var shadowPayload = new StagePayload(
                     ReviewOutcome: request.Outcome,
+                    ReviewSummary: request.Summary,
                     RunAttemptId: currentReview.SourceRunAttemptId,
                     ReviewSubjectId: currentReview.Subject.SubjectId,
                     ReviewAttemptId: attemptId,
@@ -3430,6 +3450,7 @@ public static class V1ReviewPlaneEndpoints
             "pass" => ReviewTerminalOutcome.Pass,
             "productfailure" => ReviewTerminalOutcome.ProductFailure,
             "integrationbranchdefect" => ReviewTerminalOutcome.IntegrationBranchDefect,
+            "deliverypredatesreviewplan" => ReviewTerminalOutcome.DeliveryPredatesReviewPlan,
             "reviewinfra" => ReviewTerminalOutcome.InfrastructureFailure,
             "inconclusive" => ReviewTerminalOutcome.Inconclusive,
             "cancellation" => ReviewTerminalOutcome.Cancellation,

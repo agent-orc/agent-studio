@@ -53,6 +53,7 @@ public sealed record ReviewAttemptChainEntry(
             ReviewTerminalOutcome.Pass => "Pass",
             ReviewTerminalOutcome.Superseded => "Superseded",
             ReviewTerminalOutcome.IntegrationBranchDefect => "IntegrationBranchDefect",
+            ReviewTerminalOutcome.DeliveryPredatesReviewPlan => "DeliveryPredatesReviewPlan",
             _ => "Ungraded",
         };
         var classification = (failureClassification ?? string.Empty).Trim();
@@ -350,6 +351,10 @@ public sealed record ReviewAttemptChainSummary(
                 [
                     "Read the newest review report: a gate was already red on the integration branch, so the finding is not against this card.",
                     "Fix the named gate on the integration branch; the card itself needs no correction.",
+                ],
+                ReviewTerminalOutcome.DeliveryPredatesReviewPlan =>
+                [
+                    "Merge the target branch into the delivery from its full result ref and submit the merged result for review.",
                 ],
                 ReviewTerminalOutcome.Inconclusive =>
                 [

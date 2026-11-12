@@ -202,6 +202,9 @@ public sealed class RemoteReviewPlanBuilder
                 PrivateRepository = task is not null && _visibility is not null
                     ? _visibility.IsPrivate(task, projectSettings)
                     : Contract.ReviewRepositoryAccessPolicy.IsPrivate(projectSettings?.RepositoryVisibility),
+                PlanCommitSha = repositoryPath is not null && integrationRef is not null
+                    ? Git(repositoryPath, "rev-parse", "--verify", integrationRef + "^{commit}")
+                    : null,
             }, repositoryPath, projectSettings?.BuildProfile, integrationRef,
             changedFiles, immutableResultRef ?? (task is null ? null : ReviewSubjectStore.Read(task.FolderPath)?.ImmutableResultRef));
 

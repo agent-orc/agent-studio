@@ -143,7 +143,9 @@ public sealed record ReviewPlanDto(
     string? VerifyDefinitionMissing = null,
     /// <summary>Rule that required a per-card verify gate instead of batch deferral.</summary>
     string? BuildTestDeferralDisabledReason = null,
-    IReadOnlyList<ReviewPreparationSkipDto>? PreparationSkips = null);
+    IReadOnlyList<ReviewPreparationSkipDto>? PreparationSkips = null,
+    /// <summary>Exact target-branch commit from which the command plan was read.</summary>
+    string? PlanCommitSha = null);
 
 /// <summary>Frozen engine decision visible with the review subject before any review command runs.</summary>
 public sealed record DeepReviewDecisionDto(string ReceiptId, string Mode, bool Selected,
