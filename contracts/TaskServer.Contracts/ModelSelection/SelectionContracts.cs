@@ -15,6 +15,7 @@ public static class SelectionConsumers
     public const string Chat = "chat";
     public const string MergeResolver = "merge-resolver";
     public const string CardCreation = "card-creation";
+    public const string Persona = "persona";
     public const string OneShotPrefix = "one-shot:";
 
     public static string OneShot(string kind) => OneShotPrefix + kind;

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AgentStudio.Security;
+using AgentStudio.Quota;
 
 namespace AgentStudio.Personas;
 
@@ -150,13 +151,20 @@ public sealed partial class PersonaActivationStore
     private readonly AccessSecurityStore _security;
     private readonly Func<string, string?> _resolveWorkspace;
     private readonly TimeProvider _time;
+    private readonly PersonaSchedulingService? _scheduling;
+    private readonly WorkspaceQuotaService? _quota;
     private readonly Dictionary<string, PersonaWorkspaceStateV1> _states = new(StringComparer.Ordinal);
 
     public PersonaActivationStore(IConfiguration config, PersonaCatalogue catalogue, AccessSecurityStore security,
-        AgentStudio.Registry.WorkspaceRegistry workspaces, TimeProvider time)
+        AgentStudio.Registry.WorkspaceRegistry workspaces, TimeProvider time,
+        PersonaSchedulingService scheduling, WorkspaceQuotaService quota)
         : this(string.IsNullOrWhiteSpace(config["TaskRepository"]) ? null
             : Path.Combine(config["TaskRepository"]!, ".metadata", "personas"),
-            catalogue, security, id => workspaces.Find(id)?.Id, time) { }
+            catalogue, security, id => workspaces.Find(id)?.Id, time)
+    {
+        _scheduling = scheduling;
+        _quota = quota;
+    }
 
     /// <param name="resolveWorkspace">Returns the canonical workspace id, or null for an unknown workspace.</param>
     public PersonaActivationStore(string? root, PersonaCatalogue catalogue, AccessSecurityStore security,
@@ -170,6 +178,19 @@ public sealed partial class PersonaActivationStore
     }
 
     private DateTime Now => _time.GetUtcNow().UtcDateTime;
+
+    private void ValidatePool(PersonaWorkspaceStateV1 state, string personaId, PersonaBudgetV1 allowance)
+    {
+        if (_scheduling is null || _quota is null) return;
+        var active = state.Activations.Where(a => (a.State is PersonaStates.Active or PersonaStates.Shadow)
+            && a.PersonaId != personaId).ToArray();
+        var snapshot = _quota.Snapshot(state.WorkspaceId);
+        var pool = _scheduling.Budget(state.WorkspaceId, Now,
+            snapshot.Limits?.ModelTokensPerWeek, active).PoolTokens;
+        if (active.Sum(a => (long)a.Allowance.TokensPerWeek) + allowance.TokensPerWeek > pool)
+            throw new SecurityOperationException(409, "persona-pool-overallocated",
+                "Active persona allowances exceed the workspace persona pool.");
+    }
 
     public PersonaListResponse List(string workspaceId)
     {
@@ -211,6 +232,7 @@ public sealed partial class PersonaActivationStore
                     "This persona is already activated. Deactivate it first, or adopt a newer revision.");
             var settings = new PersonaActivationSettingsV1(request.Attributes, request.Allowance, request.Scope);
             var (attributes, allowance, scope) = Effective(descriptor, settings, "invalid-activation");
+            ValidatePool(state, personaId, allowance);
             _security.ConsumePersonaActivationStepUp(owner);
             var now = Now;
             var revision = (existing?.ActivationRevision ?? 0) + 1;
@@ -361,6 +383,7 @@ public sealed partial class PersonaActivationStore
             if (live)
             {
                 var (attributes, allowance, scope) = Effective(descriptor, activation!.Settings, "adopt-conflict");
+                ValidatePool(state, personaId, allowance);
                 _security.ConsumePersonaActivationStepUp(owner);
                 var activationRevision = activation.ActivationRevision + 1;
                 activations = Replace(activations, activation with
