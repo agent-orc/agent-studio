@@ -32,11 +32,15 @@ public static class AccessSecurityEndpoints
                 // The address is the client the edge resolved (Cloudflare or
                 // direct), forwarded by the trusted frontend hop (AGT-3230).
                 var audit = loggers.CreateLogger("AgentStudio.Security.Bootstrap");
+                var errors = AccessSecurityStore.BootstrapFieldErrors(request);
                 if (RequiresBootstrapCode(context, configuration) && !MatchesBootstrapCode(request.BootstrapCode, configuration))
                 {
                     audit.LogWarning("Owner bootstrap without a valid installer code from client {ClientAddress}", context.Connection.RemoteIpAddress);
-                    throw new SecurityOperationException(403, "bootstrap-code-required", "A valid installer owner code is required.");
+                    errors["bootstrapCode"] = ["A valid installer owner code is required."];
                 }
+                if (errors.Count > 0)
+                    return Results.Json(new { error = "bootstrap-validation", message = "Check the owner details and try again.", errors },
+                        statusCode: StatusCodes.Status400BadRequest);
                 var created = store.Bootstrap(request, publicEntry: true);
                 audit.LogInformation("Owner {Username} bootstrapped from client {ClientAddress}", created.User.Username, context.Connection.RemoteIpAddress);
                 SetSessionCookies(context, created.SessionToken, created.CsrfToken);

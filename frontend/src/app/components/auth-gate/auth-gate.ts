@@ -59,12 +59,30 @@ export class AuthGateComponent implements OnInit {
       error: error => { this.error.set(authGateFailure(error, 'Invitation is invalid or expired.')); this.invitationLoading.set(false); },
     });
   }
+  readonly bootstrapErrors = signal<Partial<Record<string, string[]>>>({});
 
   submit(): void {
     const status = this.auth.status();
     if ((status?.secondFactorEnrollmentRequired || this.auth.factorRecommendation()) && !status?.user?.mustChangePassword) {
       this.confirmTotp();
       return;
+    }
+    this.error.set('');
+    this.bootstrapErrors.set({});
+    if (status?.bootstrapRequired && !this.inviteToken) {
+      const errors: Record<string, string[]> = {};
+      const username = this.username.trim();
+      if (!/^[\p{L}\p{N}._-]{3,64}$/u.test(username))
+        errors['username'] = ['Username must be 3 to 64 letters, digits, dots, underscores, or hyphens.'];
+      const passwordErrors: string[] = [];
+      if (this.password.length < 12 || this.password.length > 128)
+        passwordErrors.push('Password must be 12 to 128 characters.');
+      if (username && this.password.toLowerCase().includes(username.toLowerCase()))
+        passwordErrors.push('Password must not contain the username.');
+      if (passwordErrors.length) errors['password'] = passwordErrors;
+      if (status.bootstrapCodeRequired && !this.bootstrapCode.trim())
+        errors['bootstrapCode'] = ['Installer owner code is required.'];
+      if (Object.keys(errors).length) { this.bootstrapErrors.set(errors); return; }
     }
     this.submitting.set(true);
     this.error.set('');
@@ -81,6 +99,8 @@ export class AuthGateComponent implements OnInit {
         this.password = ''; this.newPassword = ''; this.bootstrapCode = ''; this.secondFactorCode = ''; this.submitting.set(false);
       },
       error: (error: unknown) => {
+        if (status?.bootstrapRequired && error instanceof HttpErrorResponse && error.error?.errors)
+          this.bootstrapErrors.set(error.error.errors);
         this.error.set(authGateFailure(error, 'Sign-in failed.'));
         this.submitting.set(false);
       },
