@@ -103,6 +103,16 @@
   overflow: visible;
 }
 
+.task-live--per-task .task-live__current {
+  align-items: flex-start;
+}
+
+.task-live--per-task .task-live__headline {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+
 .task-live__auto-action {
   flex: 0 0 auto;
   margin-inline-start: var(--studio-spacing-1);

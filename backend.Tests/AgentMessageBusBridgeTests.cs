@@ -35,6 +35,19 @@ public sealed class AgentMessageBusBridgeTests : IDisposable
     public void Dispose() => TestTempRoot.TryDelete(_workspace);
 
     [Fact]
+    public async Task Batch_pause_handoff_records_one_event_with_all_members()
+    {
+        await _bridge.EmitBatchPauseHandoffAsync("Project", "batch-9",
+            "flaky quarantine requires a fresh gate verdict", ["AGT-1", "AGT-2", "AGT-3", "AGT-4"]);
+
+        var message = Assert.Single(_store.Recent(_workspace, "Project", 10));
+        Assert.Equal("batch-paused-per-task-handoff", message.Topic);
+        Assert.Equal("Warn", message.Severity);
+        Assert.Contains("AGT-1, AGT-2, AGT-3, AGT-4", message.Body);
+        Assert.Contains("Red escalates; green integrates.", message.Body);
+    }
+
+    [Fact]
     public async Task SeedBuiltInParticipantsAsync_RegistersStandardSet()
     {
         await _bridge.SeedBuiltInParticipantsAsync();

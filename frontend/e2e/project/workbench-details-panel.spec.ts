@@ -3,6 +3,7 @@ import type { Page, Route } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { contrastRatio } from '../helpers/contrast';
+import { setTheme } from '../helpers/theme';
 import { test } from '../fixtures/dev-backend';
 
 const PROJECT = 'Naming Evidence';
@@ -21,9 +22,12 @@ const EMPTY_GROUPED = {
 };
 
 const DOSSIER_HTML = `<style>
-  :root { color-scheme: light dark; }
-  body { background: Canvas; color: CanvasText; }
-  textarea { background: Field; color: FieldText; }
+  :root { color-scheme: light dark; --bg: #ffffff; --fg: #171717; --field: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1a1a19; --fg: #f7f6f2; --field: #252523; }
+  }
+  body { background: var(--bg); color: var(--fg); }
+  textarea { background: var(--field); color: var(--fg); }
 </style><main>
   <h1>Naming Dossier</h1>
   <p>Select the stable public naming contract.</p>
@@ -73,9 +77,10 @@ function cardInfo(spawned: boolean) {
       noDossierNeeded: false },
     requiresIntegration: false, integration: { status: 'not-applicable' },
     order: 1, agent: 'codex', cliType: 'codex', model: 'gpt-5.6-sol',
-    createdAt: '2026-08-11T10:00:00Z', lastActivity: '2026-08-11T10:00:00Z',
+    createdAt: spawned ? null : '2026-08-11T10:00:00Z',
+    lastActivity: spawned ? null : '2026-08-11T10:00:00Z',
     sessionName: null, useOwnSession: null, lastUsage: null,
-    execution: null, commit: null, commits: [], ownerClientId: 'local-default',
+    execution: null, commit: null, commits: [], ownerClientId: spawned ? null : 'local-default',
   };
 }
 
@@ -129,6 +134,10 @@ async function installMocks(
   let decisionStage: string | null = null;
   let revision = '0123456789abcdef';
   let fingerprint = 'a'.repeat(64);
+  const catalogueStatus = () => decisionStage === 'succeeded' ? 'decided' : descriptor.status;
+  const catalogueOpenCount = () => decisionStage === 'succeeded' ? 0
+    : descriptor.status === 'decision-pending' || descriptor.phase === 'decision-ready'
+      || descriptor.lifecycleState === 'review-requested' ? 1 : 0;
 
   await page.route('**/api/**', route => json(route, []));
   await page.route('**/api/v1/studio/auth/status', route => json(route, {
@@ -197,7 +206,9 @@ async function installMocks(
       workbench: {
         id: WORKBENCH_ID, key: WORKBENCH_KEY, title: 'Naming Dossier',
         summary: 'Choose the stable naming contract used by public references.',
-        status: descriptor.status, phase: descriptor.phase,
+        status: catalogueStatus(), phase: descriptor.phase,
+        lifecycleState: decisionStage === 'succeeded' ? 'decided' : descriptor.lifecycleState,
+        openDecisionCount: catalogueOpenCount(),
         updatedAtUtc: '2026-08-11T10:00:00Z',
         entryPath: DOSSIER_PATH,
         valid: true, error: null, sourceTaskKeys: ['AGT-2600'],
@@ -214,7 +225,9 @@ async function installMocks(
       items: [{
         id: WORKBENCH_ID, key: WORKBENCH_KEY, title: 'Naming Dossier',
         summary: 'Choose the stable naming contract used by public references.',
-        status: descriptor.status, phase: descriptor.phase,
+        status: catalogueStatus(), phase: descriptor.phase,
+        lifecycleState: decisionStage === 'succeeded' ? 'decided' : descriptor.lifecycleState,
+        openDecisionCount: catalogueOpenCount(),
         updatedAtUtc: '2026-08-11T10:00:00Z',
         entryPath: DOSSIER_PATH,
         valid: true, error: null, sourceTaskKeys: ['AGT-2600'],
@@ -241,6 +254,49 @@ async function installMocks(
       projectId: 'project-naming', projectName: PROJECT, projectColor: null,
       merge: null, reviewGrade: null,
     }] : [])],
+  }));
+  await page.route('**/api/tasks/naming-feature-1/core**', route => json(route, {
+    state: 'ready', projectId: 'project-naming', projectName: PROJECT,
+    id: 'naming-feature-1', taskKey: `${PROJECT}::AGT-2611`,
+    watchPath: WATCH_PATH, folderPath: `${WATCH_PATH}/tasks/naming-feature-1`,
+    key: 'AGT-2611', title: 'Implement the stable naming contract',
+    kind: 'task', taskType: 'feature', lane: '2-ready',
+    enteredLaneAt: '2026-08-11T10:00:00Z', order: 0, mode: 'coding',
+    released: false, pendingIntent: false,
+    pins: { modelExplicit: false, thinkingLevelExplicit: false, allowWebAccess: false, noBranchExpected: false },
+    actions: { canEdit: true, canMove: true, canDelete: true, canContinue: true },
+    blocking: { dependencyBlocked: false, dependencyState: 'ready', dependencies: [], dependsOn: [], blockedBy: [] },
+    runtime: { location: 'none', leaseState: 'none' }, runtimeVersion: 'r0',
+    statusSummary: { state: 'missing', originalBytes: 0 },
+    prompt: { state: 'ready', text: 'Implement the stable naming contract.', originalBytes: 37 },
+    timeline: { state: 'missing', events: [], originalBytes: 0 }, coreVersion: '1',
+  }));
+  await page.route('**/api/tasks/naming-feature-1/details/*', route => {
+    const resource = new URL(route.request().url()).pathname.split('/').pop();
+    const data: Record<string, unknown> = {
+      overview: {},
+      documents: { name: 'status', markdown: null, summaryState: null },
+      usage: { tokenSummary: null, lastUsage: null, contextUsage: null },
+      git: { mergeSignal: null, integration: null, publishSignal: null, testEvidence: null, commit: null, commits: [] },
+      review: { reviewProjection: null, evidence: null },
+      history: { promptHistory: [], titleHistory: [], log: [] },
+    };
+    return json(route, {
+      id: 'naming-feature-1', taskKey: `${PROJECT}::AGT-2611`,
+      projectId: 'project-naming', attemptId: null, coreVersion: '1',
+      resource, version: `${resource}-1`, computedAt: null, state: 'ready',
+      data: data[resource ?? ''] ?? null, reason: null,
+    });
+  });
+  await page.route('**/api/tasks/naming-feature-1/pipeline**', route => json(route, {
+    pipeline: { id: 'fixture', displayName: 'Fixture', version: 1, pre: [], core: [], post: [], allSteps: [] },
+    execution: null, cost: null, config: {},
+  }));
+  await page.route('**/api/tasks/naming-feature-1/session-events**', route => json(route, {
+    events: [], sessionChain: [],
+  }));
+  await page.route('**/api/tasks/naming-feature-1/runs**', route => json(route, {
+    runs: [], runnerEvents: [],
   }));
   await page.route(/\/api\/tasks(?:\?.*)?$/, route => {
     if (route.request().method() !== 'POST') return json(route, []);
@@ -353,7 +409,7 @@ async function installMocks(
       workbench: {
         id: WORKBENCH_ID, key: WORKBENCH_KEY, title: 'Naming Dossier',
         summary: 'Choose the stable naming contract used by public references.',
-        status: decisionStage === 'succeeded' ? 'decided' : descriptor.status,
+        status: catalogueStatus(), openDecisionCount: catalogueOpenCount(),
         phase: descriptor.phase, updatedAtUtc: '2026-08-11T10:00:00Z',
         entryPath: 'docs/operations/naming-dossier/index.html', valid: true, error: null,
         sourceTaskKeys: ['AGT-2600'], relatedTaskKeys: taskCreated ? ['AGT-2611'] : [],
@@ -404,6 +460,9 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
   await seedWorkbench(page);
   await page.goto('/');
   await expect(page.getByTestId('workbench-viewer')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('workbench-viewer-open-decisions')).toHaveText('1 open');
+  await expect(page.getByTestId(`studio-explorer-workbench-group-${PROJECT}-needs-decision`))
+    .toContainText('1');
 
   const cardList = page.getByTestId('dossier-card-list');
   await cardList.getByTestId('dossier-cards-toggle').click();
@@ -425,6 +484,10 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
   const inline = page.getByTestId('workbench-inline-decision-action');
   await expect(inline.getByTestId('workbench-decision-start')).toBeEnabled();
   await inline.getByTestId('workbench-decision-start').press('Enter');
+  await expect(inline.getByTestId('workbench-decision-goal'))
+    .toHaveValue('Implement Naming Dossier according to the source Dossier and its recorded decisions.');
+  const seededPrompt = await inline.getByTestId('workbench-decision-prompt-preview').innerText();
+  expect(seededPrompt.match(/Recorded decisions/g)).toHaveLength(1);
   await expect(inline.getByTestId('workbench-decision-prompt-preview'))
     .toContainText('A · Same grid');
   await expect(inline.getByTestId('workbench-decision-prompt-preview'))
@@ -453,7 +516,30 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
     fullPage: true,
   });
 
+  let releaseCreate!: () => void;
+  const waitForCapture = new Promise<void>(resolveCapture => { releaseCreate = resolveCapture; });
+  await page.route(/\/decisions\/prepare(?:\?.*)?$/, async route => {
+    if (route.request().method() === 'POST') await waitForCapture;
+    await route.fallback();
+  });
   await inline.getByTestId('workbench-decision-confirm').click();
+  const pendingButton = inline.getByTestId('workbench-decision-confirm');
+  await expect(pendingButton).toHaveAttribute('aria-busy', 'true');
+  const pendingStyle = await pendingButton.evaluate(button => ({
+    fontSize: getComputedStyle(button).fontSize,
+    label: getComputedStyle(button, '::after').content,
+  }));
+  expect(pendingStyle).toEqual({ fontSize: '0px', label: '"Starting…"' });
+  for (const variant of [
+    { name: 'light', theme: 'light', width: 1600 },
+    { name: 'dark', theme: 'dark', width: 1600 },
+    { name: '390', theme: 'light', width: 390 },
+  ] as const) {
+    await page.setViewportSize({ width: variant.width, height: 1000 });
+    await setTheme(page, variant.theme);
+    await page.screenshot({ path: resolve(RESULTS, `dossier-pending-${variant.name}--mocked.png`) });
+  }
+  releaseCreate();
   const created = inline.getByTestId('workbench-decision-created-tasks');
   await expect(created).toContainText('AGT-2611');
   await expect(created).toContainText('Implement the stable naming contract');
@@ -490,6 +576,11 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.reload();
   await expect(page.getByTestId('workbench-viewer')).toBeVisible();
+  await expect(page.getByTestId('workbench-viewer-open-decisions')).toHaveText('0 open');
+  await expect(page.getByTestId(`studio-explorer-workbench-group-${PROJECT}-needs-decision`))
+    .not.toContainText('1');
+  await expect(page.getByTestId(`studio-explorer-workbench-group-${PROJECT}-in-implementation`))
+    .toContainText('1');
   const reloadedCards = page.getByTestId('dossier-card-list');
   await reloadedCards.getByTestId('dossier-cards-toggle').click();
   await reloadedCards.getByTestId('dossier-card-AGT-2611').click();
@@ -513,6 +604,38 @@ test('inline Dossier decision starts a Ready task with the selected agent', asyn
   await page.getByTestId('concept-dossier-notice').screenshot({
     path: resolve(RESULTS, 'dossier-concept-decision-390--mocked.png'),
   });
+
+  const runtimeErrors: string[] = [];
+  page.on('console', message => {
+    if (message.type() === 'error' && message.text().includes('TypeError'))
+      runtimeErrors.push(message.text());
+  });
+  await page.goto(`/?job=naming-feature-1&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  const overview = page.getByTestId('overview-status');
+  await expect(overview).toBeVisible();
+  await expect(page.getByTestId('overview-title'))
+    .toContainText('Implement the stable naming contract');
+  await page.waitForTimeout(1000);
+  const runtimeError = page.getByRole('alertdialog');
+  if (await runtimeError.isVisible({ timeout: 500 }).catch(() => false))
+    throw new Error(`Spawned card runtime error: ${await runtimeError.innerText()}`);
+  for (const label of ['Last Activity', 'Created', 'Owner'])
+    await expect(overview.getByText(label, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/^Attempt \d+/)).toHaveCount(0);
+  for (const variant of [
+    { width: 1600, theme: 'light', name: 'light' },
+    { width: 1600, theme: 'dark', name: 'dark' },
+    { width: 390, theme: 'light', name: '390-light' },
+    { width: 390, theme: 'dark', name: '390-dark' },
+  ] as const) {
+    await page.setViewportSize({ width: variant.width, height: 1000 });
+    await setTheme(page, variant.theme);
+    await page.waitForTimeout(500);
+    if (await runtimeError.isVisible().catch(() => false))
+      throw new Error(`Spawned card runtime error after theme change: ${await runtimeError.innerText()}`);
+    await page.screenshot({ path: resolve(RESULTS, `agt-3666-spawned-card-${variant.name}--mocked.png`) });
+  }
+  expect(runtimeErrors).toEqual([]);
 
   expect(captured.decisionBodies).toHaveLength(2);
   expect(captured.taskBodies).toEqual([expect.objectContaining({
@@ -563,7 +686,10 @@ test('failed Dossier confirmation removes its new task and explains the outcome'
   await page.goto('/');
   const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
   await frame.locator('[data-option-id="option-a"] input').check();
+  await frame.locator('[data-studio-decision-host-slot]').scrollIntoViewIfNeeded();
   const inline = page.getByTestId('workbench-inline-decision-action');
+  await expect.poll(() => inline.evaluate(element => getComputedStyle(element).pointerEvents))
+    .toBe('auto');
   await inline.getByTestId('workbench-decision-start').click();
   await inline.getByTestId('workbench-decision-confirm').click();
   await expect.poll(() => captured.deletedTaskIds).toEqual(['naming-feature-1']);
