@@ -269,6 +269,29 @@ export function laneActionsFor(state: string): TriageButton[] {
   return LANE_ACTIONS[state] ?? [];
 }
 
+/** Checkout setup must happen before another coding attempt can help. */
+export function isServerCheckoutFailure(text: string): boolean {
+  return /needs a server checkout|server checkout.*missing|integration worktree base .* unavailable after fetch|could not resolve the project repository for the integration worktree/i.test(text);
+}
+
+export function taskNeedsServerCheckout(info: TaskInfo): boolean {
+  return isServerCheckoutFailure([
+    info.integration?.failure?.reason,
+    info.parkedBlocker?.reason,
+  ].filter(Boolean).join(' '));
+}
+
+/** Lane primary for one task; drops Reissue while the server checkout is missing. */
+export function primaryActionForTask(info: TaskInfo): TriageButton | null {
+  const action = primaryActionFor(info.state);
+  return action?.id === 'reissue-escalated' && taskNeedsServerCheckout(info) ? null : action;
+}
+
+/** True when any escalation signal names a missing server checkout. */
+export function escalationNeedsServerCheckout(info: TaskInfo, ...texts: (string | null | undefined)[]): boolean {
+  return taskNeedsServerCheckout(info) || isServerCheckoutFailure(texts.filter(Boolean).join(' '));
+}
+
 export function laneLabelFor(state: string): string {
   return laneName(state);
 }
