@@ -1052,12 +1052,12 @@ occur. It is not a claim about tunnel transfer time.
   [docs/operations/security/overview.md](../../operations/security/overview.md).
 - The Retention destination at `#/workspace/settings/retention` owns the
   versioned workspace rule table, dry-run and explicit apply reports, run
-  history, and full-backup controls. Project Settings mounts the same rule
+  history, and a pointer to the Task Server backup controls. Project Settings mounts the same rule
   table for sparse overrides. Archived task detail remains navigable from the
   board, global search, and dossier history, then renders the cold manifest and
   hot Markdown excerpts in Docs with one restore action. All retention traffic
-  uses `/api/v1/management/retention` and `/api/v1/management/backups/full`, so
-  the Orchestrator proxy and direct Task Server deployment share one frontend.
+  uses `/api/v1/management/retention`. Installation backup commands live under
+  Settings > Task Server, with backup state on each project's Operations page.
 - The Environment destination at `#/workspace/settings/environment` (old
   `execution-hosts` and `remote-hosts` routes redirect here) persists a per-user
   Hosts, Topology, Installation, or History view. Hosts opens with a grouped
