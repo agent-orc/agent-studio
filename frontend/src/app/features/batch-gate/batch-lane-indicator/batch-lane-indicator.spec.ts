@@ -27,7 +27,7 @@ describe('BatchLaneIndicatorComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Batch: 0 waiting');
     expect(fixture.nativeElement.textContent).toContain('Per-task gates: 1 queued · 1 running');
   });
-  it('counts unfinished runs and hides disabled or unavailable projects', async () => {
+  it('counts batches in the running phase, not unfinished runs in abandoned batches', async () => {
     const state = signal<BatchGateState | null>(redHalvingState);
     const watch = vi.fn(() => vi.fn());
     await TestBed.configureTestingModule({ imports: [BatchLaneIndicatorComponent], providers: [provideZonelessChangeDetection(), {
@@ -38,6 +38,9 @@ describe('BatchLaneIndicatorComponent', () => {
     fixture.componentRef.setInput('jobs', [{ projectName: 'Demo' }] as TaskInfo[]);
     await fixture.whenStable();
     expect(fixture.nativeElement.textContent).toContain('1 running');
+    state.set({ ...redHalvingState, batches: redHalvingState.batches.map(batch => ({ ...batch, phase: 'abandoned' })) });
+    await fixture.whenStable();
+    expect(fixture.nativeElement.textContent).toContain('0 running');
     expect(watch).toHaveBeenCalledOnce();
     state.set({ ...redHalvingState, plan: { ...redHalvingState.plan, decision: 'disabled' } });
     await fixture.whenStable();
