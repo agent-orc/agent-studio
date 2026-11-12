@@ -16,6 +16,21 @@ describe('BatchMemberComponent', () => {
       expect(label).not.toContain(rule);
     }
   });
+  it('names a red batch and its reason on the member card', async () => {
+    const state = signal({ ...redHalvingState, members: { 'AGT-2': {
+      status: 'in-batch' as const, batchId: 'batch-7', phase: 'red', position: 1, size: 2,
+    } } });
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), {
+      provide: BatchGateService, useValue: { state: () => state.asReadonly(), watch: () => vi.fn() },
+    }] });
+    const fixture = TestBed.createComponent(BatchMemberComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('taskKey', 'AGT-2');
+    await fixture.whenStable();
+    const badge = fixture.nativeElement.querySelector('[data-testid="batch-member-badge"]') as HTMLElement;
+    expect(badge.textContent).toContain('in a red batch: Suite failed; isolate the culprit');
+    expect(badge.title).toBe('Suite failed; isolate the culprit');
+  });
   it('shows a review fix wait on the card', async () => {
     const state = signal({ ...redHalvingState, members: { ...redHalvingState.members,
       'CARD-7': { status: 'review-fix' as const, reason: 'actionable review concern',

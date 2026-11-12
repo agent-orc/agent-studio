@@ -22,6 +22,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
     private readonly StallInterventionReceipts _receipts;
     private readonly IConfiguration _configuration;
     private readonly RemoteDeliveryIntegrationCoordinator? _integration;
+    private readonly V1ReviewExecutorRegistry? _reviewExecutors;
     private readonly ILogger<AutoReviewStrandingWatchdog> _logger;
     private readonly TimeProvider _time;
 
@@ -32,7 +33,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         AutoReviewDeliveryResumeService resume, HumanReviewEscalation escalation,
         StallInterventionStore records, StallInterventionReceipts receipts, IConfiguration configuration,
         ILogger<AutoReviewStrandingWatchdog> logger,
-        RemoteDeliveryIntegrationCoordinator? integration = null, TimeProvider? time = null)
+        RemoteDeliveryIntegrationCoordinator? integration = null,
+        V1ReviewExecutorRegistry? reviewExecutors = null, TimeProvider? time = null)
     {
         _scanner = scanner;
         _authority = authority;
@@ -49,6 +51,7 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         _receipts = receipts;
         _configuration = configuration;
         _integration = integration;
+        _reviewExecutors = reviewExecutors;
         _logger = logger;
         _time = time ?? TimeProvider.System;
     }
@@ -61,6 +64,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         var threshold = TimeSpan.FromMinutes(Math.Clamp(
             _configuration.GetValue<int?>("AutoReviewStranding:ThresholdMinutes") ?? 30, 1, 1440));
         var now = _time.GetUtcNow().UtcDateTime;
+        var reviewHostHold = TaskLiveStatusProjection.ReviewHostHold(
+            _reviewExecutors?.LatestReviewHostTelemetry(now));
         var pending = _batches.ListPending();
         var manifests = _batches.ListManifests();
         var activeBatchMembers = manifests
@@ -80,6 +85,10 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                 var projection = _authority.GetTaskProjection(key);
                 var run = projection.CurrentRunAttempt;
                 var currentReview = ReviewForCurrentDelivery(projection.CurrentReviewAttempt, run);
+                var hostCapacityHeld = (_queue.PositionOf(card.ProjectName, card.Id) is not null
+                        || _queue.WaitStateOf(card.ProjectName, card.Id) is not null
+                        || currentReview is { State: AttemptLifecycleState.Pending or AttemptLifecycleState.Leased })
+                    && reviewHostHold is not null;
                 var writePrefix = $"auto-review-stranding:{card.ProjectName}:{key}:{card.EnteredLaneAt.Ticks}:";
                 var previous = interventions.Where(item => item.WriteKey.StartsWith(writePrefix, StringComparison.Ordinal)
                     && item.Status == StallInterventionStatuses.Verified).ToArray();
@@ -120,7 +129,8 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
                     CauseWaitMarker.TryRead(card.FolderPath, _logger) is not null,
                     infraFailure,
                     infraFailure && _authority.HasReviewInfrastructureRetryBudget(currentReview!.AttemptId),
-                    infraFailure && _authority.HasScheduledReviewInfrastructureRetry(currentReview!.AttemptId));
+                    infraFailure && _authority.HasScheduledReviewInfrastructureRetry(currentReview!.AttemptId),
+                    hostCapacityHeld);
                 var action = MonolithTransitionAdapter.AutoReviewStranding(facts);
                 var route = new AutoReviewBatchRouteFacts(
                     currentReview?.Subject.Plan?.BuildTestDeferredToBatch == true,
@@ -290,11 +300,13 @@ public sealed class AutoReviewStrandingWatchdog : BackgroundService
         }
         return (false, false, review is { Outcome: ReviewTerminalOutcome.InfrastructureFailure }
             ? $"Infrastructure retry limit reached. {ReviewFailureDetail(review)}"
-            : run is { State: AttemptLifecycleState.Completed, ResultEnvelope: not null }
-                ? review is null
-                    ? "The completed delivery has no review owner and automatic recovery did not start one."
-                    : "The last review is terminal and has no automatic recovery owner."
-                : "There is no completed delivery or review step to recover.");
+            : TaskModes.IsReportOnly(card.Mode)
+                ? "Concept post-processing has no active owner. Requeue the report step or move this card to Human Review for a decision."
+                : run is { State: AttemptLifecycleState.Completed, ResultEnvelope: not null }
+                    ? review is null
+                        ? "The completed delivery has no review owner. Requeue the review step or send this card for an operator decision."
+                        : "The last review is terminal with no automatic recovery owner. Requeue the review step or send this card for an operator decision."
+                    : "Remote Review has no completed delivery or review step to recover. Requeue the review step or send this card for an operator decision.");
     }
 
     internal static string ReviewFailureDetail(ReviewAttemptDto review)

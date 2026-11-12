@@ -86,7 +86,7 @@ public sealed class HostTelemetrySampler
         _previousSwap = currentSwap;
 
         return new HostTelemetrySample(now, cpu, ParseDouble(loads[0]), ParseDouble(loads[1]), ParseDouble(loads[2]),
-            Math.Max(0, total - available), total, swapIn, swapOut, steal, ioWait, Environment.ProcessorCount, activeSlots);
+            Math.Max(0, total - available), total, swapIn, swapOut, steal, ioWait, LinuxHostCpuCount(), activeSlots);
     }
 
     private HostTelemetrySample SampleWindows(DateTime now, int activeSlots)
@@ -114,6 +114,16 @@ public sealed class HostTelemetrySampler
         return new CpuCounters(fields.Aggregate(0UL, (sum, value) => sum + value), fields.ElementAtOrDefault(3) + fields.ElementAtOrDefault(4),
             fields.ElementAtOrDefault(7), fields.ElementAtOrDefault(4));
     }
+
+    // /proc/loadavg counts runnable work across the host. ProcessorCount may
+    // be reduced by this process's cgroup quota, so it cannot normalize loadavg.
+    internal static int LinuxHostCpuCount()
+        => ParseLinuxHostCpuCount(File.ReadLines("/proc/stat"));
+
+    internal static int ParseLinuxHostCpuCount(IEnumerable<string> lines)
+        => Math.Max(1, lines.Count(line =>
+            line.Length > 3 && line.StartsWith("cpu", StringComparison.Ordinal)
+            && char.IsAsciiDigit(line[3])));
 
     private static CpuCounters? ReadWindowsCpu()
     {

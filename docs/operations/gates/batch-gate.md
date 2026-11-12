@@ -69,6 +69,65 @@ write of a publication, of an abandon with re-formation on a moved base, and of
 a red isolation. A restarted host reaches the same valid outcome on its next
 ticks. Later steps of AGT-3552 extract the planner, the flight runner, the
 publication coordinator and the reconciler on top of this record.
+## Operator state and run artifacts
+
+The batch panel derives an unverified run's displayed status from its batch
+phase: only a running batch can display a running run. An abandoned, red, or
+published batch displays an unverified run as interrupted. The board's running
+count uses the running batch phase. The state response includes recorded phase
+transitions and whether each run's evidence exists. The panel keeps this history
+behind a disclosure and links each member to its task. Run evidence and the
+output log are available through project-scoped `run-evidence` and `run-log`
+routes, keyed by batch and run ID; both serve only files inside the batch store.
+
+## Formation planner and intents (AGT-3568)
+
+Step 02 of the AGT-3552 split. `BatchFormationPolicy` in the decision library
+owns the planner's decisions: repack membership (which formed batches of one
+scope and base merge, which members a successor takes, why the others wait),
+the commit check of each formation or replacement, and how an interrupted
+one completes. The pilot collects facts and applies the result. Formation
+snapshots (`BatchGateSnapshotBuilder`), admission (`AdmitFormationAsync`) and
+the close rule (`BatchGatePolicy.Close`) feed it unchanged; moving those three
+into the library is left to a later step.
+
+Every formation and every replacement of formed batches (repack, re-formation
+on a moved base, documentation successor, stacked successor) is one durable
+intent in `planner/<project>/intents/<id>.json` of the batch store. The planner
+writes and applies it under the project's exclusive planner lock
+(`planner.lock`):
+
+1. The commit check refuses the intent when another non-terminal batch or open
+   intent owns one of its pending generations (`generation-owned`), when a
+   predecessor is no longer formed (`predecessor-not-formed`), or when a flight
+   assembles it (`predecessor-assembling`). A flight may replace its own batch
+   in any unsettled phase. A refused formation records the plan decision
+   `formation intent refused: <reason>` and closes nothing.
+2. The intent is written with the phase record version of each predecessor.
+3. The successor manifest closes. Its first phase record (AGT-3563) is the
+   commit point.
+4. The successor's members get ownership markers that name it.
+5. Each predecessor retires by compare-and-swap on the recorded version, and
+   only its members that did not move return to the queue. A refused
+   retirement means the predecessor moved on first. The successor is then
+   rolled back and each member's marker names the predecessor again.
+6. The outcome file (`applied`, `discarded` or `rolled-back`) closes the intent.
+
+A predecessor therefore never retires before its successor is durable. Each
+tick starts, after the phase record repair, by completing the intents a dead
+host left open. An intent without a successor manifest retired nothing and is
+discarded, so the next repack plans again. An intent with a durable successor
+rolls forward. If a predecessor started its flight first, the successor rolls
+back. Restart tests stop the host after each durable write of a repack, and
+concurrency tests run two planners on one store. Both end with each pending
+generation owned by exactly one non-terminal batch, whose ownership marker
+names it.
+
+The request to tick when a replaced batch's waiting flight exits is durable
+too (`planner/<project>/successor-ticks/<batchId>.json`). The flight's exit
+consumes it, and after a restart the first tick serves a request whose flight
+is gone. The start order is first in, first out with a maximum wait; see
+[the pipeline domain map](../../system/domains/pipeline.md#flight-queue-order-agt-3710-agt-3568).
 
 ## One-step speculative stacking (AGT-3546)
 
@@ -117,6 +176,19 @@ Decision D1 is option A: keep model review per card, run preparation, build,
 lint, and affected tests per code card, then run the complete suite once on
 the combined candidate before publication. This follows the operator direction
 of 2026-10-11. The project setting defaults off and to documentation scope.
+
+Enabling batch verification requires `RemoteGate:SshHost` on an approved remote
+host and an absolute `RemoteGate:WorkerPath`. The settings API refuses the save
+when that SSH fallback transport is invalid, because a lone reviewed card can
+still need a per-task gate even when the batch suite uses claimed execution.
+Code scope includes reviewed code and documentation cards; Documentation scope
+includes only documentation cards. A concept follow-up belongs to the scope
+matching the follow-up card's changed files, not the parent concept card.
+An infrastructure failure parks the reviewed delivery as `gate-infrastructure`.
+The card offers Retry gate, which requeues the same review generation after the
+host is configured, and Disable batch verification, which turns off batching
+for future cards. The reviewed card stays parked until the host is restored,
+batch verification is re-enabled, and its gate is retried.
 
 ## Delivered
 
@@ -231,18 +303,19 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   reports `baseMoves` by new base SHA and `baseMoveTotals`, each counting formed
   batches kept and abandoned. A replay probe infrastructure failure pauses
   the batch rather than classifying a member as conflicting.
-- AGT-3562, AGT-3710: one flight per project starts, so the start order
-  decides who waits (`BatchGateStartPolicy`). A stacked successor starts
-  first, then a child batch, and a batch deferred after a lease deadline goes
-  last. All other formed batches start first in, first out: the oldest
-  formation time first (a re-formed or repacked batch keeps its place), then
-  the lowest member enqueue sequence, then the batch ID. Size does not reorder
-  the queue. The state reports `flightQueue` and each formed batch's
+- AGT-3562, AGT-3710, AGT-3568: one flight per project starts, so the start
+  order decides who waits (`BatchGateStartPolicy`). A stacked successor starts
+  first. An ordinary batch past `maximumWaitMinutes` comes next, then a child
+  batch, and a batch deferred after a lease deadline goes last. All other
+  formed batches start first in, first out: the oldest formation time first
+  (a re-formed or repacked batch keeps its place), then the lowest member
+  enqueue sequence, then the batch ID. Size does not reorder the queue. The
+  state reports `flightQueue` and each formed batch's
   `queuePosition`. On 5 November 2026 batches 24991efe (12:59 UTC) and
   baddb7f9 (15:11 UTC) stayed formed for hours while later, larger batches
   ran; on 10 November 2026 four batches formed from 03:47 UTC waited behind
   batches formed at 04:50 and 05:11 UTC. The full rule is in
-  [the pipeline domain map](../../system/domains/pipeline.md#flight-queue-order-agt-3710).
+  [the pipeline domain map](../../system/domains/pipeline.md#flight-queue-order-agt-3710-agt-3568).
 - AGT-3562: a flight can wait on the project reservation before it acquires
   its coordinator lease, so lease expiry cannot free its project slot. A
   flight that has not claimed its lease within `flightLeaseDeadlineMinutes`

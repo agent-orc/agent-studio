@@ -400,6 +400,13 @@
           <td>The isolation finding reader treated every red child phase as proof, including InfrastructureRed. A per-task fallback treated a pull job without a verdict as a terminal red gate.</td>
           <td>A proven-red finding now requires a deterministic child verdict. An interrupted isolation flight returns the review to the pending pool and retries the isolation step twice on later ticks; exhaustion parks it with GateInfra and the retry count. An interrupted per-task flight keeps its active marker for the next tick and parks with an infrastructure cause after its bounded retry.</td>
         </tr>
+        <tr id="case-review-plan-delivery-skew">
+          <td>2026-11-10</td>
+          <td><code>AGT-3624</code>, <code>AGT-3654</code>, <code>AGT-3655</code>, <code>AGT-3656</code>, <code>AGT-3690</code>, <code>AGT-3729</code><br><span class="small">review-plan-delivery-skew (fix <code>AGT-3743</code>)</span></td>
+          <td>No CLI crashed. Each delivery preceded a new target-branch review script. Review ran the new command against the older delivery tree, exited 127 twice, then parked the card for infrastructure intervention. Terminal at discovery: Escalated; operators sent merge rounds by hand.</td>
+          <td>The target branch supplied the trusted plan, but the executor did not check whether its declared file existed in the delivery tree. Exit 127 was classified as an unavailable host tool without identifying the missing file.</td>
+          <td>The executor compares declared file references with the frozen plan commit and delivery tree before running commands. A file present only on the plan commit yields <code>DeliveryPredatesReviewPlan</code>, which opens an automatic merge round naming the full result ref and does not spend an infrastructure retry. A missing host binary remains <code>ReviewInfra / ToolUnavailable</code>.</td>
+        </tr>
         <tr id="case-per-task-fallback-silent-engine-wait">
           <td>2026-11-10</td>
           <td><code>AGT-3563</code>, <code>AGT-3183</code><br><span class="small">per-task-fallback-silent-engine-wait (fix <code>AGT-3694</code>)</span></td>

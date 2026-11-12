@@ -1078,7 +1078,9 @@ public sealed class GitStateIndexServiceTests : IDisposable
         }
         using var service = new GitStateIndexService(scanner, BuildWatcher(scanner),
             new TaskListGitProjectionCache(), Fail, _ => { }, NullLogger.Instance,
-            FastOptions() with { MaxRetries = 2 }, NewClock());
+            // This test covers immediate retries, not the independent safety sweep.
+            // A loaded host can delay the final assertion past the sweep cadence.
+            FastOptions() with { MaxRetries = 2, SweepInterval = TimeSpan.FromHours(1) }, NewClock());
         await service.StartAsync(CancellationToken.None);
         try
         {

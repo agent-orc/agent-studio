@@ -1325,6 +1325,23 @@ public static class ProjectSettingsEndpoints
             }
             if (options.InvalidField is { } field)
                 return Results.BadRequest(new { error = $"Invalid batch gate setting: {field}.", field });
+            if (options.Enabled)
+            {
+                try
+                {
+                    // A lone reviewed card still needs the SSH fallback gate. Claimed
+                    // batch execution does not replace that transport.
+                    _ = RemoteGateOptions.Read(configuration);
+                }
+                catch (InvalidOperationException)
+                {
+                    return Results.BadRequest(new
+                    {
+                        error = "Batch verification needs a remote gate host. Set RemoteGate:SshHost to an approved remote host and RemoteGate:WorkerPath to its absolute worker path, then save again.",
+                        field = "enabled",
+                    });
+                }
+            }
             settings.SetBatchGate(projectName, options);
             _ = Task.Run(() =>
             {
@@ -1369,6 +1386,55 @@ public static class ProjectSettingsEndpoints
             return path is null
                 ? Results.NotFound(new { error = "No isolation evidence is recorded for this member." })
                 : Results.File(path, "text/plain; charset=utf-8");
+        });
+        app.MapGet("/api/projects/{projectName}/batch-gate/run-evidence", (string projectName,
+            string? batchId, string? runId, BatchGateStore store, TaskScannerService scanner) =>
+        {
+            var project = scanner.GetWatchPaths().FirstOrDefault(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (project is null)
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (string.IsNullOrWhiteSpace(batchId) || string.IsNullOrWhiteSpace(runId))
+                return Results.BadRequest(new { error = "batchId and runId are required." });
+            if (!store.ListManifests().Any(manifest => manifest.BatchId == batchId
+                    && string.Equals(manifest.Scope.Project, project.Name, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = "No run evidence is recorded for this project." });
+            var run = store.ListRuns(batchId).FirstOrDefault(item => item.BatchRunId == runId);
+            if (run is null) return Results.NotFound(new { error = "No run evidence is recorded for this project." });
+            var path = store.StoredEvidenceFile(run.EvidencePath);
+            return path is null
+                ? Results.NotFound(new { error = "Run evidence is not available yet." })
+                : Results.File(path, "text/plain; charset=utf-8");
+        });
+        app.MapGet("/api/projects/{projectName}/batch-gate/run-log", (string projectName,
+            string? batchId, string? runId, BatchGateStore store, TaskScannerService scanner) =>
+        {
+            var project = scanner.GetWatchPaths().FirstOrDefault(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (project is null)
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (string.IsNullOrWhiteSpace(batchId) || string.IsNullOrWhiteSpace(runId))
+                return Results.BadRequest(new { error = "batchId and runId are required." });
+            if (!store.ListManifests().Any(manifest => manifest.BatchId == batchId
+                    && string.Equals(manifest.Scope.Project, project.Name, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = "No run log is recorded for this project." });
+            var run = store.ListRuns(batchId).FirstOrDefault(item => item.BatchRunId == runId);
+            if (run is null) return Results.NotFound(new { error = "No run log is recorded for this project." });
+            var path = store.StoredEvidenceFile(run.EvidencePath);
+            if (path is null) return Results.NotFound(new { error = "Run log is not available yet." });
+            var output = new List<string>();
+            foreach (var line in File.ReadLines(path))
+            {
+                try
+                {
+                    using var json = System.Text.Json.JsonDocument.Parse(line);
+                    if (json.RootElement.TryGetProperty("Output", out var value)
+                        && value.ValueKind == System.Text.Json.JsonValueKind.String)
+                        output.Add(value.GetString() ?? string.Empty);
+                }
+                catch (System.Text.Json.JsonException) { output.Add(line); }
+            }
+            return Results.Text(string.Join(Environment.NewLine, output), "text/plain; charset=utf-8");
         });
         app.MapGet("/api/projects/{projectName}/batch-gate/ledger", (string projectName,
             DateOnly? day, string? type, int? page, int? pageSize,
@@ -1445,6 +1511,26 @@ public static class ProjectSettingsEndpoints
                 return Results.BadRequest(new { error = "X-Client-Id is required.", field = "X-Client-Id" });
             return Results.Ok(await pilot.ReleaseQueueStalledAsync(projectName,
                 AgentStudio.Tasks.TaskCrudEndpoints.OperatorActor(context), context.RequestAborted));
+        });
+        app.MapPost("/api/projects/{projectName}/batch-gate/infrastructure/{taskKey}/retry", async (
+            string projectName, string taskKey, HttpContext context, BatchGatePilotService pilot,
+            TaskScannerService scanner, ProjectSettingsService settings, IConfiguration configuration) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (string.IsNullOrWhiteSpace(context.Request.Headers["X-Client-Id"]))
+                return Results.BadRequest(new { error = "X-Client-Id is required.", field = "X-Client-Id" });
+            try { _ = RemoteGateOptions.Read(configuration); }
+            catch (InvalidOperationException)
+            {
+                return Results.Conflict(new { error = "Set RemoteGate:SshHost and an absolute RemoteGate:WorkerPath on an approved remote host before retrying the gate." });
+            }
+            if (!settings.Get(projectName).BatchGate.Enabled)
+                return Results.Conflict(new { error = "Re-enable batch verification after restoring the remote gate host, then retry this card's gate." });
+            return await pilot.RetryInfrastructureGateAsync(projectName, taskKey,
+                AgentStudio.Tasks.TaskCrudEndpoints.OperatorActor(context), context.RequestAborted)
+                ? Results.Ok(new { retried = true })
+                : Results.Conflict(new { error = "This card no longer has a current reviewed delivery waiting on gate infrastructure." });
         });
 
         app.MapGet("/api/projects/{projectName}/gate-result-cache", (

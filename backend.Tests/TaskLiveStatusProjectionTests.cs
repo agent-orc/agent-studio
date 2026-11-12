@@ -116,6 +116,48 @@ public sealed class TaskLiveStatusProjectionTests
     }
 
     [Fact]
+    public void Build_AutoReviewDoesNotListFinishedCoreStepAsNext()
+    {
+        var result = TaskLiveStatusProjection.Build(
+            Job() with { Mode = TaskModes.Concept }, Pipeline(),
+            new PipelineExecutionRecord { Attempt = 1, Steps = [] },
+            new ProjectSettings(), () => [], queue: null);
+
+        Assert.DoesNotContain(result.NextSteps, step => step.StepId == "core");
+        Assert.Equal("Tests and evidence", result.NextSteps[0].DisplayName);
+    }
+
+    [Fact]
+    public void ReviewQueue_HostSaturationExplainsHoldInsteadOfQueuePosition()
+    {
+        var current = new BoardReviewActivity(
+            AttemptLifecycleState.Pending, null, "normal", Now.AddMinutes(-11), "review_1");
+        var host = new AgentStudio.TaskServer.Contracts.HostTelemetrySnapshotDto(
+            Now, null, 38.4, null, null, null, null, null, null, null, null, 1, 0)
+        {
+            ReviewPlane = new AgentStudio.TaskServer.Contracts.ReviewPlaneBudgetDto(
+                Now, "max", 12, null, 12, 2.4, 480, 3, null, 0, false),
+        };
+        var queue = TaskLiveStatusProjection.ReviewQueueFor(
+            true, current, new ReviewQueueEntry("normal", 1), null, null, Now, host)!;
+
+        Assert.Null(queue.Position);
+        Assert.Equal("Review host saturated: load/core 3.2 > 1.0", queue.Reason);
+        var conceptQueue = TaskLiveStatusProjection.ReviewQueueFor(
+            false, null, null, 1, null, Now, host)!;
+        Assert.Null(conceptQueue.Position);
+        Assert.Equal(queue.Reason, conceptQueue.Reason);
+
+        var noSlots = host with
+        {
+            Load1 = 0,
+            ReviewPlane = host.ReviewPlane! with { CurrentCeiling = 0 },
+        };
+        Assert.Contains("no review slots available", TaskLiveStatusProjection.ReviewQueueFor(
+            true, current, new ReviewQueueEntry("normal", 1), null, null, Now, noSlots)!.Reason);
+    }
+
+    [Fact]
     public void Queue_ReportsAndClearsExistingReviewSlotPosition()
     {
         var queue = new AgentStudio.Runner.AutoReviewPostProcessingQueue();

@@ -7,7 +7,7 @@ import {
   type TaskTestRunEvidence,
 } from '../../../../models/task.model';
 
-type TestEvidenceContext = Pick<TaskInfo, 'id' | 'watchPath' | 'state' | 'commit' | 'commits' | 'commitCount' | 'integration' | 'testEvidence'>;
+type TestEvidenceContext = Pick<TaskInfo, 'id' | 'watchPath' | 'state' | 'commit' | 'commits' | 'commitCount' | 'integration' | 'testEvidence'> & Pick<Partial<TaskInfo>, 'mode'>;
 export type TestEvidenceStatusVariant = 'card' | 'panel';
 
 const MISSING_EVIDENCE_RELEVANT_STATES = new Set<string>([
@@ -30,7 +30,7 @@ function hasAttributedDelivery(task: TestEvidenceContext): boolean {
 
 export function visibleTestEvidence(task: TestEvidenceContext): TaskTestRunEvidence | null {
   const evidence = task.testEvidence;
-  if (!evidence) return null;
+  if (!evidence || task.mode === 'concept') return null;
   if (hasRecordedEvidence(evidence)) return evidence;
   return hasAttributedDelivery(task) || MISSING_EVIDENCE_RELEVANT_STATES.has(task.state)
     ? evidence

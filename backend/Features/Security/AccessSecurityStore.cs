@@ -713,7 +713,8 @@ public sealed partial class AccessSecurityStore
             (user, var bindings) = AddUserGrantsLocked(state, user, grants, actingUserId);
             state.Invitations.Add(new StudioInvitation
             {
-                Id = id, UserId = user.Id, TokenHash = PasswordSecretHasher.HashSecret(token), ExpiresAt = expiresAt
+                Id = id, UserId = user.Id, TokenHash = PasswordSecretHasher.HashSecret(token), ExpiresAt = expiresAt,
+                InvitedBy = actingUserId
             });
             SaveLocked(state);
             AuditBindings(actingUserId, "binding.add", bindings);
@@ -747,6 +748,30 @@ public sealed partial class AccessSecurityStore
                 enrollmentOnly: publicEntry && RequiresSecondFactor(state, updated.Id));
             SaveLocked(state);
             return (updated, session.Token, session.Csrf);
+        }
+    }
+
+    public object PreviewInvitation(string token, AgentStudio.Registry.ProjectRegistry registry)
+    {
+        if (!TryTokenParts(token, "inv", out var id))
+            throw new SecurityOperationException(401, "invalid-invitation", "Invitation is invalid or expired.");
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var invitation = state.Invitations.FirstOrDefault(x => x.Id == id);
+            if (invitation is null || invitation.UsedAt is not null || invitation.ExpiresAt <= Now
+                || !PasswordSecretHasher.VerifySecret(token, invitation.TokenHash))
+                throw new SecurityOperationException(401, "invalid-invitation", "Invitation is invalid or expired.");
+            var user = state.Users.FirstOrDefault(x => x.Id == invitation.UserId && !x.Disabled)
+                ?? throw new SecurityOperationException(401, "invalid-invitation", "Invitation is invalid or expired.");
+            var bindings = state.RoleBindings.Where(x => x.PrincipalKind == IamPrincipalKind.User && x.PrincipalId == user.Id).ToList();
+            var inviter = state.Users.FirstOrDefault(x => x.Id == invitation.InvitedBy)?.DisplayName ?? "Installation owner";
+            return new { user.Username, user.DisplayName, Inviter = inviter,
+                Role = string.Join(", ", bindings.Select(x => IamRoles.All.FirstOrDefault(role => role.Id == x.Role)?.DisplayName ?? x.Role).Distinct()),
+                Projects = bindings.Select(x => x.Scope.Kind == IamScopeKind.Workspace ? "Workspace"
+                        : registry.FindById(x.Scope.Project!)?.DisplayName ?? x.Scope.Project ?? "Workspace")
+                    .Distinct().ToArray(),
+                invitation.ExpiresAt, SecondFactorRequired = user.Role is StudioRoles.Owner or StudioRoles.Operator };
         }
     }
 
