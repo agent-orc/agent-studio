@@ -113,7 +113,9 @@ export async function startFakeStudio({ cards = {}, preflightBlockers = [] } = {
       return send(200, { state: 'failing', running: false, lastGoodAgeHours: 13,
         lastGood: { id: 'studio-backup-20261105T000000Z-abc123', createdAt: '2026-11-05T00:00:00+00:00', sizeBytes: 1024 },
         lastVerification: { at: '2026-11-05T00:05:00+00:00', outcome: 'verified' },
-        offHost: { kind: 'sftp', state: 'current' },
+        offHost: { kind: 'sftp', state: 'current', listing: { state: 'not-listable', archiveCount: 0, notInCatalog: [] } },
+        lastRestore: { backupId: 'studio-backup-20261104T000000Z-def456', archiveCreatedAt: '2026-11-04T00:00:00+00:00',
+          restoredAt: '2026-11-04T09:00:00+00:00', restoredBy: 'owner@host-b' },
         warnings: [{ code: 'backup-stale', severity: 'danger', message: 'The newest good backup is 13 hours old.' }] });
     if (method === 'POST' && /^\/api\/clients\/[^/]+\/(drain|resume)$/.test(path))
       return send(200, { id: decodeURIComponent(path.split('/')[3]) });
