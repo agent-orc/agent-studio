@@ -1044,7 +1044,17 @@ public sealed class RemoteReviewWorkspace
                     ? requiredComparison with { BaselineExitCode = 0, Diagnosis = cacheDefect }
                     : requiredComparison with
                     {
-                        Diagnosis = IsBuildCommand(command) && requiredComparison.BaselineExitCode != 0
+                        Diagnosis = (ReviewTestFailureAttribution.IsTestCommand(command)
+                                     && !ReviewBaselineModes.IsExitStatus(command.BaselineMode)
+                            ? ReviewTestFailureAttribution.Diagnose(
+                                        requiredComparison.InitialFailures,
+                                        cleanRepeat is null ? null : ParsedTestFailures(cleanRepeat.Process),
+                                        requiredComparison.BaselineFailures,
+                                        requiredComparison.BaselineExitCode,
+                                        ReviewTestFailureAttribution.IsBackendTestCommand(command),
+                                        await BackendChangedAgainstBaselineAsync(command, requiredComparison.BaselineSha, ct))
+                            : null)
+                            ?? (IsBuildCommand(command) && requiredComparison.BaselineExitCode != 0
                             ? new DeliveryFailureDiagnosisResult(
                                 IntegrationBranchDefectClassification, 1,
                                 [$"build {command.StepId} was already red on the integration branch"])
@@ -1057,7 +1067,7 @@ public sealed class RemoteReviewWorkspace
                                   cleanRepeat.Process.StdOut, cleanRepeat.Process.StdErr)
                                 ? DiagnoseRedTestBaseline(requiredComparison)
                             : await DiagnoseFailureAsync(
-                                command, requiredComparison, execution, cleanRepeat, ct),
+                                command, requiredComparison, execution, cleanRepeat, ct)),
                     };
                 if (comparison.Diagnosis?.Classification == DeliveryFailureDiagnosis.Environment
                     && candidateCache is not null)
@@ -1251,10 +1261,11 @@ public sealed class RemoteReviewWorkspace
         var outcome = ReviewGradingPolicy.Grade(verdicts.Select(verdict => verdict.Status))
             == ReviewGrade.ProductFailure
             ? "ProductFailure"
-            : verdicts.Any(verdict => verdict.Classification is
-                DeliveryFailureDiagnosis.Environment or
-                DeliveryFailureDiagnosis.Intermittent or
-                DeliveryFailureDiagnosis.FirstOccurrence
+            : verdicts.Any(verdict =>
+                (verdict.Classification == DeliveryFailureDiagnosis.Environment
+                    && !ReviewUnattributedTestFailurePolicy.IsNonBlocking(verdict.Diagnosis))
+                || verdict.Classification is DeliveryFailureDiagnosis.Intermittent
+                    or DeliveryFailureDiagnosis.FirstOccurrence
                 || ReviewCachedBaselinePolicy.IsCacheDefect(verdict.Classification))
                 ? "ReviewInfra"
             // AGT-2819: no verdict refuses the change, but at least one gate was
@@ -1306,6 +1317,22 @@ public sealed class RemoteReviewWorkspace
             _log($"review diff evidence unavailable: {exception.Message}");
             return [];
         }
+    }
+
+    private async Task<bool?> BackendChangedAgainstBaselineAsync(
+        ReviewCommandDto command, string baselineSha, CancellationToken ct)
+    {
+        if (!ReviewTestFailureAttribution.IsBackendTestCommand(command)) return null;
+        var diff = await ProcessRunner.RunAsync(
+            "git", ["diff", "--name-only", baselineSha, _subject.ExpectedResultSha],
+            RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+        if (!diff.Success)
+        {
+            _log($"review backend attribution diff unavailable step={command.StepId}: exit={diff.ExitCode}");
+            return null;
+        }
+        return ReviewTestFailureAttribution.BackendChanged(
+            diff.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
     }
 
     private async Task<ScopedRuntimePlan> PlanScopedReviewAsync(
@@ -3989,7 +4016,8 @@ public sealed class RemoteReviewWorkspace
         {
             return new ReviewVerdictDto(
                 command.Aspect,
-                diagnosis.ChargesCard ? "block" : "pass",
+                diagnosis.ChargesCard ? "block"
+                    : ReviewUnattributedTestFailurePolicy.IsNonBlocking(diagnosis) ? "concerns" : "pass",
                 diagnosis.Classification,
                 string.Join("; ", diagnosis.Evidence) +
                 $"; failed-tests={string.Join(", ", comparison.InitialFailures)}" +
@@ -3999,7 +4027,8 @@ public sealed class RemoteReviewWorkspace
                     ? comparison.InitialFailures.Count > 0
                         ? string.Join(", ", comparison.InitialFailures)
                         : $"failed command {command.StepId}"
-                    : "none");
+                    : "none",
+                diagnosis);
         }
         var baselineState = comparison.BaselineExitCode == 0
             ? "green on the merge base"

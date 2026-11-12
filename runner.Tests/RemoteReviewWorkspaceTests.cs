@@ -254,6 +254,59 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public void Varying_failed_tests_across_candidate_repeat_and_baseline_are_non_blocking()
+    {
+        string[] candidate = ["AgentStudio.Tests.IamHandlerAccessTests.Canonical_review_attempt_key_resolves_its_project_without_a_task_folder"];
+        string[] repeat = ["AgentStudio.Tests.IamHandlerAccessTests.Operator_override_completion_needs_admin_or_owner"];
+        string[] baseline = ["AgentStudio.Tests.IamHandlerAccessTests.Colliding_task_id_denies_scoped_reads_and_explicit_creation"];
+        var diagnosis = ReviewTestFailureAttribution.Diagnose(
+            candidate, repeat, baseline, baselineExitCode: 1,
+            backendTest: true, backendChanged: true);
+        var comparison = BaselineComparison.Create(new string('a', 40), baseline, candidate,
+            cacheHit: false, baselineExitCode: 1) with { Diagnosis = diagnosis };
+
+        var verdict = RemoteReviewWorkspace.BaselineVerdict(BaselineCommand("exit 1"), comparison);
+
+        Assert.Equal("concerns", verdict.Status);
+        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
+        Assert.Contains("failed different tests", verdict.Summary, StringComparison.Ordinal);
+        Assert.Contains(candidate[0], verdict.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Frontend_only_delivery_cannot_be_charged_for_a_red_backend_test()
+    {
+        string[] failure = ["AgentStudio.Tests.IamHandlerAccessTests.Change_project_requires_write_permission_and_a_non_product_role_in_the_destination"];
+        var command = new ReviewCommandDto("verify-4", "build-tests", "dotnet",
+            ["test", "backend.Tests/OrchestratorApi.Tests.csproj"],
+            CompareToBaseline: true, BaselineMode: ReviewBaselineModes.TestFailures);
+        Assert.True(ReviewTestFailureAttribution.IsTestCommand(command));
+        Assert.False(ReviewTestFailureAttribution.IsTestCommand(BaselineCommand("exit 1")));
+        Assert.True(ReviewTestFailureAttribution.IsBackendTestCommand(command));
+        var changedPaths = new[] { "frontend/src/app/features/board/task-card.component.ts" };
+        Assert.False(ReviewTestFailureAttribution.BackendChanged(changedPaths));
+        Assert.Null(ReviewTestFailureAttribution.Diagnose(
+            failure, failure, [], baselineExitCode: 0,
+            backendTest: true, backendChanged: true));
+        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence,
+            ReviewTestFailureAttribution.Diagnose(
+                failure, failure, [], baselineExitCode: 0,
+                backendTest: true, backendChanged: null)?.Classification);
+        var diagnosis = ReviewTestFailureAttribution.Diagnose(
+            failure, failure, [], baselineExitCode: 0,
+            backendTest: true,
+            backendChanged: ReviewTestFailureAttribution.BackendChanged(changedPaths));
+        var comparison = BaselineComparison.Create(new string('a', 40), [], failure,
+            cacheHit: false, baselineExitCode: 0) with { Diagnosis = diagnosis };
+
+        var verdict = RemoteReviewWorkspace.BaselineVerdict(command, comparison);
+
+        Assert.Equal("concerns", verdict.Status);
+        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
+        Assert.Contains("changes no file under backend/", verdict.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Exact_sha_workspace_records_head_tree_commands_environment_and_clean_after()
     {
         var sha = await SeedOriginAsync();

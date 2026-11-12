@@ -1292,7 +1292,15 @@ exit status. When the merge-base command passes and the candidate command
 fails on both its original run and clean repeat with ordinary nonzero exit
 codes, the runner classifies the delivery as `product` even if diagnostics
 change or no test name can be parsed, unless the same failure fingerprint was
-seen on another card in the last 24 hours. That cross-card evidence remains
+seen on another card in the last 24 hours. For parsed test failures, different
+nonempty failure sets on candidate and clean repeat yield a visible
+`environment` verdict. A backend test also stays environmental when a red
+baseline has a different failing set from the candidate. A backend test
+failure also cannot be charged to a delivery whose diff changes no file under
+`backend/`; the verdict names this attribution limit. These measured test
+failures settle as a non-blocking concern, while ordinary environment failures
+still use the infrastructure retry path. An unreadable diff remains
+unclassified and cannot prove a product regression. Cross-card evidence remains
 `environment`, including when a green baseline result came from the cache.
 Exit 127, timeout and abnormal termination (including signal exits 128 and
 above) remain review infrastructure. A first-run timeout receives a clean
@@ -1305,7 +1313,8 @@ that verdict.
 |---|---|---|
 | Baseline green, candidate and clean repeat both have ordinary nonzero exits | `product` | yes |
 | Baseline test result red, clean repeat has only failures named on the baseline | `IntegrationBranchDefect` with the pre-existing names | no |
-| Baseline test result red, clean repeat has new failures | `product` with the new and pre-existing names | yes |
+| Backend baseline test result red with a different candidate failure set | `environment` with the varying names | no |
+| Backend test red with no changed file under `backend/` | `environment` with the diff attribution reason | no |
 | Baseline test command cannot produce a test result | `ReviewInfra/BaselineUnavailable` | no |
 | Same fingerprint on another card with a green baseline | `environment` | no |
 | Clean repeat green and fingerprint has known intermittent pattern or prior occurrence | `intermittent` | no |
@@ -1684,8 +1693,10 @@ When the clean repeat has no new failures against a baseline that reported
 failed tests, the verification aspect passes and names the pre-existing
 failures in its verdict summary and card review evidence. The review reaches
 `IntegrationBranchDefect`; the batch gate remains the authority for the full
-suite. New failures reproduced on the candidate charge the card even when
-the baseline was red.
+suite. A changed backend failure set on a red baseline remains visible as an
+environment finding and does not charge the card.
+Other test commands can still charge a new failure that is absent on the
+baseline and reproduced by the clean repeat.
 
 For batch-deferred reviews, `RemoteReviewPlanBuilder` compares the delivered
 test project with its merge base before treating a change to
