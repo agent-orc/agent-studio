@@ -3,6 +3,13 @@
 Version: 2026-11-09
 Status: System-of-record map for frontend changes.
 
+Concept cards and detail views show the dossier and review state without code
+delivery indicators. They omit build and test evidence, delivery integration,
+and checkout context. Concept acceptance remains available when a stale
+integration status says pending. A pending review held by its host shows the
+current load or slot-capacity reason in the live status line instead of a queue
+position.
+
 Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.

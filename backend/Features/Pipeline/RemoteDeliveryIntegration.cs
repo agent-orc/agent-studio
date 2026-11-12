@@ -5,17 +5,14 @@ using Contract = AgentStudio.TaskServer.Contracts;
 namespace AgentStudio.Pipeline;
 
 /// <summary>
-/// The Human Review park reason for an immediate Remote integration result
-/// (AGT-2995). A spent automatic recovery budget keeps its exact wording;
-/// otherwise a failed integration reads its typed code, e.g.
-/// <c>integration: source-needs-rebase</c>, and never falls back to the lane
-/// ledger's bare <c>review-verdict: Error</c>. A required post-step that could
-/// not complete (concept Dossier placement or concept review) names itself and
-/// its cause instead.
+/// The Human Review park reason for a Remote integration result. A failed
+/// integration uses its typed cause to name the blocked step and next action.
+/// A spent recovery budget is described in the same terms. Required concept
+/// post-steps name their own failure and take precedence over the merge result.
 /// </summary>
 public static class RemoteDeliveryParkReason
 {
-    public const string Prefix = "integration: ";
+    public const string Prefix = "Delivery integration is blocked: ";
 
     /// <summary>Null for a successful or deliberately deferred integration whose post-steps completed.</summary>
     public static string? For(MergeIntoIntegrationResult result)
@@ -24,11 +21,35 @@ public static class RemoteDeliveryParkReason
         if (!string.IsNullOrWhiteSpace(result.PostStepParkReason))
             return result.PostStepParkReason;
         if (!string.IsNullOrWhiteSpace(result.AutomaticRecoveryDetail))
-            return result.AutomaticRecoveryDetail;
+            return $"Delivery integration stopped after automatic recovery: {result.AutomaticRecoveryDetail.Trim().TrimEnd('.')}. Review the integration evidence and retry or send the task for correction.";
         return AcceptedIntegrationFailureCodes.For(result) is { } code ? ForCode(code) : null;
     }
 
-    public static string ForCode(string failureCode) => Prefix + failureCode;
+    public static string ForCode(string failureCode)
+    {
+        var step = failureCode switch
+        {
+            AcceptedIntegrationFailureCodes.SourceNeedsRebase => "the source branch needs a rebase",
+            AcceptedIntegrationFailureCodes.MergeConflict => "the merge has conflicts",
+            AcceptedIntegrationFailureCodes.BranchSyncFailed => "the integration branch could not sync with origin",
+            AcceptedIntegrationFailureCodes.IntegrationPushBlocked => "the integration branch could not be pushed",
+            AcceptedIntegrationFailureCodes.BuildGateFailed or AcceptedIntegrationFailureCodes.DeliveryGateFailed => "the build and test gate failed",
+            AcceptedIntegrationFailureCodes.VerifyDefinitionMissing => "the build and test commands are missing",
+            _ => failureCode.Replace('-', ' '),
+        };
+        return Prefix + step + ". Review the integration evidence and retry or send the task for correction.";
+    }
+
+    public const string CompletedReviewPark =
+        "Remote Review passed and delivery integration completed. Human Review is waiting for a decision; review the task and accept or requeue it.";
+
+    public const string ReviewDecisionPark =
+        "Remote Review finished with a finding. Human Review is waiting for a decision; inspect the review evidence and accept or requeue the task.";
+
+    public static string? NormalizeStoredDetail(string? detail)
+        => detail?.StartsWith("automatic recovery budget used:", StringComparison.OrdinalIgnoreCase) == true
+            ? $"Delivery integration stopped after {detail.Trim().TrimEnd('.')}. Review the integration evidence and retry or send the task for correction."
+            : detail;
 }
 
 /// <param name="ReviewAttemptId">The settled ReviewAttempt that earned this integration; null for a batch member.</param>

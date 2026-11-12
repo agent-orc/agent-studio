@@ -54,6 +54,7 @@ import {
   overflowActionsFor,
   primaryActionFor,
   mergeAcceptViewFor,
+  acceptanceRequiresIntegration,
   acceptanceHoldReason,
   triageDecisionRefusal,
   triageDecisionRowState,
@@ -1313,12 +1314,14 @@ export class App implements OnInit, OnDestroy {
   readonly studioPrimaryAwaitingGit = computed(() => {
     const p = this.studioTriagePrimary();
     if (!p || p.id !== 'mark-done') return false;
+    if (!acceptanceRequiresIntegration(this.selectedJob()!.info)) return false;
     const status = this.selectedJob()?.info.integration?.status;
     if (status === 'integrated' || status === 'not-applicable') return false;
     return this.jobDetailSig()?.gitInfoLoading() ?? false;
   });
   readonly studioPrimaryBlockedByIntegration = computed(() => {
     if (this.studioTriagePrimary()?.id !== 'mark-done') return false;
+    if (!acceptanceRequiresIntegration(this.selectedJob()!.info)) return false;
     const status = this.selectedJob()?.info.integration?.status;
     return status !== 'integrated' && status !== 'not-applicable';
   });
