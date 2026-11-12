@@ -284,6 +284,7 @@
       </tbody>
     </table>
     <p><b>2026-10-16 operator receipt controls:</b> Raise and Cut update the limit for later remote runs. Stop is unavailable: the control is hidden and the endpoint answers HTTP 409 <code>stop-not-available</code>. An ordinary Pause still returns the card to Ready.</p>
+    <p><b>2026-11-10 operator reissue handoff:</b> An Escalated to Ready continuation confirms selected findings and an optional owner note before moving. The move rotates old verdict artifacts and writes <code>operator-reissue.json</code>; the next pickup foregrounds those instructions even when the automatic reissue tag and active pipeline record are absent. After that run crosses the agent boundary, later automatic reissues use their own findings.</p>
 
     <p class="small"><strong>Invariant:</strong> a run can only leave <em>Running</em> into one of
       {Succeeded, NeedsReview, GaveUpToHuman, CooldownRetry, SteerPending}. CooldownRetry and SteerPending must each terminate
