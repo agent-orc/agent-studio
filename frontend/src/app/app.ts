@@ -1281,11 +1281,15 @@ export class App implements OnInit, OnDestroy {
   // review panel carries its one decision.
   readonly studioTriagePrimary = computed<TriageButton | null>(() => {
     const sel = this.selectedJob();
-    return sel && !this.reviewerSession.reviewsOnly(sel.info.projectName) ? primaryActionFor(sel.info.state) : null;
+    return sel && sel.info.parkedBlocker?.blockerType !== 'gate-infrastructure'
+      && !this.reviewerSession.reviewsOnly(sel.info.projectName)
+      ? primaryActionFor(sel.info.state) : null;
   });
   readonly studioTriageOverflow = computed<TriageButton[]>(() => {
     const sel = this.selectedJob();
-    return sel && !this.reviewerSession.reviewsOnly(sel.info.projectName) ? overflowActionsFor(sel.info.state) : [];
+    return sel && sel.info.parkedBlocker?.blockerType !== 'gate-infrastructure'
+      && !this.reviewerSession.reviewsOnly(sel.info.projectName)
+      ? overflowActionsFor(sel.info.state) : [];
   });
   /**
    * State-dependent presentation for the studio Human Review acceptance primary

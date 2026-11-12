@@ -3861,6 +3861,15 @@ public sealed partial class BatchGatePilotService
             SupersedeFallbackResult(task, pending, recordInStore);
             return;
         }
+        if (infrastructure && !capacity)
+        {
+            category = HumanReviewEscalationCategories.GateInfrastructure;
+            reason = HumanReviewEscalation.FormatReason(category,
+                "The verification gate could not run or complete. "
+                + "Check the remote gate host and worker, then retry the gate. "
+                + "You can also disable batch verification for this project. "
+                + "Gate detail: " + reason.Trim().TrimEnd('.'));
+        }
         var red = new BatchGateOutcome(occurrenceKey ?? FallbackRedKey(pending), reason, Failed: true,
             Infrastructure: infrastructure);
         // AGT-3694: after a stalled engine decision was superseded the card is
@@ -3888,8 +3897,7 @@ public sealed partial class BatchGatePilotService
         }
         RecordBatchShadowOutcome(task, pending.ReviewAttemptId, red);
         Lane(pending, "ejected", outcome: laneOutcome ?? (capacity ? "GateCapacity"
-            : reason.StartsWith("GateInfra", StringComparison.Ordinal)
-            ? "GateInfra" : "GateFailed"), reason: reason);
+            : infrastructure ? "GateInfra" : "GateFailed"), reason: reason);
         BatchGateOwnershipStore.ClearIfReviewAttempt(
             movedRed.NewFolderPath ?? task.FolderPath, pending.ReviewAttemptId);
         if (recordInStore)

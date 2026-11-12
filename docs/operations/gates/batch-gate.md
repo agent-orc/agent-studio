@@ -177,6 +177,19 @@ lint, and affected tests per code card, then run the complete suite once on
 the combined candidate before publication. This follows the operator direction
 of 2026-10-11. The project setting defaults off and to documentation scope.
 
+Enabling batch verification requires `RemoteGate:SshHost` on an approved remote
+host and an absolute `RemoteGate:WorkerPath`. The settings API refuses the save
+when that SSH fallback transport is invalid, because a lone reviewed card can
+still need a per-task gate even when the batch suite uses claimed execution.
+Code scope includes reviewed code and documentation cards; Documentation scope
+includes only documentation cards. A concept follow-up belongs to the scope
+matching the follow-up card's changed files, not the parent concept card.
+An infrastructure failure parks the reviewed delivery as `gate-infrastructure`.
+The card offers Retry gate, which requeues the same review generation after the
+host is configured, and Disable batch verification, which turns off batching
+for future cards. The reviewed card stays parked until the host is restored,
+batch verification is re-enabled, and its gate is retried.
+
 ## Delivered
 
 - The Agent Studio project definition runs `bash scripts/check-release-build.sh`
