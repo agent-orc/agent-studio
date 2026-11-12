@@ -2,19 +2,21 @@ import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, O
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { ModalStackService } from '../../../services/modal-stack.service';
-import { batchIsolationRows, batchPublishedSha, batchReplayLabel, batchRiskLabel, batchRunIsRunning, batchWaitingCards } from '../../../models/batch-gate.model';
+import { batchIsolationRows, batchPublishedSha, batchReplayLabel, batchRiskLabel, batchRunIsRunning, batchRunStatus, batchRunEvidenceUrl, batchWaitingCards } from '../../../models/batch-gate.model';
 import { formatDurationMinutes } from '../../../models/duration-format';
 import type { BatchGateBatch, BatchTestFailureRank, BatchTestFailureReport, BatchGateState } from '../../../models/batch-gate.model';
 import { CreateTaskFormService } from '../../board';
 import { TaskService } from '../../../services/task.service';
 import { PendingButtonDirective } from '../../../components/async-feedback';
 import { BatchIsolationComponent } from '../batch-isolation/batch-isolation';
+import { TaskReferenceNavigationService } from '../../../services/task-reference-navigation.service';
+import { StatusIndicatorComponent, type StatusTone } from '../../../components/status-indicator/status-indicator.component';
 import { BatchPhaseMetricsComponent } from '../batch-phase-metrics/batch-phase-metrics';
 
 @Component({
   selector: 'app-batch-panel',
   standalone: true,
-  imports: [PendingButtonDirective, BatchIsolationComponent, BatchPhaseMetricsComponent],
+  imports: [PendingButtonDirective, BatchIsolationComponent, StatusIndicatorComponent, BatchPhaseMetricsComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './batch-panel.html',
   styleUrl: './batch-panel.scss',
@@ -37,6 +39,18 @@ export class BatchPanelComponent implements OnDestroy {
   readonly openingFix = signal<string | null>(null);
   readonly error = computed(() => this.gate.error(this.project())());
   readonly confirm = signal<string | null>(null);
+  readonly ejectReason = signal('');
+  readonly localEject = signal<{ taskKey: string; reason: string } | null>(null);
+  readonly ejectRequests = computed(() => {
+    const stored = this.state()?.ejectRequests ?? [];
+    const local = this.localEject();
+    if (!local) return stored;
+    const current = stored.find(request => request.taskKey === local.taskKey);
+    if (current?.status === 'released') return stored;
+    return current ? stored : [{ project: this.project(), taskKey: local.taskKey,
+      actor: 'You', reason: local.reason, requestedAtUtc: new Date().toISOString(),
+      status: 'pending' as const }, ...stored];
+  });
   readonly busy = signal(false);
   readonly actionError = signal<string | null>(null);
   readonly riskLabel = batchRiskLabel;
@@ -49,10 +63,6 @@ export class BatchPanelComponent implements OnDestroy {
       ? `Moved to per-task gates after pause: ${reason.slice(pause.length)}` : reason;
   }
   readonly formatDurationMinutes = formatDurationMinutes;
-  runOutcome(batch: BatchGateBatch, run: BatchGateBatch['runs'][number]): string {
-    if (run.startedAtUtc && !run.finishedAtUtc) return batchRunIsRunning(batch, run) ? 'running' : 'interrupted';
-    return run.outcome ?? 'waiting';
-  }
   runDuration(batch: BatchGateBatch, run: BatchGateBatch['runs'][number]): string {
     if (batchRunIsRunning(batch, run)) return 'Running';
     const detached = this.state()?.detachedFlights?.find(flight => flight.batchId === batch.batchId);
@@ -63,10 +73,30 @@ export class BatchPanelComponent implements OnDestroy {
     return Number.isFinite(started) && Number.isFinite(deadlineMinutes)
       ? new Date(started + deadlineMinutes * 60_000).toISOString() : null;
   }
-  readonly phases = ['formed', 'assembling', 'assembled', 'running', 'green', 'publishing', 'published', 'red', 'paused', 'abandoned'];
+  phaseTone(phase: string): StatusTone {
+    switch (phase) {
+      case 'running': return 'running';
+      case 'red': return 'danger';
+      case 'paused': return 'warning';
+      case 'green': case 'published': return 'success';
+      default: return 'neutral';
+    }
+  }
+  runTone(status: string): StatusTone {
+    switch (status.toLowerCase()) {
+      case 'running': return 'running';
+      case 'pass': case 'passed': return 'success';
+      case 'fail': case 'failed': return 'danger';
+      default: return 'neutral';
+    }
+  }
+  readonly runStatus = batchRunStatus;
+  readonly runEvidenceUrl = batchRunEvidenceUrl;
+  private readonly references = inject(TaskReferenceNavigationService);
   private readonly body = viewChild<ElementRef<HTMLDivElement>>('body');
   private readonly closeButton = viewChild<ElementRef<HTMLButtonElement>>('closeButton');
   private readonly confirmButton = viewChild<ElementRef<HTMLButtonElement>>('confirmButton');
+  private readonly ejectReasonInput = viewChild<ElementRef<HTMLTextAreaElement>>('ejectReasonInput');
   private readonly host = inject(ElementRef<HTMLElement>);
   private readonly injector = inject(Injector);
   private readonly destroyRef = inject(DestroyRef);
@@ -119,7 +149,24 @@ export class BatchPanelComponent implements OnDestroy {
     if (!Number.isFinite(elapsed)) return 'Unknown';
     return formatDurationMinutes(elapsed / 60_000);
   }
-  phaseLabel(phase: string): string { return phase; }
+  memberTitle(key: string): string | null {
+    const job = this.taskService.jobs().find(item => item.taskKey === key || item.id === key || item.key === key);
+    return job?.title ?? null;
+  }
+  memberHref(key: string): string { return `#/tasks/${encodeURIComponent(key.split('::').at(-1) ?? key)}`; }
+  openMember(event: MouseEvent, key: string): void {
+    const opened = this.references.openTaskKey(key) || this.references.openReference(key);
+    if (opened) { event.preventDefault(); this.close(); }
+  }
+  redNext(batch: BatchGateBatch): string {
+    const children = this.batches().filter(child => child.parentBatchId === batch.batchId);
+    if (children.some(child => ['formed', 'assembling', 'assembled', 'running', 'green', 'publishing'].includes(child.phase)))
+      return 'Isolation has started. The next verdict will identify which members need a separate gate.';
+    const slots = this.state()?.gateSlots;
+    if (slots && slots.busy >= slots.total)
+      return 'Isolation waits for a gate slot. It starts when a slot becomes free; members then return to their agents for a fix or continue through their own gate.';
+    return 'Isolation is awaiting the next planner tick. Members return to their agents for a fix or continue through their own gate after isolation.';
+  }
   isolationRows(batch: BatchGateBatch) { return batchIsolationRows(this.state(), batch); }
   /** The members a failed run proved red, joined for display, or null. */
   provenBy(failure: { batchId: string; runId: string }): string | null {
@@ -199,17 +246,25 @@ export class BatchPanelComponent implements OnDestroy {
   showConfirm(target: string): void {
     this.confirm.set(target);
     this.actionError.set(null);
-    afterNextRender(() => this.confirmButton()?.nativeElement.focus(), { injector: this.injector });
+    afterNextRender(() => (target === 'close' ? this.confirmButton() : this.ejectReasonInput())
+      ?.nativeElement.focus(), { injector: this.injector });
   }
   close(): void { this.closed()(); }
   act(): void {
     const target = this.confirm();
-    if (!target || this.busy()) return;
+    if (!target || this.busy() || (target !== 'close' && !this.ejectReason().trim())) return;
     this.busy.set(true);
     this.actionError.set(null);
-    const request = target === 'close' ? this.gate.closeNow(this.project()) : this.gate.eject(this.project(), target);
+    const reason = this.ejectReason().trim();
+    const request = target === 'close' ? this.gate.closeNow(this.project()) : this.gate.eject(this.project(), target, reason);
     request.subscribe({
-      next: () => { this.busy.set(false); this.confirm.set(null); void this.gate.refresh(this.project()); },
+      next: () => {
+        this.busy.set(false);
+        this.confirm.set(null);
+        if (target !== 'close') this.localEject.set({ taskKey: target, reason });
+        this.ejectReason.set('');
+        void this.gate.refresh(this.project());
+      },
       error: err => { this.busy.set(false); this.actionError.set(err?.error?.error ?? 'The action could not be completed.'); },
     });
   }

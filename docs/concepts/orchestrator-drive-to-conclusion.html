@@ -386,12 +386,26 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-review-host-restart-invisible-retry">
+          <td>2026-11-10</td>
+          <td><code>AGT-3648</code> S5-F14<br><span class="small">review-host-restart-invisible-retry (fix <code>AGT-3690</code>)</span></td>
+          <td>No CLI crashed. The operator crisis playthrough killed the review host mid-review. The replacement daemon settled the review as <code>ReviewInfra / ExecutorRestarted</code> ("Lost work extent: 1 of 5 review commands completed") and the Task Server scheduled retry 1 of 3, due 60 seconds later. The card head went from "Reviewing on first-run-review" to an operator-decision park; the retry existed only as a timeline row. The host detail said "Restarted · 1 reviews lost" without naming the card, and the next restart of that host overwrote it with "0 reviews lost".</td>
+          <td>The card's queue line was worded from the outcome enum alone and never carried the failure classification, the host, or the retry number. The host kept only its newest restart. A spent budget escalated as "cannot be materialized", which also parked the card on a git-ancestry condition that a host restart never clears.</td>
+          <td>The observed terminal was an Auto Review card with a scheduled retry that read as parked. The queue line now has a <code>retry-scheduled</code> state with the loss (classification, host, time) and the retry (number, budget, due time): "Review lost: review host restarted (lab-review-host, 02:27). Automatic retry 1 of 2 at 02:28." (the budget follows AGT-3608, which lowered it from 3 to 2) The host name links to the host. The attempt authority keeps 20 restarts per review runner with their lost attempts, and the host detail lists them with links to the cards. A budget spent on restarts escalates as <code>environmental</code> and names every restart.</td>
+        </tr>
         <tr id="case-cancelled-isolation-proved-red">
           <td>2026-11-10</td>
           <td><code>AGT-3584</code><br><span class="small">cancelled-isolation-proved-red (fix <code>AGT-3742</code>)</span></td>
           <td>Batch <code>5ee5c2dd</code> went red. The solo isolation flight in <code>ada8a151</code> was cancelled while the API disk was full. It had no start time, exit code or test verdict, yet AGT-3584 reached Escalated with a claim that isolation proved it red. Other members had abandoned per-task pull jobs. No CLI crashed. Terminal at discovery: Escalated with a false delivery verdict, or Auto Review without a live gate.</td>
           <td>The isolation finding reader treated every red child phase as proof, including InfrastructureRed. A per-task fallback treated a pull job without a verdict as a terminal red gate.</td>
           <td>A proven-red finding now requires a deterministic child verdict. An interrupted isolation flight returns the review to the pending pool and retries the isolation step twice on later ticks; exhaustion parks it with GateInfra and the retry count. An interrupted per-task flight keeps its active marker for the next tick and parks with an infrastructure cause after its bounded retry.</td>
+        </tr>
+        <tr id="case-review-plan-delivery-skew">
+          <td>2026-11-10</td>
+          <td><code>AGT-3624</code>, <code>AGT-3654</code>, <code>AGT-3655</code>, <code>AGT-3656</code>, <code>AGT-3690</code>, <code>AGT-3729</code><br><span class="small">review-plan-delivery-skew (fix <code>AGT-3743</code>)</span></td>
+          <td>No CLI crashed. Each delivery preceded a new target-branch review script. Review ran the new command against the older delivery tree, exited 127 twice, then parked the card for infrastructure intervention. Terminal at discovery: Escalated; operators sent merge rounds by hand.</td>
+          <td>The target branch supplied the trusted plan, but the executor did not check whether its declared file existed in the delivery tree. Exit 127 was classified as an unavailable host tool without identifying the missing file.</td>
+          <td>The executor compares declared file references with the frozen plan commit and delivery tree before running commands. A file present only on the plan commit yields <code>DeliveryPredatesReviewPlan</code>, which opens an automatic merge round naming the full result ref and does not spend an infrastructure retry. A missing host binary remains <code>ReviewInfra / ToolUnavailable</code>.</td>
         </tr>
         <tr id="case-per-task-fallback-silent-engine-wait">
           <td>2026-11-10</td>

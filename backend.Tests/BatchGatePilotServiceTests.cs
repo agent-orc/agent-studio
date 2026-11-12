@@ -93,6 +93,72 @@ public abstract partial class BatchGatePilotServiceTests : IDisposable
     }
 }
 
+public sealed class BatchGatePilotEjectTests : BatchGatePilotServiceTests
+{
+    [Fact]
+    public async Task Eject_from_active_batch_is_refused_with_release_condition()
+    {
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-ACTIVE-EJECT", "docs/active-eject.md");
+        SeedMember(factory, "DOC-ACTIVE-OTHER", "docs/active-other.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var batch = ClosePendingBatch(factory);
+
+        using var response = await client.PostAsJsonAsync(
+            $"/api/projects/{ProjectName}/batch-gate/members/{member.Key}/eject",
+            new { reason = "Inspect this card alone" });
+
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, response.StatusCode);
+        var refusal = await response.Content.ReadAsStringAsync();
+        Assert.Contains("Wait for it to finish or pause before ejecting", refusal);
+        Assert.Equal(batch.BatchId, Ownership(member.Key)?.BatchId);
+        Assert.False(store.HasEject(ProjectName, member.Key));
+    }
+
+    [Fact]
+    public async Task Eject_of_red_parent_without_isolation_releases_member_on_next_tick()
+    {
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-RED-EJECT", "docs/red-eject.md");
+        SeedMember(factory, "DOC-RED-OTHER", "docs/red-other.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var batch = ClosePendingBatch(factory);
+        foreach (var phase in new[] { BatchPhase.Assembling, BatchPhase.Assembled, BatchPhase.Running })
+            store.AppendState(new BatchGateState(batch.BatchId, batch.MembershipDigest,
+                phase, null, 1, _clock));
+        store.AppendState(new BatchGateState(batch.BatchId, batch.MembershipDigest,
+            BatchPhase.Red, member.ResultSha, 1, _clock, "deterministic suite red"));
+
+        using var response = await client.PostAsJsonAsync(
+            $"/api/projects/{ProjectName}/batch-gate/members/{member.Key}/eject",
+            new { reason = "Inspect this card alone" });
+        Assert.Equal(System.Net.HttpStatusCode.Accepted, response.StatusCode);
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertPhase(store, batch.BatchId, BatchPhase.Abandoned);
+        Assert.Null(Ownership(member.Key)?.BatchId);
+        var outcome = store.ReadEject(ProjectName, member.Key);
+        Assert.NotNull(outcome);
+        Assert.Equal("released", outcome.Status);
+        Assert.False(string.IsNullOrWhiteSpace(outcome.Actor));
+        Assert.Equal("Inspect this card alone", outcome.Reason);
+        using var stateResponse = await client.GetAsync(
+            $"/api/projects/{ProjectName}/batch-gate/state?history=10");
+        Assert.Equal(System.Net.HttpStatusCode.OK, stateResponse.StatusCode);
+        using var state = JsonDocument.Parse(await stateResponse.Content.ReadAsStringAsync());
+        var visible = Assert.Single(state.RootElement.GetProperty("ejectRequests").EnumerateArray());
+        Assert.Equal("released", visible.GetProperty("status").GetString());
+        Assert.Equal("Inspect this card alone", visible.GetProperty("reason").GetString());
+    }
+}
+
 /// <summary>Operator lane moves and explicit batch withdrawal.</summary>
 public sealed class BatchGatePilotOperatorMoveTests : BatchGatePilotServiceTests
 {

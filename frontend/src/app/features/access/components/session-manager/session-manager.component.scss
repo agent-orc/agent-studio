@@ -40,6 +40,7 @@
 .session-manager__step-up label { display: grid; gap: var(--studio-spacing-1); }
 .session-manager__step-up input { width: 100%; min-width: 0; box-sizing: border-box; }
 .session-manager__step-up-actions { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-1); }
+.session-manager__qr { display: block; width: 192px; height: 192px; max-width: 100%; }
 
 @media (max-width: 600px) {
   .session-manager__panel,

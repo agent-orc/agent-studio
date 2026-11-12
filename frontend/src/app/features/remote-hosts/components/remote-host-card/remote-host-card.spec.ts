@@ -138,6 +138,21 @@ describe('RemoteHostCardComponent', () => {
     expect(action).toEqual({ kind: 'delete', id: HOST.id });
   });
 
+  // AGT-3690: a machine row shows its coding role, so a restart of the review
+  // role on the same machine used to be invisible in the machine detail.
+  it('shows the newest restart of any role on the machine and its history', () => {
+    const fixture = mount({ ...HOST, serviceRole: 'coding', restartedAt: null, reviewsLost: 0 }, true, false);
+    const review: RemoteHost = { ...HOST, id: 'first-run-review', clientId: 'first-run-review',
+      name: 'first-run-review', serviceRole: 'review', restartedAt: '2026-07-10T11:55:00Z', reviewsLost: 1,
+      reviewRestarts: [{ restartedAt: '2026-07-10T11:55:00Z', hostId: 'first-run-host', instanceId: 'i-2',
+        reviewsLost: 1, lostAttempts: [{ attemptId: 'review_a', taskKey: 'AGT-1', status: 'worker-not-reported' }] }] };
+    fixture.componentRef.setInput('roles', [fixture.componentInstance.host(), review]);
+    fixture.detectChanges();
+    const el: HTMLElement = fixture.nativeElement;
+    expect(el.querySelector('[data-testid="remote-host-role-restart"]')?.textContent).toContain('1 review lost');
+    expect(el.querySelectorAll('[data-testid="remote-host-restart-row"]')).toHaveLength(1);
+  });
+
   it('shows review restart and quota facts in the selected detail', () => {
     const fixture = mount({ ...HOST, serviceRole: 'review', restartedAt: '2026-07-10T11:55:00Z',
       reviewsLost: 6, roleMaxParallelism: 6, reviewPlane: {

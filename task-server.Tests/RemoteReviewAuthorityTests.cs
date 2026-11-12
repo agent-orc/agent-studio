@@ -1412,6 +1412,37 @@ public sealed partial class RemoteReviewAuthorityTests
         Assert.Equal("4-auto-review", (await TaskAsync(store, subject.TaskId)).State);
     }
 
+    [Fact]
+    public async Task Plan_skew_settles_without_spending_an_infrastructure_retry()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto("verify-2", "build-tests", "sh",
+                ["-lc", "bash scripts/check-release-build.sh"])],
+            ["build-tests"], IntegrationRef: "refs/heads/main",
+            PlanCommitSha: new string('a', 40));
+        var subject = await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var skew = PassingReport(claim) with
+        {
+            Outcome = ReviewOutcomeKinds.DeliveryPredatesReviewPlan,
+            Summary = "Review plan needs scripts/check-release-build.sh, which this delivery predates; merge round sent.",
+            Commands = [],
+            Artifacts = [],
+            Verdicts = [],
+        };
+
+        var report = await store.ReportReviewAsync(claim.Attempt!.AttemptId, skew, "review-a", default);
+
+        Assert.Equal(ReviewOutcomeKinds.DeliveryPredatesReviewPlan, report.Outcome);
+        Assert.False(report.RetryScheduled);
+        Assert.Equal("4-auto-review", (await TaskAsync(store, subject.TaskId)).State);
+    }
+
     [Theory]
     [InlineData(127, false)]
     [InlineData(1, true)]

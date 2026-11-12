@@ -30,7 +30,7 @@ namespace AgentStudio.Tests;
 /// ref and SHA, while acceptance validates current lineage, Git ancestry, and
 /// exact-tree gate evidence.
 /// </summary>
-public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
+public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
 {
     // Generous on purpose: several call sites wait on a WebApplicationFactory's
     // first HTTP round trip, which JITs and spins up the whole app in-process.
@@ -3454,7 +3454,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("integrated-unverified", refused.Message);
+        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
         var overridden = await deps.Transitions.MoveAsync(
             Slug,
             TaskStates.Completed,
@@ -3645,7 +3645,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         else
         {
             Assert.Equal(MoveJobStatus.IntegrationFailed, accepted.Status);
-            Assert.Contains(gateSecondPublication ? first : second, accepted.Message);
+            Assert.Contains("`.agent-studio/project.yml`", accepted.Message);
+            Assert.DoesNotContain(gateSecondPublication ? first : second, accepted.Message);
         }
     }
 
@@ -3742,7 +3743,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains(ungated, refused.Message);
+        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
+        Assert.DoesNotContain(ungated, refused.Message);
     }
 
     [Theory]
@@ -3757,8 +3759,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("integrated-unverified", refused.Message);
-        Assert.Contains(missingGateSha, refused.Message);
+        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
+        Assert.DoesNotContain(missingGateSha, refused.Message);
     }
 
     [Fact]
@@ -3769,7 +3771,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains(keySha, refused.Message);
+        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
+        Assert.DoesNotContain(keySha, refused.Message);
     }
 
     private (Deps Deps, string KeySha) PublishVerifiedDescriptorAndKey(
@@ -3851,8 +3854,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("integrated-unverified", refused.Message);
-        Assert.Contains(unrelated, refused.Message);
+        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
+        Assert.DoesNotContain(unrelated, refused.Message);
     }
 
     [Fact]
@@ -4078,7 +4081,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var moved = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, moved.Status);
-        Assert.Contains("integrated-unverified", moved.Message);
+        Assert.Contains("`.agent-studio/project.yml`", moved.Message);
     }
 
     [Theory]
@@ -4817,7 +4820,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         bool guarded = false,
         bool engineMode = false,
         Func<DateTime>? authorityClock = null,
-        BatchGateStore? batchGates = null)
+        BatchGateStore? batchGates = null,
+        string contentStatus = "pass",
+        string contentSummary = "The fixture delivery answers its brief.")
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -4955,7 +4960,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         }
         if (seedContent)
             SeedPassedContentReview(authority, sourceRun, jobFolder, deliverySha, deliveryBriefVersion,
-                reviewPlan, reviewVerdicts);
+                reviewPlan, reviewVerdicts, contentStatus, contentSummary);
         pipeline.Begin(jobFolder, PipelineCatalogue.Standard, Project, Slug);
         Assert.NotNull(scanner.FindJob(Slug, _watchPath));
         // AGT-3076: the 11.10. crash rebuilt the attempt authority store into
@@ -5023,7 +5028,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     private void SeedPassedContentReview(
         AttemptAuthorityService authority, RunAttemptDto sourceRun,
         string folder, string deliverySha, string briefVersion,
-        Contract.ReviewPlanDto? plan = null, IReadOnlyList<Contract.ReviewVerdictDto>? verdicts = null)
+        Contract.ReviewPlanDto? plan = null, IReadOnlyList<Contract.ReviewVerdictDto>? verdicts = null,
+        string contentStatus = "pass", string contentSummary = "The fixture delivery answers its brief.")
     {
         var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
             TaskKey, "PROJ-FIXTURE", deliverySha, sourceRun.AttemptId,
@@ -5042,8 +5048,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             new Contract.ReviewEnvironmentDto("fixture-host", "fixture-reviewer", "fixture-instance",
                 "fixture-os", "fixture-arch", "fixture-runtime",
                 new Dictionary<string, string>(), new Dictionary<string, string>()),
-            [], [], verdicts ?? [new Contract.ReviewVerdictDto("requirement-fit", "pass", "Product",
-                "The fixture delivery answers its brief.")],
+            [], [], verdicts ?? [new Contract.ReviewVerdictDto("requirement-fit", contentStatus, "Product",
+                contentSummary, Missing: contentStatus == "pass" ? null : "The fixture names no missing file.")],
             AuthorityEpoch: review.AuthorityEpoch, BriefSha256: briefVersion);
         var entry = new RemoteReviewSettlementEntry
         {

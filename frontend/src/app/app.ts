@@ -1,4 +1,6 @@
 import { GitHubAppService } from './features/github-app/github-app.service';
+import { ShellAccessService } from './services/shell-access.service';
+import { ProjectLookupService } from './services/project-lookup.service';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -241,6 +243,8 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   styleUrl: './app.scss',
 })
 export class App implements OnInit, OnDestroy {
+  readonly shellAccess = inject(ShellAccessService);
+  private readonly projectLookup = inject(ProjectLookupService);
   private readonly firstRunLaunch = inject(FirstRunLaunchService);
   private readonly gitHubApp = inject(GitHubAppService);
   readonly auth = inject(AuthService); private studioInitialized = false;
@@ -405,6 +409,7 @@ export class App implements OnInit, OnDestroy {
   private hashListener: (() => void) | null = null;
   private kanbanKeyListener: ((ev: KeyboardEvent) => void) | null = null;
   readonly watchPaths = signal<WatchPathEntry[]>([]);
+  readonly watchPathsLoaded = signal(false);
   /**
    * Cycle 9 / ADR-0034: search query, four faceted filters, URL hash +
    * query-param round-trip, and `filteredGrouped` derivation all live
@@ -516,7 +521,14 @@ export class App implements OnInit, OnDestroy {
   }
 
   readonly projectNames = computed(() => {
-    return this.watchPaths().map((wp) => wp.name);
+    return !this.shellAccess.operator()
+      ? this.projectLookup.allProjects().map(project => project.displayName)
+      : this.watchPaths().map((wp) => wp.name);
+  });
+  readonly noProjectAccess = computed(() => {
+    const status = this.auth.status();
+    return status?.profile === 'networked' && status.authenticated && status.user?.role !== 'owner'
+      && (status.user?.projects.length === 0 || (this.watchPathsLoaded() && this.projectNames().length === 0));
   });
 
   // Cycle 9 / ADR-0034: filter signals + URL sync delegated to BoardFiltersService.
@@ -815,6 +827,14 @@ export class App implements OnInit, OnDestroy {
       }));
     });
     effect(() => {
+      if (this.shellAccess.operator() || !this.projectLookup.loaded()) return;
+      this.watchPaths.set(this.projectLookup.allProjects().map(project => ({
+        name: project.displayName,
+        path: project.storageLocation,
+        rootPath: project.rootPath ?? project.storageLocation,
+      })));
+    });
+    effect(() => {
       const allowed = this.auth.studioAllowed();
       const statusKnown = this.auth.status() !== null;
       if (allowed && !this.studioInitialized) untracked(() => this.initializeStudio());
@@ -1108,16 +1128,16 @@ export class App implements OnInit, OnDestroy {
   ngOnInit() { this.auth.initialize(); }
   private initializeStudio(): void {
     if (this.studioInitialized) return; this.studioInitialized = true;
-    this.orchestratorFeedStore.start();
+    if (this.shellAccess.operator()) this.orchestratorFeedStore.start();
     // Backlog-lane spec: hydrate the filter bar from the URL hash before
     // rendering so a bookmark or copy-paste lands on the same view.
     this.boardFilters.hydrateFromUrl();
-    this.loadTagRegistry();
+    if (this.shellAccess.operator()) this.loadTagRegistry();
     // ADR-0046: pre-fetch every CLI's model catalog at boot so the
     // chat-model badge, status-bar picker, and create dialog can render
     // their model lists synchronously instead of paying a round-trip on
     // first open.
-    this.cliCatalogStore.hydrateAll();
+    if (this.shellAccess.operator()) this.cliCatalogStore.hydrateAll();
     // 1-Hz wall-clock tick for the lane status RUNNING pill's elapsed
     // string. Light enough to leave running without gating - the only
     // consumer is the lane column's statusCluster computed.
@@ -1125,10 +1145,12 @@ export class App implements OnInit, OnDestroy {
     this.refresh();
     this.jobService.startLiveUpdates();
     this.projectHubUrls.start();
-    this.loadWatchPaths(false);
-    this.jobService.refreshRunnerStatus();
-    this.devTools.loadFlags();
-    this.clientService.refresh();
+    if (this.shellAccess.operator()) {
+      this.loadWatchPaths(false);
+      this.jobService.refreshRunnerStatus();
+      this.devTools.loadFlags();
+      this.clientService.refresh();
+    }
     this.jobSelection.restoreFromUrl();
 
     // Reconcile settings deep links with editor tabs.
@@ -1528,6 +1550,7 @@ export class App implements OnInit, OnDestroy {
     this.jobService.getWatchPaths().subscribe({
       next: (entries) => {
         this.watchPaths.set(entries);
+        this.watchPathsLoaded.set(true);
         if (entries.length > 0) this.createJobForm.newWatchPath = entries[0].path;
 
         // Purge stale project names that survived a registry rename / delete in

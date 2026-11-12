@@ -21,6 +21,7 @@ import { RetentionRunHistoryComponent } from '../retention-run-history/retention
 })
 export class RetentionAdminComponent {
   private readonly retention = inject(RetentionService);
+  readonly available = signal<boolean | null>(null);
   private readonly history = viewChild(RetentionRunHistoryComponent);
 
   readonly report = signal<RetentionPlan | null>(null);
@@ -29,6 +30,13 @@ export class RetentionAdminComponent {
   readonly busy = signal<'plan' | 'apply' | null>(null);
   readonly error = signal<string | null>(null);
   readonly warnings = signal<string[]>([]);
+
+  constructor() {
+    this.retention.getWorkspacePolicy().subscribe({
+      next: () => this.available.set(true),
+      error: (error: unknown) => this.available.set(!(error instanceof HttpErrorResponse && error.status === 404)),
+    });
+  }
 
   readonly archiveBytes = computed(() => this.report()?.actions
     .filter(action => action.kind === 'ArchiveHeavy' || action.kind === 'ArchiveTask')

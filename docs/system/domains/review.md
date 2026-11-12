@@ -15,6 +15,23 @@ delivery.
 Version: 2026-11-11
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
+## Target-branch plan and older deliveries (AGT-3743)
+
+The target branch remains the only source of the frozen review command plan.
+New plans record the target commit SHA. Legacy plans without it use the fetched
+target ref tip. Before preparation or verification, the
+review host checks relative file references in declared tool and preparation
+commands against that commit and the delivery's Git tree. If the plan commit
+contains a file that the delivery tree lacks, the attempt ends as
+`DeliveryPredatesReviewPlan`. Option **(b)** is implemented: the card receives
+an automatic merge round whose prompt names the full immutable result ref and
+asks the agent to merge the target branch, resolve conflicts, and submit the
+new delivery. A merge conflict is handled by that round. The attempt runs no
+review commands and spends no review infrastructure retry. A shell exit 127
+with no such Git-tree skew remains `ReviewInfra/ToolUnavailable` when the host
+lacks the declared binary. A delivery that contains the file runs its plan as
+before.
+
 ## Host source cache startup
 
 The review daemon creates and validates an absolute host source cache root before
@@ -1519,6 +1536,32 @@ The drain decision reuses `ReviewSlotAdmissionDecision` with its
 incapable of cancelling a running review. Operator procedure and the log lines
 to check live in
 [linux-runner-host.md](../../operations/setup/linux-runner-host.md#which-release-grades-an-adopted-review).
+
+## Review host restarts stay visible (AGT-3690)
+
+A replacement daemon that cannot prove a review worker alive settles the
+attempt as `ReviewInfra / ExecutorRestarted` and the server counts it as a
+`worker-not-reported` loss. Three surfaces say so:
+
+- **Card.** The Auto Review queue line reads the failure classification, the
+  lease host, the loss time and the scheduled retry from the board snapshot:
+  "Review lost: review host restarted (lab-review-host, 02:27). Automatic
+  retry 1 of 2 at 02:28." The host name links to the host detail.
+- **Host detail.** `AttemptAuthorityService` keeps the newest 20 restarts per
+  review runner identity, each with its lost attempts and their task keys.
+  `GET /api/v1/management/remote-hosts` returns them as `reviewRestarts`, and
+  the host detail lists them with a link to each lost card. `restartedAt` and
+  `reviewsLost` still describe the newest restart only. The standalone Task
+  Server keeps only that newest restart for now.
+- **Escalation.** When the retry budget is spent and the newest cause is a
+  restart, the card escalates as `environmental` and the reason names every
+  restart (host, time, attempt) instead of "cannot be materialized".
+
+Covered by `TaskLiveStatusProjectionTests`, `ReviewAttemptChainSummaryTests`,
+`V1ReviewPlaneDiagnosticsEndpointTests.Restart_history_keeps_a_lost_review_after_a_later_clean_restart`,
+`RemoteRunnerEndToEndTests.Monolith_v1_review_host_restart_names_the_host_and_retry_then_escalates_on_the_restarts`,
+and `frontend/e2e/settings/first-run-review-host-restart.spec.ts`, which kills
+the real `first-run-review` daemon mid-review twice.
 
 ## Terminal slot deletion is final (AGT-2864)
 

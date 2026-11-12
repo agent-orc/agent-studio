@@ -127,12 +127,18 @@ public static class V1ReviewPlaneEndpoints
                         request.InstanceId,
                         restartedAt,
                         restartObservations);
+                    var lostReviews = restartObservations
+                        .Where(ReviewRestartOutcomePolicy.IsDefinitiveLoss)
+                        .Select(item => new Contract.ReviewRestartLostAttemptDto(
+                            item.AttemptId, item.TaskKey, item.Status))
+                        .ToArray();
                     authority.RecordReviewDaemonRestart(
                         runnerId,
                         request.HostId,
                         request.InstanceId,
                         restartedAt,
-                        restartObservations.Count(ReviewRestartOutcomePolicy.IsDefinitiveLoss));
+                        lostReviews.Length,
+                        lostReviews);
                     AppendReviewRestartAdvisories(
                         runnerId,
                         request.InstanceId,
@@ -1073,6 +1079,7 @@ public static class V1ReviewPlaneEndpoints
                     CardRoundBudget.ResolveAllowed(configuration));
                 var payload = new StagePayload(
                     ReviewOutcome: request.Outcome,
+                    ReviewSummary: request.Summary,
                     RunAttemptId: currentReview.SourceRunAttemptId,
                     ReviewSubjectId: currentReview.Subject.SubjectId,
                     ReviewAttemptId: attemptId,
@@ -1285,7 +1292,24 @@ public static class V1ReviewPlaneEndpoints
             RemoteReviewContinuation? continuation = null;
             if (!acceptedReplay && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
-                if (budgetDecision.Escalate)
+                if (outcome == ReviewTerminalOutcome.DeliveryPredatesReviewPlan)
+                {
+                    var mergeBase = ReviewFixRoundBase.ForReview(
+                        currentReview, ReviewSubjectStore.Read(preparedTask.FolderPath), DateTime.UtcNow);
+                    if (mergeBase is not null)
+                    {
+                        var branch = currentReview.Subject.Plan?.IntegrationRef ?? "the target branch";
+                        continuation = new RemoteReviewContinuation(
+                            RemoteReviewContinuationKind.PlanMergeRound,
+                            $"{request.Summary}\n\nStart from the full result ref `{mergeBase.Ref}` "
+                            + $"at `{mergeBase.CommitSha}`. Merge `{branch}` into that delivery, "
+                            + "resolve any conflicts, and submit the merged result for review. "
+                            + "Do not treat the previous review as a product failure.",
+                            [], settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds,
+                            cardBudget, Base: mergeBase);
+                    }
+                }
+                else if (budgetDecision.Escalate)
                     continuation = new RemoteReviewContinuation(
                         RemoteReviewContinuationKind.BudgetEscalation, string.Empty,
                         blockingAspects, settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds,
@@ -1332,7 +1356,8 @@ public static class V1ReviewPlaneEndpoints
             // A batch-deferred pass owes no per-card integration: the batch gate
             // publishes it, so no delivery record may tell recovery to integrate
             // or to settle it as a failed gate.
-            if (!replay && continuation is null && outcome != ReviewTerminalOutcome.InfrastructureFailure
+            if (!replay && continuation is null && outcome is not (
+                    ReviewTerminalOutcome.InfrastructureFailure or ReviewTerminalOutcome.DeliveryPredatesReviewPlan)
                 && !deferToBatch && !waitForConcernFix
                 && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
@@ -1434,6 +1459,7 @@ public static class V1ReviewPlaneEndpoints
             {
                 var shadowPayload = new StagePayload(
                     ReviewOutcome: request.Outcome,
+                    ReviewSummary: request.Summary,
                     RunAttemptId: currentReview.SourceRunAttemptId,
                     ReviewSubjectId: currentReview.Subject.SubjectId,
                     ReviewAttemptId: attemptId,
@@ -2323,9 +2349,14 @@ public static class V1ReviewPlaneEndpoints
                     // harder failure cannot be hidden behind the majority class
                     // (AGT-2220).
                     var chain = BuildAttemptChainSummary(authority, review.TaskKey);
+                    // AGT-3690: a chain lost to review host restarts names the
+                    // restarts. "Cannot be materialized" sent the operator after
+                    // the subject (and parked the card on a git-ancestry
+                    // condition) when the host was what kept failing.
+                    var hostRestarts = chain.HostRestartSentence(AttemptAuthorityService.ReviewInfrastructureRetryBudget);
                     var category = intervention is not null
                         ? HumanReviewEscalationCategories.FailureIntervention
-                        : aspectRetryExhausted || diagnosisContractUnsupported
+                        : aspectRetryExhausted || diagnosisContractUnsupported || hostRestarts is not null
                             ? HumanReviewEscalationCategories.Environmental
                             : HumanReviewEscalationCategories.ReviewSubjectUnmaterializable;
                     var escalationReason = intervention?.WaitReason
@@ -2333,7 +2364,9 @@ public static class V1ReviewPlaneEndpoints
                             ? $"Remote Review retried the malformed aspect once, but it still produced no parseable verdict. {chain.Headline}"
                             : diagnosisContractUnsupported
                                 ? $"{Contract.ReviewReportDiagnosisPolicy.DiagnosisContractUnsupportedReason(request.ExecutorId, request.Environment.Worker?.WorkerReleaseId)} {chain.Headline}"
-                                : $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. {chain.Headline}");
+                                : hostRestarts is not null
+                                    ? $"{hostRestarts} {chain.Headline}"
+                                    : $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. {chain.Headline}");
                     var moved = await escalation.EscalateAsync(
                         task.Id,
                         task.WatchPath,
@@ -3461,6 +3494,7 @@ public static class V1ReviewPlaneEndpoints
             "pass" => ReviewTerminalOutcome.Pass,
             "productfailure" => ReviewTerminalOutcome.ProductFailure,
             "integrationbranchdefect" => ReviewTerminalOutcome.IntegrationBranchDefect,
+            "deliverypredatesreviewplan" => ReviewTerminalOutcome.DeliveryPredatesReviewPlan,
             "reviewinfra" => ReviewTerminalOutcome.InfrastructureFailure,
             "inconclusive" => ReviewTerminalOutcome.Inconclusive,
             "cancellation" => ReviewTerminalOutcome.Cancellation,

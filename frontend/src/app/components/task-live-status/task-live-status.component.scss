@@ -98,9 +98,23 @@
   font-weight: 700;
 }
 
-.task-live--manual-remote .task-live__headline {
+.task-live--manual-remote .task-live__headline,
+.task-live__headline--wrap {
   white-space: normal;
   overflow: visible;
+}
+
+// AGT-3690: the host that lost the review opens its detail. Same link chrome
+// as the Switch to Auto action beside it.
+.task-live__host-link {
+  color: var(--studio-accent-3-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.task-live__host-link:focus-visible {
+  outline: 2px solid var(--studio-accent-3);
+  outline-offset: 2px;
 }
 
 .task-live--per-task .task-live__current {
