@@ -30,6 +30,7 @@ export type ProjectRailKey =
   | 'observability'
   | 'steering'
   | 'wiki'
+  | 'magazine'
   // Nav-rebuild rails that were introduced as reachable project-level
   // destinations and now render real panels where the host supplies them.
   | 'pipeline'
@@ -83,6 +84,11 @@ export const PROJECT_RAIL_ITEMS: readonly ProjectRailItem[] = [
     empty: 'No operator overview is available for this project.',
     icon: '▤',
     railIcon: 'layout',
+  },
+  {
+    key: 'magazine', group: 'insight', label: 'Magazine', panelTitle: 'Magazine',
+    description: 'Articles by agents and personas about this project',
+    empty: 'Agents and personas write this magazine as work changes.', icon: '▤', railIcon: 'book',
   },
   {
     key: 'project-urls',

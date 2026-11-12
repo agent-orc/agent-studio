@@ -34,6 +34,15 @@ describe('RetentionRulesTableComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Platform default');
   });
 
+  it('explains when the local connection has no retention policy endpoint', async () => {
+    retention.getWorkspacePolicy.mockReturnValue(throwError(() => new HttpErrorResponse({ status: 404 })));
+    const fixture = TestBed.createComponent(RetentionRulesTableComponent);
+    fixture.detectChanges(); await fixture.whenStable(); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="retention-rules-unavailable"]')?.textContent)
+      .toContain('require a connected Task Server');
+    expect(fixture.nativeElement.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it('shows a project override and its one-click reset', async () => {
     const heavy = { ...PLATFORM_RETENTION_RULES[2], archiveAfterDaysTerminal: 45 };
     retention.getProjectPolicy.mockReturnValue(of({ ...policy(2), scope: 'project', rules: [heavy] }));

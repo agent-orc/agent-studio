@@ -1,8 +1,10 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, signal } from '@angular/core';
+import { DomSanitizer } from '@angular/platform-browser';
 import { firstValueFrom } from 'rxjs';
 import { AuthService, type AuthSessionSummary } from '../../../../services/auth.service';
 import { createPasskey, getPasskey } from '../../../../services/webauthn';
+import { totpProvisioningUri, totpQrDataUrl } from '../../../../services/totp-provisioning';
 
 @Component({
   selector: 'app-session-manager',
@@ -14,6 +16,7 @@ import { createPasskey, getPasskey } from '../../../../services/webauthn';
 })
 export class SessionManagerComponent implements OnInit, OnDestroy {
   private readonly auth = inject(AuthService);
+  private readonly sanitizer = inject(DomSanitizer);
   readonly userId = input<string | null>(null);
   readonly watchNotices = input(false);
   readonly open = signal(false);
@@ -21,6 +24,9 @@ export class SessionManagerComponent implements OnInit, OnDestroy {
   readonly error = signal('');
   readonly sessions = signal<AuthSessionSummary[]>([]);
   readonly totpSecret = signal('');
+  readonly totpUri = signal('');
+  readonly totpLink = computed(() => this.sanitizer.bypassSecurityTrustUrl(this.totpUri()));
+  readonly totpQr = signal('');
   readonly totpCode = signal('');
   readonly recoveryCodes = signal<string[]>([]);
   readonly notice = signal(false);
@@ -110,7 +116,13 @@ export class SessionManagerComponent implements OnInit, OnDestroy {
   async beginTotp(): Promise<void> {
     this.busy.set(true);
     this.error.set('');
-    try { this.totpSecret.set((await firstValueFrom(this.auth.beginTotp())).secret); }
+    try {
+      const secret = (await firstValueFrom(this.auth.beginTotp())).secret;
+      this.totpSecret.set(secret);
+      const uri = totpProvisioningUri(secret, this.auth.status()?.user?.username ?? 'account');
+      this.totpUri.set(uri);
+      this.totpQr.set(await totpQrDataUrl(uri).catch(() => ''));
+    }
     catch { this.error.set('Authenticator setup could not start.'); }
     finally { this.busy.set(false); }
   }
@@ -121,6 +133,8 @@ export class SessionManagerComponent implements OnInit, OnDestroy {
     try {
       this.recoveryCodes.set((await firstValueFrom(this.auth.confirmTotp(this.totpCode()))).recoveryCodes);
       this.totpSecret.set('');
+      this.totpUri.set('');
+      this.totpQr.set('');
       this.totpCode.set('');
     } catch { this.error.set('The authenticator code is invalid.'); }
     finally { this.busy.set(false); }

@@ -5,15 +5,17 @@
   @if (loading()) { <p>Loading batch settings…</p> }
   @if (error()) { <p role="alert" data-testid="batch-settings-error">{{ error() }} @if (fieldError()) { ({{ fieldError() }}) }</p> }
   @if (settings(); as form) {
+    <app-batch-phase-metrics [summary]="state()?.dailySummary" />
     <form (ngSubmit)="save()">
       <fieldset><legend>Enable and scope</legend>
-        <label><input type="checkbox" name="enabled" data-testid="batch-settings-enabled" [ngModel]="form.enabled" (ngModelChange)="setEnabled($event)"> Enable batch verification</label>
+        <label><input type="checkbox" name="enabled" data-testid="batch-settings-enabled" [ngModel]="form.enabled" (ngModelChange)="setEnabled($event)" [attr.aria-invalid]="invalid('enabled')"> Enable batch verification</label>
+        @if (invalid('enabled')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
         <label>Scope <select name="scope" data-testid="batch-settings-scope" [ngModel]="form.scope" (ngModelChange)="setScope($event)" [attr.aria-invalid]="invalid('scope')" aria-describedby="batch-scope-help"><option value="documentation">Documentation</option><option value="code">Code</option></select></label>
         @if (invalid('scope')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
         @if (scopeDefaulted()) {
           <p class="batch-settings__scope-note" role="status" data-testid="batch-settings-scope-defaulted">Scope set to Code. Choose Documentation to batch only documentation cards.</p>
         }
-        <p id="batch-scope-help">Code batches every reviewed card. Documentation batches only cards that change documentation.</p>
+        <p id="batch-scope-help">Code batches reviewed code and documentation cards, including code follow-ups from concept work. Documentation batches only documentation cards, including documentation follow-ups from concept work. A remote gate host is required for both scopes and for a single card's fallback gate.</p>
       </fieldset>
       <fieldset><legend>Planner and bounds</legend>
         <p>The planner waits for enough cards or a deadline. Look ahead also considers cards likely to finish soon.</p>
@@ -49,6 +51,11 @@
       <fieldset><legend>Review test level</legend>
         <label>Before batch <select name="reviewTestLevel" [ngModel]="form.reviewTestLevel" (ngModelChange)="update('reviewTestLevel', $event)" [attr.aria-invalid]="invalid('reviewTestLevel')"><option value="work-package">Work package</option><option value="build-only">Build only</option></select></label>
         <label><input type="checkbox" name="preCheckEnabled" [ngModel]="form.preCheckEnabled" (ngModelChange)="update('preCheckEnabled', $event)"> Pre-check reviewed deliveries in spare gate slots</label>
+        @if (state()?.dailySummary?.preCheckYield; as yield) {
+          <p data-testid="batch-pre-check-yield">Today: {{ yield.runs }} runs, {{ yield.red }} red, {{ yield.cardsKeptOut }} cards kept out of a red batch. Cost: {{ yield.costMinutes.toFixed(1) }} gate minutes.
+            @if (yield.cardsKeptOut === 0) { Pre-check yield is 0 today. }
+          </p>
+        }
         @if (invalid('reviewTestLevel')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
       </fieldset>
       <fieldset><legend>Gate timeout</legend>

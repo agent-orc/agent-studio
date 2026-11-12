@@ -20,7 +20,8 @@ public sealed class TaskLiveStatusProjection(
     ProjectSettingsService projectSettings,
     TaskRunnerService runners,
     AutoReviewPostProcessingQueue reviewQueue,
-    AttemptAuthorityService attemptAuthority)
+    AttemptAuthorityService attemptAuthority,
+    V1ReviewExecutorRegistry reviewExecutors)
 {
     private static readonly HashSet<string> VisibleStates = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -46,10 +47,11 @@ public sealed class TaskLiveStatusProjection(
             authority = attemptAuthority.ReadBoardAuthoritySnapshot();
             reviewQueueEntries = attemptAuthority.ReadReviewQueue();
         }
+        var reviewHost = authority is null ? null : reviewExecutors.LatestReviewHostTelemetry(DateTime.UtcNow);
 
         foreach (var job in jobList)
         {
-            var queue = ResolveQueue(job, runnerStatus, authority, reviewQueueEntries);
+            var queue = ResolveQueue(job, runnerStatus, authority, reviewQueueEntries, reviewHost);
             var execution = pipelineLog.Read(job.FolderPath);
             var settings = PipelineTypeSettings.ForTask(projectSettings.Get(job.ProjectName), job)!;
             var pipeline = ProjectPipelineOrder.Apply(
@@ -124,6 +126,7 @@ public sealed class TaskLiveStatusProjection(
         var upcoming = definitions
             .Select((step, index) => (Step: step, Index: index))
             .Where(item => item.Index > activeIndex)
+            .Where(item => job.State != TaskStates.AutoReview || item.Step.Kind != StepKind.Core)
             .Where(item => !statuses.TryGetValue(item.Step.Id, out var status)
                 || status is PipelineStepStatus.Pending)
             .Take(3)
@@ -157,7 +160,8 @@ public sealed class TaskLiveStatusProjection(
         TaskInfo job,
         IReadOnlyDictionary<string, ProjectRunnerStatus> runnerStatus,
         BoardAuthoritySnapshot? authority,
-        IReadOnlyDictionary<string, ReviewQueueEntry>? reviewQueueEntries)
+        IReadOnlyDictionary<string, ReviewQueueEntry>? reviewQueueEntries,
+        AgentStudio.TaskServer.Contracts.HostTelemetrySnapshotDto? reviewHost)
     {
         if (job.State == TaskStates.Ready
             && runnerStatus.TryGetValue(job.ProjectName, out var project))
@@ -182,7 +186,8 @@ public sealed class TaskLiveStatusProjection(
                 queued,
                 reviewQueue.PositionOf(job.ProjectName, job.Id),
                 reviewQueue.WaitStateOf(job.ProjectName, job.Id),
-                DateTime.UtcNow);
+                DateTime.UtcNow,
+                reviewHost);
         }
 
         return null;
@@ -204,6 +209,12 @@ public sealed class TaskLiveStatusProjection(
         // A mode change is visible before the next pickup tick records its gate.
         // Remote claims obey the same project mode, so a just queued Run now
         // must not look as though it is waiting for an occupied slot.
+        // The breaker changes mode synchronously; its pickup gate is published
+        // on the next tick. Use the breaker snapshot so that interval cannot
+        // advertise a manual-mode override of the safety cooldown.
+        if (project.BreakerCooldownUntil is { } until)
+            return queue with { ReasonCode = RunnerPickupWaitCodes.BreakerCooldown,
+                Reason = $"Auto-pickup is cooling down after a circuit-breaker trip ({project.BreakerReason ?? "unknown cause"}) and resumes at {until:O}." };
         if (project.Mode == "manual")
             return queue with { ReasonCode = RunnerPickupWaitCodes.ManualMode,
                 Reason = project.PickupGate is { Code: RunnerPickupWaitCodes.ManualMode } manualGate
@@ -251,9 +262,17 @@ public sealed class TaskLiveStatusProjection(
         ReviewQueueEntry? queued,
         int? localPosition,
         AutoReviewQueueWaitState? localWait,
-        DateTime nowUtc)
+        DateTime nowUtc,
+        AgentStudio.TaskServer.Contracts.HostTelemetrySnapshotDto? host = null)
     {
-        if (!canonical) return LocalReviewQueue(localPosition, localWait);
+        if (!canonical)
+        {
+            if (!IsIntegrationWait(localWait)
+                && (localPosition.HasValue || localWait is not null)
+                && ReviewHostHold(host) is { } hostHold)
+                return new TaskLiveQueue { Kind = "review", Reason = hostHold };
+            return LocalReviewQueue(localPosition, localWait);
+        }
 
         // A priority-only entry reads as Completed but has no attempt behind it.
         if (current is not { AttemptId: not null } review)
@@ -277,6 +296,8 @@ public sealed class TaskLiveStatusProjection(
 
         if (review.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased)
         {
+            if (ReviewHostHold(host) is { } hostHold)
+                return new TaskLiveQueue { Kind = "review", Reason = hostHold };
             // Pending, or a lease that ran out and waits to be re-claimed: the
             // same set ReadReviewQueue numbers. Only a missing executor
             // registration is worth a sentence; the position says the rest.
@@ -292,33 +313,130 @@ public sealed class TaskLiveStatusProjection(
         }
 
         if (review.Outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect)
-            return LocalReviewQueue(localPosition, localWait);
+            return LocalReviewQueue(localPosition, localWait, postReview: true)
+                ?? new TaskLiveQueue { Kind = "review", State = TaskLiveQueueStates.Integration,
+                    Reason = "waiting for delivery integration" };
 
         var outcome = OutcomeToken(review);
+        // AGT-3690: an infrastructure failure names its classification and the
+        // host it happened on. The outcome enum alone ("infrastructureFailure")
+        // hid that the review host had restarted, and the retry it scheduled
+        // was visible only as a timeline row.
+        var lost = LossOf(review);
         if (review.PendingInfrastructureRetryAt is { } retryAt)
         {
+            if (lost is null)
+            {
+                return new TaskLiveQueue
+                {
+                    Kind = "review",
+                    Outcome = outcome,
+                    Reason = $"review ended ({outcome}); retry scheduled for {Utc(retryAt)}",
+                };
+            }
+            var retry = new TaskLiveReviewRetry
+            {
+                Number = review.PendingInfrastructureRetryNumber,
+                Budget = AttemptAuthorityService.ReviewInfrastructureRetryBudget,
+                DueAt = retryAt,
+            };
             return new TaskLiveQueue
             {
                 Kind = "review",
+                State = TaskLiveQueueStates.RetryScheduled,
                 Outcome = outcome,
-                Reason = $"review ended ({outcome}); retry scheduled for {Utc(retryAt)}",
+                Lost = lost,
+                Retry = retry,
+                Reason = $"{LossSentence(lost)} {RetrySentence(retry)}",
             };
         }
 
-        return Stalled($"review ended ({outcome}); no new review attempt; operator decision needed", outcome);
+        return lost is null
+            ? Stalled($"review ended ({outcome}); no new review attempt; operator decision needed", outcome)
+            : Stalled($"{LossSentence(lost)} No automatic retry is scheduled; operator decision needed.", outcome) with
+            {
+                Lost = lost,
+            };
     }
 
-    private static TaskLiveQueue? LocalReviewQueue(int? localPosition, AutoReviewQueueWaitState? localWait)
+    internal static string? ReviewHostHold(AgentStudio.TaskServer.Contracts.HostTelemetrySnapshotDto? host)
     {
+        if (host is null) return null;
+        var cores = host.ReviewPlane?.HostCores ?? host.CpuCores;
+        if (host.Load1 is { } load && cores > 0 && load / cores >= 1.0)
+            return $"Review host saturated: load/core {load / cores:0.0} > 1.0";
+        if (host.ReviewPlane is { PlaneCpuCores: < 2.0 } plane)
+            return $"Review host has no review capacity: {plane.PlaneCpuCores:0.0} cores available; raise the review role quota or wait for capacity.";
+        if (host.ReviewPlane is { CurrentCeiling: <= 0 })
+            return "Review host has no review slots available; raise the review ceiling or wait for capacity.";
+        if (host.ReviewPlane is { CurrentCeiling: > 0 } capacity
+            && host.ActiveSlots >= capacity.CurrentCeiling)
+            return $"Review host at capacity: {host.ActiveSlots}/{capacity.CurrentCeiling} slots in use; wait for a slot.";
+        return null;
+    }
+
+    private static TaskLiveReviewLoss? LossOf(BoardReviewActivity review)
+    {
+        if (review.Outcome != ReviewTerminalOutcome.InfrastructureFailure) return null;
+        var classification = string.IsNullOrWhiteSpace(review.FailureClassification)
+            ? null
+            : review.FailureClassification.Trim();
+        return new TaskLiveReviewLoss
+        {
+            Cause = string.Equals(
+                    classification, ReviewAttemptChainEntry.ExecutorRestartedClassification,
+                    StringComparison.OrdinalIgnoreCase)
+                ? TaskLiveReviewLossCauses.HostRestarted
+                : TaskLiveReviewLossCauses.Infrastructure,
+            Classification = classification,
+            HostId = review.HostId,
+            ExecutorId = review.ExecutorId,
+            At = review.TerminalAt,
+        };
+    }
+
+    private static string LossSentence(TaskLiveReviewLoss lost)
+    {
+        var where = string.Join(", ", new[]
+        {
+            lost.HostId ?? lost.ExecutorId,
+            lost.At is { } at ? Utc(at) : null,
+        }.Where(part => !string.IsNullOrWhiteSpace(part)));
+        var cause = lost.Cause == TaskLiveReviewLossCauses.HostRestarted
+            ? "review host restarted"
+            : lost.Classification is null
+                ? "review infrastructure failed"
+                : $"review infrastructure failed ({lost.Classification})";
+        return where.Length == 0 ? $"Review lost: {cause}." : $"Review lost: {cause} ({where}).";
+    }
+
+    private static string RetrySentence(TaskLiveReviewRetry retry)
+        => retry.Number is { } number
+            ? $"Automatic retry {number} of {retry.Budget} at {Utc(retry.DueAt)}."
+            : $"Automatic retry at {Utc(retry.DueAt)}.";
+
+    private static TaskLiveQueue? LocalReviewQueue(int? localPosition, AutoReviewQueueWaitState? localWait,
+        bool postReview = false)
+    {
+        var state = postReview || IsIntegrationWait(localWait)
+            ? TaskLiveQueueStates.Integration : TaskLiveQueueStates.Queued;
         if (localPosition.HasValue)
-            return new TaskLiveQueue { Kind = "review", Position = localPosition.Value };
+            return new TaskLiveQueue { Kind = "review", Position = localPosition.Value, State = state };
 
         // Between two post-processing passes a deferred card has left the
         // local slot queue (it has no Position) but is not actually idle -
         // it is waiting out its backoff. Naming that wait keeps the card from
         // reading as an unexplained empty queue (AGT-2842).
-        return localWait is null ? null : new TaskLiveQueue { Kind = "review", Reason = DescribeWait(localWait) };
+        return localWait is null ? null : new TaskLiveQueue
+            { Kind = "review", State = state, Reason = DescribeWait(localWait) };
     }
+
+    private static bool IsIntegrationWait(AutoReviewQueueWaitState? wait) => wait?.Reason is
+        PostProcessingCardResult.AwaitingDeliveryIntegration
+        or PostProcessingCardResult.AwaitingIntegrationCompletion
+        or "delivery-resume-exhausted"
+        or "delivery-resume-backoff"
+        or AutoReviewDeliveryResumeService.Reasons.IntegrationOwnedWait;
 
     private static TaskLiveQueue Stalled(string reason, string? outcome) => new()
     {

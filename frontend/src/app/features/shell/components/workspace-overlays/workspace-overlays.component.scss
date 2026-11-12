@@ -138,6 +138,19 @@
 .ws-settings__section-head {
   margin-bottom: var(--studio-spacing-3);
 }
+.ws-settings__operations { display: grid; gap: var(--studio-spacing-4); }
+.ws-settings__operations-links { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }
+.ws-settings__operations-links button {
+  font: inherit;
+  color: var(--studio-fg);
+  background: var(--studio-bg-hover);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: 6px;
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  cursor: pointer;
+}
+.ws-settings__operations-links button:hover { background: var(--studio-bg-selected); }
+.ws-settings__operations-links button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 
 .ws-settings__cards {
   display: grid;

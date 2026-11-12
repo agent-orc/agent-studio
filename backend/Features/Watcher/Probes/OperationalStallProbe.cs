@@ -1,6 +1,7 @@
 using AgentStudio.Clients;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
+using AgentStudio.Projects;
 using AgentStudio.Shared;
 using AgentStudio.Security;
 using Contract = AgentStudio.TaskServer.Contracts;
@@ -21,6 +22,7 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
     private readonly GateSlotUsageTracker _gateSlots;
     private readonly PullGateStore _pullGates;
     private readonly IConfiguration _configuration;
+    private readonly ProjectSettingsService _settings;
 
     public string Name => "operational-stalls";
 
@@ -35,7 +37,7 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
         AttemptAuthorityService attempts, BatchGateStore gates, TaskScannerService tasks,
         HostReleaseDriftWatchdog releaseDrift, V1ReviewExecutorRegistry reviewHosts,
         ReviewClaimUnclaimableLog unclaimable, GateSlotUsageTracker gateSlots, PullGateStore pullGates,
-        IConfiguration configuration)
+        IConfiguration configuration, ProjectSettingsService settings)
     {
         _clients = clients;
         _telemetry = telemetry;
@@ -48,6 +50,7 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
         _gateSlots = gateSlots;
         _pullGates = pullGates;
         _configuration = configuration;
+        _settings = settings;
     }
 
     public IReadOnlyList<WatcherSignalObservation> Collect(string workspaceRoot, DateTime nowUtc)
@@ -236,17 +239,31 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
                 Cards = group.SelectMany(x => x.Cards).Distinct().ToArray(),
             }).ToArray();
 
-        var activeProjects = _gates.ListManifests()
-            .Where(x => HasState(x.BatchId)
-                && _gates.LatestState(x.BatchId).Phase is BatchPhase.Formed or BatchPhase.Assembling
-                or BatchPhase.Assembled or BatchPhase.Running or BatchPhase.Publishing)
-            .Select(x => x.Scope.Project).ToHashSet(StringComparer.Ordinal);
+        var batches = _gates.ListManifests()
+            .Where(x => HasState(x.BatchId))
+            .Select(x => (Manifest: x, State: _gates.LatestState(x.BatchId)))
+            .ToArray();
         var gateFacts = pendingGate.GroupBy(x => x.Subject.Project)
-            .Select(group => new GateStallFact(group.Key, "pending", PlanIdle: !activeProjects.Contains(group.Key),
-                group.Count(), group.Min(x => x.EnqueuedAtUtc.UtcDateTime),
-                group.Select(x => x.Subject.TaskKey).Distinct().ToArray(),
-                group.Select(x => x.Subject.TaskKey).Where(key =>
-                    jobs.Any(job => job.Id == key && job.State == TaskStates.Completed)).Distinct().ToArray()))
+            .Select(group =>
+            {
+                var active = batches.Where(x => x.Manifest.Scope.Project == group.Key
+                    && x.State.Phase is BatchPhase.Formed or BatchPhase.Assembling
+                        or BatchPhase.Assembled or BatchPhase.Running or BatchPhase.Publishing)
+                    .OrderByDescending(x => x.State.RecordedAtUtc).FirstOrDefault();
+                var batchId = active.Manifest?.BatchId ?? "not formed";
+                var phase = active.Manifest is null ? "pending" : active.State.Phase.ToString().ToLowerInvariant();
+                var started = active.Manifest is null ? (DateTime?)null
+                    : active.State.Phase == BatchPhase.Running
+                        ? _gates.ListRuns(batchId).OrderByDescending(x => x.StartedAtUtc)
+                            .FirstOrDefault()?.StartedAtUtc.UtcDateTime ?? active.State.RecordedAtUtc.UtcDateTime
+                        : active.State.RecordedAtUtc.UtcDateTime;
+                return new GateStallFact(group.Key, batchId, PlanIdle: active.Manifest is null,
+                    group.Count(), group.Min(x => x.EnqueuedAtUtc.UtcDateTime),
+                    group.Select(x => x.Subject.TaskKey).Distinct().ToArray(),
+                    group.Select(x => x.Subject.TaskKey).Where(key =>
+                        jobs.Any(job => job.Id == key && job.State == TaskStates.Completed)).Distinct().ToArray(),
+                    phase, started, _settings.Get(group.Key).BatchGate.GateTimeoutMinutes);
+            })
             .ToArray();
         var lanes = jobs.Where(x => x.EnteredLaneAt != default
                 && x.State is TaskStates.Progress or TaskStates.AutoReview or TaskStates.HumanReview)

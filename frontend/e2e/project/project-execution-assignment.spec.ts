@@ -14,6 +14,45 @@ test.beforeAll(() => {
   fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 });
 
+test('fresh local installation shows no invented runner and explains unavailable coding locations', async ({ page, devBackend }) => {
+  const projectName = 'Agent Studio Worktree';
+  const shotDir = process.env.JOB_RESULTS_DIR ?? SCREENSHOT_DIR;
+  fs.mkdirSync(shotDir, { recursive: true });
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
+  }));
+  await page.route('**/api/watch-paths', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify([{ name: projectName, path: devBackend.workspace, rootPath: devBackend.workspace }]),
+  }));
+  await page.route('**/api/projects/settings', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ [projectName]: {
+      pickupMode: 'auto', executionLocation: 'local', localCodingAdmitted: false,
+    } }),
+  }));
+  await page.route('**/api/clients', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: '[]',
+  }));
+  await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: '[]',
+  }));
+  await page.goto(`/#/projects/${slugFor(projectName)}/settings`, { waitUntil: 'domcontentloaded' });
+  const card = page.getByTestId('project-execution-card');
+  await expect(card).toBeVisible({ timeout: 60_000 });
+  const select = card.getByTestId('project-execution-host-select');
+  await expect(select.locator('option')).toHaveCount(1, { timeout: 30_000 });
+  await expect(select.locator('option')).toContainText(['Local (Local coding is disabled)']);
+  await expect(select.locator('option')).toHaveJSProperty('disabled', true);
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await card.screenshot({ path: path.join(shotDir, `fresh-execution--${theme}.png`) });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await card.screenshot({ path: path.join(shotDir, 'fresh-execution--390px.png') });
+});
+
 test('keeps pickup mode and execution location as independent controls', async ({ page, devBackend }) => {
   test.setTimeout(90_000);
   expect(devBackend.workspace).toBeTruthy();
@@ -80,6 +119,17 @@ test('keeps pickup mode and execution location as independent controls', async (
       }),
     });
   });
+  await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify([{
+      runnerId: 'agent-runner-01', name: 'agent-runner-01', lastSeenAt: new Date().toISOString(),
+      capabilities: [{ key: 'executor:coding', isFresh: true, healthState: 'healthy', advertisedStatus: 'ready' }],
+      hostAdmission: { admissionState: 'open' },
+    }, {
+      runnerId: 'review-only', name: 'review-only', lastSeenAt: new Date().toISOString(),
+      capabilities: [{ key: 'executor:review', isFresh: true, healthState: 'healthy', advertisedStatus: 'ready' }],
+      hostAdmission: { admissionState: 'open' },
+    }]),
+  }));
   await page.route('**/api/projects/*/execution-runner', async (route) => {
     expect(route.request().method()).toBe('PUT');
     const body = route.request().postDataJSON();
@@ -99,13 +149,16 @@ test('keeps pickup mode and execution location as independent controls', async (
 
   await page.goto(`/#/projects/${slugFor(projectName)}/settings`, { waitUntil: 'domcontentloaded' });
   const card = page.getByTestId('project-execution-card');
-  await expect(card).toBeVisible({ timeout: 30_000 });
+  await expect(card).toBeVisible({ timeout: 60_000 });
   await expect(card.getByTestId('project-pickup-mode-auto')).toHaveAttribute('aria-pressed', 'true');
   await expect(card.getByTestId('project-pickup-mode-auto')).toBeVisible();
   await expect(card.getByTestId('project-pickup-mode-paused')).toBeVisible();
 
   const hostSelect = card.getByTestId('project-execution-host-select');
   await expect(hostSelect).toHaveValue('local');
+  await expect(hostSelect.locator('option[value="local"]')).toHaveJSProperty('disabled', true);
+  await expect(hostSelect.locator('option[value="review-only"]')).toHaveJSProperty('disabled', true);
+  await expect(hostSelect.locator('option[value="review-only"]')).toContainText('Review-only runner');
   await expect(card.getByTestId('local-coding-disabled-warning')).toContainText('Local coding is disabled');
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);

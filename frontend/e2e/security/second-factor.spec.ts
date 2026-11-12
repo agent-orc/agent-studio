@@ -36,12 +36,15 @@ test('Owner enrollment requires a verified authenticator and shows recovery code
   await page.getByRole('button', { name: 'Set up authenticator' }).click();
   await expect(page.getByTestId('totp-secret')).toHaveText(secret);
   await expect(page.locator('output[data-testid="totp-secret"] + p')).toContainText('Add this secret');
+  await expect(page.getByTestId('totp-link')).toHaveAttribute('href', new RegExp(`^otpauth://totp/.*secret=${secret}`));
+  await expect(page.getByTestId('totp-qr')).toHaveAttribute('src', /^data:image\/png;base64,/);
+  const mask = [page.getByTestId('totp-secret'), page.getByTestId('totp-link'), page.getByTestId('totp-qr')];
   await setTheme(page, 'light');
-  await page.screenshot({ path: join(resultDir, 'second-factor-light--mocked.png'), fullPage: true });
+  await page.screenshot({ path: join(resultDir, 'second-factor-light--mocked.png'), fullPage: true, mask });
   await setTheme(page, 'dark');
-  await page.screenshot({ path: join(resultDir, 'second-factor-dark--mocked.png'), fullPage: true });
+  await page.screenshot({ path: join(resultDir, 'second-factor-dark--mocked.png'), fullPage: true, mask });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: join(resultDir, 'second-factor-390--mocked.png'), fullPage: true });
+  await page.screenshot({ path: join(resultDir, 'second-factor-390-dark--mocked.png'), fullPage: true, mask });
   await page.getByLabel('Authenticator code').fill('123456');
   await page.getByRole('button', { name: 'Verify authenticator' }).click();
   await expect(page.getByRole('alert')).toHaveText('The authenticator code is invalid.');
@@ -62,7 +65,7 @@ test('Owner can inspect and revoke sessions and receives a new-session notice', 
   ];
   await page.route('**/api/**', route => route.fulfill(json([])));
   await page.route('**/api/v1/studio/board**', route => route.fulfill(json({
-    backlog: [], ready: [], progress: [], autoReview: [], humanReview: [],
+    backlog: [], preparation: [], ready: [], progress: [], autoReview: [], humanReview: [],
     escalated: [], completed: [], archive: [],
   })));
   await page.route('**/api/tasks/archive**', route => route.fulfill(json({ items: [], total: 0 })));
@@ -86,6 +89,8 @@ test('Owner can inspect and revoke sessions and receives a new-session notice', 
   await page.route('**/api/auth/sessions', route => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify(sessions),
   }));
+  const secret = Array.from({ length: 32 }, (_, index) => String.fromCharCode(65 + index % 26)).join('');
+  await page.route('**/api/auth/totp/start', route => route.fulfill(json({ secret })));
   await page.route('**/api/auth/sessions/*', route => {
     sessions.splice(sessions.findIndex(session => session.id === route.request().url().split('/').at(-1)), 1);
     return route.fulfill({ status: 204 });
@@ -107,6 +112,22 @@ test('Owner can inspect and revoke sessions and receives a new-session notice', 
   await page.screenshot({ path: join(resultDir, 'sessions-light--mocked.png'), fullPage: true });
   await setTheme(page, 'dark');
   await page.screenshot({ path: join(resultDir, 'sessions-dark--mocked.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const panel = page.getByTestId('session-manager-panel');
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    const box = await panel.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(844);
+    await panel.getByRole('button', { name: 'Add authenticator' }).scrollIntoViewIfNeeded();
+    await expect(panel.getByRole('button', { name: 'Add authenticator' })).toBeInViewport();
+    await panel.getByRole('button', { name: 'Revoke all other sessions' }).scrollIntoViewIfNeeded();
+    await expect(panel.getByRole('button', { name: 'Revoke all other sessions' })).toBeInViewport();
+    await page.screenshot({ path: join(resultDir, `sessions-panel-390-${theme}.png`) });
+  }
   await page.getByTestId('session-row').filter({ hasText: 'Second browser' }).getByRole('button', { name: 'Revoke' }).click();
   await expect(page.getByTestId('session-row')).toHaveCount(1);
   sessions.push({ id: 'newer', device: 'Another browser', address: '192.0.2.12',
@@ -114,4 +135,14 @@ test('Owner can inspect and revoke sessions and receives a new-session notice', 
   await page.getByTestId('session-manager-panel').getByRole('button', { name: 'Refresh', exact: true }).click();
   await page.getByRole('button', { name: 'Revoke all other sessions' }).click();
   await expect(page.getByTestId('session-row')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Add authenticator' }).click();
+  await expect(page.getByTestId('session-totp-link')).toHaveAttribute('href', new RegExp(`^otpauth://totp/.*secret=${secret}`));
+  await expect(page.getByTestId('session-totp-qr')).toHaveAttribute('src', /^data:image\/png;base64,/);
+  const mask = [page.getByTestId('session-totp-secret'), page.getByTestId('session-totp-link'), page.getByTestId('session-totp-qr')];
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(resultDir, `sessions-factor-setup-${theme}--mocked.png`), fullPage: true, mask });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: join(resultDir, 'sessions-factor-setup-390--mocked.png'), fullPage: true, mask });
 });

@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, ElementRef, ViewChild, computed, effect, inject, input, output, signal } from '@angular/core';
+import { ReviewerSession } from '../../../../services/reviewer-session.service';
 import { TaskInfo, TaskState } from '../../../../models/task.model';
 import { laneName, laneTone as laneToneFor } from '../../../../models/lane-presentation';
 import {
@@ -22,6 +23,7 @@ import {
   TriageButton,
   laneLabelFor,
   mergeAcceptViewFor,
+  acceptanceRequiresIntegration,
   acceptanceHoldReason,
   overflowActionsFor,
   primaryActionFor,
@@ -53,6 +55,7 @@ import { RemoteDispatchRejectionComponent } from '../../../../components/remote-
 })
 export class DetailHeaderComponent {
   readonly info = input.required<TaskInfo>();
+  readonly gateInfrastructurePark = input(false);
   readonly defaultThinkingLevel = input<string | null>(null);
   readonly headerModel = computed(() => {
     const info = this.info();
@@ -215,14 +218,16 @@ export class DetailHeaderComponent {
   }
 
   // --- triage cluster (primary + overflow) --------------------------------
+  // AGT-3670: a Reviewer gets no cluster; the overview's review panel decides.
+  private readonly reviewer = inject(ReviewerSession);
+  readonly reviewsOnly = computed(() => this.reviewer.reviewsOnly(this.info().projectName));
 
   /** Lane label for tooltips / aria-text on the overflow trigger. */
   readonly triageLaneLabel = computed(() => laneLabelFor(this.info().state));
 
   /** Index 0 of the lane's action list when it carries a primary variant. */
-  readonly triagePrimary = computed<TriageButton | null>(() =>
-    primaryActionFor(this.info().state),
-  );
+  readonly triagePrimary = computed<TriageButton | null>(() => this.gateInfrastructurePark() || this.reviewsOnly()
+    ? null : primaryActionFor(this.info().state));
 
   /**
    * State-dependent presentation for the Human Review acceptance primary. Null
@@ -247,11 +252,13 @@ export class DetailHeaderComponent {
   /** A fresh verdict releases Accept even if provenance is still loading. */
   readonly primaryAwaitingGit = computed(() => {
     const p = this.triagePrimary();
+    if (!acceptanceRequiresIntegration(this.info())) return false;
     const status = this.info().integration?.status;
     return !!p && this.GIT_DEPENDENT_PRIMARY_IDS.has(p.id) && this.gitInfoLoading()
       && status !== 'integrated' && status !== 'not-applicable';
   });
   readonly primaryBlockedByIntegration = computed(() => {
+    if (!acceptanceRequiresIntegration(this.info())) return false;
     const status = this.info().integration?.status;
     return this.triagePrimary()?.id === 'mark-done' && status !== 'integrated' && status !== 'not-applicable';
   });
@@ -259,9 +266,8 @@ export class DetailHeaderComponent {
   readonly primaryDecisionRefusal = computed(() => triageDecisionRefusal(this.info(), this.triagePrimary()));
 
   /** Remaining lane actions + always-on Edit/Delete fallbacks. */
-  readonly triageOverflow = computed<TriageButton[]>(() =>
-    overflowActionsFor(this.info().state),
-  );
+  readonly triageOverflow = computed<TriageButton[]>(() => this.gateInfrastructurePark() || this.reviewsOnly()
+    ? [] : overflowActionsFor(this.info().state));
 
   /** True when a primary or any overflow action is available. */
   readonly hasTriageActions = computed(

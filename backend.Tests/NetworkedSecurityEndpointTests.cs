@@ -28,6 +28,87 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "studio-networked-endpoints-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task Bootstrap_and_invitation_routes_record_the_browser_and_resolved_address()
+    {
+        using var factory = BuildFactory("203.0.113.15");
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("StudioTestBrowser/1.0");
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+
+        using var bootstrap = await client.PostAsJsonAsync("/api/auth/bootstrap",
+            new BootstrapRequest("first.owner", "correct horse battery staple!", "First Owner", "website-setup-code"));
+        bootstrap.EnsureSuccessStatusCode();
+        var ownerSession = store.AuthenticateSession(SessionToken(bootstrap))!.Session;
+        Assert.Equal(("StudioTestBrowser/1.0", "203.0.113.15"), (ownerSession.Device, ownerSession.Address));
+
+        var owner = store.ListUsers().Single();
+        var invite = store.InviteUser(new InviteUserRequest("invited.user", "Invited User", StudioRoles.Viewer, ["*"]), owner.Id);
+        using var accepted = await client.PostAsJsonAsync("/api/auth/invite/accept",
+            new AcceptInvitationRequest(invite.Token, "new invited password phrase!"));
+        accepted.EnsureSuccessStatusCode();
+        var invitedSession = store.AuthenticateSession(SessionToken(accepted))!.Session;
+        Assert.Equal(("StudioTestBrowser/1.0", "203.0.113.15"), (invitedSession.Device, invitedSession.Address));
+    }
+
+    private static string SessionToken(HttpResponseMessage response)
+        => response.Headers.GetValues("Set-Cookie")
+            .Select(value => value.Split(';')[0].Split('=', 2))
+            .Single(parts => parts[0] == AccessSecurityStore.SessionCookieName)[1];
+
+    [Fact]
+    public async Task Signed_in_viewer_can_read_names_without_access_administration_fields()
+    {
+        using var factory = BuildFactory("203.0.113.15");
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var owner = store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", "Owner Name"));
+        var invitation = store.InviteUser(new InviteUserRequest("viewer", "Viewer Name", StudioRoles.Viewer, ["*"]), owner.User.Id);
+        var viewer = store.AcceptInvitation(new AcceptInvitationRequest(invitation.Token, "another correct horse phrase!"));
+
+        using var anonymous = await client.GetAsync("/api/auth/directory");
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/directory");
+        request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={viewer.SessionToken}");
+        using var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        var directory = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(2, directory.GetArrayLength());
+        Assert.Contains(directory.EnumerateArray(), user =>
+            user.GetProperty("id").GetString() == owner.User.Id
+            && user.GetProperty("displayName").GetString() == "Owner Name");
+        Assert.All(directory.EnumerateArray(), user => Assert.Equal(2, user.EnumerateObject().Count()));
+    }
+
+    [Fact]
+    public async Task Authenticator_code_cannot_sign_in_twice_in_one_step()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 2, 12, 0, 0, TimeSpan.Zero));
+        using var factory = BuildFactory("203.0.113.15", clock: clock);
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var password = "long pass phrase " + Guid.NewGuid().ToString("N");
+        var bootstrap = store.Bootstrap(new BootstrapRequest("owner", password, "Owner"));
+        var owner = store.AuthenticateSession(bootstrap.SessionToken)!;
+        var secret = store.BeginTotpEnrollment(owner);
+        store.ConfirmTotpEnrollment(owner, SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime));
+        clock.Advance(TimeSpan.FromSeconds(30));
+        var code = SecondFactorCodes.CurrentTotp(secret, clock.GetUtcNow().UtcDateTime);
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
+        using var first = await client.PostAsJsonAsync("/api/auth/login",
+            new { username = "owner", password, secondFactorCode = code });
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        using var replay = await client.PostAsJsonAsync("/api/auth/login",
+            new { username = "owner", password, secondFactorCode = code });
+        Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
+        Assert.Equal("invalid-second-factor", (await replay.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+    }
+
+    [Fact]
     public async Task Networked_host_execution_and_url_targets_require_owner()
     {
         var projectPath = Directory.CreateDirectory(Path.Combine(_workspace, "projects", "networked-smoke")).FullName;
@@ -515,15 +596,28 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         var status = await client.GetFromJsonAsync<AuthStatusResponse>("/api/auth/status");
         Assert.True(status!.BootstrapCodeRequired);
         var owner = new { username = "first.owner", password = "correct horse battery staple!", displayName = "First Owner" };
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/auth/bootstrap", owner)).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/auth/bootstrap", new
+        await AssertCodeError(await client.PostAsJsonAsync("/api/auth/bootstrap", owner));
+        await AssertCodeError(await client.PostAsJsonAsync("/api/auth/bootstrap", new
         {
             owner.username, owner.password, owner.displayName, bootstrapCode = "wrong"
-        })).StatusCode);
+        }));
+        Assert.True(factory.Services.GetRequiredService<AccessSecurityStore>().BootstrapRequired);
         (await client.PostAsJsonAsync("/api/auth/bootstrap", new
         {
             owner.username, owner.password, owner.displayName, bootstrapCode = "website-setup-code"
         })).EnsureSuccessStatusCode();
+
+        static async Task AssertCodeError(HttpResponseMessage response)
+        {
+            using (response)
+            {
+                Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+                var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+                Assert.Equal("bootstrap-validation", body.GetProperty("error").GetString());
+                Assert.Equal("A valid installer owner code is required.",
+                    body.GetProperty("errors").GetProperty("bootstrapCode")[0].GetString());
+            }
+        }
     }
 
     [Fact]

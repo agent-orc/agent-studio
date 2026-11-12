@@ -3,7 +3,7 @@ using AgentStudio.Tasks;
 
 namespace AgentStudio.Runner;
 
-public enum RemoteReviewContinuationKind { FindingRound, BudgetEscalation }
+public enum RemoteReviewContinuationKind { FindingRound, BudgetEscalation, PlanMergeRound }
 
 /// <summary>A settled report's durable lane and prompt decision.</summary>
 /// <param name="Base">
@@ -79,10 +79,13 @@ public static class RemoteReviewContinuationProjection
         {
             if (!ownsReviewReport()) return false;
             task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
-            var target = continuation.Kind == RemoteReviewContinuationKind.FindingRound
+            var isReadyRound = continuation.Kind is RemoteReviewContinuationKind.FindingRound
+                or RemoteReviewContinuationKind.PlanMergeRound;
+            var isPlanMerge = continuation.Kind == RemoteReviewContinuationKind.PlanMergeRound;
+            var target = isReadyRound
                 ? TaskStates.Ready : TaskStates.Escalated;
-            var cause = continuation.Kind == RemoteReviewContinuationKind.FindingRound
-                ? "multi-aspect-block" : "card-round-budget";
+            var cause = isPlanMerge ? "review-plan-skew"
+                : isReadyRound ? "multi-aspect-block" : "card-round-budget";
             var moveKey = $"continuation:{entry.IdempotencyKey}";
             // A settled review stays the card's current attempt until the next
             // one is minted, so a later return to 4-auto-review must not replay
@@ -91,7 +94,7 @@ public static class RemoteReviewContinuationProjection
                 timeline.ReadAll(task.FolderPath), entry.AttemptId, cause, moveKey, task.State);
             if (step == RemoteReviewContinuationStep.Completed) return true;
             if (step == RemoteReviewContinuationStep.Unapplicable) return false;
-            var fixRoundBase = continuation.Kind == RemoteReviewContinuationKind.FindingRound
+            var fixRoundBase = isReadyRound
                 ? continuation.Base : null;
             if (step == RemoteReviewContinuationStep.Move)
             {
@@ -103,14 +106,16 @@ public static class RemoteReviewContinuationProjection
                 var move = await transitions.MoveAsync(
                     task.Id, target, task.WatchPath, ct,
                     cause: $"remote-review-continuation:{entry.AttemptId}",
-                    reason: continuation.Kind == RemoteReviewContinuationKind.FindingRound
-                        ? $"Blocking review findings from {entry.AttemptId}."
+                    reason: isReadyRound
+                        ? isPlanMerge ? entry.Report.Summary
+                            ?? "The delivery predates the review plan; merge round sent."
+                            : $"Blocking review findings from {entry.AttemptId}."
                         : $"Automatic round budget spent ({continuation.Budget.Used} of {continuation.Budget.Allowed}).",
                     authorityWrite: new AttemptWriteReference(
                         entry.AttemptId, entry.Report.Fence, entry.Report.AuthorityEpoch, moveKey),
                     suppressProductExecution: true,
                     expectedSourceState: TaskStates.AutoReview,
-                    transitionCause: continuation.Kind == RemoteReviewContinuationKind.FindingRound
+                    transitionCause: isReadyRound
                         ? LaneChangeCauses.QualityLoop : LaneChangeCauses.Escalated,
                     transitionDetail: cause).ConfigureAwait(false);
                 if (move.Status != MoveJobStatus.Success)
@@ -127,16 +132,17 @@ public static class RemoteReviewContinuationProjection
             var receipt = CardRoundBudgetReceipt.Details(
                 continuation.Budget, continuation.BlockingAspects,
                 cause,
-                continuation.Kind == RemoteReviewContinuationKind.FindingRound
+                isReadyRound
                     ? CardRoundBudgetAction.OpenRound : CardRoundBudgetAction.Escalate);
             receipt["reviewAttemptId"] = entry.AttemptId;
-            if (continuation.Kind == RemoteReviewContinuationKind.FindingRound)
+            if (isReadyRound)
             {
                 TaskJsonFile.UpdateOrder(task.FolderPath, 0, logger);
-                ReviewConcernRoundStore.RecordFinding(task.FolderPath, continuation.MaximumConcernRounds,
-                    entry.AttemptId, continuation.BlockingAspects,
-                    entry.Report.Workspace.ExpectedResultSha, entry.Report.Workspace.IntegrationTipSha,
-                    entry.Report.Verdicts);
+                if (!isPlanMerge)
+                    ReviewConcernRoundStore.RecordFinding(task.FolderPath, continuation.MaximumConcernRounds,
+                        entry.AttemptId, continuation.BlockingAspects,
+                        entry.Report.Workspace.ExpectedResultSha, entry.Report.Workspace.IntegrationTipSha,
+                        entry.Report.Verdicts);
                 var marker = $"<!-- review-finding-round:{entry.AttemptId} -->";
                 var promptPath = Path.Combine(task.FolderPath, "prompt.md");
                 if (!File.Exists(promptPath) || !File.ReadAllText(promptPath).Contains(marker, StringComparison.Ordinal))
@@ -146,7 +152,7 @@ public static class RemoteReviewContinuationProjection
                     try
                     {
                         File.WriteAllText(temporary, previous
-                            + $"\n\n---\n\n## Review finding round {entry.AttemptId}\n\n"
+                            + $"\n\n---\n\n## {(isPlanMerge ? "Review plan merge round" : "Review finding round")} {entry.AttemptId}\n\n"
                             + marker + "\n" + continuation.FollowUp.TrimEnd() + "\n");
                         File.Move(temporary, promptPath, overwrite: true);
                     }
@@ -167,8 +173,9 @@ public static class RemoteReviewContinuationProjection
                     }
                     finally { if (File.Exists(temporary)) File.Delete(temporary); }
                 }
-                ConcernTagWriter.MergeConcernTags(task.FolderPath,
-                    [ReviewDecisionOrchestrator.ReissueTagId], logger);
+                if (!isPlanMerge)
+                    ConcernTagWriter.MergeConcernTags(task.FolderPath,
+                        [ReviewDecisionOrchestrator.ReissueTagId], logger);
                 receipt["aspects"] = string.Join(",", continuation.BlockingAspects);
                 receipt["followUpPrompt"] = RunTriggerMetadata.PromptPreview(continuation.FollowUp);
                 if (fixRoundBase is not null)
@@ -180,11 +187,13 @@ public static class RemoteReviewContinuationProjection
                 }
             }
             timeline.Append(task.FolderPath,
-                continuation.Kind == RemoteReviewContinuationKind.FindingRound
+                isReadyRound
                     ? TimelineEventKinds.QualityLoopReopened : TimelineEventKinds.OrchestratorEscalated,
                 TimelineActors.QualityLoop,
-                continuation.Kind == RemoteReviewContinuationKind.FindingRound
-                    ? $"Blocking findings from review {entry.AttemptId} reopened the card."
+                isReadyRound
+                    ? isPlanMerge ? entry.Report.Summary
+                        ?? "The delivery predates the review plan; merge round sent."
+                        : $"Blocking findings from review {entry.AttemptId} reopened the card."
                     : $"Automatic round budget spent ({continuation.Budget.Used} of {continuation.Budget.Allowed}); open blocking aspects: {string.Join(", ", continuation.BlockingAspects)}.",
                 runId: entry.AttemptId, details: receipt);
             return true;

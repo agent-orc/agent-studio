@@ -77,6 +77,7 @@ export interface ActiveExplorerWorkbench {
   styleUrl: './explorer-workspace-tree.component.scss',
 })
 export class ExplorerWorkspaceTreeComponent {
+  readonly workspaceMagazineRequest = output<{ id: string; label: string }>();
   readonly projectRows = input<readonly ExplorerProjectRow[]>([]);
   readonly registryWorkspaces = input<readonly RegistryWorkspaceListItem[]>([]);
   /** Flat registry list also contains records whose workspaceId is empty or

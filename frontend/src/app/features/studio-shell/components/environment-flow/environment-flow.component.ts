@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, output, signal } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import type { TaskInfo } from '../../../../models/task.model';
 import { RemoteHostsService } from '../../../remote-hosts/services/remote-hosts.service';
 import type { RemoteHost } from '../../../remote-hosts/models/remote-host.model';
@@ -12,6 +12,7 @@ import { EnvironmentHealthOverviewComponent } from '../../../environment-health'
 import { ServerReadinessPanelComponent } from '../../../server-readiness';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { claimLoadGateLabel } from '../../../remote-hosts/models/claim-load-gate';
+import { laneName } from '../../../../models/lane-presentation';
 
 interface DecisionReceipt {
   receiptId: string; taskId: string | null; chosenAction: string; callStatus: string; endedAt: string;
@@ -33,6 +34,7 @@ export class EnvironmentFlowComponent implements OnInit, OnDestroy {
   readonly flow = signal<EnvironmentFlowSnapshot | null>(null);
   readonly attempts = signal<readonly AttemptVisibility[]>([]);
   readonly attemptState = signal<'loading' | 'ready' | 'unavailable'>('loading');
+  readonly attemptUnavailableReason = signal('Attempt visibility is temporarily unavailable.');
   readonly cases = signal<readonly WatcherCase[]>([]);
   readonly receipts = signal<readonly DecisionReceipt[]>([]);
   readonly error = signal<string | null>(null);
@@ -61,9 +63,12 @@ export class EnvironmentFlowComponent implements OnInit, OnDestroy {
         this.attempts.set(data.attempts ?? []);
         this.attemptState.set('ready');
       },
-      error: () => {
+      error: (failure: unknown) => {
         if (attemptRefreshSequence !== this.attemptRefreshSequence) return;
         this.attempts.set([]);
+        this.attemptUnavailableReason.set(failure instanceof HttpErrorResponse && failure.status === 404
+          ? 'Attempt receipts require a connected Task Server. This local connection does not serve that panel.'
+          : 'Attempt visibility is temporarily unavailable for this connection.');
         this.attemptState.set('unavailable');
       },
     });
@@ -83,6 +88,21 @@ export class EnvironmentFlowComponent implements OnInit, OnDestroy {
   }
 
   readonly minutes = minutes;
+  readonly laneName = laneName;
+  displayCaseSummary(item: WatcherCase): string {
+    let summary = item.lastSummary.replace(/\b\d+[a-z]?-[a-z][a-z-]*\b/g, lane => laneName(lane));
+    for (const card of item.affectedCards) {
+      const task = this.tasks().find(candidate => candidate.id === card || candidate.key === card || candidate.taskKey === card);
+      if (task) summary = summary.replace(card, `${task.key || task.id} · ${task.title}`);
+    }
+    return summary;
+  }
+  cardNames(cards: readonly string[]): string {
+    return cards.map(card => {
+      const task = this.tasks().find(candidate => candidate.id === card || candidate.key === card || candidate.taskKey === card);
+      return task ? `${task.key || task.id} · ${task.title}` : card;
+    }).join(', ') || 'not linked';
+  }
   readonly claimLoadGateLabel = claimLoadGateLabel;
   hostAttempts(host: RemoteHost): readonly AttemptVisibility[] {
     const hostId = host.hostAdmission?.hostId ?? host.id;

@@ -136,7 +136,9 @@ public class TaskStateMachine
         bool archiveOverrideRollback = false,
         bool historicalAcceptanceRepair = false,
         bool operatorDecisionPark = false,
-        Func<TaskInfo, MoveJobOutcome?>? beforeMove = null)
+        Func<TaskInfo, MoveJobOutcome?>? beforeMove = null,
+        DateTime? expectedSourceEnteredLaneAt = null,
+        long? expectedSourceTaskJsonWriteTicks = null)
     {
         if (!TaskStates.All.Contains(targetState))
             return new MoveJobOutcome(MoveJobStatus.Failure, $"Invalid state: {targetState}");
@@ -183,6 +185,14 @@ public class TaskStateMachine
                 MoveJobStatus.SourceStateMismatch,
                 $"Expected source state {expectedSourceState}, current state is {recheck.State}.");
         }
+        if (expectedSourceEnteredLaneAt is { } expectedEntered
+            && recheck.EnteredLaneAt != expectedEntered)
+            return new MoveJobOutcome(MoveJobStatus.SourceStateMismatch,
+                "The card entered this lane again after the intervention.");
+        if (expectedSourceTaskJsonWriteTicks is { } expectedWriteTicks
+            && recheck.TaskJsonWriteTicks != expectedWriteTicks)
+            return new MoveJobOutcome(MoveJobStatus.SourceStateMismatch,
+                "The card changed after the intervention.");
         if (recheck.State == targetState) return new MoveJobOutcome(MoveJobStatus.Success, NewFolderPath: recheck.FolderPath);
 
         if (archiveOverrideRollback && (recheck.State != TaskStates.Archive

@@ -77,6 +77,9 @@ public sealed record ReviewAttemptDto(
     string? TerminalReason,
     IReadOnlyList<ReviewReportDeliveryDto> Reports);
 
+/// <summary>One leased attempt an executor still runs; Kind is <c>coding</c> or <c>review</c>.</summary>
+public sealed record ExecutorActiveAttempt(string Kind, string AttemptId, string TaskKey, DateTime AcquiredAt);
+
 public sealed record ReviewReportDeliveryDto(
     string IdempotencyKey,
     long Fence,

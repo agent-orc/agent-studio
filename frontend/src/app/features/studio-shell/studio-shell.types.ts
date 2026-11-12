@@ -9,7 +9,7 @@
  */
 
 /** Discrete tab kinds the editor area can host. */
-export type StudioTabKind = 'board' | 'feed' | 'task' | 'hub' | 'workbenches' | 'workbench' | 'diff' | 'activity' | 'url-preview' | 'workspace-settings' | 'deployment-dashboard' | 'structure' | 'welcome';
+export type StudioTabKind = 'board' | 'feed' | 'task' | 'hub' | 'magazine' | 'workbenches' | 'workbench' | 'diff' | 'activity' | 'url-preview' | 'workspace-settings' | 'deployment-dashboard' | 'structure' | 'welcome';
 
 /** Sidebar panel kinds reachable from the ActivityBar. */
 export type StudioPanelKind = 'explorer' | 'filters' | 'cli' | 'activity' | 'settings' | 'chats';
@@ -19,6 +19,7 @@ export interface BoardTab { kind: 'board'; projectName: string; }
 
 /** Workspace-wide orchestrator Feed; singleton key `feed`. */
 export interface FeedTab { kind: 'feed'; }
+export interface MagazineTab { kind: 'magazine'; scope: string; label: string }
 
 /**
  * Which project scope a task tab was opened in (AGT-2692).
@@ -133,7 +134,7 @@ export interface StructureTab { kind: 'structure'; projectName?: string; }
 /** Welcome screen — no real tab, no key. */
 export interface WelcomeTab { kind: 'welcome'; }
 
-export type StudioTab = BoardTab | FeedTab | TaskTab | HubTab | WorkbenchesTab | WorkbenchTab | DiffTab | ActivityTab | UrlPreviewTab | WorkspaceSettingsTab | DeploymentDashboardTab | StructureTab | WelcomeTab;
+export type StudioTab = BoardTab | FeedTab | MagazineTab | TaskTab | HubTab | WorkbenchesTab | WorkbenchTab | DiffTab | ActivityTab | UrlPreviewTab | WorkspaceSettingsTab | DeploymentDashboardTab | StructureTab | WelcomeTab;
 
 /**
  * Build the stable target identity for a tab. Replaceable substate is omitted:
@@ -144,6 +145,7 @@ export function studioTabKey(tab: StudioTab): string {
   switch (tab.kind) {
     case 'board':    return `board:${tab.projectName}`;
     case 'feed':     return 'feed';
+    case 'magazine': return `magazine:${tab.scope}`;
     case 'task':     return `task:${tab.taskKey}`;
     case 'hub': {
       if (tab.documentId) return `document:${tab.documentId}`;

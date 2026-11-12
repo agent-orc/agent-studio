@@ -23,7 +23,8 @@ export interface OperatorAttentionResponse {
 
 /** The decision-event classes of the operator stream, in the order the list shows them. */
 export type AttentionClass =
-  | 'decision' | 'dossier' | 'escalation' | 'human-review' | 'batch' | 'push' | 'quota' | 'host' | 'installation' | 'other';
+  | 'decision' | 'dossier' | 'escalation' | 'human-review' | 'batch' | 'batch-record' | 'push' | 'quota' | 'host'
+  | 'installation' | 'other';
 
 /** Where a row's primary action leads. */
 export type AttentionTarget = 'card' | 'dossiers' | 'backups' | 'credentials' | 'batch-gate' | 'cli-usage' | 'hosts' | 'activity';
@@ -40,7 +41,8 @@ const CLASSES: readonly AttentionClassSpec[] = [
   { key: 'dossier', label: 'Dossiers', action: 'Open Dossiers', target: 'dossiers' },
   { key: 'escalation', label: laneName(TaskState.Escalated), action: 'Open card', target: 'card' },
   { key: 'human-review', label: laneName(TaskState.HumanReview), action: 'Review', target: 'card' },
-  { key: 'batch', label: 'Batch red or isolating', action: 'Open batch gate', target: 'batch-gate' },
+  { key: 'batch', label: 'Batch needs attention', action: 'Open batch panel', target: 'batch-gate' },
+  { key: 'batch-record', label: 'Batch record unreadable', action: 'Open batch gate', target: 'batch-gate' },
   { key: 'push', label: 'Overdue pending push', action: 'Open batch gate', target: 'batch-gate' },
   { key: 'quota', label: 'Quota exhausted or fallback active', action: 'Open CLI usage', target: 'cli-usage' },
   { key: 'host', label: 'Host not claiming', action: 'Open hosts', target: 'hosts' },
@@ -57,6 +59,8 @@ const CLASS_OF_TYPE: Readonly<Record<string, AttentionClass>> = {
   'human-review.ready': 'human-review',
   'batch.red': 'batch',
   'batch.isolating': 'batch',
+  'batch.record-unreadable': 'batch-record',
+  'batch-gate.stuck': 'batch',
   'push.pending-overdue': 'push',
   'quota.exhausted': 'quota',
   'quota.fallback-active': 'quota',

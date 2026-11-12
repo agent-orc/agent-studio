@@ -9,7 +9,7 @@ import {
   signal,
 } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { RemoteHostsService, type RemoteHost } from '../../../remote-hosts';
+import { RemoteHostsService, codingLocationUnavailableReason, type RemoteHost } from '../../../remote-hosts';
 
 type ProbeState = 'pending' | 'running' | 'passed' | 'failed';
 type ProbeKey = 'code' | 'branch' | 'toolchain' | 'noop';
@@ -46,7 +46,7 @@ export class ExecutionAssignmentCardComponent implements OnInit {
 
   readonly selectedHostId = signal('local');
   readonly pickupMode = signal<'auto' | 'manual' | 'paused'>('manual');
-  readonly localCodingAdmitted = signal(true);
+  readonly localCodingAdmitted = signal(false);
   readonly integrationBranch = signal('develop');
   readonly saving = signal(false);
   readonly saveError = signal<string | null>(null);
@@ -58,6 +58,8 @@ export class ExecutionAssignmentCardComponent implements OnInit {
   readonly assignableHosts = computed(() =>
     this.hostRegistry.hosts().filter((host) => host.status !== 'retired'),
   );
+  readonly unavailableReason = (host: RemoteHost) =>
+    codingLocationUnavailableReason(host, this.localCodingAdmitted());
   readonly selectedHost = computed(() =>
     this.assignableHosts().find((host) => host.id === this.selectedHostId()) ?? null,
   );
@@ -87,7 +89,7 @@ export class ExecutionAssignmentCardComponent implements OnInit {
         next: (settings) => {
           const project = settings?.[this.projectName()];
           this.pickupMode.set(project?.pickupMode || 'manual');
-          this.localCodingAdmitted.set(project?.localCodingAdmitted ?? true);
+          this.localCodingAdmitted.set(project?.localCodingAdmitted ?? false);
           this.selectedHostId.set(
             project?.executionLocation
             || (project?.remoteExecutionEnabled === false ? 'local' : project?.executionRunner)
@@ -126,6 +128,8 @@ export class ExecutionAssignmentCardComponent implements OnInit {
   }
 
   assign(hostId: string): void {
+    const host = this.assignableHosts().find(candidate => candidate.id === hostId);
+    if (!host || this.unavailableReason(host)) return;
     const previous = this.selectedHostId();
     this.selectedHostId.set(hostId);
     this.resetProbe();

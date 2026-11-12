@@ -17,4 +17,7 @@ public enum ReviewTerminalOutcome
     /// integration: the card does not make the branch worse.
     /// </summary>
     IntegrationBranchDefect,
+
+    /// <summary>The target-branch plan names a file absent from the delivery tree.</summary>
+    DeliveryPredatesReviewPlan,
 }
