@@ -386,7 +386,7 @@ public sealed class RemoteReviewWorkspace
         finally
         {
             if (candidateCache is not null)
-                foreach (var message in candidateCache.Save()) _log(message);
+                foreach (var message in candidateCache.SaveComplete()) _log(message);
         }
 
         // One planned command. The ledgers are parameters on purpose and shadow
@@ -397,10 +397,7 @@ public sealed class RemoteReviewWorkspace
                 .Select(scope =>
                 {
                     var installRoot = ResolveWorkingDirectory(RepositoryPath, scope.WorkingSubdir);
-                    var decision = DependencyPreparationState.Evaluate(installRoot, scope);
-                    return !Directory.Exists(Path.Combine(installRoot, DependencyPreparationState.DependencyDirectoryName))
-                        ? decision with { State = "miss", Reason = "deps-dir-missing" }
-                        : decision;
+                    return DependencyPreparationState.Evaluate(installRoot, scope);
                 })
                 .Where(decision => decision.State != "hit" && decision.Reason != "no-lockfile")
                 .ToArray();
@@ -699,13 +696,20 @@ public sealed class RemoteReviewWorkspace
                         commands,
                         artifacts,
                         ct);
+                // AGT-3748: a tool or module the restored entry should carry is
+                // gone. Move that entry aside so the next review on this host
+                // prepares a fresh one instead of failing the same way.
+                var quarantined = cliRefusal is null && lostScope is null
+                    ? QuarantineRestoredCache(candidateCache, command.StepId, execution.Process)
+                    : null;
                 throw await InfrastructureFailureAsync(
                     cliRefusal ?? (lostScope is null ? "ToolUnavailable" : "DependencyDirectoryMissing"),
                     lostScope is null
                         ? $"Review command '{command.StepId}' could not use its declared toolchain: " +
                           $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
                           $"cause={cliRefusal ?? "tool unavailable"}; detail={FailureDetail(execution.Process)}; " +
-                          $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}."
+                          $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}." +
+                          (quarantined is null ? "" : $" quarantinedCacheEntry={quarantined}.")
                         : $"Candidate dependency scope '{lostScope.Scope}' disappeared after step " +
                           $"'{remover ?? command.StepId}' while '{command.StepId}' ran; " +
                           $"exit={execution.Process.ExitCode}.",
@@ -1669,7 +1673,7 @@ public sealed class RemoteReviewWorkspace
             _subject.Plan.PreserveGlobs,
             cacheRole,
             _log);
-        var cacheMessages = restoreCache ? cache.Restore() : [];
+        var cacheMessages = restoreCache ? cache.RestoreComplete() : [];
 
         foreach (var command in preparation)
         {
@@ -1700,6 +1704,14 @@ public sealed class RemoteReviewWorkspace
             CommandExecution execution;
             if (installNeeded)
             {
+                // AGT-3748: an install about to rewrite the tree first drops
+                // the stamp it may have restored, so an interrupted or failed
+                // install never looks like a complete one.
+                foreach (var item in dependencyDecisions)
+                {
+                    var stamp = Path.Combine(item.InstallRoot, DependencyPreparationState.MarkerFileName);
+                    if (File.Exists(stamp)) File.Delete(stamp);
+                }
                 var workingDirectory = ResolveWorkingDirectory(
                     workspacePath,
                     command.WorkingSubdir);
@@ -1777,7 +1789,7 @@ public sealed class RemoteReviewWorkspace
                     commands,
                     artifacts,
                     ct);
-                foreach (var message in cache.Save()) _log(message);
+                foreach (var message in cache.SaveComplete()) _log(message);
                 throw failure;
             }
 
@@ -1796,12 +1808,31 @@ public sealed class RemoteReviewWorkspace
                     commands,
                     artifacts,
                     ct);
-                foreach (var message in cache.Save()) _log(message);
+                foreach (var message in cache.SaveComplete()) _log(message);
                 throw failure;
             }
         }
 
+        var incomplete = cache.RecordComplete();
+        if (incomplete is not null)
+            _log($"dependency-cache prepared workspace not cacheable role={workspaceRole} reason={incomplete}");
         return cache;
+    }
+
+    /// <summary>
+    /// AGT-3748: quarantines the entry this workspace restored when a review
+    /// command then misses a declared tool or module. Returns the quarantine
+    /// path, or null when the dependencies were not restored from the cache.
+    /// </summary>
+    private string? QuarantineRestoredCache(
+        DependencyCacheSession? cache,
+        string stepId,
+        ProcessResult process)
+    {
+        if (cache is null || !cache.Restored || !MissingToolchain(process)) return null;
+        foreach (var message in cache.Quarantine($"missing-tool step={stepId} exit={process.ExitCode}"))
+            _log(message);
+        return cache.QuarantinedPath;
     }
 
     private async Task<ReviewCommandEvidenceDto> AddCommandEvidenceAsync(
@@ -2272,11 +2303,13 @@ public sealed class RemoteReviewWorkspace
                 ct));
             if (MissingToolchain(execution.Process))
             {
+                var quarantined = QuarantineRestoredCache(baselineCache, command.StepId, execution.Process);
                 throw await InfrastructureFailureAsync(
                     "ToolUnavailable",
                     $"Baseline review command '{command.StepId}' could not use its declared toolchain: " +
                     $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
-                    $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
+                    $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}." +
+                    (quarantined is null ? "" : $" quarantinedCacheEntry={quarantined}."),
                     commands,
                     artifacts,
                     ct);
@@ -2328,7 +2361,7 @@ public sealed class RemoteReviewWorkspace
             // The report retry must finish before this move removes the
             // baseline's dependency directories from its workspace.
             if (baselineCache is not null)
-                foreach (var message in baselineCache.Save()) _log(message);
+                foreach (var message in baselineCache.SaveComplete()) _log(message);
         }
         var failures = BaselineFailures(command, execution.Process);
         if (ReviewTestReportPolicy.Missing(command, execution.Process))
@@ -3024,7 +3057,8 @@ public sealed class RemoteReviewWorkspace
                      .SelectMany(command => command.DependencyScopes ?? []))
         {
             var installRoot = ResolveWorkingDirectory(workspacePath, scope.WorkingSubdir);
-            if (Directory.Exists(Path.Combine(
+            if (!DependencyPreparationState.RequiresDependencyDirectory(installRoot, scope.Lockfiles)
+                || Directory.Exists(Path.Combine(
                     installRoot, DependencyPreparationState.DependencyDirectoryName)))
                 continue;
             var name = string.IsNullOrWhiteSpace(scope.WorkingSubdir) ? "." : scope.WorkingSubdir;

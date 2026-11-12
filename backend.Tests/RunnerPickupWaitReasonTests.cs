@@ -209,6 +209,28 @@ public sealed class RunnerPickupWaitReasonTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task BreakerCooldown_OutranksManualModeAndNamesCauseAndEndTime()
+    {
+        WriteJob(TaskStates.Ready, "waiting", order: 1);
+        var runner = BuildRunner();
+        runner.SetMode("auto-continuous");
+        runner.RecordRateLimitAutoPickupFailureForTest("failed-card");
+        var beforeTick = runner.GetStatus();
+        Assert.Equal(RunnerPickupWaitCodes.BreakerCooldown,
+            TaskLiveStatusProjection.RunnerQueueFor("waiting", beforeTick)?.ReasonCode);
+
+        await runner.TickAsync(CancellationToken.None);
+        var status = runner.GetStatus();
+        Assert.Equal("manual", status.Mode);
+        Assert.Equal(RunnerPickupWaitCodes.BreakerCooldown, status.PickupGate?.Code);
+        Assert.Contains("rate-limit or transient CLI quota failure on 'failed-card'", status.PickupGate!.Detail);
+        Assert.Contains(status.BreakerCooldownUntil!.Value.ToString("O"), status.PickupGate.Detail);
+        var queue = TaskLiveStatusProjection.RunnerQueueFor("waiting", status)!;
+        Assert.Equal(RunnerPickupWaitCodes.BreakerCooldown, queue.ReasonCode);
+        Assert.Equal(status.PickupGate.Detail, queue.Reason);
+    }
+
     private sealed class WaitingModelSelection(string reason) : IModelSelectionService
     {
         public ModelSelectionDecision Select(ModelSelectionCall call)

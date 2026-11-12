@@ -5,12 +5,14 @@ import {
   buildUsageDetailView,
   describeLedgerScope,
   formatCountdown,
+  formatRemainingPct,
   groupRunsByModel,
   instantView,
   ledgerHref,
   ledgerScopeFromHash,
   roundingRemainder,
 } from './usage-detail.util';
+import { formatUsedPct } from './usage-chip.util';
 
 const NOW = Date.parse('2026-09-25T14:58:00Z');
 const ZONE = 'Europe/Berlin';
@@ -168,10 +170,22 @@ describe('live runs and models', () => {
 
   it('lists every window and keeps unreported ones explicit', () => {
     const codex = buildUsageDetailView(snapshot(), NOW).clis[0];
-    expect(codex.windows.map(w => [w.label, w.value, w.reset?.utc ?? null])).toEqual([
-      ['Weekly', '15% used', 'Tue 29 Sept, 07:00 UTC'],
-      ['5-hour', 'N/A', null],
+    expect(codex.windows.map(w => [w.label, w.value, w.remaining, w.reset?.utc ?? null])).toEqual([
+      ['Weekly', '15% used', '85% left', 'Tue 29 Sept, 07:00 UTC'],
+      ['5-hour', 'N/A', 'N/A', null],
     ]);
+  });
+
+  it('states what is left next to what is used, adding up to 100', () => {
+    expect([91, 91.04, 91.06, 99.96, 100, 104.2].map(used => [formatUsedPct(used), formatRemainingPct(used)])).toEqual([
+      ['91%', '9% left'],
+      ['91%', '9% left'],
+      ['91.1%', '8.9% left'],
+      ['100%', 'None left'],
+      ['100%', 'None left'],
+      ['104.2%', 'None left'],
+    ]);
+    expect(formatRemainingPct(null)).toBeNull();
   });
 
   it('uses structured source reasons without parsing chip display text', () => {

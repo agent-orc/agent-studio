@@ -106,6 +106,7 @@
     <ng-template #entryRow let-entry>
       <app-orchestrator-feed-entry
         [entry]="entry"
+        [summary]="displaySummary(entry)"
         [projectFallback]="projectName()"
         [selected]="isSelected(entry)"
         (selectRequest)="selectEntry($event)"
@@ -121,7 +122,7 @@
           <span class="orch-feed__kind">{{ kindLabel(entry.kind) }}</span>
           <span class="orch-feed__topic">{{ entry.topic }}</span>
         </header>
-        <h3>{{ entry.summary }}</h3>
+        <h3>{{ displaySummary(entry) }}</h3>
         <dl class="orch-feed__meta">
           <div><dt>Time</dt><dd>{{ formatTime(entry.ts) }}</dd></div>
           @if (entry.project) { <div><dt>Project</dt><dd>{{ entry.project }}</dd></div> }
@@ -152,8 +153,16 @@
         @if (entry.jobId && entry.watchPath) {
           <button type="button" class="orch-feed__open-task" (click)="navigateToTask(entry)" data-testid="orchestrator-open-task">Open task</button>
         }
+        @if (entry.stall?.suggestedAction; as action) {
+          <section class="orch-feed__detail-section" data-testid="orchestrator-suggested-action">
+            <h4>Next step</h4>
+            @if (entry.jobId && entry.watchPath) {
+              <button type="button" class="orch-feed__detail-task-link" (click)="navigateToTask(entry)">{{ action }}</button>
+            } @else { <p>{{ action }}</p> }
+          </section>
+        }
         @if (entry.reasoning) {
-          <section class="orch-feed__detail-section"><h4>Why</h4><p>{{ entry.reasoning }}</p></section>
+          <section class="orch-feed__detail-section"><h4>Why</h4><p>{{ displayText(entry.reasoning, entry) }}</p></section>
         }
         @if (isWatcherDecision(entry)) {
           <app-watcher-decision-panel [entry]="entry" (decided)="refresh(true)" />
