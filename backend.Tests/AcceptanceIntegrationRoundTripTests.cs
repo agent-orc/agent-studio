@@ -3454,7 +3454,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
 
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
+        Assert.Contains("the integration verification check expected integrated-verified gate evidence", refused.Message);
         var overridden = await deps.Transitions.MoveAsync(
             Slug,
             TaskStates.Completed,
@@ -3695,7 +3695,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
             Assert.Contains("full-suite batch base verdict", status.Verification?.Reason);
             if (outcome == "pass")
                 Assert.Contains(evidenceExists
-                        ? "is not counted: its gate profile digest is not the current profile"
+                        ? $"is not counted: its gate profile digest obsolete-profile is not the current gate profile {digest}"
                         : "is not counted: its evidence file is missing",
                     status.Verification?.Reason);
             else
@@ -3860,8 +3860,9 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
-        Assert.DoesNotContain(unrelated, refused.Message);
+        Assert.Contains("the integration verification check expected integrated-verified gate evidence", refused.Message);
+        // AGT-3756: the refusal names the recorded tree that does not carry the delivery.
+        Assert.Contains($"verification tree {unrelated}", refused.Message);
     }
 
     [Fact]
@@ -4087,7 +4088,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var moved = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, moved.Status);
-        Assert.Contains("`.agent-studio/project.yml`", moved.Message);
+        Assert.Contains("the integration verification check expected integrated-verified gate evidence", moved.Message);
     }
 
     [Theory]

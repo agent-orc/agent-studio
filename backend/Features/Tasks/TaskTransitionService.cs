@@ -1928,7 +1928,7 @@ public sealed class TaskTransitionService
                 MoveJobStatus.IntegrationFailed,
                 AgentStudio.Pipeline.VerifyDefinitionPolicy.DescribesMissingDefinition(verification?.Reason)
                     ? "Acceptance needs verification, but `.agent-studio/project.yml` is missing a usable `commands.build` or `commands.test` setting; ask a project Admin or Owner to configure it and rerun verification."
-                    : "Acceptance needs a passing verification gate for this delivery; ask a project Admin or Owner to check the `commands.build` and `commands.test` settings in `.agent-studio/project.yml` and rerun verification.",
+                    : DescribeVerificationRefusal(verification),
                 reviewed.FolderPath);
         }
 
@@ -2254,6 +2254,24 @@ public sealed class TaskTransitionService
         if (tags.Count != (accepted.Tags?.Count ?? 0))
             _mutations.SetJobTags(accepted.Id, tags, accepted.WatchPath);
         TryClearAcceptanceIntegrationStatus(accepted);
+    }
+
+    /// <summary>
+    /// AGT-3756: the refusal names the check that did not pass, the tree it
+    /// expected and what it found, like the later-publication refusal of
+    /// AGT-3753. Only a verdict without any reason keeps the settings hint.
+    /// </summary>
+    internal static string DescribeVerificationRefusal(TaskIntegrationVerification? verification)
+    {
+        const string settingsHint = "ask a project Admin or Owner to check the `commands.build` and `commands.test` settings in `.agent-studio/project.yml` and rerun verification.";
+        if (verification is null || string.IsNullOrWhiteSpace(verification.Reason))
+            return $"Acceptance needs a passing verification gate for this delivery; {settingsHint}";
+        var found = $"state {verification.State ?? "none"}, evidence {verification.Evidence ?? "none"}"
+            + (string.IsNullOrWhiteSpace(verification.GateVerdict) ? string.Empty : $", gate verdict {verification.GateVerdict}")
+            + (ReviewSubjectStore.IsValidResultSha(verification.Sha) ? $" on {verification.Sha}" : string.Empty);
+        return "Acceptance needs a passing verification gate for this delivery; the integration verification check expected "
+            + $"{IntegrationVerificationStates.Verified} gate evidence for a tree that contains it and found {found}. "
+            + verification.Reason.Trim();
     }
 
     private bool IsAlreadyIntegrated(TaskInfo job, out TaskIntegrationVerification? verification)
