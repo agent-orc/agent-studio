@@ -2029,6 +2029,7 @@ public sealed partial class AttemptAuthorityService
                 // the card; the defect it reports belongs to the integration
                 // branch, so the attempt is Completed, not Failed.
                 ReviewTerminalOutcome.IntegrationBranchDefect => AttemptLifecycleState.Completed,
+                ReviewTerminalOutcome.DeliveryPredatesReviewPlan => AttemptLifecycleState.Completed,
                 ReviewTerminalOutcome.Cancellation => AttemptLifecycleState.Cancelled,
                 ReviewTerminalOutcome.Superseded => AttemptLifecycleState.Superseded,
                 _ => AttemptLifecycleState.Failed,

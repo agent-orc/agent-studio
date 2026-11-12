@@ -23,6 +23,25 @@ public sealed class ControlPlaneAuditChainTests(Xunit.Abstractions.ITestOutputHe
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 11, 2, 9, 0, 0, TimeSpan.Zero));
 
     [Fact]
+    public void Recent_tail_read_stops_at_time_boundary_and_skips_a_torn_append()
+    {
+        var (log, _, _, _, _) = Build();
+        Fill(log, 100);
+        var since = _clock.GetUtcNow().AddDays(1);
+        _clock.SetUtcNow(since);
+        Fill(log, 1);
+        log.Append(Record(101) with { At = since.AddMinutes(-1).UtcDateTime });
+        _clock.SetUtcNow(since.AddMinutes(1));
+        Fill(log, 1);
+        File.AppendAllText(log.FilePath, "{\"torn\":");
+
+        var recent = log.ReadNewestSince(since, _ => true, 2000);
+
+        Assert.Equal(2, recent.Count);
+        Assert.Equal([103L, 101L], recent.Select(entry => entry.Sequence));
+    }
+
+    [Fact]
     public async Task An_untouched_chain_verifies_and_matches_the_sink()
     {
         var (log, monitor, sink, forwarder, verifier) = Build();

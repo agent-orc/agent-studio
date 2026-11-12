@@ -19,9 +19,9 @@ public sealed class BatchGatePilotFaultInjectionTests : BatchGatePilotServiceTes
 {
     // Durable batch authority writes of each uninterrupted scenario. The
     // counting facts pin them, so the crash theories cover every write.
-    private const int PublicationWrites = 33;
+    private const int PublicationWrites = 35;
     private const int BaseMoveWrites = 37;
-    private const int IsolationWrites = 59;
+    private const int IsolationWrites = 61;
 
     // Each scenario's crash points are their own test class, so the gate runs
     // them in parallel with the rest of the suite instead of after this class.

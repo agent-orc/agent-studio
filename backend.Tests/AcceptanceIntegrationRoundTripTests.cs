@@ -3454,7 +3454,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
 
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("integrated-unverified", refused.Message);
+        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
         var overridden = await deps.Transitions.MoveAsync(
             Slug,
             TaskStates.Completed,
@@ -3645,7 +3645,8 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         else
         {
             Assert.Equal(MoveJobStatus.IntegrationFailed, accepted.Status);
-            Assert.Contains(gateSecondPublication ? first : second, accepted.Message);
+            Assert.Contains("`.agent-studio/project.yml`", accepted.Message);
+            Assert.DoesNotContain(gateSecondPublication ? first : second, accepted.Message);
         }
     }
 
@@ -3742,7 +3743,8 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains(ungated, refused.Message);
+        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
+        Assert.DoesNotContain(ungated, refused.Message);
     }
 
     [Theory]
@@ -3757,8 +3759,8 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("integrated-unverified", refused.Message);
-        Assert.Contains(missingGateSha, refused.Message);
+        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
+        Assert.DoesNotContain(missingGateSha, refused.Message);
     }
 
     [Fact]
@@ -3769,7 +3771,8 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains(keySha, refused.Message);
+        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
+        Assert.DoesNotContain(keySha, refused.Message);
     }
 
     private (Deps Deps, string KeySha) PublishVerifiedDescriptorAndKey(
@@ -3851,8 +3854,8 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("integrated-unverified", refused.Message);
-        Assert.Contains(unrelated, refused.Message);
+        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
+        Assert.DoesNotContain(unrelated, refused.Message);
     }
 
     [Fact]
@@ -4078,7 +4081,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var moved = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, moved.Status);
-        Assert.Contains("integrated-unverified", moved.Message);
+        Assert.Contains("`.agent-studio/project.yml`", moved.Message);
     }
 
     [Theory]

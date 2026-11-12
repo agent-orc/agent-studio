@@ -68,6 +68,8 @@ button {
 }
 
 button:disabled { opacity: 0.6; cursor: wait; }
+.auth-gate__secondary { background: var(--studio-bg-surface); color: var(--studio-fg-strong); }
+.auth-gate__ghost { background: transparent; color: var(--studio-fg-strong); }
 .auth-gate__error { color: var(--studio-error); }
 .auth-gate__qr { width: 192px; height: 192px; max-width: 100%; }
 a { color: var(--studio-accent-strong); }

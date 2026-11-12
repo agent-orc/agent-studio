@@ -110,6 +110,9 @@ public static class AccessSecurityEndpoints
                     SecondFactorEnrollmentRequired: store.AuthenticateSession(accepted.SessionToken, touch: false)?.Session.SecondFactorEnrollmentOnly == true));
             }));
 
+        auth.MapGet("/invite/preview", (string token, AccessSecurityStore store, AgentStudio.Registry.ProjectRegistry registry)
+            => Execute(() => Results.Ok(store.PreviewInvitation(token, registry))));
+
         // The local profile treats X-Client-Id as attribution only, so it must not
         // become an alternate credential for any auth administration endpoint.
         // A missing human session yields a graceful 401 (never a 500) so the

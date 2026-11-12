@@ -21,6 +21,26 @@ export interface BackupOverview {
   warnings: readonly BackupWarning[];
   backups: readonly BackupOverviewItem[];
   generatedAt: string;
+  /** AGT-3734: the newest offline restore into this installation; absent on older servers. */
+  lastRestore?: BackupRestoreReceipt | null;
+}
+
+/** The receipt an offline restore writes into the workspace (AGT-3734). */
+export interface BackupRestoreReceipt {
+  backupId: string;
+  archiveFileName: string;
+  archiveSha256: string;
+  archiveCreatedAt: string;
+  archiveHost: string;
+  archiveStudioVersion: string;
+  restoredAt: string;
+  restoredBy: string;
+  keyId: string;
+  secretKeyId: string | null;
+  secretKeyCopyId: string | null;
+  filesRestored: number;
+  checkoutsCloned: number;
+  skippedSources: readonly string[];
 }
 
 export interface BackupOverviewItem {
@@ -48,6 +68,9 @@ export interface BackupVerificationOverview {
   backupId: string | null;
   outcome: 'verified' | 'failed';
   detail: string | null;
+  /** AGT-3734: what a verified run showed and what it did not; absent on older servers. */
+  proved?: readonly string[] | null;
+  notProved?: readonly string[] | null;
 }
 
 export interface BackupOffHostOverview {
@@ -57,6 +80,22 @@ export interface BackupOffHostOverview {
   lastUploadedId: string | null;
   lastUploadedAt: string | null;
   lastError: string | null;
+  /** AGT-3734: archives at the target; absent on older servers. */
+  listing?: BackupOffHostListing | null;
+}
+
+export interface BackupOffHostListing {
+  state: 'listed' | 'not-listable' | 'unreachable' | 'not-configured';
+  detail: string | null;
+  archiveCount: number;
+  notInCatalog: readonly BackupOffHostArchive[];
+}
+
+export interface BackupOffHostArchive {
+  id: string;
+  fileName: string;
+  sizeBytes: number;
+  modifiedAt: string;
 }
 
 export interface BackupWarning {
@@ -111,6 +150,20 @@ export function offHostTone(offHost: BackupOffHostOverview): StatusTone {
     case 'invalid': return 'danger';
     case 'not-configured': return 'warning';
     default: return 'neutral';
+  }
+}
+
+/** One line on what the off-host target holds beyond the local catalog. */
+export function offHostListingSummary(listing: BackupOffHostListing): string {
+  switch (listing.state) {
+    case 'listed':
+      if (listing.notInCatalog.length === 0) {
+        return `The target holds ${listing.archiveCount.toString()} ${listing.archiveCount === 1 ? 'archive' : 'archives'}, all known here.`;
+      }
+      return `The target holds ${listing.notInCatalog.length.toString()} of ${listing.archiveCount.toString()} archives that this host does not know.`;
+    case 'not-listable': return 'This host cannot list the target.';
+    case 'unreachable': return 'The target could not be listed.';
+    default: return 'No target to list.';
   }
 }
 

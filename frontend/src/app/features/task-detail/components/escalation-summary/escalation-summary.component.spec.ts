@@ -5,6 +5,8 @@ import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { of, throwError, Subject } from 'rxjs';
 import { EscalationSummaryComponent } from './escalation-summary.component';
 import { TaskService } from '../../../../services/task.service';
+import { BatchGateService } from '../../../../services/batch-gate.service';
+import { batchSettings } from '../../../batch-gate/testing/batch-fixtures';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
 import { RunTimelinePollService } from '../../../polling/services/run-timeline-poll.service';
 import type { TaskDetail, ReviewProjectionView } from '../../../../models/task.model';
@@ -79,6 +81,7 @@ function mount(opts: {
   events?: TaskTimelineEvent[];
   detail?: TaskDetail;
   continueJob?: ReturnType<typeof vi.fn>;
+  batchGate?: { retryInfrastructureGate: ReturnType<typeof vi.fn>; getSettings: ReturnType<typeof vi.fn>; putSettings: ReturnType<typeof vi.fn> };
   retryReview?: ReturnType<typeof vi.fn>;
 }) {
   const taskStub = {
@@ -87,13 +90,18 @@ function mount(opts: {
       opts.followUp == null ? throwError(() => ({ status: 404 })) : of(opts.followUp),
     continueJob: opts.continueJob ?? vi.fn(() => of({ status: 'queued' })),
   };
-  const timelineStub = { events: signal<TaskTimelineEvent[]>(opts.events ?? []) };
+  const timelineStub = { events: signal<TaskTimelineEvent[]>(opts.events ?? []), syncTo: vi.fn() };
 
   TestBed.configureTestingModule({
     imports: [EscalationSummaryComponent],
     providers: [
       provideZonelessChangeDetection(),
       { provide: TaskService, useValue: taskStub },
+      { provide: BatchGateService, useValue: opts.batchGate ?? {
+        retryInfrastructureGate: vi.fn(() => of({ retried: true })),
+        getSettings: vi.fn(() => of(batchSettings)),
+        putSettings: vi.fn(() => of(batchSettings)),
+      } },
       { provide: HttpClient, useValue: { post: opts.retryReview ?? vi.fn(() => of({ status: 'review-started' })) } },
       { provide: TaskTimelinePollService, useValue: timelineStub },
       { provide: RunTimelinePollService, useValue: { runs: signal([]) } },
@@ -110,6 +118,30 @@ beforeEach(() => {
 });
 
 describe('EscalationSummaryComponent', () => {
+  it('offers a gate retry and a project batch switch for gate infrastructure parks', () => {
+    const parked = detail();
+    parked.info.key = 'AGT-1994';
+    parked.info.projectName = 'Demo';
+    parked.info.parkedBlocker = {
+      blockerType: 'gate-infrastructure', parkedAt: '2026-11-10T10:00:00Z',
+      reason: '[gate-infrastructure] The verification gate could not run.',
+    } as TaskDetail['info']['parkedBlocker'];
+    const gate = {
+      retryInfrastructureGate: vi.fn(() => of({ retried: true })),
+      getSettings: vi.fn(() => of(batchSettings)),
+      putSettings: vi.fn(() => of(batchSettings)),
+    };
+    const fixture = mount({ detail: parked, batchGate: gate });
+    const element: HTMLElement = fixture.nativeElement;
+    expect(TestBed.inject(TaskTimelinePollService).syncTo).toHaveBeenCalledWith(parked.info);
+    expect(element.querySelector('[data-testid="escalation-action-reissue-escalated"]')).toBeNull();
+    expect(element.querySelector('[data-testid="escalation-action-accept-escalated"]')).toBeNull();
+    (element.querySelector('[data-testid="escalation-action-retry-gate"]') as HTMLButtonElement).click();
+    expect(gate.retryInfrastructureGate).toHaveBeenCalledWith('Demo', 'AGT-1994');
+    (element.querySelector('[data-testid="escalation-action-disable-batch"]') as HTMLButtonElement).click();
+    expect(gate.putSettings).toHaveBeenCalledWith('Demo', expect.objectContaining({ enabled: false }));
+  });
+
   it('offers Retry review as the primary watchdog recovery action', () => {
     const parked = detail();
     parked.info.parkedBlocker = {

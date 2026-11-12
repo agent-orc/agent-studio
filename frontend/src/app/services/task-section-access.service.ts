@@ -28,6 +28,12 @@ export class TaskSectionAccessService {
       && status.user?.role === 'contributor';
   });
 
+  readonly readOnlySession = computed(() => {
+    const status = this.auth.status();
+    return status?.profile === 'public-demo-readonly'
+      || (status?.profile === 'networked' && status.user?.role === 'viewer');
+  });
+
   /** `section` is a task route segment: `output`, or a `/details/{resource}` name. */
   canRead(section: string): boolean {
     return !this.productSession()
