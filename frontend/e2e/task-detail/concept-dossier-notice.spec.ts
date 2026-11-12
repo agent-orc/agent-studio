@@ -15,7 +15,7 @@ function json(route: Route, body: unknown): Promise<void> {
   return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 }
 
-function taskInfo(conceptDossier: Record<string, unknown>) {
+function taskInfo(conceptDossier: Record<string, unknown>, published = false) {
   return {
     id: JOB_ID,
     taskKey: `${WATCH_PATH}::${JOB_ID}`,
@@ -40,15 +40,21 @@ function taskInfo(conceptDossier: Record<string, unknown>) {
     ownerClientId: 'local-default',
     mode: 'concept',
     requiresIntegration: false,
-    integration: { status: 'not-applicable' },
+    integration: {
+      status: published ? 'integrated' : 'pending',
+      deliveryRef: 'refs/results/concept-dossier-card',
+      sha: published ? 'abc123' : null,
+      integrationBranch: 'develop',
+      detail: null,
+    },
     dossier: conceptDossier['repoRelativePath'] ? { path: conceptDossier['repoRelativePath'] } : null,
     conceptDossier,
   };
 }
 
-function detail(conceptDossier: Record<string, unknown>) {
+function detail(conceptDossier: Record<string, unknown>, published = false) {
   return {
-    info: taskInfo(conceptDossier),
+    info: taskInfo(conceptDossier, published),
     promptMarkdown: '# Concept\n\nPrepare the dossier.',
     statusMarkdown: '# Status\n\nConcept complete.',
     log: [],
@@ -59,9 +65,11 @@ function detail(conceptDossier: Record<string, unknown>) {
   };
 }
 
-async function installRoutes(page: Page): Promise<{ mutationBodies: unknown[] }> {
+async function installRoutes(page: Page, published = false): Promise<{ mutationBodies: unknown[] }> {
   const emptyDossier = { noDossierNeeded: false, contractSatisfied: false };
-  let current: Record<string, unknown> = emptyDossier;
+  let current: Record<string, unknown> = published
+    ? { repoRelativePath: DOSSIER_PATH, noDossierNeeded: false, contractSatisfied: true }
+    : emptyDossier;
   const mutationBodies: unknown[] = [];
   const escapedId = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -71,7 +79,7 @@ async function installRoutes(page: Page): Promise<{ mutationBodies: unknown[] }>
   }));
   await page.route('**/api/v1/studio/board**', route => json(route, {
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [],
-    codeNotComplete: [], review: [], autoReview: [], humanReview: [taskInfo(current)],
+    codeNotComplete: [], review: [], autoReview: [], humanReview: [taskInfo(current, published)],
     escalated: [], completed: [], archive: [],
   }));
   await page.route('**/api/watch-paths**', route => json(route, [
@@ -85,10 +93,10 @@ async function installRoutes(page: Page): Promise<{ mutationBodies: unknown[] }>
   ]));
   await page.route(/\/api\/workbenches\?project=/, route => json(route, {
     projectName: PROJECT,
-    count: current.repoRelativePath ? 1 : 0,
-    currentCount: current.repoRelativePath ? 1 : 0,
+    count: published && current.repoRelativePath ? 1 : 0,
+    currentCount: published && current.repoRelativePath ? 1 : 0,
     historyCount: 0,
-    items: current.repoRelativePath ? [{ projectName: PROJECT, workbench: {
+    items: published && current.repoRelativePath ? [{ projectName: PROJECT, workbench: {
       id: 'DEMO-W2', entryPath: DOSSIER_PATH, title: 'Export retention', summary: '',
       status: 'decided', phase: 'decision-ready', updatedAtUtc: '2026-08-09T18:30:00Z',
       valid: true, error: null, sourceTaskKeys: ['MKT-21'], linkedTaskKeys: ['MKT-21', 'DA-1'],
@@ -96,8 +104,8 @@ async function installRoutes(page: Page): Promise<{ mutationBodies: unknown[] }>
   }));
   await page.route(new RegExp(`/api/projects/${encodeURIComponent(PROJECT)}/workbenches(?:\\?|$)`), route => json(route, {
     projectName: PROJECT,
-    count: current.repoRelativePath ? 1 : 0,
-    items: current.repoRelativePath ? [{
+    count: published && current.repoRelativePath ? 1 : 0,
+    items: published && current.repoRelativePath ? [{
       id: 'DEMO-W2', key: 'DEMO-W2', entryPath: DOSSIER_PATH, valid: true,
       sourceTaskKeys: ['MKT-21'], linkedTaskKeys: ['MKT-21', 'DA-1'],
     }] : [],
@@ -137,7 +145,7 @@ async function installRoutes(page: Page): Promise<{ mutationBodies: unknown[] }>
     cost: null,
     config: {},
   }));
-  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${escapedId}(\\?|$)`), route => json(route, detail(current)));
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${escapedId}(\\?|$)`), route => json(route, detail(current, published)));
   await page.route(new RegExp(`/api/tasks/${escapedId}/concept-dossier(\\?|$)`), async route => {
     mutationBodies.push(await route.request().postDataJSON());
     current = {
@@ -151,7 +159,7 @@ async function installRoutes(page: Page): Promise<{ mutationBodies: unknown[] }>
   return { mutationBodies };
 }
 
-test('concept completion shows one compact dossier sensor and links the recorded path', async ({ page }) => {
+test('concept Dossier shows its stage before publication', async ({ page }) => {
   mkdirSync(RESULTS_DIR, { recursive: true });
   const { mutationBodies } = await installRoutes(page);
   await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
@@ -170,20 +178,31 @@ test('concept completion shows one compact dossier sensor and links the recorded
   await page.getByTestId('concept-dossier-path-form').getByRole('button', { name: 'Save' }).click();
 
   await expect.poll(() => mutationBodies).toEqual([{ path: DOSSIER_PATH, noDossierNeeded: false }]);
-  const link = page.getByTestId('concept-dossier-link');
-  await expect(link).toHaveText(DOSSIER_PATH);
-  await expect(link).toHaveAttribute(
-    'href',
-    '#/projects/concept-dossier-fixture/workbenches/DEMO-W2',
-  );
-  await expect(page.getByTestId('concept-dossier-decision-receipt'))
-    .toContainText('Decisions recorded on DEMO-W2: 1 of 1; spawned DA-1.');
-  await expect(page.getByTestId('studio-triage-action-mark-done')).toContainText('Accept');
+  await expect(page.getByTestId('concept-dossier-link')).toHaveCount(0);
+  await expect(page.getByTestId('concept-dossier-path')).toHaveText(DOSSIER_PATH);
+  await expect(page.getByTestId('concept-dossier-publication'))
+    .toHaveText('Not published yet · Awaiting integration');
+  await expect(page.getByTestId('studio-triage-action-mark-done')).toContainText('Await integration');
 
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
-    await notice.screenshot({ path: path.join(RESULTS_DIR, `concept-dossier-linked-${theme}--mocked.png`) });
+    await notice.screenshot({ path: path.join(RESULTS_DIR, `concept-dossier-pending-${theme}--mocked.png`) });
   }
   await page.setViewportSize({ width: 390, height: 844 });
-  await notice.screenshot({ path: path.join(RESULTS_DIR, 'concept-dossier-linked-390--mocked.png') });
+  await setTheme(page, 'light');
+  await notice.screenshot({ path: path.join(RESULTS_DIR, 'concept-dossier-pending-390--mocked.png') });
+});
+
+test('published concept Dossier opens its integration Workbench', async ({ page }) => {
+  await installRoutes(page, true);
+  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await dismissDevErrorDialog(page);
+  const link = page.getByTestId('concept-dossier-link');
+  await expect(link).toHaveText(DOSSIER_PATH);
+  await expect(link).toHaveAttribute(
+    'href', '#/projects/concept-dossier-fixture/workbenches/DEMO-W2',
+  );
+  await expect(page.getByTestId('concept-dossier-decision-receipt'))
+    .toContainText('Decisions recorded on DEMO-W2: 1 of 1; spawned DA-1.');
+  await expect(page.getByTestId('concept-dossier-publication')).toHaveCount(0);
 });

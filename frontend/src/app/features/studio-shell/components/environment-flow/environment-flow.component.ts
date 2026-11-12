@@ -12,6 +12,7 @@ import { EnvironmentHealthOverviewComponent } from '../../../environment-health'
 import { ServerReadinessPanelComponent } from '../../../server-readiness';
 import { StatusIndicatorComponent } from '../../../../components/status-indicator/status-indicator.component';
 import { claimLoadGateLabel } from '../../../remote-hosts/models/claim-load-gate';
+import { laneName } from '../../../../models/lane-presentation';
 
 interface DecisionReceipt {
   receiptId: string; taskId: string | null; chosenAction: string; callStatus: string; endedAt: string;
@@ -83,6 +84,21 @@ export class EnvironmentFlowComponent implements OnInit, OnDestroy {
   }
 
   readonly minutes = minutes;
+  readonly laneName = laneName;
+  displayCaseSummary(item: WatcherCase): string {
+    let summary = item.lastSummary.replace(/\b\d+[a-z]?-[a-z][a-z-]*\b/g, lane => laneName(lane));
+    for (const card of item.affectedCards) {
+      const task = this.tasks().find(candidate => candidate.id === card || candidate.key === card || candidate.taskKey === card);
+      if (task) summary = summary.replace(card, `${task.key || task.id} · ${task.title}`);
+    }
+    return summary;
+  }
+  cardNames(cards: readonly string[]): string {
+    return cards.map(card => {
+      const task = this.tasks().find(candidate => candidate.id === card || candidate.key === card || candidate.taskKey === card);
+      return task ? `${task.key || task.id} · ${task.title}` : card;
+    }).join(', ') || 'not linked';
+  }
   readonly claimLoadGateLabel = claimLoadGateLabel;
   hostAttempts(host: RemoteHost): readonly AttemptVisibility[] {
     const hostId = host.hostAdmission?.hostId ?? host.id;

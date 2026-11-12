@@ -249,6 +249,7 @@ export interface TaskServerTelemetrySnapshot {
   /** Live occupied slots reported by this runner process. */
   activeSlots?: number;
   claimLoadGate?: ClaimLoadGate | null;
+  oneShotClaimRoute?: OneShotClaimRouteCondition | null;
   diskFreeBytes?: number | null;
   diskTotalBytes?: number | null;
   filesystems?: readonly HostFilesystemUsage[] | null;
@@ -260,6 +261,16 @@ export interface TaskServerTelemetrySnapshot {
   taskServerConnectionLastError?: string | null;
   taskServerConnectionLastRecoveredAt?: string | null;
   reviewPlane?: ReviewPlaneBudget | null;
+}
+
+/** The runner's report that its one shot claim route answered 404 or needs the standalone Task Server. */
+export interface OneShotClaimRouteCondition {
+  condition: 'claim-route-missing' | 'standalone-task-server-required';
+  firstSeenAt: string;
+  lastSeenAt: string;
+  backoffSeconds: number;
+  statusCode: number;
+  detail: string | null;
 }
 
 export interface ClaimLoadGate {
@@ -458,6 +469,7 @@ export interface RemoteHost {
   lastClaimAt?: string | null;
   activeTaskCount?: number;
   claimLoadGate?: ClaimLoadGate | null;
+  oneShotClaimRoute?: OneShotClaimRouteCondition | null;
   availableSlots?: number;
   retireRequestedAt?: string | null;
   capabilityHealth?: readonly RemoteHostCapabilityHealth[];

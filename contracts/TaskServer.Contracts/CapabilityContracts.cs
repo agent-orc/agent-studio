@@ -172,7 +172,21 @@ public sealed record HostTelemetrySnapshotDto(
     DateTime? BuildNodeSweepAt = null,
     IReadOnlyList<HostContainerSummaryDto>? Containers = null,
     ClaimLoadGateDto? ClaimLoadGate = null,
+    OneShotClaimRouteConditionDto? OneShotClaimRoute = null,
     IReadOnlyList<HostFilesystemUsageDto>? Filesystems = null);
+
+/// <summary>
+/// The one-shot claim route as this runner observed it while it answered
+/// 404 or said networked one-shot execution needs the standalone Task Server.
+/// Absent once the route answers normally again.
+/// </summary>
+public sealed record OneShotClaimRouteConditionDto(
+    string Condition,
+    DateTime FirstSeenAt,
+    DateTime LastSeenAt,
+    int BackoffSeconds,
+    int StatusCode,
+    string? Detail);
 
 /// <summary>Current coding claim admission, observed by the runner process.</summary>
 public sealed record ClaimLoadGateDto(

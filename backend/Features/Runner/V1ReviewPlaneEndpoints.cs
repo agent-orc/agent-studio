@@ -4196,7 +4196,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     0,
                     activeSlots,
                     TaskServerConnectionStatus: "connected",
-                    TaskServerConnectionObservedAt: now),
+                    TaskServerConnectionObservedAt: now,
+                    OneShotClaimRoute: existing?.Telemetry?.OneShotClaimRoute),
                 existing?.ModelAcceptanceAdvertised ?? false);
         }
     }
