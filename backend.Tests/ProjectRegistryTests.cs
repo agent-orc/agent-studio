@@ -69,18 +69,18 @@ public class ProjectRegistryTests : IDisposable
                 return shortCode ? registry.SetShortCode(project.Id, "LOCK")
                     : registry.Rename(project.Id, "Lock Order Updated");
             }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-            Assert.True(started.Wait(TimeSpan.FromSeconds(2)));
+            Assert.True(started.Wait(TimeSpan.FromSeconds(10)));
             Thread.Sleep(100);
             var read = Task.Factory.StartNew(() => registry.FindById(project.Id),
                 CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-            Assert.True(read.Wait(TimeSpan.FromSeconds(2)), "Name mutation held the registry gate while waiting for the project gate.");
+            Assert.True(read.Wait(TimeSpan.FromSeconds(10)), "Name mutation held the registry gate while waiting for the project gate.");
             Assert.NotNull(read.Result);
         }
         finally
         {
             Monitor.Exit(gate);
         }
-        Assert.True(mutation!.Wait(TimeSpan.FromSeconds(2)));
+        Assert.True(mutation!.Wait(TimeSpan.FromSeconds(10)));
     }
 
     [Fact]

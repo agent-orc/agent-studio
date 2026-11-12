@@ -58,6 +58,18 @@ public sealed class GateShardVerdictPolicyTests
         => Assert.Equal(BuildTestGateFailureKind.Environment,
             GateShardVerdictPolicy.MergeShards([Shard(0, GateShardOutcomes.Infrastructure)]));
 
+    [Fact]
+    public void A_hung_shard_keeps_a_concurrent_red_from_charging_a_member()
+    {
+        var hung = Shard(0, GateShardOutcomes.Infrastructure, BuildTestGateFailureKind.Environment) with
+        {
+            Hang = new GateShardHangEvidence("backend-routine", 0, 2, "no result or output",
+                600_000, ["Product.Tests.Stalled"]),
+        };
+        Assert.Equal(BuildTestGateFailureKind.Environment, GateShardVerdictPolicy.MergeShards(
+            [hung, Shard(1, GateShardOutcomes.Failed, BuildTestGateFailureKind.Code)]));
+    }
+
     private static GateShardSuiteEvidence Suite(string host, int count, params GateShardEvidence[] shards)
         => new("backend-routine", "dotnet test B.csproj", count, GateShardCountSources.Profile,
             GateShardStrategies.Timings, "plan-1", 2, 5000, shards)

@@ -95,7 +95,8 @@ public sealed partial class AccessSecurityStore
         get { lock (_gate) return StateLocked().Users.Count == 0; }
     }
 
-    public (StudioUser User, string SessionToken, string CsrfToken) Bootstrap(BootstrapRequest request, bool publicEntry = false)
+    public (StudioUser User, string SessionToken, string CsrfToken) Bootstrap(BootstrapRequest request, bool publicEntry = false,
+        string? device = null, string? address = null)
     {
         ValidateUsername(request.Username);
         ValidatePassword(request.Password, request.Username);
@@ -119,7 +120,7 @@ public sealed partial class AccessSecurityStore
                 new IamGrantRequest(IamRoles.Owner, IamScope.Workspace), IamBindingSources.Bootstrap, user.Id);
             state.RoleBindings.Add(binding);
             state.IamVersion = CurrentIamVersion;
-            var created = CreateSessionLocked(state, user, enrollmentOnly: publicEntry);
+            var created = CreateSessionLocked(state, user, device, address, enrollmentOnly: publicEntry);
             SaveLocked(state);
             AuditBindings(user.Id, "binding.add", [binding]);
             return (user, created.Token, created.Csrf);
@@ -255,12 +256,14 @@ public sealed partial class AccessSecurityStore
                     if (usernameRecorded && _usernameLoginAttempts[normalized].Failures >= _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20)
                         && EnsureLoginCapacityLocked(_usernameClientDelays, loginKey!, MaxDelayEntries))
                         _usernameClientDelays[loginKey!] = now + TimeSpan.FromSeconds(_configuration.GetValue("Security:LoginThrottle:UsernameDelaySeconds", 2));
-                    throw new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
+                    throw current?.Disabled == true && ReferenceEquals(current, candidate) && passwordMatches
+                        ? new SecurityOperationException(403, "account-disabled", "This account is disabled. Ask the owner.")
+                        : new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
                 }
 
-                var needsEnrollment = requireSecondFactor && (current.Role is StudioRoles.Owner or StudioRoles.Operator)
-                    && string.IsNullOrEmpty(current.TotpSecret) && current.Passkeys.Count == 0;
-                if (requireSecondFactor && (current.Role is StudioRoles.Owner or StudioRoles.Operator) && !needsEnrollment)
+                var hasFactor = !string.IsNullOrEmpty(current.TotpSecret) || current.Passkeys.Count > 0;
+                var needsEnrollment = requireSecondFactor && RequiresSecondFactor(state, current.Id) && !hasFactor;
+                if (hasFactor)
                 {
                     try
                     {
@@ -366,12 +369,13 @@ public sealed partial class AccessSecurityStore
             var user = state.Users.FirstOrDefault(x => x.Id == principal.User.Id && !x.Disabled)
                 ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
             if (!_pendingTotpSecrets.TryGetValue(user.Id, out var secret)
-                || !SecondFactorCodes.VerifyTotp(secret, code, Now))
+                || SecondFactorCodes.MatchTotpStep(secret, code, Now) is not { } acceptedStep)
                 throw new SecurityOperationException(400, "invalid-second-factor", "The authenticator code is invalid.");
             var recovery = SecondFactorCodes.NewRecoveryCodes();
             state.Users[state.Users.IndexOf(user)] = user with
             {
                 TotpSecret = secret,
+                LastAcceptedTotpStep = acceptedStep,
                 RecoveryCodeHashes = recovery.Select(SecondFactorCodes.HashRecoveryCode).ToList()
             };
             _pendingTotpSecrets.Remove(user.Id);
@@ -582,7 +586,13 @@ public sealed partial class AccessSecurityStore
             throw new SecurityOperationException(403, "second-factor-required", "Register a second factor before signing in.");
         if (string.IsNullOrWhiteSpace(code))
             throw new SecurityOperationException(401, "second-factor-required", "A second factor is required.");
-        if (user.TotpSecret is not null && SecondFactorCodes.VerifyTotp(user.TotpSecret, code, Now)) return;
+        if (user.TotpSecret is not null
+            && SecondFactorCodes.MatchTotpStep(user.TotpSecret, code, Now) is { } acceptedStep
+            && (user.LastAcceptedTotpStep is null || acceptedStep > user.LastAcceptedTotpStep))
+        {
+            state.Users[state.Users.IndexOf(user)] = user with { LastAcceptedTotpStep = acceptedStep };
+            return;
+        }
         var recoveryHash = user.RecoveryCodeHashes.FirstOrDefault(hash => SecondFactorCodes.VerifyRecoveryCode(code, hash));
         if (recoveryHash is not null)
         {
@@ -703,7 +713,8 @@ public sealed partial class AccessSecurityStore
             (user, var bindings) = AddUserGrantsLocked(state, user, grants, actingUserId);
             state.Invitations.Add(new StudioInvitation
             {
-                Id = id, UserId = user.Id, TokenHash = PasswordSecretHasher.HashSecret(token), ExpiresAt = expiresAt
+                Id = id, UserId = user.Id, TokenHash = PasswordSecretHasher.HashSecret(token), ExpiresAt = expiresAt,
+                InvitedBy = actingUserId
             });
             SaveLocked(state);
             AuditBindings(actingUserId, "binding.add", bindings);
@@ -711,7 +722,8 @@ public sealed partial class AccessSecurityStore
         }
     }
 
-    public (StudioUser User, string SessionToken, string CsrfToken) AcceptInvitation(AcceptInvitationRequest request, bool publicEntry = false)
+    public (StudioUser User, string SessionToken, string CsrfToken) AcceptInvitation(AcceptInvitationRequest request, bool publicEntry = false,
+        string? device = null, string? address = null)
     {
         if (!TryTokenParts(request.Token, "inv", out var id))
             throw new SecurityOperationException(401, "invalid-invitation", "Invitation is invalid or expired.");
@@ -732,10 +744,34 @@ public sealed partial class AccessSecurityStore
             };
             state.Users[state.Users.IndexOf(user)] = updated;
             state.Invitations[state.Invitations.IndexOf(invitation)] = invitation with { UsedAt = Now };
-            var session = CreateSessionLocked(state, updated,
-                enrollmentOnly: publicEntry && (updated.Role is StudioRoles.Owner or StudioRoles.Operator));
+            var session = CreateSessionLocked(state, updated, device, address,
+                enrollmentOnly: publicEntry && RequiresSecondFactor(state, updated.Id));
             SaveLocked(state);
             return (updated, session.Token, session.Csrf);
+        }
+    }
+
+    public object PreviewInvitation(string token, AgentStudio.Registry.ProjectRegistry registry)
+    {
+        if (!TryTokenParts(token, "inv", out var id))
+            throw new SecurityOperationException(401, "invalid-invitation", "Invitation is invalid or expired.");
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var invitation = state.Invitations.FirstOrDefault(x => x.Id == id);
+            if (invitation is null || invitation.UsedAt is not null || invitation.ExpiresAt <= Now
+                || !PasswordSecretHasher.VerifySecret(token, invitation.TokenHash))
+                throw new SecurityOperationException(401, "invalid-invitation", "Invitation is invalid or expired.");
+            var user = state.Users.FirstOrDefault(x => x.Id == invitation.UserId && !x.Disabled)
+                ?? throw new SecurityOperationException(401, "invalid-invitation", "Invitation is invalid or expired.");
+            var bindings = state.RoleBindings.Where(x => x.PrincipalKind == IamPrincipalKind.User && x.PrincipalId == user.Id).ToList();
+            var inviter = state.Users.FirstOrDefault(x => x.Id == invitation.InvitedBy)?.DisplayName ?? "Installation owner";
+            return new { user.Username, user.DisplayName, Inviter = inviter,
+                Role = string.Join(", ", bindings.Select(x => IamRoles.All.FirstOrDefault(role => role.Id == x.Role)?.DisplayName ?? x.Role).Distinct()),
+                Projects = bindings.Select(x => x.Scope.Kind == IamScopeKind.Workspace ? "Workspace"
+                        : registry.FindById(x.Scope.Project!)?.DisplayName ?? x.Scope.Project ?? "Workspace")
+                    .Distinct().ToArray(),
+                invitation.ExpiresAt, SecondFactorRequired = user.Role is StudioRoles.Owner or StudioRoles.Operator };
         }
     }
 
@@ -1093,7 +1129,9 @@ public sealed partial class AccessSecurityStore
         var session = new StudioSession
         {
             Id = id, UserId = user.Id, TokenHash = PasswordSecretHasher.HashSecret(token), CsrfHash = PasswordSecretHasher.HashSecret(csrf),
-            CreatedAt = now, LastSeenAt = now, Device = device, Address = address,
+            CreatedAt = now, LastSeenAt = now,
+            Device = string.IsNullOrWhiteSpace(device) ? "Browser" : device,
+            Address = string.IsNullOrWhiteSpace(address) ? "Local connection" : address,
             SecondFactorEnrollmentOnly = enrollmentOnly,
             ExpiresAt = Min(now.AddMinutes(_configuration.GetValue("Security:Session:IdleMinutes", 480)), absolute), AbsoluteExpiresAt = absolute
         };
@@ -1266,6 +1304,21 @@ public sealed partial class AccessSecurityStore
     private static bool IsValidUsername(string normalized)
         => normalized.Length is >= 3 and <= 64
             && normalized.All(ch => char.IsLetterOrDigit(ch) || ch is '.' or '_' or '-');
+    public static Dictionary<string, string[]> BootstrapFieldErrors(BootstrapRequest request)
+    {
+        var errors = new Dictionary<string, string[]>();
+        var username = NormalizeUsername(request.Username);
+        if (!IsValidUsername(username))
+            errors["username"] = ["Username must be 3 to 64 letters, digits, dots, underscores, or hyphens."];
+        var passwordErrors = new List<string>();
+        var password = request.Password ?? string.Empty;
+        if (password.Length is < 12 or > 128)
+            passwordErrors.Add("Password must be 12 to 128 characters.");
+        if (username.Length > 0 && password.Contains(username, StringComparison.OrdinalIgnoreCase))
+            passwordErrors.Add("Password must not contain the username.");
+        if (passwordErrors.Count > 0) errors["password"] = [.. passwordErrors];
+        return errors;
+    }
     private static void ValidatePassword(string? password, string username)
     {
         password ??= string.Empty;

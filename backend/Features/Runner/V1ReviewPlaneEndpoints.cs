@@ -127,12 +127,18 @@ public static class V1ReviewPlaneEndpoints
                         request.InstanceId,
                         restartedAt,
                         restartObservations);
+                    var lostReviews = restartObservations
+                        .Where(ReviewRestartOutcomePolicy.IsDefinitiveLoss)
+                        .Select(item => new Contract.ReviewRestartLostAttemptDto(
+                            item.AttemptId, item.TaskKey, item.Status))
+                        .ToArray();
                     authority.RecordReviewDaemonRestart(
                         runnerId,
                         request.HostId,
                         request.InstanceId,
                         restartedAt,
-                        restartObservations.Count(ReviewRestartOutcomePolicy.IsDefinitiveLoss));
+                        lostReviews.Length,
+                        lostReviews);
                     AppendReviewRestartAdvisories(
                         runnerId,
                         request.InstanceId,
@@ -215,6 +221,7 @@ public static class V1ReviewPlaneEndpoints
             V1ReviewExecutorRegistry registry,
             AdaptiveReviewParallelismAdvisor reviewParallelism,
             AgentStudio.Clients.ClientIdentityStore clients,
+            AgentStudio.Clients.HostTelemetryStore telemetryStore,
             CliQuotaFallbackService quotaRoutes,
             AttemptAuthorityService authority,
             TaskScannerService scanner,
@@ -238,6 +245,25 @@ public static class V1ReviewPlaneEndpoints
                             scanner.ScanAllAutomationJobs()),
                 };
                 clients.RecordSeen(runnerId);
+                if (request.Telemetry is { } hostTelemetry)
+                {
+                    try
+                    {
+                        telemetryStore.Append(runnerId, new AgentStudio.Clients.HostTelemetrySample(
+                            hostTelemetry.ObservedAt, hostTelemetry.CpuPercent,
+                            hostTelemetry.Load1, hostTelemetry.Load5, hostTelemetry.Load15,
+                            hostTelemetry.MemoryUsedBytes, hostTelemetry.MemoryTotalBytes,
+                            hostTelemetry.SwapInBytesPerSecond, hostTelemetry.SwapOutBytesPerSecond,
+                            hostTelemetry.CpuStealPercent, hostTelemetry.IoWaitPercent,
+                            hostTelemetry.CpuCores, hostTelemetry.ActiveSlots,
+                            Filesystems: hostTelemetry.Filesystems));
+                    }
+                    catch (IOException error) when (AgentStudio.Tasks.HostDiskWriteFailure.IsDiskFull(error))
+                    {
+                        System.Diagnostics.Trace.TraceWarning(
+                            $"host-disk-telemetry-write-failed runner={runnerId}: {error.Message}");
+                    }
+                }
                 // AGT-2820: the review plane's parallelism recommendation used to
                 // be an unread number on a diagnostics endpoint - it answered
                 // "2" while four reviews deadlocked the host. It now rides the
@@ -388,11 +414,22 @@ public static class V1ReviewPlaneEndpoints
             ReviewClaimUnclaimableLog unclaimableLog,
             CauseBreakerService causeBreakers,
             AgentStudio.Projects.ProjectRepositoryVisibility repositoryVisibility,
+            AgentStudio.Clients.ClientIdentityStore clients,
             CancellationToken ct) =>
         {
             if (!RunnerMatches(context, runnerId)
                 || !string.Equals(runnerId, request.ExecutorId, StringComparison.Ordinal))
                 return Results.Unauthorized();
+            // AGT-3647: a drained review executor finishes what it holds and
+            // claims nothing new, like a drained coding runner. On 9 November a
+            // review container on the superseded image claimed during the update.
+            if (clients.Find(runnerId) is { } client
+                && (client.DrainRequestedAt is not null || client.Kind == ClientIdentityKind.Retired))
+                return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
+                    Contract.ReviewClaimEmptyReasons.ExecutorDraining,
+                    client.Kind == ClientIdentityKind.Retired
+                        ? "Review executor is retired."
+                        : "Review executor is draining; no new reviews are admitted."));
             if (request.AvailableSlots <= 0)
                 return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
                     Contract.ReviewClaimEmptyReasons.NoAvailableSlot,
@@ -976,10 +1013,7 @@ public static class V1ReviewPlaneEndpoints
             {
                 if (TaskModes.IsConcept(reviewTask.Mode))
                 {
-                    var briefPath = Path.Combine(reviewTask.FolderPath, "prompt.md");
-                    var currentBriefHash = File.Exists(briefPath)
-                        ? AttemptAuthorityService.Hash(File.ReadAllText(briefPath))
-                        : null;
+                    var currentBriefHash = BriefVersionStore.ReadCurrent(reviewTask.FolderPath);
                     request = frozenPlan is null
                         ? request with
                         {
@@ -1045,6 +1079,7 @@ public static class V1ReviewPlaneEndpoints
                     CardRoundBudget.ResolveAllowed(configuration));
                 var payload = new StagePayload(
                     ReviewOutcome: request.Outcome,
+                    ReviewSummary: request.Summary,
                     RunAttemptId: currentReview.SourceRunAttemptId,
                     ReviewSubjectId: currentReview.Subject.SubjectId,
                     ReviewAttemptId: attemptId,
@@ -1257,7 +1292,24 @@ public static class V1ReviewPlaneEndpoints
             RemoteReviewContinuation? continuation = null;
             if (!acceptedReplay && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
-                if (budgetDecision.Escalate)
+                if (outcome == ReviewTerminalOutcome.DeliveryPredatesReviewPlan)
+                {
+                    var mergeBase = ReviewFixRoundBase.ForReview(
+                        currentReview, ReviewSubjectStore.Read(preparedTask.FolderPath), DateTime.UtcNow);
+                    if (mergeBase is not null)
+                    {
+                        var branch = currentReview.Subject.Plan?.IntegrationRef ?? "the target branch";
+                        continuation = new RemoteReviewContinuation(
+                            RemoteReviewContinuationKind.PlanMergeRound,
+                            $"{request.Summary}\n\nStart from the full result ref `{mergeBase.Ref}` "
+                            + $"at `{mergeBase.CommitSha}`. Merge `{branch}` into that delivery, "
+                            + "resolve any conflicts, and submit the merged result for review. "
+                            + "Do not treat the previous review as a product failure.",
+                            [], settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds,
+                            cardBudget, Base: mergeBase);
+                    }
+                }
+                else if (budgetDecision.Escalate)
                     continuation = new RemoteReviewContinuation(
                         RemoteReviewContinuationKind.BudgetEscalation, string.Empty,
                         blockingAspects, settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds,
@@ -1304,7 +1356,8 @@ public static class V1ReviewPlaneEndpoints
             // A batch-deferred pass owes no per-card integration: the batch gate
             // publishes it, so no delivery record may tell recovery to integrate
             // or to settle it as a failed gate.
-            if (!replay && continuation is null && outcome != ReviewTerminalOutcome.InfrastructureFailure
+            if (!replay && continuation is null && outcome is not (
+                    ReviewTerminalOutcome.InfrastructureFailure or ReviewTerminalOutcome.DeliveryPredatesReviewPlan)
                 && !deferToBatch && !waitForConcernFix
                 && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
@@ -1406,6 +1459,7 @@ public static class V1ReviewPlaneEndpoints
             {
                 var shadowPayload = new StagePayload(
                     ReviewOutcome: request.Outcome,
+                    ReviewSummary: request.Summary,
                     RunAttemptId: currentReview.SourceRunAttemptId,
                     ReviewSubjectId: currentReview.Subject.SubjectId,
                     ReviewAttemptId: attemptId,
@@ -2165,6 +2219,7 @@ public static class V1ReviewPlaneEndpoints
                         integrationOutcome = integrationDecision.VerifyDefinitionMissing
                             ? AcceptedIntegrationFailureCodes.VerifyDefinitionMissing
                             : AcceptedIntegrationFailureCodes.DeliveryGateFailed;
+                        integrationParkReason = RemoteDeliveryParkReason.ForCode(integrationOutcome);
                     }
                     AdvanceDeliverySettlement(
                         task.FolderPath,
@@ -2189,7 +2244,10 @@ public static class V1ReviewPlaneEndpoints
                         task.WatchPath,
                         ct,
                         cause: $"remote-review:{attemptId}",
-                        reason: integrationParkReason,
+                        reason: integrationParkReason
+                            ?? (settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass
+                                ? RemoteDeliveryParkReason.CompletedReviewPark
+                                : RemoteDeliveryParkReason.ReviewDecisionPark),
                         authorityWrite: new AttemptWriteReference(
                             attemptId,
                             request.Fence,
@@ -2295,9 +2353,14 @@ public static class V1ReviewPlaneEndpoints
                     // harder failure cannot be hidden behind the majority class
                     // (AGT-2220).
                     var chain = BuildAttemptChainSummary(authority, review.TaskKey);
+                    // AGT-3690: a chain lost to review host restarts names the
+                    // restarts. "Cannot be materialized" sent the operator after
+                    // the subject (and parked the card on a git-ancestry
+                    // condition) when the host was what kept failing.
+                    var hostRestarts = chain.HostRestartSentence(AttemptAuthorityService.ReviewInfrastructureRetryBudget);
                     var category = intervention is not null
                         ? HumanReviewEscalationCategories.FailureIntervention
-                        : aspectRetryExhausted || diagnosisContractUnsupported
+                        : aspectRetryExhausted || diagnosisContractUnsupported || hostRestarts is not null
                             ? HumanReviewEscalationCategories.Environmental
                             : HumanReviewEscalationCategories.ReviewSubjectUnmaterializable;
                     var escalationReason = intervention?.WaitReason
@@ -2305,7 +2368,9 @@ public static class V1ReviewPlaneEndpoints
                             ? $"Remote Review retried the malformed aspect once, but it still produced no parseable verdict. {chain.Headline}"
                             : diagnosisContractUnsupported
                                 ? $"{Contract.ReviewReportDiagnosisPolicy.DiagnosisContractUnsupportedReason(request.ExecutorId, request.Environment.Worker?.WorkerReleaseId)} {chain.Headline}"
-                                : $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. {chain.Headline}");
+                                : hostRestarts is not null
+                                    ? $"{hostRestarts} {chain.Headline}"
+                                    : $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. {chain.Headline}");
                     var moved = await escalation.EscalateAsync(
                         task.Id,
                         task.WatchPath,
@@ -2434,7 +2499,7 @@ public static class V1ReviewPlaneEndpoints
         }
     }
 
-    private static bool HasSettledResultEnvelope(RunAttemptDto? run)
+    internal static bool HasSettledResultEnvelope(RunAttemptDto? run)
     {
         if (run is not
             {
@@ -2899,10 +2964,11 @@ public static class V1ReviewPlaneEndpoints
                     .Concat(verify.Commands.Skip(firstTest)).ToArray(),
             };
         }
-        var preparation = GatePreparationPlanner.Plan(
+        var preparationPlan = GatePreparationPlanner.PlanWithSkips(
                 repositoryPath ?? string.Empty,
                 profile,
-                verify.Commands)
+                verify.Commands);
+        var preparation = preparationPlan.Commands
             .Select((command, index) => new Contract.ReviewPreparationCommandDto(
                 $"prepare-{index + 1}",
                 "bash",
@@ -2971,6 +3037,9 @@ public static class V1ReviewPlaneEndpoints
                 .ToList(),
             IntegrationRef: integrationRef,
             Preparation: preparation,
+            PreparationSkips: preparationPlan.Skips
+                .Select(skip => new Contract.ReviewPreparationSkipDto(skip.WorkingSubdir, skip.Reason))
+                .ToArray(),
             PreserveGlobs: profile?.PreserveGlobs,
             BuildProfileFingerprint: BuildProfileValidationFingerprint.Create(profile),
             LibraryVersion: Contract.ReviewLibraryStepPolicy.Version);
@@ -3429,6 +3498,7 @@ public static class V1ReviewPlaneEndpoints
             "pass" => ReviewTerminalOutcome.Pass,
             "productfailure" => ReviewTerminalOutcome.ProductFailure,
             "integrationbranchdefect" => ReviewTerminalOutcome.IntegrationBranchDefect,
+            "deliverypredatesreviewplan" => ReviewTerminalOutcome.DeliveryPredatesReviewPlan,
             "reviewinfra" => ReviewTerminalOutcome.InfrastructureFailure,
             "inconclusive" => ReviewTerminalOutcome.Inconclusive,
             "cancellation" => ReviewTerminalOutcome.Cancellation,
@@ -4175,7 +4245,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     0,
                     activeSlots,
                     TaskServerConnectionStatus: "connected",
-                    TaskServerConnectionObservedAt: now),
+                    TaskServerConnectionObservedAt: now,
+                    OneShotClaimRoute: existing?.Telemetry?.OneShotClaimRoute),
                 existing?.ModelAcceptanceAdvertised ?? false);
         }
     }

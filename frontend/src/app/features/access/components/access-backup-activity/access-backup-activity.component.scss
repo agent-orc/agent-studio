@@ -1,0 +1,13 @@
+@use '../../access-controls' as access;
+
+:host { display: block; min-width: 0; }
+@include access.controls;
+@include access.table;
+.backups { display: flex; flex-direction: column; gap: var(--studio-spacing-1); }
+.backups__scroll { overflow-x: auto; }
+.backups__code { color: var(--studio-mono); font-family: var(--font-mono); font-size: 0.72rem; overflow-wrap: anywhere; }
+.backups__meta { display: block; color: var(--studio-fg-dim); font-size: 0.72rem; }
+.backups__nowrap { white-space: nowrap; }
+.backups__summary { min-width: 12rem; overflow-wrap: anywhere; }
+.backups__none { color: var(--studio-fg-dim); }
+code { font-family: var(--font-mono); }

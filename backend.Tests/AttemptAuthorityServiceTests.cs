@@ -1533,7 +1533,7 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
     }
 
     [Fact]
-    public void Review_infrastructure_retry_budget_allows_exactly_three_linked_retries()
+    public void Review_infrastructure_retry_budget_allows_exactly_two_linked_retries()
     {
         var service = NewService();
         var (_, initial) = CompletedRunWithReview(service, "sha-a");

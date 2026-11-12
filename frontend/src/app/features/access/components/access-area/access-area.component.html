@@ -27,20 +27,20 @@
           <div class="access-row"><button type="button" class="access-secondary" (click)="temporaryPassword.set(null)">Done</button></div>
         </div>
       }
-      <table data-testid="access-users">
+      <table class="access__users" data-testid="access-users">
         <thead><tr><th scope="col">Name</th><th scope="col">Username</th><th scope="col">Roles</th><th scope="col">Status</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
         <tbody>
           @for (user of data.users; track user.id) {
             <tr [attr.data-testid]="'access-user-' + user.username">
-              <td>{{ user.displayName }}</td>
-              <td>{{ user.username }}</td>
-              <td>
+              <td data-label="Name">{{ user.displayName }}</td>
+              <td data-label="Username">{{ user.username }}</td>
+              <td data-label="Roles">
                 <span class="access__grants">
                   @for (grant of grants(user); track grant) { <span class="access-badge">{{ grant }}</span> } @empty { <span class="access-hint">No role</span> }
                 </span>
               </td>
-              <td><app-status-indicator [tone]="statusTone(user)" [label]="status(user)" [testId]="'access-user-status-' + user.username" /></td>
-              <td class="access-actions">
+              <td data-label="Status"><app-status-indicator [tone]="statusTone(user)" [label]="status(user)" [testId]="'access-user-status-' + user.username" /></td>
+              <td class="access-actions" data-label="Actions">
                 <app-session-manager [userId]="user.id" />
                 <button type="button" class="access-quiet" [disabled]="access.busy()" (click)="resetPassword(user)">Reset password</button>
                 <button type="button" class="access-quiet" [attr.data-testid]="'access-user-toggle-' + user.username" [disabled]="access.busy()" (click)="toggleDisabled(user)">{{ user.disabled ? 'Enable' : 'Disable' }}</button>
@@ -101,6 +101,13 @@
       <section class="access__section" aria-labelledby="access-operator-activity-title">
         <header><h3 id="access-operator-activity-title">Operator activity</h3><p class="access-hint">Audit entries of operator sessions in a hash chain, with its verification and off-host forwarding.</p></header>
         @defer (on immediate) { <app-access-operator-activity /> }
+      </section>
+    }
+
+    @if (showBackupActivity()) {
+      <section class="access__section" aria-labelledby="access-backup-activity-title">
+        <header><h3 id="access-backup-activity-title">Backup activity</h3><p class="access-hint">Backup create, off-host copy, restore verification, retention, and the offline decrypt and restore, each with its actor and outcome from the audit chain.</p></header>
+        <app-access-backup-activity />
       </section>
     }
 

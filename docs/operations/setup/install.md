@@ -1,6 +1,14 @@
 # Install Agent Studio
 
-No GitHub Release is published yet, so the release installer is unavailable.
+> **Status (2026-11-09): no release is published yet.** The download URLs on
+> this page (`releases/latest/download/...`) return 404, and the
+> `ghcr.io/agent-orc` images are not anonymously pullable. Until the first
+> GitHub Release exists, use the
+> [source-built Docker one-box](./docker.md#install-from-this-checkout); the
+> [setup guide](./README.md#choose-your-path) names the path for each
+> situation. This page describes the installer for that first release and
+> later ones.
+
 The working installation path is a source checkout with the one-box Compose dev
 profile. Install Docker Engine with Compose v2, then run these commands from the
 repository root:
@@ -203,6 +211,10 @@ journey does not need report `n/a`. Docker and Compose are required only for
 `--target docker`; a Windows connector does not require Hyper-V or 20 GiB
 of repository space. One-box and join-host preflight checks `git --version`
 and names the Git installation step when Git is unavailable.
+For Docker targets, preflight distinguishes a missing Docker installation, a
+stopped engine, and denied access to the Docker socket. On Linux, denied access
+prompts the user to join the `docker` group and log out and back in before
+retrying.
 For a fresh one-box Docker install, setup checks the selected browser port
 before it changes services and suggests `--ui-port` if another process owns it.
 The [installation scenario harness](../testing/installation-scenarios.md)

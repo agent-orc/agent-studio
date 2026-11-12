@@ -13,9 +13,11 @@ import { DecisionRulesPanelComponent, OrchestratorLogicPanelComponent, PromptAdm
 // Direct path (not the studio-shell barrel) so we don't pull StudioShellComponent
 // and re-form the shell <-> studio-shell import cycle (AGT-2035).
 import { AppearanceSettingsComponent } from '../../../studio-shell/components/appearance-settings/appearance-settings.component';
-import { UpdatesSettingsComponent } from '../../../update';
+import { UpdatesSettingsComponent } from '../../../update/lazy';
 import { WorkspaceManagementComponent } from '../workspace-management/workspace-management.component';
 import { RetentionAdminComponent } from '../../../retention';
+import { BackupStatusPanelComponent } from '../../../backups/backup-status-panel/backup-status-panel.component';
+import { OperationsSecurityComponent } from '../../../project-detail/components/operations-security/operations-security';
 import { AccessAreaComponent } from '../../../access/lazy';
 import { FirstRunChecklistComponent } from '../first-run-checklist/first-run-checklist.component';
 import { GitHubAppPanelComponent } from '../../../github-app/github-app-panel/github-app-panel.component';
@@ -85,6 +87,8 @@ interface SettingsRailItem {
     UpdatesSettingsComponent,
     WorkspaceManagementComponent,
     RetentionAdminComponent,
+    BackupStatusPanelComponent,
+    OperationsSecurityComponent,
     AccessAreaComponent,
     FirstRunChecklistComponent,
     SectionHeaderComponent,
@@ -110,6 +114,7 @@ export class WorkspaceOverlaysComponent {
    *  remote-hosts panel). */
   readonly openJobDetail = output<{ jobId: string; watchPath: string }>();
 
+
   private readonly modalStack = inject(ModalStackService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly injector = inject(Injector);
@@ -130,6 +135,7 @@ export class WorkspaceOverlaysComponent {
     { key: 'secrets', label: 'Secrets', description: 'Write-only secrets per workspace, project and environment, with versions, rotation, revocation and audit.', icon: 'check', group: 'global' },
     { key: 'github', label: 'GitHub', description: 'Connect the GitHub App that gives every host short-lived repository tokens.', icon: 'link', group: 'global' },
     { key: 'remote-hosts', label: 'Environment', description: 'Machines, services, connections, health, and repository access.', icon: 'activity', group: 'global' },
+    { key: 'operations', label: 'Operations', description: 'Hosts, usage, security and backups.', icon: 'activity', group: 'global' },
     { key: 'orchestrator', label: 'Orchestrator', description: 'Platform-global supervisor, meta-cycle, and auto-intervention lifecycle flags.', icon: 'bot', group: 'global' },
     { key: 'caps', label: 'CLI Management', description: 'What CLIs and models are available, their fallback routes, usage caps and completion contracts.', icon: 'cli', group: 'workspace' },
     { key: 'prompts', label: 'System prompts', description: 'Application-wide runtime prompt defaults and overrides.', icon: 'code', group: 'workspace' },
@@ -220,6 +226,7 @@ export class WorkspaceOverlaysComponent {
       case 'secrets': return 'workspace-secrets-overlay';
       case 'github': return 'workspace-github-overlay';
       case 'remote-hosts': return 'workspace-remote-hosts-overlay';
+      case 'operations': return 'workspace-operations-overlay';
       case 'first-run': return 'workspace-first-run-overlay';
       case 'orchestrator': return 'orchestrator-config-overlay';
       case 'overview': return 'workspace-settings-overview-panel';

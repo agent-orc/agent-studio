@@ -280,6 +280,7 @@ export class CreateTaskFormService {
     this.newCliType.set(t);
     this.newModel.set(readDefaultModelPref(t));
     this.newThinkingLevel.set(readDefaultThinkingLevelPref(t));
+    this.modelSelectionExplicit.set(false);
     this.loadCreateModels(t);
     this.refreshPolicySuggestion();
   }
@@ -298,11 +299,15 @@ export class CreateTaskFormService {
         if (request !== this.projectDefaultsRequest || !this.visible()) return;
         this.defaultsPending.set(false);
         const project = projects.find(p => p.storageLocation === watchPath);
-        if (!project?.cliDefault || !(CLI_TYPES as readonly string[]).includes(project.cliDefault)) return;
-        this.newCliType.set(project.cliDefault as CliType);
-        this.newModel.set(project.modelDefault ?? '');
-        this.newThinkingLevel.set(null);
-        this.modelSelectionExplicit.set(!!project.modelDefault);
+        if (!project) return;
+        if (project.cliDefault && (CLI_TYPES as readonly string[]).includes(project.cliDefault)) {
+          this.newCliType.set(project.cliDefault as CliType);
+        }
+        if (project.modelDefault) {
+          this.newModel.set(project.modelDefault);
+          this.newThinkingLevel.set(null);
+          this.modelSelectionExplicit.set(true);
+        }
         this.loadCreateModels(this.newCliType());
         this.refreshPolicySuggestion();
       },
@@ -408,8 +413,8 @@ export class CreateTaskFormService {
       cliType: this.newCliType(),
       model: this.newModel().trim() || undefined,
       thinkingLevel: this.newThinkingLevel() || undefined,
-      modelExplicit: !!this.newModel().trim(),
-      thinkingLevelExplicit: !!this.newThinkingLevel(),
+      modelExplicit: this.modelSelectionExplicit(),
+      thinkingLevelExplicit: this.modelSelectionExplicit(),
       taskType: this.newTaskType,
       tags: this.newTags.length > 0 ? [...this.newTags] : undefined,
       kind: 'task',

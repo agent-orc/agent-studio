@@ -284,6 +284,7 @@
       </tbody>
     </table>
     <p><b>2026-10-16 operator receipt controls:</b> Raise and Cut update the limit for later remote runs. Stop is unavailable: the control is hidden and the endpoint answers HTTP 409 <code>stop-not-available</code>. An ordinary Pause still returns the card to Ready.</p>
+    <p><b>2026-11-10 operator reissue handoff:</b> An Escalated to Ready continuation confirms selected findings and an optional owner note before moving. The move rotates old verdict artifacts and writes <code>operator-reissue.json</code>; the next pickup foregrounds those instructions even when the automatic reissue tag and active pipeline record are absent. After that run crosses the agent boundary, later automatic reissues use their own findings.</p>
 
     <p class="small"><strong>Invariant:</strong> a run can only leave <em>Running</em> into one of
       {Succeeded, NeedsReview, GaveUpToHuman, CooldownRetry, SteerPending}. CooldownRetry and SteerPending must each terminate
@@ -385,6 +386,48 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-review-host-restart-invisible-retry">
+          <td>2026-11-10</td>
+          <td><code>AGT-3648</code> S5-F14<br><span class="small">review-host-restart-invisible-retry (fix <code>AGT-3690</code>)</span></td>
+          <td>No CLI crashed. The operator crisis playthrough killed the review host mid-review. The replacement daemon settled the review as <code>ReviewInfra / ExecutorRestarted</code> ("Lost work extent: 1 of 5 review commands completed") and the Task Server scheduled retry 1 of 3, due 60 seconds later. The card head went from "Reviewing on first-run-review" to an operator-decision park; the retry existed only as a timeline row. The host detail said "Restarted · 1 reviews lost" without naming the card, and the next restart of that host overwrote it with "0 reviews lost".</td>
+          <td>The card's queue line was worded from the outcome enum alone and never carried the failure classification, the host, or the retry number. The host kept only its newest restart. A spent budget escalated as "cannot be materialized", which also parked the card on a git-ancestry condition that a host restart never clears.</td>
+          <td>The observed terminal was an Auto Review card with a scheduled retry that read as parked. The queue line now has a <code>retry-scheduled</code> state with the loss (classification, host, time) and the retry (number, budget, due time): "Review lost: review host restarted (lab-review-host, 02:27). Automatic retry 1 of 2 at 02:28." (the budget follows AGT-3608, which lowered it from 3 to 2) The host name links to the host. The attempt authority keeps 20 restarts per review runner with their lost attempts, and the host detail lists them with links to the cards. A budget spent on restarts escalates as <code>environmental</code> and names every restart.</td>
+        </tr>
+        <tr id="case-cancelled-isolation-proved-red">
+          <td>2026-11-10</td>
+          <td><code>AGT-3584</code><br><span class="small">cancelled-isolation-proved-red (fix <code>AGT-3742</code>)</span></td>
+          <td>Batch <code>5ee5c2dd</code> went red. The solo isolation flight in <code>ada8a151</code> was cancelled while the API disk was full. It had no start time, exit code or test verdict, yet AGT-3584 reached Escalated with a claim that isolation proved it red. Other members had abandoned per-task pull jobs. No CLI crashed. Terminal at discovery: Escalated with a false delivery verdict, or Auto Review without a live gate.</td>
+          <td>The isolation finding reader treated every red child phase as proof, including InfrastructureRed. A per-task fallback treated a pull job without a verdict as a terminal red gate.</td>
+          <td>A proven-red finding now requires a deterministic child verdict. An interrupted isolation flight returns the review to the pending pool and retries the isolation step twice on later ticks; exhaustion parks it with GateInfra and the retry count. An interrupted per-task flight keeps its active marker for the next tick and parks with an infrastructure cause after its bounded retry.</td>
+        </tr>
+        <tr id="case-review-plan-delivery-skew">
+          <td>2026-11-10</td>
+          <td><code>AGT-3624</code>, <code>AGT-3654</code>, <code>AGT-3655</code>, <code>AGT-3656</code>, <code>AGT-3690</code>, <code>AGT-3729</code><br><span class="small">review-plan-delivery-skew (fix <code>AGT-3743</code>)</span></td>
+          <td>No CLI crashed. Each delivery preceded a new target-branch review script. Review ran the new command against the older delivery tree, exited 127 twice, then parked the card for infrastructure intervention. Terminal at discovery: Escalated; operators sent merge rounds by hand.</td>
+          <td>The target branch supplied the trusted plan, but the executor did not check whether its declared file existed in the delivery tree. Exit 127 was classified as an unavailable host tool without identifying the missing file.</td>
+          <td>The executor compares declared file references with the frozen plan commit and delivery tree before running commands. A file present only on the plan commit yields <code>DeliveryPredatesReviewPlan</code>, which opens an automatic merge round naming the full result ref and does not spend an infrastructure retry. A missing host binary remains <code>ReviewInfra / ToolUnavailable</code>.</td>
+        </tr>
+        <tr id="case-per-task-fallback-silent-engine-wait">
+          <td>2026-11-10</td>
+          <td><code>AGT-3563</code>, <code>AGT-3183</code><br><span class="small">per-task-fallback-silent-engine-wait (fix <code>AGT-3694</code>)</span></td>
+          <td>No CLI crashed. Two batch-ejected cards sat in <span class="lane">4-auto-review</span> for 11 to 12 hours after deploy 37 restarted the API. Their per-task marker was active with two of two starts spent, yet no per-task gate ran, no escalation followed and the queue-stall report was empty. The plan said only <code>overdue pending: ... per-task fallback: batch-ejected</code>. Terminal at discovery: Auto Review without a stated wait.</td>
+          <td>The fallback returned before its start budget check whenever an engine GateResult decision on its release or red key was <code>pending</code>, <code>leased</code> or <code>applying</code>. On Engine mode, the budget escalation itself opens such a red decision; with no engine instance deciding it, every tick repeated the same early return. Nothing bounded that wait or a fallback flight that never returned, and neither the batch state nor the card named it.</td>
+          <td>The observed terminal was Auto Review. <code>PerTaskFallbackWaitPolicy</code> now bounds every wait: an engine decision open for 30 minutes, or with an unrenewed lease two minutes past expiry, is superseded and the card escalates as <code>GateInfra</code> with the run id, the starts and the base. A stalled gate flight is cancelled with its start charged; one that does not stop is detached and its resume escalates. Each bound raises a <code>batch-fallback-stalled</code> event (batch store, card timeline, operator feed), and the batch state and card badge name the current wait.</td>
+        </tr>
+        <tr id="case-clean-repeat-unobserved">
+          <td>2026-11-10</td>
+          <td><code>AGT-3641</code><br><span class="small">clean-repeat-unobserved (fix <code>AGT-3650</code>)</span></td>
+          <td>No CLI crashed. A review test step failed. Its clean repeat exited 0, but the review ended at 01:44 UTC as <code>ReviewInfra / CleanRepeatUnavailable</code>: "Clean repeat 'verify-3' exited successfully without reporting every previously failed test." Terminal at discovery: Escalated by the watchdog.</td>
+          <td>A green repeat must show each previously failed test passing. <code>dotnet test</code> at its default verbosity prints only the summary, and Vitest's default reporter names failing tests only. A passing repeat therefore never showed a passing test name.</td>
+          <td>The clean repeat asks <code>dotnet test</code> for normal console verbosity and Vitest for its verbose reporter. For Vitest and Jest output that still lacks names, a passed line for each failed test's file counts as proof. The evidence records the level used (<code>test-names</code> or <code>test-files</code>). A green repeat that ran neither the failed tests nor their files stays review infrastructure.</td>
+        </tr>
+        <tr id="case-deploy-cut-running-work">
+          <td>2026-11-09</td>
+          <td><code>AGT-3591</code>, <code>WEB-37</code>, <code>AGT-3584</code>, <code>AGT-3403</code>, batch <code>9960e7c6</code><br><span class="small">deploy-cut-running-work (fix <code>AGT-3647</code>)</span></td>
+          <td>No CLI crashed. Deploy 36 and Deploy 37 followed the documented order (server, then <code>agent-runner-deploy</code>, then idle KORI review containers). A review settled as <code>ReviewInfra / ExecutorRestarted</code> ("could not adopt the persisted review process ... is not running", 7 of 15 commands lost), twice more on WEB-37. Two API restarts cut a per-task gate and escalated AGT-3584 with <code>GateInfra: per-task gate interrupted 2 times</code>. A review container on the old image claimed a new review mid-update. An interrupted batch held three members for 3.5 hours. Terminal at discovery: Escalated, or Auto Review with a spent infrastructure retry.</td>
+          <td>Nothing drained the hosts before the update: the backend review claim ignored the runner drain flag. A review worker the restart killed, or a slot cut during preparation, was settled as lost although the lease was still valid and the worker can resume from its checkpoint. The per-task gate start was refunded only by a stop handler that a killed API never reached. One failing batch recovery ended the whole recovery tick.</td>
+          <td>The networked deploy drains every runner identity, waits for a quiet point with a deadline (no running review, no batch in its first or last minutes, no pending push), switches the server, then updates and resumes each host on its own. A drained review executor claims nothing (<code>executor-draining</code>). The review daemon relaunches a dead worker under the same lease up to two times, and prepares a cut preparation again. A later API instance refunds a gate start an earlier one charged (<code>ChargedStartsAfterServiceRestart</code>). Batch recovery isolates each batch. Procedure: <code>docs/operations/deploy-drain-procedure.md</code>.</td>
+        </tr>
         <tr id="case-report-summary-stalled-review">
           <td>2026-11-05</td>
           <td><code>AGT-3496</code>, <code>AGT-3506</code>, <code>AGT-3511</code>, <code>AGT-3512</code>, <code>AGT-3515</code><br><span class="small">report-summary-stalled-review (fix <code>AGT-3547</code>)</span></td>
@@ -392,12 +435,26 @@
           <td>The read-only pipeline did not recover the agent's own status when summary assessment failed. Post-processing errors and blocked preconditions could close the worker pass without a lane transition.</td>
           <td>A failed summary keeps its failed step row. The report path uses the agent's status or final message and continues through the lightweight review and decision. If recovery or post-processing fails, it moves the card to Escalated with the concrete reason and a timeline event.</td>
         </tr>
+        <tr id="case-review-infrastructure-stranding">
+          <td>2026-11-09</td>
+          <td><code>AGT-3178</code>, <code>AGT-3183</code>, <code>AGT-3403</code>, <code>AGT-3501</code>, <code>AGT-3533</code>, <code>AGT-3558</code><br><span class="small">review-infrastructure-stranding (fix <code>AGT-3608</code>)</span></td>
+          <td>Reviews ran for about 1.5 to 2.5 hours, then ended with infrastructure failure. The next watchdog sweep moved each card from Auto Review to Escalated. Terminal at discovery: Escalated, with a misleading claim that no delivery or review existed.</td>
+          <td>The watchdog measured age from lane entry and treated a failed current review as unrecoverable. The normal retry was scheduled later in report handling, so an interrupted settlement could leave no scheduled successor.</td>
+          <td>The review terminal starts a fresh ownerless interval. After its threshold, an unscheduled current-delivery infrastructure failure receives a bounded retry through the authority scheduler. The third failed attempt escalates with its classification and summary.</td>
+        </tr>
         <tr id="case-refused-salvage-push-retained">
           <td>2026-11-01</td>
           <td>four finished deliveries<br><span class="small">refused-salvage-push-retained (fix <code>AGT-3406</code>)</span></td>
           <td>No CLI crashed. A coding and a review role on one host shared a state folder. About a second after the coding role wrote its GitHub App write tokens, the review role replaced them with read tokens, so every salvage push got 403. Terminal at discovery: Blocked with a <code>worktree-blocked</code> gate ("Remote runner retained unsecured worktree"), cards escalated although the work was complete.</td>
           <td>Both roles wrote <code>&lt;state&gt;/github-app/git-credentials</code>. A refused push escalated at once, nothing picked the retained worktree up again, and the project preflight kept its cached write-probe failure for five minutes after the credentials were repaired.</td>
           <td>The observed terminal was Escalated. Each role now keeps its tokens in its own folder, and a second process for the same role on one state folder refuses to start. The card's next round on the same host continues from the retained worktree in place. A failed preflight is probed again as soon as the host reports a new credential generation. Authorization failures now fail immediately at the push boundary; only transient server failures use the retry ladder.</td>
+        </tr>
+        <tr id="case-review-ran-build-tests-batch-refusal">
+          <td>2026-11-10</td>
+          <td><code>AGT-3243</code><br><span class="small">review-ran-build-tests-batch-refusal (fix <code>AGT-3740</code>)</span></td>
+          <td>No CLI crashed. Delivery <code>5f9803b43</code> passed every review aspect, but its review ran its own six build-tests steps instead of deferring them to the batch gate. The card stayed in Auto Review without an owner. The stranding watchdog re-entered the batch, admission refused it with "Batch admission failed: BuildTestNotDeferred.", and after about 70 minutes the card escalated with "Auto Review had no active owner". Moving it back to Auto Review repeated the cycle three times that day. Terminal at discovery: Escalated.</td>
+          <td>The watchdog's recovery for any passed review was "resume integration, else re-enter the batch". A non-deferred pass without a delivery settlement record (for example settled while the card was outside Auto Review) could not resume, and the batch never admits a review that ran its own build and tests. The plan also named no rule for most non-deferral cases, so the card could not show why.</td>
+          <td>A passed review that ran its own build and tests now takes the per-task route: integration with the review's journaled verdicts, rebuilding a missing settlement record with the settlement gate policy, or a re-planned review when no recorded verdict admits it. The receipt and the batch gate state name the rule and the route. Every non-deferring plan records its rule. The route is tried once per lane visit; if it does not hold, the card escalates with the reason.</td>
         </tr>
         <tr id="case-github-transient-push-failures">
           <td>2026-11-04</td>
@@ -3084,7 +3141,7 @@
           <td><code>AGT-3120</code><br><span class="small">cancelled-gate-subject-ownership</span></td>
           <td>AGT-3044 escalated when a gate for its older delivery was cancelled after a fix round. AGT-3106 escalated while review daemons restarted.</td>
           <td>The per-task, batch fallback, and merge callers treated Cancellation as failed verification without checking current delivery ownership or shutdown.</td>
-          <td>The observed terminal was Escalated. Superseded cancellations now retain evidence and leave the current card alone; shutdown cancellations consume one durable infrastructure retry after restart. Operator stops still park the card. The timeline records superseded, shutdown, or operator.</td>
+          <td>The observed terminal was Escalated. Superseded cancellations retain evidence and leave the current card alone; shutdown cancellations consume one durable infrastructure retry after restart. A current per-task fallback cancellation without a test verdict keeps its active marker for a bounded retry, including an operator-classified cancellation; exhaustion parks it with GateInfra. The timeline records superseded, shutdown, or operator.</td>
         </tr>
         <tr id="case-completed-gate-superseded-delivery">
           <td>2026-10-15</td>
@@ -3156,12 +3213,33 @@
           <td>The control plane had no provider login by design. Its short completion paths still used local process execution instead of the accepted coding or review host.</td>
           <td>The observed terminal was a degraded Result summary; other short completions failed. Networked one-shots now travel as bounded Task Server jobs. A host claims only with fresh <code>model-acceptance:&lt;cli&gt;:&lt;model&gt;</code> evidence. With no host, the Result reports <code>waiting for a host with &lt;capability&gt;</code> and defers without spending the summary retry budget. A later accepted host lets the retry complete.</td>
         </tr>
+        <tr id="case-review-retry-stranded-by-watchdog">
+          <td>2026-11-10</td>
+          <td><code>AGT-3648 / AGT-3691</code><br><span class="small">review-retry-stranded-by-watchdog (S6-F15)</span></td>
+          <td>No CLI crashed. The review host restarted; its report <code>ReviewInfra / ExecutorRestarted</code> was accepted at 01:27:17 and retry 1/3 was scheduled for 01:28:16. Nine seconds after the report the Auto Review stranding watchdog escalated the card (<code>Auto Review had no active owner for 4 minutes</code>). At the due time the retry scheduler found the card outside Auto Review and cleared the retry without a log line. No review ran again.</td>
+          <td>The stranding facts counted a review as an owner only while it was Pending or Leased. The persisted retry due time and a cause breaker wait were not facts of <code>AutoReviewStrandingPolicy</code>, so with the default 30 minute threshold every card older than that in Auto Review was escalated when its review host restarted.</td>
+          <td>The observed terminal was <span class="lane">5e-escalated</span> with a silently lost retry. A scheduled ReviewInfra retry of the current review now owns the card while its backoff runs and for one threshold after it came due, and a cause breaker wait or probe marker owns the parked card; the rule lives in <code>AutoReviewStrandingPolicy</code>. A retry that no scheduler tick fires still leaves the card ownerless. Every dropped retry is logged as <code>review-infrastructure-retry-dropped</code> and recorded as a <code>review_infrastructure_retry_dropped</code> timeline entry naming the reason and the lane.</td>
+        </tr>
+        <tr id="case-integration-push-stale-tracking-ref">
+          <td>2026-11-09</td>
+          <td><code>AGT-3620 / DEMO-3</code><br><span class="small">integration-push-stale-tracking-ref</span></td>
+          <td>No CLI crashed. DEMO-3's integration push reported <code>pushed</code> and its timeline recorded <code>integrated-verified</code>, but the card showed <code>merged-locally</code> and stayed in Auto Review for 9.5 minutes. Opening Project Settings caused a fetch, and the card moved to Human Review three seconds later.</td>
+          <td>The push did not advance the checkout's <code>origin/main</code> tracking ref under the playthrough's URL rewrite. Integration status read that stale ref. The integration-owned resume wait stored no next attempt time.</td>
+          <td>The observed terminal was Human Review after the incidental fetch. A successful push now records its exact SHA in the tracking ref, and every deferred resume stores a next attempt time. The normal post-processing backstop can advance the card without a read-route fetch.</td>
+        </tr>
         <tr id="case-cause-breaker-recheck-newest-delivery">
           <td>2026-11-09</td>
           <td><code>AGT-3617</code><br><span class="small">cause-breaker-recheck-newest-delivery</span></td>
           <td>Newcomer playthrough AGT-3560 (H1): with the breaker open, held cards read "Waiting for review slot &middot; position 1" while the review host was idle. "Move to Accepted" on intervention card DEMO-2 returned 409 for a missing delivery brief and content verdict. The probe always released the oldest card, whose delivery still carried the broken test, so it failed twice.</td>
           <td>The probe ordered waiting cards by park time, no UI read <code>/api/cause-breakers</code>, the CURRENT line ignored the cause-wait marker, and a plain move of a code-free intervention card hit the content check meant for deliveries.</td>
           <td>The breaker cleared only after the first card was deleted. The CURRENT line now says "Held behind &lt;key&gt;: &lt;cause&gt;" with a link, the intervention card offers "Re-check now", the probe takes the newest waiting delivery or the card the owner chose, and the owner's Accepted move on a code-free intervention completes as a recorded decision that closes the breaker.</td>
+        </tr>
+        <tr id="case-gate-host-tunnel-outage">
+          <td>2026-11-11</td>
+          <td><code>AGT-3746</code><br><span class="small">gate-host-tunnel-outage</span></td>
+          <td>No CLI crashed. From 11:30:08Z to 11:33:53Z the SSH tunnel to the remote gate host refused connections. Every gate run in flight ended with <code>Remote gate transport failure after bounded retries: ssh exited 255</code>, and all 14 members, whose reviews had passed, were parked at 11:33Z. The operator moved them back by hand.</td>
+          <td>A gate host transport failure was settled as the members' red gate: the batch paused, and each member's per-task gate escalated it on its own.</td>
+          <td>The observed terminal was <span class="lane">5e-escalated</span> for 14 cards. <code>GateHostOutagePolicy</code> now classifies such a run as gate host unavailability. Members stay in Auto Review on their pool or active per-task marker, one run probes the host with backoff (30 s up to 5 min), and the gate state reads "gate host unreachable since &lt;time&gt;; waiting". The first run that reaches the host ends the outage with one <code>gate-host-outage</code> Operations event naming start, end and the affected runs. An outage longer than <code>RemoteGate:HostOutageEscalateMinutes</code> (default 60) escalates once for the gate, never per member. A run with failing items is still the members' red.</td>
         </tr>
       </tbody>
     </table>

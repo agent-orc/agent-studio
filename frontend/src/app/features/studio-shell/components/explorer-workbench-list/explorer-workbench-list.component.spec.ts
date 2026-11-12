@@ -98,7 +98,7 @@ describe('ExplorerWorkbenchListComponent', () => {
 
     const root = fixture.nativeElement as HTMLElement;
     expect(root.querySelector('[data-testid="studio-explorer-project-workbenches-Demo"]')?.textContent)
-      .toContain('3');
+      .toContain('5');
     expect(root.querySelector('[data-testid="studio-explorer-workbench-group-Demo-needs-decision"]')?.textContent)
       .toContain('Needs a decision');
     expect(root.querySelector('[data-testid="studio-explorer-workbench-group-Demo-in-implementation"]')?.textContent)
@@ -127,6 +127,26 @@ describe('ExplorerWorkbenchListComponent', () => {
     expect(root.querySelector('[data-testid="studio-explorer-workbench-Demo-documented"]')).toBeNull();
     expect(JSON.parse(localStorage.getItem('dossier-overview:project-demo:history') ?? '{}'))
       .toEqual({ collapsed: true, hadItems: true });
+    http.verify();
+  });
+
+  it('counts an active decision-ready Dossier in the decision group until it is decided', async () => {
+    const { fixture, component, http } = await mount();
+    component.toggle();
+    http.expectOne(request => request.url === '/api/projects/Demo/workbenches'
+      && request.params.get('history') === 'true')
+      .flush(catalogue([
+        item('ready', 'active', { phase: 'decision-ready', openDecisionCount: 2 }),
+        item('decided', 'decided', { phase: 'decision-ready', openDecisionCount: 0 }),
+      ]));
+    fixture.detectChanges();
+
+    expect(component.pendingDecisionCount()).toBe(2);
+    expect(component.currentGroups()[0].items.map(entry => entry.id)).toEqual(['ready']);
+    expect(component.currentGroups()[1].items.map(entry => entry.id)).toEqual(['decided']);
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('[data-testid="studio-explorer-project-workbenches-Demo"]')?.textContent)
+      .toContain('2');
     http.verify();
   });
 

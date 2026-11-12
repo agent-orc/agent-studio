@@ -4,8 +4,33 @@ import { describe, expect, it, vi } from 'vitest';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { redHalvingState } from '../testing/batch-fixtures';
 import { BatchMemberComponent } from './batch-member';
+import { batchEjectionLabel } from '../../../models/batch-gate.model';
 
 describe('BatchMemberComponent', () => {
+  it('gives every recorded fallback rule a readable label', () => {
+    for (const rule of ['planner-per-task', 'documentation-scope', 'batch-disabled',
+      'batch-paused', 'batch-ejected', 'unattributable-replay', 'operator-eject',
+      'already-integrated', 'emergency-admission', 'interrupted-gate']) {
+      const label = batchEjectionLabel(rule);
+      expect(label).toBeTruthy();
+      expect(label).not.toContain(rule);
+    }
+  });
+  it('names a red batch and its reason on the member card', async () => {
+    const state = signal({ ...redHalvingState, members: { 'AGT-2': {
+      status: 'in-batch' as const, batchId: 'batch-7', phase: 'red', position: 1, size: 2,
+    } } });
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), {
+      provide: BatchGateService, useValue: { state: () => state.asReadonly(), watch: () => vi.fn() },
+    }] });
+    const fixture = TestBed.createComponent(BatchMemberComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('taskKey', 'AGT-2');
+    await fixture.whenStable();
+    const badge = fixture.nativeElement.querySelector('[data-testid="batch-member-badge"]') as HTMLElement;
+    expect(badge.textContent).toContain('in a red batch: Suite failed; isolate the culprit');
+    expect(badge.title).toBe('Suite failed; isolate the culprit');
+  });
   it('shows a review fix wait on the card', async () => {
     const state = signal({ ...redHalvingState, members: { ...redHalvingState.members,
       'CARD-7': { status: 'review-fix' as const, reason: 'actionable review concern',
@@ -37,6 +62,26 @@ describe('BatchMemberComponent', () => {
     expect(fixture.nativeElement.querySelector('[data-status="fallback"]')).toBeTruthy();
   });
 
+  it('shows the paused-batch rule in plain language and its event on the card', async () => {
+    const state = signal({ ...redHalvingState, members: { ...redHalvingState.members,
+      'AGT-4': { status: 'fallback' as const, batchId: 'batch-1', fallbackRule: 'batch-paused',
+        fallbackEvent: 'batch batch-1 paused: fresh gate verdict required' },
+    } });
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), {
+      provide: BatchGateService, useValue: { state: () => state.asReadonly(), watch: () => vi.fn() },
+    }] });
+    const fixture = TestBed.createComponent(BatchMemberComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('taskKey', 'AGT-4');
+    await fixture.whenStable();
+    expect(fixture.nativeElement.querySelector('[data-testid="batch-member-badge"]').textContent)
+      .toContain('Per-task fallback · batch paused');
+    expect(fixture.nativeElement.querySelector('[data-testid="batch-member-event"]').textContent)
+      .toContain('batch batch-1 paused: fresh gate verdict required');
+    expect(fixture.nativeElement.querySelector('[data-testid="batch-member-event"]').textContent)
+      .toContain('Red escalates; green integrates.');
+  });
+
   it('names why an ejected member left its batch', async () => {
     const state = signal({
       ...redHalvingState,
@@ -60,6 +105,31 @@ describe('BatchMemberComponent', () => {
     expect(badge.textContent).toContain('Per-task fallback · unattributable history');
     expect(badge.dataset['reason']).toBe('unattributable');
     expect(badge.title).toBe('Immutable result ref does not resolve to the expected SHA.');
+  });
+
+  it('names what a per-task fallback waits for on the card', async () => {
+    const detail = 'engine decision orch_1 on the gate red is pending since 2026-11-09 22:55 UTC';
+    const state = signal({
+      ...redHalvingState,
+      members: {
+        ...redHalvingState.members,
+        'AGT-12': {
+          status: 'fallback' as const, reason: 'batch-ejected', reasonDetail: 'batch paused: unresolved-cohort',
+          waitKind: 'engine-decision', waitingFor: detail, engineRunId: 'orch_1', engineStatus: 'pending',
+        },
+      },
+    });
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), {
+      provide: BatchGateService,
+      useValue: { state: () => state.asReadonly(), watch: () => vi.fn() },
+    }] });
+    const fixture = TestBed.createComponent(BatchMemberComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('taskKey', 'AGT-12');
+    await fixture.whenStable();
+    const badge = fixture.nativeElement.querySelector('[data-testid="batch-member-badge"]') as HTMLElement;
+    expect(badge.textContent).toContain('Per-task fallback · ejected from batch · waits for engine decision');
+    expect(badge.title).toBe(detail);
   });
 
   it('shows the pending approved push on its matching card', async () => {

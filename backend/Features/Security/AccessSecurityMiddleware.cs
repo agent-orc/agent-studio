@@ -489,8 +489,11 @@ public sealed class AccessSecurityMiddleware
             await RejectPermission(context, decision, required.Permission);
             return;
         }
+        // Approver and Reviewer project as viewer; each keeps its one decision
+        // route, which declares the permission only that role adds.
         if (!safeMethod && projected.LegacyRole == StudioRoles.Viewer
-            && required.Permission != IamPermissions.EnvironmentProductionDeployApprove)
+            && required.Permission is not (IamPermissions.EnvironmentProductionDeployApprove
+                or IamPermissions.ProjectCardsReview))
         {
             await Reject(context, 403, "role-denied", "Viewer role is read-only.");
             return;
@@ -1207,6 +1210,9 @@ public sealed class AccessSecurityMiddleware
            || path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/passkeys/assertion-options", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/invite/accept", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/auth/invite/preview", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/v1/studio/auth/invite/accept", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/v1/studio/auth/invite/preview", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/runner-enroll", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsRunnerTaskFileRead(string method, string path)
@@ -1226,6 +1232,8 @@ public sealed class AccessSecurityMiddleware
     private static bool IsReadOnlyPost(string method, string path)
         => HttpMethods.IsPost(method)
            && (path.Equals("/api/tasks/reference-status", StringComparison.OrdinalIgnoreCase)
+               // AGT-3753: a dry run of the completion checks; it changes nothing.
+               || path.Equals("/api/tasks/acceptance-readiness", StringComparison.OrdinalIgnoreCase)
                || path.Equals("/api/operator/deploy/plan", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
@@ -1372,6 +1380,18 @@ public sealed class AccessSecurityMiddleware
                     return ProjectRouteAddress.Addressed(Uri.UnescapeDataString(contextKey[prefix.Length..].Split('/', 2)[0]));
             return ProjectRouteAddress.WorkspaceWide;
         }
+        // Magazine routes (MAG-1) name their scope in the segment after
+        // /api/magazine. project:{id} addresses that project; the installation
+        // and workspace magazines and the list (scope in the query) are checked
+        // by the handler against the captured RequestAccess.
+        if (path.Equals("/api/magazine", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/magazine/", StringComparison.OrdinalIgnoreCase))
+        {
+            var scope = Uri.UnescapeDataString(path["/api/magazine".Length..].TrimStart('/').Split('/', 2)[0]);
+            return scope.StartsWith(AgentStudio.Magazine.MagazineScope.ProjectPrefix, StringComparison.OrdinalIgnoreCase)
+                ? ProjectRouteAddress.Addressed(scope[AgentStudio.Magazine.MagazineScope.ProjectPrefix.Length..])
+                : ProjectRouteAddress.DeferredToHandler;
+        }
         // The task collection filters per task; creation checks its body
         // project against the route's permission in the handler.
         if (path.Equals("/api/tasks", StringComparison.OrdinalIgnoreCase))
@@ -1397,11 +1417,11 @@ public sealed class AccessSecurityMiddleware
             var taskId = path["/api/tasks/".Length..].Split('/', 2)[0];
             // Body-addressed and workspace-collection task routes carry their task
             // set in the request body (reorder, batch-move) or filter their payload
-            // per task (reference-status, archive). Those handlers enforce membership
+            // per task (reference-status, acceptance-readiness, archive). Those handlers enforce membership
             // on every affected task via ProjectAccessAuthorization.AllowsTasks /
             // FilterTasks, so the middleware defers instead of inferring a single
             // project from the literal path segment.
-            if (taskId is "reorder" or "batch-move" or "reference-status" or "archive")
+            if (taskId is "reorder" or "batch-move" or "reference-status" or "acceptance-readiness" or "archive")
                 return ProjectRouteAddress.DeferredToHandler;
             // A literal route under /api/tasks/ names no task: the board and
             // other collection reads (grouped, code-review/defaults,

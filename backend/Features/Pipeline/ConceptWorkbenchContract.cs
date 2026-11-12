@@ -79,6 +79,21 @@ public static class ConceptWorkbenchContract
         IReadOnlyList<string> changedFiles,
         string? expectedSourceTaskKey = null)
     {
+        var containment = ReviewContainment(changedFiles);
+        return containment.RepoRelativeDirectory is { } rel
+            ? ReviewDirectory(checkoutRoot, rel, expectedSourceTaskKey)
+            : containment;
+    }
+
+    /// <summary>
+    /// The containment half of <see cref="ReviewChangedFiles"/>: a concept
+    /// delivery may change exactly one <c>docs/&lt;topic&gt;/</c> directory and
+    /// nothing else. A contained delivery returns that directory as
+    /// <see cref="ConceptWorkbenchReview.RepoRelativeDirectory"/> with no
+    /// findings; it is not yet a content review.
+    /// </summary>
+    public static ConceptWorkbenchReview ReviewContainment(IReadOnlyList<string> changedFiles)
+    {
         var normalized = changedFiles
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Select(NormalizeRepoPath)
@@ -94,13 +109,7 @@ public static class ConceptWorkbenchContract
             findings.Add("Concept runs may change only docs/<topic>/: " + string.Join(", ", outside));
 
         var topicRoots = normalized
-            .Where(path => path.StartsWith(DossierPrefix, StringComparison.OrdinalIgnoreCase))
-            .Select(path =>
-            {
-                var remainder = path[DossierPrefix.Length..];
-                var slash = remainder.IndexOf('/');
-                return slash <= 0 ? null : DossierPrefix + remainder[..slash];
-            })
+            .Select(TopicRoot)
             .Where(root => root is not null)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Cast<string>()
@@ -111,14 +120,38 @@ public static class ConceptWorkbenchContract
         if (findings.Count > 0)
             return new ConceptWorkbenchReview(false, null, null, null, findings);
 
-        var rel = topicRoots[0];
-        return ReviewDirectory(checkoutRoot, rel, expectedSourceTaskKey);
+        return new ConceptWorkbenchReview(false, null, topicRoots[0], null, []);
+    }
+
+    /// <summary>
+    /// The one <c>docs/&lt;topic&gt;</c> directory that holds every changed
+    /// path, or null when a path lies outside it, the paths span several
+    /// topics, or the diff is unknown or empty (AGT-3698).
+    /// </summary>
+    public static string? SingleDossierDirectory(IReadOnlyList<string>? changedFiles)
+    {
+        var roots = (changedFiles ?? [])
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => TopicRoot(NormalizeRepoPath(path)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return roots is [{ } root] ? root : null;
+    }
+
+    private static string? TopicRoot(string normalizedPath)
+    {
+        if (!normalizedPath.StartsWith(DossierPrefix, StringComparison.OrdinalIgnoreCase))
+            return null;
+        var remainder = normalizedPath[DossierPrefix.Length..];
+        var slash = remainder.IndexOf('/');
+        return slash <= 0 ? null : DossierPrefix + remainder[..slash];
     }
 
     public static ConceptWorkbenchReview ReviewDirectory(
         string checkoutRoot,
         string repoRelativeDirectory,
-        string? expectedSourceTaskKey = null)
+        string? expectedSourceTaskKey = null,
+        bool allowAccepted = false)
     {
         var rel = NormalizeRepoPath(repoRelativeDirectory).TrimEnd('/');
         var findings = new List<string>();
@@ -175,7 +208,8 @@ public static class ConceptWorkbenchContract
             if (!string.Equals(descriptor.Entrypoint, EntryFileName, StringComparison.OrdinalIgnoreCase))
                 findings.Add("workbench.json entrypoint must be index.html.");
             if (isNewDossier
-                && !string.Equals(descriptor.Status, "decision-pending", StringComparison.OrdinalIgnoreCase))
+                && !string.Equals(descriptor.Status, "decision-pending", StringComparison.OrdinalIgnoreCase)
+                && !(allowAccepted && string.Equals(descriptor.Status, "decided", StringComparison.OrdinalIgnoreCase)))
                 findings.Add("workbench.json status must be decision-pending.");
             else if (isLegacyWorkbench && string.IsNullOrWhiteSpace(descriptor.Status))
                 findings.Add("workbench.json status is required.");

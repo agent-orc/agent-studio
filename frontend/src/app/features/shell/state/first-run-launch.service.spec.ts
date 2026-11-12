@@ -5,10 +5,12 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { AuthService } from '../../../services/auth.service';
 import { WorkspaceOverlaysService } from './workspace-overlays.service';
 import { FirstRunLaunchService } from './first-run-launch.service';
+import { ShellAccessService } from '../../../services/shell-access.service';
 
 describe('FirstRunLaunchService', () => {
   const status = signal({ profile: 'networked' });
   const settingsOpen = signal(false);
+  let operatorAllowed = true;
   let service: FirstRunLaunchService;
   let http: HttpTestingController;
 
@@ -16,11 +18,13 @@ describe('FirstRunLaunchService', () => {
     window.location.hash = '';
     status.set({ profile: 'networked' });
     settingsOpen.set(false);
+    operatorAllowed = true;
     TestBed.configureTestingModule({
       providers: [
         provideHttpClient(), provideHttpClientTesting(),
         { provide: AuthService, useValue: { status } },
         { provide: WorkspaceOverlaysService, useValue: { settingsOpen } },
+        { provide: ShellAccessService, useValue: { operator: () => operatorAllowed } },
       ],
     });
     service = TestBed.inject(FirstRunLaunchService);
@@ -56,5 +60,13 @@ describe('FirstRunLaunchService', () => {
     status.set({ profile: 'public-demo-readonly' });
     service.maybeOpen(open);
     http.expectNone('/api/v1/projects');
+  });
+
+  it('does not open operator setup for a limited session', () => {
+    operatorAllowed = false;
+    const open = vi.fn();
+    service.maybeOpen(open);
+    http.expectNone('/api/v1/projects');
+    expect(open).not.toHaveBeenCalled();
   });
 });

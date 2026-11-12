@@ -121,14 +121,18 @@ to stderr) and `--url`.
 | `create --project <p> --title <t> [--ready] [--prompt-file <f>] [--type] [--cli]` | `GET /api/watch-paths`, `POST /api/tasks/` | `--ready` creates in `2-ready`, otherwise `0-backlog`. |
 | `title <card> <title>` | `.../attention`, `PUT /api/tasks/{card}/title` | |
 | `capacity` | `GET /api/operator/capacity` | |
-| `backups` | `GET /api/operator/backups` | Installation backup state and warnings (AGT-3574); the off-host target is shown only with installation-wide operate permission. |
+| `backups` | `GET /api/operator/backups` | Installation backup state and warnings (AGT-3574); the off-host target and key fingerprints are shown only with installation-wide operate permission, and host paths in error text read `<path>` without it (AGT-3737). |
 | `security [--soon]` | `GET /api/security/posture` | Read only. The installation security view ranked by severity; `--soon` lists only what needs action within 14 days, in the text and the `--json` findings (`soonOnly: true`; the summary keeps the installation-wide counts). Needs `security.posture.read`, which the `operator-agent` role holds. |
 | `routing` | `GET /api/model-selection/policy`, `GET /api/operator/capacity` | Central model selection policy and pins. |
 | `routing set-step --step <id> --cli <cli> [--model] [--thinking] [--pin-mode] [--pipeline-type] (--project <p>... \| --all)` | `GET /api/projects/settings`, `PUT /api/projects/{p}/pipeline-step` | See [Routing](#routing). |
 | `preflight restart\|deploy` | `GET /api/operator/preflight/{operation}` | Exit 8 with the named blockers. |
 | `deploy plan --target-version <v> [--window <minutes>]` | `POST /api/operator/deploy/plan` | Ordered, expiring plan: drain, Task Server, readiness, Engine, hosts. |
+| `host drain <client-id>` | `POST /api/clients/{id}/drain` | `host.drain` (T1): the runner identity claims no new run or review; running work finishes. |
+| `host status <client-id>` | `GET /api/clients/{id}/drain-status` | `draining`, `drained` and the leased attempts it still runs. |
+| `host resume <client-id>` | `POST /api/clients/{id}/resume` | `host.resume` (T1): lifts the drain. A drain that ends in retirement stays. |
 | `log [--project <p>] [--after <cursor>]` | `GET /api/operator/log` | |
 | `log append --project <p> --kind observed\|decided\|did\|handoff (--text <t> \| --text-file <f>) [--card <key>]... [--audit <id>]...` | `POST /api/operator/log` | |
+| `magazine publish <file.md> [--scope <scope>] [--slug <slug>] [--persona <name>]` | `GET` and `PUT /api/magazine/{scope}/{slug}` | See [Magazine](#magazine). Needs `magazine.write`, which the `operator-agent` role holds. |
 
 For a networked installation, `studio-op deploy plan` supplies the OP-6 plan;
 the [networked deploy runbook](networked-deploy.md) drives the complete host
@@ -186,6 +190,47 @@ requires integration proof for that move) and appends a `did` entry to the
 operator log that records the acceptance as the operator agent's verdict.
 The card timeline names the token's own actor, not the Owner.
 
+### Magazine
+
+`magazine publish` publishes or refreshes one magazine article
+([magazine domain](../../system/domains/magazine.md)) from a Markdown file
+with front matter:
+
+```markdown
+---
+scope: project:PROJ-002
+slug: decision-notes
+title: "Decision notes: 10 November"
+summary: 29 cards wait for you; 24 can be accepted, 4 need your decision, 1 gets rework.
+kind: decision-brief
+persona: Editor
+sources:
+  - card:AGT-3714
+  - dossier:docs/dossiers/magazine.md
+  - batch:batch-17
+---
+
+## Waiting for you
+...
+```
+
+- Front matter keys: `scope` (`installation`, `workspace:<id>` or `project:<id>`),
+  `slug`, `title`, `summary` (one paragraph; `summary: >` folds indented
+  lines), `kind` (`digest`, `decision-brief`, `report`, `note`), `sources`
+  (`card:`, `dossier:` or `batch:` entries, as a `-` list or `[a, b]`) and
+  the optional `persona`.
+- `--scope`, `--slug` and `--persona` override the front matter. An unknown
+  key is a usage error (`front-matter-invalid`).
+- The rest of the file is the Markdown body, at most 256 KiB
+  (`magazine-body-too-large` before any request).
+- The command reads the article first and then sends `PUT` with that revision
+  as `If-Match`: one call creates the article or refreshes it.
+- A writer that lands between the read and the write makes Studio answer
+  409 `revision-conflict` (exit 6). Run the command again to publish on top
+  of the newer revision.
+- Studio sets the author from the token. The text output names the scope,
+  slug and new revision; `--json` adds `created` and `previousRevision`.
+
 ### Routing
 
 The Dossier routes review model changes through central model selection
@@ -220,7 +265,7 @@ one result per project; exit 6 means some projects refused, exit 1 all.
 | 21 | Watch woke on `human-review.ready`. |
 | 22 | Watch woke on `decision-card.opened`. |
 | 23 | Watch woke on `backend.stalled` or `progress.idle-with-ready`. |
-| 24 | Watch woke on `batch.red` or `batch.isolating`. |
+| 24 | Watch woke on `batch.red`, `batch.isolating` or `batch.record-unreadable`. |
 | 25 | Watch woke on `push.pending-overdue`. |
 | 26 | Watch woke on `quota.exhausted` or `quota.fallback-active`. |
 | 27 | Watch woke on `stream.gap`: events were lost; read triage and capacity. |

@@ -55,7 +55,7 @@
       </label>
       <div class="field">
         <span class="field__label">Lane</span>
-        <app-segmented-control data-testid="create-lane-picker" [options]="segmentedLaneOptions" [value]="newTargetState()" ariaLabel="Lane" (valueChange)="setTargetState($event)" />
+        <app-segmented-control data-testid="create-lane-picker" [options]="segmentedLaneOptions()" [value]="newTargetState()" ariaLabel="Lane" (valueChange)="setTargetState($event)" />
       </div>
     </div>
     <h3 class="create-dialog__section-title">Configuration</h3>

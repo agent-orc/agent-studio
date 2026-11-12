@@ -260,7 +260,7 @@
       background: rgba(255,255,255,0.06);
       border: 1px solid rgba(255,255,255,0.10);
       color: var(--studio-fg-dim);
-      max-width: 58px;
+      max-width: min(220px, calc(100vw - 150px));
       overflow: hidden;
       font-variant-numeric: tabular-nums;
     }

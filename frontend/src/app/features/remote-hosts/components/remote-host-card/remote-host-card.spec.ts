@@ -78,6 +78,19 @@ function mount(host: RemoteHost, expanded = true, expandSections = true) {
 }
 
 describe('RemoteHostCardComponent', () => {
+  it('shows each measured file system and the largest product consumer', () => {
+    const fixture = mount({ ...HOST, filesystems: [
+      { purpose: 'runner work', path: '/work', freeBytes: 8 * 1073741824,
+        totalBytes: 100 * 1073741824, ownedBytes: { 'runner worktrees': 60 * 1073741824 } },
+      { purpose: 'container storage', path: '/var/lib/docker', freeBytes: 20 * 1073741824,
+        totalBytes: 100 * 1073741824 },
+    ] });
+    const text = (fixture.nativeElement.querySelector('[data-testid="remote-host-filesystems"]') as HTMLElement).textContent ?? '';
+    expect(text).toContain('/work');
+    expect(text).toContain('8%');
+    expect(text).toContain('runner worktrees');
+    expect(text).toContain('/var/lib/docker');
+  });
   it('shows a closed claim gate beside occupied slots', () => {
     const fixture = mount({ ...HOST, activeTaskCount: 7, roleMaxParallelism: 10,
       claimLoadGate: { state: 'closed', loadPerCore: 5.51, threshold: 4,
@@ -123,6 +136,21 @@ describe('RemoteHostCardComponent', () => {
     expect(remove).toBeTruthy();
     remove.click();
     expect(action).toEqual({ kind: 'delete', id: HOST.id });
+  });
+
+  // AGT-3690: a machine row shows its coding role, so a restart of the review
+  // role on the same machine used to be invisible in the machine detail.
+  it('shows the newest restart of any role on the machine and its history', () => {
+    const fixture = mount({ ...HOST, serviceRole: 'coding', restartedAt: null, reviewsLost: 0 }, true, false);
+    const review: RemoteHost = { ...HOST, id: 'first-run-review', clientId: 'first-run-review',
+      name: 'first-run-review', serviceRole: 'review', restartedAt: '2026-07-10T11:55:00Z', reviewsLost: 1,
+      reviewRestarts: [{ restartedAt: '2026-07-10T11:55:00Z', hostId: 'first-run-host', instanceId: 'i-2',
+        reviewsLost: 1, lostAttempts: [{ attemptId: 'review_a', taskKey: 'AGT-1', status: 'worker-not-reported' }] }] };
+    fixture.componentRef.setInput('roles', [fixture.componentInstance.host(), review]);
+    fixture.detectChanges();
+    const el: HTMLElement = fixture.nativeElement;
+    expect(el.querySelector('[data-testid="remote-host-role-restart"]')?.textContent).toContain('1 review lost');
+    expect(el.querySelectorAll('[data-testid="remote-host-restart-row"]')).toHaveLength(1);
   });
 
   it('shows review restart and quota facts in the selected detail', () => {

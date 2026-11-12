@@ -256,6 +256,12 @@ public sealed class BoardReadSignatureSource(
                     hash.Add(review.ExecutorId);
                     hash.Add(review.AcquiredAt);
                     hash.Add(review.PendingInfrastructureRetryAt);
+                    // AGT-3690: the lost-review line names its classification,
+                    // host, loss time and retry number.
+                    hash.Add(review.FailureClassification);
+                    hash.Add(review.HostId);
+                    hash.Add(review.TerminalAt);
+                    hash.Add(review.PendingInfrastructureRetryNumber);
                 }
             }
 

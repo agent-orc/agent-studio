@@ -4,11 +4,12 @@
 // Builds a small, reproducible TaskRepository the dev backend can point at
 // instead of the heavy production workspace (~1300 tasks / ~650 MB). The
 // generated store is built from the committed, sanitized pinned snapshot and
-// holds tasks per lane across two demo projects. A subset has run / token
-// history so the statistics views have data.
+// holds tasks per lane across two demo projects. The opt-in owner-day variant
+// adds invented owner triage scenes. A subset has run / token history so the
+// statistics views have data.
 //
 // Usage:
-//   node scripts/seed-demo-workspace.mjs [--root <path>] [--force]
+//   node scripts/seed-demo-workspace.mjs [--root <path>] [--owner-day]
 //
 // Default root: C:\Projects\agent-taskboard-workspace-demo
 //   (override with --root <path> or the ATP_DEMO_ROOT env var).
@@ -16,15 +17,14 @@
 // Re-running RESETS the demo store to a clean, known stand: every path this
 // script manages (projects/, .metadata/, logs/, and the workspace-root usage /
 // settings files) is removed and rewritten. It never touches anything else under the
-// root, so an operator-added .git stays put. The registry under
-// .metadata/projects.json is intentionally NOT written here — the backend
-// seeds it from WatchPaths on first boot (ADR-0042); wiping it forces a fresh,
-// deterministic registry on the next dev start.
+// root, so an operator-added .git stays put. Project identities are seeded
+// with the same short codes as the cards and Dossiers.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
+import { execFileSync } from 'node:child_process';
 
 const DEFAULT_ROOT = 'C:\\Projects\\agent-taskboard-workspace-demo';
 const OWNER = 'local-default';
@@ -34,10 +34,14 @@ const OWNER = 'local-default';
 const PROVENANCE = 'pinned-demo-simulated';
 
 function parseArgs(argv) {
-  const args = { root: process.env.ATP_DEMO_ROOT || DEFAULT_ROOT };
+  const args = { root: process.env.ATP_DEMO_ROOT || DEFAULT_ROOT, ownerDay: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--root') args.root = argv[++i];
+    else if (argv[i] === '--owner-day') args.ownerDay = true;
+    else throw new Error(`Unknown seed option: ${argv[i]}`);
   }
+  if (!args.root) throw new Error('--root requires a path');
+  args.root = resolve(args.root);
   return args;
 }
 
@@ -58,11 +62,19 @@ const ARTICLE_TEMPLATE_PATH = fileURLToPath(
   new URL('../docs/app/templates/article-document-v2.html', import.meta.url));
 const ARTICLE_TEMPLATE = readFileSync(ARTICLE_TEMPLATE_PATH, 'utf8');
 
-// Deterministic timestamps so a re-seed produces byte-identical files and the
-// UI never derives capture-visible dates from a re-seed's wall clock.
-const BASE = Date.parse(PINNED_SNAPSHOT.fixedTimeBase);
+// Pinned capture timestamps are fixed. Owner-day compresses the same sequence
+// into the current local day so a first boot does not age active cards out.
+const ARGS = parseArgs(process.argv.slice(2));
+const BASE = ARGS.ownerDay ? new Date().setHours(0, 0, 0, 0) : Date.parse(PINNED_SNAPSHOT.fixedTimeBase);
+const DAY_SPAN = ARGS.ownerDay ? Date.now() - BASE : 0;
 function iso(offsetMinutes) {
-  return new Date(BASE + offsetMinutes * 60_000).toISOString();
+  const elapsed = ARGS.ownerDay ? Math.floor(Math.max(0, offsetMinutes) / 1200 * DAY_SPAN) : offsetMinutes * 60_000;
+  return new Date(BASE + elapsed).toISOString();
+}
+
+function recentIso(minutesAgo) {
+  const time = Date.now() - minutesAgo * 60_000;
+  return new Date(ARGS.ownerDay ? Math.max(BASE, time) : time).toISOString();
 }
 
 /** Second-precision UTC stamp, the lifecycle timestamp form descriptors use. */
@@ -73,7 +85,21 @@ function isoSeconds(offsetMinutes) {
 // ---- Fixture definition -------------------------------------------------
 
 const PROJECTS = PINNED_SNAPSHOT.projects;
-const TASKS = PINNED_SNAPSHOT.tasks;
+const OWNER_DAY_TASKS = [
+  { project: 'demo-app', key: 'DEMO-19', state: '5-human-review', type: 'feature', title: 'Resolve the refused completion claim', ownerScene: 'refused-completion' },
+  { project: 'demo-app', key: 'DEMO-20', state: '5e-escalated', type: 'bug', title: 'Isolate the red report batch', ownerScene: 'red-batch' },
+  { project: 'demo-app', key: 'DEMO-21', state: '1-preparation', type: 'feature', title: 'Choose the export retention window', mode: 'concept', workbench: 'DEMO-W2' },
+  { project: 'demo-app', key: 'DEMO-22', state: '0-backlog', type: 'chore', title: 'Review stale preview links' },
+  { project: 'demo-app', key: 'DEMO-23', state: '2-ready', type: 'feature', title: 'Add report sharing controls' },
+  { project: 'demo-app', key: 'DEMO-24', state: '4-auto-review', type: 'bug', title: 'Check export retry boundaries', history: true },
+  { project: 'demo-app', key: 'DEMO-25', state: '3-progress', type: 'feature', title: 'Show export queue position', history: true },
+  { project: 'demo-app', key: 'DEMO-26', state: '4-auto-review', type: 'feature', title: 'Check report download receipts', history: true },
+  { project: 'demo-app', key: 'DEMO-27', state: '4-auto-review', type: 'bug', title: 'Verify retry cancellation', history: true },
+  { project: 'demo-app', key: 'DEMO-28', state: '4-auto-review', type: 'chore', title: 'Review export format fixtures', history: true },
+  { project: 'demo-platform', key: 'PLAT-5', state: '5-human-review', type: 'chore', title: 'Review deployment health signals' },
+  { project: 'demo-platform', key: 'PLAT-6', state: '2-ready', type: 'feature', title: 'Expose batch diagnostic receipts' },
+];
+const TASKS = ARGS.ownerDay ? [...PINNED_SNAPSHOT.tasks, ...OWNER_DAY_TASKS] : PINNED_SNAPSHOT.tasks;
 const DECISION = PINNED_SNAPSHOT.decision;
 const WIKI_TREES = PINNED_CONTENT.wiki;
 const DOSSIERS = PINNED_CONTENT.dossiers;
@@ -128,7 +154,8 @@ function writeTask(root, task, index) {
   const dir = taskDir(root, task);
   const id = slug(task);
   const created = iso(index * 30);
-  const entered = iso(index * 30 + 120);
+  const entered = ARGS.ownerDay && ['3-progress', '4-auto-review'].includes(task.state)
+    ? recentIso(3) : iso(index * 30 + 120);
 
   const json = {
     id,
@@ -143,7 +170,7 @@ function writeTask(root, task, index) {
     thinkingLevel: 'medium',
     cliType: 'claude',
     kind: 'task',
-    mode: 'coding',
+    mode: task.mode ?? 'coding',
     allowWebAccess: false,
     taskType: task.type,
     key: task.key,
@@ -152,7 +179,8 @@ function writeTask(root, task, index) {
 
   if (task.history) {
     json.sessionName = `demo-session-${task.key.toLowerCase()}`;
-    json.lastProgressAt = iso(index * 30 + 110);
+    json.lastProgressAt = ARGS.ownerDay && task.state === '3-progress'
+      ? recentIso(2) : iso(index * 30 + 110);
     json.lastUsage = {
       At: iso(index * 30 + 110),
       Tokens: null,
@@ -168,6 +196,7 @@ function writeTask(root, task, index) {
   // descriptor remains populated as the current compatibility bridge.
   const workbenchRefs = CARD_WORKBENCH_REFS[task.key];
   if (workbenchRefs) json.references = { workbenches: workbenchRefs };
+  if (task.workbench) json.references = { workbenches: [task.workbench] };
 
   const wikiPages = CARD_WIKI_PAGES[task.key];
   if (wikiPages) {
@@ -203,7 +232,9 @@ function writeTask(root, task, index) {
   writeJson(join(dir, 'task.json'), json);
   writeText(join(dir, 'prompt.md'), task.decision
     ? DECISION.promptMarkdown
-    : `# ${task.title}\n\nPinned demo data. This card belongs to the deterministic two-project demo scene; its content is invented and safe to reset. A re-seed restores the exact captured state.\n`);
+    : task.mode === 'concept'
+      ? `# ${task.title}\n\nOwner-day demo data. The linked Dossier DEMO-W2 has two open retention decisions. Review both options and record the operator's choices before promoting implementation work.\n`
+      : `# ${task.title}\n\n${ARGS.ownerDay ? 'Owner-day' : 'Pinned'} demo data. This card belongs to the two-project demo scene; its content is invented and safe to reset.\n`);
 
   if (task.history) writeHistory(dir, task, id, index);
   if (task.key === 'DEMO-5') {
@@ -211,11 +242,37 @@ function writeTask(root, task, index) {
     writeArtifactGalleryScene(dir);
   }
   if (task.decision) writeDecisionState(dir, task, id);
+  if (task.ownerScene) writeOwnerScene(dir, task);
+}
+
+function writeOwnerScene(dir, task) {
+  if (task.ownerScene === 'refused-completion') {
+    writeText(join(dir, 'status.md'), `# Completion claim\n\nResult: Refused\n\nThe delivery brief does not name a verified result SHA. Acceptance refused this completion claim; the card remains in Human Review until evidence is attached. This is simulated owner-day evidence.\n`);
+    writeJson(join(dir, 'results', 'completion-refusal.json'), {
+      outcome: 'refused', code: 'unintegrated-delivery',
+      reason: 'The delivery brief does not name a verified result SHA.',
+      at: recentIso(4), provenance: PROVENANCE,
+    });
+  } else if (task.ownerScene === 'red-batch') {
+    writeText(join(dir, 'status.md'), `# Batch diagnostic\n\nResult: Red\n\nThe simulated report batch failed its focused suite. The card is escalated for owner triage; inspect the diagnostic before retrying.\n`);
+    writeJson(join(dir, 'results', 'batch-diagnostic.json'), {
+      batchId: 'demo-report-batch-1', phase: 'red', outcome: 'failed',
+      members: ['DEMO-20', 'DEMO-24'],
+      failingTest: 'ReportExportTests.EmptyReportKeepsExportDisabled',
+      at: recentIso(3), provenance: PROVENANCE,
+    });
+  }
+  writeJsonl(join(dir, 'logs', 'timeline.jsonl'), [{
+    ts: recentIso(3), kind: task.ownerScene === 'red-batch' ? 'batch_gate_failed' : 'completion_refused',
+    actor: 'orchestrator', summary: task.ownerScene === 'red-batch'
+      ? 'Simulated batch gate red; owner triage required' : 'Simulated completion refused; evidence required',
+    details: { provenance: PROVENANCE },
+  }]);
 }
 
 function writeReviewEvidence(dir) {
   writeText(
-    join(dir, 'code-review-2026-06-01T12-00-00.md'),
+    join(dir, `code-review-${iso(260).replaceAll(':', '-').replace('.000Z', 'Z')}.md`),
     `---
 type: code-review-grade
 runAt: ${iso(260)}
@@ -313,7 +370,7 @@ The CSV export scene is pinned demo data, captured once and replayed unchanged.
 }
 
 function writeDecisionState(dir, task, id) {
-  const reviewFile = 'code-review-grade-2026-08-09T12-32-00Z.md';
+  const reviewFile = `code-review-grade-${iso(272).replaceAll(':', '-').replace('.000Z', 'Z')}.md`;
   writeText(
     join(dir, reviewFile),
     `---
@@ -644,7 +701,7 @@ function writeDecisionJournal(root) {
   const task = TASKS.find((candidate) => candidate.key === DECISION.taskKey);
   if (!task) throw new Error(`Pinned decision task is missing: ${DECISION.taskKey}`);
   const id = slug(task);
-  const reviewFileName = 'code-review-grade-2026-08-09T12-32-00Z.md';
+  const reviewFileName = `code-review-grade-${iso(272).replaceAll(':', '-').replace('.000Z', 'Z')}.md`;
   writeJsonl(join(root, 'logs', 'decisions', 'Demo App.jsonl'), [{
     createdAt: iso(273),
     jobId: id,
@@ -720,18 +777,15 @@ function writeWorkspaceRootFiles(root) {
   }
   writeJson(join(root, 'project-settings.json'), settings);
 
-  writeJson(join(root, 'tags.json'), {
-    Version: 1,
-    Tags: [
-      { Name: 'demo', Color: '#a78bfa' },
-      { Name: 'frontend', Color: '#60a5fa' },
-      { Name: 'platform', Color: '#34d399' },
-    ],
-  });
+  writeJson(join(root, 'tags.json'), [
+    { id: 'demo', label: 'Demo', color: '#a78bfa', description: 'Pinned demonstration data.', kind: 'facet' },
+    { id: 'frontend', label: 'Frontend', color: '#60a5fa', description: 'Demo App interface work.', kind: 'facet' },
+    { id: 'platform', label: 'Platform', color: '#34d399', description: 'Demo Platform work.', kind: 'facet' },
+  ]);
 
   writeText(
     join(root, 'README.md'),
-    '# Demo TaskRepository (generated)\n\nSlim, reproducible datastore for the DEV backend (ADR-0056). Generated by\n`scripts/seed-demo-workspace.mjs` in the agent-taskboard repo. Do not hand-edit\nfor anything you want to keep — re-running the seed resets this store to a\nclean stand.\n'
+    `# Demo TaskRepository (generated)\n\nSlim ${ARGS.ownerDay ? 'owner-day' : 'pinned'} demo datastore for the DEV backend (ADR-0056). Generated by\n\`scripts/seed-demo-workspace.mjs\` in the agent-taskboard repo. Re-running the seed resets this store.\n`
   );
 }
 
@@ -747,6 +801,51 @@ function writePinnedRepositoryMarker(projectRoot) {
     );
   }
   writeText(join(projectRoot, '.gitignore'), 'tasks/\n.orchestrator/\n');
+}
+
+function writeProjectRegistry(root) {
+  writeJson(join(root, '.metadata', 'projects.json'), {
+    version: 1,
+    nextProjectIdSeq: PROJECTS.length + 1,
+    projects: PROJECTS.map((project, index) => {
+      const projectRoot = join(root, 'projects', project.key);
+      const keys = TASKS.filter((task) => task.project === project.key);
+      const dossiers = DOSSIERS.project === project.key ? DOSSIERS.items : [];
+      return {
+        id: `PROJ-${String(index + 1).padStart(3, '0')}`,
+        displayName: project.name,
+        shortCode: project.key === 'demo-app' ? 'DEMO' : 'PLAT',
+        workspaceId: 'ws-default',
+        sortOrder: index,
+        nextTaskKeySeq: Math.max(...keys.map((task) => Number(task.key.split('-').at(-1)))) + 1,
+        nextWorkbenchKeySeq: dossiers.length
+          ? Math.max(...dossiers.map((item) => Number(item.key.split('W').at(-1)))) + 1 : 1,
+        storageLocation: projectRoot,
+        repositoryPath: projectRoot,
+        rootPath: projectRoot,
+        createdAt: iso(0),
+      };
+    }),
+    repositoryAudit: [],
+    startRuleAudit: [],
+  });
+}
+
+function commitProjectContents(root) {
+  for (const project of PROJECTS) {
+    const projectRoot = join(root, 'projects', project.key);
+    const git = (...args) => execFileSync('git', ['-C', projectRoot, ...args], {
+      stdio: 'pipe', windowsHide: true,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_DATE: iso(0), GIT_COMMITTER_DATE: iso(0),
+        GIT_CONFIG_NOSYSTEM: '1',
+      },
+    });
+    git('add', '--', '.gitignore', 'README.md', 'docs');
+    git('-c', 'user.name=Demo Seed', '-c', 'user.email=demo-seed@example.invalid',
+      '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'Seed demo project content');
+  }
 }
 
 // ---- Wiki trees and Dossier gallery ------------------------------------
@@ -1083,7 +1182,9 @@ function decisionReceipt(decision) {
 
 function writeDossierGallery(root) {
   const galleryRoot = join(root, 'projects', DOSSIERS.project, 'docs', DOSSIERS.root);
-  for (const item of DOSSIERS.items) {
+  for (const source of DOSSIERS.items) {
+    const item = ARGS.ownerDay && source.key === 'DEMO-W2'
+      ? { ...source, sourceTaskKeys: ['DEMO-17', 'DEMO-21'] } : source;
     const dir = join(galleryRoot, item.id);
     writeText(join(dir, 'index.html'), dossierHtml(item));
     writeJson(join(dir, 'workbench.json'), dossierDescriptor(item));
@@ -1098,6 +1199,10 @@ function writePresentationStory(root) {
   writeText(
     join(demoApp, 'README.md'),
     '# Demo App\n\nA deterministic sample product used only for Agent Studio demonstrations.\n'
+  );
+  writeText(
+    join(demoPlatform, 'README.md'),
+    '# Demo Platform\n\nA deterministic sample platform used only for Agent Studio demonstrations.\n'
   );
   writeJsonl(join(demoApp, '.orchestrator', 'orchestrator-chat.jsonl'), [
     { id: 'demo-chat-01', ts: iso(210), role: 'user', text: 'What should we show in the MVP walkthrough?' },
@@ -1138,7 +1243,7 @@ function stampTree(root) {
 }
 
 function main() {
-  const { root } = parseArgs(process.argv.slice(2));
+  const { root } = ARGS;
   const productionGuard = root.replace(/[\\/]+$/, '').toLowerCase();
   if (productionGuard.endsWith('agent-taskboard-workspace')) {
     console.error(`Refusing to seed the production workspace: ${root}`);
@@ -1156,6 +1261,8 @@ function main() {
   writeDossierGallery(root);
   writeDecisionJournal(root);
   stampTree(root);
+  writeProjectRegistry(root);
+  commitProjectContents(root);
 
   const perLane = TASKS.reduce((acc, t) => ((acc[t.state] = (acc[t.state] || 0) + 1), acc), {});
   const perStatus = DOSSIERS.items.reduce((acc, d) => ((acc[d.status] = (acc[d.status] || 0) + 1), acc), {});
@@ -1166,7 +1273,8 @@ function main() {
   console.log(`  lanes:    ${Object.keys(perLane).sort().join(', ')}`);
   console.log(`  wiki:     ${WIKI_TREES.map((tree) => `${tree.project} (${tree.pages.length} pages)`).join(', ')}`);
   console.log(`  dossiers: ${DOSSIERS.items.length} in ${DOSSIERS.project}/docs/${DOSSIERS.root} (${Object.keys(perStatus).sort().join(', ')})`);
-  console.log('Registry (.metadata) is left to the backend to seed from WatchPaths on first boot (ADR-0042).');
+  console.log(`  variant:  ${ARGS.ownerDay ? 'owner-day' : 'pinned'}`);
+  console.log('Project registries use DEMO and PLAT and reserve the next task and Dossier keys.');
 }
 
 const __isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];

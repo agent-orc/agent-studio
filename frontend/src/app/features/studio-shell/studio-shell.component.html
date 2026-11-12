@@ -10,7 +10,7 @@
   <app-studio-navigation-header #cockpitHeader
                             class="studio-titlebar"
                             data-testid="studio-titlebar"
-                            [navItems]="headerCockpit.navItems"
+                            [navItems]="headerCockpit.navItems()"
                             (navSelect)="headerCockpit.onNav($event, cockpitHeader)">
     <nav class="studio-titlebar__crumbs" aria-label="Breadcrumb" data-testid="studio-titlebar-crumbs"
          data-nav-inline-from="desktop">
@@ -24,56 +24,58 @@
       <span class="studio-titlebar__separator" data-nav-inline-from="desktop">/</span>
     }
 
-    @if (activeTab()?.kind === 'board') {
+    @if (headerCockpit.shellAccess.operator() && activeTab()?.kind === 'board') {
       <app-develop-state-indicator [project]="activeProjectName()" />
     }
-    <div class="studio-titlebar__picker" data-testid="studio-project-picker" data-nav-inline-from="tablet">
-      <button #studioPickerTrigger
-              type="button"
-              class="studio-pill studio-pill--picker"
-              [class.studio-pill--active]="true"
-              [style.--studio-pill-color]="activeProjectColor()"
-              data-testid="studio-project-picker-trigger"
-              [cacTooltip]="activeProjectPickerLabel() + ' — click to switch project'"
-              (click)="togglePickerMenu($event)">
-        @if (activeProjectName(); as name) {
-          <span class="studio-pill__glyph"
-                [style.background]="activeProjectColor()"
-                aria-hidden="true">{{ activeProjectInitial() }}</span>
-          <span class="studio-pill__label">{{ name }}</span>
-          <span class="studio-pill__count" aria-label="open tasks">{{ activeProjectTotalJobs() }}</span>
-        } @else {
-          <span class="studio-pill__glyph studio-pill__glyph--all" aria-hidden="true">
-            <app-studio-icon name="grid" [size]="11"></app-studio-icon>
-          </span>
-          <span class="studio-pill__label">All projects</span>
-        }
-        <span class="studio-pill__caret" aria-hidden="true">▾</span>
-      </button>
-
-      @if (activeProjectName(); as name) {
-        <button type="button" class="studio-auto-toggle studio-auto-toggle--inline"
-                [class.studio-auto-toggle--on]="autoModeFor(name) !== 'manual' && autoModeFor(name) !== 'paused'"
-                data-testid="studio-titlebar-auto-toggle"
-                [attr.aria-label]="autoToggleTooltip(name)"
-                [cacTooltip]="autoToggleTooltip(name)"
-                (click)="toggleAuto.emit(name)">
-          <span class="studio-auto-toggle__dot" aria-hidden="true"></span>
-          <span class="studio-auto-toggle__label">{{ autoModeLabelFor(name) }}</span>
+    @if (!productWithoutProject()) {
+      <div class="studio-titlebar__picker" data-testid="studio-project-picker" data-nav-inline-from="tablet">
+        <button #studioPickerTrigger
+                type="button"
+                class="studio-pill studio-pill--picker"
+                [class.studio-pill--active]="true"
+                [style.--studio-pill-color]="activeProjectColor()"
+                data-testid="studio-project-picker-trigger"
+                [cacTooltip]="activeProjectPickerLabel() + ' — click to switch project'"
+                (click)="togglePickerMenu($event)">
+          @if (activeProjectName(); as name) {
+            <span class="studio-pill__glyph"
+                  [style.background]="activeProjectColor()"
+                  aria-hidden="true">{{ activeProjectInitial() }}</span>
+            <span class="studio-pill__label">{{ name }}</span>
+            <span class="studio-pill__count" aria-label="open tasks">{{ activeProjectTotalJobs() }}</span>
+          } @else {
+            <span class="studio-pill__glyph studio-pill__glyph--all" aria-hidden="true">
+              <app-studio-icon name="grid" [size]="11"></app-studio-icon>
+            </span>
+            <span class="studio-pill__label">All projects</span>
+          }
+          <span class="studio-pill__caret" aria-hidden="true">▾</span>
         </button>
-      }
 
-      <app-menu
-        [items]="projectPickerItems()"
-        [open]="pickerOpen()"
-        [anchorEl]="headerCockpit.pickerAnchor() ?? studioPickerTrigger"
-        placement="below"
-        testIdPrefix="studio-project-picker"
-        ariaLabel="Project picker"
-        [minWidth]="240"
-        (itemClick)="onProjectPickerItemClick($event)"
-        (closeRequest)="closePickerMenu()" />
-    </div>
+        @if (headerCockpit.shellAccess.operator() && activeProjectName(); as name) {
+          <button type="button" class="studio-auto-toggle studio-auto-toggle--inline"
+                  [class.studio-auto-toggle--on]="autoModeFor(name) !== 'manual' && autoModeFor(name) !== 'paused'"
+                  data-testid="studio-titlebar-auto-toggle"
+                  [attr.aria-label]="autoToggleTooltip(name)"
+                  [cacTooltip]="autoToggleTooltip(name)"
+                  (click)="toggleAuto.emit(name)">
+            <span class="studio-auto-toggle__dot" aria-hidden="true"></span>
+            <span class="studio-auto-toggle__label">{{ autoModeLabelFor(name) }}</span>
+          </button>
+        }
+
+        <app-menu
+          [items]="projectPickerItems()"
+          [open]="pickerOpen()"
+          [anchorEl]="headerCockpit.pickerAnchor() ?? studioPickerTrigger"
+          placement="below"
+          testIdPrefix="studio-project-picker"
+          ariaLabel="Project picker"
+          [minWidth]="240"
+          (itemClick)="onProjectPickerItemClick($event)"
+          (closeRequest)="closePickerMenu()" />
+      </div>
+    }
 
     <span class="studio-titlebar__spacer"></span>
 
@@ -86,11 +88,17 @@
     </button>
 
     <div class="studio-titlebar__actions" data-testid="studio-titlebar-actions">
-      <app-task-defaults-control (cliChange)="defaultCliChange.emit($event)"
-                                 (modelChange)="defaultModelChange.emit($event)" />
-      <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-environment"
-              data-nav-inline-from="tablet" cacTooltip="Open live environment"
-              (click)="environmentOpen.set(true)">Environment</button>
+      <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-magazine"
+              data-nav-inline-from="desktop" (click)="openInstallationMagazine()">Magazine</button>
+      @if (headerCockpit.shellAccess.operator()) {
+        @defer (on immediate) {
+          <app-task-defaults-control (cliChange)="defaultCliChange.emit($event)"
+                                     (modelChange)="defaultModelChange.emit($event)" />
+        }
+        <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-environment"
+                data-nav-inline-from="tablet" cacTooltip="Open live environment"
+                (click)="environmentOpen.set(true)">Environment</button>
+      }
       <button type="button"
               class="studio-titlebar__chatbtn"
               data-testid="studio-titlebar-chat"
@@ -109,15 +117,17 @@
               (click)="toggleTheme()">
         <app-studio-icon [name]="theme() === 'light' ? 'moon' : 'sun'" [size]="14"></app-studio-icon>
       </button>
-      <app-attention-control />
-      <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-settings"
+      @if (headerCockpit.shellAccess.operator()) {
+        @defer (on immediate) { <app-attention-control /> }
+      }
+      @if (headerCockpit.shellAccess.operator()) { <button type="button" class="studio-titlebar__chatbtn" data-testid="studio-titlebar-settings"
               aria-label="Settings" cacTooltip="Workspace settings" (click)="toggleSettings.emit()">
         <app-studio-icon name="settings" [size]="14" /><span>Settings</span>
-      </button>
+      </button> }
       <app-account-control />
     </div>
   </app-studio-navigation-header>
-  <app-workspace-quota-banner />
+  @if (headerCockpit.shellAccess.operator()) { <app-workspace-quota-banner /> }
   @defer (when headerCockpit.detailFocus() !== null) {
   <app-usage-detail-surface surfaceId="studio-usage-detail"
                             [snapshot]="headerCockpit.usage.snapshot()"
@@ -232,33 +242,37 @@
                      owning the data and the drag / open / expand actions.
                      Management (rename / colour / move / delete) stays in
                      the Settings panel (F47 / F66 / ADR-0048). -->
-                <app-explorer-workspace-tree
-                  [projectRows]="projectRows()"
-                  [registryWorkspaces]="registryWorkspaces()"
-                  [registryProjects]="registryProjects()"
-                  [projectStorageByName]="projectStorageByName()"
-                  [expandedProjects]="expandedProjects()"
-                  [showAllActive]="activeProjectName() === null && activeTab()?.kind === 'board'"
-                  [activeProjectSurface]="activeProjectSurface()"
-                  [activeWorkbench]="activeWorkbench()" [collapseAllVersion]="collapseAllVersion()"
-                  [metricView]="uiPrefs.treeMetricView()"
-                  [projectAutoPickupByName]="projectAutoPickupByName()"
-                  (showAll)="pickProject(null)"
-                  (toggleExpanded)="toggleProjectExpanded($event)"
-                  (openBoardRequest)="openBoard($event)"
-                  (openHubRequest)="openHub($event)"
-                  (openDeployRequest)="openProjectArea($event, 'deploy')"
-                  (openOperationsRequest)="openProjectArea($event, 'operations')"
-                  (openUrlPreviewRequest)="openUrlPreview($event)"
-                  (openWikiRequest)="openWiki($event)"
-                  (openWorkbenchesRequest)="openWorkbenches($event)"
-                  (openWorkbenchRequest)="openWorkbench($event)"
-                  (onboardProjectRequest)="onAddProjectToWorkspace($event)"
-                  (onboardWorkspaceRequest)="onAddWorkspace()"
-                  (renameWorkspace)="onTreeRenameWorkspace($event)"
-                  (renameProject)="onTreeRenameProject($event)"
-                  (deleteProject)="onTreeDeleteProject($event)"
-                  (projectDrop)="onProjectWorkspaceDrop($event)" />
+                <!-- AGT-3668: without a project the editor says why; no empty tree. -->
+                @if (!productWithoutProject()) {
+                  <app-explorer-workspace-tree
+                    (workspaceMagazineRequest)="openWorkspaceMagazine($event.id, $event.label)"
+                    [projectRows]="projectRows()"
+                    [registryWorkspaces]="registryWorkspaces()"
+                    [registryProjects]="registryProjects()"
+                    [projectStorageByName]="projectStorageByName()"
+                    [expandedProjects]="expandedProjects()"
+                    [showAllActive]="activeProjectName() === null && activeTab()?.kind === 'board'"
+                    [activeProjectSurface]="activeProjectSurface()"
+                    [activeWorkbench]="activeWorkbench()" [collapseAllVersion]="collapseAllVersion()"
+                    [metricView]="uiPrefs.treeMetricView()"
+                    [projectAutoPickupByName]="projectAutoPickupByName()"
+                    (showAll)="pickProject(null)"
+                    (toggleExpanded)="toggleProjectExpanded($event)"
+                    (openBoardRequest)="openBoard($event)"
+                    (openHubRequest)="openHub($event)"
+                    (openDeployRequest)="openProjectArea($event, 'deploy')"
+                    (openOperationsRequest)="openProjectArea($event, 'operations')"
+                    (openUrlPreviewRequest)="openUrlPreview($event)"
+                    (openWikiRequest)="openWiki($event)"
+                    (openWorkbenchesRequest)="openWorkbenches($event)"
+                    (openWorkbenchRequest)="openWorkbench($event)"
+                    (onboardProjectRequest)="onAddProjectToWorkspace($event)"
+                    (onboardWorkspaceRequest)="onAddWorkspace()"
+                    (renameWorkspace)="onTreeRenameWorkspace($event)"
+                    (renameProject)="onTreeRenameProject($event)"
+                    (deleteProject)="onTreeDeleteProject($event)"
+                    (projectDrop)="onProjectWorkspaceDrop($event)" />
+                }
                 @if (moveErrorMessage(); as msg) {
                   <div class="studio-explorer__move-error"
                        role="alert"
@@ -451,7 +465,9 @@
           }
         </div>
         <div class="studio-tabbar__actions" data-testid="studio-tab-actions">
-          <ng-content select="[studioTabActions]"></ng-content>
+          @if (!productWithoutProject()) {
+            <ng-content select="[studioTabActions]"></ng-content>
+          }
         </div>
       </div>
 
@@ -464,7 +480,16 @@
           components (and their already-wired drag-and-drop, triage, etc.)
           inside the new shell without re-implementing handlers here.
         -->
-        <ng-content select="[studioContent]"></ng-content>
+        @if (!productWithoutProject()) {
+          <ng-content select="[studioContent]"></ng-content>
+        }
+        @if (activeTab(); as tab) {
+          @if (tab.kind === 'magazine') {
+            @if (magazineComponent(); as component) {
+              <ng-container *ngComponentOutlet="component; inputs: { scope: tab.scope, label: tab.label, children: magazineChildren(tab.scope), projects: magazineProjects() }" />
+            }
+          }
+        }
         @if (activeTab()?.kind === 'deployment-dashboard') {
           @defer (on idle) {
           <app-workspace-deployment-dashboard
@@ -482,9 +507,10 @@
             }
           } @placeholder { <p>Loading structure…</p> }
         }
-        @if (activeTab() === null) {
+        @if (activeTab() === null || productWithoutProject()) {
           <app-studio-welcome
             [projects]="projectRows()"
+            [emptyMessage]="productWithoutProject() ? productNoProjectMessage : null"
             (boardOpened)="openBoard($event)"
             (deploymentDashboardOpened)="openDeploymentDashboard()"
             (chatOpened)="chatToggle.emit()" />

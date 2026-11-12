@@ -11,6 +11,7 @@ import { ledgerScopeFromHash, type UsageLedgerScope } from '../../usage-cockpit'
  *     `updates`, `workspaces` (registry management, moved off the sidebar),
  *     `task-server` (the durable task server's URL, store, evidence git,
  *     client registry and management sweeps — AGT-1924), `remote-hosts`,
+ *     `operations` (installation hosts, usage, security, and backups),
  *     `orchestrator` (the platform-global supervisor / orchestrator lifecycle
  *     flags — AGT-1812 retired their standalone modal into this section).
  *   - Workspace defaults: `caps` (the "CLI Management" hub - CLI catalog,
@@ -33,6 +34,7 @@ export type WorkspaceSettingsSection =
   | 'credentials'
   | 'secrets'
   | 'remote-hosts'
+  | 'operations'
   | 'orchestrator'
   | 'caps'
   | 'prompts'
@@ -233,6 +235,7 @@ export class WorkspaceOverlaysService {
       case '/workspace/settings/environment':
       case '/workspace/settings/execution-hosts':
       case '/workspace/settings/remote-hosts': return 'remote-hosts';
+      case '/workspace/settings/operations': return 'operations';
       // Retired project-source catalogue: old bookmarks land safely on Overview.
       case '/workspace/settings/project-sources': return 'overview';
       case '/workspace/settings/orchestrator': return 'orchestrator';
@@ -269,38 +272,11 @@ export class WorkspaceOverlaysService {
       case 'first-run': return '/workspace/settings/first-run';
       case 'github': return '/workspace/settings/github';
       case 'remote-hosts': return '/workspace/settings/environment';
+      case 'operations': return '/workspace/settings/operations';
       case 'orchestrator': return '/workspace/settings/orchestrator';
       case 'overview': return '/workspace/settings';
     }
   }
-
-  private readonly ownRoutes = new Set<string>([
-    '/workspace/settings',
-    '/workspace/settings/caps',
-    '/workspace/settings/prompts',
-    '/workspace/settings/retention',
-    '/workspace/settings/access',
-    '/workspace/settings/appearance',
-    '/workspace/settings/updates',
-    '/workspace/settings/workspaces',
-    '/workspace/settings/task-server',
-    '/workspace/settings/credentials',
-    '/workspace/settings/secrets',
-    '/workspace/settings/first-run',
-    '/workspace/settings/github',
-    '/workspace/settings/execution-hosts',
-    '/workspace/settings/environment',
-    '/workspace/settings/remote-hosts',
-    '/workspace/settings/project-sources',
-    '/workspace/settings/orchestrator',
-    '/workspace/settings/screenshots',
-    '/workspace/caps',
-    '/workspace/prompts',
-    '/workspace/screenshots',
-    // Retired aliases stay here so a stale summary route still clears on close.
-    '/workspace/summary',
-    '/summary',
-  ]);
 
   /** Swap the hash's route segment for `route`, keeping all other segments. */
   private writeRoute(route: string): void {
@@ -315,8 +291,7 @@ export class WorkspaceOverlaysService {
   /** Remove an own route segment, keeping foreign segments (e.g. filters). */
   private clearOwnHash(): void {
     const route = routeSegmentOf(window.location.hash);
-    if (route && (this.ownRoutes.has(route.split('?')[0])
-      || route === TOKEN_ANALYSIS_ROUTE || TOKEN_USAGE_ROUTE.test(route))) {
+    if (route && this.sectionForRoute(route.split('?')[0])) {
       const target = withRouteSegment(window.location.hash, null);
       try {
         history.replaceState(null, '', window.location.pathname + window.location.search + target);

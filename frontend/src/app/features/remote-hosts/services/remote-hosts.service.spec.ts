@@ -5,9 +5,21 @@ import { TestBed } from '@angular/core/testing';
 import { RemoteHostsService, mergeReleaseReport } from './remote-hosts.service';
 import { seedRemoteHosts } from './remote-hosts.seed';
 import { AuthSessionState } from '../../../services/auth.service';
+import type { RemoteHost } from '../models/remote-host.model';
+
+function knownRunner(): RemoteHost {
+  return {
+    ...seedRemoteHosts(0)[0], id: 'agent-runner-01', clientId: 'agent-runner-01',
+    name: 'agent-runner-01', role: 'remote', serviceRole: 'coding',
+  };
+}
 
 it('does not seed local or historical runner machines for a networked installation', () => {
   expect(seedRemoteHosts(Date.now(), 'networked')).toEqual([]);
+});
+
+it('seeds only the intrinsic local machine for a local installation', () => {
+  expect(seedRemoteHosts(Date.now(), 'local').map(host => host.id)).toEqual(['local']);
 });
 
 it('keeps a newer capability release report over an older drift snapshot', () => {
@@ -49,10 +61,10 @@ describe('RemoteHostsService', () => {
     vi.restoreAllMocks();
   });
 
-  it('seeds the registry on first load with the local + remote hosts', () => {
+  it('seeds the registry on first load with only the local machine', () => {
     svc.ensureLoaded();
     const hosts = svc.hosts();
-    expect(hosts.length).toBeGreaterThanOrEqual(2);
+    expect(hosts.length).toBe(1);
     expect(hosts[0]).toMatchObject({
       id: 'local',
       name: 'Local machine',
@@ -60,14 +72,7 @@ describe('RemoteHostsService', () => {
       clientId: 'local-default',
     });
     expect(hosts.some((h) => h.role === 'local')).toBe(true);
-    expect(hosts.some((h) => h.role === 'remote')).toBe(true);
-    expect(hosts.find((h) => h.id === 'agent-runner-01')).toMatchObject({
-      clientId: 'agent-runner-01',
-      status: 'offline',
-      lastHeartbeatAt: null,
-      cliQuotas: [],
-      stats: null,
-    });
+    expect(hosts.some((h) => h.role === 'remote')).toBe(false);
     expect(svc.loading()).toBe(false);
     expect(svc.error()).toBeNull();
   });
@@ -449,6 +454,7 @@ describe('RemoteHostsService client registry hydration', () => {
   it('persists drain through the lifecycle API before reloading', () => {
     TestBed.configureTestingModule({ providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()] });
     const svc = TestBed.inject(RemoteHostsService);
+    svc.hosts.set([seedRemoteHosts(0)[0], knownRunner()]);
     const http = TestBed.inject(HttpTestingController);
     svc.reload();
     http.expectOne('/api/clients').flush([]);
@@ -504,6 +510,8 @@ describe('RemoteHostsService client registry hydration', () => {
       roleMaxParallelism: 8,
       restartedAt: now,
       reviewsLost: 2,
+      reviewRestarts: [{ restartedAt: now, hostId: 'agent-runner-01', instanceId: 'i-2', reviewsLost: 2,
+        lostAttempts: [{ attemptId: 'review_a', taskKey: 'AGT-1', status: 'worker-not-reported' }] }],
     }]);
 
     expect(svc.hosts().find(host => host.id === 'agent-runner-01')).toMatchObject({
@@ -512,6 +520,8 @@ describe('RemoteHostsService client registry hydration', () => {
       serviceRole: 'coding',
       restartedAt: now,
       reviewsLost: 2,
+      reviewRestarts: [{ restartedAt: now, hostId: 'agent-runner-01', instanceId: 'i-2', reviewsLost: 2,
+        lostAttempts: [{ attemptId: 'review_a', taskKey: 'AGT-1', status: 'worker-not-reported' }] }],
     });
     flushHostHydration(http);
     flushRunnerInfrastructureFailures(http);
@@ -841,6 +851,7 @@ describe('RemoteHostsService client registry hydration', () => {
   it('adopts the server release-drift verdict and the Stable reference', () => {
     TestBed.configureTestingModule({ providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()] });
     const svc = TestBed.inject(RemoteHostsService);
+    svc.hosts.set([seedRemoteHosts(0)[0], knownRunner()]);
     const http = TestBed.inject(HttpTestingController);
     svc.reload();
     http.expectOne('/api/clients').flush([]);
@@ -933,6 +944,7 @@ describe('RemoteHostsService client registry hydration', () => {
     'retains the drift verdict for the same release after a newer heartbeat when %s settles first', order => {
       TestBed.configureTestingModule({ providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()] });
       const svc = TestBed.inject(RemoteHostsService);
+      svc.hosts.set([seedRemoteHosts(0)[0], knownRunner()]);
       const http = TestBed.inject(HttpTestingController);
       const older = '2026-10-16T08:00:00Z';
       const newer = '2026-10-16T08:01:00Z';
@@ -1018,6 +1030,7 @@ describe('RemoteHostsService client registry hydration', () => {
   it('invalidates cached project proofs before reloading a re-probed host', () => {
     TestBed.configureTestingModule({ providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()] });
     const svc = TestBed.inject(RemoteHostsService);
+    svc.hosts.set([seedRemoteHosts(0)[0], knownRunner()]);
     const http = TestBed.inject(HttpTestingController);
     svc.reload();
     http.expectOne('/api/clients').flush([]);

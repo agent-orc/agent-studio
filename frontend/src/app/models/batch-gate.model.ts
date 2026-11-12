@@ -36,6 +36,19 @@ export interface BatchGateConfiguration {
 }
 
 export interface BatchGateState {
+  ejectRequests?: { project: string; taskKey: string; actor: string; reason: string;
+    requestedAtUtc: string; status: 'pending' | 'released'; releasedAtUtc?: string | null }[];
+  perTaskGates?: { taskKey: string; reviewAttemptId: string; position: number; total: number;
+    batchId?: string | null; reason: string; running: boolean; host?: string | null;
+    startedAtUtc?: string | null }[];
+  /** Gate processes detached at a lease deadline and still exiting. */
+  detachedFlights?: { batchId: string; project: string; startedAtUtc: string; detachedAtUtc: string;
+    deadlineMinutes: number; reason: string }[];
+  dailySummary?: {
+    phaseMinutes?: Record<string, { p50: number | null; p90: number | null; cards: number }>;
+    diagnosticRerunShare?: number | null;
+    preCheckYield?: { runs: number; red: number; cardsKeptOut: number; costMinutes: number } | null;
+  } | null;
   reviewFixWaits?: { taskKey: string; reviewAttemptId: string; round: number; maximum: number; aspects: string[] }[];
   preChecksRun?: number;
   preChecksRed?: number;
@@ -59,7 +72,9 @@ export interface BatchGateState {
     batchId: string;
     parentBatchId?: string | null;
     phase: string;
+    phaseAtUtc?: string | null;
     phaseReason?: string | null;
+    phaseHistory?: { phase: string; reason?: string | null; atUtc: string }[];
     /** AGT-3710: one-based place of a formed batch in its project's flight queue. */
     queuePosition?: number | null;
     formationReason?: string | null;
@@ -67,7 +82,7 @@ export interface BatchGateState {
     baseSha: string;
     candidateSha?: string | null;
     members: { taskKey: string; replay: BatchReplay; released: boolean }[];
-    runs: { batchRunId: string; host: string; outcome?: string | null; classification?: string | null; startedAtUtc?: string | null; finishedAtUtc?: string | null }[];
+    runs: { batchRunId: string; host: string; outcome?: string | null; classification?: string | null; hang?: string | null; evidenceAvailable?: boolean; startedAtUtc?: string | null; finishedAtUtc?: string | null }[];
     publication?: BatchPublication | null;
   }[];
   members: Record<string, BatchMemberState>;
@@ -75,9 +90,39 @@ export interface BatchGateState {
   flightQueue?: BatchFlightQueueEntry[];
   /** AGT-3577: per member of a red batch, what the bisection proved. */
   isolationFindings?: BatchIsolationFinding[];
+  /** AGT-3681: batch records the store could not read; `batches` leaves those batches out. */
+  quarantined?: BatchQuarantinedRecord[];
+}
+
+/** One unreadable manifest, state or run record of the batch store (AGT-3681). */
+export interface BatchQuarantinedRecord {
+  batchId: string;
+  /** Null when the damaged record no longer names its project. */
+  project: string | null;
+  kind: 'manifest' | 'state' | 'run' | string;
+  file: string;
+  error: string;
+  detectedAtUtc: string;
+  nextStep: string;
 }
 
 export type BatchGateBatch = BatchGateState['batches'][number];
+
+const ACTIVE_BATCH_PHASES = new Set(['formed', 'assembling', 'assembled', 'running']);
+
+/** Pending records can remain in the snapshot after their cards joined a batch. */
+export function batchWaitingCards(state: BatchGateState | null): BatchGateState['pending'] {
+  if (!state) return [];
+  const assigned = new Set(state.batches.filter(batch => ACTIVE_BATCH_PHASES.has(batch.phase))
+    .flatMap(batch => batch.members.map(member => member.taskKey)));
+  const perTask = new Set((state.perTaskGates ?? []).map(gate => gate.reviewAttemptId));
+  return state.pending.filter(item => !assigned.has(item.taskKey) && !perTask.has(item.reviewAttemptId));
+}
+
+/** A run without a finish event is live only while its batch is running. */
+export function batchRunIsRunning(batch: BatchGateBatch, run: BatchGateBatch['runs'][number]): boolean {
+  return batch.phase === 'running' && !!run.startedAtUtc && !run.finishedAtUtc;
+}
 
 /** One formed batch in the flight queue; position 1 starts next. */
 export interface BatchFlightQueueEntry {
@@ -141,7 +186,30 @@ export interface BatchMemberState {
   size?: number | null;
   reason?: string | null;
   reasonDetail?: string | null;
+  fallbackRule?: string | null;
+  fallbackEvent?: string | null;
+  /** What a per-task fallback waits for (AGT-3694); the detail names the engine run or the stage. */
+  waitKind?: string | null;
+  waitingFor?: string | null;
+  waitSinceUtc?: string | null;
+  engineRunId?: string | null;
+  engineStatus?: string | null;
   preCheck?: BatchPreCheck | null;
+  timeline?: BatchMemberTimeline | null;
+}
+
+export interface BatchMemberTimeline {
+  reviewPassedAtUtc: string;
+  preCheckQueuedAtUtc?: string | null;
+  preCheckStartedAtUtc?: string | null;
+  preCheckFinishedAtUtc?: string | null;
+  joinedBatchAtUtc?: string | null;
+  batchStartedAtUtc?: string | null;
+  batchFinishedAtUtc?: string | null;
+  publishedAtUtc?: string | null;
+  terminalAtUtc?: string | null;
+  outcome: string;
+  diagnosticRerun: boolean;
 }
 
 export interface BatchPreCheck {
@@ -182,12 +250,46 @@ export function batchEjectionLabel(reason: string | null | undefined): string | 
   switch (reason) {
     case 'conflict': return 'replay conflict';
     case 'unattributable': return 'unattributable history';
-    default: return reason || null;
+    case 'planner-per-task': return 'planner selected a per-task gate';
+    case 'documentation-scope': return 'code delivery outside documentation batch scope';
+    case 'batch-disabled': return 'batch gate unavailable';
+    case 'batch-paused': return 'batch paused';
+    case 'batch-ejected': return 'ejected from batch';
+    case 'unattributable-replay': return 'unattributable replay';
+    case 'operator-eject': return 'operator ejected card';
+    case 'already-integrated': return 'already integrated';
+    case 'emergency-admission': return 'batch admission failed';
+    case 'interrupted-gate': return 'gate resumed after interruption';
+    default: return reason ? reason.replace(/[-_]/g, ' ').replace(/\b\w/g, char => char.toUpperCase()) : null;
+  }
+}
+
+/** Short card label of what a per-task fallback waits for. */
+export function batchFallbackWaitLabel(kind: string | null | undefined): string | null {
+  switch (kind) {
+    case 'engine-decision': return 'waits for engine decision';
+    case 'per-task-slot': return 'waits for per-task slot';
+    case 'batch-slot': return 'waits for batch slot';
+    case 'machine-gate-slot': return 'waits for machine gate slot';
+    case 'preparing': return 'preparing gate';
+    case 'gate-running': return 'gate running';
+    case 'integration': return 'integrating';
+    case 'resume-pending': return 'resumes next tick';
+    default: return kind || null;
   }
 }
 
 export function batchPublishedSha(publication: BatchPublication | null | undefined): string | null {
   return publication?.verifiedRemoteSha ?? publication?.publishedSha ?? null;
+}
+
+export function batchRunStatus(batch: BatchGateBatch, run: BatchGateBatch['runs'][number]): string {
+  if (run.outcome) return run.outcome;
+  return batch.phase === 'running' && !run.finishedAtUtc ? 'running' : 'interrupted';
+}
+
+export function batchRunEvidenceUrl(project: string, batchId: string, runId: string, view: 'evidence' | 'log' = 'evidence'): string {
+  return `/api/projects/${encodeURIComponent(project)}/batch-gate/run-${view}?batchId=${encodeURIComponent(batchId)}&runId=${encodeURIComponent(runId)}`;
 }
 
 export function batchMemberFor(state: BatchGateState | null, ...keys: (string | null | undefined)[]) {

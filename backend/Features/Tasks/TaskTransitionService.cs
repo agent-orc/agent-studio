@@ -139,6 +139,11 @@ public sealed class TaskTransitionService
     /// the <c>lane_changed</c> ledger row (see <see cref="TaskStateMachine.MoveJob"/>).
     /// </param>
     /// <param name="transitionDetail">Short qualifier for <paramref name="transitionCause"/>.</param>
+    /// <param name="batchWithdrawalId">
+    /// The active batch an operator explicitly withdraws this card from. The
+    /// caller has already requested the eject; any other operator move of an
+    /// active batch member out of Auto Review is refused (AGT-3719).
+    /// </param>
     public async Task<MoveJobOutcome> MoveAsync(
         string jobId,
         string targetState,
@@ -160,10 +165,22 @@ public sealed class TaskTransitionService
         bool engineDecisionRequeue = false,
         AgentStudio.Runner.ContinuationBaseRecord? engineContinuationBase = null,
         bool operatorDecisionPark = false,
-        string? automaticAcceptanceBy = null)
+        OperatorReissueInstructions? reissueInstructions = null,
+        string? automaticAcceptanceBy = null,
+        string? batchWithdrawalId = null,
+        DateTime? expectedSourceEnteredLaneAt = null,
+        long? expectedSourceTaskJsonWriteTicks = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return new MoveJobOutcome(MoveJobStatus.NotFound);
+        if (ActiveBatchMemberRefusal(info, targetState, cause, batchWithdrawalId) is { } batchRefusal)
+            return batchRefusal;
+        if (reissueInstructions is not null
+            && (info.State != TaskStates.Escalated || targetState != TaskStates.Ready
+                || !TimelineActors.IsHuman(cause)
+                || !OperatorReviewRequeueService.ValidInstructions(reissueInstructions)))
+            return new MoveJobOutcome(MoveJobStatus.Failure,
+                "Reissue instructions require an Escalated to Ready operator move, with up to 12 findings of 500 characters and an optional note of 2000 characters.");
         if (TaskKinds.IsDecision(info.Kind)
             && DecisionLaneGuard.Refusal(info, targetState, _scanner.GetReferenceIndex(), decisionReopenPermit) is { } refusal)
             return new MoveJobOutcome(MoveJobStatus.Failure, refusal);
@@ -240,15 +257,7 @@ public sealed class TaskTransitionService
         // reports any stray working-tree diff as a containment violation rather
         // than committing it. See TaskModes / ParallelSlotPolicy and ADR-0052.
         var isReadOnly = TaskModes.IsReadOnly(info.Mode);
-        // Legacy intervention follow-ups were stored as bug cards. The ledger
-        // supplies their code-free intent without rewriting task metadata at
-        // completion. Delivery evidence still outranks that intent.
-        var completionInfo = targetState == TaskStates.Completed
-            && info.RequiresIntegration is null
-            && _failureInterventions?.IsInterventionFollowUp(info) == true
-            ? info with { NoBranchExpected = true }
-            : info;
-        var integrationRequired = AcceptanceIntegrationPolicy.IsIntegrationRequired(completionInfo);
+        var integrationRequired = IsCompletionIntegrationRequired(info, targetState);
 
         // Auto-commit is a per-project operator setting. Read it from the live
         // ProjectSettingsService cache for every transition so a UI toggle
@@ -282,154 +291,16 @@ public sealed class TaskTransitionService
             && integrationRequired
             && fromState == TaskStates.HumanReview
             && targetState == TaskStates.Completed;
-        var acceptanceLineage = acceptsIntegratedDelivery
-            ? DecideAcceptanceLineage(info, operatorOverride)
-            : null;
-        // AGT-3076: the content verdict lives in the same authority store as
-        // the lost RunAttempt, so the content gaps would only be symptoms.
-        // Name the cause instead.
-        if (acceptanceLineage is
-            { Admission: AcceptanceLineageAdmission.Refuse, Check: AgentStudio.Pipeline.ReviewSubjectAttemptCheck.NoCurrentRunAttempt })
-            return new MoveJobOutcome(MoveJobStatus.IntegrationFailed, acceptanceLineage.Message, info.FolderPath);
-        CompletionContentFacts? contentEvidence = null;
-        CompletionContentDecision? contentDecision = null;
-        if (targetState == TaskStates.Completed && fromState != TaskStates.Completed)
-        {
-            contentEvidence = CompletionContentEvidence.Read(info, _attemptAuthority);
-            contentDecision = CompletionContentPolicy.Decide(contentEvidence with
-            {
-                OperatorOverride = operatorOverride,
-                OverrideReason = reason,
-            });
-            if (contentEvidence.Settlement is { } settlement)
-                ReportUnusableSettlement(info, settlement, contentDecision);
-            if (!contentDecision.Accepted)
-                return new MoveJobOutcome(MoveJobStatus.IntegrationFailed, contentDecision.Message, info.FolderPath);
-        }
-        var recordedContainment = false;
-        if ((targetState == TaskStates.HumanReview && fromState == TaskStates.AutoReview
-             || targetState == TaskStates.Completed && fromState == TaskStates.HumanReview)
-            && BatchGateReleaseFailure(info, ct, out recordedContainment,
-                repairContainedFallback: fromState == TaskStates.HumanReview) is { } batchFailure)
-            return new MoveJobOutcome(MoveJobStatus.IntegrationFailed, batchFailure, info.FolderPath);
-        // AGT-3139: the containment mapping is integration evidence. The status
-        // checks below and the delivery reconciler read it from the card.
-        if (recordedContainment && _scanner.FindJob(jobId, watchPath) is { } contained
-            && contained.State == fromState)
-            info = contained;
+        var admission = AdmitTransition(info, jobId, watchPath, targetState, settings, integrationRequired,
+            acceptsIntegratedDelivery, operatorOverride, reason, cause, preview: false, ct);
+        if (admission.Refusal is not null) return admission.Refusal;
+        info = admission.Info;
         var projectName = info.ProjectName;
-
-        // Human acceptance is a quality decision, never an integration trigger.
-        // Coding deliveries must already be present in the effective integration
-        // branch. This check retains current-attempt lineage validation and
-        // refuses a stale, failed, or pending delivery without invoking Git.
-        if (acceptsIntegratedDelivery)
-        {
-            var integrationAdmission = ValidateIntegratedAcceptance(
-                info, settings, operatorOverride, acceptanceLineage);
-            if (integrationAdmission is not null) return integrationAdmission;
-        }
-
-        if (fromState == TaskStates.Escalated
-            && targetState == TaskStates.Completed
-            && !operatorOverride
-            && !CanCompleteEscalatedJob(info, settings))
-        {
-            return new MoveJobOutcome(
-                MoveJobStatus.Failure,
-                $"Escalated tasks can only be accepted after their latest task commit is integrated into "
-                + $"{ResolveIntegrationBranch(info, settings)}.");
-        }
-
-        // AGT-2817 - the completion contract. Entering the delivered lane is
-        // the moment the card starts claiming a delivery, so this is where the
-        // claim is checked and recorded: a delivery contained in the
-        // published integration branch, or a named deliverable without code.
-        // The same rule applies to operator and automated moves.
-        CompletionContractDecision? completionContract = null;
-        TaskIntegrationStatus? completionIntegrationStatus = null;
-        if (targetState == TaskStates.Completed
-            && fromState != TaskStates.Completed)
-        {
-            completionIntegrationStatus = _integrationStatus?.BuildForAcceptance(info);
-            completionContract = DecideCompletionContract(
-                info,
-                settings,
-                integrationRequired,
-                operatorOverride,
-                reason,
-                cause ?? (operatorOverride ? "operator:unspecified" : null),
-                completionIntegrationStatus);
-            // Every completion needs a delivery claim, including automated
-            // transitions when the legacy guarded-delivery setting is off.
-            if (!completionContract.Accepted || completionContract.Claim is null)
-            {
-                return new MoveJobOutcome(
-                    MoveJobStatus.IntegrationFailed,
-                    completionContract.Message ?? "Completion has no delivery claim.",
-                    info.FolderPath);
-            }
-        }
-
-        var contentClaim = completionContract?.Claim;
-        if (contentClaim is not null && contentEvidence is not null)
-        {
-            // A code-free operator resolution already names its evidence.
-            // Record the content gap below without replacing that claim with
-            // wording about an unproven repository delivery.
-            var replaceClaimForContent = contentDecision?.Overridden == true
-                && !(contentClaim.Basis == CompletionClaimBases.DeliverableWithoutCode
-                    && contentClaim.Reason is not null);
-            contentClaim = contentClaim with
-            {
-                Basis = replaceClaimForContent
-                    ? CompletionClaimBases.OperatorOverride : contentClaim.Basis,
-                Evidence = AppendLineageEvidence(
-                    replaceClaimForContent ? contentDecision!.Message : contentClaim.Evidence,
-                    acceptanceLineage),
-                Reason = contentDecision?.Overridden == true ? reason?.Trim() : contentClaim.Reason,
-                CurrentBriefVersion = contentEvidence.CurrentBriefVersion,
-                DeliveryBriefVersion = contentEvidence.DeliveryBriefVersion,
-                ReviewBriefVersion = contentEvidence.ReviewBriefVersion,
-                ContentAspect = contentEvidence.RequiredAspect,
-                ContentStatus = contentEvidence.ContentStatus,
-                ContentSummary = contentEvidence.ContentSummary,
-                ContentEvidenceChecked = contentEvidence.EvidenceChecked,
-                ContentMissing = contentEvidence.Missing,
-                RanAspects = contentEvidence.RanAspects,
-                SkippedAspects = contentEvidence.SkippedAspects,
-            };
-        }
-        if (contentClaim?.Basis == CompletionClaimBases.IntegratedDelivery
-            && completionIntegrationStatus?.Verification is { State: IntegrationVerificationStates.Verified } gate)
-        {
-            var gateStep = string.Equals(completionIntegrationStatus.IntegrationBranch, "main", StringComparison.OrdinalIgnoreCase)
-                ? "pre-main-test-gate" : AgentStudio.Pipeline.IntegrationGateJournal.PreDevelopBuildGateStep;
-            var gateName = gate.Evidence == IntegrationVerificationEvidence.PublishedGate
-                ? gate.Reason
-                : gate.Evidence is IntegrationVerificationEvidence.MergeGate
-                    or IntegrationVerificationEvidence.GateRun
-                    or IntegrationVerificationEvidence.GateReceipt
-                    ? $"Gate {gateStep} of {info.Key ?? info.TaskKey} returned {gate.GateVerdict ?? "verified"} on "
-                      + $"{completionIntegrationStatus.IntegrationBranch} tree {gate.Sha}."
-                    : $"Verification record {gate.Evidence} on {completionIntegrationStatus.IntegrationBranch} "
-                      + $"tree {gate.Sha}: {gate.Reason}";
-            contentClaim = contentClaim with
-            {
-                Evidence = $"{contentClaim.Evidence} {gateName}"
-                    + (gate.GateNeutralCommits.Count == 0 ? string.Empty
-                        : $" Gate-neutral document-key commits: {string.Join(", ", gate.GateNeutralCommits)}."),
-            };
-        }
-        var boundCompletionClaim = contentClaim is null
-            ? null : BindCompletionClaim(info, contentClaim);
-        if (_guardedDelivery && targetState == TaskStates.Completed && integrationRequired
-            && contentDecision?.Overridden != true
-            && (boundCompletionClaim?.Basis != CompletionClaimBases.IntegratedDelivery
-                || string.IsNullOrWhiteSpace(boundCompletionClaim.ResultSha)
-                || string.IsNullOrWhiteSpace(boundCompletionClaim.DeliveryEpoch)))
-            return new MoveJobOutcome(MoveJobStatus.IntegrationFailed,
-                "The integrated delivery cannot be bound to a result SHA and delivery epoch. Recover its delivery evidence before acceptance.");
+        var acceptanceLineage = admission.Lineage;
+        var contentEvidence = admission.ContentEvidence;
+        var contentDecision = admission.ContentDecision;
+        var completionIntegrationStatus = admission.IntegrationStatus;
+        var boundCompletionClaim = admission.BoundClaim;
 
         var checksOperatorAcceptance = operatorOverride
             && fromState == TaskStates.HumanReview
@@ -489,7 +360,9 @@ public sealed class TaskTransitionService
                 transitionDetail,
                 decisionReopenPermit, archiveOverride,
                 operatorDecisionPark: operatorDecisionPark,
-                beforeMove: EnsureResultAfterAdmission);
+                beforeMove: EnsureResultAfterAdmission,
+                expectedSourceEnteredLaneAt: expectedSourceEnteredLaneAt,
+                expectedSourceTaskJsonWriteTicks: expectedSourceTaskJsonWriteTicks);
             if (!archiveOverride || moved.Status != MoveJobStatus.Success)
                 return moved;
 
@@ -630,7 +503,8 @@ public sealed class TaskTransitionService
                 fromState,
                 targetState,
                 reason,
-                cause!);
+                cause!,
+                reissueInstructions);
             _scanner.InvalidateCache();
             _scanner.PublishCoreFromKnownFolder(movedFolder);
         }
@@ -1609,10 +1483,16 @@ public sealed class TaskTransitionService
         if (!ParkedBlockerCatalog.IsParkedLane(targetState)) return null;
         var fromMarker = ParkedBlockerMarker.ToStatus(
             ParkedBlockerMarker.TryRead(task.FolderPath), atUtc);
-        if (fromMarker is not null) return fromMarker;
-        if (task.ParkedBlocker is not null) return task.ParkedBlocker;
-        return ParkedBlockerMarker.ToStatus(
+        var park = fromMarker ?? task.ParkedBlocker ?? ParkedBlockerMarker.ToStatus(
             ParkedBlockerCatalog.Build(targetState, reason: null, parkedAt: atUtc), atUtc);
+        // Human Review is also the ordinary acceptance lane. An unexplained
+        // synthetic park there is not an operator question and must not add a
+        // false open item to a missing-result scaffold.
+        if (targetState == TaskStates.HumanReview
+            && park?.Reason?.Contains("Parked with no recorded cause.", StringComparison.Ordinal) == true
+            && string.IsNullOrWhiteSpace(park.Decision?.Question))
+            return null;
+        return park;
     }
 
     private static string ResolveScaffoldResult(TaskInfo task, string targetState)
@@ -1731,6 +1611,244 @@ public sealed class TaskTransitionService
             .Trim();
 
     /// <summary>
+    /// AGT-3564 - the admission checks of a Human Review to Completed move
+    /// without an override, run through <see cref="AdmitTransition"/> like the
+    /// move itself, so the first refusal named here is the one the move
+    /// answers. The preview writes nothing: it reports no unusable settlement,
+    /// and it neither records nor repairs a batch-gate containment. A card the
+    /// move could still repair reads as refused here; a card refused by the
+    /// move never reads as admitted.
+    /// </summary>
+    public CompletionAdmissionPreview PreviewCompletion(TaskInfo info, CancellationToken ct = default)
+    {
+        if (info.State != TaskStates.HumanReview)
+            return CompletionAdmissionPreview.Refused(CompletionAdmissionStages.Lane,
+                $"The card is in {info.State}, not in Human Review.");
+        if (TaskKinds.IsDecision(info.Kind)
+            && DecisionLaneGuard.Refusal(info, TaskStates.Completed, _scanner.GetReferenceIndex()) is { } refusal)
+            return CompletionAdmissionPreview.Refused(CompletionAdmissionStages.Decision, refusal);
+
+        var integrationRequired = IsCompletionIntegrationRequired(info, TaskStates.Completed);
+        var admission = AdmitTransition(info, info.Id, info.WatchPath, TaskStates.Completed,
+            _settings.Get(info.ProjectName), integrationRequired, acceptsIntegratedDelivery: integrationRequired,
+            operatorOverride: false, reason: null, cause: null, preview: true, ct);
+        // The verification names the merged tree an admitted card or an
+        // integration refusal is about; an integrated delivery that the check
+        // still refuses lacks a gate on that tree.
+        TaskIntegrationVerification? verification = null;
+        var integrated = integrationRequired
+            && admission.RefusalStage is null or CompletionAdmissionStages.IntegrationMissing
+            && IsAlreadyIntegrated(info, out verification);
+        if (admission.Refusal is { } refused)
+            return CompletionAdmissionPreview.Refused(
+                integrated ? CompletionAdmissionStages.IntegrationUnverified : admission.RefusalStage!,
+                refused.Message ?? "Acceptance refused by the integration check.", admission.ContentEvidence, verification);
+        return CompletionAdmissionPreview.Admitted(admission.ContentDecision!.Message, admission.ContentEvidence, verification);
+    }
+
+    /// <summary>
+    /// Legacy intervention follow-ups were stored as bug cards. The ledger
+    /// supplies their code-free intent without rewriting task metadata at
+    /// completion. Delivery evidence still outranks that intent.
+    /// </summary>
+    private bool IsCompletionIntegrationRequired(TaskInfo info, string targetState)
+        => AcceptanceIntegrationPolicy.IsIntegrationRequired(targetState == TaskStates.Completed
+            && info.RequiresIntegration is null
+            && _failureInterventions?.IsInterventionFollowUp(info) == true
+            ? info with { NoBranchExpected = true }
+            : info);
+
+    /// <summary>
+    /// The admission facts of a lane move, or the first refusal with the stage
+    /// that gave it (<see cref="CompletionAdmissionStages"/>).
+    /// </summary>
+    private sealed record TransitionAdmission(
+        TaskInfo Info,
+        AcceptanceLineageDecision? Lineage,
+        CompletionContentFacts? ContentEvidence,
+        CompletionContentDecision? ContentDecision,
+        TaskIntegrationStatus? IntegrationStatus,
+        TaskCompletionClaim? BoundClaim,
+        string? RefusalStage = null,
+        MoveJobOutcome? Refusal = null);
+
+    /// <summary>
+    /// The admission checks of a lane move, in the order the move answers
+    /// them: acceptance lineage, content verdict, batch gate, integration,
+    /// escalation, completion contract, and claim binding. <see cref="MoveAsync"/>
+    /// applies the result; <see cref="PreviewCompletion"/> runs the same checks
+    /// with <paramref name="preview"/> set, which skips every write.
+    /// </summary>
+    private TransitionAdmission AdmitTransition(
+        TaskInfo info,
+        string jobId,
+        string? watchPath,
+        string targetState,
+        ProjectSettings settings,
+        bool integrationRequired,
+        bool acceptsIntegratedDelivery,
+        bool operatorOverride,
+        string? reason,
+        string? cause,
+        bool preview,
+        CancellationToken ct)
+    {
+        var fromState = info.State;
+        var acceptanceLineage = acceptsIntegratedDelivery
+            ? DecideAcceptanceLineage(info, operatorOverride)
+            : null;
+        CompletionContentFacts? contentEvidence = null;
+        CompletionContentDecision? contentDecision = null;
+        TransitionAdmission Refuse(string stage, MoveJobOutcome outcome)
+            => new(info, acceptanceLineage, contentEvidence, contentDecision, null, null, stage, outcome);
+
+        // AGT-3076: the content verdict lives in the same authority store as
+        // the lost RunAttempt, so the content gaps would only be symptoms.
+        // Name the cause instead.
+        if (acceptanceLineage is
+            { Admission: AcceptanceLineageAdmission.Refuse, Check: AgentStudio.Pipeline.ReviewSubjectAttemptCheck.NoCurrentRunAttempt })
+            return Refuse(CompletionAdmissionStages.Lineage,
+                new MoveJobOutcome(MoveJobStatus.IntegrationFailed, acceptanceLineage.Message, info.FolderPath));
+        if (targetState == TaskStates.Completed && fromState != TaskStates.Completed)
+        {
+            contentEvidence = CompletionContentEvidence.Read(info, _attemptAuthority);
+            contentDecision = CompletionContentPolicy.Decide(contentEvidence with
+            {
+                OperatorOverride = operatorOverride,
+                OverrideReason = reason,
+            });
+            if (!preview && contentEvidence.Settlement is { } settlement)
+                ReportUnusableSettlement(info, settlement, contentDecision);
+            if (!contentDecision.Accepted)
+                return Refuse(CompletionAdmissionStages.Content,
+                    new MoveJobOutcome(MoveJobStatus.IntegrationFailed, contentDecision.Message, info.FolderPath));
+        }
+        var recordedContainment = false;
+        if ((targetState == TaskStates.HumanReview && fromState == TaskStates.AutoReview
+             || targetState == TaskStates.Completed && fromState == TaskStates.HumanReview)
+            && BatchGateReleaseFailure(info, ct, out recordedContainment,
+                repairContainedFallback: !preview && fromState == TaskStates.HumanReview, preview) is { } batchFailure)
+            return Refuse(CompletionAdmissionStages.BatchGate,
+                new MoveJobOutcome(MoveJobStatus.IntegrationFailed, batchFailure, info.FolderPath));
+        // AGT-3139: the containment mapping is integration evidence. The status
+        // checks below and the delivery reconciler read it from the card.
+        if (recordedContainment && _scanner.FindJob(jobId, watchPath) is { } contained
+            && contained.State == fromState)
+            info = contained;
+
+        // Human acceptance is a quality decision, never an integration trigger.
+        // Coding deliveries must already be present in the effective integration
+        // branch. This check retains current-attempt lineage validation and
+        // refuses a stale, failed, or pending delivery without invoking Git.
+        if (acceptsIntegratedDelivery
+            && ValidateIntegratedAcceptance(info, settings, operatorOverride, acceptanceLineage) is { } integrationRefusal)
+            return Refuse(acceptanceLineage?.Admission == AcceptanceLineageAdmission.Refuse
+                    ? CompletionAdmissionStages.Lineage : CompletionAdmissionStages.IntegrationMissing,
+                integrationRefusal);
+
+        if (fromState == TaskStates.Escalated
+            && targetState == TaskStates.Completed
+            && !operatorOverride
+            && !CanCompleteEscalatedJob(info, settings))
+        {
+            return Refuse(CompletionAdmissionStages.Contract, new MoveJobOutcome(
+                MoveJobStatus.Failure,
+                $"Escalated tasks can only be accepted after their latest task commit is integrated into "
+                + $"{ResolveIntegrationBranch(info, settings)}."));
+        }
+
+        // AGT-2817 - the completion contract. Entering the delivered lane is
+        // the moment the card starts claiming a delivery, so this is where the
+        // claim is checked and recorded: a delivery contained in the
+        // published integration branch, or a named deliverable without code.
+        // The same rule applies to operator and automated moves.
+        CompletionContractDecision? completionContract = null;
+        TaskIntegrationStatus? completionIntegrationStatus = null;
+        if (targetState == TaskStates.Completed
+            && fromState != TaskStates.Completed)
+        {
+            completionIntegrationStatus = _integrationStatus?.BuildForAcceptance(info);
+            completionContract = DecideCompletionContract(
+                info,
+                settings,
+                integrationRequired,
+                operatorOverride,
+                reason,
+                cause ?? (operatorOverride ? "operator:unspecified" : null),
+                completionIntegrationStatus);
+            // Every completion needs a delivery claim, including automated
+            // transitions when the legacy guarded-delivery setting is off.
+            if (!completionContract.Accepted || completionContract.Claim is null)
+            {
+                return Refuse(CompletionAdmissionStages.Contract, new MoveJobOutcome(
+                    MoveJobStatus.IntegrationFailed,
+                    completionContract.Message ?? "Completion has no delivery claim.",
+                    info.FolderPath));
+            }
+        }
+        var contentClaim = completionContract?.Claim;
+        if (contentClaim is not null && contentEvidence is not null)
+        {
+            // A code-free operator resolution already names its evidence.
+            // Record the content gap below without replacing that claim with
+            // wording about an unproven repository delivery.
+            var replaceClaimForContent = contentDecision?.Overridden == true
+                && !(contentClaim.Basis == CompletionClaimBases.DeliverableWithoutCode
+                    && contentClaim.Reason is not null);
+            contentClaim = contentClaim with
+            {
+                Basis = replaceClaimForContent
+                    ? CompletionClaimBases.OperatorOverride : contentClaim.Basis,
+                Evidence = AppendLineageEvidence(
+                    replaceClaimForContent ? contentDecision!.Message : contentClaim.Evidence,
+                    acceptanceLineage),
+                Reason = contentDecision?.Overridden == true ? reason?.Trim() : contentClaim.Reason,
+                CurrentBriefVersion = contentEvidence.CurrentBriefVersion,
+                DeliveryBriefVersion = contentEvidence.DeliveryBriefVersion,
+                ReviewBriefVersion = contentEvidence.ReviewBriefVersion,
+                ContentAspect = contentEvidence.RequiredAspect,
+                ContentStatus = contentEvidence.ContentStatus,
+                ContentSummary = contentEvidence.ContentSummary,
+                ContentEvidenceChecked = contentEvidence.EvidenceChecked,
+                ContentMissing = contentEvidence.Missing,
+                RanAspects = contentEvidence.RanAspects,
+                SkippedAspects = contentEvidence.SkippedAspects,
+            };
+        }
+        if (contentClaim?.Basis == CompletionClaimBases.IntegratedDelivery
+            && completionIntegrationStatus?.Verification is { State: IntegrationVerificationStates.Verified } gate)
+        {
+            var gateStep = string.Equals(completionIntegrationStatus.IntegrationBranch, "main", StringComparison.OrdinalIgnoreCase)
+                ? "pre-main-test-gate" : AgentStudio.Pipeline.IntegrationGateJournal.PreDevelopBuildGateStep;
+            var gateName = gate.Evidence == IntegrationVerificationEvidence.PublishedGate
+                ? gate.Reason
+                : gate.Evidence is IntegrationVerificationEvidence.MergeGate
+                    or IntegrationVerificationEvidence.GateRun
+                    or IntegrationVerificationEvidence.GateReceipt
+                    ? $"Gate {gateStep} of {info.Key ?? info.TaskKey} returned {gate.GateVerdict ?? "verified"} on "
+                      + $"{completionIntegrationStatus.IntegrationBranch} tree {gate.Sha}."
+                    : $"Verification record {gate.Evidence} on {completionIntegrationStatus.IntegrationBranch} "
+                      + $"tree {gate.Sha}: {gate.Reason}";
+            contentClaim = contentClaim with
+            {
+                Evidence = $"{contentClaim.Evidence} {gateName}"
+                    + (gate.GateNeutralCommits.Count == 0 ? string.Empty
+                        : $" Gate-neutral document-key commits: {string.Join(", ", gate.GateNeutralCommits)}."),
+            };
+        }
+        var boundCompletionClaim = contentClaim is null
+            ? null : BindCompletionClaim(info, contentClaim);
+        if (_guardedDelivery && targetState == TaskStates.Completed && integrationRequired
+            && contentDecision?.Overridden != true
+            && (boundCompletionClaim?.Basis != CompletionClaimBases.IntegratedDelivery
+                || string.IsNullOrWhiteSpace(boundCompletionClaim.ResultSha)
+                || string.IsNullOrWhiteSpace(boundCompletionClaim.DeliveryEpoch)))
+            return Refuse(CompletionAdmissionStages.Binding, new MoveJobOutcome(MoveJobStatus.IntegrationFailed,
+                "The integrated delivery cannot be bound to a result SHA and delivery epoch. Recover its delivery evidence before acceptance."));
+        return new(info, acceptanceLineage, contentEvidence, contentDecision, completionIntegrationStatus, boundCompletionClaim);
+    }
+
+    /// <summary>
     /// Matches the card's review subject against the attempt authority store.
     /// Null when there is no subject or no authority to match against.
     /// </summary>
@@ -1798,11 +1916,19 @@ public sealed class TaskTransitionService
             // that responsibility explicitly with an override.
             if (operatorOverride || IntegrationVerificationStates.PermitsCompletion(verification))
                 return null;
+            // AGT-3753: a later publication without a gate is not a project.yml
+            // problem; the refusal names the commit and why no source counted it.
+            if (verification?.UncoveredPublication is { } uncovered)
+                return new MoveJobOutcome(
+                    MoveJobStatus.IntegrationFailed,
+                    $"Acceptance needs a passed gate on every publication after this delivery's verified tree; "
+                    + $"{uncovered} has none. {verification.Reason}",
+                    reviewed.FolderPath);
             return new MoveJobOutcome(
                 MoveJobStatus.IntegrationFailed,
-                "Acceptance refused: the delivery is on the integration branch but integrated-unverified - no gate passed on "
-                + $"the merged tree{(string.IsNullOrWhiteSpace(verification?.Sha) ? string.Empty : $" {verification!.Sha}")}. "
-                + $"{verification?.Reason} Repair the branch and deliver again, or accept with an operator override.",
+                AgentStudio.Pipeline.VerifyDefinitionPolicy.DescribesMissingDefinition(verification?.Reason)
+                    ? "Acceptance needs verification, but `.agent-studio/project.yml` is missing a usable `commands.build` or `commands.test` setting; ask a project Admin or Owner to configure it and rerun verification."
+                    : "Acceptance needs a passing verification gate for this delivery; ask a project Admin or Owner to check the `commands.build` and `commands.test` settings in `.agent-studio/project.yml` and rerun verification.",
                 reviewed.FolderPath);
         }
 
@@ -1819,8 +1945,31 @@ public sealed class TaskTransitionService
             reviewed.FolderPath);
     }
 
+    /// <summary>
+    /// The shared active-batch membership guard (AGT-3719). It runs before any
+    /// side effect of the move, for every operator cause, so the single move,
+    /// the batch move and every other operator route refuse the same move.
+    /// </summary>
+    private MoveJobOutcome? ActiveBatchMemberRefusal(TaskInfo info, string targetState,
+        string? cause, string? batchWithdrawalId)
+    {
+        if (_batchGateStore is null
+            || !AgentStudio.Pipeline.ActiveBatchMemberGuardPolicy.IsOperatorCause(cause)
+            || !AgentStudio.Pipeline.ActiveBatchMemberGuardPolicy.LeavesAutoReview(info.State, targetState))
+            return null;
+        var membership = new AgentStudio.Pipeline.ActiveBatchMemberGuard(_batchGateStore).Find(info, targetState);
+        if (membership is null
+            || string.Equals(membership.BatchId, batchWithdrawalId, StringComparison.Ordinal))
+            return null;
+        return new MoveJobOutcome(MoveJobStatus.ActiveBatchMember,
+            AgentStudio.Pipeline.ActiveBatchMemberGuardPolicy.Message(membership), info.FolderPath)
+        {
+            ActiveBatch = membership,
+        };
+    }
+
     private string? BatchGateReleaseFailure(TaskInfo task, CancellationToken ct,
-        out bool recordedContainment, bool repairContainedFallback)
+        out bool recordedContainment, bool repairContainedFallback, bool preview = false)
     {
         recordedContainment = false;
         AgentStudio.Pipeline.BatchGateOwnership? ownership;
@@ -1840,7 +1989,7 @@ public sealed class TaskTransitionService
             ownership, projection, _batchGateStore, task.FolderPath);
         if (failure is null)
         {
-            if (ownership.ContainedInSha is not null
+            if (!preview && ownership.ContainedInSha is not null
                 && AgentStudio.Pipeline.BatchGateOwnershipStore.IsCurrentGeneration(ownership, projection))
                 recordedContainment = RecordContainmentMapping(task, ownership);
             return null;
@@ -2363,6 +2512,7 @@ public sealed class TaskTransitionService
         }
         _pipelineLog?.Complete(folder, now);
         SteerPendingMarker.Clear(folder, _logger);
+        _scanner.InvalidateCache(changedPath: SteerPendingMarker.PathFor(folder));
     }
 
     private bool CanCompleteEscalatedJob(TaskInfo info, ProjectSettings settings)
@@ -2428,7 +2578,7 @@ public sealed class TaskTransitionService
     /// <see cref="MoveAsync"/>, so a failure on one item never rolls back
     /// items that already moved. The result list mirrors the input order
     /// one-for-one with a typed per-item status (<c>moved</c> / <c>not-found</c>
-    /// / <c>conflict</c> / <c>rejected</c> / <c>failed</c>). This is the
+    /// / <c>conflict</c> / <c>rejected</c> / <c>refused</c> / <c>failed</c>). This is the
     /// endpoint backing <c>POST /api/tasks/batch-move</c> and exists so the
     /// LLM never has to fall back to shell <c>mv</c> for a multi-job
     /// restore - the 2026-05-08 incident that motivated this method.
@@ -2516,6 +2666,13 @@ public sealed class TaskTransitionService
                 new BatchMoveItemResult { JobId = item.JobId, Status = "locked", Message = outcome.Message },
             MoveJobStatus.IntegrationFailed =>
                 new BatchMoveItemResult { JobId = item.JobId, Status = "integration-failed", Message = outcome.Message },
+            MoveJobStatus.ActiveBatchMember =>
+                new BatchMoveItemResult
+                {
+                    JobId = item.JobId,
+                    Status = "refused",
+                    Message = $"{AgentStudio.Pipeline.ActiveBatchMemberGuardPolicy.Code}: {outcome.Message}",
+                },
             _ =>
                 new BatchMoveItemResult { JobId = item.JobId, Status = "failed", Message = outcome.Message }
         };
