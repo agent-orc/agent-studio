@@ -80,6 +80,10 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
         BatchGateStates.Reach(batches, new BatchGateState(parent.BatchId, parent.MembershipDigest, BatchPhase.Red, null, 1,
             _clock.GetUtcNow(), "deterministic suite red"));
         Close(batches, parent.BatchId, "A-9");
+        // AGT-3681: a manifest a different binary wrote, cut off mid-record.
+        Directory.CreateDirectory(batches.BatchDirectory("stale"));
+        File.WriteAllText(Path.Combine(batches.BatchDirectory("stale"), "manifest.json"),
+            "{\"batchId\":\"stale\",\"scope\":{\"project\":\"alpha\",\"repo");
         limits.Record(new ProviderLimitStatus("claude", factTime, factTime.AddHours(1), "rate limited", true));
         Assert.Equal(WatcherLeaseOutcome.Granted, leases.Acquire("service-account:watcher", new WatcherLeaseRequest("laptop")).Outcome);
 
