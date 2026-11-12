@@ -58,10 +58,8 @@ export class TaskLiveStatusComponent {
     return batchMemberFor(this.batchGate.state(task.projectName)(),
       task.taskKey, task.key, task.displayKey, task.id);
   });
-  readonly hasRecordedAttempt = computed(() => {
-    const task = this.task();
-    return !!(task.liveStatus?.activeStep || task.execution || task.runActivity || task.runner);
-  });
+  readonly hasRecordedAttempt = computed(() => (({ liveStatus, execution, runActivity, runner }) =>
+    !!(liveStatus?.activeStep || execution || runActivity || runner))(this.task()));
 
   constructor() {
     effect(onCleanup => {
