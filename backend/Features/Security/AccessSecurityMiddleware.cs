@@ -1232,6 +1232,8 @@ public sealed class AccessSecurityMiddleware
     private static bool IsReadOnlyPost(string method, string path)
         => HttpMethods.IsPost(method)
            && (path.Equals("/api/tasks/reference-status", StringComparison.OrdinalIgnoreCase)
+               // AGT-3753: a dry run of the completion checks; it changes nothing.
+               || path.Equals("/api/tasks/acceptance-readiness", StringComparison.OrdinalIgnoreCase)
                || path.Equals("/api/operator/deploy/plan", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
@@ -1415,11 +1417,11 @@ public sealed class AccessSecurityMiddleware
             var taskId = path["/api/tasks/".Length..].Split('/', 2)[0];
             // Body-addressed and workspace-collection task routes carry their task
             // set in the request body (reorder, batch-move) or filter their payload
-            // per task (reference-status, archive). Those handlers enforce membership
+            // per task (reference-status, acceptance-readiness, archive). Those handlers enforce membership
             // on every affected task via ProjectAccessAuthorization.AllowsTasks /
             // FilterTasks, so the middleware defers instead of inferring a single
             // project from the literal path segment.
-            if (taskId is "reorder" or "batch-move" or "reference-status" or "archive")
+            if (taskId is "reorder" or "batch-move" or "reference-status" or "acceptance-readiness" or "archive")
                 return ProjectRouteAddress.DeferredToHandler;
             // A literal route under /api/tasks/ names no task: the board and
             // other collection reads (grouped, code-review/defaults,

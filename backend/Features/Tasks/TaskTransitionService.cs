@@ -1916,6 +1916,14 @@ public sealed class TaskTransitionService
             // that responsibility explicitly with an override.
             if (operatorOverride || IntegrationVerificationStates.PermitsCompletion(verification))
                 return null;
+            // AGT-3753: a later publication without a gate is not a project.yml
+            // problem; the refusal names the commit and why no source counted it.
+            if (verification?.UncoveredPublication is { } uncovered)
+                return new MoveJobOutcome(
+                    MoveJobStatus.IntegrationFailed,
+                    $"Acceptance needs a passed gate on every publication after this delivery's verified tree; "
+                    + $"{uncovered} has none. {verification.Reason}",
+                    reviewed.FolderPath);
             return new MoveJobOutcome(
                 MoveJobStatus.IntegrationFailed,
                 AgentStudio.Pipeline.VerifyDefinitionPolicy.DescribesMissingDefinition(verification?.Reason)

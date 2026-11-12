@@ -46,6 +46,7 @@ public sealed partial class BatchGatePilotService
     private readonly PipelineHealthDetector? _pipelineHealth;
     private readonly PipelineHealthService? _healthAlerts;
     private readonly ConcurrentDictionary<string, string> _activeBatchGates = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _runHangs = new(StringComparer.Ordinal);
     private readonly IServiceProvider? _services;
     private readonly IConfiguration? _configuration;
     private readonly TimelineLog? _timeline;
@@ -1040,9 +1041,15 @@ public sealed partial class BatchGatePilotService
     /// </summary>
     private void RecoverInterrupted()
     {
+        // AGT-3681: the store quarantines an unreadable record; a batch whose
+        // own reads still fail is skipped so every other batch recovers.
         foreach (var parent in _store.ListManifests().Where(item => item.ParentBatchId is null))
         {
             try { DeriveIsolationFindings(parent); }
+            catch (BatchGateRecordUnreadableException ex)
+            {
+                _logger.LogWarning(ex, "batch-recovery-skipped-unreadable batch={BatchId}", parent.BatchId);
+            }
             catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException)
             {
                 _logger.LogWarning(ex, "batch-recovery-isolation-findings-failed batch={BatchId}", parent.BatchId);
@@ -1083,6 +1090,10 @@ public sealed partial class BatchGatePilotService
         foreach (var manifest in _store.ListRecoverableManifests())
         {
             try { RecoverInterrupted(manifest); }
+            catch (BatchGateRecordUnreadableException ex)
+            {
+                _logger.LogWarning(ex, "batch-recovery-skipped-unreadable batch={BatchId}", manifest.BatchId);
+            }
             catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException
                                            or InvalidOperationException)
             {
@@ -2542,14 +2553,18 @@ public sealed partial class BatchGatePilotService
             (BatchGateManifest Manifest, BatchGateAssembly Assembly,
                 BatchGateRunRecord Run, BatchGateRunVerdict Verdict)>(StringComparer.OrdinalIgnoreCase);
         var budget = Math.Min(6, BatchGatePolicy.DiagnosticRunsPerCycle(ordered.Length) * 2);
+        // AGT-3752: after a subset of this isolation publishes, the remaining
+        // subsets are assembled on the published SHA. Only an own publication
+        // moves this base, so an external tip move still ends as StaleBase.
+        var isolationBase = failedManifest.BaseSha;
         var isolated = await BatchGateIsolation.RunAsync(ordered,
             async (subset, token) =>
             {
                 var digest = BatchGatePolicy.MembershipDigest(
-                    failedManifest.BaseSha, failedManifest.Scope, subset);
+                    isolationBase, failedManifest.Scope, subset);
                 var diagnostic = new BatchGateManifest(
                     Guid.NewGuid().ToString("N"), failedManifest.Scope,
-                    failedManifest.BaseSha, digest, _time.GetUtcNow(),
+                    isolationBase, digest, _time.GetUtcNow(),
                     subset.ToArray(), [], subset.Select(item => item.TaskKey).ToArray(),
                     failedManifest.BatchId, Diagnostic: true);
                 _store.CloseManifest(diagnostic);
@@ -2631,7 +2646,14 @@ public sealed partial class BatchGatePilotService
                 await PublishGreenAsync(prepared.Manifest, prepared.Assembly,
                     prepared.Run, prepared.Verdict, lease, pending, repo, fallbackKeys, token)
                     .ConfigureAwait(false);
-                return _store.LatestState(prepared.Manifest.BatchId).Phase == BatchPhase.Published;
+                if (_store.LatestState(prepared.Manifest.BatchId).Phase != BatchPhase.Published)
+                    return false;
+                if (_store.ReadPublication(prepared.Manifest.BatchId) is { } publication
+                    && publication.PreTipSha == isolationBase
+                    && string.Equals(publication.VerifiedRemoteSha, publication.TestedCandidateSha,
+                        StringComparison.OrdinalIgnoreCase))
+                    isolationBase = publication.VerifiedRemoteSha;
+                return true;
             }, initialCohortRed: retryOnlyKeys is null).ConfigureAwait(false);
         var diagnosticIds = _store.ListManifests()
             .Where(manifest => manifest.ParentBatchId == failedManifest.BatchId
@@ -2645,7 +2667,9 @@ public sealed partial class BatchGatePilotService
             isolationExecutions.Sum(execution => execution.DurationMs is { } duration
                 ? duration / 60000d
                 : Math.Max(0, (execution.CompletedAtUtc - execution.StartedAtUtc).TotalMinutes)),
-            _time.GetUtcNow()));
+            _time.GetUtcNow(),
+            diagnosticIds.Count(id => _store.LatestState(id) is
+                { Phase: BatchPhase.Abandoned, Reason: nameof(BatchPublishDecision.StaleBase) })));
         foreach (var member in ordered.Where(member =>
                      !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
         {
@@ -2896,6 +2920,7 @@ public sealed partial class BatchGatePilotService
                 durationMs: result.DurationMs, queueWaitMs: result.GateQueueWaitMs,
                 outcome: result.Verdict.ToString(), reuseToken: run.BatchRunId,
                 reason: $"batch:{run.BatchId}");
+        await EmitBatchShardHangsAsync(project, run, result).ConfigureAwait(false);
         return result;
     }
 
@@ -2909,20 +2934,40 @@ public sealed partial class BatchGatePilotService
         _activeBatchGates[run.BatchRunId] = project;
         foreach (var member in gated ?? [])
             Lane(member, "gate-token-acquired", level: level);
-        return await claimed.RunAsync(_store.ReadManifest(run.BatchId), run, repo, verify,
+        var result = await claimed.RunAsync(_store.ReadManifest(run.BatchId), run, repo, verify,
             TimeSpan.FromMinutes(settings.BatchGate.GateTimeoutMinutes), ct).ConfigureAwait(false);
+        await EmitBatchShardHangsAsync(project, run, result).ConfigureAwait(false);
+        return result;
+    }
+
+    private async Task EmitBatchShardHangsAsync(string project, BatchGateRunRecord run,
+        BuildTestGateResult result)
+    {
+        var bus = _services?.GetService<AgentMessageBusBridge>();
+        foreach (var hang in result.TestShards.SelectMany(suite => suite.Shards)
+                     .Select(shard => shard.Hang).Where(item => item is not null))
+        {
+            _runHangs.TryAdd(run.BatchRunId, hang!.Summary());
+            if (bus is not null)
+                await bus.EmitBatchShardHangAsync(project, run.BatchId, run.BatchRunId, hang!)
+                    .ConfigureAwait(false);
+        }
     }
 
     private BatchGateRunVerdict RecordVerdict(BatchGateRunRecord run,
         BuildTestGateResult gate, string classification, BaseAnswer? baseAnswer = null)
     {
+        var hang = gate.TestShards.SelectMany(suite => suite.Shards)
+            .Select(shard => shard.Hang).FirstOrDefault(item => item is not null);
+        _runHangs.TryRemove(run.BatchRunId, out var earlierHang);
         var verdict = new BatchGateRunVerdict(
             run.BatchRunId, run.BatchId, run.MembershipDigest,
             gate.TestedSha ?? run.CandidateSha, run.GateProfileDigest,
             classification is "pass" or "flaky-quarantined-pass"
                 ? "pass" : "fail", classification,
             run.EvidencePath, _time.GetUtcNow(),
-            baseAnswer?.Source, baseAnswer?.Minutes);
+            baseAnswer?.Source, baseAnswer?.Minutes,
+            hang?.Summary() ?? earlierHang);
         _store.RecordVerdict(verdict);
         RecordFirstCandidateOutcome(_store, run.BatchId, verdict, _logger);
         return verdict;

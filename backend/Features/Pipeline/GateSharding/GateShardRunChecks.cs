@@ -3,6 +3,7 @@ namespace AgentStudio.Pipeline;
 /// <summary>Why a shard that did not run to a trustworthy test verdict is an infrastructure failure.</summary>
 public static class GateShardDetails
 {
+    public const string InfrastructureHang = "infrastructure-hang";
     /// <summary>The test run aborted or the test host crashed; the shard's tests did not all run.</summary>
     public const string TestRunAborted = "test-run-aborted";
 
