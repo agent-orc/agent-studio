@@ -37,6 +37,10 @@ fi
 export API_REQUIRE_PREBUILT=1
 export API_START_TIMEOUT_SECS="${API_START_TIMEOUT_SECS:-90}"
 export TaskRepository="${PW_E2E_WORKSPACE}"
+# Enabling batch verification requires a configured remote gate host. The
+# isolated backend gets an unresolvable placeholder; no spec reaches it.
+export RemoteGate__SshHost="${RemoteGate__SshHost:-gate.e2e.invalid}"
+export RemoteGate__WorkerPath="${RemoteGate__WorkerPath:-/opt/agentstudio/remote-gate-worker}"
 export GIT_CONFIG_GLOBAL="${PW_E2E_WORKSPACE}/gitconfig"
 export HOME="${PW_E2E_WORKSPACE}/home"
 export XDG_CONFIG_HOME="${PW_E2E_WORKSPACE}/config"

@@ -44,7 +44,21 @@ public sealed class BatchIsolationGuardTests : IDisposable
     [InlineData("batch-1", true, BatchPhase.Red, true, false)]
     public void Isolation_holds_only_for_an_active_member_of_a_red_batch_that_has_not_released_it(
         string? batchId, bool pendingActive, BatchPhase phase, bool memberLeft, bool expected)
-        => Assert.Equal(expected, BatchIsolationGuardPolicy.IsIsolating(batchId, pendingActive, phase, memberLeft));
+        => Assert.Equal(expected, BatchIsolationGuardPolicy.IsIsolating(batchId, pendingActive, phase, memberLeft, true));
+
+    [Fact]
+    public void A_red_parent_without_a_live_flight_does_not_refuse_a_requeue()
+        => Assert.False(BatchIsolationGuardPolicy.IsIsolating("batch-1", true, BatchPhase.Red, false));
+
+    [Fact]
+    public void A_live_flight_refuses_a_red_parent_member()
+    {
+        var manifest = SeedMember();
+        BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Red, Result, 1, Now, "deterministic suite red"));
+        var membership = new BatchIsolationGuard(_store, activeFlight: _ => true).Find(Card());
+        Assert.Equal(new BatchIsolationMembership(Project, TaskKey, manifest.BatchId), membership);
+    }
 
     [Theory]
     [InlineData(TaskStates.AutoReview, TaskStates.Ready, true)]
@@ -58,7 +72,7 @@ public sealed class BatchIsolationGuardTests : IDisposable
         => Assert.Equal(expected, BatchIsolationGuardPolicy.IsRequeue(from, to));
 
     [Fact]
-    public void A_member_of_a_red_batch_is_isolating_until_the_batch_pauses()
+    public void A_red_parent_without_a_live_flight_does_not_refuse_its_member()
     {
         var manifest = SeedMember();
         var guard = new BatchIsolationGuard(_store);
@@ -66,9 +80,7 @@ public sealed class BatchIsolationGuardTests : IDisposable
 
         BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Red, Result, 1, Now, "deterministic suite red"));
-        var membership = guard.Find(Card());
-        Assert.Equal(new BatchIsolationMembership(Project, TaskKey, manifest.BatchId), membership);
-        Assert.Contains(manifest.BatchId, BatchIsolationGuardPolicy.Message(membership!), StringComparison.Ordinal);
+        Assert.Null(guard.Find(Card()));
 
         BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Paused, Result, 1, Now.AddMinutes(1), "unresolved-cohort:" + TaskKey));
@@ -87,7 +99,7 @@ public sealed class BatchIsolationGuardTests : IDisposable
         _store.RecordIsolationFinding(new BatchGateIsolationFinding(Project, manifest.BatchId, TaskKey,
             "run-1", Result, Base, status, "evidence.json", Now));
 
-        Assert.Equal(released, new BatchIsolationGuard(_store).Find(Card()) is null);
+        Assert.Equal(released, new BatchIsolationGuard(_store, activeFlight: _ => true).Find(Card()) is null);
     }
 
     [Fact]
