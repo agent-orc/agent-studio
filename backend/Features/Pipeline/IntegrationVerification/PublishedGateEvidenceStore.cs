@@ -73,8 +73,10 @@ public static class PublishedGateEvidenceStore
     }
 
     /// <summary>
-    /// Appends a passed gate. A red gate and a tree already recorded for the
-    /// branch are refused. The newest entries per branch are kept.
+    /// Appends a passed gate. A red gate and a publication already recorded for
+    /// the branch and gate step are refused. AGT-3756: entries are keyed by
+    /// published SHA and gate step, not by tree or card, so each publication of
+    /// a card keeps its own entry. The newest entries per branch are kept.
     /// </summary>
     public static bool Append(string projectFolder, PublishedGateEvidence record)
     {
@@ -83,7 +85,7 @@ public static class PublishedGateEvidenceStore
         lock (Gate)
         {
             var records = Read(projectFolder);
-            if (records.Any(existing => SameTree(existing, record))) return false;
+            if (records.Any(existing => SamePublication(existing, record))) return false;
             var kept = Bound(records.Append(record));
             var path = Path.Combine(projectFolder, FileName);
             var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
@@ -110,7 +112,14 @@ public static class PublishedGateEvidenceStore
             .OrderBy(record => record.RecordedAtUtc)
             .ToList();
 
-    private static bool SameTree(PublishedGateEvidence left, PublishedGateEvidence right)
-        => string.Equals(left.TreeSha, right.TreeSha, StringComparison.OrdinalIgnoreCase)
+    /// <summary>
+    /// The store key: branch, published SHA, tree and gate step. An entry recorded
+    /// before AGT-3756 reads the same way; one whose tree differs from its
+    /// published SHA no longer blocks an exact entry for that tree.
+    /// </summary>
+    internal static bool SamePublication(PublishedGateEvidence left, PublishedGateEvidence right)
+        => string.Equals(left.PublishedSha, right.PublishedSha, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(left.TreeSha, right.TreeSha, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(left.GateStep, right.GateStep, StringComparison.Ordinal)
            && IntegrationVerificationProjection.SameBranch(left.IntegrationBranch, right.IntegrationBranch);
 }

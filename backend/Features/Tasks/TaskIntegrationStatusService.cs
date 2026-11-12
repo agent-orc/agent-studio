@@ -241,7 +241,8 @@ public sealed class TaskIntegrationStatusService
                         && !string.Equals(verdict.VerifiedSha, verdict.BaseSha, StringComparison.OrdinalIgnoreCase)
                         ? $"it verified {verdict.VerifiedSha}"
                     : !string.Equals(verdict.GateProfileDigest, currentProfile, StringComparison.Ordinal)
-                        ? "its gate profile digest is not the current profile"
+                        ? $"its gate profile digest {verdict.GateProfileDigest ?? "none"} is not the current gate profile {currentProfile}; "
+                            + "a verdict under an older gate profile is not counted"
                     : !File.Exists(verdict.EvidencePath) ? "its evidence file is missing"
                     : null;
                 if (uncounted is not null)

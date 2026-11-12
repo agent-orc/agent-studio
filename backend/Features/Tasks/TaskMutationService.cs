@@ -2354,7 +2354,8 @@ public class TaskMutationService
             return _reservedJobIds.Values.Any(reserved => reserved.Contains(identity));
     }
 
-    public bool UpdateJobFile(string jobId, string fileName, string content, string? watchPath = null)
+    public bool UpdateJobFile(string jobId, string fileName, string content, string? watchPath = null,
+        string? actor = null)
     {
         var allowed = new[] { "prompt.md" };
         if (!allowed.Contains(fileName)) return false;
@@ -2367,9 +2368,22 @@ public class TaskMutationService
         // reliable signal because jobs stay there after stop / crash / restart.
 
         var filePath = Path.Combine(info.FolderPath, fileName);
+        var previousBrief = File.Exists(filePath) ? File.ReadAllText(filePath) : string.Empty;
         WriteAllTextWithRetry(filePath, content);
         if (string.Equals(fileName, "prompt.md", StringComparison.OrdinalIgnoreCase))
-            BriefVersionStore.Record(info.FolderPath, content);
+        {
+            var previousVersion = AgentStudio.Runner.RunDispositionPolicy.BriefVersion(previousBrief);
+            var currentVersion = BriefVersionStore.Record(info.FolderPath, content, previousBrief);
+            if (!string.Equals(previousVersion, currentVersion, StringComparison.OrdinalIgnoreCase))
+                _timeline?.Append(info.FolderPath, TimelineEventKinds.BriefChanged,
+                    actor ?? TimelineActors.System,
+                    $"Brief changed from {previousVersion} to {currentVersion}.",
+                    details: new Dictionary<string, string>
+                    {
+                        ["fromVersion"] = previousVersion,
+                        ["toVersion"] = currentVersion,
+                    });
+        }
         // prompt.md does not affect kanban-card fields, but UpdateJobFile is
         // user-initiated (edit prompt) and the next read should see the
         // change for any consumer that pulls TaskDetail with the prompt body.

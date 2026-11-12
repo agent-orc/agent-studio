@@ -14,6 +14,20 @@ public sealed partial class AccessSecurityStore
                 && account.PersonaWorkspaceId == workspaceId && account.PersonaId == personaId);
     }
 
+    /// <summary>Admission checks the current grant before reserving a runner slot.</summary>
+    public bool HasLivePersonaGrant(string workspaceId, string personaId)
+    {
+        lock (_gate)
+        {
+            var state = StateLocked();
+            var account = state.ServiceAccounts.FirstOrDefault(candidate => candidate.Origin == ServiceAccountOrigins.Persona
+                && candidate.PersonaWorkspaceId == workspaceId && candidate.PersonaId == personaId
+                && candidate.DisabledAt is null);
+            return account is not null && state.StandingGrants.Any(grant => grant.PrincipalId == account.Id
+                && OperatorPolicy.IsLive(grant, Now));
+        }
+    }
+
     public bool PersonaProjectsCover(string principalId, IReadOnlyList<string> requested,
         Func<string, string, bool> sameProject)
     {

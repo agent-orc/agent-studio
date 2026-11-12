@@ -1,4 +1,5 @@
 using AgentStudio.Security;
+using AgentStudio.Quota;
 
 namespace AgentStudio.Personas;
 
@@ -19,6 +20,45 @@ public static class PersonaEndpoints
 
         personas.MapGet("", (string id, PersonaActivationStore store) =>
             AccessSecurityEndpoints.Execute(() => Results.Ok(store.List(id))));
+
+        personas.MapGet("/budget", (string id, PersonaActivationStore store,
+            PersonaSchedulingService scheduling, WorkspaceQuotaService quota) =>
+            AccessSecurityEndpoints.Execute(() =>
+            {
+                var activations = store.List(id).Personas.Select(p => p.Activation)
+                    .Where(a => a is not null).Cast<PersonaActivationV1>().ToArray();
+                var snapshot = quota.Snapshot(id);
+                return Results.Ok(scheduling.Budget(id, DateTime.UtcNow,
+                    snapshot.Limits?.ModelTokensPerWeek, activations));
+            })).RequirePermission(IamPermissions.WorkspaceRead);
+
+        personas.MapPut("/budget", (string id, PersonaBudgetSettings request, HttpContext context,
+            AccessSecurityStore security, PersonaActivationStore store,
+            PersonaSchedulingService scheduling, WorkspaceQuotaService quota) =>
+            AccessSecurityEndpoints.Execute(() =>
+            {
+                var owner = AccessSecurityEndpoints.RequireHuman(context, security);
+                security.RequirePersonaOwner(owner);
+                var activations = store.List(id).Personas.Select(p => p.Activation)
+                    .Where(a => a is { State: PersonaStates.Active or PersonaStates.Shadow })
+                    .Cast<PersonaActivationV1>().ToArray();
+                var snapshot = quota.Snapshot(id);
+                var defaultPool = snapshot.Limits?.ModelTokensPerWeek is { } limit ? limit / 10 : 1_200_000;
+                try
+                {
+                    if (request.PoolTokensPerWeek is null && activations.Sum(a => (long)a.Allowance.TokensPerWeek) > defaultPool)
+                        throw new ArgumentException("Active persona allowances exceed the default pool.");
+                    scheduling.SetBudget(id, request.PoolTokensPerWeek, request.MaxOpenPerWorkspace,
+                        activations.Sum(a => (long)a.Allowance.TokensPerWeek));
+                }
+                catch (ArgumentException ex)
+                {
+                    throw new SecurityOperationException(400, "invalid-persona-budget", ex.Message);
+                }
+                security.AppendPersonaAudit(owner.User.Id, "persona.budget.set", id, "pool", request);
+                return Results.Ok(scheduling.Budget(id, DateTime.UtcNow,
+                    snapshot.Limits?.ModelTokensPerWeek, activations));
+            })).RequirePermission(IamPermissions.WorkspaceAdminister);
 
         personas.MapPost("/{personaId}/activate", (string id, string personaId, PersonaActivateRequest? request,
             HttpContext context, AccessSecurityStore security, PersonaActivationStore store) =>
@@ -75,3 +115,5 @@ public static class PersonaEndpoints
                     AccessSecurityEndpoints.RequireHuman(context, security)))))
             .RequirePermission(IamPermissions.WorkspaceAdminister);
 }
+
+public sealed record PersonaBudgetSettings(long? PoolTokensPerWeek, int MaxOpenPerWorkspace = 2);
