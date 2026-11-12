@@ -10,6 +10,7 @@ import { setTheme, type Theme } from '../helpers/theme';
 // workspace, and the host's git config. No route is mocked.
 const PROJECT = 'Demo App';
 const WORKBENCH_ID = 'export-retention';
+const ANSWERED_OPTIONS = ['window-30', 'proof-receipt'];
 const RESULTS = resolve(process.env['JOB_RESULTS_DIR']
   ?? resolve(__dirname, '..', '..', '..', 'results', 'AGT-3654'));
 
@@ -60,7 +61,9 @@ test('a Dossier decision that cannot be saved removes its card, and the retry de
   }
 
   // The retry creates a fresh card and records the decision with it.
+  await restoreAnswers(page);
   await revealAction(page);
+  await expect(inline.getByTestId('workbench-decision-confirm')).toBeEnabled({ timeout: 30_000 });
   await inline.getByTestId('workbench-decision-confirm').click();
   const created = inline.getByTestId('workbench-decision-created-tasks');
   await expect(created).toContainText(title, { timeout: 30_000 });
@@ -94,15 +97,24 @@ async function openDossier(page: Page): Promise<void> {
 }
 
 async function answerBothDecisions(page: Page): Promise<void> {
-  const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
-  for (const option of ['window-30', 'proof-receipt']) {
-    const input = frame.locator(`[data-option-id="${option}"] input`);
-    await expect(input).toBeVisible({ timeout: 30_000 });
-    await input.check();
-  }
+  await restoreAnswers(page);
   await revealAction(page);
   await expect(page.getByTestId('workbench-inline-decision-action')
     .getByTestId('workbench-decision-start')).toBeEnabled({ timeout: 30_000 });
+}
+
+/**
+ * Selects the recommended option of both decision points. The viewer iframe
+ * reloads when the theme or the viewport changes, which drops the answers it
+ * holds, so the retry after the screenshots selects them again.
+ */
+async function restoreAnswers(page: Page): Promise<void> {
+  const frame = page.frameLocator('[data-testid="workbench-viewer-frame"]');
+  for (const option of ANSWERED_OPTIONS) {
+    const input = frame.locator(`[data-option-id="${option}"] input`);
+    await expect(input).toBeVisible({ timeout: 30_000 });
+    if (!await input.isChecked()) await input.check();
+  }
 }
 
 /** The inline action floats over the slot after the last decision point. */
