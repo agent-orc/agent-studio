@@ -49,6 +49,9 @@
       }
       @if (publishedSha(batch.publication); as sha) { <p>Published candidate: <code>{{ sha }}</code></p> }
     }
+    @if (isolation(); as isolation) {
+      <p data-testid="task-batch-isolation-state">{{ isolation.state }}@if (isolation.wait) { · Waiting for: {{ isolation.wait }} }</p>
+    }
   </section>
 }
 @if (panelOpen()) {

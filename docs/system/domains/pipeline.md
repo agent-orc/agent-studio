@@ -37,6 +37,19 @@ persisted Running phase without a live flight exceeds the configured gate
 timeout plus the two-minute coordinator lease TTL. Recovery contention is
 logged once per batch and reason; the pilot retries on its 30-second tick.
 
+An interrupted deterministic red batch ends as `Paused` with reason
+`isolation interrupted` on the next pilot tick when unresolved members remain.
+The pilot derives any child findings, releases the parent members to planning,
+and keeps that terminal state visible in the batch article and card. A live
+isolation flight alone blocks continue, steer, and requeue; a persisted red
+verdict by itself is not a live flight. Coordinator leases record the local
+process identity so a restarted host can reclaim a dead process's lease
+without waiting for its two-minute expiry.
+The batch state response exposes `phaseAtUtc`, `isolationActive`, and
+`isolationPending` on each batch. The card and batch panel use those facts to
+name the active or interrupted wait without treating a stored red child as a
+live process.
+
 The batch gate state read reports `phaseReason` and `phaseAtUtc` for a stopped batch and
 `causedByTaskKey` when a member eject or lost review generation caused
 abandonment. Explicit operator withdrawals are retained as batch withdrawal

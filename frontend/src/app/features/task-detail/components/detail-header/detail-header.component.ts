@@ -26,7 +26,7 @@ import {
   acceptanceRequiresIntegration,
   acceptanceHoldReason,
   overflowActionsFor,
-  primaryActionFor,
+  primaryActionForTask,
   triageDecisionRefusal,
   triageDecisionRowState,
 } from '../../state/triage-actions.model';
@@ -227,7 +227,7 @@ export class DetailHeaderComponent {
 
   /** Index 0 of the lane's action list when it carries a primary variant. */
   readonly triagePrimary = computed<TriageButton | null>(() => this.gateInfrastructurePark() || this.reviewsOnly()
-    ? null : primaryActionFor(this.info().state));
+    ? null : primaryActionForTask(this.info()));
 
   /**
    * State-dependent presentation for the Human Review acceptance primary. Null

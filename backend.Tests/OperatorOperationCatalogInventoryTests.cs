@@ -52,6 +52,14 @@ public sealed class OperatorOperationCatalogInventoryTests : IDisposable
         { OperatorOperationIds.GrantChange, OperatorTier.T2 },
         { OperatorOperationIds.CatalogueChange, OperatorTier.T2 },
         { OperatorOperationIds.DeployBlockerOverride, OperatorTier.T2 },
+        { OperatorOperationIds.PersonaItemPublish, OperatorTier.T1 },
+        { OperatorOperationIds.PersonaReportPublish, OperatorTier.T1 },
+        { OperatorOperationIds.PersonaProposalDraft, OperatorTier.T1 },
+        { OperatorOperationIds.PersonaDecisionRequest, OperatorTier.T1 },
+        { OperatorOperationIds.PersonaProposalAccept, OperatorTier.T1 },
+        { OperatorOperationIds.PersonaImportanceAdjust, OperatorTier.T1 },
+        { OperatorOperationIds.PersonaBudgetRebalance, OperatorTier.T1 },
+        { OperatorOperationIds.PersonaPause, OperatorTier.T1 },
     };
 
     [Theory]

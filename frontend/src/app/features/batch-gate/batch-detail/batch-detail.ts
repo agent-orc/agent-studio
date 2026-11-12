@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import type { TaskInfo } from '../../../models/task.model';
-import { batchMemberFor, batchProvenRedFor, batchPublishedSha, batchTimeLine } from '../../../models/batch-gate.model';
+import { batchIsolationRows, batchIsolationState, batchMemberFor, batchProvenRedFor, batchPublishedSha, batchTimeLine } from '../../../models/batch-gate.model';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { BatchPanelComponent } from '../batch-panel/batch-panel';
 import { BatchProvenRedComponent } from '../batch-proven-red/batch-proven-red';
@@ -44,6 +44,24 @@ export class BatchDetailComponent {
     if (batchId) return batches?.find(batch => batch.batchId === batchId) ?? null;
     return batches?.find(batch => batch.members.some(member =>
       [this.task().taskKey, this.task().key, this.task().displayKey, this.task().id].includes(member.taskKey))) ?? null;
+  });
+  readonly isolation = computed(() => {
+    const record = this.record();
+    const currentParent = record?.parentBatchId
+      ? this.state()?.batches.find(batch => batch.batchId === record.parentBatchId) : record;
+    const keys = [this.task().taskKey, this.task().key, this.task().displayKey, this.task().id];
+    const parent = currentParent && batchIsolationState(currentParent) ? currentParent
+      : this.state()?.batches.find(batch => !batch.parentBatchId
+        && batch.phaseReason === 'isolation interrupted'
+        && batch.members.some(member => keys.includes(member.taskKey)));
+    if (!parent) return null;
+    const state = batchIsolationState(parent);
+    const key = parent.members.find(member => keys.includes(member.taskKey))?.taskKey;
+    const current = this.member();
+    const wait = current?.batchId && current.batchId !== parent.batchId
+      ? `Batch ${current.batchId} verification`
+      : batchIsolationRows(this.state(), parent)?.find(row => row.taskKey === key)?.waitFor;
+    return state ? { state, wait } : null;
   });
 
   constructor() {

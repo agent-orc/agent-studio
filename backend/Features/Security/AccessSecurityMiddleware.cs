@@ -640,6 +640,47 @@ public sealed class AccessSecurityMiddleware
             operation = await OperatorRequestClassifier.ClassifyAsync(context, IsSafe(context.Request.Method, path),
                 context.RequestServices?.GetService<IOperatorGateEvidence>(), OperatorEnvironmentKind,
                 key => RouteValue(context, path, context.GetEndpoint(), key));
+            if (operation is not null && OperatorOperationIds.PersonaAll.Contains(operation.Id)
+                && account.Origin != ServiceAccountOrigins.Persona)
+            {
+                await Reject(context, 403, "persona-principal-required", "This operation requires a persona principal.");
+                return;
+            }
+            if (account.Origin == ServiceAccountOrigins.Persona)
+            {
+                var occurrence = context.Request.Headers["X-Persona-Occurrence-Id"].ToString();
+                if (string.IsNullOrWhiteSpace(account.OccurrenceId) || occurrence != account.OccurrenceId)
+                {
+                    await Reject(context, 403, "occurrence-required", "This persona session is bound to one occurrence.");
+                    return;
+                }
+                var workspaceId = RouteValue(context, path, context.GetEndpoint(), "id");
+                var personaId = RouteValue(context, path, context.GetEndpoint(), "personaId");
+                if ((path.StartsWith("/api/workspaces/", StringComparison.OrdinalIgnoreCase)
+                        && workspaceId != account.PersonaWorkspaceId)
+                    || (personaId is not null && personaId != account.PersonaId))
+                {
+                    await Reject(context, 403, "persona-scope-denied", "This persona session does not cover this workspace or persona.");
+                    return;
+                }
+                var statedSource = context.Request.Headers[OperatorApprovalHeaders.InstructionSource].ToString();
+                var source = OperatorInstructionSources.Normalize(statedSource);
+                if ((source is OperatorInstructionSources.Card or OperatorInstructionSources.RepositoryFile or OperatorInstructionSources.Log
+                        && (operation is null || !OperatorOperationIds.PersonaPublish.Contains(operation.Id)))
+                    || source == OperatorInstructionSources.WebPage
+                    || (!string.IsNullOrWhiteSpace(statedSource) && source == OperatorInstructionSources.Unstated))
+                {
+                    await Reject(context, 403, "instruction-source-denied",
+                        "Untrusted instruction sources may only publish persona items, reports, drafts, or decision requests.");
+                    return;
+                }
+                if (operation is { Tier: OperatorTier.T2 })
+                {
+                    await Reject(context, 403, OperatorPolicyReasons.GrantRequired,
+                        "A persona principal cannot request a high-risk operation.");
+                    return;
+                }
+            }
             var gate = breakGlass is null || operation is null ? OperatorPolicy.TierGate(operation) : null;
             var awaitsApproval = breakGlass is null && operation is { Tier: OperatorTier.T2 } && !IsTokenDeniedRoute(path);
             if (gate is not null && !awaitsApproval) context.Items[OperatorPolicyItem] = gate;
@@ -701,6 +742,12 @@ public sealed class AccessSecurityMiddleware
             && WorkspaceBindingsDecide(subject, bindings);
         var target = await TargetAsync(context, path, required, safeMethod);
         context.Items[AuditTargetItem] = target;
+        if (account.Origin == ServiceAccountOrigins.Persona && target.Projects.Count > 0
+            && !_store.PersonaProjectsCover(account.AccountId, target.Projects, SameProject))
+        {
+            await Reject(context, 403, "persona-scope-denied", "This persona's scope does not cover the project.");
+            return;
+        }
         var decision = PermissionEvaluator.Evaluate(required.Permission, subject, bindings, target, SameProject);
         var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
         if (await RejectedByRoleRequirement(context, projected.LegacyRole)) return;
@@ -716,7 +763,7 @@ public sealed class AccessSecurityMiddleware
         }
         // The operator agent role keeps installation operation read-only: its
         // writes address projects, whatever principal holds it (OP-1).
-        if (!safeMethod && projected.Role == IamRoles.OperatorAgent
+        if (!safeMethod && projected.Role == IamRoles.OperatorAgent && account.Origin != ServiceAccountOrigins.Persona
             && target.Scope is not (ProjectRouteScope.Addressed or ProjectRouteScope.DeferredToHandler))
         {
             await Reject(context, 403, "project-scope-denied", "The operator agent role cannot make installation-wide changes.");

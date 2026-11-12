@@ -76,6 +76,8 @@ export interface BatchGateState {
     liveFlight?: boolean;
     recoveryStatus?: { reason: string; nextRetryAtUtc: string } | null;
     phaseReason?: string | null;
+    isolationActive?: boolean;
+    isolationPending?: boolean;
     phaseHistory?: { phase: string; reason?: string | null; atUtc: string }[];
     /** AGT-3710: one-based place of a formed batch in its project's flight queue. */
     queuePosition?: number | null;
@@ -167,6 +169,7 @@ export interface BatchIsolationRow {
   taskKey: string;
   status: BatchIsolationRowStatus;
   finding: BatchIsolationFinding | null;
+  waitFor: string;
 }
 
 /** Red or isolating batch of a project, for the lane indicator. */
@@ -384,15 +387,35 @@ function latestFindings(state: BatchGateState | null, parentBatchId: string): Ma
 export function batchIsolationRows(state: BatchGateState | null, batch: BatchGateBatch): BatchIsolationRow[] | null {
   if (batch.parentBatchId) return null;
   const findings = latestFindings(state, batch.batchId);
-  if (batch.phase !== 'red' && findings.size === 0) return null;
+  if (batch.phase !== 'red' && batch.phaseReason !== 'isolation interrupted' && findings.size === 0) return null;
   return batch.members.map(member => {
     const finding = findings.get(member.taskKey) ?? null;
     const status = finding?.status;
     return {
       taskKey: member.taskKey, finding,
       status: status === 'proven-red' || status === 'proven-green' || status === 'superseded' ? status : 'not-isolated',
+      waitFor: status === 'proven-red' ? 'Escalation after the red verdict'
+        : status === 'proven-green' ? 'Publication of a proven green cohort'
+        : status === 'superseded' ? 'A new review attempt'
+        : batch.phaseReason === 'isolation interrupted' ? 'Its own gate after interrupted isolation'
+        : batch.phase === 'red' && batch.isolationActive === false && batch.isolationPending
+          ? 'Recovery of the interrupted isolation'
+        : batch.phase === 'red' && batch.isolationActive === false ? 'No further isolation action'
+        : 'An isolation verdict',
     };
   });
+}
+
+export function batchIsolationState(batch: BatchGateBatch): string | null {
+  const at = batch.phaseAtUtc && !Number.isNaN(Date.parse(batch.phaseAtUtc))
+    ? new Date(batch.phaseAtUtc).toISOString().replace('.000Z', 'Z') : 'an unknown time';
+  if (batch.phaseReason === 'isolation interrupted')
+    return `Ended without a verdict at ${at}; isolation interrupted`;
+  if (batch.phase === 'red' && batch.isolationActive !== false)
+    return `Isolating since ${at}`;
+  if (batch.phase === 'red') return batch.isolationPending
+    ? 'Isolation has no active flight; awaiting recovery' : 'Isolation ended';
+  return null;
 }
 
 /**
@@ -408,7 +431,8 @@ export function batchAlert(state: BatchGateState | null): BatchAlert | null {
     const children = batches.filter(child => child.parentBatchId === batch.batchId);
     const culprits = [...latestFindings(state, batch.batchId).values()]
       .filter(finding => finding.status === 'proven-red').map(finding => finding.taskKey);
-    if (children.some(child => ACTIVE_PHASES.has(child.phase))) return { state: 'isolating', batchId: batch.batchId, culprits };
+    if (batch.isolationActive ?? children.some(child => ACTIVE_PHASES.has(child.phase)))
+      return { state: 'isolating', batchId: batch.batchId, culprits };
     // Batches arrive newest first: a published newer batch means the project moved on.
     if (roots.slice(0, index).some(newer => newer.phase === 'published')) return null;
     return { state: 'red', batchId: batch.batchId, culprits };

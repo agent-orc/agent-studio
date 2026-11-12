@@ -4,6 +4,7 @@
       <div>
         <h3 id="operations-backups-title">Installation backups</h3>
         <p>Encrypted backups of the whole installation, verified by a restore and copied off this host.</p>
+        <a data-testid="operations-backups-content-list" href="https://github.com/agent-orc/agent-studio/blob/develop/docs/operations/setup/studio-backup-restore.md#credential-content-list" target="_blank" rel="noopener noreferrer">Archive credential content list</a>
       </div>
       <button type="button" class="backup-status__refresh" data-testid="operations-backups-refresh" (click)="load()">Refresh</button>
     </header>
@@ -154,7 +155,7 @@
                 <tr [attr.data-backup-id]="item.id">
                   <th scope="row"><time [attr.datetime]="item.createdAt">{{ item.createdAt | date:'medium':'UTC' }} UTC</time></th>
                   <td>{{ formatBytes(item.sizeBytes) }}</td>
-                  <td>{{ item.fileCount }}</td>
+                  <td><a [attr.href]="'/api/v1/management/backups/' + item.id + '/contents'" target="_blank" rel="noopener noreferrer" [attr.aria-label]="'Archive content list for ' + item.id">{{ item.fileCount }}</a></td>
                   <td>{{ verificationLabel(item.verification) }}</td>
                   <td>{{ itemOffHostLabel(item.offHost) }}</td>
                 </tr>

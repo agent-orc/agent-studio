@@ -171,6 +171,7 @@
               @if (batch.phase === 'running' && batch.liveFlight === false && batch.recoveryStatus) {
                 <p role="status">Recovery pending: {{ batch.recoveryStatus.reason }}. Next retry {{ retryTime(batch.recoveryStatus.nextRetryAtUtc) }}.</p>
               }
+              @if (isolationState(batch); as state) { <p data-testid="batch-isolation-state">{{ state }}</p> }
               @if (batch.phaseHistory?.length) {
                 <details class="batch-panel__history"><summary>Phase history</summary>
                   <ol>@for (step of batch.phaseHistory; track step.atUtc + step.phase) { <li>{{ date(step.atUtc) }} · {{ step.phase }}@if (step.reason) { · {{ step.reason }} }</li> }</ol>

@@ -93,7 +93,8 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
                     hold.Dispose();
                 }
 
-                BackupArchive.WriteJson(writer, BackupArchive.ContentsMember, new BackupContents(contents, stats.ToConsistency()));
+                BackupArchive.WriteJson(writer, BackupArchive.ContentsMember,
+                    new BackupContents(contents, stats.ToConsistency(), BackupCredentialInventory.Count(contents)));
                 writer.Dispose();
                 sizeBytes = hashing.BytesWritten;
                 sha256 = hashing.Hash();
@@ -219,6 +220,7 @@ public sealed class BackupCollector(BackupCatalog catalog, BackupWritePause paus
                 AfterCapture?.Invoke(full);
                 stats.Count(capture, member);
                 if (capture.Kind == BackupCaptureKind.Vanished) continue;
+                BackupCredentialInventory.RejectPlaintextTotp(member, spool, request.SecretKeyId);
                 BackupArchive.WriteFile(writer, member, spool, file.LastWriteTimeUtc, UnixMode(full));
                 contents.Add(new(member, capture.Length, capture.Sha256, capture.Kind.ToString()));
                 File.Delete(spool);

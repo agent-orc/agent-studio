@@ -120,4 +120,41 @@ describe('BatchDetailComponent', () => {
     expect([...red.host.querySelectorAll('[data-testid="task-batch-pre-check-tests"] li')].map(item => item.textContent))
       .toEqual(['Product.Tests.One', 'Product.Tests.Two']);
   });
+
+  it('explains an interrupted red parent and the member wait', async () => {
+    const parent = { ...redHalvingState.batches[0], phase: 'paused', phaseReason: 'isolation interrupted',
+      phaseAtUtc: '2026-11-10T03:12:00Z' };
+    const state = { ...redHalvingState, batches: [parent], members: {
+      ...redHalvingState.members, 'AGT-2': { status: 'pending' as const, batchId: parent.batchId },
+    } };
+    const { host } = await mount(state, { id: 'AGT-2' });
+    expect(host.querySelector('[data-testid="task-batch-isolation-state"]')?.textContent)
+      .toContain('Ended without a verdict at 2026-11-10T03:12:00Z');
+    expect(host.querySelector('[data-testid="task-batch-isolation-state"]')?.textContent)
+      .toContain('Waiting for: Its own gate after interrupted isolation');
+  });
+
+  it('shows when a live isolation flight began', async () => {
+    const parent = { ...redHalvingState.batches[0], isolationActive: true,
+      phaseAtUtc: '2026-11-10T03:10:00Z' };
+    const { host } = await mount({ ...redHalvingState, batches: [parent], members: {
+      ...redHalvingState.members, 'AGT-2': { status: 'in-batch' as const, batchId: parent.batchId, phase: 'red' },
+    } }, { id: 'AGT-2' });
+    expect(host.querySelector('[data-testid="task-batch-isolation-state"]')?.textContent)
+      .toContain('Isolating since 2026-11-10T03:10:00Z');
+  });
+
+  it('keeps the interruption visible after the member enters a new batch', async () => {
+    const old = { ...redHalvingState.batches[0], phase: 'paused',
+      phaseReason: 'isolation interrupted', phaseAtUtc: '2026-11-10T03:12:00Z' };
+    const next = { ...redHalvingState.batches[1], batchId: 'batch-next', parentBatchId: null, phase: 'formed' };
+    const state = { ...redHalvingState, batches: [next, old], members: {
+      ...redHalvingState.members, 'AGT-2': { status: 'in-batch' as const, batchId: 'batch-next', phase: 'formed' },
+    } };
+    const { host } = await mount(state, { id: 'AGT-2' });
+    expect(host.querySelector('[data-testid="task-batch-isolation-state"]')?.textContent)
+      .toContain('Ended without a verdict at 2026-11-10T03:12:00Z');
+    expect(host.querySelector('[data-testid="task-batch-isolation-state"]')?.textContent)
+      .toContain('Waiting for: Batch batch-next verification');
+  });
 });
