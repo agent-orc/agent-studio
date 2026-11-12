@@ -93,10 +93,10 @@ export default defineConfig({
           : profile === 'networked-https' ? ['**/security/product-session-networked-https.spec.ts', '**/security/owner-second-factor-human-pace.spec.ts', '**/security/reviewer-role.networked-https.spec.ts']
           : profile === 'networked-https-demo' ? '**/security/product-card-detail.spec.ts'
           : profile === 'operator-cli' ? '**/operator/studio-op-operator-cli.spec.ts'
-          : profile === 'demo' ? '**/usage-cockpit/cockpit-integration-matrix.spec.ts'
+          : profile === 'demo' ? ['**/usage-cockpit/cockpit-integration-matrix.spec.ts', '**/project/dossier-decision-live.spec.ts']
           : profile === 'public-demo' ? '**/system/public-demo-shell.spec.ts' : '**/*.spec.ts',
         testIgnore: profile === 'standard'
-          ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|security\/(product-session-networked-https|owner-second-factor-human-pace|reviewer-role\.networked-https|product-card-detail)\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts/
+          ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|settings\/first-run-journey\.spec\.ts|settings\/first-run-networked-monolith\.spec\.ts|security\/(product-session-networked-https|owner-second-factor-human-pace|reviewer-role\.networked-https|product-card-detail)\.spec\.ts|operator\/studio-op-operator-cli\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts|project\/dossier-decision-live\.spec\.ts/
           : /visual-evidence\//,
       } : { testIgnore: /visual-evidence\// }),
       use: { ...devices['Desktop Chrome'], channel: undefined },
