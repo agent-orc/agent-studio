@@ -592,8 +592,8 @@ public sealed partial class AccessSecurityStore
             throw new SecurityOperationException(403, "second-factor-required", "Register a second factor before signing in.");
         if (string.IsNullOrWhiteSpace(code))
             throw new SecurityOperationException(401, "second-factor-required", "A second factor is required.");
-        if (user.TotpSecret is not null
-            && SecondFactorCodes.MatchTotpStep(user.TotpSecret, code, Now) is { } acceptedStep
+        if (OpenTotp(user) is { } seed
+            && SecondFactorCodes.MatchTotpStep(seed, code, Now) is { } acceptedStep
             && (user.LastAcceptedTotpStep is null || acceptedStep > user.LastAcceptedTotpStep))
         {
             state.Users[state.Users.IndexOf(user)] = user with { LastAcceptedTotpStep = acceptedStep };
@@ -1216,8 +1216,8 @@ public sealed partial class AccessSecurityStore
         try { loaded = persisted ? JsonSerializer.Deserialize<SecurityState>(File.ReadAllText(StatePath), Json) ?? new() : new(); }
         catch (Exception ex) { throw new InvalidOperationException($"Security state at '{StatePath}' cannot be read safely.", ex); }
         var legacyTotp = loaded.Users.Any(user => user.TotpSecret is { Length: > 0 } value && !value.StartsWith(TotpPrefix, StringComparison.Ordinal));
-        if (loaded.Users.Any(user => user.TotpSecret is { Length: > 0 }))
-            loaded = loaded with { Users = loaded.Users.Select(user => user with { TotpSecret = OpenTotp(user) }).ToList() };
+        // Sealed seeds stay sealed in memory and open only where a code is verified, so commands that
+        // never check a code, such as the out-of-band kill switch, work without the secret store key.
         if (legacyTotp && persisted)
             SaveLocked(loaded);
         SealLegacyTotpSnapshots();
@@ -1272,7 +1272,8 @@ public sealed partial class AccessSecurityStore
 
     private string? SealTotp(StudioUser user)
     {
-        if (string.IsNullOrEmpty(user.TotpSecret)) return user.TotpSecret;
+        if (string.IsNullOrEmpty(user.TotpSecret) || user.TotpSecret.StartsWith(TotpPrefix, StringComparison.Ordinal))
+            return user.TotpSecret;
         var sealedValue = SecretEnvelope.Seal(_totpKeys.Load(createIfMissing: CanCreateTotpKey()), TotpIdentity(user.Id), 1,
             Encoding.UTF8.GetBytes(user.TotpSecret));
         return TotpPrefix + Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(sealedValue));
