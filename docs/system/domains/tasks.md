@@ -1461,6 +1461,13 @@ decision of whoever parked the card, and re-queueing remains the operator lane
 move that opens a fresh review-attempt epoch. A condition no probe can decide is
 reported as `undeterminable` rather than optimistically as resolved.
 
+An Auto Review watchdog park is typed `environmental` with the
+`auto-review-stranded` cause detail and a
+`review-retry-available` condition checked against the current immutable run.
+The card offers Retry review on that delivery and links the watchdog receipt;
+the receipt's Undo restores Auto Review only if the parked card and delivery
+have not changed since that intervention.
+
 `TaskInfo.ParkedBlocker` is a read-time projection of that marker, never
 persisted on `task.json`. It carries the lane age (`parkedForSeconds`), so a card
 that has sat unlooked-at for days is visible as such. The board card leaves the
@@ -1642,6 +1649,43 @@ membership), `GET /api/projects/{id}/delivery-claims` (sweep), and
 `POST /api/projects/{id}/delivery-claims/reconcile` (repairs only the caches
 that contradict positive containment, and reports what changed). Full
 rationale: [the completion contract](../../concepts/task-integration-and-merge-workflow.md#the-completion-contract-agt-2817).
+
+### Human Review acceptance readiness (AGT-3564)
+
+`POST /api/tasks/acceptance-readiness` answers, for each named Human Review
+card (or every Human Review card of `project`), what its acceptance would
+answer now. `TaskTransitionService.PreviewCompletion` runs the admission checks
+of a Human Review to Completed move without an override through the same
+`AdmitTransition` method that `MoveAsync` calls, so the checks and their order
+are one implementation: decision guard, run-attempt lineage, content verdict,
+batch-gate release, integration and gate verification, completion contract,
+and claim binding. It moves nothing and writes nothing. It does not report an
+unusable settlement, and it neither records nor repairs a batch containment, so
+a card the move could still repair reads as refused, never the other way round.
+The route is a POST because those checks read Git and read requests serve
+published facts only (AGT-3321); it needs `project.read` on every card.
+
+`AcceptanceReadinessPolicy` (pure, one test row per class) turns the answer
+into one class: `ready`, `review-concerns` (with the aspect, the concern text
+and the missing item from the settlement), `integrated-unverified` (also a
+batch gate without passing evidence), `not-integrated`, `verdict-stale`
+(verdict or delivery for an older brief, or a review of another run),
+`no-content-verdict`, `blocked` (any other refusal, in the completion's
+wording), `waiting-deploy`, and `owner-decision`. Only a park outranks the
+admission: a park reason that waits for a deploy or a live measurement, or a
+park for a person (`operator-decision`, `agent-needs-input`,
+`needs-human-input`, a decision request, or a pending decision card). A refused
+class also carries a prefilled round: the refusal, the concern, and the card's
+latest result ref (`ContinueRoundBasePolicy`, AGT-3483).
+
+The Human Review lane groups its cards by class and filters by All, Ready, and
+Not ready; the lane count stays the sum of what it shows. Each card names its
+reason and links its review evidence tab. "Accept N ready" confirms, then sends
+the ready cards the filter shows through the normal `POST /api/tasks/batch-move`,
+so every card passes the full completion again and may still be refused; the
+lane lists each card's result and checks again. "Send a round to close the
+gap" opens the prefilled prompt and result ref for editing, and nothing is
+sent until the owner confirms it through `POST .../continue` with `baseRef`.
 
 ## Task-tab refinement projection
 
@@ -2364,9 +2408,18 @@ every byte of it is a byte the client already holds.
   complement of `LegacyTask`, so the board tells a canonical card from a legacy
   one without the authority lock; the board path makes no `GetTaskProjection`
   call for it. `liveStatus.queue.state` is `reviewing` (the lease holder and
-  its start), `queued` (the claimable position, a scheduled retry, or a missing
-  executor registration) or `stalled` (a terminal non-Pass review with nothing
-  scheduled, or no review attempt at all; an operator has to decide). A review
+  its start), `queued` (the claimable position or a missing executor
+  registration), `retry-scheduled` or `stalled` (a terminal non-Pass review
+  with nothing scheduled, or no review attempt at all; an operator has to
+  decide). AGT-3690: an infrastructure failure also carries `queue.lost` (the
+  report's failure classification, the lease host and executor, and when the
+  attempt ended), and a scheduled retry carries `queue.retry` (number, budget,
+  due time) under `retry-scheduled`. A review host restart
+  (`ExecutorRestarted`) reads "Review lost: review host restarted (host,
+  time). Automatic retry 1 of 3 at time." and the host name links to the
+  host. The snapshot fields behind it (`FailureClassification`, `HostId`,
+  `TerminalAt`, `PendingInfrastructureRetryNumber`) are folded into the board
+  signature. A review
   that passed and waits for integration, a legacy card and a report-only card
   keep the local post-processing wait sentence. Every attempt-authority read
   is keyed by `TaskIdentity.AuthorityKey` (the task.json `key`, then the

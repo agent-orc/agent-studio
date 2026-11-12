@@ -406,6 +406,7 @@ export class App implements OnInit, OnDestroy {
   private hashListener: (() => void) | null = null;
   private kanbanKeyListener: ((ev: KeyboardEvent) => void) | null = null;
   readonly watchPaths = signal<WatchPathEntry[]>([]);
+  readonly watchPathsLoaded = signal(false);
   /**
    * Cycle 9 / ADR-0034: search query, four faceted filters, URL hash +
    * query-param round-trip, and `filteredGrouped` derivation all live
@@ -518,6 +519,11 @@ export class App implements OnInit, OnDestroy {
 
   readonly projectNames = computed(() => {
     return this.watchPaths().map((wp) => wp.name);
+  });
+  readonly noProjectAccess = computed(() => {
+    const status = this.auth.status();
+    return status?.profile === 'networked' && status.authenticated && status.user?.role !== 'owner'
+      && (status.user?.projects.length === 0 || (this.watchPathsLoaded() && this.projectNames().length === 0));
   });
 
   // Cycle 9 / ADR-0034: filter signals + URL sync delegated to BoardFiltersService.
@@ -1531,6 +1537,7 @@ export class App implements OnInit, OnDestroy {
     this.jobService.getWatchPaths().subscribe({
       next: (entries) => {
         this.watchPaths.set(entries);
+        this.watchPathsLoaded.set(true);
         if (entries.length > 0) this.createJobForm.newWatchPath = entries[0].path;
 
         // Purge stale project names that survived a registry rename / delete in

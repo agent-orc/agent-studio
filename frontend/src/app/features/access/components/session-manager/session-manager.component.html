@@ -42,6 +42,8 @@
           @if (totpSecret()) {
             <p>Add this secret to an authenticator app.</p>
             <output data-testid="session-totp-secret">{{ totpSecret() }}</output>
+            <a data-testid="session-totp-link" [href]="totpLink()">Open in authenticator app</a>
+            @if (totpQr()) { <img data-testid="session-totp-qr" class="session-manager__qr" [src]="totpQr()" alt="Authenticator setup QR code"> }
             <label>Authenticator code <input type="text" inputmode="numeric" [value]="totpCode()"
               (input)="totpCode.set($any($event.target).value)"></label>
             <button type="button" (click)="confirmTotp()" [disabled]="busy()">Verify authenticator</button>

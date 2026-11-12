@@ -12,6 +12,7 @@ import { fakeBackupActivityService } from '../../testing/backup-fixtures';
 import { fakeStandingGrantsService } from '../../testing/grant-fixtures';
 import { fakeOperatorAgentsService } from '../../testing/operator-fixtures';
 import { AccessAreaComponent } from './access-area.component';
+import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 
 describe('AccessAreaComponent', () => {
   async function render(access: ReturnType<typeof fakeAccessService>, operators = fakeOperatorAgentsService(),
@@ -124,6 +125,15 @@ describe('AccessAreaComponent', () => {
     expect(access.resetPassword).toHaveBeenCalledWith('usr_dev');
     expect(element.querySelector('[data-testid="access-temporary-password"]')?.textContent).toContain('dev.user');
     (element.querySelector('[data-testid="access-user-toggle-dev.user"]') as HTMLButtonElement).click();
+    const dialog = TestBed.inject(ConfirmDialogService);
+    expect(dialog.active()?.message).toContain('Open sessions end immediately');
+    expect(access.setUserDisabled).not.toHaveBeenCalled();
+    dialog.cancel();
+    await Promise.resolve();
+    expect(access.setUserDisabled).not.toHaveBeenCalled();
+    (element.querySelector('[data-testid="access-user-toggle-dev.user"]') as HTMLButtonElement).click();
+    dialog.accept();
+    await Promise.resolve();
     expect(access.setUserDisabled).toHaveBeenCalledWith('usr_dev', true);
   });
 

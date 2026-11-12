@@ -225,4 +225,42 @@ public sealed class ReviewAttemptChainSummaryTests
         Assert.Equal("No graded review attempt exists for this subject.", summary.Headline);
         Assert.Contains("- Review attempt chain: No graded review attempt exists", summary.Detail);
     }
+
+    // AGT-3690 (S5-F14): a chain the review host lost by restarting names the
+    // restarts, host and time, instead of claiming the subject cannot be
+    // materialized.
+    [Fact]
+    public void A_chain_lost_to_review_host_restarts_names_every_restart()
+    {
+        var attempts = new[]
+        {
+            Infra("review_r1", 1, 26, 1, 27, "ExecutorRestarted") with { HostId = "lab-review-host" },
+            Infra("review_r2", 1, 28, 1, 31, "ExecutorRestarted") with { HostId = "lab-review-host" },
+            Infra("review_r3", 1, 34, 1, 40, "ExecutorRestarted"),
+        };
+
+        var summary = ReviewAttemptChainSummary.Build(attempts);
+
+        Assert.Equal(
+            "The review was lost to 3 review host restarts: "
+            + "lab-review-host 2026-07-28 01:27 UTC (review_r1); "
+            + "lab-review-host 2026-07-28 01:31 UTC (review_r2); "
+            + "2026-07-28 01:40 UTC (review_r3). "
+            + "The automatic retry budget of 3 is spent; no review check failed against the card.",
+            summary.HostRestartSentence(3));
+        Assert.Contains("Find out why the review host restarted", summary.Detail);
+        Assert.DoesNotContain("cannot be materialized", summary.Detail);
+    }
+
+    [Fact]
+    public void A_chain_whose_newest_cause_is_not_a_restart_has_no_restart_sentence()
+    {
+        var attempts = new[]
+        {
+            Infra("review_r1", 1, 26, 1, 27, "ExecutorRestarted"),
+            Infra("review_sha", 2, 0, 2, 5, "ShaMismatch"),
+        };
+
+        Assert.Null(ReviewAttemptChainSummary.Build(attempts).HostRestartSentence(3));
+    }
 }

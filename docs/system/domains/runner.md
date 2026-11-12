@@ -1851,9 +1851,14 @@ unreported claim expires with its lease and is queued again.
   identity. Each persisted Coding slot emits one startup reconciliation line:
   `reattached`, `purged` with the process-proof reason, or fail-closed
   `retained`. Missing or mismatched coding processes are actively released and
-  returned to Ready. A non-adoptable review is settled as `ReviewInfra` with
-  classification `ExecutorRestarted`, the completed-command count and duration,
-  the failed process proof, and the retry reason. DB lease presence alone is
+  returned to Ready. A review whose worker is gone while its lease is still
+  valid is relaunched within the same attempt and resumes from
+  `review-progress.json`; a stop during workspace preparation hands the slot
+  over and the replacement prepares again (AGT-3647). Only after
+  `DurableReviewProcess.MaximumWorkerRelaunches` relaunches is a non-adoptable
+  review settled as `ReviewInfra` with classification `ExecutorRestarted`, the
+  completed-command count and duration, the failed process proof, and the
+  retry reason. DB lease presence alone is
   never process-liveness evidence. systemd must use `KillMode=process`. It must
   also use `PrivateTmp=false`: a private-`/tmp` unit unmounts its namespace-scoped
   `/tmp` on every restart even though `KillMode=process` leaves the detached

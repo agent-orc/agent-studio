@@ -50,6 +50,35 @@ public sealed class GateCancellationPolicyTests
         => Assert.Equal(charged, GateCancellationPolicy.ChargedStartsAfterCancellation(
             startsBefore, reason, serviceStopping));
 
+    [Theory]
+    // AGT-3647: a start charged by an earlier instance was cut by the restart.
+    [InlineData(1, "instance-a", "instance-b", 0)]
+    [InlineData(2, "instance-a", "instance-b", 1)]
+    // The instance that ran and lost the gate itself keeps the charge.
+    [InlineData(2, "instance-b", "instance-b", 2)]
+    // No start in flight: nothing to refund.
+    [InlineData(1, null, "instance-b", 1)]
+    [InlineData(0, "instance-a", "instance-b", 0)]
+    public void A_start_cut_by_a_service_restart_is_refunded(
+        int charged, string? runBy, string current, int expected)
+        => Assert.Equal(expected, GateCancellationPolicy.ChargedStartsAfterServiceRestart(
+            charged, runBy, current));
+
+    [Fact]
+    public void Repeated_api_restarts_under_a_gate_never_reach_the_start_budget()
+    {
+        var starts = 0;
+        string? runBy = null;
+        for (var restart = 0; restart < 10; restart++)
+        {
+            var instance = $"instance-{restart}";
+            starts = GateCancellationPolicy.ChargedStartsAfterServiceRestart(starts, runBy, instance) + 1;
+            runBy = instance;
+        }
+
+        Assert.Equal(1, starts);
+    }
+
     [Fact]
     public void Repeated_service_stops_never_reach_the_start_budget()
     {

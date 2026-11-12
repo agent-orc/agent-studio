@@ -36,6 +36,8 @@ export interface BatchGateConfiguration {
 }
 
 export interface BatchGateState {
+  ejectRequests?: { project: string; taskKey: string; actor: string; reason: string;
+    requestedAtUtc: string; status: 'pending' | 'released'; releasedAtUtc?: string | null }[];
   perTaskGates?: { taskKey: string; reviewAttemptId: string; position: number; total: number;
     batchId?: string | null; reason: string; running: boolean; host?: string | null;
     startedAtUtc?: string | null }[];

@@ -1,0 +1,26 @@
+:host { display: block; }
+
+.receipt {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: 6px;
+  background: var(--studio-bg);
+  color: var(--studio-fg);
+  font-size: 12px;
+
+  p { margin: 0; }
+  a { color: var(--studio-accent); }
+  button {
+    padding: var(--studio-spacing-1) var(--studio-spacing-2);
+    border: 1px solid var(--studio-border);
+    border-radius: 6px;
+    background: var(--studio-bg);
+    color: var(--studio-fg-strong);
+    cursor: pointer;
+    font: inherit;
+  }
+}

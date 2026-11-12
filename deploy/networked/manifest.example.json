@@ -57,6 +57,9 @@
           ],
           "contains": "ACCEPTED"
         }
+      ],
+      "drainClients": [
+        "SET_CODING_RUNNER_CLIENT_ID"
       ]
     },
     {
@@ -77,9 +80,19 @@
       ],
       "reviewIdleCommand": [
         "SET_REVIEW_IDLE_JSON_COMMAND"
+      ],
+      "drainClients": [
+        "SET_REVIEW_RUNNER_CLIENT_ID"
       ]
     }
   ],
+  "quietPoint": {
+    "deadlineSeconds": 2700,
+    "pollSeconds": 20,
+    "batchFirstMinutes": 5,
+    "batchLastMinutes": 5,
+    "batchExpectedMinutes": null
+  },
   "commands": {
     "build": {
       "api": [
@@ -177,6 +190,33 @@
       "--config",
       "{manifest}",
       "work-state"
+    ],
+    "host_drain": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "host-drain",
+      "{host_id}",
+      "{client_id}"
+    ],
+    "host_status": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "host-status",
+      "{host_id}",
+      "{client_id}"
+    ],
+    "host_resume": [
+      "python3",
+      "{adapter}",
+      "--config",
+      "{manifest}",
+      "host-resume",
+      "{host_id}",
+      "{client_id}"
     ],
     "plan": [
       "studio-op",

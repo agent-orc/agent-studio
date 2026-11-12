@@ -483,6 +483,8 @@ builder.Services.AddSingleton<CodexSignInCoordinator>();
 builder.Services.AddSingleton<ClaudeSignInCoordinator>();
 builder.Services.AddSingleton<MigrationStateStore>();
 builder.Services.AddSingleton<HostTelemetryStore>();
+builder.Services.AddSingleton<ApiHostDiskService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ApiHostDiskService>());
 builder.Services.AddSingleton<EnvironmentFlowService>();
 builder.Services.AddSingleton<AgentStudio.Persistence.IAtomicJsonFileWriter, AgentStudio.Persistence.AtomicJsonFileWriter>();
 builder.Services.AddSingleton<OrchestratorConfigService>();
@@ -715,6 +717,8 @@ builder.Services.AddSingleton<TestRunService>();
 // AGT-2717: canonical read-time merge of local + remote review attempts.
 builder.Services.AddSingleton<ReviewProjectionService>();
 builder.Services.AddSingleton<TaskTransitionService>();
+// AGT-3564: Human Review acceptance readiness (a dry run of the completion checks).
+builder.Services.AddSingleton<AcceptanceReadinessService>();
 builder.Services.AddSingleton<DecisionCardService>();
 builder.Services.AddSingleton<DecisionRecordService>();
 // Decision cards, apply step and creation paths (Dossier decision-cards D3=C, D5=A).
@@ -1493,7 +1497,8 @@ if (!publicDemoExecutionProfile)
 // was cleared is reported instead of sitting unnoticed (AGT-2220 lost four days
 // exactly that way). Report-only: it never re-queues a card.
 builder.Services.AddSingleton<AgentStudio.Tasks.IParkedBlockerProbe>(sp =>
-    new AgentStudio.Tasks.ParkedBlockerProbe(sp.GetService<AgentStudio.Git.GitService>()));
+    new AgentStudio.Tasks.ParkedBlockerProbe(sp.GetService<AgentStudio.Git.GitService>(),
+        sp.GetService<AgentStudio.Runner.AttemptAuthorityService>()));
 builder.Services.AddSingleton<AgentStudio.Tasks.ParkedCardRecallSweep>();
 builder.Services.AddHostedService<AgentStudio.Tasks.ParkedCardRecallSweepHostedService>();
 // AGT-2818: the pickup lanes get the same treatment the parked lane got. A card

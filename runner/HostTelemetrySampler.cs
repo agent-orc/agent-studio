@@ -1,11 +1,14 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
 /// <summary>Stateful, dependency-free host sampler. Linux reads /proc; Windows uses kernel counters.</summary>
 public sealed class HostTelemetrySampler
 {
+    private readonly RunnerOptions? _options;
+    public HostTelemetrySampler(RunnerOptions? options = null) => _options = options;
     private CpuCounters? _previousCpu;
     private (long InPages, long OutPages, DateTime At)? _previousSwap;
     private DateTime _nextAt = DateTime.MinValue;
@@ -35,7 +38,23 @@ public sealed class HostTelemetrySampler
         var sample = OperatingSystem.IsLinux()
             ? SampleLinux(now, activeSlots)
             : SampleWindows(now, activeSlots);
-        return WithConnectivity(sample, connectivity);
+        var paths = new List<(string Purpose, string Path)>
+        {
+            ("runner work", _options?.WorkDir ?? Environment.CurrentDirectory),
+            ("runner state", _options?.StateDir ?? Environment.CurrentDirectory),
+            ("review work", _options?.ReviewWorkDir ?? Environment.CurrentDirectory),
+        };
+        if (!string.IsNullOrWhiteSpace(_options?.SalvageDir))
+            paths.Add(("salvage", _options.SalvageDir));
+        foreach (var containerPath in new[] { "/var/lib/docker", "/var/lib/containers" }.Where(Directory.Exists))
+            paths.Add(("container storage", containerPath));
+        var filesystems = HostFilesystemProbe.Measure(paths);
+        if (HostDiskPressurePolicy.Decide(filesystems, new HostDiskPressureThresholds()).Level != HostDiskPressureLevel.Healthy)
+            filesystems = HostFilesystemProbe.Measure(paths,
+                [("runner worktrees", _options?.WorkDir ?? Environment.CurrentDirectory),
+                 ("logs", _options?.StateDir ?? Environment.CurrentDirectory),
+                 ("result archives", _options?.SalvageDir ?? Environment.CurrentDirectory)]);
+        return WithConnectivity(sample with { Filesystems = filesystems }, connectivity);
     }
 
     private HostTelemetrySample SampleLinux(DateTime now, int activeSlots)

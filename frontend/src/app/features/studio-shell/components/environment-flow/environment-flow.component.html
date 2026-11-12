@@ -47,7 +47,7 @@
     <app-environment-health-overview />
     <section aria-labelledby="environment-hosts-title"><h2 id="environment-hosts-title">Hosts <small>{{ hosts().length }}</small></h2>
       <p class="environment-flow__note">Attempt provenance: Task Server lease and host executor receipt. Placement shadow grants are labelled when no executor grant was reported. DP-D8 option A.</p>
-      @if (attemptState() === 'unavailable') { <p class="environment-flow__note">Attempt visibility is unavailable for this connection.</p> }
+      @if (attemptState() === 'unavailable') { <p class="environment-flow__note">{{ attemptUnavailableReason() }}</p> }
       <div class="environment-flow__hosts">
         @for (host of hosts(); track host.id) {
           <article class="environment-flow__host" [class.environment-flow__host--alert]="host.status === 'offline' || host.status === 'degraded'" [attr.data-host-id]="host.id">

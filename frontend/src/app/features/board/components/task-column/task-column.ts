@@ -14,6 +14,7 @@ import {
   viewChild,
 } from '@angular/core';
 import type { Subscription } from 'rxjs';
+import { HttpErrorResponse } from '@angular/common/http';
 import {
   ArchivedTaskInfo,
   CliType,
@@ -23,6 +24,7 @@ import {
   TaskState,
 } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
+import { AuthService } from '../../../../services/auth.service';
 import { TaskCardComponent } from '../task-card/task-card.component';
 import { DecisionBacklogHintComponent } from '../decision-backlog-hint/decision-backlog-hint.component';
 import { projectIdentity } from '../../../../services/project-identity.util';
@@ -43,6 +45,8 @@ import { BatchLaneIndicatorComponent } from '../../../batch-gate/batch-lane-indi
 import { OrchestratorFeedStore } from '../../../orchestrator';
 import { LaneCardWindow } from './lane-card-window';
 import { LaneCardWindowComponent } from '../lane-card-window/lane-card-window.component';
+import { AcceptanceReadinessStore } from '../../../acceptance-readiness';
+import { AcceptanceReadinessBarComponent } from '../../../acceptance-readiness/lazy';
 /** ASS-1727: Archive pagination and typed-filter debounce. */
 const ARCHIVE_PAGE_SIZE = 50;
 const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
@@ -60,6 +64,7 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
     PostProcessingSummaryComponent,
     ReadyWaitSplitComponent,
     BatchLaneIndicatorComponent,
+    AcceptanceReadinessBarComponent,
   ],
   // Signal inputs let OnPush skip unchanged lanes during board polling.
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -68,8 +73,10 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
 })
 export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   private readonly taskService = inject(TaskService);
+  private readonly auth = inject(AuthService);
   private readonly boardDrag = inject(BoardDragStateService);
   private readonly stalls = inject(OrchestratorFeedStore);
+  private readonly readiness = inject(AcceptanceReadinessStore);
   readonly title = input.required<string>();
   readonly icon = input<string>('');
   readonly state = input.required<string>();
@@ -364,15 +371,20 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   readonly infoTopic = computed<string | null>(() => this.lane().docTopic);
   readonly laneTone = computed(() => this.lane().tone);
 
+  /** AGT-3564: once a readiness check answered, Human Review groups its cards by acceptance readiness. */
+  private readonly readinessGroups = computed(() =>
+    this.state() === TaskState.HumanReview ? this.readiness.groupsFor(this.jobs()) : null);
+
   /**
    * In-column subsections, presentation only (cards keep their lane and drag
    * semantics; reorder is off while a lane is grouped). The legacy `4-review`
    * payload splits into orchestrator and human review (ADR-0025 made both real
-   * lanes); Escalated groups bursts that share a cause (AGT-3585), else null.
+   * lanes); Escalated groups bursts that share a cause (AGT-3585); Human Review
+   * groups by acceptance readiness (AGT-3564); else null.
    */
   readonly laneGroups = computed<readonly LaneCardGroup[] | null>(() =>
     this.state() === '4-review' ? groupReviewJobs(this.jobs())
-      : this.state() === TaskState.Escalated ? groupEscalatedJobs(this.jobs()) : null);
+      : this.state() === TaskState.Escalated ? groupEscalatedJobs(this.jobs()) : this.readinessGroups());
 
   isGrouped(): boolean {
     return this.laneGroups() !== null;
@@ -404,7 +416,8 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   readonly archiveIsEmpty = computed(() => this.archiveLoaded() && this.archiveTotal() === 0);
 
   /** Count the children currently rendered in the lane, including held Ready cards. */
-  readonly headerCount = computed(() => (this.isArchive() ? this.archiveItems().length : this.jobs().length));
+  readonly headerCount = computed(() => (this.isArchive() ? this.archiveItems().length
+    : this.laneGroups()?.reduce((sum, group) => sum + group.jobs.length, 0) ?? this.jobs().length));
 
   ngOnInit(): void {
     if (this.isArchive()) {
@@ -452,8 +465,16 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
           this.archiveLoading.set(false);
           this.archiveLoaded.set(true);
         },
-        error: () => {
-          this.archiveError.set('Failed to load archived tasks.');
+        error: (error: unknown) => {
+          if (error instanceof HttpErrorResponse && error.status === 403 && this.auth.status()?.profile === 'networked') {
+            this.auth.refreshAccessStatus().subscribe({
+              next: status => {
+                if (status.user?.role === 'owner' || (status.user?.projects.length ?? 0) > 0)
+                  this.archiveError.set('Failed to load archived tasks.');
+              },
+              error: () => this.archiveError.set('Failed to load archived tasks.'),
+            });
+          } else this.archiveError.set('Failed to load archived tasks.');
           this.archiveLoading.set(false);
           this.archiveLoaded.set(true);
         },

@@ -181,10 +181,13 @@
             [watchPath]="detail().info.watchPath" />
         } @else if (activeInspectorTab() === 'protocol') {
           <section class="notes-panel">
-            <app-decision-surface
-              [detail]="detail()"
-              [mutationsBlocked]="mutationsBlocked()"
-              (decisionApplied)="decisionApplied.emit()" />
+            @if (detail().info.parkedBlocker?.blockerType !== 'environmental'
+              || detail().info.parkedBlocker?.causeDetail !== 'auto-review-stranded') {
+              <app-decision-surface
+                [detail]="detail()"
+                [mutationsBlocked]="mutationsBlocked()"
+                (decisionApplied)="decisionApplied.emit()" />
+            }
             @if (summaryStatus() === 'failed') {
               <div class="summary-error" role="alert" data-testid="protocol-summary-error">
                 <div class="summary-error__head">
