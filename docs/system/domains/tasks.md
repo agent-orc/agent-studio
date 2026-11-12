@@ -264,7 +264,10 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   active and no isolation finding released it. Eject
   (`POST /api/projects/{project}/batch-gate/members/{taskKey}/eject`) stays
   allowed (AGT-3483, `BatchIsolationGuard`).
-  The read-only failure continuation check reports the same isolation reason
+- An Escalated to Ready operator move can include `reissueInstructions` with up
+  to twelve selected findings and an optional owner note. The move persists
+  that handoff for the next run after rotating the old review artifacts.
+- The read-only failure continuation check reports the same isolation reason
   and marks the action unavailable, so task detail disables it with that reason
   as its tooltip (AGT-3687).
 
@@ -1168,6 +1171,13 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   leaving a parked lane always clears the marker (see Parked-card blocker and
   recall below). Both hooks are best-effort primes: a missed one still
   self-heals on the next watch event or periodic sweep.
+- After a successful integration push, `GitService` advances the local
+  `origin/<branch>` tracking ref to the pushed SHA with a compare-and-swap. A
+  newer tracking ref stays ahead. This gives integration status the publication
+  fact even when `url.insteadOf` prevents Git from updating the tracking ref
+  during the push. The resume retry record always has a due time, including
+  waits owned by integration; the post-processing backstop rechecks those cards
+  without a GET route fetching from origin (AGT-3620).
 - A move may set `operatorOverride: true` only when targeting `6-completed`.
   This is an explicit, one-shot operator waiver, never a default. Pipeline
   history and `status.md` retain the override and reason. Concept and other
