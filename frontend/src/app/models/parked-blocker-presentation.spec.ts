@@ -202,7 +202,7 @@ describe('parked-blocker presentation', () => {
 describe('park copy from the recorded cause', () => {
   const escalatedButtons = [
     { id: 'reissue-escalated', label: 'Continue (reissue)' },
-    { id: 'accept-escalated', label: 'Accept as-is' },
+    { id: 'accept-escalated', label: 'Accept with reason' },
     { id: 'manual-resolve-escalated', label: 'Resolve manually' },
     { id: 'discard-escalated', label: 'Abort' },
   ];
@@ -314,6 +314,10 @@ describe('park copy from the recorded cause', () => {
     expect(parkCauseView('escalated', 'gate-capacity')).toMatchObject({
       origin: 'stall-intervention', label: 'Gate queue stall',
     });
+    expect(parkCauseView('escalated', 'auto-review-stranded')).toMatchObject({
+      origin: 'auto-review-watchdog', label: 'Environmental · Auto Review watchdog',
+      parkedBy: 'the Auto Review watchdog',
+    });
     expect(parkCauseView('escalated', 'aspect-verdict-infra-crash').origin).toBe('review-gate');
     expect(parkCauseView('escalated', 'completion-gate').origin).toBe('review-gate');
     expect(parkCauseView('escalated', 'agent-blocked').origin).toBe('run');
@@ -332,7 +336,7 @@ describe('park copy from the recorded cause', () => {
     );
     const budget = parkCauseView('escalated', 'card-round-budget');
     expect(parkNextStepSentence(budget.nextSteps, escalatedButtons)).toBe(
-      'Use Continue (reissue) to allow another round, or Accept as-is to take the current delivery.',
+      'Use Continue (reissue) to allow another round, or Accept with reason to take the current delivery.',
     );
     expect(parkNextStepSentence(audit.nextSteps, [])).toBeNull();
     expect(parkNextStepSentence(parkCauseView('escalated', 'agent-blocked').nextSteps, escalatedButtons)).toBeNull();

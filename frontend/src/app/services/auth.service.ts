@@ -21,6 +21,12 @@ export interface AuthUser {
   projects: string[];
   disabled: boolean;
   mustChangePassword: boolean;
+  /**
+   * AGT-3670: projects where this user reviews through the Reviewer role and
+   * holds no card write; `*` is every project. Absent outside a networked
+   * session.
+   */
+  reviewerProjects?: string[];
 }
 
 export interface AuthStatus {
@@ -31,6 +37,17 @@ export interface AuthStatus {
   bootstrapCodeRequired?: boolean;
   user?: AuthUser | null;
   secondFactorEnrollmentRequired?: boolean;
+  restoreNotice?: { archiveId: string; archiveCreatedAt: string; restoredAt: string } | null;
+}
+
+export interface InvitationPreview {
+  username: string;
+  displayName: string;
+  inviter: string;
+  role: string;
+  projects: string[];
+  expiresAt: string;
+  secondFactorRequired: boolean;
 }
 
 interface StandaloneAuthUser {
@@ -76,6 +93,9 @@ function normalizeSession(response: AuthStatus | StandaloneAuthSession): AuthSta
   return 'status' in response ? normalizeStatus(response.status) : normalizeStatus(response);
 }
 
+/** AGT-3668: the one sentence a Product session sees when it has no project. */
+export const PRODUCT_NO_PROJECT_MESSAGE = 'You have no project yet; ask a workspace owner to add you to one.';
+
 /** Credential-free browser auth state shared with the 401 response interceptor. */
 @Injectable({ providedIn: 'root' })
 export class AuthSessionState {
@@ -83,6 +103,7 @@ export class AuthSessionState {
   readonly loading = signal(true);
   /** One-time owner recovery code; memory only until the owner acknowledges custody. */
   readonly ownerRecoveryCode = signal<string | null>(null);
+  readonly factorRecommendation = signal(false);
   readonly studioAllowed = computed(() => {
     const status = this.status();
     // public-demo-readonly has no sign-in flow at all - every visitor is an
@@ -90,13 +111,24 @@ export class AuthSessionState {
     // server edge (PublicDemoEdgeMiddleware) is the actual boundary; letting
     // the shell render here is what makes the demo browsable in the first
     // place.
-    return !this.ownerRecoveryCode() && (status?.profile === 'local'
+    return !this.ownerRecoveryCode() && !this.factorRecommendation() && !status?.restoreNotice && (status?.profile === 'local'
       || status?.profile === 'public-demo-readonly'
       || (status?.authenticated === true && !status.user?.mustChangePassword && !status.secondFactorEnrollmentRequired));
   });
   readonly networkedAuthenticated = computed(() => {
     const status = this.status();
     return status?.profile === 'networked' && status.authenticated === true;
+  });
+  /** AGT-3668: the session holds the Product (contributor) role. */
+  readonly productSession = computed(() => this.status()?.user?.role === 'contributor');
+  /**
+   * AGT-3668: a signed-in account that holds no project. Removing a Product
+   * user's last project binding leaves no role at all, which the session
+   * summary reports as a viewer without projects; an owner always sees all.
+   */
+  readonly withoutProject = computed(() => {
+    const user = this.status()?.authenticated ? this.status()?.user : null;
+    return !!user && user.role !== 'owner' && (user.projects?.length ?? 0) === 0;
   });
 
   expireNetworkedSession(): void {
@@ -121,6 +153,13 @@ export class AuthService {
   readonly studioAllowed = this.session.studioAllowed;
   readonly networkedAuthenticated = this.session.networkedAuthenticated;
   readonly ownerRecoveryCode = this.session.ownerRecoveryCode;
+  readonly factorRecommendation = this.session.factorRecommendation;
+
+  acknowledgeRestoreNotice(archiveId: string): Observable<void> {
+    return this.http.post<void>('/api/auth/restore-notice/acknowledge', { archiveId }).pipe(tap(() => {
+      this.status.update(status => status ? { ...status, restoreNotice: null } : status);
+    }));
+  }
 
   acknowledgeRecoveryCode(): void { this.ownerRecoveryCode.set(null); }
 
@@ -136,6 +175,14 @@ export class AuthService {
       },
       error: () => this.loadStandaloneStatus(null),
     });
+  }
+
+  /** Refresh the networked user's current binding projection after a refused board read. */
+  refreshAccessStatus(): Observable<AuthStatus> {
+    return this.http.get<AuthStatus>('/api/auth/status').pipe(
+      map(normalizeStatus),
+      tap(status => this.status.set(status)),
+    );
   }
 
   private loadStandaloneStatus(localStatus: AuthStatus | null): void {
@@ -177,6 +224,14 @@ export class AuthService {
 
   finishFactorEnrollment(): void {
     this.status.update(status => status ? { ...status, secondFactorEnrollmentRequired: false } : status);
+    this.factorRecommendation.set(false);
+  }
+
+  dismissFactorRecommendation(): void { this.factorRecommendation.set(false); }
+
+  previewInvitation(token: string): Observable<InvitationPreview> {
+    return this.http.get<InvitationPreview>(
+      `/api/v1/studio/auth/invite/preview?token=${encodeURIComponent(token)}`);
   }
 
   listSessions(userId?: string | null): Observable<AuthSessionSummary[]> {
@@ -204,7 +259,10 @@ export class AuthService {
 
   acceptInvitation(token: string, newPassword: string): Observable<AuthStatus> {
     return this.http.post<AuthStatus | StandaloneAuthSession>('/api/v1/studio/auth/invite/accept', { token, newPassword })
-      .pipe(map(normalizeSession), tap((status) => this.status.set(status)));
+      .pipe(map(normalizeSession), tap(status => {
+        this.status.set(status);
+        if (!status.secondFactorEnrollmentRequired) this.factorRecommendation.set(true);
+      }));
   }
 
   bootstrap(username: string, password: string, displayName: string, bootstrapCode?: string): Observable<AuthStatus> {

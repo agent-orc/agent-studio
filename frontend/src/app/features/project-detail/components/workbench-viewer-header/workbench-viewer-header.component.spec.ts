@@ -35,6 +35,41 @@ const DOCUMENT: WorkbenchDocument = {
 };
 
 describe('WorkbenchViewerHeaderComponent', () => {
+  it('shows accepted concepts as in implementation with no open decisions', async () => {
+    await TestBed.configureTestingModule({
+      imports: [WorkbenchViewerHeaderComponent],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        { provide: TaskService, useValue: { getReferenceStatuses: () => of([]) } },
+        { provide: TaskReferenceNavigationService, useValue: { openTaskKey: vi.fn() } },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(WorkbenchViewerHeaderComponent);
+    fixture.componentRef.setInput('projectName', 'Agent Studio');
+    fixture.componentRef.setInput('document', {
+      ...DOCUMENT,
+      workbench: {
+        ...DOCUMENT.workbench,
+        key: null,
+        sourceTaskKeys: [],
+        relatedTaskKeys: [],
+        status: 'decided',
+        phase: 'shaping',
+      },
+    });
+    fixture.componentRef.setInput('decisionPoints', [
+      { id: 'route', kind: 'single', label: 'Route', options: [], commentLabel: null },
+    ]);
+    fixture.detectChanges();
+
+    const header = fixture.nativeElement as HTMLElement;
+    expect(header.querySelector('[data-testid="workbench-viewer-status"]')?.getAttribute('aria-label'))
+      .toBe('Status: In implementation');
+    expect(header.querySelector('[data-testid="workbench-viewer-open-decisions"]')?.textContent)
+      .toContain('0 open');
+  });
+
   it('derives implementation only between the first started card and all-terminal state', () => {
     const status = (key: string, lane: string | null, exists = true): TaskReferenceStatus => ({
       key,
@@ -128,10 +163,18 @@ describe('WorkbenchViewerHeaderComponent', () => {
       { id: 'density', kind: 'single', label: 'Density', options: [], commentLabel: null },
       { id: 'proof', kind: 'confirm', label: 'Proof', options: [], commentLabel: null },
     ]);
+    fixture.componentRef.setInput('responses', [
+      { decisionId: 'route', kind: 'single', selectedOptionIds: ['direct'], comment: null },
+      { decisionId: 'density', kind: 'single', selectedOptionIds: ['compact'], comment: null },
+      { decisionId: 'proof', kind: 'confirm', selectedOptionIds: ['capture'], comment: null },
+    ]);
     fixture.componentRef.setInput('liveConnected', true);
     fixture.componentRef.setInput('connectionChangedAtUtc', '2026-08-11T10:00:00Z');
     fixture.componentRef.setInput('lastUpdatedAtUtc', '2026-08-11T10:02:00Z');
     fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-viewer-open-decisions"]')?.textContent)
+      .toContain('3 open');
 
     const http = TestBed.inject(HttpTestingController);
     http.expectOne('/api/projects/Agent%20Studio/workbenches/AGT-W4/references').flush({

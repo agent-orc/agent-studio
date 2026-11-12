@@ -186,4 +186,9 @@
 
 @media (max-width: 520px) {
   .attention-list__row { flex-direction: column; align-items: stretch; }
+
+  .attention-list__row[data-attention-type='batch-gate.stuck'] .attention-list__reason {
+    display: block;
+    overflow: visible;
+  }
 }

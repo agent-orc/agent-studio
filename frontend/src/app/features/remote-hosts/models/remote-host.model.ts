@@ -142,10 +142,19 @@ export interface HostTelemetryPoint {
   ioWaitPercent: number | null;
   cpuCores: number;
   activeSlots: number;
+  filesystems?: readonly HostFilesystemUsage[] | null;
+}
+
+export interface HostFilesystemUsage {
+  purpose: string;
+  path: string;
+  freeBytes: number;
+  totalBytes: number;
+  ownedBytes?: Readonly<Record<string, number>> | null;
 }
 
 export interface HostTelemetryFinding {
-  kind: 'vm-throttled' | 'oversubscribed' | 'memory-pressure';
+  kind: 'vm-throttled' | 'oversubscribed' | 'memory-pressure' | 'disk-pressure';
   label: string;
   since: string;
   until: string;
@@ -153,6 +162,7 @@ export interface HostTelemetryFinding {
   occurrences?: number;
   /** Omitted by older servers, whose findings represented active phases only. */
   isActive?: boolean;
+  detail?: string | null;
 }
 
 export interface HostTelemetrySeries {
@@ -239,8 +249,10 @@ export interface TaskServerTelemetrySnapshot {
   /** Live occupied slots reported by this runner process. */
   activeSlots?: number;
   claimLoadGate?: ClaimLoadGate | null;
+  oneShotClaimRoute?: OneShotClaimRouteCondition | null;
   diskFreeBytes?: number | null;
   diskTotalBytes?: number | null;
+  filesystems?: readonly HostFilesystemUsage[] | null;
   taskServerConnectionStatus?: 'unknown' | 'reachable' | 'unreachable';
   taskServerConnectionObservedAt?: string | null;
   taskServerConnectionFailureStartedAt?: string | null;
@@ -249,6 +261,16 @@ export interface TaskServerTelemetrySnapshot {
   taskServerConnectionLastError?: string | null;
   taskServerConnectionLastRecoveredAt?: string | null;
   reviewPlane?: ReviewPlaneBudget | null;
+}
+
+/** The runner's report that its one shot claim route answered 404 or needs the standalone Task Server. */
+export interface OneShotClaimRouteCondition {
+  condition: 'claim-route-missing' | 'standalone-task-server-required';
+  firstSeenAt: string;
+  lastSeenAt: string;
+  backoffSeconds: number;
+  statusCode: number;
+  detail: string | null;
 }
 
 export interface ClaimLoadGate {
@@ -298,6 +320,8 @@ export interface TaskServerRunnerCapabilitySnapshot {
   roleMaxParallelism?: number | null;
   restartedAt?: string | null;
   reviewsLost?: number;
+  /** AGT-3690: this runner's review daemon restarts, newest first, with the attempts each lost. */
+  reviewRestarts?: readonly ReviewDaemonRestart[] | null;
   installedClis?: readonly InstalledCli[] | null;
   cliUpdate?: HostCliUpdate | null;
   /** Comparable deployment identity (AGT-2826); absent from pre-2826 daemons. */
@@ -426,6 +450,8 @@ export interface RemoteHost {
   /** Live system stats, or null when the host reports none (e.g. retired). */
   stats: HostSystemStats | null;
   telemetry?: HostTelemetrySeries | null;
+  filesystems?: readonly HostFilesystemUsage[] | null;
+  diskPressureReason?: string | null;
   /** Process-local route observation; capability freshness remains the remote alarm. */
   taskServerConnection?: TaskServerConnectionTelemetry | null;
   /** Freshness of the client/daemon projection requested for this mount. */
@@ -445,6 +471,7 @@ export interface RemoteHost {
   lastClaimAt?: string | null;
   activeTaskCount?: number;
   claimLoadGate?: ClaimLoadGate | null;
+  oneShotClaimRoute?: OneShotClaimRouteCondition | null;
   availableSlots?: number;
   retireRequestedAt?: string | null;
   capabilityHealth?: readonly RemoteHostCapabilityHealth[];
@@ -461,6 +488,8 @@ export interface RemoteHost {
   /** Review daemon restart outcome, retained by the Task Server for 24 hours. */
   restartedAt?: string | null;
   reviewsLost?: number;
+  /** AGT-3690: restart history, newest first; a later clean restart no longer hides an earlier loss. */
+  reviewRestarts?: readonly ReviewDaemonRestart[];
   runtimeCapacityAppliedAt?: string | null;
   /** Exact Task Server policy version confirmed by this daemon. */
   runtimeCapacityAppliedVersion?: number | null;
@@ -654,4 +683,20 @@ export function taskServerRouteDetail(host: RemoteHost): string {
     || host.taskServerConnection?.lastError
     || capability?.reason
     || 'No route observation has been reported yet.';
+}
+
+/** AGT-3690: one review daemon restart and the review attempts it lost. */
+export interface ReviewDaemonRestart {
+  restartedAt: string;
+  hostId: string;
+  instanceId: string;
+  reviewsLost: number;
+  lostAttempts: readonly ReviewRestartLostAttempt[];
+}
+
+/** A review attempt a daemon restart lost, and the card it reviewed. */
+export interface ReviewRestartLostAttempt {
+  attemptId: string;
+  taskKey: string;
+  status: string;
 }

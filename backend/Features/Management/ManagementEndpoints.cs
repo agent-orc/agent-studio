@@ -69,11 +69,18 @@ public static class ManagementEndpoints
         group.MapGet("/remote-hosts", (
             HttpContext context,
             AgentStudio.Runner.V1ReviewExecutorRegistry registry,
+            AgentStudio.Runner.AttemptAuthorityService authority,
             IConfiguration configuration) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
-            return Results.Ok(registry.ListCapabilitySnapshots());
+            // AGT-3690: the restart history is durable authority state; the
+            // registry only knows the newest restart of the current instance.
+            return Results.Ok(registry.ListCapabilitySnapshots()
+                .Select(snapshot => authority.ListReviewDaemonRestarts(snapshot.RunnerId) is { Count: > 0 } restarts
+                    ? snapshot with { ReviewRestarts = restarts }
+                    : snapshot)
+                .ToArray());
         });
         group.MapGet("/runner-infrastructure-failures", (
             HttpContext context,

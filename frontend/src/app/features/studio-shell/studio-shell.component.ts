@@ -14,7 +14,6 @@ import {
   untracked,
   viewChildren,
 } from '@angular/core';
-import { FormsModule } from '@angular/forms';
 import { NgComponentOutlet } from '@angular/common';
 import { StudioHeaderCockpit, StudioNavigationHeaderComponent } from './studio-shell.header-cockpit';
 import type { TaskInfo, RegistryWorkspaceListItem, RegistryProjectSummary, WatchPathEntry, RegistryProjectUrl } from '../../models/task.model';
@@ -29,6 +28,7 @@ import { SectionHeaderComponent } from '../../components/section-header/section-
 import { CountBadgeComponent } from '../../components/count-badge/count-badge.component';
 import { ListRowComponent } from '../../components/list-row/list-row.component';
 import { ClientService } from '../../services/client.service';
+import { AuthSessionState, PRODUCT_NO_PROJECT_MESSAGE } from '../../services/auth.service';
 import { FeatureFlagsService } from '../../services/feature-flags.service';
 import { projectIdentity } from '../../services/project-identity.util';
 import { TaskSelectionService } from '../task-detail/runtime';
@@ -67,6 +67,7 @@ import { ExplorerWorkbenchStateService } from './services/explorer-workbench-sta
 import { buildProjectSidebarRows, type ProjectSidebarRow } from './studio-shell.project-rows';
 import { StudioTab, studioTabKey } from './studio-shell.types';
 import { titleFromDocumentPath, truncateTabTitle } from './studio-shell.tab-labels';
+import { requestErrorMessage } from './studio-shell.request-error';
 import { ALL_PROJECTS_BOARD_NAME, taskTabProjectScope } from './services/task-tab-scope';
 import { GlobalSearchComponent } from './components/global-search/global-search.component';
 import { OrchestratorFeedStore } from '../orchestrator';
@@ -79,23 +80,8 @@ import { WorkspaceDeploymentDashboardComponent } from '../deployments';
 import { TaskDefaultsControlComponent } from './components/task-defaults-control/task-defaults-control';
 import { DevelopStateIndicatorComponent } from './components/develop-state-indicator/develop-state-indicator.component';
 import { AttentionControlComponent } from './components/attention-control/attention-control';
-/** Canonicalise project storage paths so titlebar workspace lookup survives
- * slash style, trailing separator, and case differences. */
-function normalizeStorage(path: string): string {
-  return path.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
-}
-
-/** Brand swatches per CLI — matches the status-bar glyph colours so the
- *  Sidebar CLI panel reads the same on first glance. */
-function cliColorFor(cli: string): string {
-  switch (cli) {
-    case 'claude':  return '#d97757';
-    case 'codex':   return '#569cd6';
-    case 'gemini':  return '#c586c0';
-    default:        return '#6e6e6e';
-  }
-}
-
+import type { MagazineChild } from '../magazine/magazine-view/magazine-view';
+import { cliColorFor, normalizeStorage } from './studio-shell.utils';
 
 /**
  * Top-level "Agent Software Studio" shell — the VS-Code-inspired chrome
@@ -112,7 +98,7 @@ function cliColorFor(cli: string): string {
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [FormsModule, NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent, AttentionControlComponent],
+  imports: [NgComponentOutlet, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, StudioNavigationHeaderComponent, UsageDetailSurfaceComponent, WorkspaceQuotaBannerComponent, TaskDefaultsControlComponent, AccountControlComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent, DevelopStateIndicatorComponent, AttentionControlComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',
@@ -163,12 +149,27 @@ export class StudioShellComponent {
   private readonly projectLookup = inject(ProjectLookupService);
   private readonly themeService = inject(ThemeService);
   readonly orchestratorFeed = inject(OrchestratorFeedStore);
+  private readonly authSession = inject(AuthSessionState);
+  openInstallationMagazine(): void { this.tabState.open({ kind: 'magazine', scope: 'installation', label: 'Installation' }); }
+  openWorkspaceMagazine(id: string, label: string): void { this.tabState.open({ kind: 'magazine', scope: `workspace:${id}`, label }); }
+  magazineProjects(): MagazineChild[] { return this.registryProjects().map(project => ({ scope: `project:${project.id}`, label: project.displayName })); }
+  magazineChildren(scope: string): MagazineChild[] {
+    if (scope === 'installation') return this.registryWorkspaces().map(ws => ({ scope: `workspace:${ws.id}`, label: ws.displayName }));
+    if (scope.startsWith('workspace:')) return this.registryProjects().filter(project => project.workspaceId === scope.slice(10)).map(project => ({ scope: `project:${project.id}`, label: project.displayName }));
+    return [];
+  }
 
   /** Tab list + active selection re-exposed for the template. */
   readonly tabs = this.tabState.tabs;
   readonly activeKey = this.tabState.activeKey;
   readonly activeTab = this.tabState.activeTab;
   readonly structureComponent = signal<Type<unknown> | null>(null);
+  readonly magazineComponent = signal<Type<unknown> | null>(null);
+  private readonly magazineLoader = effect(() => {
+    if (this.activeTab()?.kind === 'magazine' && !this.magazineComponent()) {
+      void import('../magazine/magazine-view/magazine-view').then(module => this.magazineComponent.set(module.MagazineViewComponent));
+    }
+  });
   private readonly structureLoader = effect(() => {
     if (this.activeTab()?.kind === 'structure' && !this.structureComponent()) {
       void import('../structure/structure-view/structure-view.component').then(module =>
@@ -177,7 +178,6 @@ export class StudioShellComponent {
   });
   readonly tabKey = studioTabKey;
   private readonly tabElements = viewChildren<ElementRef<HTMLElement>>('studioTab');
-
   @HostListener('keydown', ['$event'])
   onDocumentHistoryShortcut(event: KeyboardEvent): void {
     if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
@@ -200,7 +200,7 @@ export class StudioShellComponent {
   private keepActiveTabVisible(behavior: ScrollBehavior): void {
     const activeKey = this.activeKey();
     const tabs = this.tabs();
-    if (!activeKey || !tabs.some(tab => studioTabKey(tab) === activeKey)) return;
+    if (tabs.length <= 1 || !activeKey || !tabs.some(tab => studioTabKey(tab) === activeKey)) return;
 
     const activeElement = this.tabElements()
       .find(ref => ref.nativeElement.dataset['tabKey'] === activeKey)
@@ -396,6 +396,12 @@ export class StudioShellComponent {
   readonly registryProjects = signal<readonly RegistryProjectSummary[]>([]);
   readonly registryWorkspacesLoading = signal(false);
   readonly registryWorkspacesError = signal<string | null>(null);
+  /** True once a registry load answered, with data or an error. */
+  private readonly registryLoaded = signal(false);
+  readonly productNoProjectMessage = PRODUCT_NO_PROJECT_MESSAGE;
+  /** AGT-3668: one sentence instead of an empty tree and picker; a Product session whose registry lists nothing also counts. */
+  readonly productWithoutProject = computed(() => this.authSession.withoutProject() || (this.authSession.productSession()
+    && this.registryLoaded() && !this.registryWorkspacesLoading() && !this.registryProjects().length && !this.projectRows().length));
   /** Ids waiting on an Explorer-tree registry mutation (rename / delete), used
    *  to disable the affected row while the request is in flight. Registry
    *  *management* moved to the settings view; these stay for the tree's own
@@ -446,10 +452,12 @@ export class StudioShellComponent {
         this.registryProjects.set(projects ?? []);
         this.projectLookup.setWorkspaces(ws ?? []);
         this.registryWorkspacesLoading.set(false);
+        this.registryLoaded.set(true);
       },
       error: (err: unknown) => {
-        this.registryWorkspacesError.set(this.errMsg(err));
+        this.registryWorkspacesError.set(requestErrorMessage(err));
         this.registryWorkspacesLoading.set(false);
+        this.registryLoaded.set(true);
       },
     });
   }
@@ -470,20 +478,9 @@ export class StudioShellComponent {
       next: () => { this.registryProjectBusyId.set(null); this.reloadRegistryWorkspaces(); },
       error: (err: unknown) => {
         this.registryProjectBusyId.set(null);
-        this.registryWorkspacesError.set(this.errMsg(err));
+        this.registryWorkspacesError.set(requestErrorMessage(err));
       },
     });
-  }
-
-  private errMsg(err: unknown): string {
-    if (err && typeof err === 'object' && 'error' in err) {
-      const inner = (err as { error?: unknown }).error;
-      if (inner && typeof inner === 'object' && 'error' in inner)
-        return String((inner as { error?: unknown }).error);
-      if (typeof inner === 'string') return inner;
-    }
-    if (err instanceof Error) return err.message;
-    return 'Request failed';
   }
 
   private lastAutoExpandedNavigationPath: string | null = null;
@@ -847,7 +844,7 @@ export class StudioShellComponent {
       },
       error: (err: unknown) => {
         this.projectDrag.movingProjectId.set(null);
-        this.projectDrag.moveErrorMessage.set(this.errMsg(err));
+        this.projectDrag.moveErrorMessage.set(requestErrorMessage(err));
       },
     });
   }
@@ -863,7 +860,7 @@ export class StudioShellComponent {
       next: () => { this.registryWorkspaceBusyId.set(null); this.reloadRegistryWorkspaces(); },
       error: (err: unknown) => {
         this.registryWorkspaceBusyId.set(null);
-        this.registryWorkspacesError.set(this.errMsg(err));
+        this.registryWorkspacesError.set(requestErrorMessage(err));
       },
     });
   }
@@ -918,7 +915,7 @@ export class StudioShellComponent {
       },
       error: (err: unknown) => {
         this.registryProjectBusyId.set(null);
-        const msg = this.errMsg(err);
+        const msg = requestErrorMessage(err);
         this.registryWorkspacesError.set(msg);
         this.notifications.error(`Failed to delete project "${label}": ${msg}`);
       },
@@ -1142,6 +1139,8 @@ export class StudioShellComponent {
         return tab.projectName === '__all__' ? 'All projects · Board' : `${this.projectShortLabel(tab.projectName)} · Board`;
       case 'feed':
         return 'Activity across projects';
+      case 'magazine':
+        return `${tab.label} · Magazine`;
       case 'workbenches':
         return 'Dossiers';
       case 'task': {

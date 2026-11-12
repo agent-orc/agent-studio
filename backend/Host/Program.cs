@@ -483,6 +483,8 @@ builder.Services.AddSingleton<CodexSignInCoordinator>();
 builder.Services.AddSingleton<ClaudeSignInCoordinator>();
 builder.Services.AddSingleton<MigrationStateStore>();
 builder.Services.AddSingleton<HostTelemetryStore>();
+builder.Services.AddSingleton<ApiHostDiskService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ApiHostDiskService>());
 builder.Services.AddSingleton<EnvironmentFlowService>();
 builder.Services.AddSingleton<AgentStudio.Persistence.IAtomicJsonFileWriter, AgentStudio.Persistence.AtomicJsonFileWriter>();
 builder.Services.AddSingleton<OrchestratorConfigService>();
@@ -575,6 +577,8 @@ builder.Services.AddSingleton<TaskSessionLog>();
 builder.Services.AddSingleton<TimelineLog>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.OperatorCandidateAuditRepair>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Pipeline.OperatorCandidateAuditRepair>());
+builder.Services.AddSingleton<AgentStudio.Pipeline.PublishedGateEvidenceBackfill>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Pipeline.PublishedGateEvidenceBackfill>());
 builder.Services.AddSingleton<ProjectThroughputService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateSlotUsageTracker>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateCapacitySettings(
@@ -713,6 +717,8 @@ builder.Services.AddSingleton<TestRunService>();
 // AGT-2717: canonical read-time merge of local + remote review attempts.
 builder.Services.AddSingleton<ReviewProjectionService>();
 builder.Services.AddSingleton<TaskTransitionService>();
+// AGT-3564: Human Review acceptance readiness (a dry run of the completion checks).
+builder.Services.AddSingleton<AcceptanceReadinessService>();
 builder.Services.AddSingleton<DecisionCardService>();
 builder.Services.AddSingleton<DecisionRecordService>();
 // Decision cards, apply step and creation paths (Dossier decision-cards D3=C, D5=A).
@@ -1182,8 +1188,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.WikiLearningsPostStepRunner>(
 builder.Services.AddSingleton<AgentStudio.Pipeline.AgentsWikiSyncPostStepRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IManagedProjectArtifactCommitService,
     AgentStudio.Pipeline.ManagedProjectArtifactCommitService>();
-builder.Services.AddSingleton<AgentStudio.Pipeline.IConceptWorkbenchPublisher,
-    AgentStudio.Pipeline.ConceptWorkbenchPublisher>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.ConceptDeliveryPostSteps>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ConceptPromotionService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.OnDemandPostStepService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.WikiTaskCrossReferenceService>();
@@ -1493,7 +1498,8 @@ if (!publicDemoExecutionProfile)
 // was cleared is reported instead of sitting unnoticed (AGT-2220 lost four days
 // exactly that way). Report-only: it never re-queues a card.
 builder.Services.AddSingleton<AgentStudio.Tasks.IParkedBlockerProbe>(sp =>
-    new AgentStudio.Tasks.ParkedBlockerProbe(sp.GetService<AgentStudio.Git.GitService>()));
+    new AgentStudio.Tasks.ParkedBlockerProbe(sp.GetService<AgentStudio.Git.GitService>(),
+        sp.GetService<AgentStudio.Runner.AttemptAuthorityService>()));
 builder.Services.AddSingleton<AgentStudio.Tasks.ParkedCardRecallSweep>();
 builder.Services.AddHostedService<AgentStudio.Tasks.ParkedCardRecallSweepHostedService>();
 // AGT-2818: the pickup lanes get the same treatment the parked lane got. A card
@@ -1525,6 +1531,7 @@ builder.Services.AddSingleton<WorkbenchCatalogueService>();
 builder.Services.AddSingleton<DossierCardsService>();
 builder.Services.AddSingleton<DossierMaintenanceService>();
 builder.Services.AddSingleton<WorkbenchChangeNotifier>();
+builder.Services.AddSingleton<IWorkbenchSpawnedCardCleanup, WorkbenchSpawnedCardCleanup>();
 builder.Services.AddSingleton<WorkbenchDecisionService>();
 builder.Services.AddSingleton<WorkbenchReviewService>();
 // AGT-2803: the classification vocabulary. The areas registry merges the
@@ -2074,6 +2081,19 @@ if (runRepairSweeps) try
 catch (Exception ex)
 {
     crashRecorder.Record("RemoteCompletionAttributionSweep", ex);
+}
+
+// AGT-3717: one-time re-attribution of deliveries whose own runner salvage
+// commit named a related card in its subject, which the attribution guard
+// rejected before it exempted that commit.
+if (runRepairSweeps) try
+{
+    hostTimeline.Sweep("SalvageSubjectAttributionRepair",
+        () => app.Services.GetRequiredService<RemoteCompletionAttributionSweep>().RunSalvageSubjectRepairOnce());
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("SalvageSubjectAttributionRepair", ex);
 }
 
 // Cap legacy durable CLI logs after the one-time full-history wiki read

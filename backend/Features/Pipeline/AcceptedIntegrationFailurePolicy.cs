@@ -86,7 +86,7 @@ public static class AcceptedIntegrationFailureCodes
     /// <summary>An exact branch, tip, or merge-result SHA the merge needs could not be resolved.</summary>
     public const string IntegrationRefUnresolved = "integration-ref-unresolved";
 
-    /// <summary>The mandatory pre-main test gate is not wired, so main is not advanced.</summary>
+    /// <summary>A mandatory integration gate is unavailable, so the branch is not advanced.</summary>
     public const string GateUnavailable = "gate-unavailable";
 
     /// <summary>
@@ -102,6 +102,14 @@ public static class AcceptedIntegrationFailureCodes
     /// the delivery itself needs no change.
     /// </summary>
     public const string ReleaseLineMoving = "release-line-moving";
+
+    /// <summary>
+    /// The concept Dossier placement check refused a concept delivery before
+    /// its task-branch merge: the delivery changed anything besides one
+    /// <c>docs/&lt;slug&gt;/</c> directory, or the Dossier failed the
+    /// deterministic concept contract. Nothing was merged.
+    /// </summary>
+    public const string ConceptDossierRejected = "concept-dossier-rejected";
 
     /// <summary>
     /// Maps a non-successful merge result onto its typed code. An
@@ -351,6 +359,14 @@ public static class AcceptedIntegrationFailurePolicy
                     verdictSummary,
                     "The release line moved during every full-suite run on the merge result; nothing was published."),
                 RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.ConceptDossierRejected => new(
+                code,
+                "Dossier placement failed",
+                FirstNonBlank(
+                    reason,
+                    verdictSummary,
+                    "The concept delivery is not one complete docs/<slug>/ Dossier; nothing was merged."),
+                RebaseRecoveryAvailable: false),
             _ => new(
                 AcceptedIntegrationFailureCodes.IntegrationError,
                 "Integration failed",
@@ -454,6 +470,7 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.GateUnavailable => AcceptedIntegrationFailureCodes.GateUnavailable,
             AcceptedIntegrationFailureCodes.VerifyDefinitionMissing => AcceptedIntegrationFailureCodes.VerifyDefinitionMissing,
             AcceptedIntegrationFailureCodes.ReleaseLineMoving => AcceptedIntegrationFailureCodes.ReleaseLineMoving,
+            AcceptedIntegrationFailureCodes.ConceptDossierRejected => AcceptedIntegrationFailureCodes.ConceptDossierRejected,
             _ => null,
         };
     }

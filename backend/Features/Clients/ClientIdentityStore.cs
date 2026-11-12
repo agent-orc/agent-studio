@@ -337,6 +337,26 @@ public class ClientIdentityStore
         }
     }
 
+    /// <summary>
+    /// AGT-3647: lifts a deploy drain. A drain that ends in retirement stays,
+    /// and a retired identity needs <see cref="Revive"/>.
+    /// </summary>
+    public ClientIdentity? ResumeDrain(string id)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            if (!_byId.TryGetValue(id, out var existing)
+                || existing.Kind == ClientIdentityKind.Retired
+                || existing.RetireRequestedAt is not null) return null;
+            if (existing.DrainRequestedAt is null) return existing;
+            var updated = existing with { DrainRequestedAt = null };
+            WriteLocked(updated);
+            SetRecordLocked(updated);
+            return updated;
+        }
+    }
+
     public ClientIdentity? Revive(string id)
     {
         EnsureLoaded();

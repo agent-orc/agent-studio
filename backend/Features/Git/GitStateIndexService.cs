@@ -83,6 +83,16 @@ public sealed class GitStateIndexService : BackgroundService
     private const string SweepConfigUnavailable = "unavailable";
     private const string SweepConfigSourcesChanged = "sources-changed";
 
+    /// <summary>
+    /// AGT-3753: consecutive superseded runs after which a run publishes what
+    /// it computed anyway. On a busy repository a ref or task change lands
+    /// during nearly every run; discarding each result kept a day-old
+    /// generation (and its integration tip) on every card detail. A
+    /// superseded result is still newer than the one served, and the rerun it
+    /// requests catches up with the change that superseded it.
+    /// </summary>
+    internal const int MaxConsecutiveSupersededRuns = 3;
+
     private readonly ConcurrentDictionary<string, RepoState> _repos =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -226,6 +236,10 @@ public sealed class GitStateIndexService : BackgroundService
     /// <summary>Test/diagnostic hook: is a run currently in flight for this project.</summary>
     internal bool IsRunning(string projectName)
         => _repos.TryGetValue(projectName, out var state) && Volatile.Read(ref state.Running) == 1;
+
+    /// <summary>Test/diagnostic hook: queued card facts can outlive the first ready publication.</summary>
+    internal bool HasPendingCardFacts(string projectName)
+        => _cardFacts?.HasPendingWork(projectName) == true;
 
     /// <summary>
     /// Per-repository status for the Admin git-telemetry surface: the last
@@ -428,6 +442,8 @@ public sealed class GitStateIndexService : BackgroundService
     {
         var gitDirectory = GitRefSignature.ResolveGitDirectory(state.RepositoryPath);
         if (string.IsNullOrWhiteSpace(gitDirectory) || !Directory.Exists(gitDirectory)) return;
+        state.GitDirectory = gitDirectory;
+        state.CommonGitDirectory = GitRefSignature.ResolveCommonGitDirectory(gitDirectory);
 
         try
         {
@@ -458,22 +474,52 @@ public sealed class GitStateIndexService : BackgroundService
         }
     }
 
-    private void OnGitDirectoryEvent(RepoState state, string path)
+    /// <summary>
+    /// Whether a write under the Git directory can change an index input.
+    /// AGT-3753: every write under <c>worktrees/</c> used to count, so the
+    /// index, logs and lock files of every task worktree sharing this
+    /// repository superseded the run in flight. Only the watched checkout's
+    /// own Git directory (<paramref name="ownGitDirectory"/>) counts below
+    /// the common directory's <c>worktrees/</c>; lock files and reflogs never do, the ref write they
+    /// accompany raises its own event.
+    /// </summary>
+    internal static bool IsIndexRelevantGitPath(string path, string? ownGitDirectory, string? commonGitDirectory)
     {
         var name = Path.GetFileName(path);
+        var paths = FileSystemPathComparer.Instance;
         var sep = Path.DirectorySeparatorChar;
         var altSep = Path.AltDirectorySeparatorChar;
-        var paths = FileSystemPathComparer.Instance;
-        var relevant =
-            paths.Equals(name, "HEAD")
+        // Reflogs (logs/HEAD, logs/refs/...) follow a ref write that raises its own event.
+        if (name.EndsWith(".lock", StringComparison.OrdinalIgnoreCase)
+            || path.Contains($"{sep}logs{sep}", StringComparison.OrdinalIgnoreCase)
+            || path.Contains($"{altSep}logs{altSep}", StringComparison.OrdinalIgnoreCase)) return false;
+        if (commonGitDirectory is not null
+            && IsUnder(path, Path.Combine(commonGitDirectory, "worktrees"))
+            && !(ownGitDirectory is not null && !IsUnder(commonGitDirectory, ownGitDirectory)
+                && IsUnder(path, ownGitDirectory))) return false;
+        return paths.Equals(name, "HEAD")
             || paths.Equals(name, "packed-refs")
             || paths.Equals(name, "config")
             || paths.Equals(name, "config.worktree")
             || path.Contains($"{sep}refs{sep}", StringComparison.OrdinalIgnoreCase)
-            || path.Contains($"{altSep}refs{altSep}", StringComparison.OrdinalIgnoreCase)
-            || path.Contains($"{sep}worktrees{sep}", StringComparison.OrdinalIgnoreCase)
-            || path.Contains($"{altSep}worktrees{altSep}", StringComparison.OrdinalIgnoreCase);
-        if (!relevant) return;
+            || path.Contains($"{altSep}refs{altSep}", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUnder(string path, string? directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory)) return false;
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+        var full = Path.GetFullPath(path);
+        return FileSystemPathComparer.Instance.Equals(full, root)
+            || full.StartsWith(root + Path.DirectorySeparatorChar,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    }
+
+    private void OnGitDirectoryEvent(RepoState state, string path)
+    {
+        var name = Path.GetFileName(path);
+        var paths = FileSystemPathComparer.Instance;
+        if (!IsIndexRelevantGitPath(path, state.GitDirectory, state.CommonGitDirectory)) return;
         // AGT-3322: only a configuration event (or HEAD under an onbranch
         // include) makes the next run resolve Git's configuration again.
         var configEvent = paths.Equals(name, "config") || paths.Equals(name, "config.worktree");
@@ -789,10 +835,16 @@ public sealed class GitStateIndexService : BackgroundService
             if (superseded)
             {
                 if (state.Disposed) return "disposed";
-                _projectionCache.MarkFailed(state.WatchPath, "superseded");
                 state.RerunRequested = true;
                 state.RerunTrigger = "superseded";
-                return "superseded";
+                if (++state.SupersededRuns < MaxConsecutiveSupersededRuns)
+                {
+                    _projectionCache.MarkFailed(state.WatchPath, "superseded");
+                    return "superseded";
+                }
+                _logger.LogWarning(
+                    "git-index-superseded-publish repository={Repository} consecutive={Count}",
+                    state.ProjectName, state.SupersededRuns);
             }
         }
         if (projection.RepositoryFailure is { } failure)
@@ -826,6 +878,7 @@ public sealed class GitStateIndexService : BackgroundService
             state.LastSweepConfig = input.Config;
             state.LastSettingsVersion = input.SettingsVersion;
             state.RestoredServing = false;
+            state.SupersededRuns = 0;
             ClearFailure(state);
         }
 
@@ -1193,6 +1246,9 @@ public sealed class GitStateIndexService : BackgroundService
         public bool Disposed;
         public RepoInput? LastPublishedInput;
         public long InvalidationVersion;
+        public int SupersededRuns;
+        public string? GitDirectory;
+        public string? CommonGitDirectory;
         public int Failures;
         public string? LastErrorReason;
         public string? LastError;

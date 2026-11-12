@@ -36,7 +36,7 @@ describe('BatchDetailComponent', () => {
   });
 
   it('shows the batch phase and run start on the card', async () => {
-    const batch = { ...redHalvingState.batches[1], phaseStartedAtUtc: '2026-11-09T21:11:00Z',
+    const batch = { ...redHalvingState.batches[1], phaseAtUtc: '2026-11-09T21:11:00Z',
       runs: [{ ...redHalvingState.batches[1].runs[0], startedAtUtc: '2026-11-09T21:11:00Z' }] };
     const { host } = await mount({ ...redHalvingState, batches: [redHalvingState.batches[0], batch] }, { id: 'AGT-2' });
     expect(host.querySelector('[data-testid="task-batch-phase-time"]')?.textContent).toContain('running since 21:11 UTC');
@@ -56,6 +56,18 @@ describe('BatchDetailComponent', () => {
       reviewFixWaits: [{ taskKey: 'CARD-7', reviewAttemptId: 'review-7', round: 1, maximum: 1, aspects: ['code-quality'] }],
     }, { key: 'CARD-7', id: 'CARD-7' });
     expect(host.querySelector('[data-testid="task-batch-review-fix"]')?.textContent).toContain('before batch admission');
+  });
+
+  it('states the paused batch reason and the red and green outcomes', async () => {
+    const { host } = await mount({ ...redHalvingState, members: { ...redHalvingState.members,
+      'AGT-9': { status: 'fallback', batchId: 'batch-9', phase: 'abandoned',
+        position: 2, size: 4, fallbackRule: 'batch-paused',
+        fallbackEvent: 'batch batch-9 paused: fresh gate verdict required' },
+    } }, { id: 'AGT-9' });
+    expect(host.querySelector('[data-testid="task-batch-fallback-reason"]')?.textContent)
+      .toContain('batch batch-9 paused: fresh gate verdict required');
+    expect(host.querySelector('[data-testid="task-batch-fallback-outcome"]')?.textContent)
+      .toContain('Red escalates the card; green integrates it.');
   });
 
   it('shows the push wait of a member', async () => {

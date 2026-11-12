@@ -7,6 +7,9 @@ using AgentStudio.Security;
 
 namespace AgentStudio.Management;
 
+/// <summary>One archive found at the off-host target.</summary>
+public sealed record BackupTargetFile(string Name, long SizeBytes, string ModifiedAt);
+
 /// <summary>
 /// The off-host copy of every backup. A target receives the encrypted archive
 /// and its <c>.sha256</c> file; it never needs read, list or delete rights,
@@ -21,6 +24,12 @@ public interface IBackupTarget
 
     /// <summary>Uploads <paramref name="localPath"/> as <paramref name="remoteName"/>; completes only when the copy is whole.</summary>
     Task UploadAsync(string localPath, string remoteName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The archives at the target (AGT-3734), or null when this host may not
+    /// list it: SFTP and S3 targets are write-only for the host by design.
+    /// </summary>
+    IReadOnlyList<BackupTargetFile>? ListArchives() => null;
 }
 
 /// <summary>Runs a non-Git helper process (sftp) with a bounded time.</summary>
@@ -86,6 +95,17 @@ public sealed class DirectoryBackupTarget(string directory) : IBackupTarget
             to.Flush(flushToDisk: true);
         }
         File.Move(partial, final, overwrite: true);
+    }
+
+    /// <summary>A mount the host writes to can also be read: lists complete archives, not <c>.partial</c> leftovers.</summary>
+    public IReadOnlyList<BackupTargetFile>? ListArchives()
+    {
+        if (!Directory.Exists(directory))
+            throw new BackupException("backup-target-unreachable", $"The backup target directory {directory} does not exist.");
+        return new DirectoryInfo(directory).EnumerateFiles("studio-backup-*" + BackupCatalog.ArchiveSuffix)
+            .Select(file => new BackupTargetFile(file.Name, file.Length, new DateTimeOffset(file.LastWriteTimeUtc).ToString("O")))
+            .OrderByDescending(file => file.Name, StringComparer.Ordinal)
+            .ToArray();
     }
 }
 
@@ -171,6 +191,12 @@ public sealed class SftpBackupTarget(BackupTargetOptions options, IBackupProcess
 public sealed class S3BackupTarget(BackupTargetOptions options, Func<HttpClient> http, TimeProvider clock) : IBackupTarget
 {
     public const long MaxSinglePut = 5L * 1024 * 1024 * 1024;
+    public static readonly TimeSpan ResponseHeadersTimeout = TimeSpan.FromSeconds(30);
+    internal TimeSpan? HeadersTimeoutOverride { get; set; }
+
+    // At least five minutes, then one minute per 16 MiB, capped at two hours.
+    public static TimeSpan UploadTimeout(long bytes)
+        => TimeSpan.FromMinutes(Math.Min(120, Math.Max(5, 5 + (double)bytes / (16 * 1024 * 1024))));
 
     public string Kind => "s3";
 
@@ -182,22 +208,63 @@ public sealed class S3BackupTarget(BackupTargetOptions options, Func<HttpClient>
         var length = new FileInfo(localPath).Length;
         if (length > MaxSinglePut)
             throw new BackupException("backup-target-upload-failed", "The archive exceeds the 5 GiB single upload limit of S3.");
+        using var overall = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        overall.CancelAfter(UploadTimeout(length));
         string payloadHash;
-        await using (var hashed = File.OpenRead(localPath))
-            payloadHash = Convert.ToHexStringLower(await SHA256.HashDataAsync(hashed, cancellationToken).ConfigureAwait(false));
+        try
+        {
+            await using var hashed = File.OpenRead(localPath);
+            payloadHash = Convert.ToHexStringLower(await SHA256.HashDataAsync(hashed, overall.Token).ConfigureAwait(false));
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new BackupException("backup-target-upload-failed", "S3 PUT timed out.");
+        }
         var accessKey = BackupTargets.ReadSecretFile(options.AccessKeyIdFile, "Backup:Target:AccessKeyIdFile");
         var secret = BackupTargets.ReadSecretFile(options.SecretAccessKeyFile, "Backup:Target:SecretAccessKeyFile");
 
         await using var body = File.OpenRead(localPath);
-        using var request = BuildRequest(remoteName, payloadHash, accessKey, secret, clock.GetUtcNow(), new StreamContent(body));
+        using var headers = CancellationTokenSource.CreateLinkedTokenSource(overall.Token);
+        using var content = new UploadCompletionContent(body, length,
+            () => headers.CancelAfter(HeadersTimeoutOverride ?? ResponseHeadersTimeout));
+        using var request = BuildRequest(remoteName, payloadHash, accessKey, secret, clock.GetUtcNow(), content);
         request.Content!.Headers.ContentLength = length;
-        using var response = await http().SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-            .ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            throw new BackupException("backup-target-upload-failed",
-                $"S3 PUT answered {(int)response.StatusCode}: {CredentialRedactor.Redact(text.Length > 400 ? text[..400] : text)}");
+            using var response = await http().SendAsync(request, HttpCompletionOption.ResponseHeadersRead, headers.Token)
+                .ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                var text = await response.Content.ReadAsStringAsync(headers.Token).ConfigureAwait(false);
+                throw new BackupException("backup-target-upload-failed",
+                    $"S3 PUT answered {(int)response.StatusCode}: {CredentialRedactor.Redact(text.Length > 400 ? text[..400] : text)}");
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new BackupException("backup-target-upload-failed", "S3 PUT timed out.");
+        }
+    }
+
+    private sealed class UploadCompletionContent(Stream body, long length, Action sent) : HttpContent
+    {
+        protected override bool TryComputeLength(out long computedLength)
+        {
+            computedLength = length;
+            return true;
+        }
+
+        protected override async Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context)
+        {
+            await body.CopyToAsync(stream).ConfigureAwait(false);
+            sent();
+        }
+
+        protected override async Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context,
+            CancellationToken cancellationToken)
+        {
+            await body.CopyToAsync(stream, cancellationToken).ConfigureAwait(false);
+            sent();
         }
     }
 

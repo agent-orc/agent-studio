@@ -558,9 +558,9 @@ export interface PlanningSpawnSummary {
 }
 
 /**
- * Interim concept-dossier projection. The path is detected from
- * results/deliverables.md or status.md until references.workbenches provides
- * the structured carrier.
+ * Concept Dossier projection from the same primary task.dossier link used by
+ * the board and the Dossier card list. A deliberate no-Dossier choice is
+ * carried separately.
  */
 export interface ConceptDossierSummary {
   repoRelativePath?: string | null;
@@ -1790,6 +1790,7 @@ export interface CreateTaskRequest {
   /** Ownership-routing input. The backend resolves and validates the destination. */
   routing?: ComponentRoutingRequest;
   requestedTaskPrefix?: string;
+  dossier?: { path: string; section?: string | null; decision?: string | null; implementationIndex?: number | null };
 }
 
 /**
@@ -2176,8 +2177,9 @@ export interface TaskLiveQueue {
   reasonCode?: RunnerPickupWaitCode | string | null;
   /**
    * AGT-3094: `reviewing` while a review executor holds the ReviewAttempt lease,
-   * `stalled` when nothing will review the delivery without an operator, else
-   * `queued`. Runner queues and legacy review queues are always `queued`.
+   * `retry-scheduled` while a lost review waits for its automatic retry (AGT-3690),
+   * `stalled` when nothing will review the delivery without an operator,
+   * `integration` after review passes, else `queued`.
    * Absent on payloads from older servers; read it as `queued`.
    */
   state?: TaskLiveQueueState;
@@ -2187,9 +2189,39 @@ export interface TaskLiveQueue {
   since?: string | null;
   /** Terminal review outcome token behind a `stalled` or retrying review. */
   outcome?: string | null;
+  /** AGT-3690: why the current review attempt ended without a verdict. */
+  lost?: TaskLiveReviewLoss | null;
+  /** AGT-3690: the automatic retry that comes next; set only while `retry-scheduled`. */
+  retry?: TaskLiveReviewRetry | null;
 }
 
-export type TaskLiveQueueState = 'queued' | 'reviewing' | 'stalled';
+/**
+ * AGT-3690: `retry-scheduled` is a review attempt that was lost (see `lost`)
+ * while its automatic retry is due (see `retry`).
+ */
+export type TaskLiveQueueState = 'queued' | 'reviewing' | 'stalled' | 'integration' | 'retry-scheduled';
+
+/** AGT-3690: the cause of a lost review attempt, as the card names it. */
+export interface TaskLiveReviewLoss {
+  /** `host-restarted` when the review daemon restarted under the attempt. */
+  cause: 'host-restarted' | 'infrastructure' | string;
+  /** The review report's classification, e.g. `ExecutorRestarted`. */
+  classification?: string | null;
+  /** Host that held the lost lease. */
+  hostId?: string | null;
+  /** Runner identity that held the lost lease. */
+  executorId?: string | null;
+  /** UTC instant the attempt ended. */
+  at?: string | null;
+}
+
+/** AGT-3690: the scheduled automatic review retry within its budget. */
+export interface TaskLiveReviewRetry {
+  /** One-based retry number; absent on a retry scheduled before it was recorded. */
+  number?: number | null;
+  budget: number;
+  dueAt: string;
+}
 
 export interface TaskLiveStatus {
   attempt: number;

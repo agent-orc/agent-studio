@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isolatedRedState, redHalvingState } from '../features/batch-gate/testing/batch-fixtures';
 import {
-  batchAlert, batchIsolationEvidenceUrl, batchIsolationRows, batchProvenRedFor, batchShortId, batchTimeLine,
+  batchAlert, batchIsolationEvidenceUrl, batchIsolationRows, batchProvenRedFor, batchShortId, batchWaitingCards, batchTimeLine,
   type BatchGateState,
 } from './batch-gate.model';
 
@@ -11,6 +11,18 @@ it('formats the UTC start and elapsed gate time', () => {
   expect(batchTimeLine('2026-11-09T21:11:00Z', null, Date.parse('2026-11-10T00:41:00Z')))
     .toBe('since 21:11 UTC, 3 h 30 min');
   expect(batchTimeLine('2026-11-09T21:11:00Z', '2026-11-09T21:14:00Z')).toBe('since 21:11 UTC, 3 min');
+});
+
+describe('batch waiting projection', () => {
+  it('excludes members of a formed or running batch from pending records', () => {
+    const pending = [1, 2].map(index => ({ taskKey: `AGT-${index}`, reviewAttemptId: `r-${index}`,
+      resultSha: 'a'.repeat(40), waitMinutes: 229.234388035, risk: 0.2 }));
+    const batch = { ...redHalvingState.batches[1], members: [{ taskKey: 'AGT-1', replay: 'applied', released: false }] };
+    for (const phase of ['formed', 'running']) {
+      const state = { ...redHalvingState, pending, batches: [{ ...batch, phase }], members: {} };
+      expect(batchWaitingCards(state).map(item => item.taskKey)).toEqual(['AGT-2']);
+    }
+  });
 });
 
 describe('batch isolation model (AGT-3577)', () => {

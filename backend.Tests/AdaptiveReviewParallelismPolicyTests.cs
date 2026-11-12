@@ -9,6 +9,24 @@ public sealed class AdaptiveReviewParallelismPolicyTests
     private static readonly DateTime Now = new(2026, 8, 17, 12, 0, 0, DateTimeKind.Utc);
     private static readonly AdaptiveReviewParallelismOptions Options = AdaptiveReviewParallelismOptions.Default;
 
+    [Fact]
+    public void Evaluate_NormalizesHostLoadByHostCoresWhenProcessIsCgroupLimited()
+    {
+        var budget = Plane(12, 900, 0.02);
+        var host = Host(load1: 4, memoryUsedGb: 20) with
+        {
+            CpuCores = 1,
+            ReviewPlane = budget,
+        };
+
+        var decision = AdaptiveReviewParallelismPolicy.Evaluate(
+            2, 5, false, Now, Now.AddMinutes(-10), null, Options,
+            budget, hostTelemetry: host);
+
+        Assert.Equal(ReviewParallelismAction.Raise, decision.Action);
+        Assert.Contains("load/core 0.33", decision.Reason);
+    }
+
     [Theory]
     // depth, current, lastChangeMinutesAgo, expectedAction, expectedTarget
     [InlineData(5, 2, null, ReviewParallelismAction.Hold, 2)]

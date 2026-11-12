@@ -92,6 +92,8 @@ public sealed class BrowserOriginPolicyTests
     [InlineData("/api/auth/login", true)]
     [InlineData("/API/AUTH/BOOTSTRAP", true)]
     [InlineData("/api/auth/invite/accept", true)]
+    [InlineData("/api/v1/studio/auth/invite/accept", true)]
+    [InlineData("/api/v1/studio/auth/invite/preview", false)]
     [InlineData("/api/auth/runner-enroll", false)]
     [InlineData("/api/auth/status", false)]
     public void Only_session_issuing_endpoints_count_as_browser_sign_in(string path, bool expected)

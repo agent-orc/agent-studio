@@ -433,10 +433,117 @@ async function shootBothThemes(page: Page, testInfo: TestInfo, baseName: string)
 test.describe('Escalation summary panel — collapsible + compact', () => {
   test.beforeEach(() => test.setTimeout(90_000));
 
+  test('gate infrastructure park offers retry and project switch without coding actions', async ({ page }, testInfo) => {
+    let retries = 0;
+    let enabledOnSave: boolean | null = null;
+    await openDetail(page, '5e-escalated', true, true,
+      '[gate-infrastructure] The verification gate could not run. Check the remote gate host and worker, then retry the gate.',
+      async () => {
+        const info = { ...buildInfo('5e-escalated', true), parkedBlocker: {
+          blockerType: 'gate-infrastructure', conditionKind: 'manual',
+          conditionDescription: 'The remote gate worker needs attention.',
+          lane: '5e-escalated', parkedAt: '2026-10-06T04:22:54Z', parkedForSeconds: 59,
+          reason: '[gate-infrastructure] The verification gate could not run. Check the remote gate host and worker, then retry the gate.',
+          recallStatus: 'blocked', lastEvaluatedAt: null, detail: '', decision: null,
+          needsInputFile: null, evaluationAgeSeconds: null, evaluationStale: false,
+          requiresDecisionCard: false,
+        } };
+        await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), route =>
+          route.fulfill({ status: 200, contentType: 'application/json',
+            body: JSON.stringify({ ...buildDetail('5e-escalated', true), info }) }));
+        const gateSettings = {
+          enabled: true, scope: 'code', planner: 'threshold', minimumSize: 2, maximumSize: 4,
+          deadlineMinutes: 20, lookAheadMinutes: 10, urgentTags: [], riskPolicy: 'balanced',
+          overlap: 'adjacent', reviewTestLevel: 'build-only', gateTimeoutMinutes: 25,
+          preCheckEnabled: false, advisor: { mode: 'off', cliType: 'codex', timeoutSeconds: 30 },
+        };
+        await page.route(`**/api/projects/${PROJECT}/batch-gate`, route => {
+          if (route.request().method() === 'PUT') enabledOnSave = route.request().postDataJSON().enabled;
+          return route.fulfill({ status: 200, contentType: 'application/json',
+            body: JSON.stringify({ settings: gateSettings, limits: { hardMaximumSize: 8 } }) });
+        });
+        await page.route(`**/api/projects/${PROJECT}/batch-gate/infrastructure/${JOB_ID}/retry`, route => {
+          retries++;
+          return route.fulfill({ status: 200, contentType: 'application/json', body: '{"retried":true}' });
+        });
+      });
+    const parked = page.getByTestId('parked-blocker');
+    await expect(parked).toContainText('The verification gate could not run.');
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        const shot = await parked.screenshot();
+        const name = `gate-infrastructure-park-${width}-${theme}--mocked.png`;
+        await saveShot(testInfo, name, shot);
+        writeFileSync(path.join(SHOTS_DIR, name), shot);
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await expect(page.getByTestId('escalation-action-retry-gate')).toBeVisible();
+    await expect(page.getByTestId('escalation-action-disable-batch')).toBeVisible();
+    await expect(page.getByTestId('escalation-action-reissue-escalated')).toHaveCount(0);
+    await expect(page.getByTestId('escalation-action-accept-escalated')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Continue (reissue)' })).toHaveCount(0);
+    await shootBothThemes(page, testInfo, 'gate-infrastructure-actions');
+    await page.setViewportSize({ width: 390, height: 900 });
+    await shootBothThemes(page, testInfo, 'gate-infrastructure-actions-390');
+    await page.getByTestId('escalation-action-retry-gate').click();
+    await expect(page.getByTestId('gate-infrastructure-outcome')).toContainText('returned to verification');
+    expect(retries).toBe(1);
+    await page.getByTestId('escalation-action-disable-batch').click();
+    await expect(page.getByTestId('gate-infrastructure-outcome')).toContainText('off for this project');
+    expect(enabledOnSave).toBe(false);
+  });
+
+  test('confirms selected reissue findings and owner note before moving', async ({ page }, testInfo) => {
+    await openDetail(page, '5e-escalated');
+    const moves: Array<{ targetState: string; reissueInstructions: { findings: string[]; note: string } }> = [];
+    await page.route(/\/move(\?|$)/, async route => {
+      moves.push(route.request().postDataJSON());
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await expect(page.getByTestId('escalation-gate-items').getByRole('listitem')).toHaveCount(4);
+    await page.getByTestId('studio-triage-action-reissue-escalated').click();
+    await expect(page.getByTestId('escalation-confirm')).toBeVisible();
+    expect(moves).toHaveLength(0);
+    await page.getByTestId('escalation-confirm-cancel').click();
+    await page.getByTestId('escalation-action-reissue-escalated').click();
+    const dialog = page.getByTestId('escalation-confirm');
+    await expect(dialog).toBeVisible();
+    expect(moves).toHaveLength(0);
+    await expect(dialog.getByRole('checkbox')).toHaveCount(4);
+    await dialog.getByRole('checkbox').nth(1).uncheck();
+    await dialog.getByTestId('escalation-owner-note').fill('Keep the retry bounded.');
+    await expect(dialog.getByTestId('reissue-instructions-preview')).toContainText('Preserve the complete council response.');
+    await expect(dialog.getByTestId('reissue-instructions-preview')).not.toContainText('Render every grade document.');
+    await expect(dialog).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(dialog.getByTestId('escalation-owner-note')).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      const name = `reissue-confirm-${theme}.png`;
+      const shot = await page.screenshot();
+      await saveShot(testInfo, name, shot);
+      writeFileSync(path.join(SHOTS_DIR, name), shot);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(dialog).toBeVisible();
+    const mobileName = 'reissue-confirm-390px.png';
+    const mobileShot = await page.screenshot();
+    await saveShot(testInfo, mobileName, mobileShot);
+    writeFileSync(path.join(SHOTS_DIR, mobileName), mobileShot);
+    await dialog.getByTestId('escalation-confirm-submit').click();
+    await expect.poll(() => moves.length).toBe(1);
+    expect(moves[0].targetState).toBe('2-ready');
+    expect(moves[0].reissueInstructions.note).toBe('Keep the retry bounded.');
+    expect(moves[0].reissueInstructions.findings).toHaveLength(3);
+    expect(moves[0].reissueInstructions.findings.join(' ')).not.toContain('Render every grade document.');
+  });
+
   test('shows the latest continued attempt in the parked header', async ({ page }, testInfo) => {
     await openDetail(page, '5e-escalated', true, true);
     await expect(page.getByTestId('escalation-essence')).toContainText(
-      'Latest attempt ended 2026-10-06 04:22 UTC: Push protection rejected the branch.',
+      'Latest attempt ended 2026-10-06 04:22 UTC and parked this card.',
     );
     await shootBothThemes(page, testInfo, 'escalation-latest-attempt');
   });
@@ -633,7 +740,7 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     await expect(page.getByTestId('escalation-toggle')).toHaveAttribute('aria-expanded', 'true');
     const panel = page.getByTestId('escalation-summary');
     await expect(panel.getByTestId('escalation-action-reissue-escalated')).toHaveText('Continue (reissue)');
-    await expect(panel.getByTestId('escalation-action-accept-escalated')).toHaveText('Accept as-is');
+    await expect(panel.getByTestId('escalation-action-accept-escalated')).toHaveText('Accept with reason');
     await expect(panel.getByTestId('escalation-action-discard-escalated')).toHaveText('Abort');
     const recommendation = panel.getByTestId('escalation-recommendation');
     await expect(recommendation).toHaveText('Needs decision');
@@ -682,7 +789,7 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     const panel = page.getByTestId('escalation-summary');
 
     await expect(page.getByTestId('escalation-essence')).toContainText(
-      '0 review rounds · Reissue budget exhausted',
+      '3 review rounds · Reissue budget exhausted',
     );
     await expect(page.getByTestId('escalation-context-empty')).toHaveText(
       'No structured findings, review artifacts, or delivery context were recorded.',
