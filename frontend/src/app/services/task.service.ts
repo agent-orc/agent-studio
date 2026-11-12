@@ -1072,23 +1072,9 @@ export class TaskService {
     const params = opts?.includeArchived
       ? new HttpParams().set('includeArchived', 'true')
       : undefined;
-    if (this.shellAccess.limited()) {
-      return this.http.get<RegistryProjectSummary[]>('/api/projects', { params }).pipe(
-        map(projects => {
-          const groups = new Map<string, RegistryProjectSummary[]>();
-          for (const project of projects) {
-            const id = project.workspaceId || 'accessible-projects';
-            groups.set(id, [...(groups.get(id) ?? []), project]);
-          }
-          return [...groups].map(([id, entries], index) => ({
-            id, displayName: groups.size === 1 ? 'Projects' : `Projects ${index + 1}`,
-            sortOrder: index, isDefault: index === 0, color: null, createdAt: '',
-            projects: entries,
-          })) satisfies RegistryWorkspaceListItem[];
-        }),
-      );
-    }
-    return this.http.get<RegistryWorkspaceListItem[]>('/api/v1/workspaces', { params });
+    // Product sessions read the legacy listing, filtered by their project bindings.
+    return this.http.get<RegistryWorkspaceListItem[]>(
+      this.shellAccess.limited() ? '/api/workspaces' : '/api/v1/workspaces', { params });
   }
 
   /**

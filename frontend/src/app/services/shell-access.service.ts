@@ -5,19 +5,19 @@ import { AuthSessionState } from './auth.service';
 @Injectable({ providedIn: 'root' })
 export class ShellAccessService {
   private readonly session = inject(AuthSessionState);
-  readonly operator = computed(() => {
-    const status = this.session.status();
-    return status?.profile === 'local'
-      || (status?.profile === 'networked' && status.authenticated
-        && (status.user?.role === 'owner' || status.user?.role === 'operator'));
-  });
-
-  /** Product and read-only sessions have a board, but no operator shell. */
+  /**
+   * Product and read-only sessions have a board, but no operator shell. Only a
+   * session whose role is known and is not owner or operator is limited; local,
+   * unknown and role-less sessions keep the full shell and let the server decide.
+   */
   readonly limited = computed(() => {
     const status = this.session.status();
-    return status?.profile === 'networked' && status.authenticated
-      && !this.operator();
+    const role = status?.profile === 'networked' && status.authenticated ? status.user?.role : undefined;
+    return !!role && role !== 'owner' && role !== 'operator';
   });
+
+  /** The operator shell: every session the server has not narrowed to the board. */
+  readonly operator = computed(() => !this.limited());
 
   /** Background reads allowed by ContributorAccessPolicy and the board contract. */
   canReadBackground(url: string): boolean {
@@ -36,7 +36,8 @@ export class ShellAccessService {
       return (parts[5] === 'tasks' || parts[5] === 'board')
         && !parts.some(segment => PRODUCT_DENIED_SEGMENTS.has(segment));
     }
-    if (path === '/api/projects' || path === '/api/registry' || path === '/api/magazine') return true;
+    if (path === '/api/projects' || path === '/api/workspaces' || path === '/api/watch-paths'
+        || path === '/api/registry' || path === '/api/magazine') return true;
     if (path.startsWith('/api/registry/') || path.startsWith('/api/magazine/')) return true;
     if (path === '/api/tasks' || path.startsWith('/api/tasks/')) {
       return !path.split('/').some(segment => PRODUCT_DENIED_SEGMENTS.has(segment));

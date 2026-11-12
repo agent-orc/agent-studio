@@ -247,7 +247,7 @@ describe('TaskService', () => {
     http.expectNone('/api/projects/settings');
   });
 
-  it('builds a Product project tree from the authorized project list', () => {
+  it('reads a Product project tree from the binding-filtered workspace list', () => {
     TestBed.inject(AuthSessionState).status.set({
       profile: 'networked', bootstrapRequired: false, authenticated: true,
       user: { id: 'product', username: 'product', displayName: 'Product', role: 'contributor',
@@ -259,9 +259,9 @@ describe('TaskService', () => {
       workspaceIds = workspaces.map(workspace => workspace.id);
       projectIds = workspaces.flatMap(workspace => workspace.projects.map(project => project.id));
     });
-    http.expectOne('/api/projects').flush([
-      { id: 'PROJ-1', displayName: 'Demo App', workspaceId: 'ws-one' },
-      { id: 'PROJ-2', displayName: 'Next App', workspaceId: 'ws-two' },
+    http.expectOne('/api/workspaces').flush([
+      { id: 'ws-one', displayName: 'One', projects: [{ id: 'PROJ-1', displayName: 'Demo App' }] },
+      { id: 'ws-two', displayName: 'Two', projects: [{ id: 'PROJ-2', displayName: 'Next App' }] },
     ]);
     expect(workspaceIds).toEqual(['ws-one', 'ws-two']);
     expect(projectIds).toEqual(['PROJ-1', 'PROJ-2']);
