@@ -84,8 +84,9 @@ public static class BatchGateStateSnapshotReader
             _ => leaseDeadlineDeferredBatchId);
         var flightQueue = formedBatches.OrderBy(manifest => queuePositions[manifest.BatchId]).ToArray();
         var planDeadlinePassed = plan.CloseAtUtc is { } closeAt && closeAt <= at;
-        var overduePending = pending.Where(item => (item.Subject.ReviewCompletedAtUtc
-                .AddMinutes(settings.DeadlineMinutes) <= at || planDeadlinePassed)
+        bool OwnDeadlinePassed(BatchGatePendingRecord item) =>
+            item.Subject.ReviewCompletedAtUtc.AddMinutes(settings.DeadlineMinutes) <= at;
+        var overduePending = pending.Where(item => (OwnDeadlinePassed(item) || planDeadlinePassed)
             && !plan.ProposedMembers.Contains(item.Subject.TaskKey, StringComparer.Ordinal))
             .ToArray();
         var overdue = overduePending
@@ -95,12 +96,15 @@ public static class BatchGateStateSnapshotReader
                     member.TaskKey == item.Subject.TaskKey
                     && member.RunAttempt == item.Subject.RunAttempt));
                 var cause = latestCauseByAttempt.GetValueOrDefault(item.ReviewAttemptId);
+                var excludedRule = plan.ExcludedMembers?.FirstOrDefault(excluded =>
+                    excluded.TaskKey == item.Subject.TaskKey)?.Rule;
                 var reason = formed is not null
                     ? $"batch {formed.BatchId} is {StateOf(store, formed).Phase.ToString().ToLowerInvariant()}"
                         + (queuePositions.TryGetValue(formed.BatchId, out var queued)
                             ? $", flight queue position {queued} of {flightQueue.Length}" : "")
                     : item.Subject.ActivePerTaskGate ? "per-task gate is in progress"
                     : cause is not null ? $"per-task fallback: {cause.Rule}"
+                    : excludedRule is not null ? $"excluded by {excludedRule}"
                     : "pending member awaits the next planner tick";
                 if (formed is null && waits.TryGetValue(item.ReviewAttemptId, out var wait))
                     reason += $", waits for {wait.Detail}";
@@ -111,8 +115,11 @@ public static class BatchGateStateSnapshotReader
             {
                 Decision = plan.Decision == "idle" ? "wait" : plan.Decision,
                 Reason = plan.Reason + "; overdue pending: " + string.Join("; ", overdue),
-                ProposedMembers = plan.ProposedMembers.Concat(overduePending
-                    .Where(item => !item.Subject.ActivePerTaskGate
+                ProposedMembers = !settings.Enabled ? plan.ProposedMembers : plan.ProposedMembers.Concat(overduePending
+                    .Where(item => OwnDeadlinePassed(item)
+                        && !(plan.ExcludedMembers?.Any(excluded =>
+                            excluded.TaskKey == item.Subject.TaskKey) ?? false)
+                        && !item.Subject.ActivePerTaskGate
                         && !recoverable.Any(manifest => manifest.Members.Any(member =>
                             member.TaskKey == item.Subject.TaskKey
                             && member.RunAttempt == item.Subject.RunAttempt))

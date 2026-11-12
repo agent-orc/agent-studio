@@ -69,6 +69,8 @@ create-only JSON record, retained for 90 days. `GET
 returns newest-first rows and a total count. The `type` filter accepts the
 stored run types: `batch-gate`, `batch-base`, `batch-pre-check`,
 `per-task-fallback`, `per-task-gate`, and `clean-diagnostic-rerun`.
+Failed-test ranking retries unreadable evidence only within the same 90-day
+window. An execution without its gate run ID is permanently unattributed.
 
 Rows carry request, slot, lease, command start and finish times, process and
 shard evidence (including class names and measured class durations), rerun cost,
@@ -115,8 +117,10 @@ publication locks are keyed by project and integration branch; the aggregate
 merge-busy flag still drains stable deployment.
 The threshold batch planner selects a per-task gate when one eligible card
 reaches its deadline without a batch partner, or an operator closes below the
-minimum batch size. The plan state names that trigger. This path does not use
-title urgency, risk, or changed-path overlap. Its fallback gate does not own
+minimum batch size. The plan state names that trigger. The persisted plan records
+each excluded task key and its rule; overdue status uses each task's own review
+completion time and deadline. Excluded tasks stay out of proposed members.
+This path does not use title urgency, risk, or changed-path overlap. Its fallback gate does not own
 the project batch reservation. A later direct integration must hold the
 reservation through its merge gate and possible rollback. It acquires the
 reservation after the per-project merge lock, so a queued per-task integration

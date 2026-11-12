@@ -55,6 +55,32 @@ public sealed class ReviewAspectInputBudgetTests
     }
 
     [Fact]
+    public void Verdict_usage_and_model_reply_text_are_not_cli_refusals()
+    {
+        var command = new ReviewCommandDto("aspect-code-quality", "code-quality", "codex", [],
+            ExecutionKind: ReviewCommandKinds.AgentAspect, Prompt: "Review", CliType: "codex");
+        Assert.Null(ReviewCliRefusalPolicy.Classify(command,
+            new ProcessResult(1, "[[ASPECT_VERDICT aspect=code-quality verdict=pass]]", "input_too_large")));
+        Assert.Null(ReviewCliRefusalPolicy.Classify(command,
+            new ProcessResult(1, "", "turn/start failed"), hasUsage: true));
+        Assert.Null(ReviewCliRefusalPolicy.Classify(command,
+            new ProcessResult(1, "input_too_large", "")));
+    }
+
+    [Fact]
+    public void Dossier_has_its_own_budget_and_keeps_its_truncation_marker()
+    {
+        var dossier = "\n## Dossier excerpt\n" + new string('d', 65_000)
+            + "\n[[DOSSIER_EXCERPT_TRUNCATED: shown 65000 of 80000 characters]]";
+        var result = ReviewAspectInputBudget.Compose("Review", new string('m', 790_000), "", dossier, 36_000);
+        Assert.True(result.Prompt.Length <= ReviewAspectInputBudget.MaximumCharacters);
+        Assert.Contains("[[DOSSIER_EXCERPT_TRUNCATED:", result.Prompt);
+        Assert.DoesNotContain("Screenshot section:", result.Report);
+        Assert.Contains("Dossier excerpt:", result.Report);
+        Assert.Contains(new string('d', 30_000), result.Prompt);
+    }
+
+    [Fact]
     public void Package_members_share_the_same_diff_budget_and_keep_each_members_file_list()
     {
         var material = new StringBuilder();
