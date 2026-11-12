@@ -315,7 +315,7 @@ public sealed class TaskLiveStatusProjectionTests
             true, current, new ReviewQueueEntry("normal", null), null,
             Wait(PostProcessingCardResult.AwaitingDeliveryIntegration, null), Now)!;
 
-        Assert.Equal(TaskLiveQueueStates.Queued, queue.State);
+        Assert.Equal(TaskLiveQueueStates.Integration, queue.State);
         Assert.Equal("waiting for delivery integration", queue.Reason);
     }
 
@@ -334,6 +334,7 @@ public sealed class TaskLiveStatusProjectionTests
             true, current, new ReviewQueueEntry("normal", null), null,
             Wait(reason, "lane write failed"), Now)!;
 
+        Assert.Equal(TaskLiveQueueStates.Integration, queue.State);
         Assert.Equal(expected, queue.Reason);
     }
 
@@ -350,6 +351,14 @@ public sealed class TaskLiveStatusProjectionTests
         Assert.Equal("waiting for review executor: agent-runner-01-review is registered and active", queue.Reason);
         Assert.Equal(2, slotted.Position);
         Assert.Null(TaskLiveStatusProjection.ReviewQueueFor(false, null, null, null, null, Now));
+    }
+
+    [Fact]
+    public void ReviewQueue_LegacyIntegrationWait_IsNotAReviewWait()
+    {
+        var queue = TaskLiveStatusProjection.ReviewQueueFor(false, null, null, null,
+            Wait(PostProcessingCardResult.AwaitingDeliveryIntegration, null), Now)!;
+        Assert.Equal(TaskLiveQueueStates.Integration, queue.State);
     }
 
     [Fact]

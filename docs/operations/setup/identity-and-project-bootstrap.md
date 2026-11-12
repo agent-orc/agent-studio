@@ -9,6 +9,9 @@ legacy networked backend keeps its own runbook in
 [networked-task-server.md](./networked-task-server.md); its cookies, `enr.*`
 codes and `/api/auth/*` routes are a different contract and do not work
 against the standalone Studio BFF.
+The legacy monolith `/api/auth/bootstrap` profile does not issue an installation
+recovery code. The `recoveryCode` below belongs only to the standalone Task
+Server profile.
 
 `X-Client-Id` and `X-Actor-Id` are attribution hints only. They never
 authenticate anything and are ignored by every route on this page.
@@ -66,6 +69,10 @@ provide host, credential, merge, or promotion access.
    and operator sign-in require a registered factor; every step-up requires one
    regardless of role. A new operator accepts an invitation in the same
    limited setup session.
+
+An authenticator code is accepted once. Sign-in and step-up require a code
+from a later 30-second step than the last accepted code, including the
+enrollment confirmation. A reused code counts as a failed sign-in.
 
 The networked backend has a separate IAM role model: **Owner, Admin,
 Developer, Approver, and Viewer** must register a factor because their permissions

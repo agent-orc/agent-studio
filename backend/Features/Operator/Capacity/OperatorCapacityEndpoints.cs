@@ -1,9 +1,11 @@
 using AgentStudio.Cli;
+using AgentStudio.Pipeline;
 using AgentStudio.Projects;
 using AgentStudio.Registry;
 using AgentStudio.Runner;
 using AgentStudio.Security;
 using AgentStudio.Shared;
+using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Tasks;
 
 namespace AgentStudio.Operator;
@@ -18,9 +20,25 @@ public sealed record CapacityFallback(string? Project, string? CardKey, string? 
     DateTimeOffset? ActivatedAt, string SettingKey, string SettingHref);
 public sealed record CapacityPin(string Project, string Consumer, string? PipelineType,
     string? StepId, string? CliType, string? Model, string? ThinkingLevel, string PinMode);
+/// <summary>
+/// A Ready card whose next pickup would not run its configured route, as the
+/// selection service answers it now. <c>Outcome</c> is <c>fallback</c>,
+/// <c>wait</c> or <c>throttle</c>; the target is the route a fallback would
+/// launch, or the configured route a wait holds for. <c>NextResetAt</c> is when a
+/// wait asks again or a fallback may return to the configured route.
+/// </summary>
+public sealed record CapacityQueuedCard(string Project, string CardKey, string? Title,
+    string? ConfiguredCli, string? ConfiguredModel, string? ConfiguredThinkingLevel, string Outcome,
+    string? TargetCli, string? TargetModel, string? TargetThinkingLevel, string Reason, DateTime? NextResetAt);
 public sealed record OperatorCapacityResponse(IReadOnlyList<CapacityQuota> Quota,
     IReadOnlyList<CapacityFallback> ActiveFallbacks, IReadOnlyList<CapacityWait> WaitingCards,
-    IReadOnlyList<CapacityPin> ModelRoutingPins);
+    IReadOnlyList<CapacityPin> ModelRoutingPins)
+{
+    public IReadOnlyList<CapacityQueuedCard> QueuedCards { get; init; } = [];
+}
+
+/// <summary>The configured route of a card and the admission plan its next pickup would get.</summary>
+public sealed record CapacityForecast(SelectionRoute Configured, QuotaAdmissionPlan Plan);
 
 /// <summary>Read-only capacity projection over the quota cache and existing card and selection records.</summary>
 public static class OperatorCapacityEndpoints
@@ -30,7 +48,8 @@ public static class OperatorCapacityEndpoints
         app.MapGet("/api/operator/capacity", (HttpContext context, QuotaService quota,
             CliQuotaCapsService caps, TaskScannerService scanner, ProjectRegistry registry,
             TaskRunnerService runners, ModelSelectionLedger ledger, ModelSelectionPolicyStore policy,
-            ProjectSettingsService settings, TimeProvider clock, CancellationToken ct) =>
+            ProjectSettingsService settings, IModelSelectionService selection, TimeProvider clock,
+            CancellationToken ct) =>
         {
             var scoped = context.Items[AccessSecurityMiddleware.RequestAccessItem]
                 is RequestAccess access
@@ -48,17 +67,38 @@ public static class OperatorCapacityEndpoints
                 && (entry.Project is null ? !scoped : projects.Contains(entry.Project))).ToArray();
             var projectSettings = projects.ToDictionary(project => project, settings.Get,
                 StringComparer.OrdinalIgnoreCase);
+            var now = clock.GetUtcNow().UtcDateTime;
+            var qualification = context.RequestServices.GetService<ModelQualificationService>();
             return Results.Ok(Build(report, tasks, active, policy.Get(), projectSettings,
                 task => runners.GetQuotaFallbackForJob(task.Id, task.ProjectName) ?? task.QuotaFallback,
-                snapshot => caps.Evaluate(snapshot).Blocked, clock.GetUtcNow().UtcDateTime));
+                snapshot => caps.Evaluate(snapshot).Blocked, now,
+                task => Forecast(selection, qualification, task, tasks, now)));
         }).RequirePermission(IamPermissions.ProjectRead);
+    }
+
+    /// <summary>
+    /// Asks the selection service the question the next local pickup asks, as a
+    /// preview: no ledger receipt is written, so reading capacity never changes routing.
+    /// </summary>
+    internal static CapacityForecast Forecast(IModelSelectionService selection,
+        ModelQualificationService? qualification, TaskInfo task, IReadOnlyList<TaskInfo> tasks, DateTime now)
+    {
+        var occupied = tasks.Count(other => other.State == TaskStates.Progress
+            && string.Equals(other.ProjectName, task.ProjectName, StringComparison.OrdinalIgnoreCase));
+        var decision = selection.Select(CodingSelectionCalls.For(task, task.ProjectName, occupied, now,
+            qualification is null ? null : () => qualification.CorrectnessFloor(task,
+                ProjectRunner.ReadPromptText(Path.Combine(task.FolderPath, "prompt.md"))),
+            preview: true));
+        return new CapacityForecast(decision.Result.Primary,
+            ProjectRunner.ApplyPendingModelRoute(decision.Admission, task.PendingIntent?.ModelFallback));
     }
 
     internal static OperatorCapacityResponse Build(QuotaReport report, IReadOnlyList<TaskInfo> tasks,
         IReadOnlyList<ModelSelectionEvent> active, ModelSelectionPolicy policy,
         IReadOnlyDictionary<string, ProjectSettings> settings,
         Func<TaskInfo, QuotaFallbackStatus?> fallbackOf,
-        Func<QuotaSnapshot, bool> exhausted, DateTime now)
+        Func<QuotaSnapshot, bool> exhausted, DateTime now,
+        Func<TaskInfo, CapacityForecast?>? forecastOf = null)
     {
         var quota = report.Snapshots.Select(snapshot => new CapacityQuota(snapshot.CliType, snapshot,
             snapshot.FetchedAt != default && snapshot.Error is null
@@ -112,7 +152,34 @@ public static class OperatorCapacityEndpoints
         var pins = settings.SelectMany(pair => Pins(pair.Key, pair.Value))
             .OrderBy(pin => pin.Project).ThenBy(pin => pin.Consumer)
             .ThenBy(pin => pin.PipelineType).ThenBy(pin => pin.StepId).ToArray();
-        return new OperatorCapacityResponse(quota, fallbacks, waits, pins);
+        return new OperatorCapacityResponse(quota, fallbacks, waits, pins)
+        {
+            QueuedCards = forecastOf is null ? [] : QueuedCards(tasks, forecastOf),
+        };
+    }
+
+    private static CapacityQueuedCard[] QueuedCards(IReadOnlyList<TaskInfo> tasks,
+        Func<TaskInfo, CapacityForecast?> forecastOf)
+    {
+        var rows = new List<CapacityQueuedCard>();
+        foreach (var task in tasks.Where(task => task.State == TaskStates.Ready))
+        {
+            var forecast = forecastOf(task);
+            var outcome = forecast?.Plan.Outcome switch
+            {
+                QuotaAdmissionOutcome.LaunchFallback => "fallback",
+                QuotaAdmissionOutcome.Wait => "wait",
+                QuotaAdmissionOutcome.Throttle => "throttle",
+                _ => null,
+            };
+            if (forecast is null || outcome is null) continue;
+            var (configured, plan) = (forecast.Configured, forecast.Plan);
+            rows.Add(new CapacityQueuedCard(task.ProjectName, CardKey(task), task.Title,
+                configured.CliType, configured.Model, configured.ThinkingLevel, outcome,
+                plan.CliType, plan.Model, plan.ThinkingLevel, plan.Reason, plan.NextResetAt));
+        }
+        return rows.OrderBy(row => row.Project, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(row => row.CardKey, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     private static IEnumerable<CapacityPin> Pins(string project, ProjectSettings settings)

@@ -930,9 +930,13 @@ unreported claim expires with its lease and is queued again.
   Changing a remotely placed project to local execution requires the Owner.
 - `runner/OneShotJobAdmission.cs`: coding and review hosts poll bounded model
   jobs independently of task claims. The review host starts this poll after
-  client registration. A missing claim route (HTTP 404) is logged once and
-  retried every five minutes; a successful poll logs restoration and returns
-  to the normal three-second interval.
+  client registration. A missing claim route (HTTP 404) or a refusal saying
+  networked one-shot execution requires the standalone Task Server is logged
+  once and retried every five minutes. `OneShotClaimRouteObservation` keeps the
+  condition with first and last seen time and the backoff, and the daemon sends
+  it as `HostTelemetrySnapshotDto.OneShotClaimRoute` with its minutely
+  capability advertisement. A successful poll clears it, logs restoration and
+  returns to the normal three-second interval.
 - `backend/Features/Runner/RemoteChatWorkBroker.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteProjectChatRunner.cs`: assignment-aware remote side-sheet chat
@@ -1994,6 +1998,11 @@ unreported claim expires with its lease and is queued again.
   and does not shift the positions of eligible cards.
 - A re-open starts a new run. It must rerun pre steps, core, post steps, and
   append run history instead of flattening earlier evidence.
+- An operator's Escalated to Ready reissue carries the confirmed findings and
+  owner note in `operator-reissue.json`, written after the old review artifacts
+  rotate into history. The first pickup in that review epoch reads this handoff
+  even without the automatic reissue tag or an active prior pipeline record.
+  A later automatic reissue reads its new follow-up and review findings instead.
 - Before any automatic auto-review follow-up is persisted,
   `ReviewDecisionOrchestrator` compares its whitespace- and case-normalized
   base text with every prompt under `orchestrator-follow-up-history/`. A match
@@ -2679,7 +2688,11 @@ attempts, batch-gate pending records, card lane
 timestamps and claim failures, and the host release drift snapshot. Thresholds
 under `Watcher` are `HostTargetPercent` (85), `HostOverloadMinutes` (10),
 `MemoryUsedPercent` (90), `SwapBytesPerSecond` (65536), `IdleWaitMinutes` (15),
-`GatePendingHours` (2), `LaneBudgetHours` (24), and `HostHeartbeatMinutes` (10).
+`LaneBudgetHours` (24), and `HostHeartbeatMinutes` (10). Batch gate stalls use
+the running batch's configured `GateTimeoutMinutes`, measured from its gate
+run start. An idle plan with pending members is reported on the next sweep.
+The attention list groups these cases with batches and opens the project's
+batch panel.
 Every finding has a stable
 case fingerprint, subject, severity, since time, affected card count, evidence,
 and suggested action. A successful healthy sweep resolves an open operational

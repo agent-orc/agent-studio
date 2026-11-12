@@ -273,7 +273,7 @@ public sealed class AutoReviewDeliveryResumeService
         var resumeAttempts = retry?.Attempts ?? 0;
         var nextResumeAt = retry?.NextAtUtc;
         var resumeReason = retry?.Reason;
-        if (retry?.WaitingForIntegration == true)
+        if (retry?.WaitingForIntegration == true && nextResumeAt > now)
         {
             ShowResumeWait(task, resumeAttempts, nextResumeAt, resumeReason, integrationOwned: true);
             return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
@@ -413,7 +413,9 @@ public sealed class AutoReviewDeliveryResumeService
             Reason = reason,
             WaitingForIntegration = waitingForIntegration,
             Attempts = waitingForIntegration ? Math.Max(0, retry.Attempts - 1) : retry.Attempts,
-            NextAtUtc = waitingForIntegration ? null : retry.NextAtUtc,
+            NextAtUtc = waitingForIntegration
+                ? _time.GetUtcNow() + AutoReviewResumeRetryPolicy.Delay(1)
+                : retry.NextAtUtc,
         };
         AutoReviewResumeRetryStore.Write(task.FolderPath, recorded);
         ShowResumeWait(task, recorded.Attempts, recorded.NextAtUtc, reason, waitingForIntegration);

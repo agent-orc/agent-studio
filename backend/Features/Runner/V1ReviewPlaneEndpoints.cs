@@ -2900,10 +2900,11 @@ public static class V1ReviewPlaneEndpoints
                     .Concat(verify.Commands.Skip(firstTest)).ToArray(),
             };
         }
-        var preparation = GatePreparationPlanner.Plan(
+        var preparationPlan = GatePreparationPlanner.PlanWithSkips(
                 repositoryPath ?? string.Empty,
                 profile,
-                verify.Commands)
+                verify.Commands);
+        var preparation = preparationPlan.Commands
             .Select((command, index) => new Contract.ReviewPreparationCommandDto(
                 $"prepare-{index + 1}",
                 "bash",
@@ -2972,6 +2973,9 @@ public static class V1ReviewPlaneEndpoints
                 .ToList(),
             IntegrationRef: integrationRef,
             Preparation: preparation,
+            PreparationSkips: preparationPlan.Skips
+                .Select(skip => new Contract.ReviewPreparationSkipDto(skip.WorkingSubdir, skip.Reason))
+                .ToArray(),
             PreserveGlobs: profile?.PreserveGlobs,
             BuildProfileFingerprint: BuildProfileValidationFingerprint.Create(profile),
             LibraryVersion: Contract.ReviewLibraryStepPolicy.Version);
@@ -4176,7 +4180,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     0,
                     activeSlots,
                     TaskServerConnectionStatus: "connected",
-                    TaskServerConnectionObservedAt: now),
+                    TaskServerConnectionObservedAt: now,
+                    OneShotClaimRoute: existing?.Telemetry?.OneShotClaimRoute),
                 existing?.ModelAcceptanceAdvertised ?? false);
         }
     }

@@ -209,6 +209,12 @@ public sealed class TaskLiveStatusProjection(
         // A mode change is visible before the next pickup tick records its gate.
         // Remote claims obey the same project mode, so a just queued Run now
         // must not look as though it is waiting for an occupied slot.
+        // The breaker changes mode synchronously; its pickup gate is published
+        // on the next tick. Use the breaker snapshot so that interval cannot
+        // advertise a manual-mode override of the safety cooldown.
+        if (project.BreakerCooldownUntil is { } until)
+            return queue with { ReasonCode = RunnerPickupWaitCodes.BreakerCooldown,
+                Reason = $"Auto-pickup is cooling down after a circuit-breaker trip ({project.BreakerReason ?? "unknown cause"}) and resumes at {until:O}." };
         if (project.Mode == "manual")
             return queue with { ReasonCode = RunnerPickupWaitCodes.ManualMode,
                 Reason = project.PickupGate is { Code: RunnerPickupWaitCodes.ManualMode } manualGate
@@ -261,7 +267,9 @@ public sealed class TaskLiveStatusProjection(
     {
         if (!canonical)
         {
-            if ((localPosition.HasValue || localWait is not null) && ReviewHostHold(host) is { } hostHold)
+            if (!IsIntegrationWait(localWait)
+                && (localPosition.HasValue || localWait is not null)
+                && ReviewHostHold(host) is { } hostHold)
                 return new TaskLiveQueue { Kind = "review", Reason = hostHold };
             return LocalReviewQueue(localPosition, localWait);
         }
@@ -305,7 +313,9 @@ public sealed class TaskLiveStatusProjection(
         }
 
         if (review.Outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect)
-            return LocalReviewQueue(localPosition, localWait);
+            return LocalReviewQueue(localPosition, localWait, postReview: true)
+                ?? new TaskLiveQueue { Kind = "review", State = TaskLiveQueueStates.Integration,
+                    Reason = "waiting for delivery integration" };
 
         var outcome = OutcomeToken(review);
         if (review.PendingInfrastructureRetryAt is { } retryAt)
@@ -337,17 +347,28 @@ public sealed class TaskLiveStatusProjection(
         return null;
     }
 
-    private static TaskLiveQueue? LocalReviewQueue(int? localPosition, AutoReviewQueueWaitState? localWait)
+    private static TaskLiveQueue? LocalReviewQueue(int? localPosition, AutoReviewQueueWaitState? localWait,
+        bool postReview = false)
     {
+        var state = postReview || IsIntegrationWait(localWait)
+            ? TaskLiveQueueStates.Integration : TaskLiveQueueStates.Queued;
         if (localPosition.HasValue)
-            return new TaskLiveQueue { Kind = "review", Position = localPosition.Value };
+            return new TaskLiveQueue { Kind = "review", Position = localPosition.Value, State = state };
 
         // Between two post-processing passes a deferred card has left the
         // local slot queue (it has no Position) but is not actually idle -
         // it is waiting out its backoff. Naming that wait keeps the card from
         // reading as an unexplained empty queue (AGT-2842).
-        return localWait is null ? null : new TaskLiveQueue { Kind = "review", Reason = DescribeWait(localWait) };
+        return localWait is null ? null : new TaskLiveQueue
+            { Kind = "review", State = state, Reason = DescribeWait(localWait) };
     }
+
+    private static bool IsIntegrationWait(AutoReviewQueueWaitState? wait) => wait?.Reason is
+        PostProcessingCardResult.AwaitingDeliveryIntegration
+        or PostProcessingCardResult.AwaitingIntegrationCompletion
+        or "delivery-resume-exhausted"
+        or "delivery-resume-backoff"
+        or AutoReviewDeliveryResumeService.Reasons.IntegrationOwnedWait;
 
     private static TaskLiveQueue Stalled(string reason, string? outcome) => new()
     {

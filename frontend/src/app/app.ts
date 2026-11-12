@@ -12,6 +12,8 @@ import {
   ViewChild,
   ViewEncapsulation,
   OnDestroy,
+  afterEveryRender,
+  DestroyRef,
 } from '@angular/core';
 import { forkJoin } from 'rxjs';
 import { FormsModule } from '@angular/forms';
@@ -795,8 +797,24 @@ export class App implements OnInit, OnDestroy {
    * Cleared automatically after one animation cycle.
    */
   readonly justCreatedJobId = signal<string | null>(null);
+  private readonly destroyRef = inject(DestroyRef);
+  private detailPrefetchScheduled = false;
 
   constructor() {
+    // The deferred detail view can download after the board has painted. Keep
+    // its first-use network work out of the board's critical rendering path.
+    afterEveryRender(() => {
+      if (this.detailPrefetchScheduled || !document.querySelector('[data-testid="task-card"]')) return;
+      this.detailPrefetchScheduled = true;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (this.destroyRef.destroyed) return;
+        const preload = () => {
+          if (!this.destroyRef.destroyed) void import('./features/task-detail/task-detail');
+        };
+        if ('requestIdleCallback' in window) window.requestIdleCallback(preload, { timeout: 1000 });
+        else setTimeout(preload, 0);
+      }));
+    });
     effect(() => {
       const allowed = this.auth.studioAllowed();
       const statusKnown = this.auth.status() !== null;
@@ -1406,6 +1424,7 @@ export class App implements OnInit, OnDestroy {
 
   private dispatchStudioTriage(info: TaskInfo, button: TriageButton): void {
     const id = button.id;
+    if (id === 'reissue-escalated' || id === 'accept-escalated') return this.jobDetailRef?.onTriageAction({ id, label: button.label, intent: button.intent });
     switch (button.intent.kind) {
       case 'move':
         this.onTriageMove(info, { targetState: button.intent.targetState, actionId: id });

@@ -29,7 +29,7 @@ import {
 } from '../../models/physical-host-group';
 import { differsFromStableLabel, stableReleaseLabel } from '../../models/host-release-drift';
 import { DeploymentCheckpointsComponent } from '../deployment-checkpoints/deployment-checkpoints';
-import { ExecutionInfrastructureComponent } from '../execution-infrastructure/execution-infrastructure';
+import { ExecutionInfrastructureComponent, oneShotRouteReports } from '../execution-infrastructure/execution-infrastructure';
 import { HttpClient } from '@angular/common/http';
 import { AuthSessionState } from '../../../../services/auth.service';
 import { EnvironmentMapComponent } from '../environment-map/environment-map';
@@ -146,6 +146,8 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     this.setExpanded(group.id, true);
   });
 
+  /** Hosts whose runner reported its one shot claim route unavailable, oldest first. */
+  readonly oneShotRouteReports = computed(() => oneShotRouteReports(this.hosts()));
   readonly retiredCount = computed(() => this.hosts().filter(host => host.status === 'retired').length);
   readonly total = computed(() => this.hostGroups().length);
   readonly gateWorkers = computed(() => this.environment()?.gateWorkers ?? []);

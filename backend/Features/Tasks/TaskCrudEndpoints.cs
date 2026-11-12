@@ -1669,6 +1669,7 @@ public static class TaskCrudEndpoints
                 cause: OperatorActor(context), reason: request.Reason,
                 operatorOverride: request.OperatorOverride,
                 archiveOverride: request.ArchiveOverride,
+                reissueInstructions: request.ReissueInstructions,
                 batchWithdrawalId: activeBatch?.BatchId);
             var moved = activeBatch is null ? await Move()
                 : await batchGuard.WithdrawAsync(activeBatch, Move);

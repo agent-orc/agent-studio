@@ -193,7 +193,7 @@ describe('primaryActionFor — Enter-bound primary per source lane', () => {
     const primary = primaryActionFor('5e-escalated');
     expect(primary?.label).toBe('Continue (reissue)');
     expect(overflowActionsFor('5e-escalated').map(action => action.label)).toEqual(
-      expect.arrayContaining(['Accept as-is', 'Abort']),
+      expect.arrayContaining(['Accept with reason', 'Abort']),
     );
   });
 
