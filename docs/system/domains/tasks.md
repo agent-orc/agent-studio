@@ -1486,6 +1486,10 @@ Second, a parked card
 never reports zero open items - `ParkedOpenItems` is applied where a summary stub
 is PRODUCED (`HumanReviewEscalation.BuildStatusStub` and the
 `TaskTransitionService` result scaffold), never by rewriting an agent's own text.
+The result scaffold treats a Human Review marker whose only reason is
+`Parked with no recorded cause.` and which has no question as ordinary review,
+so it does not invent a person or an open decision. A stated park still has an
+open item.
 The Task Detail renders the park ABOVE the derived escalation headline, because
 the park is a fact and the headline is an inference; the board distinguishes a
 card waiting on a person from one waiting on a fix.

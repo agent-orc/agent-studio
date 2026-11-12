@@ -58,7 +58,7 @@ export class UndoController {
     this.cancelActive();
 
     const { jobId, jobLabel, actionLabel, targetLaneLabel, revert } = params;
-    const message = `${actionLabel} "${jobLabel}" → ${targetLaneLabel}`;
+    const message = `${actionLabel} "${jobLabel}"${targetLaneLabel ? ` → ${targetLaneLabel}` : ''}`;
 
     // The NotificationService forces durationMs=0 whenever a toast
     // carries action buttons (so a long-lived "Reload required" / error

@@ -44,6 +44,9 @@ export function integrationDeadEnd(
     };
   }
   if (!status || status.status === 'no-branch') return null;
+  // Waiting for acceptance or requiring no integration is not a delivery dead end.
+  if ((status.status === 'pending' || status.status === 'not-applicable') && !status.failure)
+    return null;
   const failure = status.failure;
   const report = failure?.conflictReport;
   const code = failure?.code ?? (status.status === 'merged-locally' ? 'push-blocked' : 'delivery-pending');
