@@ -265,6 +265,84 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
       }
     }
   });
+  test('changed brief offers refusal, content review, difference and written acceptance in both themes and narrow view', async ({ page }) => {
+    await installBaseRoutes(page);
+    await installJobRoutes(page, { detailMerge: { mergeCommit: MERGE_SHA }, landedState: 'merged-to-develop' });
+    await page.route('**/api/usage/cockpit**', (route) => route.fulfill({ status: 503, body: '{}' }));
+    await page.route(new RegExp(`/api/tasks/${JOB_ID}/delivery-claim(\\?|$)`), route => json(route, {
+      taskKey: JOB_ID, jobId: JOB_ID, lane: '5-human-review', deliveryRef: `task/${JOB_ID}`,
+      integrationBranch: 'develop', releaseBranch: 'main', containmentStatus: 'integrated',
+      integrated: true, released: false, integratedSha: MERGE_SHA, mergeCommit: MERGE_SHA,
+      hasIntegrationRecord: true, class: 'integrated-delivery', findings: [], completionClaim: null,
+      commits: [], detail: null,
+      contentReview: {
+        mode: 'coding', currentBriefVersion: 'brief-v2', deliveryBriefVersion: 'brief-v1',
+        reviewBriefVersion: 'brief-v1', requiredAspect: 'requirement-fit', contentStatus: 'pass',
+        ranAspects: ['requirement-fit'], skippedAspects: [],
+      },
+    }));
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}/brief-difference(\\?|$)`), route => json(route, {
+      fromVersion: 'brief-v1', toVersion: 'brief-v2', before: 'Old owner direction', after: 'New owner direction',
+    }));
+    let reviewRequests = 0;
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}/content-review(\\?|$)`), route => {
+      reviewRequests++;
+      return json(route, { reviewAttemptId: 'review-v2', briefVersion: 'brief-v2' });
+    });
+    let override: Record<string, unknown> | null = null;
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}/move(\\?|$)`), route => {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      if (body.operatorOverride) {
+        override = body;
+        return json(route, { status: 'success' });
+      }
+      return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({
+        code: 'completion-content-gap',
+        error: 'Completion refused: delivered against brief v1, current v2; content verdict was for brief v1, current v2.',
+      }) });
+    });
+    await openJob(page);
+    const gap = page.getByTestId('stale-brief-acceptance');
+    await expect(gap).toContainText('Acceptance is blocked');
+    await expect(gap).toContainText('brief-v1');
+    await expect(gap).toContainText('brief-v2');
+    await page.getByTestId('brief-difference-link').click();
+    await expect(page.getByTestId('brief-difference')).toContainText('Old owner direction');
+    await expect(page.getByTestId('brief-difference')).toContainText('New owner direction');
+
+    let expectedReviews = 0;
+    for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]] as const) {
+      if (expectedReviews > 0) await openJob(page);
+      await page.setViewportSize({ width, height: 850 });
+      await setTheme(page, theme);
+      await dismissDevErrorDialog(page);
+      if (RESULTS_DIR) {
+        fs.mkdirSync(RESULTS_DIR, { recursive: true });
+        await gap.screenshot({ path: path.join(RESULTS_DIR, `brief-gap-${theme}-${width}.png`) });
+      }
+      await page.getByTestId('studio-triage-action-mark-done').click();
+      await expect(page.getByText('Acceptance needs a decision')).toBeVisible();
+      // A refused optimistic move reopens detail through the core-first API.
+      // This fixture supplies the full-detail route, so reopen the same card.
+      await openJob(page);
+      await expect(gap).toBeVisible();
+      if (RESULTS_DIR) await gap.screenshot({ path: path.join(RESULTS_DIR, `brief-refused-${theme}-${width}.png`) });
+      await page.getByTestId('review-current-brief').click();
+      expectedReviews++;
+      await expect.poll(() => reviewRequests).toBe(expectedReviews);
+      if (RESULTS_DIR) await gap.screenshot({ path: path.join(RESULTS_DIR, `brief-rereview-${theme}-${width}.png`) });
+      await page.getByTestId('accept-with-reason-open').click();
+      await page.getByTestId('accept-with-reason-input').fill('short');
+      await expect(page.getByTestId('accept-with-reason-submit')).toBeDisabled();
+      await page.getByTestId('accept-with-reason-input').fill('I compared the changed requirement and accept this delivery.');
+      if (RESULTS_DIR) await gap.screenshot({ path: path.join(RESULTS_DIR, `brief-override-${theme}-${width}.png`) });
+      override = null;
+      await page.getByTestId('accept-with-reason-submit').click();
+      await expect.poll(() => override).not.toBeNull();
+      expect(override?.['operatorOverride']).toBe(true);
+      expect(override?.['reason']).toBe('I compared the changed requirement and accept this delivery.');
+    }
+  });
   // AGT-3076: the rebuilt attempt authority store lost this integrated card's
   // run attempt. The delivery panel says why acceptance needs an override
   // before the operator tries to accept.

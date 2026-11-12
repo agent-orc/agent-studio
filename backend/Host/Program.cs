@@ -142,6 +142,8 @@ builder.Services.AddSingleton<DecisionRuleVersionStore>();
 // Persona team PT-1: built-in catalogue and per-workspace activations.
 builder.Services.AddSingleton<AgentStudio.Personas.PersonaCatalogue>(_ => new AgentStudio.Personas.PersonaCatalogue());
 builder.Services.AddSingleton<AgentStudio.Personas.PersonaActivationStore>();
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaSchedulingService>();
+builder.Services.AddSingleton<AgentStudio.Personas.PersonaSweepCoordinator>();
 builder.Services.AddSingleton<DecisionGroundsCollector>();
 builder.Services.AddSingleton<ReviewInputDecisionGateway>();
 builder.Services.AddSingleton<ActiveChoiceAdmissionAdapter>();
@@ -1444,6 +1446,7 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPen
         ? OperatorDecisionFacts.CardKey(task) : null));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorProviderLimitFactSource(
     sp.GetRequiredService<ProviderLimitRegistry>()));
+builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();
 builder.Services.AddSingleton<OperatorDecisionPublisher>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<OperatorDecisionPublisher>());

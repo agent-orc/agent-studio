@@ -135,4 +135,23 @@ public sealed class CompletionContentPolicyTests
         }
         finally { Directory.Delete(folder, recursive: true); }
     }
+
+    [Fact]
+    public void BriefEditKeepsTheBeforeAndAfterTextForOwnerComparison()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "brief-difference-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            const string before = "First brief.";
+            const string after = "Second brief with a changed requirement.";
+            var from = BriefVersionStore.Record(folder, before);
+            var to = BriefVersionStore.Record(folder, after, before);
+            var difference = BriefVersionStore.ReadDifference(folder);
+            Assert.NotNull(difference);
+            Assert.Equal((from, to, before, after),
+                (difference.FromVersion, difference.ToVersion, difference.Before, difference.After));
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
 }

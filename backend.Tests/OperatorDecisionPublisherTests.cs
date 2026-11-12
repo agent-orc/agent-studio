@@ -57,7 +57,10 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
 
         var factTime = _clock.GetUtcNow().UtcDateTime;
         var expected = new Dictionary<string, DateTime>(StringComparer.Ordinal);
-        foreach (var type in OperatorDecisionTypes.All) expected[type] = factTime;
+        // Deploy completion has its own quota-backed source; this fixture
+        // registers only the task, watcher, batch, push and provider sources.
+        foreach (var type in OperatorDecisionTypes.All.Where(type => type != OperatorDecisionTypes.DeployCompleted))
+            expected[type] = factTime;
         expected[OperatorDecisionTypes.PushPendingOverdue] = factTime.AddSeconds(2);
         _tasks =
         [
@@ -88,10 +91,10 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
         Assert.Equal(WatcherLeaseOutcome.Granted, leases.Acquire("service-account:watcher", new WatcherLeaseRequest("laptop")).Outcome);
 
         _clock.Advance(TimeSpan.FromSeconds(5));
-        await WaitUntil(() => Types(log).IsSupersetOf(OperatorDecisionTypes.All));
+        await WaitUntil(() => Types(log).IsSupersetOf(expected.Keys));
 
         var events = log.Read(0, 1000, _ => true).Events;
-        foreach (var type in OperatorDecisionTypes.All)
+        foreach (var type in expected.Keys)
         {
             var published = events.Where(item => item.Type == type).ToArray();
             Assert.NotEmpty(published);

@@ -57,6 +57,20 @@ public static class OperatorOperationIds
     public const string GrantChange = "grant.change";
     public const string CatalogueChange = "catalogue.change";
     public const string DeployBlockerOverride = "deploy.blocker-override";
+    public const string PersonaItemPublish = "persona.item.publish";
+    public const string PersonaReportPublish = "persona.report.publish";
+    public const string PersonaProposalDraft = "persona.proposal.draft";
+    public const string PersonaDecisionRequest = "persona.decision.request";
+    public const string PersonaProposalAccept = "persona.proposal.accept";
+    public const string PersonaImportanceAdjust = "persona.importance.adjust";
+    public const string PersonaBudgetRebalance = "persona.budget.rebalance";
+    public const string PersonaPause = "persona.pause";
+
+    public static readonly IReadOnlyList<string> PersonaPublish =
+        [PersonaItemPublish, PersonaReportPublish, PersonaProposalDraft, PersonaDecisionRequest];
+    public static readonly IReadOnlyList<string> PersonaManager =
+        [PersonaProposalAccept, PersonaImportanceAdjust, PersonaBudgetRebalance, PersonaPause];
+    public static readonly IReadOnlyList<string> PersonaAll = [.. PersonaPublish, .. PersonaManager];
 }
 
 /// <summary>One catalogued operation: exactly one tier and the kind of scope it acts on.</summary>
@@ -75,10 +89,12 @@ public enum OperatorRouteRefinement
     GateEvidence,
     /// <summary>The target environment decides between a stage deploy and a production promotion, then gate evidence.</summary>
     ReleaseDeployment,
+    PersonaOperation,
 }
 
 /// <summary>The request facts a refinement reads; the classifier collects them.</summary>
-public sealed record OperatorRequestFacts(string? TargetLane = null, string? EnvironmentKind = null, bool FullGateEvidence = false);
+public sealed record OperatorRequestFacts(string? TargetLane = null, string? EnvironmentKind = null,
+    bool FullGateEvidence = false, string? PersonaOperationId = null);
 
 /// <summary>
 /// The operator agent's operation catalogue (security model SM-4, decisions
@@ -141,6 +157,14 @@ public static class OperatorOperationCatalog
             "Change the operation catalogue"),
         new(OperatorOperationIds.DeployBlockerOverride, OperatorTier.T2, OperatorScopeKinds.Workspace,
             "Override a deploy or restart preflight blocker"),
+        new(OperatorOperationIds.PersonaItemPublish, OperatorTier.T1, OperatorScopeKinds.Workspace, "Publish a persona item"),
+        new(OperatorOperationIds.PersonaReportPublish, OperatorTier.T1, OperatorScopeKinds.Workspace, "Publish a persona report"),
+        new(OperatorOperationIds.PersonaProposalDraft, OperatorTier.T1, OperatorScopeKinds.Workspace, "Draft a persona proposal"),
+        new(OperatorOperationIds.PersonaDecisionRequest, OperatorTier.T1, OperatorScopeKinds.Workspace, "Request an Owner decision"),
+        new(OperatorOperationIds.PersonaProposalAccept, OperatorTier.T1, OperatorScopeKinds.Workspace, "Accept a proposal"),
+        new(OperatorOperationIds.PersonaImportanceAdjust, OperatorTier.T1, OperatorScopeKinds.Workspace, "Adjust importance"),
+        new(OperatorOperationIds.PersonaBudgetRebalance, OperatorTier.T1, OperatorScopeKinds.Workspace, "Rebalance persona budget"),
+        new(OperatorOperationIds.PersonaPause, OperatorTier.T1, OperatorScopeKinds.Workspace, "Pause a persona"),
     ];
 
     /// <summary>Typed host operations of the Operations Server, by their definition id.</summary>
@@ -191,6 +215,8 @@ public static class OperatorOperationCatalog
             OperatorRouteRefinement.GateEvidence),
         new("POST", "/api/projects/{}/deploy/releases/{}/deployments", OperatorOperationIds.StageDeploy,
             OperatorRouteRefinement.ReleaseDeployment),
+        new("POST", "/api/workspaces/{}/personas/{}/operations/{}", OperatorOperationIds.PersonaItemPublish,
+            OperatorRouteRefinement.PersonaOperation),
 
         // --- T2 high risk ----------------------------------------------------
         new("W", "/api/secrets/**", OperatorOperationIds.SecretsChange),
@@ -279,6 +305,8 @@ public static class OperatorOperationCatalog
                 IamEnvironments.Production => OperatorOperationIds.ProductionPromote,
                 _ => null,
             },
+            OperatorRouteRefinement.PersonaOperation => OperatorOperationIds.PersonaAll.Contains(facts.PersonaOperationId ?? "")
+                ? facts.PersonaOperationId : null,
             _ => rule.OperationId,
         };
         return Find(id);
@@ -291,6 +319,7 @@ public static class OperatorOperationCatalog
         OperatorRouteRefinement.GateEvidence => [rule.OperationId, OperatorOperationIds.GateBypass],
         OperatorRouteRefinement.ReleaseDeployment =>
             [OperatorOperationIds.StageDeploy, OperatorOperationIds.ProductionPromote, OperatorOperationIds.GateBypass],
+        OperatorRouteRefinement.PersonaOperation => OperatorOperationIds.PersonaAll,
         _ => [rule.OperationId],
     };
 

@@ -164,12 +164,13 @@ public sealed partial class AccessSecurityStore
         {
             var state = StateLocked();
             var now = Now;
-            var agent = state.ServiceAccounts.FirstOrDefault(candidate => IsOperatorAgent(candidate)
+            var agent = state.ServiceAccounts.FirstOrDefault(candidate => IsOperatorPrincipal(candidate)
                 && candidate.Sessions?.Any(session => session.Id == sessionId) == true);
             var session = agent?.Sessions!.First(candidate => candidate.Id == sessionId);
             if (agent is null || session is null || agent.DisabledAt is not null || session.RevokedAt is not null
                 || session.ExpiresAt <= now || !PasswordSecretHasher.VerifySecret(bearer!, session.SecretHash))
                 return null;
+            if (agent.Origin == ServiceAccountOrigins.Persona && session.OccurrenceId is null) return null;
             if (!ActiveOwnerIds(state.Users, state.RoleBindings, state.Groups).Contains(session.CreatedBy)) return null;
             if (session.LastUsedAt is null || now - session.LastUsedAt >= TimeSpan.FromMinutes(1))
             {
@@ -181,7 +182,8 @@ public sealed partial class AccessSecurityStore
                 SaveLocked(state);
             }
             return new ServiceAccountPrincipal(agent.Id, agent.Name, session.Id, agent.Origin, agent.CreatedBy,
-                new AgentStudio.Shared.OperatorActor(agent.Id, session.Id, session.CreatedBy));
+                new AgentStudio.Shared.OperatorActor(agent.Id, session.Id, session.CreatedBy, agent.PersonaId),
+                session.OccurrenceId, agent.PersonaWorkspaceId, agent.PersonaId);
         }
     }
 
@@ -210,6 +212,8 @@ public sealed partial class AccessSecurityStore
     }
 
     private static bool IsOperatorAgent(ServiceAccount account) => account.Origin == ServiceAccountOrigins.OperatorAgent;
+    private static bool IsOperatorPrincipal(ServiceAccount account)
+        => IsOperatorAgent(account) || account.Origin == ServiceAccountOrigins.Persona;
 
     private static ServiceAccount DisabledLocked(ServiceAccount account, DateTime now, string? actingUserId) => account with
     {

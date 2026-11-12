@@ -966,6 +966,18 @@ export class TaskService {
     ).pipe(this.afterMutation(jobId, watchPath, targetState));
   }
 
+  reviewContentAgainstCurrentBrief(jobId: string, watchPath?: string) {
+    return this.http.post<{ reviewAttemptId: string; briefVersion: string }>(
+      `${this.taskV1Url(jobId)}/content-review`, {}, this.withWatchPath(watchPath),
+    );
+  }
+
+  getBriefDifference(jobId: string, watchPath?: string) {
+    return this.http.get<{ fromVersion: string; toVersion: string; before: string; after: string }>(
+      `${this.taskV1Url(jobId)}/brief-difference`, this.withWatchPath(watchPath),
+    );
+  }
+
   decideOlderBriefDelivery(jobId: string, decision: 'accept' | 'starting-point' | 'discard', watchPath?: string) {
     return this.http.post(
       `${this.taskV1Url(jobId)}/older-brief-delivery/decision`,

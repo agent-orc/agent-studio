@@ -296,6 +296,7 @@ public static class RegistryEndpoints
                 return Results.Conflict(new { error = storage.Error });
 
             ProvisionedRepository? provisioned = null;
+            var clonedCheckout = false;
             if (body.CreateRepository is { } newRepository)
             {
                 try
@@ -318,6 +319,31 @@ public static class RegistryEndpoints
                     loggerFactory.CreateLogger("ProjectCreate").LogError(ex,
                         "Repository provisioning failed for {Owner}/{Name}", newRepository.Owner, newRepository.Name);
                     return Results.Problem("Repository setup failed. Check the Studio host and retry.", statusCode: 500);
+                }
+            }
+            else if (SecurityProfiles.IsNetworked(configuration) && repositoryUrl is not null
+                && repositoryPath is null)
+            {
+                if (rootPath is not null)
+                {
+                    workspaceManagement.DeleteProjectStorage(storage.Entry!.Path);
+                    return Results.BadRequest(new { error =
+                        "Leave working directory empty when Studio clones the repository URL. Set a repository subdirectory after registration." });
+                }
+                try
+                {
+                    repositoryPath = await NetworkedRepositoryCheckout.CloneAsync(
+                        repositoryUrl, storage.Entry!.Path, id, cancellationToken);
+                    rootPath ??= repositoryPath;
+                    clonedCheckout = true;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    workspaceManagement.DeleteProjectStorage(storage.Entry!.Path);
+                    loggerFactory.CreateLogger("ProjectCreate").LogWarning(ex,
+                        "Server checkout could not be created for {ProjectId}", id);
+                    return Results.BadRequest(new { code = "server-checkout-required",
+                        error = "The Studio server could not clone this repository. Give the server Git access to the URL, or supply an existing server checkout path, then register the project again." });
                 }
             }
 
@@ -368,6 +394,7 @@ public static class RegistryEndpoints
             catch (InvalidOperationException ex)
             {
                 CleanupFailedCreate(record, appended, projects, workspaceManagement, loggerFactory);
+                if (clonedCheckout) NetworkedRepositoryCheckout.RemoveIfOwned(record);
                 if (provisioned is not null)
                     await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory);
                 return Results.Conflict(new { error = ex.Message });
@@ -375,6 +402,7 @@ public static class RegistryEndpoints
             catch (ArgumentException ex)
             {
                 CleanupFailedCreate(record, appended, projects, workspaceManagement, loggerFactory);
+                if (clonedCheckout) NetworkedRepositoryCheckout.RemoveIfOwned(record);
                 if (provisioned is not null)
                     await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory);
                 return Results.BadRequest(new { error = ex.Message });
@@ -382,6 +410,7 @@ public static class RegistryEndpoints
             catch (UnauthorizedAccessException)
             {
                 CleanupFailedCreate(record, appended, projects, workspaceManagement, loggerFactory);
+                if (clonedCheckout) NetworkedRepositoryCheckout.RemoveIfOwned(record);
                 return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden);
             }
             catch (ProjectPersistenceException ex)
@@ -396,6 +425,7 @@ public static class RegistryEndpoints
                     projects,
                     workspaceManagement,
                     loggerFactory);
+                if (clonedCheckout) NetworkedRepositoryCheckout.RemoveIfOwned(record);
                 if (provisioned is not null)
                     await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory);
                 return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
@@ -624,6 +654,10 @@ public static class RegistryEndpoints
 
             try { projects.Delete(projId); }
             catch (KeyNotFoundException __ex) { SilentCatch.Note(__ex, "RegistryEndpoints: already removed; idempotent success"); /* already removed; idempotent success */ }
+
+            try { NetworkedRepositoryCheckout.RemoveIfOwned(record); }
+            catch (IOException ex) { log.LogWarning(ex, "Managed checkout cleanup failed for {ProjectId}", projId); }
+            catch (UnauthorizedAccessException ex) { log.LogWarning(ex, "Managed checkout cleanup failed for {ProjectId}", projId); }
 
             log.LogInformation(
                 "project-deleted id={Id} displayName={DisplayName} storage={Storage}",

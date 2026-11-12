@@ -45,6 +45,9 @@
       <p>Phase: {{ batch.phase }} · Latest run: {{ batch.runs[batch.runs.length - 1]?.outcome ?? (batch.phase === 'running' ? 'running' : 'interrupted') }}</p>
       @if (publishedSha(batch.publication); as sha) { <p>Published candidate: <code>{{ sha }}</code></p> }
     }
+    @if (isolation(); as isolation) {
+      <p data-testid="task-batch-isolation-state">{{ isolation.state }}@if (isolation.wait) { · Waiting for: {{ isolation.wait }} }</p>
+    }
   </section>
 }
 @if (panelOpen()) {

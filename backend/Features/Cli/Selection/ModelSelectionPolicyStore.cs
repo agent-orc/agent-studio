@@ -88,6 +88,8 @@ public sealed record ModelSelectionPolicy
             ["one-shot"] = new(new ConsumerPolicyRoute("claude", "claude-haiku-4-5"), Fallbacks: ConsumerFallbacks.Catalogue),
             ["merge-resolver"] = new(new ConsumerPolicyRoute("claude", "claude-opus-5", "high"), Fallbacks: ConsumerFallbacks.Catalogue),
             ["card-creation"] = new(Route: "qualification", Fallbacks: ConsumerFallbacks.Catalogue),
+            ["persona"] = new(new ConsumerPolicyRoute("claude", "claude-sonnet-4-5", "high"),
+                Fallbacks: ConsumerFallbacks.Catalogue, SameClassOnly: true),
         };
     }
 }
