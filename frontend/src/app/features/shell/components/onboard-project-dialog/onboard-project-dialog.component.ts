@@ -16,7 +16,7 @@ import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
 import { CliCatalogStore } from '../../../cli';
 import { WorkspaceManagerService } from '../../state/workspace-manager.service';
-import { RemoteHostsService, hostExecutorRole, type RemoteHost } from '../../../remote-hosts';
+import { RemoteHostsService, codingLocationUnavailableReason, type RemoteHost } from '../../../remote-hosts';
 
 @Component({
   selector: 'app-onboard-project-dialog',
@@ -50,7 +50,7 @@ export class OnboardProjectDialogComponent {
     host => this.codingRunner(host) && host.status !== 'retired' && !this.runnerUnavailable(host)));
 
   codingRunner(host: RemoteHost): boolean {
-    return host.id !== 'local' && hostExecutorRole(host) === 'coding';
+    return host.role === 'remote' && host.serviceRole === 'coding';
   }
   readonly codingNeedsRunner = computed(() => !this.localCodingAdmitted()
     && (this.repositoryMode() === 'create' || !!this.repositoryPath().trim() || !!this.rootPath().trim()));
@@ -87,8 +87,9 @@ export class OnboardProjectDialogComponent {
   readonly canSubmit = computed(() =>
     !this.submitting()
     && this.executionCapabilityLoaded()
-    && !!this.executionRunner()
-    && !(this.codingNeedsRunner() && this.executionRunner() === 'local')
+    && (this.executionRunner() === 'local'
+      ? this.localCodingAdmitted()
+      : this.availableRunners().some(host => host.id === this.executionRunner()))
     && (this.repositoryMode() === 'existing'
       || (/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(this.repositoryOwner().trim())
         && /^[A-Za-z0-9_.-]{1,100}$/.test(this.repositoryName().trim())))
@@ -102,6 +103,9 @@ export class OnboardProjectDialogComponent {
     effect(() => {
       if (!this.manager.onboardProjectOpen()) return;
       const workspaceId = this.manager.onboardWorkspaceId() ?? '';
+      // Opening reads and writes other signals (the host registry reloads its
+      // own host list). Tracking them re-ran this effect on every host load and
+      // never rendered the dialog.
       untracked(() => this.initialize(workspaceId));
     });
     effect(() => {
@@ -148,12 +152,17 @@ export class OnboardProjectDialogComponent {
     if (!this.submitting()) this.manager.closeProjectOnboard();
   }
 
-  runnerUnavailable(host: { status: string }): boolean {
-    return host.status === 'offline' || host.status === 'draining';
+  runnerUnavailable(host: RemoteHost): boolean {
+    return !!this.runnerUnavailableReason(host);
   }
 
-  runnerLabel(host: { name: string; status: string }): string {
-    return this.runnerUnavailable(host) ? `${host.name} (${host.status})` : host.name;
+  runnerUnavailableReason(host: RemoteHost): string {
+    return codingLocationUnavailableReason(host, this.localCodingAdmitted());
+  }
+
+  runnerLabel(host: RemoteHost): string {
+    const reason = this.runnerUnavailableReason(host);
+    return reason ? `${host.name} (${reason})` : host.name;
   }
 
   setRepositoryMode(mode: 'existing' | 'create'): void {

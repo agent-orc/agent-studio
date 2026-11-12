@@ -24,7 +24,7 @@ instead of creating a new article.
 | `summary` | One short paragraph, at most 600 characters, no blank line. |
 | `body` | Markdown text, at most 256 KiB in UTF-8 (`magazine-body-too-large`, 413). |
 | `kind` | `digest`, `decision-brief`, `report` or `note`. |
-| `author`, `authors` | The principal of a revision, set by Studio from the authenticated caller, and an optional `persona`. `authors` lists every distinct author. |
+| `author`, `authors` | The principal of a revision, set by Studio from the authenticated caller, an optional persona name, persona id and role id. `authors` lists every distinct author. Old articles without ids remain readable. The orchestrator may publish with a persona name and no role id until persona records exist. |
 | `sources` | Up to 100 `{ kind, ref }` entries with kind `card`, `dossier` or `batch`. |
 | `createdAt`, `updatedAt`, `revision` | `updatedAt` and `revision` change with every content update. |
 | `pinned`, `archivedAt` | Flags. Changing them appends no revision and leaves `updatedAt` alone. |
@@ -67,7 +67,7 @@ The store is not proxied to a standalone Task Server.
 | `GET /api/magazine?scope=<scope>[&includeArchived=true]` | `magazine.read` | `{ scope, articles }`, without bodies, pinned first, then newest `updatedAt`. Archived articles only with `includeArchived`. |
 | `GET /api/magazine/{scope}/{slug}[?revision=n]` | `magazine.read` | The article with `body`, `bodyFormat: "markdown"`, `revision` (the one shown) and `currentRevision`. `ETag` is the current revision. |
 | `GET /api/magazine/{scope}/{slug}/history` | `magazine.read` | `{ scope, slug, currentRevision, revisions }`, newest first, without bodies. |
-| `PUT /api/magazine/{scope}/{slug}` | `magazine.write` | Upsert. The body is `{ title, summary, body, kind, persona?, sources? }`. 201 on create, 200 on update. |
+| `PUT /api/magazine/{scope}/{slug}` | `magazine.write` | Upsert. The body is `{ title, summary, body, kind, persona?, personaId?, roleId?, sources? }`. 201 on create, 200 on update. |
 | `POST /api/magazine/{scope}/{slug}/pin` | `magazine.write` | `{ pinned }`, default `true`. |
 | `POST /api/magazine/{scope}/{slug}/archive` | `magazine.write` | `{ archived }`, default `true`. `false` restores the article. |
 
@@ -92,6 +92,18 @@ Errors are `{ error, message }` with stable codes: `magazine-scope-invalid`,
 The body is text in a JSON string. Studio never renders it as HTML or
 executes it. The MAG-2 views must render the Markdown through the
 frontend's sanitizing renderer.
+
+## Views (MAG-2)
+
+The header Magazine action opens the installation scope. Workspace rows in
+the Explorer open their scope, and the project hub Magazine rail opens the
+project scope. Installation and workspace views list the visible scopes below
+them. Lists put pinned articles first, then order by update time. A browser
+remembers the latest revision opened for each article and marks a later
+revision as updated. An article shows its sources and read-only revision
+history. Its Markdown is rendered without raw HTML, and references are
+resolved against the viewer's available cards, Dossiers and projects when
+shown. Unresolved references remain text.
 
 ## Access
 

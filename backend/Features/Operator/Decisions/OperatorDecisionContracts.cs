@@ -11,9 +11,11 @@ public static class OperatorDecisionTypes
     public const string HumanReviewReady = "human-review.ready";
     public const string DecisionCardOpened = "decision-card.opened";
     public const string BackendStalled = "backend.stalled";
+    public const string BatchGateStuck = "batch-gate.stuck";
     public const string ProgressIdleWithReady = "progress.idle-with-ready";
     public const string BatchRed = "batch.red";
     public const string BatchIsolating = "batch.isolating";
+    public const string BatchRecordUnreadable = "batch.record-unreadable";
     public const string PushPendingOverdue = "push.pending-overdue";
     public const string PushBlocked = "push.blocked";
     public const string QuotaExhausted = "quota.exhausted";
@@ -22,8 +24,8 @@ public static class OperatorDecisionTypes
 
     public static readonly IReadOnlyList<string> All =
     [
-        EscalationOpened, HumanReviewReady, DecisionCardOpened, BackendStalled, ProgressIdleWithReady,
-        BatchRed, BatchIsolating, PushPendingOverdue, PushBlocked, QuotaExhausted, QuotaFallbackActive,
+        EscalationOpened, HumanReviewReady, DecisionCardOpened, BackendStalled, BatchGateStuck, ProgressIdleWithReady,
+        BatchRed, BatchIsolating, BatchRecordUnreadable, PushPendingOverdue, PushBlocked, QuotaExhausted, QuotaFallbackActive,
         WatcherHeartbeat,
     ];
 
@@ -62,10 +64,13 @@ public static class OperatorOperations
         // Decision cards stay with the owner (OA-D5).
         OperatorDecisionTypes.DecisionCardOpened => [CardInspect, OwnerDecide],
         OperatorDecisionTypes.BackendStalled => [StallsInspect, CapacityRead],
+        OperatorDecisionTypes.BatchGateStuck => [BatchTriage],
         OperatorDecisionTypes.ProgressIdleWithReady => [StallsInspect, CapacityRead],
         OperatorDecisionTypes.BatchRed => [BatchTriage, BatchEject],
         // Eject is the only member action while a batch isolates (Guardrails).
         OperatorDecisionTypes.BatchIsolating => [BatchTriage, BatchEject],
+        // The repair is a file restore by the operator; triage shows the quarantine.
+        OperatorDecisionTypes.BatchRecordUnreadable => [BatchTriage],
         OperatorDecisionTypes.PushPendingOverdue => [PushInspect, BatchTriage],
         // The card's Retry integration replays the publication (AGT-3695).
         OperatorDecisionTypes.PushBlocked => [CardInspect, PushInspect],

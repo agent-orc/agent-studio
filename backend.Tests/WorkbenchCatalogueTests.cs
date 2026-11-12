@@ -253,6 +253,46 @@ public sealed class WorkbenchCatalogueTests : IDisposable
         Assert.True(item.Valid, item.Error);
         Assert.Equal("decision-pending", item.Status);
         Assert.Null(item.Decision);
+        Assert.Equal("a", Assert.Single(item.RecordedResponses).SelectedOptionIds.Single());
+
+        descriptor["status"] = "decided";
+        File.WriteAllText(path, descriptor.ToJsonString());
+        item = Assert.Single(Service().List("Project")!.Items);
+        Assert.Equal("decided", item.Status);
+        Assert.Equal(0, item.OpenDecisionCount);
+        Assert.Equal("a", Assert.Single(item.RecordedResponses).SelectedOptionIds.Single());
+    }
+
+    [Fact]
+    public void List_SchemaTwoAcceptedConceptKeepsRecordedChoicesAndClosesDecisionCount()
+    {
+        WriteSchemaTwoWorkbench("accepted-concept");
+        var path = Path.Combine(_root, "docs", "workbenches", "accepted-concept", "workbench.json");
+        var descriptor = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        descriptor["lifecycleState"] = "decided";
+        descriptor["editedAt"] = "2026-09-25T12:57:00Z";
+        descriptor["editedBy"] = "AGT-3649";
+        descriptor["lifecycleHistory"]!.AsArray().Add(JsonNode.Parse("""
+          {"state":"decided","editedBy":"AGT-3649","editedAt":"2026-09-25T12:57:00Z"}
+          """));
+        descriptor["decision"] = JsonNode.Parse("""
+          {
+            "outcome":"record-only", "action":"recorded", "state":"succeeded",
+            "operationId":"operator-20260925-accepted",
+            "sourceFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "preparedAt":"2026-09-25T12:56:00Z", "preparedBy":"Operator",
+            "confirmedAt":"2026-09-25T12:56:00Z", "confirmedBy":"Operator",
+            "decidedAt":"2026-09-25T12:56:00Z",
+            "responses":[{"decisionId":"choice","kind":"single","selectedOptionIds":["b"],"comment":"Selected by operator."}]
+          }
+          """);
+        File.WriteAllText(path, descriptor.ToJsonString());
+
+        var item = Assert.Single(Service().List("Project")!.Items);
+        Assert.True(item.Valid, item.Error);
+        Assert.Equal("decided", item.Status);
+        Assert.Equal(0, item.OpenDecisionCount);
+        Assert.Equal("b", Assert.Single(item.RecordedResponses).SelectedOptionIds.Single());
     }
 
     [Fact]
@@ -317,6 +357,23 @@ public sealed class WorkbenchCatalogueTests : IDisposable
         var item = Assert.Single(Service().List("Project")!.Items);
 
         Assert.Equal(2, item.OpenDecisionCount);
+    }
+
+    [Fact]
+    public void List_CountsDecisionReadyPointsBeforeTheLegacyStatusChanges()
+    {
+        WriteWorkbench("ready-phase", "Ready phase", "active", "2026-07-12T10:00:00Z");
+        var directory = Path.Combine(_root, "docs", "workbenches", "ready-phase");
+        var descriptorPath = Path.Combine(directory, "workbench.json");
+        var descriptor = JsonNode.Parse(File.ReadAllText(descriptorPath))!.AsObject();
+        descriptor["phase"] = "decision-ready";
+        File.WriteAllText(descriptorPath, descriptor.ToJsonString());
+        File.WriteAllText(Path.Combine(directory, "index.html"), """
+          <section data-decision-id="a" data-decision-kind="single"><span data-option-id="x">X</span></section>
+          <section data-decision-id="b" data-decision-kind="confirm"><span data-option-id="y">Y</span></section>
+          """);
+
+        Assert.Equal(2, Assert.Single(Service().List("Project")!.Items).OpenDecisionCount);
     }
 
     [Fact]

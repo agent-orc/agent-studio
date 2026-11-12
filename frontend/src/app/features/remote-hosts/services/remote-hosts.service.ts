@@ -72,13 +72,13 @@ export interface RunnerInfrastructureFailure {
 /**
  * Registry + action service for the Remote-Hosts page (AGT-1921).
  *
- * Host topology comes from the static configuration seed while liveness comes
- * from the real client registry. Reload hydrates each configured client id from
- * `GET /api/clients`, so runner polling updates LastSeen and status without a
- * second host-registry backend contract.
+ * The local profile seeds only its own machine. Remote hosts are discovered
+ * from the client and capability registries; liveness comes from the real
+ * client registry. Reload hydrates seen client ids from `GET /api/clients`,
+ * so runner polling updates LastSeen and status.
  *
- * Lifecycle actions call the persisted client API. No seeded value is treated
- * as live telemetry.
+ * Lifecycle actions call the persisted client API. The local seed is not
+ * treated as live telemetry.
  */
 @Injectable({ providedIn: 'root' })
 export class RemoteHostsService {
@@ -124,7 +124,7 @@ export class RemoteHostsService {
   private seed(): RemoteHost[] {
     return seedRemoteHosts(Date.now(), this.auth?.status()?.profile ?? 'local');
   }
-  private capabilityRunnerIds = new Set<string>();
+  private capabilityRunnerIds = new Set<string>(['api-host']);
 
   /** Every mount revalidates live state; cached cards are never authoritative. */
   ensureLoaded(): void {
@@ -183,6 +183,7 @@ export class RemoteHostsService {
         this.hosts.update(hosts => {
           const projected = (this.auth?.status()?.profile === 'networked'
             ? hosts.filter(host => this.capabilityRunnerIds.has(host.clientId)) : hosts).map(host => {
+          if (host.clientId === 'api-host') return host;
           const client = byId.get(host.clientId);
           if (!client) return {
             ...host,
@@ -276,7 +277,7 @@ export class RemoteHostsService {
     this.http.get<TaskServerRunnerCapabilitySnapshot[]>('/api/v1/management/remote-hosts').subscribe({
       next: snapshots => {
         this.providerAuth?.ingest(snapshots ?? []);
-        this.capabilityRunnerIds = new Set((snapshots ?? []).map(snapshot => snapshot.runnerId));
+        this.capabilityRunnerIds = new Set([...(snapshots ?? []).map(snapshot => snapshot.runnerId), 'api-host']);
         const now = Date.now();
         this.hosts.update(hosts => {
           const projected = this.auth?.status()?.profile === 'networked'
@@ -368,6 +369,7 @@ export class RemoteHostsService {
                 : current.reviewPlane ?? null,
               restartedAt: snapshot.restartedAt ?? null,
               reviewsLost: snapshot.reviewsLost ?? 0,
+              reviewRestarts: snapshot.reviewRestarts ?? [],
               installedClis: snapshot.installedClis ?? current.installedClis ?? [],
               cliUpdate: snapshot.cliUpdate ?? current.cliUpdate ?? null,
               runtimeCapacityAppliedAt:
@@ -386,6 +388,7 @@ export class RemoteHostsService {
                 : current.taskServerConnection ?? null,
               activeTaskCount: snapshot.telemetry?.activeSlots ?? current.activeTaskCount,
               claimLoadGate: telemetryFresh ? snapshot.telemetry?.claimLoadGate ?? null : null,
+              oneShotClaimRoute: telemetryFresh ? snapshot.telemetry?.oneShotClaimRoute ?? null : null,
               stats,
             };
             if (index >= 0) projected[index] = next;

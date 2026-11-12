@@ -169,7 +169,16 @@ public sealed partial class BatchGatePilotService
         var action = MonolithTransitionAdapter.GateQueueOverrun(gate.ViolatedBudget?.Name,
             gate.ViolatedBudget?.Phase, live?.State, current, TimeSpan.FromMilliseconds(priorWaitMs + waitedMs), cap);
         if (action == GateQueueOverrunAction.Settle)
+        {
+            // AGT-3746: a run that never reached the gate host judged nothing.
+            if (GateHostUnavailable(gate) && live is not null)
+            {
+                await HoldFallbackForGateHostAsync(live, pending, gate, ct).ConfigureAwait(false);
+                return true;
+            }
+            RecordGateHostReachable(live?.WatchPath ?? pending.WatchPath);
             return false;
+        }
         if (action == GateQueueOverrunAction.Supersede)
         {
             _logger.LogWarning(
@@ -402,6 +411,65 @@ public sealed partial class BatchGatePilotService
         _logger.LogInformation("batch-gate-queue-release project={Project} actor={Actor} released={Released} refused={Refused}",
             project, actor, released.Count, refused.Count);
         return new GateQueueStallRelease(released, refused);
+    }
+
+    /// <summary>Resume the same reviewed delivery after a gate infrastructure park.</summary>
+    public async Task<bool> RetryInfrastructureGateAsync(string project, string taskKey, string actor,
+        CancellationToken ct)
+    {
+        await _tick.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (!BatchEnabled(project)) return false;
+            var task = _scanner.ScanAllJobs().FirstOrDefault(item =>
+                item.State == TaskStates.Escalated
+                && string.Equals(item.ProjectName, project, StringComparison.OrdinalIgnoreCase)
+                && (item.Key == taskKey || item.Id == taskKey));
+            if (task?.ParkedBlocker?.BlockerType != HumanReviewEscalationCategories.GateInfrastructure
+                || task.PendingIntent is not null
+                || _mutations.ReadStashedPendingIntent(task.FolderPath) is not null)
+                return false;
+            var projection = _authority.GetTaskProjection(AuthorityKey(task));
+            if (projection.CurrentReviewAttempt is not { } review
+                || projection.CurrentRunAttempt is not { } source
+                || review.SourceRunAttemptId != source.AttemptId
+                || review.Outcome is not (ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect)
+                || Detail(LastEscalation(task), "from") != TaskStates.AutoReview)
+                return false;
+            var reviewedAt = ReviewedAt(review);
+            var moved = await _transitions.MoveAsync(task.Id, TaskStates.AutoReview, task.WatchPath, ct,
+                cause: "batch-gate-infrastructure-retry",
+                reason: $"{actor} retried the verification gate after the gate infrastructure was restored.",
+                suppressProductExecution: true, expectedSourceState: TaskStates.Escalated,
+                transitionCause: LaneChangeCauses.EscalationRequeue,
+                transitionDetail: "batch-gate-infrastructure-retry").ConfigureAwait(false);
+            if (moved.Status != MoveJobStatus.Success) return false;
+            _scanner.InvalidateCache();
+            var live = _scanner.FindJob(task.Id, task.WatchPath) ?? task;
+            try
+            {
+                // An interrupted flight spent its start budget. A deliberate
+                // operator retry grants this reviewed generation a fresh budget.
+                var ownership = BatchGateOwnershipStore.Read(live.FolderPath);
+                if (ownership?.ReviewAttemptId == review.AttemptId)
+                    BatchGateOwnershipStore.Write(live.FolderPath,
+                        ownership with { FallbackGateActive = false, FallbackGateStarts = 0 });
+                _store.ReopenPending(review.AttemptId);
+                await EnqueueAsync(live, review, source, reviewedAt, ct).ConfigureAwait(false);
+                _store.ClearQueueWait(review.AttemptId);
+                return true;
+            }
+            catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or IOException)
+            {
+                _logger.LogError(ex, "batch-gate-infrastructure-retry-failed task={TaskKey}", taskKey);
+                await _reviewJournal.EscalateAsync(live.Id, live.WatchPath, live.ProjectName,
+                    HumanReviewEscalationCategories.GateInfrastructure,
+                    "The gate retry could not join the verification queue. Check the gate worker and retry again. "
+                    + ex.Message, ct).ConfigureAwait(false);
+                return false;
+            }
+        }
+        finally { _tick.Release(); }
     }
 
     /// <summary>

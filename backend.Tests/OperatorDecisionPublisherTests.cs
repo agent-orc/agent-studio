@@ -11,7 +11,7 @@ using Xunit;
 namespace AgentStudio.Tests;
 
 /// <summary>
-/// OP-2 acceptance on the real stores: each of the eleven event types is
+/// OP-2 acceptance on the real stores: each event type is
 /// published by the running publisher loop within 10 seconds of the fact it
 /// reports, once, on a controlled clock.
 /// </summary>
@@ -85,10 +85,15 @@ public sealed class OperatorDecisionPublisherTests : IDisposable
         ];
         cases.Save(_root, Case("host-offline", factTime));
         cases.Save(_root, Case("idle-capacity", factTime));
+        cases.Save(_root, Case("batch-gate-stuck", factTime));
         var parent = Close(batches, null, "A-9", "A-10");
-        batches.AppendState(new BatchGateState(parent.BatchId, parent.MembershipDigest, BatchPhase.Red, null, 1,
+        BatchGateStates.Reach(batches, new BatchGateState(parent.BatchId, parent.MembershipDigest, BatchPhase.Red, null, 1,
             _clock.GetUtcNow(), "deterministic suite red"));
         Close(batches, parent.BatchId, "A-9");
+        // AGT-3681: a manifest a different binary wrote, cut off mid-record.
+        Directory.CreateDirectory(batches.BatchDirectory("stale"));
+        File.WriteAllText(Path.Combine(batches.BatchDirectory("stale"), "manifest.json"),
+            "{\"batchId\":\"stale\",\"scope\":{\"project\":\"alpha\",\"repo");
         limits.Record(new ProviderLimitStatus("claude", factTime, factTime.AddHours(1), "rate limited", true));
         Assert.Equal(WatcherLeaseOutcome.Granted, leases.Acquire("service-account:watcher", new WatcherLeaseRequest("laptop")).Outcome);
 

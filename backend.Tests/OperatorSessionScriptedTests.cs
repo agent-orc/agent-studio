@@ -7,8 +7,10 @@ using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -25,6 +27,7 @@ public sealed class OperatorSessionScriptedTests : IDisposable
 {
     private const string Password = "correct horse battery staple!";
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "operator-session-" + Guid.NewGuid().ToString("N"));
+    private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 11, 4, 9, 0, 0, TimeSpan.Zero));
     private string _ownerTotpSecret = string.Empty;
 
     [Fact]
@@ -195,6 +198,7 @@ public sealed class OperatorSessionScriptedTests : IDisposable
         var factory = new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
+            builder.ConfigureTestServices(services => services.AddSingleton<TimeProvider>(_clock));
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["TaskRepository"] = _workspace,
@@ -238,7 +242,10 @@ public sealed class OperatorSessionScriptedTests : IDisposable
     }
 
     private string CurrentCode(WebApplicationFactory<Program> factory)
-        => SecondFactorCodes.CurrentTotp(_ownerTotpSecret, factory.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime);
+    {
+        _clock.Advance(TimeSpan.FromSeconds(30));
+        return SecondFactorCodes.CurrentTotp(_ownerTotpSecret, _clock.GetUtcNow().UtcDateTime);
+    }
 
     private static HttpClient BearerClient(WebApplicationFactory<Program> factory, string token)
     {

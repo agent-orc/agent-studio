@@ -318,10 +318,12 @@ Switch a project's runner mode. Body:
 
 Valid modes: `manual` | `auto-single` | `auto-continuous` | `paused`.
 
-Note: returns `400 "Invalid project or mode"` when the project has no
-registered runner. This currently happens when a watch-path is added after
-backend start; restart picks it up. See
-`fix-runner-mode-rejects-newly-added-projects` if you hit this.
+Errors: `400` "Invalid mode '<mode>'. Allowed: manual, auto-single,
+auto-continuous, paused." for an unknown mode; `409` "has no RootPath
+configured" when the project has no working directory and therefore no local
+runner; `404` "Unknown project" for an unknown name. Project Settings uses
+`PUT /api/projects/{project}/execution-runner` with `pickupMode` `auto`,
+`manual` or `paused` instead; `auto` maps to `auto-continuous`.
 
 ## Bus / observability (read-only)
 
@@ -376,6 +378,7 @@ Event types, the fact each one publishes, and the suggested operations:
 | `progress.idle-with-ready` | The watcher opened a stall case of kind `idle-capacity` or `fleet-claim-stall` | `stalls.inspect`, `capacity.read` |
 | `batch.red` | A batch gate flight turned red | `batch.triage`, `batch.eject` |
 | `batch.isolating` | A red flight has diagnostic child batches still running | `batch.triage`, `batch.eject` |
+| `batch.record-unreadable` | A batch manifest, state or run record does not deserialize; the store quarantined it. The reason names the batch, project, file, parse error and next step | `batch.triage` |
 | `push.pending-overdue` | A pending integration push passed `BatchGate:PendingPushAlertMinutes` | `push.inspect`, `batch.triage` |
 | `push.blocked` | A Post Processing card merged locally but its publication to origin was refused | `card.inspect`, `push.inspect` |
 | `quota.exhausted` | A card waits for a quota reset, or a CLI hit its provider limit (installation-wide) | `capacity.read`, `routing.change` |

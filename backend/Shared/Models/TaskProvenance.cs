@@ -359,6 +359,13 @@ public sealed record TaskIntegrationVerification
     /// <summary>Why the card is verified or unverified. Tooltip and audit only.</summary>
     public string? Reason { get; init; }
 
+    /// <summary>
+    /// AGT-3753 - the first later first-parent commit no gate source counts,
+    /// as short SHA and subject, when acceptance turned a verified delivery
+    /// into unverified. <see cref="Reason"/> says why each source did not count it.
+    /// </summary>
+    public string? UncoveredPublication { get; init; }
+
     /// <summary>Later server document-key commits inspected as gate-neutral at acceptance.</summary>
     public IReadOnlyList<string> GateNeutralCommits { get; init; } = [];
 }

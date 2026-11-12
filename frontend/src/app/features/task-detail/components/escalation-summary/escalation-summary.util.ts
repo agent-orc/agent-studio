@@ -596,10 +596,18 @@ export function buildEscalationEssence(inputs: {
 }): EscalationEssence {
   const projection = inputs.reviewProjection;
   const reasonClass = escalationReasonClass(inputs.timeline, inputs.steering, inputs.codeReviews);
+  const escalation = [...inputs.timeline].reverse().find(event => event.kind === 'orchestrator_escalated');
+  const recordedAttempt = Number(escalation?.details?.['attempt']);
+  const recordedMax = Number(escalation?.details?.['maxAttempts']);
+  const budgetRounds = reasonClass === 'Reissue budget exhausted'
+    && Number.isInteger(recordedAttempt) && recordedAttempt > 0
+    && Number.isInteger(recordedMax) && recordedMax > 0
+    ? recordedAttempt : null;
 
   if (!projection || projection.rounds === 0) {
+    const rounds = budgetRounds ?? 0;
     return {
-      reviewRounds: 0,
+      reviewRounds: rounds,
       latestPlane: null,
       latestOutcome: null,
       latestReceivedAt: null,
@@ -607,11 +615,12 @@ export function buildEscalationEssence(inputs: {
       buildTestsSummary: null,
       deliverySummary: null,
       reasonClass,
-      label: `0 review rounds · ${reasonClass}`,
+      label: `${rounds} review ${rounds === 1 ? 'round' : 'rounds'} · ${reasonClass}`,
     };
   }
 
-  const roundsLabel = projection.rounds === 1 ? '1 review round' : `${projection.rounds} review rounds`;
+  const rounds = budgetRounds ?? projection.rounds;
+  const roundsLabel = rounds === 1 ? '1 review round' : `${rounds} review rounds`;
   const planeLabel = projection.latestPlane ? ` (${projection.latestPlane})` : '';
   const blockingAspect = projection.blockingAspects[0] ?? null;
   const buildTestsSummary = buildTestsSummaryLabel(projection);
@@ -626,7 +635,7 @@ export function buildEscalationEssence(inputs: {
   ].filter((clause): clause is string => !!clause);
 
   return {
-    reviewRounds: projection.rounds,
+    reviewRounds: rounds,
     latestPlane: projection.latestPlane,
     latestOutcome: projection.latestOutcome,
     latestReceivedAt: projection.latestReceivedAt,
@@ -709,7 +718,7 @@ export function deriveRecommendation(
 ): EscalationRecommendation | null {
   switch (verdict) {
     case 'accept':
-      return { kind: 'accept', label: 'Accept as-is', tone: 'ok' };
+      return { kind: 'accept', label: 'Accept with reason', tone: 'ok' };
     case 'reissue':
       return { kind: 'reissue', label: 'Reissue', tone: 'warn' };
     case 'escalate': {

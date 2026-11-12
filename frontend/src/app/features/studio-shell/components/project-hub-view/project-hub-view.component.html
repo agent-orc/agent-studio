@@ -17,7 +17,6 @@
         (openTask)="openTask.emit($event)" />
       <app-api-stall-panel />
       <app-project-product-runtime-panel [projectName]="projectName()" />
-      <app-operations-security (openTask)="openTask.emit($event)" />
     }
   </div>
 } @else {
@@ -35,6 +34,12 @@
         (openRail)="setRail($event)"
         (openTask)="openTask.emit($event)"
         (openUrlPreview)="openUrlPreview($event)" />
+    }
+  }
+  @if (activeRail() === 'magazine') {
+    @if (projectId(); as id) {
+      <app-magazine-view [scope]="'project:' + id" [label]="projectName()"
+        [projects]="[{ scope: 'project:' + id, label: projectName() }]" />
     }
   }
   @defer (when activeRail() === 'project-urls') {

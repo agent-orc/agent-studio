@@ -25,6 +25,24 @@ describe('GitPaneService hidden pane loading', () => {
     http.expectNone(() => true);
     http.verify();
   });
+
+  it('reports provenance as loading only while its request is in flight', async () => {
+    await TestBed.configureTestingModule({ providers: [GitPaneService,
+      provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+      provideRouter([])] }).compileComponents();
+    const service = TestBed.inject(GitPaneService);
+    const http = TestBed.inject(HttpTestingController);
+    const job = { id: 'job-y', watchPath: '/wp' } as TaskInfo;
+    // A hidden pane defers provenance; Accept must not wait for it.
+    service.setJob(job, false);
+    expect(service.provenanceLoading()).toBe(false);
+    service.setJob(job, true);
+    expect(service.provenanceLoading()).toBe(true);
+    http.expectOne(request => request.url.endsWith('/api/tasks/job-y/provenance')).flush(null);
+    expect(service.provenanceLoading()).toBe(false);
+    http.expectOne(request => request.url.endsWith('/api/tasks/job-y/code-review/list')).flush({ entries: [] });
+    http.verify();
+  });
 });
 
 describe('GitPaneService header provenance (AGT-3621)', () => {

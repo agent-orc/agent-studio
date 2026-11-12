@@ -57,9 +57,11 @@ describe('integrationDeadEnd', () => {
     expect(integrationDeadEnd(status('integration-push-blocked'))).toMatchObject({ retry: false, replay: false });
   });
 
-  it('offers continuation for a pending delivery', () => {
+  it('keeps an ordinary pending delivery out of the failure panel', () => {
     expect(integrationDeadEnd({ ...status('merge-conflict'), status: 'pending', failure: null }))
-      .toMatchObject({ kind: 'delivery-pending', stage: 'integration reach', recheck: false });
+      .toBeNull();
+    expect(integrationDeadEnd({ ...status('merge-conflict'), status: 'not-applicable', failure: null }))
+      .toBeNull();
   });
 
   it('offers a recheck when git reach is unavailable', () => {

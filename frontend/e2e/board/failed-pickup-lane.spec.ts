@@ -1,5 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import { join } from 'node:path';
+import { setTheme } from '../helpers/theme';
 
 /**
  * ADR-0051 (eliminate the failed-pickup lane) regression spec. Supersedes the
@@ -224,6 +225,49 @@ test.describe('Board card move menu (AGT-3588)', () => {
   };
   const noOrchestratorLanes = /In Progress|Post Processing|Failed pickup|Code not complete/;
 
+  test('Product menu shows only permitted moves in each lane', async ({ page }) => {
+    await installBoardMocks(page, 0, 1);
+    const productStatus = {
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'product-1', username: 'product', displayName: 'Product', role: 'contributor',
+        projects: ['PROJ-001'], disabled: false, mustChangePassword: false },
+    };
+    for (const endpoint of ['**/api/auth/status', '**/api/v1/studio/auth/status']) {
+      await page.route(endpoint, route => route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify(productStatus) }));
+    }
+    await page.goto('/');
+
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      const reviewMenu = await openMenu(page, 'lane-5-human-review', 'Review fixture');
+      await expect(reviewMenu.getByRole('menuitem', { name: 'Move to Accepted' })).toBeVisible();
+      await expect(reviewMenu.getByRole('menuitem', { name: /^Move to (Backlog|Preparation|Ready|Archive)$/ })).toHaveCount(0);
+      await expect(reviewMenu.getByRole('menuitem', { name: 'Delete task' })).toHaveCount(0);
+      await page.screenshot({ path: join(resultsDir, `product-move-menu-${theme}.png`) });
+      await page.keyboard.press('Escape');
+    }
+
+    const backlogMenu = await openMenu(page, 'lane-0-backlog', 'Captured idea');
+    await expect(backlogMenu.getByRole('menuitem', { name: 'Move to Ready' })).toBeVisible();
+    await expect(backlogMenu.getByRole('menuitem', { name: /^Move to (Preparation|Accepted|Archive)$/ })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    const readyMenu = await openMenu(page, 'lane-2-ready', 'Queued first');
+    await expect(readyMenu.getByRole('menuitem', { name: 'Move to Backlog' })).toBeVisible();
+    await expect(readyMenu.getByRole('menuitem', { name: /^Move to (Preparation|Accepted|Archive|top|bottom)$/ })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole('combobox', { name: 'Board lane' }).selectOption('5-human-review');
+    const reviewCard = page.getByTestId('lane-5-human-review').getByTestId('task-card').filter({ hasText: 'Review fixture' });
+    await expect(reviewCard).toBeVisible();
+    await reviewCard.dispatchEvent('contextmenu', { button: 2, clientX: 220, clientY: 260 });
+    const mobileMenu = page.getByRole('menu', { name: 'Task actions' });
+    await expect(mobileMenu.getByRole('menuitem', { name: 'Move to Accepted' })).toBeVisible();
+    await expect(mobileMenu.getByRole('menuitem', { name: 'Move to Ready' })).toHaveCount(0);
+    await page.screenshot({ path: join(resultsDir, 'product-move-menu-390.png') });
+  });
+
   test('Human review lists every manual target lane by name', async ({ page }) => {
     await installBoardMocks(page, 0, 1);
     await page.goto('/');
@@ -286,5 +330,25 @@ test.describe('Board card move menu (AGT-3588)', () => {
     await again.getByRole('menuitem', { name: 'Move to bottom' }).click();
     await expect.poll(readyTitles).toEqual(['second', 'first']);
     await expect(page.getByTestId('undo-action')).toBeVisible();
+  });
+
+  test('automatic Ready sort disables queue moves and the card button', async ({ page }) => {
+    await installBoardMocks(page, 0);
+    await page.route('**/api/projects/settings', async route => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        [FIXTURE_PROJECT]: { laneSortStrategies: { '2-ready': 'newest-first' } },
+      }) });
+    });
+    await page.goto('/');
+    const ready = page.getByTestId('lane-2-ready');
+    await expect(ready.getByTestId('task-card')).toHaveCount(2);
+    await expect(ready.getByTestId('task-card-pick-next').first()).toBeDisabled();
+    const menu = await openMenu(page, 'lane-2-ready', 'Queued second');
+    const top = menu.getByTestId('card-ctx-item-move-to-top');
+    const bottom = menu.getByTestId('card-ctx-item-move-to-bottom');
+    await expect(top).toBeDisabled();
+    await expect(bottom).toBeDisabled();
+    await expect(top).toContainText('Switch this lane to Manual');
+    await menu.screenshot({ path: join(resultsDir, 'card-move-menu-automatic-ready.png') });
   });
 });

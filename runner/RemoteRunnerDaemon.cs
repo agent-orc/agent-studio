@@ -22,6 +22,7 @@ public sealed class RemoteRunnerDaemon
     private readonly RunnerOptions _options;
     private readonly TaskServerClient _client;
     private readonly Action<string> _log;
+    private readonly OneShotClaimRouteObservation _oneShotClaimRoute = new();
 
     public RemoteRunnerDaemon(RunnerOptions options, TaskServerClient client, Action<string> log)
     {
@@ -381,7 +382,7 @@ public sealed class RemoteRunnerDaemon
             }, shutdown);
         }
         var capabilityGeneration = DateTime.UtcNow.Ticks;
-        var telemetry = new HostTelemetrySampler();
+        var telemetry = new HostTelemetrySampler(_options);
         // Claim admission and salvage deletion share this gate. A claim is
         // protected from the server mutation until its card is visible here.
         var salvageAdmissionGate = new SemaphoreSlim(1, 1);
@@ -392,6 +393,10 @@ public sealed class RemoteRunnerDaemon
             admittedCardKeys.TryAdd(accepted.Task.TaskKey, 0);
         // AGT-2999: the coding host owns its salvage store. The sweep runs on its
         // own timer. Deletion and claim admission meet only at the final boundary.
+        var worktreeRetention = new RunnerWorktreeRetention(_options, _client,
+            () => ActiveTaskKeys(inventory.Snapshot(), state)
+                .Concat(admittedCardKeys.Keys).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            salvageAdmissionGate, _log);
         var salvage = _options.Role == "coding" && !string.IsNullOrWhiteSpace(_options.SalvageDir)
             ? new SalvageRetentionSweeper(
                 _options,
@@ -402,7 +407,8 @@ public sealed class RemoteRunnerDaemon
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray(),
                 _log,
-                runAdmissionGate: salvageAdmissionGate)
+                runAdmissionGate: salvageAdmissionGate,
+                worktreeSweep: worktreeRetention.SweepOnceAsync)
             : null;
         using var auxiliaryStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
         var salvageSweep = salvage?.RunAsync(auxiliaryStop.Token) ?? Task.CompletedTask;
@@ -435,7 +441,7 @@ public sealed class RemoteRunnerDaemon
                         gitCapability.Detail,
                         connectivity: connectivity.Snapshot),
                     RunnerCapabilityProbe.Telemetry(latestTelemetry, salvageStore: salvage?.Current,
-                        claimLoadGate: ClaimLoadGateSnapshot()),
+                        claimLoadGate: ClaimLoadGateSnapshot(), oneShotClaimRoute: _oneShotClaimRoute.Current),
                     capabilityGeneration,
                     ct);
             },
@@ -495,7 +501,7 @@ public sealed class RemoteRunnerDaemon
         var interactiveChat = new InteractiveChatAdmission(_options, _client, _log);
         var interactivePoll = interactiveChat.PollAsync(auxiliaryStop.Token);
         var decisionPoll = new OrchestratorDecisionJobAdmission(_options, _client, _log).PollAsync(auxiliaryStop.Token);
-        var oneShotPoll = new OneShotJobAdmission(_options, _client, _log).PollAsync(auxiliaryStop.Token);
+        var oneShotPoll = new OneShotJobAdmission(_options, _client, _log, route: _oneShotClaimRoute).PollAsync(auxiliaryStop.Token);
         var repositoryProbePoll = new RunnerProjectRepositoryProbe(_options, _client,
             new PlatformRepositoryGitProof(_ => null, _options.StateDir), _log).PollAsync(auxiliaryStop.Token);
         var gitSetupPoll = new RunnerGitSetupAgent(_options, _client, _log).PollAsync(auxiliaryStop.Token);
@@ -638,7 +644,7 @@ public sealed class RemoteRunnerDaemon
                                 gitCapability.Detail,
                                 connectivity: connectivity.Snapshot),
                             RunnerCapabilityProbe.Telemetry(capabilityTelemetry, salvageStore: salvage?.Current,
-                                claimLoadGate: ClaimLoadGateSnapshot()),
+                                claimLoadGate: ClaimLoadGateSnapshot(), oneShotClaimRoute: _oneShotClaimRoute.Current),
                             generation,
                             ct),
                         async ct =>
@@ -676,7 +682,7 @@ public sealed class RemoteRunnerDaemon
                                 _options, gitCapability.CanPush, gitCapability.CanPushWorkflows,
                                 gitCapability.Detail, connectivity: connectivity.Snapshot),
                             RunnerCapabilityProbe.Telemetry(latestTelemetry, salvageStore: salvage?.Current,
-                                claimLoadGate: ClaimLoadGateSnapshot()),
+                                claimLoadGate: ClaimLoadGateSnapshot(), oneShotClaimRoute: _oneShotClaimRoute.Current),
                             generation, ct),
                         async ct => { _ = await RegisterAsync(ct); },
                         connectivity, () => active.Count, _options.PollSeconds,

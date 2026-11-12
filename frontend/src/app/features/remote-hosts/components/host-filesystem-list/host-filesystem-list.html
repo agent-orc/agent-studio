@@ -1,0 +1,11 @@
+@if (rows().length) {
+  <div class="filesystem-list" data-testid="remote-host-filesystems" aria-label="File system free space">
+    @for (disk of rows(); track disk.path) {
+      <div class="filesystem-list__row">
+        <span>{{ disk.purpose }} · {{ disk.path }}</span>
+        <span class="filesystem-list__value">{{ disk.free }} free of {{ disk.total }} ({{ disk.percent }}%)</span>
+        @if (disk.consumers) { <small>Product storage: {{ disk.consumers }}</small> }
+      </div>
+    }
+  </div>
+}

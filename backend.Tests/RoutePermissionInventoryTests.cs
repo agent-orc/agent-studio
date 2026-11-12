@@ -61,6 +61,21 @@ public sealed class RoutePermissionInventoryTests : IDisposable
         Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    [Theory]
+    [InlineData("run-evidence")]
+    [InlineData("run-log")]
+    public async Task Batch_run_artifact_routes_are_project_read_scoped(string artifact)
+    {
+        var route = $"/api/projects/{{projectName}}/batch-gate/{artifact}";
+        Assert.Equal(IamPermissions.ProjectRead, RoutePermissionCatalog.Resolve("GET", route)?.Permission);
+        using var factory = Factory(SecurityProfiles.Local, null);
+        Assert.Contains(Routes(factory.Services), entry => entry.RoutePattern.RawText == route);
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync(
+            $"/api/projects/unknown-project/batch-gate/{artifact}?batchId=batch-1&runId=run-1");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "route-permissions-" + Guid.NewGuid().ToString("N"));
 
     public static TheoryData<string, string?> Profiles => new()
@@ -131,6 +146,7 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("POST", "/api/tasks/{jobId}/preview-comments", IamPermissions.ProjectCardsWrite)]
     [InlineData("POST", "/api/tasks/{jobId}/start", IamPermissions.ProjectRunsOperate)]
     [InlineData("POST", "/api/tasks/reference-status", IamPermissions.ProjectRead)]
+    [InlineData("POST", "/api/tasks/acceptance-readiness", IamPermissions.ProjectRead)]
     [InlineData("PUT", "/api/tasks/{jobId}/release", IamPermissions.EnvironmentProductionDeployApprove)]
     [InlineData("POST", "/api/projects/{projectName}/environments/promotions/approve", IamPermissions.EnvironmentProductionDeployApprove)]
     [InlineData("POST", "/api/projects/{projectName}/environments/releases", IamPermissions.EnvironmentDeploy)]
@@ -330,6 +346,7 @@ public sealed class RoutePermissionInventoryTests : IDisposable
         Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/tasks")?.ProjectBindingsSuffice);
         Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/tasks/batch-move")?.ProjectBindingsSuffice);
         Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/tasks/reorder")?.ProjectBindingsSuffice);
+        Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/tasks/acceptance-readiness")?.ProjectBindingsSuffice);
         Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/orchestration/decision-receipts/{}/operator-intent")?.ProjectBindingsSuffice);
         Assert.False(RoutePermissionCatalog.Resolve("POST", "/api/supervisor/{}")?.ProjectBindingsSuffice);
         Assert.False(RoutePermissionCatalog.Resolve("PUT", "/api/workspaces/{}/autonomy")?.ProjectBindingsSuffice);

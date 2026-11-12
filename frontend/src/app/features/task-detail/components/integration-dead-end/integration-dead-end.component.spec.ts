@@ -60,6 +60,7 @@ describe('IntegrationDeadEndComponent', () => {
     fixture.componentRef.setInput('status', {
       status: 'pending', integrationBranch: 'develop', deliveryRef: 'task/AGT-2909',
       sha: null, detail: 'Delivery is not on develop.',
+      failure: { code: 'delivery-pending', label: 'Delivery pending', reason: 'Delivery is not on develop.' },
     });
     fixture.detectChanges();
     await fixture.whenStable();
@@ -87,7 +88,10 @@ describe('IntegrationDeadEndComponent', () => {
     }).compileComponents();
     const fixture = TestBed.createComponent(IntegrationDeadEndComponent);
     fixture.componentRef.setInput('jobId', 'task-2909');
-    fixture.componentRef.setInput('status', { status: 'pending', detail: 'Delivery pending.' });
+    fixture.componentRef.setInput('status', {
+      status: 'pending', detail: 'Delivery pending.',
+      failure: { code: 'delivery-pending', label: 'Delivery pending', reason: 'Delivery pending.' },
+    });
     fixture.detectChanges();
     await fixture.whenStable();
     fixture.detectChanges();
@@ -117,6 +121,10 @@ describe('IntegrationDeadEndComponent', () => {
       fixture.componentRef.setInput('watchPath', '/project/tasks');
       fixture.componentRef.setInput('status', {
         status: 'not-applicable', integrationBranch: 'develop', deliveryRef: null, sha: null, detail: null,
+        failure: {
+          code: 'delivery-gate-failed', label: 'Delivery gate failed',
+          reason: 'The recorded delivery gate failed.',
+        },
       });
       fixture.detectChanges();
       await fixture.whenStable();

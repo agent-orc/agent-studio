@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Clients;
 
@@ -8,7 +9,8 @@ public sealed record HostTelemetrySample(DateTime Timestamp, double? CpuPercent,
     string TaskServerConnectionStatus = "unknown", DateTime? TaskServerConnectionObservedAt = null,
     DateTime? TaskServerConnectionFailureStartedAt = null, int TaskServerConnectionConsecutiveFailures = 0,
     DateTime? TaskServerConnectionEscalatedAt = null, string? TaskServerConnectionLastError = null,
-    DateTime? TaskServerConnectionLastRecoveredAt = null);
+    DateTime? TaskServerConnectionLastRecoveredAt = null,
+    IReadOnlyList<AgentStudio.TaskServer.Contracts.HostFilesystemUsageDto>? Filesystems = null);
 
 public sealed record HostTelemetryFinding(
     string Kind,
@@ -16,26 +18,39 @@ public sealed record HostTelemetryFinding(
     DateTime Since,
     DateTime Until,
     int Occurrences,
-    bool IsActive);
+    bool IsActive,
+    string? Detail = null);
 public sealed record HostTelemetryResponse(string ClientId, string Window, IReadOnlyList<HostTelemetrySample> Points,
     IReadOnlyList<HostTelemetryFinding> Findings);
 
 /// <summary>Durable per-client telemetry series with 48h raw and 14d five-minute retention.</summary>
-public sealed class HostTelemetryStore(IConfiguration config, ILogger<HostTelemetryStore> logger)
+public sealed class HostTelemetryStore(IConfiguration config, ILogger<HostTelemetryStore> logger,
+    TimeProvider? time = null)
 {
+    private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly object _gate = new();
+    private readonly Dictionary<string, bool> _diskPaused = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, HostDiskPressureLevel> _diskLevels = new(StringComparer.Ordinal);
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = false };
     private string Root => Path.Combine(config["TaskRepository"] ?? Path.Combine(AppContext.BaseDirectory, "workspace"), "telemetry");
 
     public void Append(string clientId, HostTelemetrySample sample)
     {
-        if (sample.Timestamp == default || sample.Timestamp > DateTime.UtcNow.AddMinutes(5)) return;
+        var now = _time.GetUtcNow().UtcDateTime;
+        if (sample.Timestamp == default || sample.Timestamp > now.AddMinutes(5)) return;
         lock (_gate)
         {
             var points = Read(clientId);
             if (points.Count > 0 && sample.Timestamp <= points[^1].Timestamp) return;
             points.Add(sample);
-            points = Compact(points, DateTime.UtcNow);
+            points = Compact(points, now);
+            var disk = DiskPressure(clientId, sample.Filesystems);
+            if (_diskLevels.GetValueOrDefault(clientId) != disk.Level)
+            {
+                logger.LogWarning("host-disk-pressure-event clientId={ClientId} level={Level} reason={Reason}",
+                    clientId, disk.Level, disk.Reason);
+                _diskLevels[clientId] = disk.Level;
+            }
             Directory.CreateDirectory(Root);
             var path = PathFor(clientId); var temporary = path + ".tmp";
             File.WriteAllText(temporary, JsonSerializer.Serialize(points, _json));
@@ -44,12 +59,44 @@ public sealed class HostTelemetryStore(IConfiguration config, ILogger<HostTeleme
         }
     }
 
+    public AgentStudio.TaskServer.Contracts.HostDiskPressureDecision DiskPressure(string clientId,
+        IReadOnlyList<AgentStudio.TaskServer.Contracts.HostFilesystemUsageDto>? filesystems)
+    {
+        lock (_gate)
+        {
+            var thresholds = new AgentStudio.TaskServer.Contracts.HostDiskPressureThresholds(
+                config.GetValue("DiskPressure:WarningFreeBytes", 30L * 1024 * 1024 * 1024),
+                config.GetValue("DiskPressure:WarningFreePercent", 15d),
+                config.GetValue("DiskPressure:CriticalFreeBytes", 8L * 1024 * 1024 * 1024),
+                config.GetValue("DiskPressure:CriticalFreePercent", 5d));
+            var previous = _diskPaused.GetValueOrDefault(clientId);
+            if (filesystems is null && previous)
+                return new(HostDiskPressureLevel.Critical,
+                    "Disk readings are unavailable after a critical report; claims remain paused.", null);
+            var decision = AgentStudio.TaskServer.Contracts.HostDiskPressurePolicy.Decide(
+                filesystems, thresholds, previous);
+            if (filesystems is { Count: > 0 }) _diskPaused[clientId] =
+                decision.Level == AgentStudio.TaskServer.Contracts.HostDiskPressureLevel.Critical;
+            return decision;
+        }
+    }
+
     public HostTelemetryResponse Query(string clientId, string window, DateTime? nowUtc = null)
     {
         var duration = window switch { "1h" => TimeSpan.FromHours(1), "6h" => TimeSpan.FromHours(6), "14d" => TimeSpan.FromDays(14), _ => TimeSpan.FromHours(48) };
         List<HostTelemetrySample> points;
-        lock (_gate) points = Read(clientId).Where(point => point.Timestamp >= (nowUtc ?? DateTime.UtcNow) - duration).ToList();
-        return new HostTelemetryResponse(clientId, window, points, Findings(points));
+        lock (_gate) points = Read(clientId).Where(point => point.Timestamp >=
+            (nowUtc ?? _time.GetUtcNow().UtcDateTime) - duration).ToList();
+        var findings = Findings(points).ToList();
+        if (points.LastOrDefault() is { Filesystems: { Count: > 0 } filesystems } latest)
+        {
+            var disk = DiskPressure(clientId, filesystems);
+            if (disk.Level != HostDiskPressureLevel.Healthy)
+                findings.Add(new HostTelemetryFinding("disk-pressure",
+                    disk.Level == HostDiskPressureLevel.Critical ? "Disk critical" : "Disk low",
+                    latest.Timestamp, latest.Timestamp, 1, true, disk.Reason));
+        }
+        return new HostTelemetryResponse(clientId, window, points, findings);
     }
 
     private List<HostTelemetrySample> Read(string clientId)
@@ -84,7 +131,7 @@ public sealed class HostTelemetryStore(IConfiguration config, ILogger<HostTeleme
             latest.TaskServerConnectionStatus, latest.TaskServerConnectionObservedAt,
             latest.TaskServerConnectionFailureStartedAt, latest.TaskServerConnectionConsecutiveFailures,
             latest.TaskServerConnectionEscalatedAt, latest.TaskServerConnectionLastError,
-            latest.TaskServerConnectionLastRecoveredAt);
+            latest.TaskServerConnectionLastRecoveredAt, latest.Filesystems);
     }
 
     internal static IReadOnlyList<HostTelemetryFinding> Findings(List<HostTelemetrySample> points)

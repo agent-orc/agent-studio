@@ -8,10 +8,14 @@ import {
   output,
   signal,
 } from '@angular/core';
+import { HttpClient, HttpParams } from '@angular/common/http';
 
 import { TaskState } from '../../../../models/task.model';
+import { CdkTrapFocus } from '@angular/cdk/a11y';
 import type { TaskDetail, TaskInfo } from '../../../../models/task.model';
 import { CodeReviewListEntry, TaskService } from '../../../../services/task.service';
+import { BatchGateService } from '../../../../services/batch-gate.service';
+import { EscalationGateActions } from './escalation-gate-actions';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
 import { RunTimelinePollService } from '../../../polling/services/run-timeline-poll.service';
 import {
@@ -57,6 +61,7 @@ import {
     EscalationDetailsComponent,
     DisclosureMarkerComponent,
     GateQueueReleaseComponent,
+    CdkTrapFocus,
   ],
   templateUrl: './escalation-summary.component.html',
   styleUrl: './escalation-summary.component.scss',
@@ -69,15 +74,62 @@ export class EscalationSummaryComponent {
   readonly answerDraft = signal('');
   readonly answering = signal(false);
   readonly answerError = signal<string | null>(null);
+  readonly gateInfrastructure = computed(() => this.detail().info.state === TaskState.Escalated
+    && this.detail().info.parkedBlocker?.blockerType === 'gate-infrastructure');
+  readonly reviewRetrying = signal(false);
+  readonly reviewRetryMessage = signal<string | null>(null);
+  readonly watchdogPark = computed(() => this.detail().info.state === TaskState.Escalated
+    && this.detail().info.parkedBlocker?.blockerType === 'environmental'
+    && this.detail().info.parkedBlocker?.causeDetail === 'auto-review-stranded');
+  readonly decisionDialog = signal<'reissue' | 'accept' | null>(null);
+  readonly codeReviewsLoaded = signal(false);
+  readonly ownerNote = signal('');
+  readonly selectedFindingIds = signal<ReadonlySet<string>>(new Set());
+  private selectionTouched = false;
+  readonly selectedFindings = computed(() => this.view().gateItems
+    .filter(item => this.selectedFindingIds().has(item.id))
+    .map(item => (item.detail ? `${item.text}: ${item.detail}` : item.text)
+      .replace(/\s+/g, ' ').trim().slice(0, 500))
+    .slice(0, 12));
+  readonly instructionsPreview = computed(() => [
+    '# Operator reissue instructions',
+    '',
+    ...(this.selectedFindings().length ? ['Selected escalation findings:',
+      ...this.selectedFindings().map(item => `- [ ] ${item}`)] : []),
+    ...(this.ownerNote().trim() ? ['', 'Owner note:',
+      this.selectedFindings().length ? this.ownerNote().trim() : `- [ ] ${this.ownerNote().trim()}`] : []),
+  ].join('\n'));
 
   /** The three terminal operator choices shown beside NEEDS DECISION. */
   readonly decisionActions = computed(() =>
-    this.detail().info.state === TaskState.Escalated
+    this.detail().info.state === TaskState.Escalated && !this.gateInfrastructure()
       ? laneActionsFor(TaskState.Escalated).filter((action) => DECISION_ACTION_IDS.has(action.id))
+        .map(action => this.watchdogPark() && action.id === 'reissue-escalated'
+          ? { ...action, variant: 'secondary' as const } : action)
       : [],
   );
 
+  retryReview(): void {
+    const info = this.detail().info;
+    if (!this.watchdogPark() || this.reviewRetrying() || this.mutationsBlocked()) return;
+    this.reviewRetrying.set(true);
+    this.reviewRetryMessage.set(null);
+    this.http.post<{ status: string }>(`/api/tasks/${encodeURIComponent(info.id)}/review/retry`, null,
+      info.watchPath ? { params: new HttpParams().set('watchPath', info.watchPath) } : {}).subscribe({
+      next: () => {
+        this.reviewRetrying.set(false);
+        this.reviewRetryMessage.set('A fresh review attempt is queued for the same delivery.');
+      },
+      error: error => {
+        this.reviewRetrying.set(false);
+        this.reviewRetryMessage.set(reviewRetryError(error?.error?.error));
+      },
+    });
+  }
+
   private readonly jobs = inject(TaskService);
+  readonly gate = new EscalationGateActions(inject(BatchGateService), () => this.detail().info, this.mutationsBlocked);
+  private readonly http = inject(HttpClient);
   private readonly timelinePoll = inject(TaskTimelinePollService);
   private readonly runTimelinePoll = inject(RunTimelinePollService);
 
@@ -103,6 +155,10 @@ export class EscalationSummaryComponent {
   private collapseJobId: string | null = null;
 
   constructor() {
+    // The summary needs the ledger for reissue history and the parked reason
+    // even when the operator has not opened the Timeline tab.
+    effect(() => this.timelinePoll.syncTo(this.detail().info));
+
     // Seed the collapse state whenever the open task changes: the stored
     // per-task preference wins; absent that, the lane picks the default.
     effect(() => {
@@ -120,15 +176,20 @@ export class EscalationSummaryComponent {
       if (info.id === this.fetchedJobId) return;
       this.fetchedJobId = info.id;
       this.codeReviews.set([]);
+      this.codeReviewsLoaded.set(false);
       this.followUpMarkdown.set(null);
 
       this.jobs.listCodeReviews(info.id, info.watchPath).subscribe({
         next: (resp) => {
           if (this.fetchedJobId !== info.id) return;
           this.codeReviews.set(resp.entries ?? []);
+          this.codeReviewsLoaded.set(true);
+          if (this.decisionDialog() === 'reissue' && !this.selectionTouched) this.seedSelectedFindings();
         },
         error: () => {
-          /* leave empty; the verdict head hides when there is nothing to show */
+          if (this.fetchedJobId !== info.id) return;
+          this.codeReviewsLoaded.set(true);
+          if (this.decisionDialog() === 'reissue' && !this.selectionTouched) this.seedSelectedFindings();
         },
       });
 
@@ -181,6 +242,7 @@ export class EscalationSummaryComponent {
   readonly headTitle = computed<string>(() =>
     this.detail().info.needsInput
       ? (this.hasQueuedAnswer() ? 'Answer queued' : 'Agent needs input')
+      : this.watchdogPark() ? 'Review recovery'
       : this.view().escalation?.kind === 'gave-up' ? 'Orchestrator gave up' : 'Escalation',
   );
 
@@ -229,9 +291,63 @@ export class EscalationSummaryComponent {
   /** Route inline decisions through the detail view's existing triage pipeline. */
   triggerDecision(action: TriageButton): void {
     if (this.mutationsBlocked() || this.triageActingId() !== null) return;
+    if (action.id === 'reissue-escalated' || action.id === 'accept-escalated') {
+      this.openDecision(action.id);
+      return;
+    }
     this.triageAction.emit({ id: action.id, label: action.label, intent: action.intent });
   }
 
+  openDecision(id: string): void {
+    if (this.mutationsBlocked() || this.triageActingId() !== null) return;
+    this.ownerNote.set('');
+    this.selectionTouched = false;
+    this.seedSelectedFindings();
+    this.decisionDialog.set(id === 'reissue-escalated' ? 'reissue' : 'accept');
+  }
+
+  private seedSelectedFindings(): void {
+    this.selectedFindingIds.set(new Set(this.view().gateItems
+      .filter(item => !item.checked).slice(0, 12).map(item => item.id)));
+  }
+
+  toggleFinding(id: string, selected: boolean): void {
+    this.selectionTouched = true;
+    const next = new Set(this.selectedFindingIds());
+    if (selected && next.size >= 12) return;
+    if (selected) next.add(id); else next.delete(id);
+    this.selectedFindingIds.set(next);
+  }
+
+  updateOwnerNote(event: Event): void {
+    this.ownerNote.set((event.target as HTMLTextAreaElement).value);
+  }
+
+  confirmDecision(): void {
+    const mode = this.decisionDialog();
+    const note = this.ownerNote().trim();
+    if (!mode || this.mutationsBlocked()) return;
+    if (mode === 'reissue') {
+      if (!this.codeReviewsLoaded() || (!this.selectedFindings().length && !note)) return;
+      this.triageAction.emit({ id: 'reissue-escalated', label: 'Continue (reissue)',
+        intent: { kind: 'move', targetState: TaskState.Ready },
+        reissueInstructions: { findings: this.selectedFindings(), note } });
+    } else {
+      if (note.length < 8) return;
+      this.triageAction.emit({ id: 'accept-escalated', label: 'Accept with reason',
+        intent: { kind: 'move', targetState: TaskState.Completed },
+        operatorOverride: true, reason: note });
+    }
+    this.decisionDialog.set(null);
+  }
+
+}
+
+function reviewRetryError(code?: string): string {
+  if (code === 'card-changed-since-park') return 'The card changed since the watchdog parked it. Reload and try again.';
+  if (code === 'review-delivery-unavailable') return 'The completed delivery is unavailable or another review owns it.';
+  if (code === 'review-attempt-could-not-start') return 'The card was restored, but a review attempt could not start.';
+  return 'Retry review failed.';
 }
 
 /** localStorage key holding the per-task collapse map (`{ [jobId]: boolean }`). */

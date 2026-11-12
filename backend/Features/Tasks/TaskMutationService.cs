@@ -237,14 +237,23 @@ public class TaskMutationService
         using var span = TaskSwitchTrace.Span("mutation.read-current");
         // The preceding routing writer publishes before releasing this same
         // file lock. Its resident fact is therefore the newest routing input
-        // without a second folder scan on the common path.
+        // without a second folder scan on the common path. A fact whose
+        // task.json stamp no longer matches the disk missed a write (an
+        // external writer, or a publication that has not landed yet) and
+        // would normalize the new value against the old CLI (AGT-3723).
         var published = _scanner.FindPublishedJob(known.Id, known.WatchPath);
         if (published is not null && FileSystemPathComparer.Instance.Equals(
-                published.FolderPath, known.FolderPath)) return published;
+                published.FolderPath, known.FolderPath)
+            && MatchesTaskJson(published)) return published;
         return _scanner.ScanJobFolder(known.FolderPath,
             new WatchPathEntry { Name = known.ProjectName, Path = known.WatchPath },
             known.State, bypassMemo: true);
     }
+
+    private static bool MatchesTaskJson(TaskInfo info) =>
+        info.TaskJsonLength >= 0
+        && TaskCoreSourceStamp.Read(Path.Combine(info.FolderPath, "task.json"))
+            == new TaskCoreSourceStamp(info.TaskJsonLength, info.TaskJsonWriteTicks);
 
     private static IDisposable AcquireRoutingLock(string folder)
     {
@@ -2499,7 +2508,7 @@ public class TaskMutationService
                 Encoding.UTF8);
             // PendingIntent appears on TaskInfo (kanban card shows the intent),
             // so the snapshot must be invalidated for the next read to see it.
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: path);
             _scanner.PublishCoreFromKnownFolder(info.FolderPath);
             return intent;
         }
@@ -2539,7 +2548,7 @@ public class TaskMutationService
             if (File.Exists(stash)) File.Delete(stash);
             File.Move(path, stash);
             // pending-intent.json gone → TaskInfo.PendingIntent should be null.
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: path);
             _scanner.PublishCoreFromKnownFolder(jobFolder);
             return intent;
         }
@@ -2598,7 +2607,7 @@ public class TaskMutationService
                 return PendingIntentAcknowledgeResult.HistoryWriteFailed;
 
             File.Delete(stash);
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: Path.Combine(jobFolder, "pending-intent.json"));
             _scanner.PublishCoreFromKnownFolder(jobFolder);
             return PendingIntentAcknowledgeResult.Consumed;
         }
@@ -2641,7 +2650,7 @@ public class TaskMutationService
             }
             if (File.Exists(canonical)) File.Delete(canonical);
             if (File.Exists(stash)) File.Delete(stash);
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: canonical);
             _scanner.PublishCoreFromKnownFolder(jobFolder);
             return true;
         }
@@ -2680,7 +2689,7 @@ public class TaskMutationService
             var stash = Path.Combine(jobFolder, "pending-intent.consumed.json");
             if (File.Exists(canonical)) File.Delete(canonical);
             if (File.Exists(stash)) File.Delete(stash);
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: canonical);
             _scanner.PublishCoreFromKnownFolder(jobFolder);
             return true;
         }
@@ -2712,7 +2721,7 @@ public class TaskMutationService
             {
                 File.Move(stash, canonical);
             }
-            _scanner.InvalidateCache();
+            _scanner.InvalidateCache(changedPath: canonical);
             _scanner.PublishCoreFromKnownFolder(jobFolder);
         }
         catch (Exception ex)
