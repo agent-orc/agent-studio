@@ -53,6 +53,10 @@ export class TaskLiveStatusComponent {
   private readonly errors = inject(ErrorDialogService);
   private readonly batchGate = inject(BatchGateService);
   readonly switchingToAuto = signal(false);
+  readonly hasRecordedAttempt = computed(() => {
+    const task = this.task();
+    return !!(task.liveStatus?.activeStep || task.execution || task.runActivity || task.runner);
+  });
 
   constructor() {
     effect(onCleanup => {
