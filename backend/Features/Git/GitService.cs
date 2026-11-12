@@ -4840,6 +4840,16 @@ public partial class GitService
         return commits;
     }
 
+    /// <summary>The subject line of one commit, or null when it cannot be read.</summary>
+    public string? GetCommitSubject(string repoRoot, string sha)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
+            || !ReviewSubjectStore.IsValidResultSha(sha)) return null;
+        var (output, _, code) = RunGitArgs(repoRoot, "show", "-s", "--format=%s", sha);
+        var subject = output.Trim();
+        return code == 0 && subject.Length > 0 ? subject : null;
+    }
+
     /// <summary>
     /// Recognizes a server document-key mutation only after checking
     /// every changed blob against its first parent. Formatting may change when
