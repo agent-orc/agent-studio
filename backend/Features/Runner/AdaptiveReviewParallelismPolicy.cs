@@ -277,7 +277,9 @@ public static class AdaptiveReviewParallelismPolicy
     }
 
     private static double? LoadPerCore(Contract.HostTelemetrySnapshotDto? host)
-        => host is { Load1: { } load, CpuCores: > 0 } ? load / host.CpuCores : null;
+        => host is { Load1: { } load } && (host.ReviewPlane?.HostCores ?? host.CpuCores) > 0
+            ? load / (host.ReviewPlane?.HostCores ?? host.CpuCores)
+            : null;
 
     private static double? AvailableMemoryShare(Contract.HostTelemetrySnapshotDto? host)
         => host is { MemoryUsedBytes: { } used, MemoryTotalBytes: { } total } && total > 0

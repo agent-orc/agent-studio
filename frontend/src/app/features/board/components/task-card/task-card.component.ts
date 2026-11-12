@@ -3,6 +3,7 @@ import { TaskState, isTerminalTaskState, type AutoLoopSnapshot, type TaskExecuti
 import { RemoteDispatchRejectionComponent } from '../../../../components/remote-dispatch-rejection/remote-dispatch-rejection.component';
 import { GitSummaryService } from '../../../../services/git-summary.service';
 import { TaskService } from '../../../../services/task.service';
+import { TaskSectionAccessService } from '../../../../services/task-section-access.service';
 import { allowsDragReorder } from '../../../../services/lane-sort.util';
 import { isReadyQueueHead } from '../ready-lane-split.util';
 import { BoardMutationsService } from '../../state/board-mutations.service';
@@ -159,7 +160,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   readonly tagChips = computed(() => buildTagChips(this.job().tags, this.tagRegistry.byIdForProject(this.job().projectName), this.job().state));
 
   readonly publishableChip = computed(() => {
-    if (this.job().state !== TaskState.Completed) return null;
+    if (this.job().mode === 'concept' || this.job().state !== TaskState.Completed) return null;
     const labels = this.job().publishSignal?.labels ?? [];
     if (labels.length === 0) return null;
     return { labels, text: labels.join(', ') };
@@ -300,6 +301,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   readonly pipelineDots = computed(() => buildPipelineDots(this.job()));
 
   readonly changeContext = computed(() => {
+    if (this.job().mode === 'concept') return null;
     const live = this.gitPill();
     const gitState = this.gitStateBadge();
     const commits = this.commitChainView();
@@ -341,7 +343,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   });
 
   readonly mergeSignal = computed(() => buildMergeSignal(this.job()));
-  readonly integrationStatus = computed(() => currentIntegrationStatus(this.job()));
+  readonly integrationStatus = computed(() => this.job().mode === 'concept' ? null : currentIntegrationStatus(this.job()));
   readonly needsAttention = computed(() => cardNeedsAttention(this.job()));
   readonly outcomeIssueBadge = computed(() => buildOutcomeIssueBadge(this.job()));
   readonly currentPendingIntent = computed(() =>
@@ -415,6 +417,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   // Context menu actions.
   private readonly notifications = inject(NotificationService);
   private readonly jobs = inject(TaskService);
+  private readonly taskAccess = inject(TaskSectionAccessService);
   private readonly boardMutations = inject(BoardMutationsService);
   private readonly laneFocus = inject(LaneCollapseService).focusedContainer;
   private readonly selection = inject(TaskSelectionService);
@@ -435,8 +438,13 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   private readonly reviewer = inject(ReviewerSession);
   readonly cardCtxMenuItems = computed(() => buildCardCtxMenuItems(
     this.job(), this.mutationsBlocked(),
-    focusVisibleLaneStates(this.laneFocus()), this.readyQueueEdge(), this.canReorderReady(),
-    this.reviewer.reviewsOnly(this.job().projectName)));
+    focusVisibleLaneStates(this.laneFocus()), this.readyQueueEdge(),
+    {
+      canReorder: this.canReorderReady(),
+      reviewsOnly: this.reviewer.reviewsOnly(this.job().projectName),
+      productSession: this.taskAccess.productSession(),
+      readOnlySession: this.taskAccess.readOnlySession(),
+    }));
 
   /** AGT-2029: open the dependency this card is waiting on (see resolveDependencyTarget). */
   navigateToDependency(chip: DependencyChip, event: MouseEvent): void {

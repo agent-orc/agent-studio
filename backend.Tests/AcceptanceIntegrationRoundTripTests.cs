@@ -3454,7 +3454,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
 
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("integrated-unverified", refused.Message);
+        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
         var overridden = await deps.Transitions.MoveAsync(
             Slug,
             TaskStates.Completed,
@@ -3645,7 +3645,11 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         else
         {
             Assert.Equal(MoveJobStatus.IntegrationFailed, accepted.Status);
-            Assert.Contains(gateSecondPublication ? first : second, accepted.Message);
+            // AGT-3753: the refusal names the newest uncovered commit, not project.yml.
+            var uncovered = gateSecondPublication ? first : second;
+            Assert.Contains($"{uncovered[..7]} \"later published delivery\" has none", accepted.Message);
+            Assert.Contains("no published gate evidence for that tree", accepted.Message);
+            Assert.DoesNotContain("`.agent-studio/project.yml`", accepted.Message);
         }
     }
 
@@ -3742,7 +3746,9 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains(ungated, refused.Message);
+        // AGT-3753: the refusal names the uncovered commit instead of project.yml.
+        Assert.Contains($"{ungated[..7]} \"", refused.Message);
+        Assert.DoesNotContain("`.agent-studio/project.yml`", refused.Message);
     }
 
     [Theory]
@@ -3757,8 +3763,9 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("integrated-unverified", refused.Message);
-        Assert.Contains(missingGateSha, refused.Message);
+        // AGT-3753: the refusal names the uncovered commit instead of project.yml.
+        Assert.Contains($"{missingGateSha[..7]} \"", refused.Message);
+        Assert.DoesNotContain("`.agent-studio/project.yml`", refused.Message);
     }
 
     [Fact]
@@ -3769,7 +3776,9 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains(keySha, refused.Message);
+        // AGT-3753: the refusal names the uncovered commit instead of project.yml.
+        Assert.Contains($"{keySha[..7]} \"", refused.Message);
+        Assert.DoesNotContain("`.agent-studio/project.yml`", refused.Message);
     }
 
     private (Deps Deps, string KeySha) PublishVerifiedDescriptorAndKey(
@@ -3851,8 +3860,8 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("integrated-unverified", refused.Message);
-        Assert.Contains(unrelated, refused.Message);
+        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
+        Assert.DoesNotContain(unrelated, refused.Message);
     }
 
     [Fact]
@@ -4078,7 +4087,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var moved = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, moved.Status);
-        Assert.Contains("integrated-unverified", moved.Message);
+        Assert.Contains("`.agent-studio/project.yml`", moved.Message);
     }
 
     [Theory]

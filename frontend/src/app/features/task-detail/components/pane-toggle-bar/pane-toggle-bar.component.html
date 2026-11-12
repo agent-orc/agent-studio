@@ -11,6 +11,7 @@
           data-testid="pane-toggle-protocol"
           aria-label="Toggle Protocol pane"
           [cacTooltip]="'Protocol &amp; chat'">🤖</button>
+  @if (showGit()) {
   <button class="pane-toggle pane-toggle--has-badge"
           [class.pane-toggle--active]="panesVisible().git"
           (click)="toggleRequest.emit('git')"
@@ -24,6 +25,7 @@
             [attr.aria-label]="commitCount() + ' commits'">{{ commitCount() }}</span>
     }
   </button>
+  }
   <span class="detail__panes-toolbar-spacer"></span>
   @if (localActionsAvailable()) {
   <button class="pane-toggle"

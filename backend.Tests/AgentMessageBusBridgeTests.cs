@@ -48,6 +48,23 @@ public sealed class AgentMessageBusBridgeTests : IDisposable
     }
 
     [Fact]
+    public async Task Batch_shard_hang_names_the_shard_duration_and_test_in_activity()
+    {
+        var hang = new AgentStudio.Pipeline.GateShardHangEvidence(
+            "backend-routine", 3, 4, "completed report but host still alive",
+            120_000, ["Product.Tests.StalledTests.Finishes"]);
+        await _bridge.EmitBatchShardHangAsync("Project", "batch-9", "run-7", hang);
+
+        var message = Assert.Single(_store.Recent(_workspace, "Project", 10));
+        Assert.Equal("batch-test-shard-hang", message.Topic);
+        Assert.Equal("Warn", message.Severity);
+        Assert.Contains("shard 4/4", message.Summary);
+        Assert.Contains("0:02:00", message.Body);
+        Assert.Contains("Product.Tests.StalledTests.Finishes", message.Body);
+        Assert.Contains("not charged", message.Body);
+    }
+
+    [Fact]
     public async Task SeedBuiltInParticipantsAsync_RegistersStandardSet()
     {
         await _bridge.SeedBuiltInParticipantsAsync();

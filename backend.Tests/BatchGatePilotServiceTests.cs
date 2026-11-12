@@ -335,6 +335,27 @@ public sealed class BatchGatePilotOperatorMoveTests : BatchGatePilotServiceTests
 public sealed class BatchGatePilotPlanningTests : BatchGatePilotServiceTests
 {
     [Fact]
+    public async Task Enabling_batch_verification_requires_a_remote_fallback_gate_host()
+    {
+        using var factory = BuildFactory(new Dictionary<string, string?>
+        {
+            ["RemoteGate:SshHost"] = null,
+            ["RemoteGate:WorkerPath"] = null,
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var refused = await client.PutAsJsonAsync($"/api/projects/{ProjectName}/batch-gate",
+            new BatchGateFormationOptions(Enabled: true, Scope: "code"));
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, refused.StatusCode);
+        using var body = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
+        Assert.Equal("enabled", body.RootElement.GetProperty("field").GetString());
+        Assert.Contains("RemoteGate:SshHost", body.RootElement.GetProperty("error").GetString());
+        Assert.Contains("RemoteGate:WorkerPath", body.RootElement.GetProperty("error").GetString());
+        Assert.False(factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .Get(ProjectName).BatchGate.Enabled);
+    }
+
+    [Fact]
     public async Task Batch_gate_settings_and_state_api_follow_the_shared_shape()
     {
         using var factory = BuildFactory();
@@ -1910,7 +1931,9 @@ public sealed class BatchGatePilotPublicationTests : BatchGatePilotServiceTests
             var hasA = TreeHas(request.ExpectedSha!, "docs/iso-a.md");
             var hasB = TreeHas(request.ExpectedSha!, "docs/iso-b.md");
             var hasC = TreeHas(request.ExpectedSha!, "docs/iso-c.md");
-            if (hasB && hasC && !hasA && !changed)
+            // AGT-3752: after A publishes, later children start on its tip.
+            var ownA = hasA && TreeHas(RemoteTip(), "docs/iso-a.md");
+            if (hasB && hasC && (!hasA || ownA) && !changed)
             {
                 changed = true;
                 Supersede(authority, b.Key);
@@ -3171,8 +3194,30 @@ public sealed class BatchGatePilotRecoveryTests : BatchGatePilotServiceTests
 
         Assert.Equal(0, _gate.FallbackRuns);
         AssertLane(member.Key, TaskStates.Escalated);
+        var parked = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(member.Key, _watchPath)!.ParkedBlocker;
+        Assert.Equal(HumanReviewEscalationCategories.GateInfrastructure, parked?.BlockerType);
+        Assert.Contains("retry the gate", parked?.Reason);
         Assert.Null(Ownership(member.Key));
         Assert.Empty(store.ListPending());
+
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
+        settings.SetBatchGate(ProjectName, Settings(factory) with { Enabled = false });
+        var disabledRetry = await client.PostAsync(
+            $"/api/projects/{ProjectName}/batch-gate/infrastructure/{member.Key}/retry", null);
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, disabledRetry.StatusCode);
+        Assert.Contains("Re-enable batch verification", await disabledRetry.Content.ReadAsStringAsync());
+        AssertLane(member.Key, TaskStates.Escalated);
+        Assert.Empty(store.ListPending());
+        settings.SetBatchGate(ProjectName, Settings(factory) with { Enabled = true });
+        var retry = await client.PostAsync(
+            $"/api/projects/{ProjectName}/batch-gate/infrastructure/{member.Key}/retry", null);
+        Assert.Equal(System.Net.HttpStatusCode.OK, retry.StatusCode);
+        AssertLane(member.Key, TaskStates.AutoReview);
+        Assert.Single(store.ListPending());
+        Assert.Equal(0, _gate.FallbackRuns);
     }
 
     [Fact]
@@ -4117,6 +4162,8 @@ public abstract partial class BatchGatePilotServiceTests
                     ["TaskIndexCache:RefreshCoalesceMilliseconds"] = "0",
                     // These tests drive the suite through the fake build/test gate runner.
                     [ClaimedBatchGateRunner.ExecutionKey] = ClaimedBatchGateRunner.BridgeMode,
+                    ["RemoteGate:SshHost"] = "gate-test",
+                    ["RemoteGate:WorkerPath"] = "/opt/studio/OrchestratorApi.dll",
                 }).AddInMemoryCollection(configuration ?? new Dictionary<string, string?>()));
             builder.ConfigureTestServices(services =>
             {

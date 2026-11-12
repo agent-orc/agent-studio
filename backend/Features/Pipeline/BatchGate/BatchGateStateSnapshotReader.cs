@@ -44,8 +44,11 @@ public static class BatchGateStateSnapshotReader
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
         var latestCauseByAttempt = fallbackCauses.GroupBy(cause => cause.ReviewAttemptId, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        // An unreadable newest state is reported under quarantined, not as a
+        // readable batch with a phase inferred from an older state row.
         var projectManifests = store.ListManifests()
-            .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
+            .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase)
+                && store.LatestState(item.BatchId).Reason != BatchGateStore.StateUnreadableReason)
             .ToArray();
         var relevantManifests = projectManifests.OrderByDescending(item => item.ClosedAtUtc)
             .Take(Math.Clamp(history, 0, 500))
@@ -81,11 +84,12 @@ public static class BatchGateStateSnapshotReader
                 store.LatestState(manifest.BatchId).Phase == BatchPhase.Formed)
             .DistinctBy(manifest => manifest.BatchId, StringComparer.Ordinal).ToArray();
         var queuePositions = BatchGateFlightQueue.Positions(store, formedBatches,
-            _ => leaseDeadlineDeferredBatchId);
+            _ => leaseDeadlineDeferredBatchId, at, _ => settings.MaximumWaitMinutes);
         var flightQueue = formedBatches.OrderBy(manifest => queuePositions[manifest.BatchId]).ToArray();
         var planDeadlinePassed = plan.CloseAtUtc is { } closeAt && closeAt <= at;
-        var overduePending = pending.Where(item => (item.Subject.ReviewCompletedAtUtc
-                .AddMinutes(settings.DeadlineMinutes) <= at || planDeadlinePassed)
+        bool OwnDeadlinePassed(BatchGatePendingRecord item) =>
+            item.Subject.ReviewCompletedAtUtc.AddMinutes(settings.DeadlineMinutes) <= at;
+        var overduePending = pending.Where(item => (OwnDeadlinePassed(item) || planDeadlinePassed)
             && !plan.ProposedMembers.Contains(item.Subject.TaskKey, StringComparer.Ordinal))
             .ToArray();
         var overdue = overduePending
@@ -95,12 +99,15 @@ public static class BatchGateStateSnapshotReader
                     member.TaskKey == item.Subject.TaskKey
                     && member.RunAttempt == item.Subject.RunAttempt));
                 var cause = latestCauseByAttempt.GetValueOrDefault(item.ReviewAttemptId);
+                var excludedRule = plan.ExcludedMembers?.FirstOrDefault(excluded =>
+                    excluded.TaskKey == item.Subject.TaskKey)?.Rule;
                 var reason = formed is not null
                     ? $"batch {formed.BatchId} is {StateOf(store, formed).Phase.ToString().ToLowerInvariant()}"
                         + (queuePositions.TryGetValue(formed.BatchId, out var queued)
                             ? $", flight queue position {queued} of {flightQueue.Length}" : "")
                     : item.Subject.ActivePerTaskGate ? "per-task gate is in progress"
                     : cause is not null ? $"per-task fallback: {cause.Rule}"
+                    : excludedRule is not null ? $"excluded by {excludedRule}"
                     : "pending member awaits the next planner tick";
                 if (formed is null && waits.TryGetValue(item.ReviewAttemptId, out var wait))
                     reason += $", waits for {wait.Detail}";
@@ -111,8 +118,11 @@ public static class BatchGateStateSnapshotReader
             {
                 Decision = plan.Decision == "idle" ? "wait" : plan.Decision,
                 Reason = plan.Reason + "; overdue pending: " + string.Join("; ", overdue),
-                ProposedMembers = plan.ProposedMembers.Concat(overduePending
-                    .Where(item => !item.Subject.ActivePerTaskGate
+                ProposedMembers = !settings.Enabled ? plan.ProposedMembers : plan.ProposedMembers.Concat(overduePending
+                    .Where(item => OwnDeadlinePassed(item)
+                        && !(plan.ExcludedMembers?.Any(excluded =>
+                            excluded.TaskKey == item.Subject.TaskKey) ?? false)
+                        && !item.Subject.ActivePerTaskGate
                         && !recoverable.Any(manifest => manifest.Members.Any(member =>
                             member.TaskKey == item.Subject.TaskKey
                             && member.RunAttempt == item.Subject.RunAttempt))
@@ -167,6 +177,9 @@ public static class BatchGateStateSnapshotReader
                 phase = phase.Phase.ToString().ToLowerInvariant(),
                 phaseAtUtc = phase.RecordedAtUtc,
                 phaseReason = phase.Reason,
+                phaseHistory = store.StateHistory(manifest.BatchId).Select(item => new {
+                    phase = item.Phase.ToString().ToLowerInvariant(), reason = item.Reason, atUtc = item.RecordedAtUtc,
+                }).ToArray(),
                 queuePosition = queuePositions.TryGetValue(manifest.BatchId, out var position)
                     ? position : (int?)null,
                 causedByTaskKey = phase.CausedByTaskKey,
@@ -196,6 +209,8 @@ public static class BatchGateStateSnapshotReader
                         run.BatchRunId, run.Host,
                         outcome = verdict?.Outcome,
                         classification = verdict?.Classification,
+                        hang = verdict?.Hang,
+                        evidenceAvailable = store.StoredEvidenceFile(run.EvidencePath) is not null,
                         startedAtUtc = (DateTimeOffset?)run.StartedAtUtc,
                         finishedAtUtc = verdict?.CompletedAtUtc,
                     };
@@ -407,8 +422,24 @@ public static class BatchGateStateSnapshotReader
             preChecksRed = preChecks.Count(check => check.Outcome == "red"),
             preCheckMinutesSaved = preChecks.Sum(check => check.MinutesSaved),
             dailySummary,
+            quarantined = Quarantined(store, project),
         };
     }
+
+    /// <summary>
+    /// The project's quarantined batch records, read after the route's own
+    /// reads so it lists what they met. A record whose project cannot be read
+    /// may belong to any project, so every project lists it.
+    /// </summary>
+    private static object[] Quarantined(BatchGateStore store, string project)
+        => store.ListQuarantined()
+            .Where(record => record.Project is null
+                || string.Equals(record.Project, project, StringComparison.OrdinalIgnoreCase))
+            .Select(record => (object)new
+            {
+                record.BatchId, record.Project, record.Kind, record.File, record.Error,
+                record.DetectedAtUtc, record.NextStep,
+            }).ToArray();
 
     /// <summary>
     /// A manifest the snapshot reads between the manifest write and its first

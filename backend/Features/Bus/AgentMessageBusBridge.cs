@@ -771,6 +771,25 @@ public sealed class AgentMessageBusBridge
         return EmitAsync(msg, ct);
     }
 
+    /// <summary>Names the timed out shard and its last observed tests in Activity.</summary>
+    public Task EmitBatchShardHangAsync(string project, string batchId, string runId,
+        AgentStudio.Pipeline.GateShardHangEvidence hang, CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: ParticipantOrchestratorFor(project),
+            role: "system",
+            kind: "error",
+            severity: "Warn",
+            project: project,
+            topic: "batch-test-shard-hang",
+            summary: TruncateSummary(hang.Summary()),
+            body: $"Batch: {batchId}\nRun: {runId}\n{hang.Summary()}\n"
+                + "The run is infrastructure red; members are not charged for this hang.",
+            payload: new { batchId, runId, hang },
+            tags: ["batch-gate", "infrastructure-hang", $"batch:{batchId}"]);
+        return EmitAsync(msg, ct);
+    }
+
     public Task EmitQualityChangeReviewDeliveryExpiredAsync(string cardKey, string repositoryId,
         string key, CancellationToken ct = default)
     {

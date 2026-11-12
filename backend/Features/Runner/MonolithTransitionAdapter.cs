@@ -163,8 +163,35 @@ public static class MonolithTransitionAdapter
     public static bool PerTaskGateSlotFree(int perTaskGates, int slotsTotal)
         => BatchGateLookAheadPlanner.PerTaskGateSlotFree(perTaskGates, slotsTotal);
 
-    public static IReadOnlyList<string> BatchStartOrder(IEnumerable<BatchGateStartCandidate> formed)
-        => BatchGateStartPolicy.Order(formed);
+    public static IReadOnlyList<string> BatchStartOrder(IEnumerable<BatchGateStartCandidate> formed,
+        DateTimeOffset nowUtc)
+        => BatchGateStartPolicy.Order(formed, nowUtc);
+
+    public static BatchRepackDecision BatchRepack(BatchRepackFacts facts)
+        => BatchFormationPolicy.Repack(facts);
+
+    public static (bool Overlap, string Detail) BatchRepackExclusion(BatchPlannerCard card,
+        IReadOnlyList<BatchPlannerCard> selected, int maximumSize, string overlap)
+        => BatchFormationPolicy.RepackExclusion(card, selected, maximumSize, overlap);
+
+    public static IReadOnlyList<BatchPlannerCard> BatchLargestCompatible(IReadOnlyList<BatchPlannerCard> ordered,
+        int maximumSize, string overlap)
+        => BatchFormationPolicy.LargestCompatible(ordered, maximumSize, overlap);
+
+    public static IReadOnlyList<string> BatchConflictingFiles(BatchPlannerCard left, BatchPlannerCard right)
+        => BatchFormationPolicy.ConflictingFiles(left, right);
+
+    public static BatchIntentDecision BatchIntent(BatchIntentFacts facts)
+        => BatchFormationPolicy.Decide(facts);
+
+    public static BatchIntentStep BatchIntentRecovery(BatchIntentRecoveryFacts facts)
+        => BatchFormationPolicy.Recover(facts);
+
+    public static bool BatchMayRetirePredecessors(BatchPhase? successorPhase)
+        => BatchFormationPolicy.MayRetirePredecessors(successorPhase);
+
+    public static bool BatchPhaseIsTerminal(BatchPhase phase)
+        => BatchPhaseTransitionPolicy.IsTerminal(phase);
 
     public static bool BatchFlightLeaseDeadlinePassed(DateTimeOffset startedAtUtc, bool leaseClaimed,
         DateTimeOffset nowUtc, int deadlineMinutes)

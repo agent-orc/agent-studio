@@ -3,6 +3,13 @@
 Version: 2026-11-09
 Status: System-of-record map for frontend changes.
 
+Concept cards and detail views show the dossier and review state without code
+delivery indicators. They omit build and test evidence, delivery integration,
+and checkout context. Concept acceptance remains available when a stale
+integration status says pending. A pending review held by its host shows the
+current load or slot-capacity reason in the live status line instead of a queue
+position.
+
 Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
@@ -293,6 +300,27 @@ the domains it broke without hiding the domains that succeeded.
 
 ## Entry Points
 
+### Session-aware board shell
+
+The shell reads the authenticated session's projected role before it starts
+background loaders. Product and other read-only sessions load the board and
+their project collections, but skip runner status, CLI catalogs, usage, host
+health, operator attention, quotas, and their polling loops. The shared
+`ShellAccessService` also stops late-mounted background reads that the role
+cannot use before they reach the network. A refused background runner read
+does not open the generic error dialog. The limited status bar identifies the
+board without showing a fabricated local runner state. The server remains the
+authority for every request.
+
+For restricted sessions, the Explorer groups projects returned by the
+authorized `/api/projects` list under Projects headings. The public demo
+banner skips its environment flag read for restricted signed-in roles. The DEV
+favicon check waits for operator access before reading that endpoint.
+
+Operator-only header controls mount immediately after the first shell paint.
+Their code stays outside the initial bundle, and restricted sessions never
+construct those controls.
+
 ### Product preview and feedback
 
 The Project URL tab keeps its live iframe and places the project chat beside it through the existing Orchestrator side sheet. Its product controls collect a change request in plain language: desired result, page location, optional example, quota estimate, then an explicit Create this change action. The resulting card asks for before and after screenshots of each changed page. Delivery screenshots come from the task screenshot API. A person marks a rectangle or point on a screenshot, writes feedback, and sends its crop, optional element selector, and current preview address to the same card's next round. Acceptance uses the existing Human Review move; production release remains a separate approval.
@@ -335,7 +363,12 @@ Project settings expose the batch gate's scope, planner, bounds, risk policy,
 calibration, stacking, review test level, timeout, and advisor mode. Enabling
 the gate while the scope is Documentation switches the scope to Code and says
 so; the operator can switch it back before saving. A link at the top of the
-project settings page jumps to the section (AGT-3592). Review lane headers summarize
+project settings page jumps to the section (AGT-3592).
+Code scope includes code and documentation follow-ups from concept work;
+Documentation scope includes only documentation follow-ups. A save that enables
+batch verification requires the remote SSH gate host and worker path, and an
+infrastructure park offers Retry gate and Disable batch verification.
+Review lane headers summarize
 waiting and running batches; card badges and task detail read membership from
 `GET /api/projects/{project}/batch-gate/state?history=10`, not from board cards.
 The project batch panel shows the planner, look ahead, advisor verdict, pending

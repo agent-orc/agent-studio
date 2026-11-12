@@ -1853,19 +1853,37 @@ export function cardMoveTarget(id: string): string | null {
   return target && MANUAL_MOVE_LANES.includes(target) ? target : null;
 }
 
+/** Role scopes that narrow the card menu. Every flag only removes rows. */
+export interface CardMenuScope {
+  /** Ready lane is in Manual sort, so queue position can change. Defaults to true. */
+  canReorder?: boolean;
+  /**
+   * AGT-3670: a Reviewer holds no lane move, review order, or delete, and
+   * decides a Human Review card inside its detail.
+   */
+  reviewsOnly?: boolean;
+  /**
+   * AGT-3677: Product moves Backlog and Ready among each other and accepts a
+   * reviewed card. No other lane, no queue order, no delete.
+   */
+  productSession?: boolean;
+  /** AGT-3677: a Viewer or the public demo sees no mutation row at all. */
+  readOnlySession?: boolean;
+}
+
 /**
- * Right-click context-menu rows for a card. `reviewsOnly` (AGT-3670) keeps
- * the copy and filter rows only: a Reviewer holds no lane move, review
- * order, or delete, and decides a Human Review card inside its detail.
+ * Right-click context-menu rows for a card. `scope` narrows the rows to the
+ * moves the session's role may actually make, so the menu never offers a move
+ * the backend would refuse (AGT-3677).
  */
 export function buildCardCtxMenuItems(
   job: TaskInfo,
   mutationsBlocked = false,
   visibleLanes: readonly string[] = MANUAL_MOVE_LANES,
   queueEdge: ReadyQueueEdge | null = null,
-  canReorder = true,
-  reviewsOnly = false,
+  scope: CardMenuScope = {},
 ): MenuItem[] {
+  const { canReorder = true, reviewsOnly = false, productSession = false, readOnlySession = false } = scope;
   const items: MenuItem[] = [
     { kind: 'row', id: 'copy-name', label: 'Copy Name' },
     { kind: 'row', id: 'copy-id', label: 'Copy ID' },
@@ -1878,8 +1896,9 @@ export function buildCardCtxMenuItems(
       label: `Filter: tasks depending on ${job.key}`,
     });
   }
-  if (reviewsOnly) return items;
-  if (job.state === TaskState.AutoReview) {
+  // A Reviewer and a read-only session both stop at the copy and filter rows.
+  if (reviewsOnly || readOnlySession) return items;
+  if (!productSession && job.state === TaskState.AutoReview) {
     items.push({ kind: 'separator' });
     items.push({ kind: 'row', id: REVIEW_FIRST_ID, label: 'Review first',
       disabled: mutationsBlocked || job.reviewPriority === 'urgent' });
@@ -1893,8 +1912,13 @@ export function buildCardCtxMenuItems(
   const current = job.state === '2-ready-intake' ? TaskState.Ready : job.state;
   const targets = MANUAL_MOVE_LANES.filter((state) => visibleLanes.includes(state)
     && state !== current
-    && !manualMoveSkipsExecution(current, state));
-  if (current === TaskState.Ready) {
+    && !manualMoveSkipsExecution(current, state)
+    && (!productSession || (
+      (job.state === TaskState.Backlog && state === TaskState.Ready)
+      || (job.state === TaskState.Ready && state === TaskState.Backlog)
+      || (job.state === TaskState.HumanReview && state === TaskState.Completed)
+    )));
+  if (!productSession && current === TaskState.Ready) {
     items.push({ kind: 'separator' }, { kind: 'header', label: 'Queue position' });
     items.push({ kind: 'row', id: MOVE_TOP_ID, label: 'Move to top',
       disabled: mutationsBlocked || !canReorder || queueEdge?.first === true,
@@ -1922,14 +1946,16 @@ export function buildCardCtxMenuItems(
   }
 
   // Destructive delete lives at the very end behind a separator so it never
-  // sits next to the everyday copy rows. Present on every card.
-  items.push({ kind: 'separator' });
-  items.push({
-    kind: 'row',
-    id: DELETE_ID,
-    label: 'Delete task',
-    danger: true,
-    disabled: mutationsBlocked,
-  });
+  // sits next to the everyday copy rows. Restricted roles do not see it.
+  if (!productSession) {
+    items.push({ kind: 'separator' });
+    items.push({
+      kind: 'row',
+      id: DELETE_ID,
+      label: 'Delete task',
+      danger: true,
+      disabled: mutationsBlocked,
+    });
+  }
   return items;
 }

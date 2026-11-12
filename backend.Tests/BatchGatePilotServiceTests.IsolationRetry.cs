@@ -72,7 +72,9 @@ public sealed class BatchGatePilotIsolationRetryTests : BatchGatePilotServiceTes
             var hasA = TreeHas(request.ExpectedSha!, "docs/early-green.md");
             var hasB = TreeHas(request.ExpectedSha!, "docs/late-cancel.md");
             var hasC = TreeHas(request.ExpectedSha!, "docs/late-partner.md");
-            return hasB && !hasA && !hasC && ++soloAttempts == 1 ? Cancelled()
+            // AGT-3752: after the green sibling publishes, the solo starts on its tip.
+            var ownA = hasA && TreeHas(RemoteTip(), "docs/early-green.md");
+            return hasB && (!hasA || ownA) && !hasC && ++soloAttempts == 1 ? Cancelled()
                 : hasB ? Red(request.ExpectedSha) : Green(request.ExpectedSha);
         };
         _gate.Base = request => Green(request.ExpectedSha);

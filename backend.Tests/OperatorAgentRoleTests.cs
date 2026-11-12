@@ -57,6 +57,8 @@ public sealed class OperatorAgentRoleTests : IClassFixture<OperatorAgentRoleTest
         // Lane moves and acceptance.
         { "POST", "/api/tasks/{}/move", "/api/tasks/DEMO-1/move" },
         { "POST", "/api/tasks/batch-move", "/api/tasks/batch-move" },
+        // AGT-3753: the acceptance dry run is a read, not an installation-wide change.
+        { "POST", "/api/tasks/acceptance-readiness", "/api/tasks/acceptance-readiness" },
         // Create cards in Ready, repair titles.
         { "POST", "/api/tasks", "/api/tasks" },
         { "PUT", "/api/tasks/{}/title", "/api/tasks/DEMO-1/title" },
@@ -192,6 +194,27 @@ public sealed class OperatorAgentRoleTests : IClassFixture<OperatorAgentRoleTest
         Assert.Equal(200, read.Response.StatusCode);
         var write = await Invoke(store, configuration, "POST", "/api/cause-breakers/{}/probe", "/api/cause-breakers/fp_1/probe", issued.Secret);
         Assert.Equal(403, write.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Operator_agent_service_account_reads_acceptance_readiness_as_a_read()
+    {
+        var (store, configuration) = NewStore();
+        var owner = Owner(store);
+        var account = store.CreateServiceAccount(new CreateServiceAccountRequest("operator account", null,
+            [new IamGrantRequest(OperatorAgentRole, IamScope.Workspace)]), owner.Id);
+        var issued = store.CreateServiceAccountToken(account.Id,
+            new CreateServiceAccountTokenRequest("ops", _clock.GetUtcNow().UtcDateTime.AddDays(30)), owner.Id);
+        var scoped = OperatorToken(store, owner, "mine");
+
+        // The handler checks read access to every card it names; the
+        // middleware no longer treats the dry run as an installation-wide write.
+        foreach (var bearer in new[] { issued.Secret, scoped })
+        {
+            var result = await Invoke(store, configuration, "POST", "/api/tasks/acceptance-readiness",
+                "/api/tasks/acceptance-readiness", bearer);
+            Assert.True(result.Response.StatusCode == 200, $"{result.Response.StatusCode} {Body(result)}");
+        }
     }
 
     [Fact]

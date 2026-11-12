@@ -22,6 +22,7 @@ describe('operator attention model', () => {
     expect(attentionClassOf('human-review.ready')).toBe('human-review');
     expect(attentionClassOf('batch.red')).toBe('batch');
     expect(attentionClassOf('batch.isolating')).toBe('batch');
+    expect(attentionClassOf('batch.record-unreadable')).toBe('batch-record');
     expect(attentionClassOf('batch-gate.stuck')).toBe('batch');
     expect(attentionClassOf('push.pending-overdue')).toBe('push');
     expect(attentionClassOf('quota.exhausted')).toBe('quota');
@@ -55,6 +56,14 @@ describe('operator attention model', () => {
     const [escalation] = groupAttention([orphan]);
     expect(attentionTarget(orphan, escalation.spec)).toBe('activity');
     expect(attentionActionLabel(orphan, escalation.spec)).toBe('Open Activity');
+  });
+
+  it('opens the batch gate for an unreadable batch record, and Activity when it names no project', () => {
+    const [named] = groupAttention([item('batch.record-unreadable', { cardKey: null, cards: [] })]);
+    expect(named.spec.label).toBe('Batch record unreadable');
+    expect(attentionTarget(named.items[0], named.spec)).toBe('batch-gate');
+    const unnamed = item('batch.record-unreadable', { cardKey: null, cards: [], project: null });
+    expect(attentionTarget(unnamed, named.spec)).toBe('activity');
   });
 
   it('renders a compact age', () => {

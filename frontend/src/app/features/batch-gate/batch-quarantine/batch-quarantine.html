@@ -1,0 +1,16 @@
+<section class="batch-quarantine" aria-labelledby="batch-quarantine-title" data-testid="batch-quarantine">
+  <h3 id="batch-quarantine-title">
+    <app-status-indicator tone="warning" [label]="records().length === 1 ? 'Batch record unreadable' : records().length + ' batch records unreadable'" />
+  </h3>
+  <p>The batch gate skips these records. Every other batch keeps running.</p>
+  <ul class="batch-quarantine__rows">
+    @for (record of records(); track record.file) {
+      <li class="batch-quarantine__row" data-testid="batch-quarantine-row" [attr.data-kind]="record.kind">
+        <p><strong>{{ kindLabel(record.kind) }} of batch {{ record.batchId }}</strong> · project {{ record.project ?? 'unknown' }}</p>
+        <p class="batch-quarantine__file">{{ record.file }}</p>
+        <p class="batch-quarantine__error">{{ record.error }}</p>
+        <p>{{ record.nextStep }}</p>
+      </li>
+    }
+  </ul>
+</section>

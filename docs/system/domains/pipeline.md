@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-10
+Version: 2026-11-12
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -69,6 +69,8 @@ create-only JSON record, retained for 90 days. `GET
 returns newest-first rows and a total count. The `type` filter accepts the
 stored run types: `batch-gate`, `batch-base`, `batch-pre-check`,
 `per-task-fallback`, `per-task-gate`, and `clean-diagnostic-rerun`.
+Failed-test ranking retries unreadable evidence only within the same 90-day
+window. An execution without its gate run ID is permanently unattributed.
 
 Rows carry request, slot, lease, command start and finish times, process and
 shard evidence (including class names and measured class durations), rerun cost,
@@ -115,8 +117,10 @@ publication locks are keyed by project and integration branch; the aggregate
 merge-busy flag still drains stable deployment.
 The threshold batch planner selects a per-task gate when one eligible card
 reaches its deadline without a batch partner, or an operator closes below the
-minimum batch size. The plan state names that trigger. This path does not use
-title urgency, risk, or changed-path overlap. Its fallback gate does not own
+minimum batch size. The plan state names that trigger. The persisted plan records
+each excluded task key and its rule; overdue status uses each task's own review
+completion time and deadline. Excluded tasks stay out of proposed members.
+This path does not use title urgency, risk, or changed-path overlap. Its fallback gate does not own
 the project batch reservation. A later direct integration must hold the
 reservation through its merge gate and possible rollback. It acquires the
 reservation after the per-project merge lock, so a queued per-task integration
@@ -476,25 +480,48 @@ phase `Unknown` and is skipped by recovery until a state exists. The next pilot
 tick writes its first record. The recovery scan logs this condition once per
 manifest and store instance.
 
-### Flight queue order (AGT-3710)
+A record that does not deserialize is quarantined per record (AGT-3681,
+`BatchGateStore.Quarantine.cs`). `ListManifests` and `ListRecoverableManifests`
+skip an unreadable manifest, `ListRuns` skips an unreadable run record, and
+`LatestState` answers `Unknown` with reason `batch-state-record-unreadable` when
+the newest state row is unreadable; it never falls back to an older row, whose
+phase the batch may already have left. A direct read of one named record
+(`ReadManifest`, `ReadRun`) raises `BatchGateRecordUnreadableException`, a
+`JsonException`, and the pilot's recovery skips that batch. The quarantine is an
+in-memory projection of the files: `ListQuarantined` drops a record whose file
+is removed, superseded by a newer state row, or reads again after a change. The
+decision stream publishes each record once as `batch.record-unreadable`, and the
+state route lists them under `quarantined`.
+
+### Flight queue order (AGT-3710, AGT-3568)
 
 Each project runs one ordinary batch flight at a time, so formed batches wait
 in a flight queue. `BatchGateStartPolicy.Order` (orchestration decisions) fixes
 the queue, and `BatchGateFlightQueue` applies it in the start pass, in recovery,
-and in the state read:
+and in the state read. The rule is first in, first out with a maximum wait
+(AGT-3568 chose this explicit fairness rule over the size preference of
+AGT-3562, which let larger, younger batches overtake older ones):
 
 1. A stacked successor (`stackedOnBatchId`) starts first: it already gated
    against the candidate of a predecessor whose publication is in progress.
-2. A child batch (`parentBatchId`: an isolation, bisection, or documentation
+2. An ordinary batch that has waited the project's `maximumWaitMinutes`
+   (default 45) since its formation time starts next, oldest first. Child
+   batches cannot hold it back longer than that.
+3. A child batch (`parentBatchId`: an isolation, bisection, or documentation
    successor child) continues its parent's flight and starts next.
-3. A batch whose last flight was cancelled at its lease deadline goes last.
-4. Every other formed batch starts first in, first out: the oldest durable
+4. Every other ordinary batch starts first in, first out: the oldest durable
    formation time first, then the lowest member `enqueueSequence`, then the
    batch ID. The formation time is the close time of the first batch of its
    re-form chain (`reformedFromBatchId`), or the recorded `queuedSinceUtc` of a
    repacked replacement, which keeps the place of the oldest batch it
-   replaced. Size does not reorder the queue; `maximumWaitMinutes` no longer
-   affects the order.
+   replaced.
+5. A batch whose last flight was cancelled at its lease deadline goes last,
+   even past its maximum wait, so a refused flight cannot take the slot again
+   at once.
+
+Size never reorders the queue, and the maximum wait never reorders ordinary
+batches among themselves: an overdue batch is always older than a waiting one
+of the same project.
 
 Only the head ordinary batch of a project may stack on the running flight, so
 a younger batch on the running base cannot overtake an older one. Batch
@@ -1247,6 +1274,13 @@ as before.
   `Category!=MachineBound` and every other category filter therefore apply
   exactly as in the unsharded run. The complement filter names hundreds of
   classes, which is why it is not passed on the command line.
+- **Hang bound.** A shard with no result or output ends after the larger of ten
+  minutes and twice its own estimated duration. VSTest blame-hang starts at
+  90% of that bound and records the test sequence without a dump. A complete
+  TRX report starts a separate two-minute host-exit grace. The shard evidence
+  names the stall and recent tests; the gate treats it as infrastructure red.
+  The [batch gate operations page](../../operations/gates/batch-gate.md#test-shard-hang-bound-and-operator-evidence-agt-3751)
+  describes what the operator sees.
 - **Parallel lanes on one host.** The gate's own machine slot is one lane. It
   takes additional slots that are free at that moment for more lanes, so
   `RemoteGate:GateSlots` times `RemoteGate:ProcessorCount` still bounds the
