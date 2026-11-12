@@ -3,6 +3,13 @@
 Version: 2026-11-09
 Status: System-of-record map for frontend changes.
 
+Concept cards and detail views show the dossier and review state without code
+delivery indicators. They omit build and test evidence, delivery integration,
+and checkout context. Concept acceptance remains available when a stale
+integration status says pending. A pending review held by its host shows the
+current load or slot-capacity reason in the live status line instead of a queue
+position.
+
 Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
@@ -293,6 +300,27 @@ the domains it broke without hiding the domains that succeeded.
 
 ## Entry Points
 
+### Session-aware board shell
+
+The shell reads the authenticated session's projected role before it starts
+background loaders. Product and other read-only sessions load the board and
+their project collections, but skip runner status, CLI catalogs, usage, host
+health, operator attention, quotas, and their polling loops. The shared
+`ShellAccessService` also stops late-mounted background reads that the role
+cannot use before they reach the network. A refused background runner read
+does not open the generic error dialog. The limited status bar identifies the
+board without showing a fabricated local runner state. The server remains the
+authority for every request.
+
+For restricted sessions, the Explorer groups projects returned by the
+authorized `/api/projects` list under Projects headings. The public demo
+banner skips its environment flag read for restricted signed-in roles. The DEV
+favicon check waits for operator access before reading that endpoint.
+
+Operator-only header controls mount immediately after the first shell paint.
+Their code stays outside the initial bundle, and restricted sessions never
+construct those controls.
+
 ### Product preview and feedback
 
 The Project URL tab keeps its live iframe and places the project chat beside it through the existing Orchestrator side sheet. Its product controls collect a change request in plain language: desired result, page location, optional example, quota estimate, then an explicit Create this change action. The resulting card asks for before and after screenshots of each changed page. Delivery screenshots come from the task screenshot API. A person marks a rectangle or point on a screenshot, writes feedback, and sends its crop, optional element selector, and current preview address to the same card's next round. Acceptance uses the existing Human Review move; production release remains a separate approval.
@@ -335,7 +363,12 @@ Project settings expose the batch gate's scope, planner, bounds, risk policy,
 calibration, stacking, review test level, timeout, and advisor mode. Enabling
 the gate while the scope is Documentation switches the scope to Code and says
 so; the operator can switch it back before saving. A link at the top of the
-project settings page jumps to the section (AGT-3592). Review lane headers summarize
+project settings page jumps to the section (AGT-3592).
+Code scope includes code and documentation follow-ups from concept work;
+Documentation scope includes only documentation follow-ups. A save that enables
+batch verification requires the remote SSH gate host and worker path, and an
+infrastructure park offers Retry gate and Disable batch verification.
+Review lane headers summarize
 waiting and running batches; card badges and task detail read membership from
 `GET /api/projects/{project}/batch-gate/state?history=10`, not from board cards.
 The project batch panel shows the planner, look ahead, advisor verdict, pending
@@ -845,7 +878,10 @@ occur. It is not a claim about tunnel transfer time.
   the viewport-safe shared tooltip instead of a second tree line. The Dossiers
   count is the number of Dossier leaves under the branch, excluding the
   separately promoted Style Guide. Open-decision counts remain on pending
-  leaves and reconcile with the list and viewer header after acceptance.
+  leaves and reconcile with the list and viewer header after acceptance. A
+  decision-pending status or decision-ready phase opens that count; unsaved
+  browser selections do not close it. An active Dossier with open decisions
+  stays under `Needs a decision` until the recorded decision closes them.
   Dossier overview and Explorer lifecycle headers are keyboard-accessible disclosures whose per-project collapsed state persists locally; a newly populated section opens once with its quiet count visible.
   Lifecycle-group counts equal
   their visible leaves and zero counts stay hidden. The catalogue's
@@ -873,7 +909,9 @@ occur. It is not a claim about tunnel transfer time.
   in an opaque-origin `srcdoc` iframe with the Dossier CSP. A source-checked
   message boundary maps docs-relative links to the in-app Wiki and opens absolute
   HTTP(S) links in a new tab without exposing host APIs or credentials. An inert
-  DOM parse moves artifact nodes into a fixed policy-first wrapper. Dossier
+  DOM parse moves artifact nodes into a fixed policy-first wrapper. Studio's
+  theme selects the article's inline light and dark CSS rules when the sandboxed
+  document loads; switching themes reloads the frame. Dossier
   pages expose a Maximize action, and dirty working-tree
   content is labelled as uncommitted instead of receiving the current HEAD
   revision. Canonical entries expose their stable project reference key as a
@@ -1047,12 +1085,12 @@ occur. It is not a claim about tunnel transfer time.
   [docs/operations/security/overview.md](../../operations/security/overview.md).
 - The Retention destination at `#/workspace/settings/retention` owns the
   versioned workspace rule table, dry-run and explicit apply reports, run
-  history, and full-backup controls. Project Settings mounts the same rule
+  history, and a pointer to the Task Server backup controls. Project Settings mounts the same rule
   table for sparse overrides. Archived task detail remains navigable from the
   board, global search, and dossier history, then renders the cold manifest and
   hot Markdown excerpts in Docs with one restore action. All retention traffic
-  uses `/api/v1/management/retention` and `/api/v1/management/backups/full`, so
-  the Orchestrator proxy and direct Task Server deployment share one frontend.
+  uses `/api/v1/management/retention`. Installation backup commands live under
+  Settings > Task Server, with backup state on each project's Operations page.
 - The Environment destination at `#/workspace/settings/environment` (old
   `execution-hosts` and `remote-hosts` routes redirect here) persists a per-user
   Hosts, Topology, Installation, or History view. Hosts opens with a grouped

@@ -417,7 +417,8 @@ internal static class RunnerCapabilityProbe
                 BuildNodeSweep.Latest is null ? null : BuildNodeSweep.TerminatedTotal,
                 BuildNodeSweep.Latest?.ObservedAt,
                 ClaimLoadGate: claimLoadGate,
-                OneShotClaimRoute: oneShotClaimRoute);
+                OneShotClaimRoute: oneShotClaimRoute,
+                Filesystems: sample.Filesystems);
 
     /// <summary>A missing Docker daemon leaves the optional inventory absent for older hosts.</summary>
     public static async Task<IReadOnlyList<HostContainerSummaryDto>?> ContainersAsync(CancellationToken ct)

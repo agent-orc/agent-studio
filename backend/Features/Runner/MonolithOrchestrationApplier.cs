@@ -332,15 +332,28 @@ public sealed class MonolithOrchestrationApplier(
                     "model-selected-salvage-handoff", occurrence.AuthorityAttemptId,
                     time.GetUtcNow().UtcDateTime);
             }
+            // The gate payload already carries the typed park reason. Preserve
+            // it when the engine applies the escalation, even if the batch
+            // member receipt was cleared before this decision arrived.
+            var batchInfrastructurePark = target == TaskStates.Escalated
+                && GateReason(occurrence.Run.PayloadJson).StartsWith(
+                    HumanReviewEscalation.FormatReason(
+                        HumanReviewEscalationCategories.GateInfrastructure, ""),
+                    StringComparison.Ordinal);
             var move = await transitions.MoveAsync(task.Id, target, task.WatchPath, ct,
-                cause: "engine-decision", reason: decision?.Reason ?? "Engine stage completed.",
+                cause: "engine-decision",
+                reason: batchInfrastructurePark ? GateReason(occurrence.Run.PayloadJson)
+                    : decision?.Reason ?? "Engine stage completed.",
                 authorityWrite: new AttemptWriteReference(occurrence.AuthorityAttemptId,
                     occurrence.AuthorityFence, occurrence.AuthorityEpoch, key),
                 suppressProductExecution: true,
                 expectedSourceState: occurrence.ExpectedSourceState,
-                transitionCause: decision?.Action is TransitionAction.FindingRound or TransitionAction.ConcernRound
-                    ? LaneChangeCauses.QualityLoop : LaneChangeCauses.Delivered,
-                transitionDetail: decision?.Action.ToString() ?? completion.Action.ToString(),
+                transitionCause: batchInfrastructurePark ? LaneChangeCauses.Escalated
+                    : decision?.Action is TransitionAction.FindingRound or TransitionAction.ConcernRound
+                        ? LaneChangeCauses.QualityLoop : LaneChangeCauses.Delivered,
+                transitionDetail: batchInfrastructurePark
+                    ? HumanReviewEscalationCategories.GateInfrastructure
+                    : decision?.Action.ToString() ?? completion.Action.ToString(),
                 engineDecisionRequeue: activeChoice is { Action: DecisionActionKinds.Retry,
                     Target: "card:ready" } or { Action: DecisionActionKinds.Adapt,
                     Target: "salvage-handoff" },
@@ -417,8 +430,17 @@ public sealed class MonolithOrchestrationApplier(
                     ? GateReason(occurrence.Run.PayloadJson)
                     : string.Join("\n", decision.Findings.Select(finding =>
                         $"- {finding.Aspect}: {finding.Summary}"));
+                using var reviewPayload = JsonDocument.Parse(occurrence.Run.PayloadJson);
+                var planSkew = reviewPayload.RootElement.TryGetProperty("reviewOutcome", out var reportedOutcome)
+                    && reportedOutcome.GetString()
+                        == AgentStudio.TaskServer.Contracts.ReviewOutcomeKinds.DeliveryPredatesReviewPlan;
+                var followUp = planSkew
+                    ? $"{decision.Reason} Start from the full result ref "
+                      + $"{decision.ContinuationBase?.ResultRef ?? "missing"}, merge the target branch into it, "
+                      + "resolve any conflicts, and submit the merged delivery for review."
+                    : $"{(decision.Action == TransitionAction.ReturnToReady ? "Fix the build and test gate failure:" : "Fix the reviewed findings on the reviewed delivery:")}\n{findings}";
                 if (!mutations.AppendContinuationNote(task.Id,
-                    $"{marker}\n{(decision.Action == TransitionAction.ReturnToReady ? "Fix the build and test gate failure:" : "Fix the reviewed findings on the reviewed delivery:")}\n{findings}", task.WatchPath))
+                    $"{marker}\n{followUp}", task.WatchPath))
                     throw new IOException("The engine follow-up prompt could not be appended.");
             }
         }

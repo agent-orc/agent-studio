@@ -1,6 +1,7 @@
 import { DestroyRef, computed, effect, inject, signal, untracked, type OutputEmitterRef, type Signal, type WritableSignal } from '@angular/core';
 
 import type { RegistryWorkspaceListItem } from '../../models/task.model';
+import { ShellAccessService } from '../../services/shell-access.service';
 import { clearVisibleInterval, setVisibleInterval } from '../../utils/visible-interval';
 import { WorkspaceQuotaBoardState } from '../quota';
 import {
@@ -53,6 +54,7 @@ export interface StudioHeaderHost {
  * footer triggers to their destinations.
  */
 export class StudioHeaderCockpit {
+  readonly shellAccess = inject(ShellAccessService);
   private currentWorkspaceId: string | null | undefined;
   readonly usage = inject(UsageCockpitService);
   readonly alarms = inject(UsageAlarmStateService);
@@ -63,8 +65,9 @@ export class StudioHeaderCockpit {
     const name = this.host.activeWorkspaceName();
     return (workspaces.find(ws => ws.displayName === name) ?? workspaces.find(ws => ws.isDefault) ?? workspaces[0])?.id ?? null;
   });
-  readonly navItems = computed(() => this.host.productWithoutProject()
-    ? STUDIO_HEADER_NAV_ITEMS.filter(item => item.id !== 'project') : STUDIO_HEADER_NAV_ITEMS);
+  readonly navItems = computed(() => STUDIO_HEADER_NAV_ITEMS.filter(item =>
+    !(item.id === 'project' && this.host.productWithoutProject())
+    && (this.shellAccess.operator() || (item.id !== 'environment' && item.id !== 'settings'))));
   readonly detailFocus = signal<UsageDetailFocus | null>(null);
   readonly detailNow = signal(Date.now());
   readonly openRequest = signal<UsageDetailRequest | null>(null);
@@ -78,8 +81,10 @@ export class StudioHeaderCockpit {
       const workspaceId = this.quotaWorkspaceId();
       untracked(() => this.loadQuota(workspaceId));
     });
-    const quotaPoll = setVisibleInterval(() => this.loadQuota(this.quotaWorkspaceId()), QUOTA_POLL_MS);
-    destroyRef.onDestroy(() => clearVisibleInterval(quotaPoll));
+    if (this.shellAccess.operator()) {
+      const quotaPoll = setVisibleInterval(() => this.loadQuota(this.quotaWorkspaceId()), QUOTA_POLL_MS);
+      destroyRef.onDestroy(() => clearVisibleInterval(quotaPoll));
+    }
     effect(() => {
       const name = host.activeWorkspaceName();
       const workspaceId = host.registryWorkspaces().find(ws => ws.displayName === name)?.id ?? null;
@@ -128,6 +133,7 @@ export class StudioHeaderCockpit {
   }
 
   private loadQuota(workspaceId: string | null): void {
+    if (!this.shellAccess.operator()) return;
     if (workspaceId) this.quotaBoard.load(workspaceId);
     else this.quotaBoard.reset();
   }

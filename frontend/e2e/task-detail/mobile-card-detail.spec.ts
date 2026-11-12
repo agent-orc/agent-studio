@@ -44,6 +44,7 @@ test('390 px card detail uses one page scroll, a pane switcher, and a full-width
     const switcher = page.getByTestId('detail-mobile-pane-switcher');
     const action = page.getByTestId('studio-mobile-triage-action-mark-done');
     await expect(switcher).toBeVisible();
+    await expect(page.getByTestId('detail-mobile-pane-git')).toHaveCount(0);
     await expect(action).toBeVisible();
     await expect(action).toContainText('Accept');
     await expect(page.getByTestId('studio-triage-action-mark-done')).toBeHidden();
@@ -81,21 +82,15 @@ test('390 px card detail uses one page scroll, a pane switcher, and a full-width
     mkdirSync(shots, { recursive: true });
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
-      await page.screenshot({ path: path.join(shots, `mobile-card-overview-${theme}.png`), animations: 'disabled' });
+      await page.screenshot({ path: path.join(shots, `mobile-card-overview-${theme}--real.png`), animations: 'disabled' });
 
       await page.getByTestId('detail-mobile-pane-result').click();
       await expect(page.getByTestId('pane-protocol')).toBeVisible();
       await expect(page.getByTestId('pane-prompt')).toBeHidden();
       await expect(page.getByTestId('pane-git')).toBeHidden();
       await expect(page.getByTestId('pane-protocol-body')).toHaveCSS('overflow-y', 'visible');
-      await page.screenshot({ path: path.join(shots, `mobile-card-result-${theme}.png`), animations: 'disabled' });
+      await page.screenshot({ path: path.join(shots, `mobile-card-result-${theme}--real.png`), animations: 'disabled' });
 
-      await page.getByTestId('detail-mobile-pane-git').click();
-      await expect(page.getByTestId('pane-git')).toBeVisible();
-      await expect(page.getByTestId('pane-prompt')).toBeHidden();
-      await expect(page.getByTestId('pane-protocol')).toBeHidden();
-      await expect(page.getByTestId('git-view-body')).toHaveCSS('overflow-y', 'visible');
-      await page.screenshot({ path: path.join(shots, `mobile-card-git-${theme}.png`), animations: 'disabled' });
       await page.getByTestId('detail-mobile-pane-overview').click();
     }
     await page.setViewportSize({ width: 600, height: 844 });
@@ -106,7 +101,7 @@ test('390 px card detail uses one page scroll, a pane switcher, and a full-width
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       await expect(page.getByTestId('studio-triage-action-mark-done')).toBeVisible();
-      await page.screenshot({ path: path.join(shots, `card-header-1024-${theme}.png`), animations: 'disabled' });
+      await page.screenshot({ path: path.join(shots, `card-header-1024-${theme}--real.png`), animations: 'disabled' });
     }
   } finally {
     await api<void>(`/api/tasks/${encodeURIComponent(created.id)}?watchPath=${encodeURIComponent(watchPath)}`, {

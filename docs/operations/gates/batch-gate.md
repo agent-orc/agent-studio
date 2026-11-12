@@ -69,6 +69,16 @@ write of a publication, of an abandon with re-formation on a moved base, and of
 a red isolation. A restarted host reaches the same valid outcome on its next
 ticks. Later steps of AGT-3552 extract the planner, the flight runner, the
 publication coordinator and the reconciler on top of this record.
+## Operator state and run artifacts
+
+The batch panel derives an unverified run's displayed status from its batch
+phase: only a running batch can display a running run. An abandoned, red, or
+published batch displays an unverified run as interrupted. The board's running
+count uses the running batch phase. The state response includes recorded phase
+transitions and whether each run's evidence exists. The panel keeps this history
+behind a disclosure and links each member to its task. Run evidence and the
+output log are available through project-scoped `run-evidence` and `run-log`
+routes, keyed by batch and run ID; both serve only files inside the batch store.
 
 ## Formation planner and intents (AGT-3568)
 
@@ -166,6 +176,19 @@ Decision D1 is option A: keep model review per card, run preparation, build,
 lint, and affected tests per code card, then run the complete suite once on
 the combined candidate before publication. This follows the operator direction
 of 2026-10-11. The project setting defaults off and to documentation scope.
+
+Enabling batch verification requires `RemoteGate:SshHost` on an approved remote
+host and an absolute `RemoteGate:WorkerPath`. The settings API refuses the save
+when that SSH fallback transport is invalid, because a lone reviewed card can
+still need a per-task gate even when the batch suite uses claimed execution.
+Code scope includes reviewed code and documentation cards; Documentation scope
+includes only documentation cards. A concept follow-up belongs to the scope
+matching the follow-up card's changed files, not the parent concept card.
+An infrastructure failure parks the reviewed delivery as `gate-infrastructure`.
+The card offers Retry gate, which requeues the same review generation after the
+host is configured, and Disable batch verification, which turns off batching
+for future cards. The reviewed card stays parked until the host is restored,
+batch verification is re-enabled, and its gate is retried.
 
 ## Delivered
 

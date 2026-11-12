@@ -11,6 +11,66 @@ namespace AgentStudio.Tests;
 public sealed class BatchGateStoreTests : IDisposable
 {
     [Fact]
+    public void State_keeps_excluded_overdue_member_out_of_proposals_and_uses_each_deadline()
+    {
+        _store.Enqueue(new BatchGatePendingRecord("review-a", Subject("task-a", 0),
+            _root, _root, _root, "direct-merge", "task", Now));
+        _store.Enqueue(new BatchGatePendingRecord("review-b", Subject("task-b", 25),
+            _root, _root, _root, "direct-merge", "task", Now));
+        _store.AppendPlanDecision("project", new BatchPlanDecision("wait", "waiting", Now.AddMinutes(30),
+            [], 2, [], ExcludedMembers: [new BatchPlanExcludedMember("task-a", "MissingResultSha")]));
+        var settings = new BatchGateFormationOptions(Enabled: true, DeadlineMinutes: 30);
+
+        JsonElement State(DateTimeOffset at) => JsonSerializer.SerializeToElement(
+            BatchGateStateSnapshotReader.Read(_store, "project", settings, now: at),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("plan");
+
+        var early = State(Now.AddMinutes(40));
+        Assert.Empty(early.GetProperty("proposedMembers").EnumerateArray());
+        Assert.Contains("task-a: excluded by MissingResultSha", early.GetProperty("reason").GetString());
+        var later = State(Now.AddMinutes(60));
+        Assert.Equal("task-b", Assert.Single(later.GetProperty("proposedMembers").EnumerateArray()).GetString());
+    }
+
+    [Fact]
+    public void State_skips_a_malformed_manifest_without_losing_the_project()
+    {
+        var broken = Path.Combine(_root, "malformed-folder");
+        Directory.CreateDirectory(broken);
+        File.WriteAllText(Path.Combine(broken, "manifest.json"), "{broken");
+        var incomplete = Path.Combine(_root, "incomplete-folder");
+        Directory.CreateDirectory(incomplete);
+        File.WriteAllText(Path.Combine(incomplete, "manifest.json"), "{}");
+
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.Empty(state.GetProperty("batches").EnumerateArray());
+        Assert.Empty(_store.ListRecoverableManifests());
+    }
+
+    [Fact]
+    public void State_history_preserves_recorded_transitions_in_order()
+    {
+        var manifest = Close();
+        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Assembling, Next, 1, Now.AddMinutes(-1), "assembling candidate"));
+        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Assembled, Next, 1, Now, "candidate assembled"));
+        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Abandoned, Next, 1, Now.AddMinutes(1), "interrupted"));
+        var history = _store.StateHistory(manifest.BatchId);
+        Assert.Equal(BatchPhase.Assembled, history[^2].Phase);
+        Assert.Equal(BatchPhase.Abandoned, history[^1].Phase);
+        var snapshot = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var batch = Assert.Single(snapshot.GetProperty("batches").EnumerateArray());
+        Assert.Equal("abandoned", batch.GetProperty("phaseHistory").EnumerateArray().Last()
+            .GetProperty("phase").GetString());
+    }
+    [Fact]
     public void State_reports_capacity_and_current_slot_use_together()
     {
         var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(

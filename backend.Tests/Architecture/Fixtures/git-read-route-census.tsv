@@ -23,6 +23,8 @@
 /api/auth/api-tokens	free	-	-	-
 /api/auth/audit/backups	free	-	-	-
 /api/auth/audit/operator-activity	free	-	-	-
+/api/auth/directory	free	-	-	-
+/api/auth/invite/preview	free	-	-	-
 /api/auth/iam/	free	-	-	-
 /api/auth/iam/break-glass/windows	free	-	-	-
 /api/auth/iam/check	free	-	-	-
@@ -65,6 +67,7 @@
 /api/clients/	free	-	-	-
 /api/clients/{id}	free	-	-	-
 /api/clients/{id}/defaults	free	-	-	-
+/api/clients/{id}/drain-status	free	-	-	-
 /api/clients/{id}/runner-capacity	free	-	-	-
 /api/clients/{id}/telemetry	free	-	-	-
 /api/concept-docs/{topic}	free	-	-	-
@@ -118,6 +121,7 @@
 /api/git/project-commit/diff	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
 /api/git/project-commit/files	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
 /api/git/summary	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
+/api/host/filesystems	free	-	-	-
 /api/hosts/{id}/operations/{attemptId}	free	-	-	-
 /api/integrations/quality-studio/connection	free	-	-	-
 /api/integrations/quality-studio/open	free	-	-	-
@@ -181,6 +185,8 @@
 /api/projects/{projectName}/batch-gate/ledger	free	-	-	-
 /api/projects/{projectName}/batch-gate/queue-stalls	free	-	-	-
 /api/projects/{projectName}/batch-gate/report	free	-	-	-
+/api/projects/{projectName}/batch-gate/run-evidence	free	-	-	-
+/api/projects/{projectName}/batch-gate/run-log	free	-	-	-
 /api/projects/{projectName}/batch-gate/state	free	-	-	-
 /api/projects/{projectName}/build-profile	reachable	gap	Pipeline	Pipeline reads from the Git fact store
 /api/projects/{projectName}/chat-metadata	free	-	-	-

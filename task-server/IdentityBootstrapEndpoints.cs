@@ -92,6 +92,10 @@ internal static class IdentityBootstrapEndpoints
             }
         }).RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
+        auth.MapGet("/invite/preview", async (string token, TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(() => store.PreviewStudioInvitationAsync(token, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+
         auth.MapPut("/users/{userId}/projects/{projectId}/production-approval", async (
             HttpContext context, string userId, string projectId, StudioProductionApprovalRequest request,
             TaskServerStore store, TaskServerBootstrapOptions bootstrap, CancellationToken ct)

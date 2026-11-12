@@ -8,11 +8,14 @@ import {
   output,
   signal,
 } from '@angular/core';
+import { HttpClient, HttpParams } from '@angular/common/http';
 
 import { TaskState } from '../../../../models/task.model';
 import { CdkTrapFocus } from '@angular/cdk/a11y';
 import type { TaskDetail, TaskInfo } from '../../../../models/task.model';
 import { CodeReviewListEntry, TaskService } from '../../../../services/task.service';
+import { BatchGateService } from '../../../../services/batch-gate.service';
+import { EscalationGateActions } from './escalation-gate-actions';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
 import { RunTimelinePollService } from '../../../polling/services/run-timeline-poll.service';
 import {
@@ -71,6 +74,13 @@ export class EscalationSummaryComponent {
   readonly answerDraft = signal('');
   readonly answering = signal(false);
   readonly answerError = signal<string | null>(null);
+  readonly gateInfrastructure = computed(() => this.detail().info.state === TaskState.Escalated
+    && this.detail().info.parkedBlocker?.blockerType === 'gate-infrastructure');
+  readonly reviewRetrying = signal(false);
+  readonly reviewRetryMessage = signal<string | null>(null);
+  readonly watchdogPark = computed(() => this.detail().info.state === TaskState.Escalated
+    && this.detail().info.parkedBlocker?.blockerType === 'environmental'
+    && this.detail().info.parkedBlocker?.causeDetail === 'auto-review-stranded');
   readonly decisionDialog = signal<'reissue' | 'accept' | null>(null);
   readonly codeReviewsLoaded = signal(false);
   readonly ownerNote = signal('');
@@ -92,12 +102,34 @@ export class EscalationSummaryComponent {
 
   /** The three terminal operator choices shown beside NEEDS DECISION. */
   readonly decisionActions = computed(() =>
-    this.detail().info.state === TaskState.Escalated
+    this.detail().info.state === TaskState.Escalated && !this.gateInfrastructure()
       ? laneActionsFor(TaskState.Escalated).filter((action) => DECISION_ACTION_IDS.has(action.id))
+        .map(action => this.watchdogPark() && action.id === 'reissue-escalated'
+          ? { ...action, variant: 'secondary' as const } : action)
       : [],
   );
 
+  retryReview(): void {
+    const info = this.detail().info;
+    if (!this.watchdogPark() || this.reviewRetrying() || this.mutationsBlocked()) return;
+    this.reviewRetrying.set(true);
+    this.reviewRetryMessage.set(null);
+    this.http.post<{ status: string }>(`/api/tasks/${encodeURIComponent(info.id)}/review/retry`, null,
+      info.watchPath ? { params: new HttpParams().set('watchPath', info.watchPath) } : {}).subscribe({
+      next: () => {
+        this.reviewRetrying.set(false);
+        this.reviewRetryMessage.set('A fresh review attempt is queued for the same delivery.');
+      },
+      error: error => {
+        this.reviewRetrying.set(false);
+        this.reviewRetryMessage.set(reviewRetryError(error?.error?.error));
+      },
+    });
+  }
+
   private readonly jobs = inject(TaskService);
+  readonly gate = new EscalationGateActions(inject(BatchGateService), () => this.detail().info, this.mutationsBlocked);
+  private readonly http = inject(HttpClient);
   private readonly timelinePoll = inject(TaskTimelinePollService);
   private readonly runTimelinePoll = inject(RunTimelinePollService);
 
@@ -123,6 +155,10 @@ export class EscalationSummaryComponent {
   private collapseJobId: string | null = null;
 
   constructor() {
+    // The summary needs the ledger for reissue history and the parked reason
+    // even when the operator has not opened the Timeline tab.
+    effect(() => this.timelinePoll.syncTo(this.detail().info));
+
     // Seed the collapse state whenever the open task changes: the stored
     // per-task preference wins; absent that, the lane picks the default.
     effect(() => {
@@ -206,6 +242,7 @@ export class EscalationSummaryComponent {
   readonly headTitle = computed<string>(() =>
     this.detail().info.needsInput
       ? (this.hasQueuedAnswer() ? 'Answer queued' : 'Agent needs input')
+      : this.watchdogPark() ? 'Review recovery'
       : this.view().escalation?.kind === 'gave-up' ? 'Orchestrator gave up' : 'Escalation',
   );
 
@@ -304,6 +341,13 @@ export class EscalationSummaryComponent {
     this.decisionDialog.set(null);
   }
 
+}
+
+function reviewRetryError(code?: string): string {
+  if (code === 'card-changed-since-park') return 'The card changed since the watchdog parked it. Reload and try again.';
+  if (code === 'review-delivery-unavailable') return 'The completed delivery is unavailable or another review owns it.';
+  if (code === 'review-attempt-could-not-start') return 'The card was restored, but a review attempt could not start.';
+  return 'Retry review failed.';
 }
 
 /** localStorage key holding the per-task collapse map (`{ [jobId]: boolean }`). */

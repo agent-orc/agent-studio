@@ -211,25 +211,43 @@ public sealed class TaskIntegrationRecordEndpointTests : IDisposable
         var index = factory.Services.GetRequiredService<TaskIndexCache>();
         index.GetSnapshot();
         Assert.Equal(3000, scanner.GetResidentIdentityFacts().Count);
-        var scans = scanner.RawScanCalls;
 
-        using (var capacity = await client.GetAsync("/api/operator/capacity"))
+        // The startup historical sweep can perform its own raw scan after
+        // the first index publication. Measure the request path instead of
+        // treating that background work as an endpoint scan.
+        using (var capacity = await SendWithoutWorkspaceScanAsync(
+            () => client.GetAsync("/api/operator/capacity")))
             capacity.EnsureSuccessStatusCode();
-        Assert.Equal(scans, scanner.RawScanCalls);
 
-        using (var ambiguous = await client.PostAsJsonAsync(
-            $"/api/tasks/{duplicateId}/integration-records", Request()))
+        using (var ambiguous = await SendWithoutWorkspaceScanAsync(
+            () => client.PostAsJsonAsync(
+                $"/api/tasks/{duplicateId}/integration-records", Request())))
             Assert.Equal(HttpStatusCode.Conflict, ambiguous.StatusCode);
-        Assert.Equal(scans, scanner.RawScanCalls);
 
-        using (var addressed = await client.PostAsJsonAsync(
-            "/api/tasks/ASS-13002/integration-records", Request()))
+        using (var addressed = await SendWithoutWorkspaceScanAsync(
+            () => client.PostAsJsonAsync(
+                "/api/tasks/ASS-13002/integration-records", Request())))
             addressed.EnsureSuccessStatusCode();
-        Assert.Equal(scans, scanner.RawScanCalls);
         using var first = JsonDocument.Parse(File.ReadAllText(Path.Combine(firstFolder, "task.json")));
         Assert.False(first.RootElement.TryGetProperty("integrationRecords", out _));
         using var second = JsonDocument.Parse(File.ReadAllText(Path.Combine(secondFolder, "task.json")));
         Assert.Single(second.RootElement.GetProperty("integrationRecords").EnumerateArray());
+    }
+
+    private static async Task<HttpResponseMessage> SendWithoutWorkspaceScanAsync(
+        Func<Task<HttpResponseMessage>> send)
+    {
+        var trace = TaskSwitchTrace.Begin(null, null);
+        try
+        {
+            var response = await send();
+            Assert.Equal(0, trace.WorkspaceScans);
+            return response;
+        }
+        finally
+        {
+            trace.Restore();
+        }
     }
 
     [Fact]

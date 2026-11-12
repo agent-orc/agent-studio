@@ -14,6 +14,11 @@ public sealed class AutoReviewStrandingPolicyTests
         false, false, false, false, true, false, false);
 
     [Fact]
+    public void Host_capacity_hold_keeps_pending_review_out_of_stranding_escalation()
+        => Assert.Equal(AutoReviewStrandingAction.Leave,
+            AutoReviewStrandingPolicy.Decide(Stranded() with { HostCapacityHeld = true }));
+
+    [Fact]
     public void Older_run_review_cannot_reenter_batch_for_a_new_delivery()
     {
         const string oldSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -235,6 +240,34 @@ public sealed class AutoReviewStrandingPolicyTests
     public void Cause_breaker_wait_owns_the_parked_card()
         => Assert.Equal(AutoReviewStrandingAction.Leave,
             AutoReviewStrandingPolicy.Decide(Stranded() with { HasReview = true, CauseBreakerWait = true }));
+
+    [Fact]
+    public void Escalation_reason_names_delivery_review_restart_and_retry_state()
+    {
+        var ended = new DateTime(2026, 11, 9, 1, 23, 0, DateTimeKind.Utc);
+        var sha = new string('a', 40);
+        var run = new RunAttemptDto("run-1", "AGT-1", "repo", null,
+            AttemptLifecycleState.Completed, null, 1, 1, ended.AddMinutes(-10), ended,
+            sha, "done", null, [],
+            new AgentStudio.TaskServer.Contracts.ImmutableResultEnvelope(
+                "repo", "run-1", new string('b', 40), sha, "refs/results/one", null, "digest"));
+        var subject = new ReviewSubjectDto("subject", "repo", sha, run.AttemptId,
+            "requirements", "policy", [], ended);
+        var review = new ReviewAttemptDto("review-1", "AGT-1", "repo", run.AttemptId,
+            null, subject, AttemptLifecycleState.Failed, null, 1, 1,
+            ended, ended.AddMinutes(4), ReviewTerminalOutcome.InfrastructureFailure,
+            "ExecutorRestarted", null, "Review worker restarted.", []);
+
+        var reason = AutoReviewStrandingWatchdog.ParkReason(Stranded() with
+        {
+            InfrastructureFailure = true,
+            InfrastructureRetryAvailable = false,
+        }, run, review, "Infrastructure retry limit reached.");
+
+        Assert.Contains("Last run completed at 2026-11-09 01:23 UTC", reason);
+        Assert.Contains("Last review ended as ExecutorRestarted at 2026-11-09 01:27 UTC", reason);
+        Assert.Contains("Infrastructure retry budget is exhausted", reason);
+    }
 
     [Fact]
     public void Successful_step_recovery_can_advance_to_batch_recovery_in_same_lane_visit()
