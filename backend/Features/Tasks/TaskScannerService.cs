@@ -1307,7 +1307,11 @@ public class TaskScannerService : ITaskScanner
     /// <summary>
     /// Reads the validated implementation-card proposals from a delivered
     /// concept Workbench. The published document is the durable source of
-    /// truth, not the agent's status report.
+    /// truth, not the agent's status report. The developer checkout is read
+    /// first; when it does not carry the complete Dossier yet (a Remote merge
+    /// lands in the integration worktree and reaches the checkout only when
+    /// the branch is released to it), the copy that Dossier placement stored
+    /// at the integrated commit is read instead. No git process runs here.
     /// </summary>
     public PromoteConceptResponse? BuildPromoteConceptPlan(string jobId, string? watchPath = null)
     {
@@ -1326,8 +1330,18 @@ public class TaskScannerService : ITaskScanner
         if (string.IsNullOrWhiteSpace(repositoryRoot) || !Directory.Exists(repositoryRoot))
             return null;
 
+        var documentRoot = repositoryRoot;
         var review = AgentStudio.Pipeline.ConceptWorkbenchContract.ReviewDirectory(
-            repositoryRoot, publication.RepoRelativeDirectory, info.Key ?? info.Id);
+            documentRoot, publication.RepoRelativeDirectory, info.Key ?? info.Id,
+            allowAccepted: true);
+        var placedCopy = AgentStudio.Pipeline.ConceptWorkbenchStore.SnapshotRoot(info.FolderPath);
+        if (!review.IsComplete && Directory.Exists(placedCopy))
+        {
+            documentRoot = placedCopy;
+            review = AgentStudio.Pipeline.ConceptWorkbenchContract.ReviewDirectory(
+                documentRoot, publication.RepoRelativeDirectory, info.Key ?? info.Id,
+                allowAccepted: true);
+        }
         if (!review.IsComplete || review.Descriptor == null) return null;
 
         return new PromoteConceptResponse
@@ -1337,8 +1351,8 @@ public class TaskScannerService : ITaskScanner
                 RepoRelativePath = publication.RepoRelativeEntrypoint,
                 Title = review.Descriptor.Title,
                 Decisions = AgentStudio.Pipeline.ConceptDecisionAssumptions.Read(
-                    Path.Combine(repositoryRoot, publication.RepoRelativeDirectory, "index.html"),
-                    Path.Combine(repositoryRoot, publication.RepoRelativeDirectory, "workbench.json")),
+                    Path.Combine(documentRoot, publication.RepoRelativeDirectory, "index.html"),
+                    Path.Combine(documentRoot, publication.RepoRelativeDirectory, "workbench.json")),
             },
             Items = review.Descriptor.ImplementationTasks,
             WatchPath = info.WatchPath,

@@ -1854,13 +1854,17 @@ export function cardMoveTarget(id: string): string | null {
 }
 
 /**
- * Right-click context-menu rows for a card.
+ * Right-click context-menu rows for a card. `reviewsOnly` (AGT-3670) keeps
+ * the copy and filter rows only: a Reviewer holds no lane move, review
+ * order, or delete, and decides a Human Review card inside its detail.
  */
 export function buildCardCtxMenuItems(
   job: TaskInfo,
   mutationsBlocked = false,
   visibleLanes: readonly string[] = MANUAL_MOVE_LANES,
   queueEdge: ReadyQueueEdge | null = null,
+  canReorder = true,
+  reviewsOnly = false,
 ): MenuItem[] {
   const items: MenuItem[] = [
     { kind: 'row', id: 'copy-name', label: 'Copy Name' },
@@ -1874,6 +1878,7 @@ export function buildCardCtxMenuItems(
       label: `Filter: tasks depending on ${job.key}`,
     });
   }
+  if (reviewsOnly) return items;
   if (job.state === TaskState.AutoReview) {
     items.push({ kind: 'separator' });
     items.push({ kind: 'row', id: REVIEW_FIRST_ID, label: 'Review first',
@@ -1892,9 +1897,13 @@ export function buildCardCtxMenuItems(
   if (current === TaskState.Ready) {
     items.push({ kind: 'separator' }, { kind: 'header', label: 'Queue position' });
     items.push({ kind: 'row', id: MOVE_TOP_ID, label: 'Move to top',
-      disabled: mutationsBlocked || queueEdge?.first === true });
+      disabled: mutationsBlocked || !canReorder || queueEdge?.first === true,
+      hint: !canReorder ? 'Switch this lane to Manual' : undefined,
+      tooltip: !canReorder ? 'Switch this lane to Manual to change queue position.' : undefined });
     items.push({ kind: 'row', id: MOVE_BOTTOM_ID, label: 'Move to bottom',
-      disabled: mutationsBlocked || queueEdge?.last === true });
+      disabled: mutationsBlocked || !canReorder || queueEdge?.last === true,
+      hint: !canReorder ? 'Switch this lane to Manual' : undefined,
+      tooltip: !canReorder ? 'Switch this lane to Manual to change queue position.' : undefined });
   }
   if (targets.length) {
     items.push({ kind: 'separator' }, { kind: 'header', label: 'Move' });

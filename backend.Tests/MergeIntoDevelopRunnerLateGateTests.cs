@@ -12,6 +12,84 @@ namespace AgentStudio.Tests;
 public sealed partial class MergeIntoDevelopRunnerTests
 {
     [Fact]
+    public async Task Inline_push_records_gate_after_fresh_merge_verification()
+    {
+        var fixture = SeedLateGateFixture("inline-published-gate", "inline", publishDelivery: false);
+        var gate = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 10, "", "green", true, false));
+        var runner = PublicationRunner(fixture, gate);
+
+        var result = await runner.RunAsync("Fixture", "inline", fixture.Folder,
+            fixture.WatchPath, "develop", CancellationToken.None);
+
+        Assert.True(result.Outcome.IsSuccessfulIntegration(), result.Error);
+        var publication = Assert.Single(PublishedGateEvidenceStore.Read(fixture.WatchPath));
+        Assert.Equal(result.MergedSha, publication.TreeSha);
+        Assert.Equal(result.MergedSha, publication.PublishedSha);
+        Assert.Equal(result.MergedSha, IntegrationVerificationStore.Read(fixture.Folder)?.Sha);
+    }
+
+    [Theory]
+    [InlineData(BuildTestGateVerdict.Fail, false, MergeIntoIntegrationOutcome.GateFailed, null)]
+    [InlineData(BuildTestGateVerdict.Ok, true, MergeIntoIntegrationOutcome.Error,
+        AcceptedIntegrationFailureCodes.GateUnavailable)]
+    public async Task Net_change_publication_needs_a_passed_gate_on_its_exact_commit(
+        BuildTestGateVerdict verdict, bool testsOtherCommit, MergeIntoIntegrationOutcome expected,
+        string? failureCode)
+    {
+        // A direct three-way merge conflicts; the commit-by-commit replay is
+        // clean, so the publication is a single-parent net change.
+        var repo = SeedRepo($"net-change-{verdict}");
+        RunGit(repo, "checkout -q -b develop");
+        File.WriteAllText(Path.Combine(repo, "shared.txt"), "a\n");
+        Commit(repo, "chore: shared base");
+        RunGit(repo, "checkout -q -b task/net-change");
+        File.WriteAllText(Path.Combine(repo, "shared.txt"), "b\n");
+        Commit(repo, "feat: delivery step a");
+        File.WriteAllText(Path.Combine(repo, "shared.txt"), "c\n");
+        Commit(repo, "feat: delivery step b");
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "shared.txt"), "b\n");
+        File.WriteAllText(Path.Combine(repo, "integration.txt"), "integration work");
+        Commit(repo, "chore: develop moved on");
+        var developBefore = RunGit(repo, "rev-parse develop").Out.Trim();
+        var (git, log, settings) = BuildWithSettings(repo);
+        settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
+        var gate = new OtherCommitGateRunner(new BuildTestGateResult(
+            verdict, verdict == BuildTestGateVerdict.Fail ? 1 : 0, 10, "", "gate verdict", true, false),
+            testsOtherCommit ? developBefore : null);
+        var runner = new MergeIntoDevelopRunner(git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: settings, preDevelopBuildGate: new PreDevelopBuildGate(gate));
+
+        var outcome = await runner.RunAsync("Fixture", "net-change", BeginRun(log, repo, "net-change"),
+            repo, "develop", CancellationToken.None);
+
+        Assert.Equal(1, gate.Invocations);
+        Assert.Equal(expected, outcome.Outcome);
+        Assert.Equal(failureCode, outcome.FailureCode);
+        if (failureCode is not null) Assert.Contains("no passed gate on its exact tree", outcome.Error);
+        Assert.Equal(developBefore, RunGit(repo, "rev-parse develop").Out.Trim());
+    }
+
+    private sealed class OtherCommitGateRunner(BuildTestGateResult result, string? testedSha)
+        : IBuildTestGateRunner
+    {
+        public int Invocations { get; private set; }
+
+        public Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
+            IReadOnlyList<string>? changedFiles, BuildProfile? profile, PostStepMode mode,
+            TimeSpan timeout, CancellationToken ct)
+        {
+            Invocations++;
+            return Task.FromResult(result with
+            {
+                ExpectedSha = request.ExpectedSha,
+                TestedSha = testedSha ?? request.ExpectedSha,
+            });
+        }
+    }
+
+    [Fact]
     public async Task Rejected_push_on_disjoint_origin_replays_under_the_green_gate()
     {
         var fixture = SeedLateGateFixture("rejected-push-disjoint", "replay", publishDelivery: false);

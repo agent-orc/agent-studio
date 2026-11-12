@@ -12,8 +12,18 @@ changed by the delivery before the gate tests the resulting tree. Catalogue
 discovery keeps its managed key mutation for descriptors outside a gated
 delivery.
 
-Version: 2026-11-09
+Version: 2026-11-11
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
+
+## Host source cache startup
+
+The review daemon creates and validates an absolute host source cache root before
+it starts background work or claims reviews. On Linux, `XDG_CACHE_HOME` selects
+the base when set; otherwise the daemon uses `HOME/.cache`. Windows uses Local
+Application Data with folder creation enabled. A missing, relative, or
+uncreatable root stops the daemon with the path and cause. Source materialization
+failures during an attempt report `ReviewInfra/SourceUnavailable` with the
+repository and cache paths, rather than being mistaken for a lost worker.
 
 ## Concept brief and Dossier evidence
 
@@ -413,9 +423,13 @@ authority and is never treated as missing.
 
 The per-card Auto Review stranding watchdog runs every 30 seconds. After
 `AutoReviewStranding:ThresholdMinutes` (30 by default), it checks for a running
-pipeline step, a pending or leased ReviewAttempt, a pending or active formed
-batch, a queued round, and a queued post-processing step. A card with none gets
-a durable intervention receipt in the existing stall-intervention feed and
+pipeline step, a pending or leased ReviewAttempt, a scheduled ReviewInfra
+retry of the current review, a cause breaker wait or probe marker, a pending or
+active formed batch, a queued round, and a queued post-processing step. A
+scheduled retry owns the card while its backoff runs and for one threshold
+after it came due, so a review host restart never escalates a card inside its
+backoff, while a retry that no scheduler tick fires still does (AGT-3691). A
+card with none gets a durable intervention receipt in the existing stall-intervention feed and
 its timeline. Report-only cards restart post-processing; coding cards with a
 completed run request a fresh ReviewAttempt; a passed review resumes delivery
 integration or re-enters the batch gate only when its source RunAttempt and
@@ -462,8 +476,15 @@ on the timeline.
 
 ## Versioned review-library steps
 
-Concept cards on the remote plane receive one semantic `concept-fit` aspect in
-addition to the existing build and lint commands. It uses the shared aspect
+Concept cards on the remote plane receive one semantic `concept-fit` aspect.
+When every changed path lies inside one `docs/<topic>/` Dossier directory, it
+is the only planned aspect (AGT-3698): the plan carries no dependency
+preparation and no build, test or lint command, and lists `build-tests` (plus
+any other dropped tool aspect) as skipped with the reason. Installing and
+testing the repository proves nothing about a Dossier, and a missing lockfile,
+an empty dependency tree or a red integration branch must not block it. Any
+other concept diff (unknown, several topics, or paths outside `docs/<topic>/`)
+keeps the build and lint commands next to `concept-fit`. The aspect uses the shared aspect
 runner, verdict sentinel, citation policy, and review grade. Its frozen prompt
 compares the delivered Dossier in the Result-SHA diff with the current
 `prompt.md` (bounded to 64,000 characters in the rendered prompt): required
@@ -472,7 +493,9 @@ decisions, and implementation-card source data. A contradiction is a blocking
 finding. The project pipeline-step setting `aspect-concept-fit` resolves its
 enabled state, prompt override, CLI, model, and thinking level like other
 aspects. Its default route is the bounded support aspect route from
-`PipelineStepModelDefaults`; build and lint keep their existing plans.
+`PipelineStepModelDefaults`. A Dossier-only plan whose `concept-fit` is
+disabled carries the completion-only command, so the subject stays admissible
+and settles `Inconclusive` for the missing aspect.
 
 The concept ReviewSubject stores the SHA-256 of the complete `prompt.md` in
 both its requirements identity and frozen review plan. Its frozen plan also
@@ -706,8 +729,15 @@ either. Two paths are deliberately outside the attempt directory (AGT-3429):
   scratch folder holds NuGet's extraction locks. See
   [pipeline.md](pipeline.md) for what a dependency-cache hit may skip.
 
+The conventional Node preparation plan runs `npm ci` only for selected package
+roots with a tracked `package-lock.json` or `npm-shrinkwrap.json`. It records
+roots without a tracked lockfile in `PreparationSkips` with reason
+`no-tracked-lockfile`; an explicit build-profile install command still runs.
+An npm lockfile with no installed packages may complete without `node_modules`.
+For that scope, a matching install marker is sufficient preparation.
+
 Before each candidate tool command, the review workspace checks every prepared
-dependency scope for its directory and lockfile marker. A missing scope reruns
+dependency scope for its required directory and lockfile marker. A missing scope reruns
 preparation and records the miss in command evidence. An environment diagnosis
 evicts the candidate cache entry and invalidates its scope markers, then the
 next candidate command prepares those scopes again. It keeps the dependency
@@ -983,6 +1013,13 @@ plan kept calling a withdrawn review model for 59 attempts, so a corrected
 setting now costs exactly one attempt. This closes the
 AGT-2841 gap where a `ReviewInfra` verdict left a card sitting in Auto Review
 with no automatic next attempt until an operator issued `POST /move`.
+
+When the scheduler abandons a due retry without a successor, it logs
+`review-infrastructure-retry-dropped` and writes a
+`review_infrastructure_retry_dropped` timeline entry whose `reason` names why:
+`card-left-auto-review` (with the `lane` the card is in) or
+`cause-breaker-wait` (with the cause key and fingerprint). A card that is gone
+gets only the log line (AGT-3691).
 
 One class is never retried: `ReviewInfra/DiagnosisContractUnsupported`
 (AGT-3089). `ReviewReportDiagnosisPolicy.Normalize` sets it only when the worker

@@ -69,6 +69,14 @@ describe('buildCardCtxMenuItems — delete row (AGT-2020)', () => {
     expect(rows.find(item => item.id === DELETE_ID)?.disabled).toBe(true);
   });
 
+  it('keeps only copy and filter rows for a Reviewer (AGT-3670)', () => {
+    for (const state of [TaskState.HumanReview, TaskState.Ready, TaskState.AutoReview]) {
+      const items = buildCardCtxMenuItems(makeJob({ state }), false, undefined, null, true, true);
+      expect(items.filter(isRow).map(item => item.id)).toEqual(['copy-name', 'copy-id', 'copy-key', 'filter-dependents']);
+      expect(items.some(item => item.kind === 'separator')).toBe(false);
+    }
+  });
+
   it('offers Review first and Normal review order on auto-review cards', () => {
     const normal = buildCardCtxMenuItems(makeJob({ state: TaskState.AutoReview })).filter(isRow);
     expect(normal.find(item => item.id === REVIEW_FIRST_ID)?.disabled).not.toBe(true);
@@ -143,6 +151,13 @@ describe('Ready queue position rows (AGT-3588)', () => {
     expect(queueRows(TaskState.Ready, false, { first: false, last: true }).map((row) => !!row.disabled))
       .toEqual([false, true]);
     expect(queueRows(TaskState.Ready, true).every((row) => row.disabled)).toBe(true);
+  });
+
+  it('disables queue moves with a Manual hint under an automatic sort', () => {
+    const rows = buildCardCtxMenuItems(makeJob(), false, undefined, null, false)
+      .filter(isRow).filter(row => row.id === MOVE_TOP_ID || row.id === MOVE_BOTTOM_ID);
+    expect(rows).toHaveLength(2);
+    expect(rows.every(row => row.disabled && row.hint === 'Switch this lane to Manual')).toBe(true);
   });
 });
 

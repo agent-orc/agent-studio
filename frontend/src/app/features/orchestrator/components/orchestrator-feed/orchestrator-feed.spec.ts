@@ -8,7 +8,8 @@ import { OrchestratorFeedComponent } from './orchestrator-feed';
 import type { OrchestratorLogEntry } from '../../../orchestrator';
 import { BoardFiltersService } from '../../../../features/board';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
-import type { RegistryWorkspaceListItem } from '../../../../models/task.model';
+import { TaskService } from '../../../../services/task.service';
+import type { RegistryWorkspaceListItem, TaskInfo } from '../../../../models/task.model';
 
 /**
  * Cycle 11c smoke. Compiles + instantiates the standalone component.
@@ -114,6 +115,23 @@ describe('OrchestratorFeedComponent · decision override buttons', () => {
     ]);
     expect(fixture.componentInstance.kindFilter()).toBe('all');
     expect(fixture.componentInstance.visibleEntries().map(entry => entry.kind)).toEqual(['decision', 'observation']);
+  });
+
+  it('names an alert lane and affected card with the shared presentation', async () => {
+    const { fixture } = await setup();
+    TestBed.inject(TaskService).jobs.set([{
+      id: 'document-the-export-retention-policy', key: 'AGT-42', taskKey: '/repo::document-the-export-retention-policy',
+      title: 'Document the export retention policy',
+    } as TaskInfo]);
+    const entry: OrchestratorLogEntry = {
+      ...decisionEntry, kind: 'alert', jobId: 'document-the-export-retention-policy',
+      summary: 'document-the-export-retention-policy has stayed in 5-human-review beyond its 24h budget.',
+      stall: { subject: 'card:AGT-42:5-human-review', severity: 'warning', sinceUtc: decisionEntry.ts,
+        blockedCount: 1, affectedCards: ['document-the-export-retention-policy'],
+        suggestedAction: 'Open the card and decide acceptance or integration.', evidence: {} },
+    };
+    expect(fixture.componentInstance.displaySummary(entry)).toBe(
+      'AGT-42 · Document the export retention policy has stayed in Human review beyond its 24h budget.');
   });
 
   it('keeps interleaved projects in one newest-first day stream with a project chip per entry', async () => {

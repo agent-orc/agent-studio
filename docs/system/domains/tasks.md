@@ -194,14 +194,22 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   implementation slice count. A decision slice stays incomplete while any
   implementation card created from its choice remains open. Dossier chat
   receives the same bounded card list.
-  `TaskInfo.ConceptDossier` still detects a repository-relative
-  `docs/.../index.html` path from
-  `results/deliverables.md` first and `status.md` second. Task detail renders
-  that one path only as a compatibility fallback. A concept in `5-human-review` or
+  `TaskInfo.ConceptDossier` projects that same primary `task.json.dossier` path
+  for the detail notice. The result-document path is a backfill input for older
+  cards, not a separate visible link. The correction action writes the primary
+  association; a no-dossier decision clears it. A concept in `5-human-review` or
   `6-completed` with neither a link nor a deliberate no-dossier explanation
   gets one compact `No dossier linked` notice with the two correction actions.
-  The legacy Markdown reference is not bulk-migrated. MKT-21 remains a manual
-  correction example for that separate concept delivery contract.
+  The catalogue projects `linkedTaskKeys` from those primary associations for
+  the Dossier overview on each read, even while the Wiki descriptor is cached;
+  descriptor source and related keys
+  seed backfill but do not act as a separate visible membership source.
+  A recorded Dossier decision appears beside the concept link with its answered
+  point count and spawned keys. The task toolbar offers acceptance in Human
+  Review. A spawned card carries the primary Dossier association from creation
+  and links back from its task detail; its key appears in the Dossier card list
+  and counts as an implementation slice when the descriptor has no matching
+  declared slice.
 - The Dossier-key reference reuses the same detail row and operator actions,
   not a second Dossier block. The Markdown detector remains read-only
   compatibility for already-linked cards and never produces a duplicate visible
@@ -256,7 +264,10 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   active and no isolation finding released it. Eject
   (`POST /api/projects/{project}/batch-gate/members/{taskKey}/eject`) stays
   allowed (AGT-3483, `BatchIsolationGuard`).
-  The read-only failure continuation check reports the same isolation reason
+- An Escalated to Ready operator move can include `reissueInstructions` with up
+  to twelve selected findings and an optional owner note. The move persists
+  that handoff for the next run after rotating the old review artifacts.
+- The read-only failure continuation check reports the same isolation reason
   and marks the action unavailable, so task detail disables it with that reason
   as its tooltip (AGT-3687).
 
@@ -1013,6 +1024,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   The target ref fingerprint is diagnostic evidence, not an acceptance boundary.
   A new delivery epoch or result SHA, or a delivery no longer integrated in the
   published branch, makes the verdict stale and returns the card to Auto Review.
+  Stale-verdict recovery records the integration request and returns from the
+  delivery-chain pass before the per-project merge gate finishes. Its completion
+  requests a fresh review or queues a merge round. After a restart, the
+  reconciler resumes a returned Auto Review card whose latest lane change was
+  the stale-verdict transition and whose review is still pending recovery.
   Older claims without these delivery fields remain accepted while Git reports
   the delivery integrated. An explicit operator override remains accepted for
   its recorded delivery; advancing the target branch does not reopen it.
@@ -1155,6 +1171,13 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   leaving a parked lane always clears the marker (see Parked-card blocker and
   recall below). Both hooks are best-effort primes: a missed one still
   self-heals on the next watch event or periodic sweep.
+- After a successful integration push, `GitService` advances the local
+  `origin/<branch>` tracking ref to the pushed SHA with a compare-and-swap. A
+  newer tracking ref stays ahead. This gives integration status the publication
+  fact even when `url.insteadOf` prevents Git from updating the tracking ref
+  during the push. The resume retry record always has a due time, including
+  waits owned by integration; the post-processing backstop rechecks those cards
+  without a GET route fetching from origin (AGT-3620).
 - A move may set `operatorOverride: true` only when targeting `6-completed`.
   This is an explicit, one-shot operator waiver, never a default. Pipeline
   history and `status.md` retain the override and reason. Concept and other
@@ -1387,6 +1410,13 @@ with `403` and no body. Task Server denies with `403` and
 `backend.Tests/ContributorAccessTests.cs` and
 `task-server.Tests/IdentityBootstrapTests.cs`. The role summary is in
 [security overview](../../operations/security/overview.md).
+
+A Reviewer session (AGT-3670) is not a Product session. It reads cards like a
+Viewer and decides a card in Human Review through
+`POST /api/tasks/{jobId}/human-review/accept` and
+`POST /api/tasks/{jobId}/human-review/send-back`; the note of a send back
+becomes the next run's follow-up. The decision and its audit are described in
+[Who reviews cards](../../operations/security/overview.md#who-reviews-cards-the-reviewer-role-agt-3670).
 
 ## Parked-card blocker and recall
 
@@ -1938,6 +1968,9 @@ from completion backfill, cycle time, throughput, and environment flow metrics.
   option IDs, rationale, operator and decision time, but projects no settled
   promotion decision. The descriptor keeps its current status, and the normal
   prepare and confirm path remains available for a later promotion decision.
+  Concept promotion marks the descriptor `decided` after creating its slice
+  cards, retains those recorded choices, and can be retried without duplicating
+  the cards or lifecycle transition.
 - A delivering card resolved through `references.workbenches` or a descriptor
   `sourceTaskKeys` back edge receives the Dossier maintenance prompt contract.
   It appends only its own dated implementation entry between the canonical log

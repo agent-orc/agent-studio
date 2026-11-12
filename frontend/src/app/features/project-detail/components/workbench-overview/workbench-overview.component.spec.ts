@@ -92,6 +92,8 @@ describe('WorkbenchOverviewComponent', () => {
     fixture.detectChanges();
     const http = TestBed.inject(HttpTestingController);
     const pending = item('pending', 'decision-pending', 3, 'ui');
+    pending.workbench.sourceTaskKeys = ['DEMO-17'];
+    pending.workbench.linkedTaskKeys = ['AGT-2', 'AGT-1', 'AGT-404', 'DEMO-17'];
     pending.workbench.documentation = {
       eligible: false,
       totalCount: 3,
@@ -126,7 +128,7 @@ describe('WorkbenchOverviewComponent', () => {
     fixture.detectChanges();
 
     const referenceRequest = http.expectOne('/api/tasks/reference-status');
-    expect(referenceRequest.request.body).toEqual({ keys: ['AGT-2', 'AGT-1', 'AGT-404', 'AGT-3'] });
+    expect(referenceRequest.request.body).toEqual({ keys: ['AGT-2', 'AGT-1', 'AGT-404', 'DEMO-17', 'AGT-3'] });
     expect(fixture.nativeElement.querySelector(
       '[data-testid="workbench-overview-task-Demo-pending-AGT-1"] a',
     )).toBeNull();
@@ -134,6 +136,7 @@ describe('WorkbenchOverviewComponent', () => {
       taskStatus('AGT-1', '3-progress', 'Demo::active-card'),
       taskStatus('AGT-2', '2-ready', 'Demo::ready-card'),
       taskStatus('AGT-3', '4-auto-review', 'Demo::review-card'),
+      taskStatus('DEMO-17', '5-human-review', 'Demo::concept-card'),
     ] });
     fixture.detectChanges();
 
@@ -167,7 +170,7 @@ describe('WorkbenchOverviewComponent', () => {
       '[data-testid="workbench-overview-pattern-Demo-active"]')?.getAttribute('data-pattern'))
       .toBe('concept');
     const decidedRow = fixture.nativeElement.querySelector('[data-testid="workbench-overview-item-Demo-tracking"]');
-    expect(decidedRow?.textContent).toContain('Accepted / In progress');
+    expect(decidedRow?.textContent).toContain('In implementation');
     expect(decidedRow?.textContent).not.toContain('Decision pending');
     expect(decidedRow?.textContent).not.toContain('Tracking');
 
@@ -179,6 +182,7 @@ describe('WorkbenchOverviewComponent', () => {
         'workbench-overview-task-Demo-pending-AGT-2',
         'workbench-overview-task-Demo-pending-AGT-1',
         'workbench-overview-task-Demo-pending-AGT-404',
+        'workbench-overview-task-Demo-pending-DEMO-17',
       ]);
     const activeCard = fixture.nativeElement.querySelector(
       '[data-testid="workbench-overview-task-Demo-pending-AGT-1"]',

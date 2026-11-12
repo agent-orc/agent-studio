@@ -35,6 +35,41 @@ const DOCUMENT: WorkbenchDocument = {
 };
 
 describe('WorkbenchViewerHeaderComponent', () => {
+  it('shows accepted concepts as in implementation with no open decisions', async () => {
+    await TestBed.configureTestingModule({
+      imports: [WorkbenchViewerHeaderComponent],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        { provide: TaskService, useValue: { getReferenceStatuses: () => of([]) } },
+        { provide: TaskReferenceNavigationService, useValue: { openTaskKey: vi.fn() } },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(WorkbenchViewerHeaderComponent);
+    fixture.componentRef.setInput('projectName', 'Agent Studio');
+    fixture.componentRef.setInput('document', {
+      ...DOCUMENT,
+      workbench: {
+        ...DOCUMENT.workbench,
+        key: null,
+        sourceTaskKeys: [],
+        relatedTaskKeys: [],
+        status: 'decided',
+        phase: 'shaping',
+      },
+    });
+    fixture.componentRef.setInput('decisionPoints', [
+      { id: 'route', kind: 'single', label: 'Route', options: [], commentLabel: null },
+    ]);
+    fixture.detectChanges();
+
+    const header = fixture.nativeElement as HTMLElement;
+    expect(header.querySelector('[data-testid="workbench-viewer-status"]')?.getAttribute('aria-label'))
+      .toBe('Status: In implementation');
+    expect(header.querySelector('[data-testid="workbench-viewer-open-decisions"]')?.textContent)
+      .toContain('0 open');
+  });
+
   it('derives implementation only between the first started card and all-terminal state', () => {
     const status = (key: string, lane: string | null, exists = true): TaskReferenceStatus => ({
       key,

@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-11-05
+Version: 2026-11-10
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -29,12 +29,27 @@ pipeline view.
 
 ## Gate economics and integration lane
 
-The batch gate state read reports `phaseReason` for a stopped batch and
+The batch gate state read reports `phaseReason` and `phaseAtUtc` for a stopped batch and
 `causedByTaskKey` when a member eject or lost review generation caused
 abandonment. Explicit operator withdrawals are retained as batch withdrawal
 records with the actor, card, reason, and time. The existing eject path returns
 the remaining members to planning; the operator move requests a close on the
 next planner tick.
+The batch panel lists pending cards that have not joined a formed or running
+batch. A run without a finish event counts as running only while its batch is
+in the running phase; after interruption, the panel uses `phaseAtUtc` to show
+the elapsed run time. Detached flights include their batch, detach time, and
+lease deadline in the state response and panel.
+
+When a paused batch hands its members to per-task verification, the state read
+reports `perTaskGates` in queue order. Each row names the review generation,
+one-based position, total handoffs, batch, cause, and current gate host and
+start time while its flight is active. The board uses this projection for the
+card CURRENT line and lane counts. Each member receives a full suite as a gate
+slot opens; a red gate escalates that card, and a green gate integrates it. The
+batch panel lists the queue in order and excludes its members from cards waiting
+for another batch. The handoff writes one operator-feed event per paused batch
+with its members.
 
 ### Gate run ledger (AGT-3500)
 
@@ -445,10 +460,12 @@ Temporary worktree removal is retried, and cleanup leftovers do not discard
 a successful replay. Candidate refs use
 `refs/agent-studio/batch-candidates/<batchId>/<membershipDigest>/<coordinatorFence>`.
 
-The store durably writes the initial `Formed` state before publishing a closed
-manifest. A visible manifest with no state rows, for example after external
-file loss, has phase `Unknown` and is skipped by recovery until a state exists.
-The recovery scan logs this condition once per manifest and store instance.
+The store writes the closed manifest and then its first `Formed` phase record
+(AGT-3563). A visible manifest with neither a phase record nor state rows, for
+example after a crash between the two writes or external file loss, reads as
+phase `Unknown` and is skipped by recovery until a state exists. The next pilot
+tick writes its first record. The recovery scan logs this condition once per
+manifest and store instance.
 
 ### Flight queue order (AGT-3710)
 
@@ -1526,12 +1543,13 @@ artifact on `pipeline-execution.json`. Findings are report-only in this phase:
 they do not reissue or block a delivery. The evidence supports the shadow
 comparison before Quality Studio's verdict contract can decide a review.
 - `backend/Features/Pipeline/ConceptWorkbenchContract.cs`,
-  `ConceptWorkbenchPublisher.cs`, and `ConceptPromotionService.cs`: the
-  document-first concept contract. One isolated concept run may author exactly
-  one `docs/<slug>/` dossier, publishes it through the managed project-artifact
-  commit boundary, verifies the source-card key plus `decision-pending` status
-  and task-file links, waits for human sight review, then creates coding cards
-  from the descriptor.
+  `ConceptDeliveryPostSteps.cs`, `ConceptDossierSnapshot.cs`, and
+  `ConceptPromotionService.cs`: the document-first concept contract. One
+  Remote concept run may author exactly one `docs/<slug>/` dossier. The
+  reviewed task-branch merge integrates it after a pre-merge Dossier placement
+  check. The post-steps verify the source-card key plus `decision-pending`
+  status and task-file links, wait for human sight review, then create coding
+  cards from the descriptor.
 - `backend/Features/Docs/DossierMaintenanceService.cs` and
   `DossierImplementationContract.cs`: resolve a delivery card's Dossiers from
   `references.workbenches` or descriptor `sourceTaskKeys`, frame the CORE run,
@@ -2864,11 +2882,43 @@ operator changes cause the step to fail before its writer runs.
   `5-human-review` or `5e-escalated`, without repeating the research or moving
   the card. A present verdict, also `concerns`, is not reviewed again for the
   same delivery and brief.
-- The concept pipeline is distinct from the report-only pipeline. It runs in an
-  isolated worktree, permits a diff only inside one
-  `docs/<slug>/` directory, and never merges that task branch.
-  Dossier placement publishes `workbench.json` plus `index.html` through the
-  managed project-artifact commit boundary. Concept review checks alternatives,
+- The concept pipeline is distinct from the report-only pipeline. It runs on a
+  Remote runner (local concept runs are not admitted, see
+  `RemoteExecutionRequirement`) and permits a diff only inside one
+  `docs/<slug>/` directory. Concept delivery integration has one contract
+  (AGT-3696): the reviewed task-branch merge that every Remote delivery takes
+  through `RemoteDeliveryIntegrationCoordinator`. There is no managed
+  project-artifact copy of the Dossier. `ConceptDeliveryPostSteps` brackets that
+  merge, independent of `ReviewDecisionOrchestrator:Enabled`:
+  - Before the merge, Dossier placement fetches the fenced result and requires
+    its diff against the integration line to stay inside exactly one
+    `docs/<slug>/` directory. The Dossier at that commit must pass the
+    concept contract, and `results/deliverables.md` must name it. The
+    backend-owned `status.md` keeps that reference, as summary generation
+    does. A refused delivery merges nothing. Its merge row records failure
+    code `concept-dossier-rejected` with `Dossier placement failed:
+    <findings>`. The delivery-chain reconciler then escalates the
+    integrating card with that reason.
+  - After the merge, placement writes `.metadata/concept-workbench.json` with
+    the integrated commit. Concept review reruns on that commit. The step then
+    writes the `concept-sight-review` marker. An integrated but incomplete
+    Dossier enters Human Review with `Concept review failed: <findings>`.
+  - Both steps read git objects through `ConceptDossierSnapshot`, because the
+    merge runs in the integration worktree and does not update the developer
+    checkout. Placement stores the Dossier's two contract files at the
+    integrated commit under the card's `.metadata/concept-dossier/`.
+    `promote-concept` reads the checkout first and falls back to that copy,
+    so its read request spawns no git process. When the checkout still lacks
+    the integrated Dossier, promotion records the accepted state on that
+    placed copy; a complete checkout Dossier uses the managed repository
+    mutation path (AGT-3670).
+  - A concept delivery never joins a batch, so it always takes this
+    per-delivery merge.
+  - A new `workbench.json` without a document key gets one in the integration
+    merge itself (`IncludeDocumentKeysInIntegrationMerge` amends the merge).
+    The integration line then moves to that keyed merge before the gate runs.
+    Before AGT-3696 publication refused the keyed SHA as `sha-not-on-branch`.
+  Concept review checks alternatives,
   recommendation, evidence, open decisions, implementation-card source data,
   the own-card `sourceTaskKeys` entry, `status=decision-pending`, and the dossier
   path in both `results/deliverables.md` and `status.md`. New scaffolds use the
@@ -2877,10 +2927,12 @@ operator changes cause the step to fail before its writer runs.
   `concept`. The template includes the canonical append-only Implementation
   section and log markers. Its implementation convention requires one
   `implementationTasks` entry per independently reviewable slice, never one
-  open-ended all-recommendations entry. The local concept pipeline does not run
-  build, test, code aspects, or integration. A concept delivery entering Remote
-  Review retains its project build and lint commands and adds the read-only
-  `aspect-concept-fit` content check. Its project pipeline-step setting controls
+  open-ended all-recommendations entry. The concept pipeline runs no code
+  aspects. A Remote Review diff confined to one `docs/<slug>/` Dossier runs
+  the read-only `aspect-concept-fit` check and skips repository dependency
+  preparation, build, test, and lint with a recorded reason (AGT-3698).
+  Diffs outside that shape retain ordinary verification and are refused by
+  Dossier placement before integration. The project pipeline-step setting controls
   model, thinking level, CLI, and prompt. The frozen ReviewSubject records the
   `prompt.md` SHA-256; a missing content verdict or a changed brief cannot
   settle as `Pass`. The grade lists skipped applicable aspects with reasons.
