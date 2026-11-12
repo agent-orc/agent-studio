@@ -72,8 +72,8 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof accessS
     : route.continue());
   await page.route('**/api/auth/iam', route => json(route, state));
   // Operator agents and standing grants have their own spec (operator-agents.spec.ts); this server answers without them.
-  await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-agents')
-    || url.pathname.startsWith('/api/auth/iam/operator-approvals') || url.pathname.startsWith('/api/auth/audit/')
+  await page.route(url => url.pathname.startsWith('/api/auth/iam/operator-agents') || url.pathname.startsWith('/api/auth/iam/operator-approvals')
+    || url.pathname.startsWith('/api/auth/audit/')
     || url.pathname === '/api/auth/iam/operator-catalogue' || url.pathname.startsWith('/api/auth/iam/standing-grants'),
     route => json(route, { message: 'Not found' }, 404));
   await page.route('**/api/auth/runner-enrollments', route => route.request().method() === 'POST'
@@ -103,7 +103,7 @@ async function stubNetworkedOwner(page: Page): Promise<ReturnType<typeof accessS
 
 async function openAccess(page: Page) {
   await page.goto('/#/workspace/settings/access', { waitUntil: 'domcontentloaded', timeout: 30_000 });
-  await expect(page.getByTestId('workspace-settings-rail-access')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('workspace-settings-rail-access')).toBeAttached({ timeout: 30_000 });
   const access = page.getByTestId('access-area');
   await expect(access.getByRole('heading', { name: 'Users' })).toBeVisible();
   return access;
@@ -131,6 +131,31 @@ test('owner sees users, groups, service accounts with API tokens, runners, and r
     await page.screenshot({ path: join(resultDir, `access-area-1440-${theme}.png`) });
     await access.getByTestId('access-bindings').scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(resultDir, `access-area-1440-${theme}-bindings.png`) });
+  }
+});
+
+test('users stack with status and actions visible at 390 px in both themes', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await stubNetworkedOwner(page);
+  const access = await openAccess(page);
+  const users = access.getByTestId('access-users');
+  const product = access.getByTestId('access-user-product.lead');
+
+  mkdirSync(resultDir, { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await users.scrollIntoViewIfNeeded();
+    await expect(product.getByTestId('access-user-status-product.lead')).toBeVisible();
+    for (const name of ['Sessions', 'Reset password', 'Disable']) {
+      const button = product.getByRole('button', { name });
+      await expect(button).toBeVisible();
+      const box = await button.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+    }
+    expect(await users.evaluate(table => table.scrollWidth <= table.clientWidth + 1)).toBe(true);
+    await page.screenshot({ path: join(resultDir, `access-users-390-${theme}.png`) });
   }
 });
 

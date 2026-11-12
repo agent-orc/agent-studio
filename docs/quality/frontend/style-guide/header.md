@@ -29,7 +29,7 @@ actions; the global alert is projected from `app.html` before `app-task-detail`.
 | Task 10 | `app-batch-detail` | Batch verification and panel action | Current task is a batch member in a relevant phase | Notice plus ghost button; `27424297a7`, restricted by AGT-3463. |
 | Task 11 | `app-older-brief-offer` | Older brief action | Older brief can be used | Action row; `1e21a6843`. |
 | Task 12 | Review round budget | Delivered review round count | Delivered rounds greater than zero | Compact notice; `ccd526925f`. |
-| Task 13 | `app-parked-blocker` | Authoritative reason work is parked | Parked blocker exists | Status narrative; `3e0d1f838`, AGT-2816 placement. |
+| Task 13 | `app-parked-blocker` | Authoritative reason work is parked | Current-lane blocker has a recorded cause or decision | Status narrative; `3e0d1f838`, AGT-2816 placement. |
 | Task 14 | `app-decision-card-panel` | Decision question and options | This is a decision card | Action panel; AGT-2795 (`f6ba50863`). |
 | Task 15 | `app-decision-blocked-notice` | Pending decision blocking this task | Pending decision exists | Notice; AGT-2795 (`f6ba50863`). |
 | Task 16 | `app-escalation-summary` | Escalation and recovery actions | Escalated or needs input | Status narrative and action row; `3abe490ad`. |
