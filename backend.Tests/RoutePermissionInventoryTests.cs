@@ -131,6 +131,7 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("POST", "/api/tasks/{jobId}/preview-comments", IamPermissions.ProjectCardsWrite)]
     [InlineData("POST", "/api/tasks/{jobId}/start", IamPermissions.ProjectRunsOperate)]
     [InlineData("POST", "/api/tasks/reference-status", IamPermissions.ProjectRead)]
+    [InlineData("POST", "/api/tasks/acceptance-readiness", IamPermissions.ProjectRead)]
     [InlineData("PUT", "/api/tasks/{jobId}/release", IamPermissions.EnvironmentProductionDeployApprove)]
     [InlineData("POST", "/api/projects/{projectName}/environments/promotions/approve", IamPermissions.EnvironmentProductionDeployApprove)]
     [InlineData("POST", "/api/projects/{projectName}/environments/releases", IamPermissions.EnvironmentDeploy)]
@@ -330,6 +331,7 @@ public sealed class RoutePermissionInventoryTests : IDisposable
         Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/tasks")?.ProjectBindingsSuffice);
         Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/tasks/batch-move")?.ProjectBindingsSuffice);
         Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/tasks/reorder")?.ProjectBindingsSuffice);
+        Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/tasks/acceptance-readiness")?.ProjectBindingsSuffice);
         Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/orchestration/decision-receipts/{}/operator-intent")?.ProjectBindingsSuffice);
         Assert.False(RoutePermissionCatalog.Resolve("POST", "/api/supervisor/{}")?.ProjectBindingsSuffice);
         Assert.False(RoutePermissionCatalog.Resolve("PUT", "/api/workspaces/{}/autonomy")?.ProjectBindingsSuffice);

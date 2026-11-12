@@ -430,6 +430,9 @@
       }
     </div>
   }
+  @if (job().state === '5-human-review') {
+    @defer (on immediate) { <app-acceptance-readiness-note [job]="job()" /> }
+  }
   <app-test-evidence-status [task]="job()" />
   <div class="task-card__activity">
     Last activity: {{ relativeActivity() }}
