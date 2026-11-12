@@ -180,6 +180,7 @@ public static class OperatorOperationCatalog
         new("POST", "/api/hosts/{}/logs", OperatorOperationIds.HostLogsCollect),
         new("POST", "/api/hosts/{}/configuration", OperatorOperationIds.HostConfigurationApply),
         new("POST", "/api/tasks/{}/integration/retry", OperatorOperationIds.GateRerun),
+        new("POST", "/api/tasks/{}/review/retry", OperatorOperationIds.GateRerun),
         new("POST", "/api/tasks/{}/pipeline/steps/{}/run", OperatorOperationIds.GateRerun),
         new("POST", "/api/projects/{}/environments/releases", OperatorOperationIds.StageDeploy,
             OperatorRouteRefinement.GateEvidence),

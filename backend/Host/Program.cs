@@ -1493,7 +1493,8 @@ if (!publicDemoExecutionProfile)
 // was cleared is reported instead of sitting unnoticed (AGT-2220 lost four days
 // exactly that way). Report-only: it never re-queues a card.
 builder.Services.AddSingleton<AgentStudio.Tasks.IParkedBlockerProbe>(sp =>
-    new AgentStudio.Tasks.ParkedBlockerProbe(sp.GetService<AgentStudio.Git.GitService>()));
+    new AgentStudio.Tasks.ParkedBlockerProbe(sp.GetService<AgentStudio.Git.GitService>(),
+        sp.GetService<AgentStudio.Runner.AttemptAuthorityService>()));
 builder.Services.AddSingleton<AgentStudio.Tasks.ParkedCardRecallSweep>();
 builder.Services.AddHostedService<AgentStudio.Tasks.ParkedCardRecallSweepHostedService>();
 // AGT-2818: the pickup lanes get the same treatment the parked lane got. A card
