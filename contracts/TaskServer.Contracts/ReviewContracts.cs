@@ -61,6 +61,8 @@ public sealed record ReviewDependencyScopeDto(
     string WorkingSubdir,
     IReadOnlyList<string> Lockfiles);
 
+public sealed record ReviewPreparationSkipDto(string WorkingSubdir, string Reason);
+
 /// <param name="CoveredByDependencyScopes">
 /// True only when the scopes' lockfiles cover everything the command prepares,
 /// so a dependency-cache hit on every scope may skip it. A plan without the
@@ -140,7 +142,8 @@ public sealed record ReviewPlanDto(
     // example. The delivery is not integrated while it is set.
     string? VerifyDefinitionMissing = null,
     /// <summary>Rule that required a per-card verify gate instead of batch deferral.</summary>
-    string? BuildTestDeferralDisabledReason = null);
+    string? BuildTestDeferralDisabledReason = null,
+    IReadOnlyList<ReviewPreparationSkipDto>? PreparationSkips = null);
 
 /// <summary>Frozen engine decision visible with the review subject before any review command runs.</summary>
 public sealed record DeepReviewDecisionDto(string ReceiptId, string Mode, bool Selected,

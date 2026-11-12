@@ -8,6 +8,7 @@ using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using AgentStudio.TaskServer.Contracts.BatchGate;
 using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Bus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -396,6 +397,8 @@ public sealed partial class BatchGatePilotService
             : _services?.GetService<PullGateStore>() is { } pull
                 ? GateCapacityEndpoints.Usage(_gateSlots, pull) : _gateSlots.ReportedOrLocalSnapshot();
         // A read route starts no Git: risk and paths come from the planner tick's cache.
+        HashSet<string> activeFallbacks;
+        lock (_fallbackFlights) activeFallbacks = _fallbackFlights.Keys.ToHashSet(StringComparer.Ordinal);
         return BatchGateStateSnapshotReader.Read(_store, project, options, history,
             _snapshots.Cached(project, pending),
             CodeBatchEnabled(project) ? _reservations?.GetWait(project) : null,
@@ -403,7 +406,7 @@ public sealed partial class BatchGatePilotService
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
             _time.GetUtcNow(), _services?.GetService<GateRunLedger>(), reviewFixWaits,
             _services?.GetService<GateCapacitySettings>()?.Current(), DetachedFlights(project),
-            LeaseDeadlineDeferred()(project), FallbackWaits(project), LastInvariantReport(project));
+            LeaseDeadlineDeferred()(project), FallbackWaits(project), activeFallbacks, LastInvariantReport(project));
     }
 
     private static BatchGateReviewFixWait[] ReviewFixWaits(IEnumerable<TaskInfo> tasks, string project)
@@ -1296,7 +1299,7 @@ public sealed partial class BatchGatePilotService
                     State(manifest, BatchPhase.Abandoned, paused.CandidateSha, lease.Fence,
                         "paused-to-per-task-gate: " + paused.Reason);
                     pauseCause = new PerTaskFallbackCause(PerTaskFallbackRules.BatchPaused,
-                        $"batch {Short(manifest.BatchId)} paused: {paused.Reason}", manifest.BatchId);
+                        $"batch {manifest.BatchId} paused: {paused.Reason}", manifest.BatchId);
                 }
             }
             finally { _leases.Release(lease); }
@@ -1310,6 +1313,10 @@ public sealed partial class BatchGatePilotService
                 }
                 else if (_store.HasEject(item.Subject.Project, item.Subject.TaskKey))
                     await HandOffEjectedAsync(item, fetchedBases, ct).ConfigureAwait(false);
+            if (pauseCause is not null && _services?.GetService<AgentMessageBusBridge>() is { } bus)
+                await bus.EmitBatchPauseHandoffAsync(manifest.Scope.Project, manifest.BatchId,
+                    pauseCause.Event, released.Select(item => item.Subject.TaskKey).ToArray(), ct)
+                    .ConfigureAwait(false);
         }
     }
 
@@ -3016,6 +3023,7 @@ public sealed partial class BatchGatePilotService
             if (ownBase)
                 evidence = Path.Combine(TaskPaths.LogsDir(task.FolderPath),
                     FallbackOwnBaseEvidenceName(pending.ReviewAttemptId));
+            var started = _time.GetUtcNow();
             BatchGateOwnershipStore.Write(task.FolderPath,
                 new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
                     FallbackGateActive: true, FallbackGateStarts: starts + 1,
@@ -3023,7 +3031,6 @@ public sealed partial class BatchGatePilotService
                     FallbackCandidateSha: subject.Merged ? subject.TestedSha : null,
                     FallbackCandidateTreeSha: subject.TreeSha, FallbackOwnBase: ownBase,
                     FallbackGateRunBy: ServiceInstanceId));
-            var started = _time.GetUtcNow();
             // AGT-3414: classify the exact tree this fallback gate tests.
             var level = FallbackTestLevel(pending, subject);
             Lane(pending, "gate-requested", level: level,
@@ -3045,6 +3052,7 @@ public sealed partial class BatchGatePilotService
                     await Task.Delay(250, ct).ConfigureAwait(false);
                 }
                 FallbackStage(pending, PerTaskFallbackWaitKinds.GateRunning);
+                started = _time.GetUtcNow();
                 // AGT-3466: the per-task slot taken above already keeps the batch slot free.
                 gate = await _gate.RunAsync(new BuildTestGateRequest(
                         pending.RepositoryPath, subject.TestedSha, "batch-fallback")
@@ -3066,6 +3074,13 @@ public sealed partial class BatchGatePilotService
                         OnMachineGateAcquired = () =>
                         {
                             FallbackStage(pending, PerTaskFallbackWaitKinds.GateRunning);
+                            var activeOwnership = BatchGateOwnershipStore.Read(task.FolderPath);
+                            if (activeOwnership?.ReviewAttemptId == pending.ReviewAttemptId)
+                                BatchGateOwnershipStore.Write(task.FolderPath, activeOwnership with
+                                {
+                                    FallbackGateStartedAtUtc = _time.GetUtcNow(),
+                                    FallbackGateHost = _configuration?["RemoteGate:SshHost"] ?? Environment.MachineName,
+                                });
                             _queueStalls.Left(pending.ReviewAttemptId);
                         },
                     }, null, _settings.Get(pending.Subject.Project).BuildProfile,

@@ -135,6 +135,8 @@ public record ExternalCompletionResponse
 public record MoveJobRequest
 {
     public string TargetState { get; init; } = "";
+    /// <summary>Findings and owner note explicitly chosen for an Escalated to Ready reissue.</summary>
+    public OperatorReissueInstructions? ReissueInstructions { get; init; }
     /// <summary>Explicit handling of a live remote attempt when leaving Progress: revoke or steer.</summary>
     public string? RunIntent { get; init; }
     /// <summary>
@@ -177,6 +179,12 @@ public enum MoveJobStatus
     IntegrationFailed,
     /// <summary>An operator move would take a member of an active batch out of Auto Review (AGT-3719).</summary>
     ActiveBatchMember
+}
+
+public record OperatorReissueInstructions
+{
+    public IReadOnlyList<string> Findings { get; init; } = [];
+    public string? Note { get; init; }
 }
 
 /// <summary>
