@@ -123,7 +123,7 @@ describe('BatchDetailComponent', () => {
     expect(host.querySelector('[data-testid="task-batch-isolation-state"]')?.textContent)
       .toContain('Ended without a verdict at 2026-11-10T03:12:00Z');
     expect(host.querySelector('[data-testid="task-batch-isolation-state"]')?.textContent)
-      .toContain('Waiting for: The next batch plan after interrupted isolation');
+      .toContain('Waiting for: Its own gate after interrupted isolation');
   });
 
   it('shows when a live isolation flight began', async () => {

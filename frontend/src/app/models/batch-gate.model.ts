@@ -371,7 +371,7 @@ export function batchIsolationRows(state: BatchGateState | null, batch: BatchGat
       waitFor: status === 'proven-red' ? 'Escalation after the red verdict'
         : status === 'proven-green' ? 'Publication of a proven green cohort'
         : status === 'superseded' ? 'A new review attempt'
-        : batch.phaseReason === 'isolation interrupted' ? 'The next batch plan after interrupted isolation'
+        : batch.phaseReason === 'isolation interrupted' ? 'Its own gate after interrupted isolation'
         : batch.phase === 'red' && batch.isolationActive === false && batch.isolationPending
           ? 'Recovery of the interrupted isolation'
         : batch.phase === 'red' && batch.isolationActive === false ? 'No further isolation action'

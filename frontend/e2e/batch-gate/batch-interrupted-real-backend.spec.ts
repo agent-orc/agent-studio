@@ -95,7 +95,7 @@ test('card and batch panel explain interrupted isolation from the real backend',
   await expect(card.getByTestId('task-batch-isolation-state')).toContainText(
     'Ended without a verdict at 2026-11-10T03:12:00Z', { timeout: 60_000 });
   await expect(card.getByTestId('task-batch-isolation-state')).toContainText(
-    'Waiting for: The next batch plan after interrupted isolation', { timeout: 60_000 });
+    'Waiting for: Its own gate after interrupted isolation', { timeout: 60_000 });
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
     for (const theme of ['light', 'dark'] as const) {
@@ -109,7 +109,7 @@ test('card and batch panel explain interrupted isolation from the real backend',
   await expect(panel.locator('#batch-interrupted-e2e').getByTestId('batch-isolation-state'))
     .toContainText('Ended without a verdict at 2026-11-10T03:12:00Z', { timeout: 60_000 });
   await expect(panel.locator('#batch-interrupted-e2e').getByTestId('batch-isolation-member'))
-    .toContainText('Waiting for: The next batch plan after interrupted isolation', { timeout: 60_000 });
+    .toContainText('Waiting for: Its own gate after interrupted isolation', { timeout: 60_000 });
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
     for (const theme of ['light', 'dark'] as const) {

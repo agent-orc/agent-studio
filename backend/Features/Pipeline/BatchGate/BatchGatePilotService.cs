@@ -1401,11 +1401,23 @@ public sealed partial class BatchGatePilotService
         foreach (var manifest in _store.ListPausedManifests())
         {
             ct.ThrowIfCancellationRequested();
-            // Recovery already returned these members to planning. Keep the
-            // interrupted isolation verdict visible as its terminal state.
+            // Recovery already released these members. Keep the interrupted
+            // isolation verdict visible as its terminal state and send each
+            // unresolved member through its own gate, as any pause does.
             if (_store.LatestState(manifest.BatchId).Reason == "isolation interrupted")
             {
                 ReturnToPending(manifest);
+                var cause = new PerTaskFallbackCause(PerTaskFallbackRules.BatchPaused,
+                    $"batch {manifest.BatchId} paused: isolation interrupted", manifest.BatchId);
+                foreach (var item in _store.ListPending().Where(item => manifest.Members.Any(member =>
+                             member.TaskKey == item.Subject.TaskKey && member.RunAttempt == item.Subject.RunAttempt)
+                             && BatchGateOwnershipStore.Read(item.JobFolderPath)?.BatchId is null).ToArray())
+                {
+                    var containedInSha = PublishedIn(Refresh(item), fetchedBases, ct,
+                        gateInterrupted: !FallbackInFlight(item.ReviewAttemptId));
+                    var handoff = ScheduleFallback(item, ct, cause, containedInSha: containedInSha);
+                    if (containedInSha is not null) await handoff.ConfigureAwait(false);
+                }
                 continue;
             }
             BatchCoordinatorLease? lease;
