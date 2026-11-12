@@ -143,12 +143,22 @@ describe('BatchPanelComponent', () => {
     fixture.detectChanges();
     await fixture.whenStable();
     expect(fixture.nativeElement.querySelector('[data-testid="batch-confirm"]')).toBeTruthy();
-    expect(document.activeElement).toBe(fixture.nativeElement.querySelector('[data-testid="batch-confirm"] button'));
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector('[data-testid="batch-eject-reason"]'));
     expect(http.match('/api/projects/Demo/batch-gate/members/AGT-1/eject')).toHaveLength(0);
+    const reason = fixture.nativeElement.querySelector('[data-testid="batch-eject-reason"]') as HTMLTextAreaElement;
+    expect((fixture.nativeElement.querySelector('[data-testid="batch-confirm"] button') as HTMLButtonElement).disabled).toBe(true);
+    reason.value = 'Inspect separately';
+    reason.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
     fixture.nativeElement.querySelector('[data-testid="batch-confirm"] button').click();
-    http.expectOne('/api/projects/Demo/batch-gate/members/AGT-1/eject').flush({}, { status: 202, statusText: 'Accepted' });
+    const eject = http.expectOne('/api/projects/Demo/batch-gate/members/AGT-1/eject');
+    expect(eject.request.body).toEqual({ reason: 'Inspect separately' });
+    eject.flush({}, { status: 202, statusText: 'Accepted' });
     http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
     await fixture.whenStable();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="batch-eject-AGT-1"]').textContent)
+      .toContain('Pending eject');
     http.verify();
   });
 

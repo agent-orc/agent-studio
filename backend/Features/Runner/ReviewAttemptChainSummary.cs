@@ -15,8 +15,13 @@ public sealed record ReviewAttemptChainEntry(
     DateTime? TerminalAt,
     ReviewTerminalOutcome? Outcome,
     string? FailureClassification,
-    string? TerminalReason)
+    string? TerminalReason,
+    string? HostId = null)
 {
+    /// <summary>The review report's classification for a review daemon restart
+    /// that could not adopt the running review (AGT-3690).</summary>
+    public const string ExecutorRestartedClassification = "ExecutorRestarted";
+
     /// <summary>When this attempt produced its evidence: the terminal stamp, or
     /// the creation stamp while the attempt is still open.</summary>
     public DateTime ObservedAt => TerminalAt ?? CreatedAt;
@@ -36,7 +41,15 @@ public sealed record ReviewAttemptChainEntry(
         review.TerminalAt,
         review.Outcome,
         review.FailureClassification,
-        review.TerminalReason);
+        review.TerminalReason,
+        string.IsNullOrWhiteSpace(review.Lease?.HostId) ? null : review.Lease.HostId.Trim());
+
+    /// <summary>True when the review host restarted under this attempt.</summary>
+    public bool IsHostRestartLoss => Outcome == ReviewTerminalOutcome.InfrastructureFailure
+        && string.Equals(
+            (FailureClassification ?? string.Empty).Trim(),
+            ExecutorRestartedClassification,
+            StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Renders the operator-facing outcome label. The outcome uses the
     /// wire spelling the review report used (<c>ReviewInfra</c>, not the
@@ -145,6 +158,30 @@ public sealed record ReviewAttemptChainSummary(
             divergent,
             OperatorOptions(newest),
             all.Count - graded.Count);
+    }
+
+    /// <summary>
+    /// AGT-3690: the sentence an escalation leads with when the newest cause is
+    /// a review host restart, naming every restart that cost an attempt (host
+    /// and time, oldest first). Null for any other newest cause. The generic
+    /// "cannot be materialized" wording read as a broken subject when the
+    /// subject was fine and the host kept restarting under it.
+    /// </summary>
+    public string? HostRestartSentence(int retryBudget)
+    {
+        if (NewestAttempt is not { IsHostRestartLoss: true }) return null;
+        var restarts = GradedAttempts
+            .Where(attempt => attempt.IsHostRestartLoss)
+            .OrderBy(attempt => attempt.ObservedAt)
+            .ThenBy(attempt => attempt.AttemptId, StringComparer.Ordinal)
+            .Select(attempt => string.IsNullOrWhiteSpace(attempt.HostId)
+                ? $"{Stamp(attempt.ObservedAt)} ({attempt.AttemptId})"
+                : $"{attempt.HostId} {Stamp(attempt.ObservedAt)} ({attempt.AttemptId})")
+            .ToList();
+        return $"The review was lost to {restarts.Count} review host "
+               + (restarts.Count == 1 ? "restart" : "restarts")
+               + $": {string.Join("; ", restarts)}. The automatic retry budget of {retryBudget} is spent; "
+               + "no review check failed against the card.";
     }
 
     /// <summary>
@@ -333,6 +370,12 @@ public sealed record ReviewAttemptChainSummary(
             [
                 "Reconcile the project's configured repository with the repository identity recorded on the immutable ReviewSubject.",
                 "Requeue the card for auto review only once both identities match.",
+            ],
+            "executorrestarted" =>
+            [
+                "Find out why the review host restarted: its service journal around the restart times above names the cause, for example a deploy, a crash, or an out-of-memory kill.",
+                "Requeue the card for auto review once the host stays up; the review subject itself is reviewable.",
+                "Do not read this as a finding against the card content: each review was lost before it finished.",
             ],
             "dirtybefore" or "mutatedafter" =>
             [

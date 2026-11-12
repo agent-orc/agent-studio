@@ -44,6 +44,21 @@ public static class GateCancellationPolicy
     /// shutdown reported by a remote gate host while this service keeps running
     /// stays charged.
     /// </summary>
+    /// <summary>
+    /// Charged starts once a later service instance finds the gate it lost
+    /// (AGT-3647). The start in flight was charged by <paramref name="runByInstance"/>;
+    /// when that is another instance, the service was replaced under the gate,
+    /// by a deploy, a restart or a kill past its stop timeout, and the gate
+    /// never had a verdict. That start is refunded, so an API restart never
+    /// escalates the card. A gate that throws keeps its charge under the
+    /// instance that ran it, so the budget still ends a gate that keeps failing.
+    /// </summary>
+    public static int ChargedStartsAfterServiceRestart(int chargedStarts, string? runByInstance,
+        string currentInstance)
+        => runByInstance is not null && !string.Equals(runByInstance, currentInstance, StringComparison.Ordinal)
+            ? Math.Max(0, chargedStarts - 1)
+            : Math.Max(0, chargedStarts);
+
     public static int ChargedStartsAfterCancellation(int startsBeforeThisRun, string? reason,
         bool serviceStopping)
         => reason == GateCancellationReasons.Shutdown && serviceStopping

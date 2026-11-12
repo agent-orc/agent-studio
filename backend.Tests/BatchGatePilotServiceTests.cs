@@ -93,6 +93,72 @@ public abstract partial class BatchGatePilotServiceTests : IDisposable
     }
 }
 
+public sealed class BatchGatePilotEjectTests : BatchGatePilotServiceTests
+{
+    [Fact]
+    public async Task Eject_from_active_batch_is_refused_with_release_condition()
+    {
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-ACTIVE-EJECT", "docs/active-eject.md");
+        SeedMember(factory, "DOC-ACTIVE-OTHER", "docs/active-other.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var batch = ClosePendingBatch(factory);
+
+        using var response = await client.PostAsJsonAsync(
+            $"/api/projects/{ProjectName}/batch-gate/members/{member.Key}/eject",
+            new { reason = "Inspect this card alone" });
+
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, response.StatusCode);
+        var refusal = await response.Content.ReadAsStringAsync();
+        Assert.Contains("Wait for it to finish or pause before ejecting", refusal);
+        Assert.Equal(batch.BatchId, Ownership(member.Key)?.BatchId);
+        Assert.False(store.HasEject(ProjectName, member.Key));
+    }
+
+    [Fact]
+    public async Task Eject_of_red_parent_without_isolation_releases_member_on_next_tick()
+    {
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        EnableBatchGate(factory, closeSize: 2);
+        var member = SeedMember(factory, "DOC-RED-EJECT", "docs/red-eject.md");
+        SeedMember(factory, "DOC-RED-OTHER", "docs/red-other.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var batch = ClosePendingBatch(factory);
+        foreach (var phase in new[] { BatchPhase.Assembling, BatchPhase.Assembled, BatchPhase.Running })
+            store.AppendState(new BatchGateState(batch.BatchId, batch.MembershipDigest,
+                phase, null, 1, _clock));
+        store.AppendState(new BatchGateState(batch.BatchId, batch.MembershipDigest,
+            BatchPhase.Red, member.ResultSha, 1, _clock, "deterministic suite red"));
+
+        using var response = await client.PostAsJsonAsync(
+            $"/api/projects/{ProjectName}/batch-gate/members/{member.Key}/eject",
+            new { reason = "Inspect this card alone" });
+        Assert.Equal(System.Net.HttpStatusCode.Accepted, response.StatusCode);
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertPhase(store, batch.BatchId, BatchPhase.Abandoned);
+        Assert.Null(Ownership(member.Key)?.BatchId);
+        var outcome = store.ReadEject(ProjectName, member.Key);
+        Assert.NotNull(outcome);
+        Assert.Equal("released", outcome.Status);
+        Assert.False(string.IsNullOrWhiteSpace(outcome.Actor));
+        Assert.Equal("Inspect this card alone", outcome.Reason);
+        using var stateResponse = await client.GetAsync(
+            $"/api/projects/{ProjectName}/batch-gate/state?history=10");
+        Assert.Equal(System.Net.HttpStatusCode.OK, stateResponse.StatusCode);
+        using var state = JsonDocument.Parse(await stateResponse.Content.ReadAsStringAsync());
+        var visible = Assert.Single(state.RootElement.GetProperty("ejectRequests").EnumerateArray());
+        Assert.Equal("released", visible.GetProperty("status").GetString());
+        Assert.Equal("Inspect this card alone", visible.GetProperty("reason").GetString());
+    }
+}
+
 /// <summary>Operator lane moves and explicit batch withdrawal.</summary>
 public sealed class BatchGatePilotOperatorMoveTests : BatchGatePilotServiceTests
 {
@@ -3013,6 +3079,76 @@ public sealed class BatchGatePilotRecoveryTests : BatchGatePilotServiceTests
         AssertLane(member.Key, TaskStates.Escalated);
         Assert.Null(Ownership(member.Key));
         Assert.Empty(store.ListPending());
+    }
+
+    [Fact]
+    public async Task Per_task_fallback_cut_by_two_api_restarts_runs_again_without_escalating_the_card()
+    {
+        // AGT-3584 / AGT-3647: each API restart of Deploy 36 cut the per-task
+        // gate. A process killed under its gate leaves the active marker with
+        // the start it charged, which the next instance must refund.
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-RESTART", "docs/restart.md");
+        factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetBatchGate(ProjectName, new BatchGateFormationOptions(Enabled: false));
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var cuts = 0;
+        _gate.Fallback = request => ++cuts <= 2
+            ? throw new IOException("API process ended under the gate")
+            : Green(request.ExpectedSha);
+
+        // Each instance stands for one API process with its own instance id.
+        BatchGatePilotService ApiProcess()
+        {
+            var pilot = ActivatorUtilities.CreateInstance<BatchGatePilotService>(factory.Services);
+            pilot.WaitForFlightsInTick = true;
+            return pilot;
+        }
+
+        var first = ApiProcess();
+        await first.TickAsync(CancellationToken.None);
+        var afterFirst = Assert.IsType<BatchGateOwnership>(Ownership(member.Key));
+        Assert.Equal(1, afterFirst.FallbackGateStarts);
+        Assert.Equal(first.ServiceInstanceId, afterFirst.FallbackGateRunBy);
+        EnableBatchGate(factory, closeSize: 4);
+
+        var second = ApiProcess();
+        await second.TickAsync(CancellationToken.None);
+        var afterSecond = Assert.IsType<BatchGateOwnership>(Ownership(member.Key));
+        Assert.Equal(1, afterSecond.FallbackGateStarts);
+        Assert.Equal(second.ServiceInstanceId, afterSecond.FallbackGateRunBy);
+
+        var third = ApiProcess();
+        await third.TickAsync(CancellationToken.None);
+
+        Assert.Equal(3, _gate.FallbackRuns);
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, member.Key)));
+        Assert.Empty(store.ListPending());
+    }
+
+    [Fact]
+    public async Task Per_task_fallback_that_throws_twice_in_one_instance_still_spends_its_budget()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-REPEAT", "docs/repeat.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = Assert.Single(store.ListPending());
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        BatchGateOwnershipStore.Write(Path.Combine(_watchPath, TaskStates.AutoReview, member.Key),
+            new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
+                FallbackGateActive: true,
+                FallbackGateStarts: BatchGatePilotService.FallbackGateStartBudget,
+                FallbackGateRunBy: pilot.ServiceInstanceId));
+        _gate.Fallback = request => Green(request.ExpectedSha);
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Equal(0, _gate.FallbackRuns);
+        AssertLane(member.Key, TaskStates.Escalated);
     }
 
     [Fact]

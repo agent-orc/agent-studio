@@ -81,6 +81,10 @@
       }
     </dl>
 
+    @if (v.cause.origin === 'auto-review-watchdog') {
+      @defer (on immediate) { <app-watchdog-receipt [info]="info()" /> }
+    }
+
     @if (v.documents.length > 0 || v.needsInputFile || v.decisionCardKey) {
       <ul class="park__links" data-testid="parked-blocker-links">
         @for (document of v.documents; track document) {
