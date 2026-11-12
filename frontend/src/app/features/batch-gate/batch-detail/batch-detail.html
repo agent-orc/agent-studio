@@ -17,6 +17,10 @@
       @if (item.position && item.size) { · {{ item.position }} of {{ item.size }} }
       @if (item.phase) { · {{ item.phase }} }
     </p>
+    @if (item.status === 'fallback') {
+      <p data-testid="task-batch-fallback-reason">{{ item.fallbackEvent || item.reasonDetail }}</p>
+      <p data-testid="task-batch-fallback-outcome">Each member runs a full suite as a gate slot opens. Red escalates the card; green integrates it.</p>
+    }
     @if (provenRed(); as finding) {
       <div class="batch-detail__proven-red" data-testid="task-batch-proven-red">
         <app-status-indicator tone="danger" [label]="'Proven red in ' + finding.parentBatchId" testId="task-batch-proven-red-status" />

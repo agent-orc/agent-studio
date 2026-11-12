@@ -3,6 +3,7 @@ import { TaskState, isTerminalTaskState, type AutoLoopSnapshot, type TaskExecuti
 import { RemoteDispatchRejectionComponent } from '../../../../components/remote-dispatch-rejection/remote-dispatch-rejection.component';
 import { GitSummaryService } from '../../../../services/git-summary.service';
 import { TaskService } from '../../../../services/task.service';
+import { allowsDragReorder } from '../../../../services/lane-sort.util';
 import { isReadyQueueHead } from '../ready-lane-split.util';
 import { BoardMutationsService } from '../../state/board-mutations.service';
 import { readyQueueReorder } from '../../state/ready-queue-order';
@@ -162,12 +163,17 @@ export class TaskCardComponent implements OnInit, OnDestroy {
 
   /** AGT-3587: the one Ready card per project the runner takes next. */
   readonly isPickupNext = computed(() => isReadyQueueHead(this.job(), this.jobs.runnerStatus()));
+  /** Queue edge moves are available only when the Ready lane uses manual order. */
+  readonly canReorderReady = computed(() => {
+    const strategy = this.jobs.laneSortStrategies()[this.job().projectName]?.['2-ready'];
+    return !strategy || allowsDragReorder(strategy);
+  });
   /** True for queued Ready cards that "Move to top" can promote; the head card is already next. */
   readonly canPickNext = computed(() => this.job().state === TaskState.Ready && !this.isPickupNext() && !this.mutationsBlocked());
 
   onPickNextClick(event: Event) {
     event.stopPropagation();
-    if (this.mutationsBlocked()) return;
+    if (this.mutationsBlocked() || !this.canReorderReady()) return;
     const blocked = this.decisionBlockTooltip();
     if (blocked) {
       this.notifications.info(blocked);
@@ -425,7 +431,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   private readonly reviewer = inject(ReviewerSession);
   readonly cardCtxMenuItems = computed(() => buildCardCtxMenuItems(
     this.job(), this.mutationsBlocked(),
-    focusVisibleLaneStates(this.laneFocus()), this.readyQueueEdge(),
+    focusVisibleLaneStates(this.laneFocus()), this.readyQueueEdge(), this.canReorderReady(),
     this.reviewer.reviewsOnly(this.job().projectName)));
 
   /** AGT-2029: open the dependency this card is waiting on (see resolveDependencyTarget). */

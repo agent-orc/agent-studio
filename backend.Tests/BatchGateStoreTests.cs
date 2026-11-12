@@ -51,6 +51,52 @@ public sealed class BatchGateStoreTests : IDisposable
     }
 
     [Fact]
+    public void Paused_batch_handoff_exposes_ordered_per_task_gates_and_running_host()
+    {
+        var manifest = Close(4);
+        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Abandoned, null, 1, Now.AddMinutes(21),
+            "paused-to-per-task-gate: flaky quarantine requires a fresh gate verdict"));
+        for (var index = 0; index < 4; index++)
+        {
+            var key = $"task-{index}";
+            var folder = Path.Combine(_root, key);
+            var subject = Subject(key, index);
+            _store.Enqueue(new BatchGatePendingRecord($"review-{index}", subject,
+                _root, _root, folder, "direct-merge", "task", Now.AddMinutes(index)));
+            _store.RecordFallbackCause(new BatchGateFallbackCause("project", key,
+                $"review-{index}", subject.RunAttempt, PerTaskFallbackRules.BatchPaused,
+                $"batch {manifest.BatchId} paused: flaky quarantine requires a fresh gate verdict",
+                manifest.BatchId, Now.AddMinutes(22)));
+            if (index == 1)
+                BatchGateOwnershipStore.Write(folder, new BatchGateOwnership($"review-{index}", subject,
+                    FallbackGateActive: true, FallbackGateStartedAtUtc: Now.AddMinutes(23),
+                    FallbackGateHost: "gate-01"));
+        }
+        var unrelated = Subject("other-task", 4);
+        _store.Enqueue(new BatchGatePendingRecord("other-review", unrelated,
+            _root, _root, Path.Combine(_root, "other-task"), "direct-merge", "task", Now.AddMinutes(4)));
+        _store.RecordFallbackCause(new BatchGateFallbackCause("project", "other-task",
+            "other-review", unrelated.RunAttempt, PerTaskFallbackRules.BatchPaused,
+            "another batch paused", "another-batch", Now.AddMinutes(22)));
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true),
+            activePerTaskFlights: new HashSet<string> { "review-1" }),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var gates = state.GetProperty("perTaskGates").EnumerateArray().ToArray();
+        Assert.Equal(5, gates.Length);
+        Assert.Equal(2, gates[1].GetProperty("position").GetInt32());
+        Assert.Equal(4, gates[1].GetProperty("total").GetInt32());
+        Assert.Equal(1, gates[4].GetProperty("position").GetInt32());
+        Assert.Equal(1, gates[4].GetProperty("total").GetInt32());
+        Assert.True(gates[1].GetProperty("running").GetBoolean());
+        Assert.Equal("gate-01", gates[1].GetProperty("host").GetString());
+        Assert.Contains("flaky quarantine", gates[1].GetProperty("reason").GetString());
+        Assert.Equal(PerTaskFallbackRules.BatchPaused,
+            state.GetProperty("members").GetProperty("task-1").GetProperty("fallbackRule").GetString());
+    }
+
+    [Fact]
     public void Base_verdict_is_reused_by_exact_sha_and_profile()
     {
         var verdict = new BatchGateBaseVerdict("project", Base, "profile-a",

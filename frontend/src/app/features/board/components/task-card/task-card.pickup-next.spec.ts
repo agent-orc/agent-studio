@@ -15,7 +15,7 @@ import type { ProjectRunnerStatus, TaskInfo } from '../../../../models/task.mode
  * "Move to top".
  */
 describe('TaskCardComponent Ready queue marker (AGT-3587)', () => {
-  async function mount(job: TaskInfo, queuedJobIds: string[]) {
+  async function mount(job: TaskInfo, queuedJobIds: string[], strategy?: string) {
     await TestBed.configureTestingModule({
       imports: [TaskCardComponent],
       providers: [
@@ -28,6 +28,7 @@ describe('TaskCardComponent Ready queue marker (AGT-3587)', () => {
     TestBed.inject(TaskService).runnerStatus.set({
       projects: { Test: { projectName: 'Test', queuedJobIds } as ProjectRunnerStatus },
     });
+    if (strategy) TestBed.inject(TaskService).laneSortStrategies.set({ Test: { '2-ready': strategy } });
     const fixture = TestBed.createComponent(TaskCardComponent);
     fixture.componentRef.setInput('job', job);
     fixture.detectChanges();
@@ -52,6 +53,14 @@ describe('TaskCardComponent Ready queue marker (AGT-3587)', () => {
     expect(move?.getAttribute('aria-label')).toBe('Move to top');
     expect(move?.textContent).toContain('Move to top');
     expect(move?.textContent).not.toContain('Next');
+  });
+
+  it('disables Move to top on an automatically sorted Ready lane', async () => {
+    const fixture = await mount(makeJob('task-2'), ['task-1', 'task-2'], 'newest-first');
+    expect((q(fixture, 'task-card-pick-next') as HTMLButtonElement).disabled).toBe(true);
+    const rows = fixture.componentInstance.cardCtxMenuItems();
+    expect(rows.filter(row => row.kind === 'row' && row.id === 'move-to-top')
+      .every(row => row.kind === 'row' && row.disabled)).toBe(true);
   });
 });
 
