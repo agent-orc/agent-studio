@@ -1855,6 +1855,8 @@ export function cardMoveTarget(id: string): string | null {
 
 /** Role scopes that narrow the card menu. Every flag only removes rows. */
 export interface CardMenuScope {
+  /** Ready lane is in Manual sort, so queue position can change. Defaults to true. */
+  canReorder?: boolean;
   /**
    * AGT-3670: a Reviewer holds no lane move, review order, or delete, and
    * decides a Human Review card inside its detail.
@@ -1881,7 +1883,7 @@ export function buildCardCtxMenuItems(
   queueEdge: ReadyQueueEdge | null = null,
   scope: CardMenuScope = {},
 ): MenuItem[] {
-  const { reviewsOnly = false, productSession = false, readOnlySession = false } = scope;
+  const { canReorder = true, reviewsOnly = false, productSession = false, readOnlySession = false } = scope;
   const items: MenuItem[] = [
     { kind: 'row', id: 'copy-name', label: 'Copy Name' },
     { kind: 'row', id: 'copy-id', label: 'Copy ID' },
@@ -1919,9 +1921,13 @@ export function buildCardCtxMenuItems(
   if (!productSession && current === TaskState.Ready) {
     items.push({ kind: 'separator' }, { kind: 'header', label: 'Queue position' });
     items.push({ kind: 'row', id: MOVE_TOP_ID, label: 'Move to top',
-      disabled: mutationsBlocked || queueEdge?.first === true });
+      disabled: mutationsBlocked || !canReorder || queueEdge?.first === true,
+      hint: !canReorder ? 'Switch this lane to Manual' : undefined,
+      tooltip: !canReorder ? 'Switch this lane to Manual to change queue position.' : undefined });
     items.push({ kind: 'row', id: MOVE_BOTTOM_ID, label: 'Move to bottom',
-      disabled: mutationsBlocked || queueEdge?.last === true });
+      disabled: mutationsBlocked || !canReorder || queueEdge?.last === true,
+      hint: !canReorder ? 'Switch this lane to Manual' : undefined,
+      tooltip: !canReorder ? 'Switch this lane to Manual to change queue position.' : undefined });
   }
   if (targets.length) {
     items.push({ kind: 'separator' }, { kind: 'header', label: 'Move' });

@@ -6,7 +6,7 @@ import type { Page } from '@playwright/test';
 /**
  * Per-project pre/post pipeline-step config (this task).
  *
- * The Project Settings panel grows a "Pipeline steps" section: one row per
+ * The Deploy Run steps view contains the project step editor: one row per
  * configurable step (from /api/projects/pipeline-catalogue) joined with the
  * project's current overrides. Aspect steps expose a model picker + an
  * enable toggle; tool/orchestrator gate steps expose a mode select. Each
@@ -117,6 +117,13 @@ function slugFor(name: string): string {
   return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
+async function openPipelineSteps(page: Page): Promise<void> {
+  await page.goto(`/#/projects/${projectSlug}/deploy?view=steps`);
+  await expect(page.getByTestId('project-deploy-area')).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId('deploy-tab-steps').click();
+  await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 30_000 });
+}
+
 function enc(name: string): string {
   return encodeURIComponent(name);
 }
@@ -158,7 +165,8 @@ async function backendApi<T = unknown>(path: string, init: RequestInit = {}): Pr
   return text ? JSON.parse(text) as T : undefined as T;
 }
 
-test.afterEach(async () => {
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
   if (!projectName) return;
   // Restore the steps to their pre-test state (clear if they had no override).
   await setStep({
@@ -202,10 +210,9 @@ test('pipeline: pipeline-step section renders and a per-step model change persis
   // Start from a clean override so the model select begins on Inherit.
   await setStep({ stepId: STEP, enabled: null, economyModel: null, cliType: null, model: null, thinkingLevel: null, prompt: null, mode: null });
 
-  // Nav-rebuild step 2 (T5b): the pipeline-steps section moved out of Project
-  // Settings onto the Pipeline rail; identical rows/controls, new mount.
-  await page.goto(`/#/projects/${projectSlug}/pipeline`);
-  await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 10_000 });
+  // The Run steps view contains the project step editor.
+  await openPipelineSteps(page);
+  await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 10_000 });
 
   const section = page.getByTestId('project-detail-pipeline');
   await expect(section).toBeVisible();
@@ -239,8 +246,8 @@ test('pipeline: a closed-row toggle disables a step without expanding it', async
   // --grep instead of relying on the model test that normally runs first.
   await setStep({ stepId: STEP, enabled: null });
 
-  await page.goto(`/#/projects/${projectSlug}/pipeline`);
-  await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 10_000 });
+  await openPipelineSteps(page);
+  await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 10_000 });
 
   const section = page.getByTestId('project-detail-pipeline');
   await expect(section).toBeVisible();
@@ -268,8 +275,8 @@ test('pipeline: task type is first, switches catalogue, and keeps bug override i
   await setStep({ pipelineType: 'task', stepId: STEP, enabled: null });
   await setStep({ pipelineType: 'bug', stepId: STEP, enabled: null });
 
-  await page.goto(`/#/projects/${projectSlug}/pipeline`);
-  await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 10_000 });
+  await openPipelineSteps(page);
+  await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 10_000 });
 
   const type = page.getByTestId('pipeline-type-select');
   await expect(type).toHaveValue('task');
@@ -290,10 +297,32 @@ test('pipeline: task type is first, switches catalogue, and keeps bug override i
   await page.screenshot({ path: path.join(SCREENSHOT_DIR, '04-bug-type-disabled.png'), fullPage: true });
 });
 
+test('pipeline: task type stays locked while aspect steps are being updated', async ({ page }) => {
+  await openPipelineSteps(page);
+  const type = page.getByTestId('pipeline-type-select');
+  await expect(type).toBeEnabled();
+  const apply = page.getByTestId('aspect-model-apply-steps');
+  await expect(apply).toBeEnabled();
+
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route(/\/api\/projects\/[^/]+\/pipeline-step$/, async route => {
+    await held;
+    await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+  });
+  const request = page.waitForRequest(req => req.method() === 'PUT' && req.url().endsWith('/pipeline-step'));
+  await apply.click();
+  await request;
+  await expect(type).toBeDisabled();
+  await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'task-type-locked-during-bulk.png'), fullPage: true });
+  release();
+  await expect(type).toBeEnabled();
+});
+
 test('pipeline: economy recommendation opt-in persists for an aspect', async ({ page }) => {
   await setStep({ stepId: STEP, enabled: null, economyModel: null, cliType: null, model: null, thinkingLevel: null });
-  await page.goto(`/#/projects/${projectSlug}/pipeline`);
-  await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 10_000 });
+  await openPipelineSteps(page);
+  await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 10_000 });
 
   const row = page.getByTestId(`pipeline-step-row-${STEP}`);
   await row.locator('summary').click();
@@ -309,8 +338,8 @@ test('pipeline: abort-review exposes a run-condition control that persists', asy
   // Start from a clean abort-review override (opt-out step, default on since 2026-07-05).
   await setStep({ stepId: ABORT_STEP, enabled: null, model: null, mode: null, condition: null });
 
-  await page.goto(`/#/projects/${projectSlug}/pipeline`);
-  await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 10_000 });
+  await openPipelineSteps(page);
+  await expect(page.getByTestId('project-detail-pipeline')).toBeVisible({ timeout: 10_000 });
 
   const section = page.getByTestId('project-detail-pipeline');
   await expect(section).toBeVisible();

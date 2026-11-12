@@ -171,6 +171,48 @@ describe('StatusBarComponent CLI repair note', () => {
   });
 });
 
+describe('StatusBarComponent quota fallback entry', () => {
+  const project = (projectName: string, model: string | null, reason: string | null) => ({
+    projectName, mode: 'auto', activeJobId: model ? `${projectName}-run` : null, activeExecution: null,
+    quotaFallbackModel: model, quotaFallbackReason: reason, queuedJobIds: [],
+  });
+
+  async function render() {
+    await TestBed.configureTestingModule({
+      imports: [StatusBarComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(StatusBarComponent);
+    return { fixture, service: TestBed.inject(TaskService) };
+  }
+
+  it('counts every project with an active fallback, not only the first', async () => {
+    const { fixture, service } = await render();
+    service.runnerStatus.set({ projects: {
+      beta: project('beta', 'gpt-6-sol', 'weekly window at 97%'),
+      alpha: project('alpha', 'claude-sonnet-5', 'session window at 99%'),
+      idle: project('idle', null, null),
+    } });
+    fixture.detectChanges();
+
+    const entry = fixture.nativeElement.querySelector('[data-testid="status-bar-quota-fallback"]');
+    expect(entry?.textContent).toContain('fallback: 2 projects');
+    expect(fixture.componentInstance.fallbackCount()).toBe(2);
+  });
+
+  it('counts one project on a fallback and uses no space without one', async () => {
+    const { fixture, service } = await render();
+    service.runnerStatus.set({ projects: { alpha: project('alpha', 'gpt-6-sol', 'weekly cap') } });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="status-bar-quota-fallback"]')?.textContent)
+      .toContain('fallback: 1 project');
+
+    service.runnerStatus.set({ projects: { alpha: project('alpha', null, null) } });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="status-bar-quota-fallback"]')).toBeNull();
+  });
+});
+
 // AGT-3589 (walkthrough F14): the footer read "review idle" while Post
 // Processing held ten cards, because it counted the auto-review queue.
 describe('StatusBarComponent review entry', () => {

@@ -331,4 +331,24 @@ test.describe('Board card move menu (AGT-3588)', () => {
     await expect.poll(readyTitles).toEqual(['second', 'first']);
     await expect(page.getByTestId('undo-action')).toBeVisible();
   });
+
+  test('automatic Ready sort disables queue moves and the card button', async ({ page }) => {
+    await installBoardMocks(page, 0);
+    await page.route('**/api/projects/settings', async route => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        [FIXTURE_PROJECT]: { laneSortStrategies: { '2-ready': 'newest-first' } },
+      }) });
+    });
+    await page.goto('/');
+    const ready = page.getByTestId('lane-2-ready');
+    await expect(ready.getByTestId('task-card')).toHaveCount(2);
+    await expect(ready.getByTestId('task-card-pick-next').first()).toBeDisabled();
+    const menu = await openMenu(page, 'lane-2-ready', 'Queued second');
+    const top = menu.getByTestId('card-ctx-item-move-to-top');
+    const bottom = menu.getByTestId('card-ctx-item-move-to-bottom');
+    await expect(top).toBeDisabled();
+    await expect(bottom).toBeDisabled();
+    await expect(top).toContainText('Switch this lane to Manual');
+    await menu.screenshot({ path: join(resultsDir, 'card-move-menu-automatic-ready.png') });
+  });
 });

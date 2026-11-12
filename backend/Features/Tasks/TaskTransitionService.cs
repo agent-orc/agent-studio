@@ -165,6 +165,7 @@ public sealed class TaskTransitionService
         bool engineDecisionRequeue = false,
         AgentStudio.Runner.ContinuationBaseRecord? engineContinuationBase = null,
         bool operatorDecisionPark = false,
+        OperatorReissueInstructions? reissueInstructions = null,
         string? automaticAcceptanceBy = null,
         string? batchWithdrawalId = null)
     {
@@ -172,6 +173,12 @@ public sealed class TaskTransitionService
         if (info == null) return new MoveJobOutcome(MoveJobStatus.NotFound);
         if (ActiveBatchMemberRefusal(info, targetState, cause, batchWithdrawalId) is { } batchRefusal)
             return batchRefusal;
+        if (reissueInstructions is not null
+            && (info.State != TaskStates.Escalated || targetState != TaskStates.Ready
+                || !TimelineActors.IsHuman(cause)
+                || !OperatorReviewRequeueService.ValidInstructions(reissueInstructions)))
+            return new MoveJobOutcome(MoveJobStatus.Failure,
+                "Reissue instructions require an Escalated to Ready operator move, with up to 12 findings of 500 characters and an optional note of 2000 characters.");
         if (TaskKinds.IsDecision(info.Kind)
             && DecisionLaneGuard.Refusal(info, targetState, _scanner.GetReferenceIndex(), decisionReopenPermit) is { } refusal)
             return new MoveJobOutcome(MoveJobStatus.Failure, refusal);
@@ -638,7 +645,8 @@ public sealed class TaskTransitionService
                 fromState,
                 targetState,
                 reason,
-                cause!);
+                cause!,
+                reissueInstructions);
             _scanner.InvalidateCache();
             _scanner.PublishCoreFromKnownFolder(movedFolder);
         }
@@ -1617,10 +1625,16 @@ public sealed class TaskTransitionService
         if (!ParkedBlockerCatalog.IsParkedLane(targetState)) return null;
         var fromMarker = ParkedBlockerMarker.ToStatus(
             ParkedBlockerMarker.TryRead(task.FolderPath), atUtc);
-        if (fromMarker is not null) return fromMarker;
-        if (task.ParkedBlocker is not null) return task.ParkedBlocker;
-        return ParkedBlockerMarker.ToStatus(
+        var park = fromMarker ?? task.ParkedBlocker ?? ParkedBlockerMarker.ToStatus(
             ParkedBlockerCatalog.Build(targetState, reason: null, parkedAt: atUtc), atUtc);
+        // Human Review is also the ordinary acceptance lane. An unexplained
+        // synthetic park there is not an operator question and must not add a
+        // false open item to a missing-result scaffold.
+        if (targetState == TaskStates.HumanReview
+            && park?.Reason?.Contains("Parked with no recorded cause.", StringComparison.Ordinal) == true
+            && string.IsNullOrWhiteSpace(park.Decision?.Question))
+            return null;
+        return park;
     }
 
     private static string ResolveScaffoldResult(TaskInfo task, string targetState)

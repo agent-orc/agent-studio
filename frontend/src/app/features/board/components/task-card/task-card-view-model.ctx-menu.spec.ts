@@ -173,6 +173,13 @@ describe('Ready queue position rows (AGT-3588)', () => {
       .toEqual([false, true]);
     expect(queueRows(TaskState.Ready, true).every((row) => row.disabled)).toBe(true);
   });
+
+  it('disables queue moves with a Manual hint under an automatic sort', () => {
+    const rows = buildCardCtxMenuItems(makeJob(), false, undefined, null, { canReorder: false })
+      .filter(isRow).filter(row => row.id === MOVE_TOP_ID || row.id === MOVE_BOTTOM_ID);
+    expect(rows).toHaveLength(2);
+    expect(rows.every(row => row.disabled && row.hint === 'Switch this lane to Manual')).toBe(true);
+  });
 });
 
 describe('card move rows follow the lane guard (AGT-3624)', () => {
