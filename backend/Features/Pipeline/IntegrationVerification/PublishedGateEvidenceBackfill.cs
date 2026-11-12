@@ -99,23 +99,45 @@ public sealed class PublishedGateEvidenceBackfill(
     public int RepairAll(CancellationToken cancellationToken = default)
     {
         var added = 0;
+        var counts = new RepairCounts();
         foreach (var job in scanner.ScanAllJobsWithArchive())
         {
             if (cancellationToken.IsCancellationRequested) break;
-            try { added += Repair(job.ProjectName, job.Id, job.FolderPath, job.WatchPath); }
+            counts.Card();
+            try { added += Repair(job.ProjectName, job.Id, job.FolderPath, job.WatchPath, counts); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogWarning(ex, "Published gate evidence backfill skipped {Folder}", job.FolderPath);
             }
         }
+        logger.LogInformation(
+            "published-gate-evidence backfill done cards={Cards} receipts={Receipts} added={Added} alreadyRecorded={Recorded} skipped={Skipped}",
+            counts.Cards, counts.Receipts, added, counts.Recorded, counts.Unqualified);
         return added;
+    }
+
+    private sealed class RepairCounts
+    {
+        public int Cards { get; private set; }
+        public int Receipts { get; private set; }
+        public int Recorded { get; private set; }
+        public int Unqualified { get; private set; }
+        public void Card() => Cards++;
+        public void Read(int receipts) => Receipts += receipts;
+        public void AlreadyRecorded() => Recorded++;
+        public void Skipped() => Unqualified++;
     }
 
     /// <summary>Backfills one card's qualifying receipts; an entry already recorded for the tree is kept.</summary>
     public int Repair(string project, string jobId, string jobFolderPath, string? watchPath)
+        => Repair(project, jobId, jobFolderPath, watchPath, counts: null);
+
+    private int Repair(string project, string jobId, string jobFolderPath, string? watchPath, RepairCounts? counts)
     {
         if (string.IsNullOrWhiteSpace(watchPath)) return 0;
+        // AGT-3756: every pre-develop-build-gate-N.log of the card, not only the newest.
         var receipts = PassedReceipts(jobFolderPath);
+        counts?.Read(receipts.Count);
         if (receipts.Count == 0) return 0;
         var repoRoot = git.ResolveRepoRootForWatchPath(watchPath);
         if (repoRoot is null
@@ -133,16 +155,32 @@ public sealed class PublishedGateEvidenceBackfill(
         var added = 0;
         foreach (var receipt in receipts)
         {
+            // AGT-3756: only an exact entry for this publication counts as
+            // already recorded. An entry naming the tree under a later
+            // published SHA is refused by acceptance and must not hide it.
             if (recorded.Any(entry => string.Equals(entry.TreeSha, receipt.Sha, StringComparison.OrdinalIgnoreCase)
-                    && IntegrationVerificationProjection.SameBranch(entry.IntegrationBranch, branch))
-                || !OnFirstParentLine(repoRoot, receipt.Sha, tip!)) continue;
+                    && string.Equals(entry.PublishedSha, receipt.Sha, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(entry.GateStep, GatePrefix, StringComparison.Ordinal)
+                    && IntegrationVerificationProjection.SameBranch(entry.IntegrationBranch, branch)))
+            {
+                counts?.AlreadyRecorded();
+                continue;
+            }
+            if (!OnFirstParentLine(repoRoot, receipt.Sha, tip!))
+            {
+                counts?.Skipped();
+                continue;
+            }
             var gateLog = Path.Combine("post-steps", Path.GetFileName(receipt.Path));
             if (!PublishedGateEvidenceStore.Append(watchPath, new PublishedGateEvidence(
                     project, branch, receipt.Sha, GatePrefix, jobId,
                     nameof(BuildTestGateVerdict.Ok), receipt.Reason, receipt.Sha,
                     DateTimeOffset.UtcNow, Backfilled: true, GateLog: $"{jobId}/{gateLog.Replace('\\', '/')}",
                     TestLevel: receipt.TestLevel)))
+            {
+                counts?.Skipped();
                 continue;
+            }
             added++;
             logger.LogInformation(
                 "published-gate-evidence backfilled project={Project} job={JobId} branch={Branch} tree={Tree} level={Level} log={Log}",

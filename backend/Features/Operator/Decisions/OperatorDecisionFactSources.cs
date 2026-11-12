@@ -2,6 +2,8 @@ using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Watcher;
+using AgentStudio.Quota;
+using AgentStudio.Registry;
 
 namespace AgentStudio.Operator;
 
@@ -13,6 +15,22 @@ public interface IOperatorDecisionFactSource
 
     /// <summary>The current facts, or null while the source has nothing to read yet; null keeps their published keys.</summary>
     IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc);
+}
+
+/// <summary>Completed deploys already metered by workspace quota, without a new event store.</summary>
+public sealed class OperatorDeployFactSource(WorkspaceQuotaService quota, ProjectRegistry projects)
+    : IOperatorDecisionFactSource
+{
+    public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.DeployCompleted];
+
+    public IReadOnlyList<OperatorDecisionFact> Collect(DateTime nowUtc)
+        => quota.CompletedDeploys(nowUtc.AddDays(-7)).Select(deploy =>
+        {
+            var project = projects.FindById(deploy.ProjectId);
+            return new OperatorDecisionFact(OperatorDecisionTypes.DeployCompleted,
+                $"{OperatorDecisionTypes.DeployCompleted}|{deploy.ProjectId}|{deploy.JobId}|{deploy.CompletedAt:O}",
+                project?.DisplayName, deploy.JobId, "Deployment completed.", deploy.CompletedAt!.Value, []);
+        }).ToArray();
 }
 
 /// <summary>

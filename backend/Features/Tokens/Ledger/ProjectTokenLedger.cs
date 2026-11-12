@@ -1,6 +1,7 @@
 using System.Globalization;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
+using AgentStudio.Personas;
 
 namespace AgentStudio.Tokens;
 
@@ -28,18 +29,20 @@ public sealed class ProjectTokenLedger
     private readonly IConfiguration _config;
     private readonly ProjectTokenReceiptReader _receipts;
     private readonly TaskIndexCache? _indexCache;
+    private readonly PersonaSchedulingService? _personas;
     private readonly GenerationSingleFlightCache<ProjectTokenLedgerSnapshot> _snapshotCache = new();
 
     public ProjectTokenLedger(
         AgentMessageBusStore store,
         IConfiguration config,
         ProjectTokenReceiptReader receipts,
-        TaskIndexCache? indexCache = null)
+        TaskIndexCache? indexCache = null, PersonaSchedulingService? personas = null)
     {
         _store = store;
         _config = config;
         _receipts = receipts;
         _indexCache = indexCache;
+        _personas = personas;
     }
 
     public ProjectTokenLedgerSnapshot LoadSnapshot(string projectName, string watchPath)
@@ -90,6 +93,27 @@ public sealed class ProjectTokenLedger
         if (!string.IsNullOrWhiteSpace(receiptRead.Warning)) warnings.Add(receiptRead.Warning!);
 
         var entries = TokenLedgerMerge.WithoutDuplicates(historical, receiptRead.Entries);
+        if (_personas is not null)
+        {
+            var personaEntries = _personas.TokenReceipts(projectName).Select(receipt => new OrchestratorLogEntry
+            {
+                Ts = receipt.CreatedAtUtc,
+                Kind = OrchestratorLogKinds.Decision,
+                Topic = OrchestratorLogTopics.General,
+                Summary = "Persona occurrence token usage",
+                JobId = receipt.Key,
+                ParticipantId = "persona:" + receipt.PersonaId,
+                TokenUsage = new OrchestratorTokenUsage
+                {
+                    InputTokens = (int)Math.Min(int.MaxValue, receipt.InputTokens),
+                    OutputTokens = (int)Math.Min(int.MaxValue, receipt.OutputTokens),
+                    CacheReadTokens = (int)Math.Min(int.MaxValue, receipt.CacheReadTokens),
+                    CacheCreationTokens = (int)Math.Min(int.MaxValue, receipt.CacheWriteTokens),
+                },
+            }).ToArray();
+            entries = TokenLedgerMerge.WithoutDuplicates(entries, personaEntries);
+            sources.Add("persona-occurrence-receipts");
+        }
         if (!string.IsNullOrWhiteSpace(workspace))
         {
             var fallback = ChatUsageFallbackReceipts.Read(workspace!, projectName);

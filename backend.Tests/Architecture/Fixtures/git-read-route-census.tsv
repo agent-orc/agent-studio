@@ -372,6 +372,7 @@
 /api/tasks/{jobId}/agent-work-summary	free	-	-	-
 /api/tasks/{jobId}/artifacts	free	-	-	-
 /api/tasks/{jobId}/attachments/{fileName}	free	-	-	-
+/api/tasks/{jobId}/brief-difference	free	-	-	-
 /api/tasks/{jobId}/checkout/{**path}	free	-	-	-
 /api/tasks/{jobId}/claude/session-info	free	-	-	-
 /api/tasks/{jobId}/code-review/list	free	-	-	-
@@ -478,6 +479,7 @@
 /api/workspace/tokens/timeline/cached	free	-	-	-
 /api/workspaces	free	-	-	-
 /api/workspaces/{id}/personas/	free	-	-	-
+/api/workspaces/{id}/personas/budget	free	-	-	-
 /api/workspaces/{id}/settings	free	-	-	-
 /api/workspaces/{workspaceId}/decision-rules/	free	-	-	-
 /api/workspaces/{workspaceId}/decision-rules/versions/{versionId}/dry-run	free	-	-	-

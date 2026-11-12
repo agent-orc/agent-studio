@@ -569,7 +569,17 @@ now a no-op integration:
   profile, its evidence file exists, and that commit is on the first-parent
   integration line. Failed, provisional, narrow, stale-profile, and
   missing-evidence base verdicts do not cover a publication; the refusal names
-  such a base check.
+  such a base check, and for a stale profile both digests.
+  Since AGT-3756 an entry is keyed by branch, published SHA, tree and gate
+  step, not by tree alone, so each publication of one card keeps its own
+  entry. An older entry whose tree differs from its published SHA (tree
+  `81123540e` under `dd73bd98f` for AGT-3243) no longer blocks the exact
+  entry for that tree: the startup backfill reads every
+  `pre-develop-build-gate-N.log` of a card and adds the exact entry, and logs
+  the number of cards, receipts, added, already recorded and skipped
+  receipts. When acceptance refuses a contained delivery without a gate, the
+  refusal names the verification state, evidence and tree it found and the
+  verification reason, instead of the generic `project.yml` hint.
 - **Batch candidate evidence.** The operator fast path pushes a batch
   candidate to the branch before its members' reviews settle. The batch gate
   already tested the candidate and wrote a run verdict (`outcome: pass`,

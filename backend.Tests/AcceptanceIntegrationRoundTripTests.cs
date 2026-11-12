@@ -1959,6 +1959,58 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(MoveJobStatus.IntegrationFailed, outcome.Status);
         Assert.Contains("delivered against brief", outcome.Message);
         Assert.Equal(TaskStates.HumanReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+        Assert.Contains(deps.Timeline.ReadAll(deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.CompletionContentRefused
+                && entry.Details?.GetValueOrDefault("code") == "completion-content-gap"
+                && entry.Details?.GetValueOrDefault("text") == outcome.Message);
+    }
+
+    [Fact]
+    public async Task ChangedBrief_RequestsOnlyContentReviewForTheSameDeliveryRun()
+    {
+        var deliverySha = PublishDelivery("content-review.txt", "delivered result\n");
+        var deps = Build(deliverySha, backgroundIntegration: true, briefVersion: "brief-v1");
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        BriefVersionStore.Record(card.FolderPath, "brief v2");
+        var run = deps.Authority.GetTaskProjection(TaskKey).CurrentRunAttempt!;
+
+        using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _tempDir,
+                    ["WatchPaths:0:Name"] = Project,
+                    ["WatchPaths:0:Path"] = _watchPath,
+                    ["WatchPaths:0:RootPath"] = _repo,
+                    ["WatchPaths:0:RepositoryPath"] = _repo,
+                    ["DeliveryChain:Guarded"] = "false",
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IHostedService>();
+                services.RemoveAll<ProjectSettingsService>();
+                services.AddSingleton(deps.Settings);
+                services.RemoveAll<AttemptAuthorityService>();
+                services.AddSingleton(deps.Authority);
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var response = await client.PostAsJsonAsync(
+            $"/api/tasks/{Slug}/content-review?watchPath={Uri.EscapeDataString(_watchPath)}", new { });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var review = deps.Authority.GetTaskProjection(TaskKey).CurrentReviewAttempt;
+        Assert.NotNull(review);
+        Assert.Equal(run.AttemptId, review.SourceRunAttemptId);
+        Assert.Equal(new[] { "requirement-fit" }, review.Subject.Plan!.RequiredAspects);
+        Assert.All(review.Subject.Plan.Commands, command => Assert.Equal("requirement-fit", command.Aspect));
+        Assert.Equal(TaskStates.AutoReview, factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(Slug, _watchPath)!.State);
+        Assert.Contains(factory.Services.GetRequiredService<TimelineLog>().ReadAll(
+                factory.Services.GetRequiredService<TaskScannerService>().FindJob(Slug, _watchPath)!.FolderPath),
+            row => row.Kind == TimelineEventKinds.ContentReviewRequested);
     }
 
     /// <summary>
@@ -3454,7 +3506,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
 
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
+        Assert.Contains("the integration verification check expected integrated-verified gate evidence", refused.Message);
         var overridden = await deps.Transitions.MoveAsync(
             Slug,
             TaskStates.Completed,
@@ -3695,7 +3747,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
             Assert.Contains("full-suite batch base verdict", status.Verification?.Reason);
             if (outcome == "pass")
                 Assert.Contains(evidenceExists
-                        ? "is not counted: its gate profile digest is not the current profile"
+                        ? $"is not counted: its gate profile digest obsolete-profile is not the current gate profile {digest}"
                         : "is not counted: its evidence file is missing",
                     status.Verification?.Reason);
             else
@@ -3860,8 +3912,9 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
-        Assert.Contains("`.agent-studio/project.yml`", refused.Message);
-        Assert.DoesNotContain(unrelated, refused.Message);
+        Assert.Contains("the integration verification check expected integrated-verified gate evidence", refused.Message);
+        // AGT-3756: the refusal names the recorded tree that does not carry the delivery.
+        Assert.Contains($"verification tree {unrelated}", refused.Message);
     }
 
     [Fact]
@@ -4087,7 +4140,7 @@ public sealed partial class AcceptanceIntegrationRoundTripTests : IDisposable
         var moved = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, moved.Status);
-        Assert.Contains("`.agent-studio/project.yml`", moved.Message);
+        Assert.Contains("the integration verification check expected integrated-verified gate evidence", moved.Message);
     }
 
     [Theory]
