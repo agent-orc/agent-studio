@@ -65,6 +65,7 @@
 /api/clients/	free	-	-	-
 /api/clients/{id}	free	-	-	-
 /api/clients/{id}/defaults	free	-	-	-
+/api/clients/{id}/drain-status	free	-	-	-
 /api/clients/{id}/runner-capacity	free	-	-	-
 /api/clients/{id}/telemetry	free	-	-	-
 /api/concept-docs/{topic}	free	-	-	-
@@ -118,6 +119,7 @@
 /api/git/project-commit/diff	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
 /api/git/project-commit/files	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
 /api/git/summary	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
+/api/host/filesystems	free	-	-	-
 /api/hosts/{id}/operations/{attemptId}	free	-	-	-
 /api/integrations/quality-studio/connection	free	-	-	-
 /api/integrations/quality-studio/open	free	-	-	-

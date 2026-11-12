@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { of, throwError, Subject } from 'rxjs';
 import { EscalationSummaryComponent } from './escalation-summary.component';
@@ -81,6 +82,7 @@ function mount(opts: {
   detail?: TaskDetail;
   continueJob?: ReturnType<typeof vi.fn>;
   batchGate?: { retryInfrastructureGate: ReturnType<typeof vi.fn>; getSettings: ReturnType<typeof vi.fn>; putSettings: ReturnType<typeof vi.fn> };
+  retryReview?: ReturnType<typeof vi.fn>;
 }) {
   const taskStub = {
     listCodeReviews: () => opts.reviewsStream ?? of({ entries: opts.reviews ?? [] }),
@@ -100,6 +102,7 @@ function mount(opts: {
         getSettings: vi.fn(() => of(batchSettings)),
         putSettings: vi.fn(() => of(batchSettings)),
       } },
+      { provide: HttpClient, useValue: { post: opts.retryReview ?? vi.fn(() => of({ status: 'review-started' })) } },
       { provide: TaskTimelinePollService, useValue: timelineStub },
       { provide: RunTimelinePollService, useValue: { runs: signal([]) } },
     ],
@@ -137,6 +140,35 @@ describe('EscalationSummaryComponent', () => {
     expect(gate.retryInfrastructureGate).toHaveBeenCalledWith('Demo', 'AGT-1994');
     (element.querySelector('[data-testid="escalation-action-disable-batch"]') as HTMLButtonElement).click();
     expect(gate.putSettings).toHaveBeenCalledWith('Demo', expect.objectContaining({ enabled: false }));
+  });
+
+  it('offers Retry review as the primary watchdog recovery action', () => {
+    const parked = detail();
+    parked.info.parkedBlocker = {
+      blockerType: 'environmental', parkedAt: '2026-11-09T01:27:00Z',
+      reason: '[environmental] Last review ended as ExecutorRestarted.',
+      cause: 'escalated', causeDetail: 'auto-review-stranded',
+    } as TaskDetail['info']['parkedBlocker'];
+    const retryReview = vi.fn((...request: [string, null, { params: HttpParams }]) => {
+      expect(request[2].params.get('watchPath')).toBe('/ws');
+      return of({ status: 'review-started' });
+    });
+    const fixture = mount({ detail: parked, retryReview });
+    const root = fixture.nativeElement as HTMLElement;
+    const retry = root.querySelector<HTMLButtonElement>('[data-testid="escalation-action-retry-review"]')!;
+    expect(retry).toBeTruthy();
+    expect(root.querySelector('[data-testid="escalation-action-reissue-escalated"]')?.className)
+      .toContain('secondary');
+    expect(root.querySelector('[data-testid="escalation-title"]')?.textContent).toContain('Review recovery');
+    expect(root.querySelector('[data-testid="escalation-essence"]')?.textContent)
+      .not.toContain('Human decision required');
+    expect(root.querySelector('[data-testid="escalation-recommendation"]')?.textContent)
+      .toContain('Review retry available');
+    retry.click();
+    fixture.detectChanges();
+    expect(retryReview).toHaveBeenCalledWith('/api/tasks/AGT-1994/review/retry', null, expect.anything());
+    expect(root.querySelector('[data-testid="review-retry-message"]')?.textContent)
+      .toContain('fresh review attempt');
   });
 
   it('puts the latest ended attempt in the header and leaves the reason to the park panel', () => {

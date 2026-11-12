@@ -850,7 +850,10 @@ occur. It is not a claim about tunnel transfer time.
   the viewport-safe shared tooltip instead of a second tree line. The Dossiers
   count is the number of Dossier leaves under the branch, excluding the
   separately promoted Style Guide. Open-decision counts remain on pending
-  leaves and reconcile with the list and viewer header after acceptance.
+  leaves and reconcile with the list and viewer header after acceptance. A
+  decision-pending status or decision-ready phase opens that count; unsaved
+  browser selections do not close it. An active Dossier with open decisions
+  stays under `Needs a decision` until the recorded decision closes them.
   Dossier overview and Explorer lifecycle headers are keyboard-accessible disclosures whose per-project collapsed state persists locally; a newly populated section opens once with its quiet count visible.
   Lifecycle-group counts equal
   their visible leaves and zero counts stay hidden. The catalogue's
@@ -878,7 +881,9 @@ occur. It is not a claim about tunnel transfer time.
   in an opaque-origin `srcdoc` iframe with the Dossier CSP. A source-checked
   message boundary maps docs-relative links to the in-app Wiki and opens absolute
   HTTP(S) links in a new tab without exposing host APIs or credentials. An inert
-  DOM parse moves artifact nodes into a fixed policy-first wrapper. Dossier
+  DOM parse moves artifact nodes into a fixed policy-first wrapper. Studio's
+  theme selects the article's inline light and dark CSS rules when the sandboxed
+  document loads; switching themes reloads the frame. Dossier
   pages expose a Maximize action, and dirty working-tree
   content is labelled as uncommitted instead of receiving the current HEAD
   revision. Canonical entries expose their stable project reference key as a
@@ -1052,12 +1057,12 @@ occur. It is not a claim about tunnel transfer time.
   [docs/operations/security/overview.md](../../operations/security/overview.md).
 - The Retention destination at `#/workspace/settings/retention` owns the
   versioned workspace rule table, dry-run and explicit apply reports, run
-  history, and full-backup controls. Project Settings mounts the same rule
+  history, and a pointer to the Task Server backup controls. Project Settings mounts the same rule
   table for sparse overrides. Archived task detail remains navigable from the
   board, global search, and dossier history, then renders the cold manifest and
   hot Markdown excerpts in Docs with one restore action. All retention traffic
-  uses `/api/v1/management/retention` and `/api/v1/management/backups/full`, so
-  the Orchestrator proxy and direct Task Server deployment share one frontend.
+  uses `/api/v1/management/retention`. Installation backup commands live under
+  Settings > Task Server, with backup state on each project's Operations page.
 - The Environment destination at `#/workspace/settings/environment` (old
   `execution-hosts` and `remote-hosts` routes redirect here) persists a per-user
   Hosts, Topology, Installation, or History view. Hosts opens with a grouped

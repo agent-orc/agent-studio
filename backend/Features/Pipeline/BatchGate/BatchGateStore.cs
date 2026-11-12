@@ -262,6 +262,8 @@ public sealed partial class BatchGateStore
         _readFailureEvidence = readFailureEvidence;
     }
 
+    internal string StorageRoot => _root;
+
     public string BatchDirectory(string batchId)
         => Path.Combine(_root, SafeName(batchId));
 
@@ -473,7 +475,29 @@ public sealed partial class BatchGateStore
         => !Directory.Exists(_root) ? []
             : InFormationOrder(Directory.EnumerateDirectories(_root)
                 .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
-                .Select(dir => Read<BatchGateManifest>(Path.Combine(dir, "manifest.json"))));
+                .Select(TryReadManifest)
+                .OfType<BatchGateManifest>());
+
+    private static BatchGateManifest? TryReadManifest(string folder)
+    {
+        var path = Path.Combine(folder, "manifest.json");
+        try
+        {
+            var manifest = Read<BatchGateManifest>(path);
+            if (string.IsNullOrWhiteSpace(manifest.BatchId) || manifest.Scope is null
+                || string.IsNullOrWhiteSpace(manifest.Scope.Project)
+                || manifest.Members is null || manifest.Exclusions is null
+                || manifest.EligibleKeys is null)
+                throw new InvalidDataException("Batch gate manifest is incomplete.");
+            return manifest;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidDataException
+            or IOException or UnauthorizedAccessException)
+        {
+            Log.Warning(ex, "Skipping unreadable batch gate manifest at {Path}", path);
+            return null;
+        }
+    }
 
     private static BatchGateManifest[] InFormationOrder(IEnumerable<BatchGateManifest> manifests)
         => manifests.OrderBy(manifest => manifest.ClosedAtUtc)
@@ -698,7 +722,7 @@ public sealed partial class BatchGateStore
         if (!Directory.Exists(_root)) return [];
         return InFormationOrder(Directory.EnumerateDirectories(_root)
             .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
-            .Select(dir => Read<BatchGateManifest>(Path.Combine(dir, "manifest.json")))
+            .Select(TryReadManifest).OfType<BatchGateManifest>()
             .Where(manifest => IsRecoverable(manifest)));
     }
 

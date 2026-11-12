@@ -7,6 +7,7 @@ import { CapabilityHealthComponent } from '../capability-health/capability-healt
 import { GitTokenCapabilityComponent } from '../git-token-capability/git-token-capability';
 import { HostWorkloadSummaryComponent } from '../host-workload-summary/host-workload-summary';
 import { HostTelemetryHistoryComponent } from '../host-telemetry-history/host-telemetry-history';
+import { HostFilesystemListComponent } from '../host-filesystem-list/host-filesystem-list';
 import { HostReleaseIdentityComponent } from '../host-release-identity/host-release-identity';
 import { RemoteHostDetailSummaryComponent } from '../remote-host-detail-summary/remote-host-detail-summary';
 import { HostCredentialsComponent } from '../host-credentials/host-credentials';
@@ -79,6 +80,7 @@ interface Meter {
     GitTokenCapabilityComponent,
     HostWorkloadSummaryComponent,
     HostTelemetryHistoryComponent,
+    HostFilesystemListComponent,
     HostReleaseIdentityComponent,
     RuntimeCapacityEditorComponent,
     RemoteHostDetailSummaryComponent,
@@ -164,7 +166,10 @@ export class RemoteHostCardComponent {
   readonly tone = computed(() => this.liveLoading() ? 'idle' : hostStatusTone(this.host().status));
   readonly indicatorTone = computed<StatusTone>(() => this.liveLoading() ? 'running' : hostStatusIndicatorTone(this.host().status));
   readonly statusLabel = computed(() => this.liveLoading() ? 'Loading live status' : hostStatusLabel(this.host().status));
-  readonly statusReason = computed(() => this.host().status === 'degraded' ? 'A runner role is degraded. Inspect its role row and Capabilities detail.' : null);
+  readonly statusReason = computed(() => this.host().diskPressureReason ?? (this.host().status === 'degraded'
+    ? 'A runner role is degraded. Inspect its role row and Capabilities detail.' : null));
+  readonly filesystems = computed(() => this.host().filesystems
+    ?? this.host().telemetry?.points.at(-1)?.filesystems ?? []);
   readonly roleLabel = computed(() => hostRoleLabel(this.host().role));
   readonly heartbeatLabel = computed(() => this.liveLoading()
     ? 'loading…'

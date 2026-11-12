@@ -19,7 +19,7 @@
         <span class="escalation__headline">
           <span class="escalation__title" data-testid="escalation-title">{{ headTitle() }}</span>
           <span class="escalation__essence" data-testid="escalation-essence">
-            <span class="escalation__essence-copy">{{ v.latestAttempt ?? v.essence.label }}</span>
+            <span class="escalation__essence-copy">{{ watchdogPark() ? 'The completed delivery is ready for another review.' : (v.latestAttempt ?? v.essence.label) }}</span>
             @if (v.delivery.merge; as m) {
               <span
                 class="escalation__essence-merge"
@@ -42,7 +42,10 @@
       </button>
 
       <div class="escalation__decision">
-        @if (v.recommendation; as rec) {
+        @if (watchdogPark()) {
+          <span class="escalation__rec escalation__rec--warn" data-testid="escalation-recommendation"
+            data-label-kind="status">Review retry available</span>
+        } @else if (v.recommendation; as rec) {
           <span
             class="escalation__rec escalation__rec--{{ rec.tone }}"
             data-testid="escalation-recommendation"
@@ -56,14 +59,21 @@
           @if (gateInfrastructure()) {
             <button type="button" class="escalation__action escalation__action--primary"
               data-testid="escalation-action-retry-gate"
-              [disabled]="mutationsBlocked() || gateAction() !== null"
-              [appPendingButton]="gateAction() === 'retry'" pendingLabel="Retrying gate…"
-              (click)="retryGate()">Retry gate</button>
+              [disabled]="mutationsBlocked() || gate.action() !== null"
+              [appPendingButton]="gate.action() === 'retry'" pendingLabel="Retrying gate…"
+              (click)="gate.retry()">Retry gate</button>
             <button type="button" class="escalation__action escalation__action--secondary"
               data-testid="escalation-action-disable-batch"
-              [disabled]="mutationsBlocked() || gateAction() !== null"
-              [appPendingButton]="gateAction() === 'disable'" pendingLabel="Disabling…"
-              (click)="disableBatchVerification()">Disable batch verification</button>
+              [disabled]="mutationsBlocked() || gate.action() !== null"
+              [appPendingButton]="gate.action() === 'disable'" pendingLabel="Disabling…"
+              (click)="gate.disable()">Disable batch verification</button>
+          }
+          @if (watchdogPark()) {
+            <button type="button" class="escalation__action escalation__action--primary"
+              data-testid="escalation-action-retry-review"
+              [disabled]="mutationsBlocked() || triageActingId() !== null || reviewRetrying()"
+              [appPendingButton]="reviewRetrying()" pendingLabel="Retrying review…"
+              (click)="retryReview()">Retry review</button>
           }
           @for (action of decisionActions(); track action.id) {
             <button
@@ -78,8 +88,9 @@
             </button>
           }
         </div>
-        @if (gateActionMessage(); as message) { <p role="status" data-testid="gate-infrastructure-outcome">{{ message }}</p> }
-        @if (gateActionError(); as message) { <p role="alert" data-testid="gate-infrastructure-error">{{ message }}</p> }
+        @if (gate.message(); as message) { <p role="status" data-testid="gate-infrastructure-outcome">{{ message }}</p> }
+        @if (gate.error(); as message) { <p role="alert" data-testid="gate-infrastructure-error">{{ message }}</p> }
+        @if (reviewRetryMessage(); as message) { <p role="status" data-testid="review-retry-message">{{ message }}</p> }
       </div>
     </div>
 

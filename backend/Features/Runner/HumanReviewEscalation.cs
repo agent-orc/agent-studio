@@ -153,6 +153,8 @@ public static class HumanReviewEscalationCategories
     public const string GateCapacity = AgentStudio.OrchestrationDecisions.GateQueueStallPolicy.GateCapacityCategory;
     /// <summary>A reviewed delivery could not pass its gate because the gate infrastructure failed.</summary>
     public const string GateInfrastructure = "gate-infrastructure";
+    /// <summary>The Auto Review owner disappeared after a completed delivery.</summary>
+    public const string AutoReviewStranded = "auto-review-stranded";
 
     /// <summary>An unanswered steer / NeedsInput question timed out (Run-Liveness
     /// Slice B, concept Rule 2) and the answer was not derivable from the task
@@ -261,7 +263,8 @@ public sealed class HumanReviewEscalation
         string category, string reason, CancellationToken ct = default,
         AttemptWriteReference? authorityWrite = null,
         string? statusDetail = null,
-        string? expectedSourceState = null)
+        string? expectedSourceState = null,
+        string? parkDetail = null)
     {
         category = ResolveCategory(jobId, watchPath, category);
         var beforeFolder = ResolveSourceFolder(jobId, watchPath);
@@ -271,7 +274,7 @@ public sealed class HumanReviewEscalation
         // A card outside the expected source lane gets no verdict stub: its
         // move is refused and the card keeps its own Result.
         if (!string.IsNullOrWhiteSpace(beforeFolder) && InSourceLane(jobId, watchPath, beforeFolder, expectedSourceState))
-            WriteStatusStubIfMissing(beforeFolder, category, reason, statusDetail);
+            WriteStatusStubIfMissing(beforeFolder, category, reason, statusDetail, parkDetail);
         var outcome = await _transitions.MoveAsync(
             jobId,
             TaskStates.Escalated,
@@ -285,11 +288,11 @@ public sealed class HumanReviewEscalation
             // move (an operator drag, a follow-up) refuses the escalation.
             expectedSourceState: expectedSourceState,
             transitionCause: LaneChangeCauses.Escalated,
-            transitionDetail: category);
+            transitionDetail: parkDetail ?? category);
         if (outcome.Status == MoveJobStatus.Success)
         {
             RecordPostMergeAttributionEscalation(project, jobId, category);
-            RecordVerdictAndStatus(project, jobId, outcome.NewFolderPath, category, reason, statusDetail);
+            RecordVerdictAndStatus(project, jobId, outcome.NewFolderPath, category, reason, statusDetail, parkDetail);
             if (CarriesNeedsInputArtifact(category) && outcome.NewFolderPath is not null)
                 NeedsInputArtifact.ReferenceFromParkedBlocker(outcome.NewFolderPath, _logger);
             TryCommitArtifacts(project, jobId, beforeFolder, outcome.NewFolderPath);
@@ -449,7 +452,7 @@ public sealed class HumanReviewEscalation
     /// </summary>
     public void RecordVerdictAndStatus(
         string project, string jobId, string? folderPath, string category, string reason,
-        string? statusDetail = null)
+        string? statusDetail = null, string? parkDetail = null)
     {
         if (!string.IsNullOrWhiteSpace(_workspaceRoot) && !string.IsNullOrWhiteSpace(project))
         {
@@ -483,7 +486,7 @@ public sealed class HumanReviewEscalation
         }
 
         if (!string.IsNullOrWhiteSpace(folderPath))
-            WriteStatusStubIfMissing(folderPath!, category, reason, statusDetail);
+            WriteStatusStubIfMissing(folderPath!, category, reason, statusDetail, parkDetail);
     }
 
     /// <summary>Encodes the category into the verdict reason so the decision
@@ -541,7 +544,8 @@ public sealed class HumanReviewEscalation
     /// claim otherwise. The section is produced here, at the stub's source, so
     /// no surface has to rewrite an agent's own text to stay honest.</para></summary>
     public static string BuildStatusStub(
-        string category, string reason, bool partialResultsPresent = false, string? detail = null)
+        string category, string reason, bool partialResultsPresent = false, string? detail = null,
+        string? parkDetail = null)
     {
         var c = string.IsNullOrWhiteSpace(category) ? HumanReviewEscalationCategories.UnknownLegacy : category.Trim();
         var r = (reason ?? string.Empty).Trim();
@@ -567,8 +571,11 @@ public sealed class HumanReviewEscalation
             sb.Append(d).Append(nl);
         sb.Append("- See `logs/` in this folder for the run output, and the project decision journal (`logs/decisions/<project>.jsonl`) for the escalation record.")
           .Append(nl).Append(nl);
+        var conditionType = c == HumanReviewEscalationCategories.Environmental
+            && parkDetail == HumanReviewEscalationCategories.AutoReviewStranded
+            ? parkDetail : c;
         sb.Append(ParkedOpenItems.Section(
-            c, question: null, reason: r, ParkedBlockerCatalog.ConditionFor(c).Description));
+            c, question: null, reason: r, ParkedBlockerCatalog.ConditionFor(conditionType).Description));
         return sb.ToString();
     }
 
@@ -586,7 +593,7 @@ public sealed class HumanReviewEscalation
     }
 
     private void WriteStatusStubIfMissing(
-        string folderPath, string category, string reason, string? detail = null)
+        string folderPath, string category, string reason, string? detail = null, string? parkDetail = null)
     {
         var path = Path.Combine(folderPath, "status.md");
         try
@@ -599,7 +606,7 @@ public sealed class HumanReviewEscalation
                     return; // never clobber a real summary
             }
             Directory.CreateDirectory(folderPath);
-            File.WriteAllText(path, BuildStatusStub(category, reason, HasPartialResults(folderPath), detail));
+            File.WriteAllText(path, BuildStatusStub(category, reason, HasPartialResults(folderPath), detail, parkDetail));
         }
         catch (Exception ex)
         {

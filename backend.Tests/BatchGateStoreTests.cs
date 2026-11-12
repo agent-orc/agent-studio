@@ -11,6 +11,24 @@ namespace AgentStudio.Tests;
 public sealed class BatchGateStoreTests : IDisposable
 {
     [Fact]
+    public void State_skips_a_malformed_manifest_without_losing_the_project()
+    {
+        var broken = Path.Combine(_root, "malformed-folder");
+        Directory.CreateDirectory(broken);
+        File.WriteAllText(Path.Combine(broken, "manifest.json"), "{broken");
+        var incomplete = Path.Combine(_root, "incomplete-folder");
+        Directory.CreateDirectory(incomplete);
+        File.WriteAllText(Path.Combine(incomplete, "manifest.json"), "{}");
+
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.Empty(state.GetProperty("batches").EnumerateArray());
+        Assert.Empty(_store.ListRecoverableManifests());
+    }
+
+    [Fact]
     public void State_reports_capacity_and_current_slot_use_together()
     {
         var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(

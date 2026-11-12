@@ -167,7 +167,9 @@ public sealed class TaskTransitionService
         bool operatorDecisionPark = false,
         OperatorReissueInstructions? reissueInstructions = null,
         string? automaticAcceptanceBy = null,
-        string? batchWithdrawalId = null)
+        string? batchWithdrawalId = null,
+        DateTime? expectedSourceEnteredLaneAt = null,
+        long? expectedSourceTaskJsonWriteTicks = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return new MoveJobOutcome(MoveJobStatus.NotFound);
@@ -504,7 +506,9 @@ public sealed class TaskTransitionService
                 transitionDetail,
                 decisionReopenPermit, archiveOverride,
                 operatorDecisionPark: operatorDecisionPark,
-                beforeMove: EnsureResultAfterAdmission);
+                beforeMove: EnsureResultAfterAdmission,
+                expectedSourceEnteredLaneAt: expectedSourceEnteredLaneAt,
+                expectedSourceTaskJsonWriteTicks: expectedSourceTaskJsonWriteTicks);
             if (!archiveOverride || moved.Status != MoveJobStatus.Success)
                 return moved;
 
@@ -1625,10 +1629,16 @@ public sealed class TaskTransitionService
         if (!ParkedBlockerCatalog.IsParkedLane(targetState)) return null;
         var fromMarker = ParkedBlockerMarker.ToStatus(
             ParkedBlockerMarker.TryRead(task.FolderPath), atUtc);
-        if (fromMarker is not null) return fromMarker;
-        if (task.ParkedBlocker is not null) return task.ParkedBlocker;
-        return ParkedBlockerMarker.ToStatus(
+        var park = fromMarker ?? task.ParkedBlocker ?? ParkedBlockerMarker.ToStatus(
             ParkedBlockerCatalog.Build(targetState, reason: null, parkedAt: atUtc), atUtc);
+        // Human Review is also the ordinary acceptance lane. An unexplained
+        // synthetic park there is not an operator question and must not add a
+        // false open item to a missing-result scaffold.
+        if (targetState == TaskStates.HumanReview
+            && park?.Reason?.Contains("Parked with no recorded cause.", StringComparison.Ordinal) == true
+            && string.IsNullOrWhiteSpace(park.Decision?.Question))
+            return null;
+        return park;
     }
 
     private static string ResolveScaffoldResult(TaskInfo task, string targetState)
