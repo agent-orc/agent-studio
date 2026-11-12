@@ -93,8 +93,10 @@ public sealed partial class AccessSecurityStore
             {
                 var user = next.Users.First(item => item.Id == ownerId);
                 if (user.TotpSecret is null || string.IsNullOrWhiteSpace(offlineFactor)
-                    || !SecondFactorCodes.VerifyTotp(user.TotpSecret, offlineFactor, now))
+                    || SecondFactorCodes.MatchTotpStep(user.TotpSecret, offlineFactor, now) is not { } acceptedStep
+                    || (user.LastAcceptedTotpStep is { } previousStep && acceptedStep <= previousStep))
                     throw new SecurityOperationException(403, "break-glass-second-factor-invalid", "A current authenticator code is required.");
+                next.Users[next.Users.IndexOf(user)] = user with { LastAcceptedTotpStep = acceptedStep };
             }
             var window = new BreakGlassWindow
             {
@@ -184,8 +186,11 @@ public sealed partial class AccessSecurityStore
             var owner = state.Users.FirstOrDefault(user => user.Id == window.OwnerId && user.Username == username && !user.Disabled);
             if (owner is null || !ActiveOwnerIds(state.Users, state.RoleBindings, state.Groups).Contains(owner.Id)
                 || owner.TotpSecret is null || string.IsNullOrWhiteSpace(factor)
-                || !SecondFactorCodes.VerifyTotp(owner.TotpSecret, factor, Now))
+                || SecondFactorCodes.MatchTotpStep(owner.TotpSecret, factor, Now) is not { } acceptedStep
+                || (owner.LastAcceptedTotpStep is { } previousStep && acceptedStep <= previousStep))
                 throw new SecurityOperationException(403, "break-glass-second-factor-invalid", "An active Owner's current authenticator code is required.");
+            state.Users[state.Users.IndexOf(owner)] = owner with { LastAcceptedTotpStep = acceptedStep };
+            SaveLocked(state);
             AppendBreakGlassAudit(window, operation, outcome, $"human:{owner.Id}",
                 new { window.SessionIds, host = true }, target);
         }

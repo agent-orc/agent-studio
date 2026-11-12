@@ -458,6 +458,50 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
 
   test.beforeEach(() => test.setTimeout(90_000));
 
+  test('confirms selected reissue findings and owner note before moving', async ({ page }, testInfo) => {
+    await openDetail(page, '5e-escalated');
+    const moves: Array<{ targetState: string; reissueInstructions: { findings: string[]; note: string } }> = [];
+    await page.route(/\/move(\?|$)/, async route => {
+      moves.push(route.request().postDataJSON());
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await expect(page.getByTestId('escalation-gate-items').getByRole('listitem')).toHaveCount(4);
+    await page.getByTestId('studio-triage-action-reissue-escalated').click();
+    await expect(page.getByTestId('escalation-confirm')).toBeVisible();
+    expect(moves).toHaveLength(0);
+    await page.getByTestId('escalation-confirm-cancel').click();
+    await page.getByTestId('escalation-action-reissue-escalated').click();
+    const dialog = page.getByTestId('escalation-confirm');
+    await expect(dialog).toBeVisible();
+    expect(moves).toHaveLength(0);
+    await expect(dialog.getByRole('checkbox')).toHaveCount(4);
+    await dialog.getByRole('checkbox').nth(1).uncheck();
+    await dialog.getByTestId('escalation-owner-note').fill('Keep the retry bounded.');
+    await expect(dialog.getByTestId('reissue-instructions-preview')).toContainText('Preserve the complete council response.');
+    await expect(dialog.getByTestId('reissue-instructions-preview')).not.toContainText('Render every grade document.');
+    await expect(dialog).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(dialog.getByTestId('escalation-owner-note')).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      const name = `reissue-confirm-${theme}.png`;
+      const shot = await page.screenshot();
+      await saveShot(testInfo, name, shot);
+      writeFileSync(path.join(SHOTS_DIR, name), shot);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(dialog).toBeVisible();
+    const mobileName = 'reissue-confirm-390px.png';
+    const mobileShot = await page.screenshot();
+    await saveShot(testInfo, mobileName, mobileShot);
+    writeFileSync(path.join(SHOTS_DIR, mobileName), mobileShot);
+    await dialog.getByTestId('escalation-confirm-submit').click();
+    await expect.poll(() => moves.length).toBe(1);
+    expect(moves[0].targetState).toBe('2-ready');
+    expect(moves[0].reissueInstructions.note).toBe('Keep the retry bounded.');
+    expect(moves[0].reissueInstructions.findings).toHaveLength(3);
+    expect(moves[0].reissueInstructions.findings.join(' ')).not.toContain('Render every grade document.');
+  });
+
   test('shows the latest continued attempt in the parked header', async ({ page }, testInfo) => {
     await openDetail(page, '5e-escalated', true, true);
     await expect(page.getByTestId('escalation-essence')).toContainText(
@@ -658,7 +702,7 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     await expect(page.getByTestId('escalation-toggle')).toHaveAttribute('aria-expanded', 'true');
     const panel = page.getByTestId('escalation-summary');
     await expect(panel.getByTestId('escalation-action-reissue-escalated')).toHaveText('Continue (reissue)');
-    await expect(panel.getByTestId('escalation-action-accept-escalated')).toHaveText('Accept as-is');
+    await expect(panel.getByTestId('escalation-action-accept-escalated')).toHaveText('Accept with reason');
     await expect(panel.getByTestId('escalation-action-discard-escalated')).toHaveText('Abort');
     const recommendation = panel.getByTestId('escalation-recommendation');
     await expect(recommendation).toHaveText('Needs decision');
@@ -707,7 +751,7 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     const panel = page.getByTestId('escalation-summary');
 
     await expect(page.getByTestId('escalation-essence')).toContainText(
-      '0 review rounds · Reissue budget exhausted',
+      '3 review rounds · Reissue budget exhausted',
     );
     await expect(page.getByTestId('escalation-context-empty')).toHaveText(
       'No structured findings, review artifacts, or delivery context were recorded.',

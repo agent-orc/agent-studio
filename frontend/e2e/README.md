@@ -708,10 +708,11 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `unified-dialog-screenshots.spec.ts` | Unified confirm + notify visuals |
 | `visual-evidence-strip-and-reel.spec.ts` | Visual evidence: per-task strip + lightbox + workspace reel |
 
-### `usage-cockpit/` - 1 spec
+### `usage-cockpit/` - 2 specs
 
 | Spec | Summary |
 |------|---------|
+| `capacity-forecast.spec.ts` | Near-exhausted window states what is left; the usage detail Capacity section lists two Ready cards that would fall back, one flagged as not offered by the installed CLI (AGT-3584) |
 | `footer-subscription-usage.spec.ts` | One footer entry per subscription, stale age, host sign-in problem, top-right account and Settings, and responsive screenshots |
 
 ### `workspace/` - 8 specs
