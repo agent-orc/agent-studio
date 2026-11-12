@@ -144,9 +144,14 @@ public sealed record BatchFirstCandidateFact(
     double MaxRisk, IReadOnlyList<string> Areas, string OverlapGroup,
     bool Red, string Classification);
 
-/// <summary>Cost of suites used to isolate a red candidate; one fact per parent.</summary>
+/// <summary>
+/// Cost of suites used to isolate a red candidate; one fact per parent.
+/// <c>DiscardedPasses</c> counts green diagnostic subsets abandoned as
+/// StaleBase, passes the queue paid for without a publication (AGT-3752).
+/// </summary>
 public sealed record BatchIsolationCostFact(
-    string BatchId, int SuiteRuns, double HostMinutes, DateTimeOffset AtUtc);
+    string BatchId, int SuiteRuns, double HostMinutes, DateTimeOffset AtUtc,
+    int DiscardedPasses = 0);
 
 /// <summary>
 /// Durable batch authority. A closed manifest is written once before assembly;
@@ -187,7 +192,7 @@ public sealed partial class BatchGateStore
 
     public void RecordIsolationCost(BatchIsolationCostFact fact)
     {
-        if (fact.SuiteRuns < 0 || fact.HostMinutes < 0)
+        if (fact.SuiteRuns < 0 || fact.HostMinutes < 0 || fact.DiscardedPasses < 0)
             throw new ArgumentOutOfRangeException(nameof(fact));
         var folder = Path.Combine(_root, "isolation-costs");
         Directory.CreateDirectory(folder);
@@ -209,7 +214,7 @@ public sealed partial class BatchGateStore
                 return new BatchPlanObservation(fact.BatchId, fact.AtUtc, fact.Size,
                     fact.MaxRisk, fact.Areas, fact.OverlapGroup, fact.Red,
                     cost?.SuiteRuns ?? 0, cost?.HostMinutes ?? 0,
-                    fact.Classification);
+                    fact.Classification, cost?.DiscardedPasses ?? 0);
             }).OrderBy(fact => fact.AtUtc).ToArray();
     }
 

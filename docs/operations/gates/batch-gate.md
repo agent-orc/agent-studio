@@ -342,6 +342,19 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   first on the same base. Restart reconstruction uses these findings and the
   closed child verdicts. The state route and report expose the findings as
   `proven-red`, `proven-green`, and `superseded`.
+- Isolation base after a partial publication (AGT-3752). Diagnostic children
+  start on the red batch's base. When a child of the same isolation publishes,
+  every later child is assembled on the SHA that publication verified, so it
+  can still fast-forward; the exact-SHA rule holds because each child
+  publishes the candidate it tested. The base follows only the isolation's own
+  publications. If the tip moves for any other reason, later green children
+  end as `StaleBase` and their members return to pending, as before. Rebasing
+  was chosen over ending the isolation: the remaining split still proves the
+  culprit and its evidence in the same flight, and green members publish
+  without being gated again in a new batch. The isolation cost fact
+  (`isolation-costs/<batch>.json`) records `discardedPasses`, the green
+  children abandoned as `StaleBase`. Plan observations expose it as
+  `isolationDiscardedPasses` for the batch panel.
 - Isolation in the UI (AGT-3577). Each finding names the child batch run that
   decided it (`provingBatchId`, `provingRunId`). On the state route a
   proven-red finding also carries that run's `failures` (test name and error
