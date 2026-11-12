@@ -6,17 +6,20 @@ namespace AgentStudio.Pipeline;
 
 /// <summary>
 /// The Human Review park reason for a Remote integration result. A failed
-/// integration uses its typed cause to name the blocked step and the next
-/// action; a spent recovery budget is described in the same terms.
+/// integration uses its typed cause to name the blocked step and next action.
+/// A spent recovery budget is described in the same terms. Required concept
+/// post-steps name their own failure and take precedence over the merge result.
 /// </summary>
 public static class RemoteDeliveryParkReason
 {
     public const string Prefix = "Delivery integration is blocked: ";
 
-    /// <summary>Null for a successful or deliberately deferred integration.</summary>
+    /// <summary>Null for a successful or deliberately deferred integration whose post-steps completed.</summary>
     public static string? For(MergeIntoIntegrationResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
+        if (!string.IsNullOrWhiteSpace(result.PostStepParkReason))
+            return result.PostStepParkReason;
         if (!string.IsNullOrWhiteSpace(result.AutomaticRecoveryDetail))
             return $"Delivery integration stopped after automatic recovery: {result.AutomaticRecoveryDetail.Trim().TrimEnd('.')}. Review the integration evidence and retry or send the task for correction.";
         return AcceptedIntegrationFailureCodes.For(result) is { } code ? ForCode(code) : null;
@@ -105,18 +108,22 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         AttemptAuthorityService authority,
         GitService? git = null,
         BranchReclaimTriggerService? branchReclaim = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        ConceptDeliveryPostSteps? conceptDelivery = null)
         : this(
-            request => IntegrateAndRecordAsync(
+            request => IntegrateDeliveryAsync(
                 request,
-                runner,
-                scanner,
-                provenance,
-                timeline,
-                request.ReviewAttemptId is { } reviewAttemptId
-                    ? apply => OwnsRequest(request, configuration)
-                        && authority.TryApplyForCurrentReviewedDelivery(reviewAttemptId, apply)
-                    : null),
+                conceptDelivery,
+                () => IntegrateAndRecordAsync(
+                    request,
+                    runner,
+                    scanner,
+                    provenance,
+                    timeline,
+                    request.ReviewAttemptId is { } reviewAttemptId
+                        ? apply => OwnsRequest(request, configuration)
+                            && authority.TryApplyForCurrentReviewedDelivery(reviewAttemptId, apply)
+                        : null)),
             logger,
             (request, failureCode, summary, detail) => RecordPreReviewFailure(
                 request,
@@ -135,6 +142,19 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             request => ReclaimBranchesAfterIntegration(request, scanner, git, branchReclaim))
     {
     }
+
+    /// <summary>
+    /// A concept card takes the same task-branch merge, bracketed by its
+    /// Dossier placement check and concept post-steps
+    /// (<see cref="ConceptDeliveryPostSteps"/>). Every other card merges as is.
+    /// </summary>
+    private static Task<MergeIntoIntegrationResult> IntegrateDeliveryAsync(
+        RemoteDeliveryIntegrationRequest request,
+        ConceptDeliveryPostSteps? conceptDelivery,
+        Func<Task<MergeIntoIntegrationResult>> merge)
+        => conceptDelivery?.ConceptCard(request) is { } card
+            ? conceptDelivery.IntegrateAsync(card, request, merge)
+            : merge();
 
     private static bool OwnsRequest(RemoteDeliveryIntegrationRequest request, IConfiguration? configuration)
         => !request.MonolithOwnedResume || configuration is null

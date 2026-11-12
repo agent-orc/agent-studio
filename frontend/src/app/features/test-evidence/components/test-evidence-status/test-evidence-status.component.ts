@@ -12,7 +12,6 @@ export type TestEvidenceStatusVariant = 'card' | 'panel';
 
 const MISSING_EVIDENCE_RELEVANT_STATES = new Set<string>([
   TaskState.AutoReview,
-  TaskState.HumanReview,
   TaskState.Completed,
   TaskState.Archive,
 ]);

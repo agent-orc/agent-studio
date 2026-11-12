@@ -111,7 +111,6 @@ public class ProjectRunner
     // of a permanent "- -". Optional so test fixtures that build the runner
     // directly keep working; production DI always supplies an instance.
     private readonly AgentStudio.Pipeline.PipelineExecutionLog? _pipelineLog;
-    private readonly AgentStudio.Pipeline.IConceptWorkbenchPublisher? _conceptWorkbenchPublisher;
     private readonly AgentStudio.Pipeline.ModelQualificationService? _modelQualification;
     // AGT-2716: optional so existing test fixtures keep working; production DI
     // always supplies an instance. Null => the auto-migration check at run
@@ -486,7 +485,6 @@ public class ProjectRunner
         AgentStudio.Pipeline.ModelQualificationService? modelQualification = null,
         AgentStudio.Pipeline.IntegrationPushQueue? integrationPushQueue = null,
         CliQuotaWaitPolicyService? quotaWaitPolicy = null,
-        AgentStudio.Pipeline.IConceptWorkbenchPublisher? conceptWorkbenchPublisher = null,
         PromptEnrichmentService? promptEnrichment = null,
         DossierMaintenanceService? dossierMaintenance = null,
         IVisualQaService? visualQa = null,
@@ -559,7 +557,6 @@ public class ProjectRunner
         _modelQualification = modelQualification;
         _modelMigrationCatalog = modelMigrationCatalog;
         _integrationPushQueue = integrationPushQueue;
-        _conceptWorkbenchPublisher = conceptWorkbenchPublisher;
         _promptEnrichment = promptEnrichment;
         _dossierMaintenance = dossierMaintenance;
         _visualQa = visualQa;
@@ -7141,19 +7138,11 @@ public class ProjectRunner
 
             // movedToReview was computed up-front for the circuit breaker.
 
-            // Concept cards never merge their task branch. Once the core run has
-            // produced a reviewable docs-only Dossier, copy that single
-            // directory through the managed project-artifact commit/push
-            // boundary. The subsequent concept review reads the published
-            // document and routes it to the human sight-review marker.
-            if (movedToReview
-                && activeInfo != null
-                && TaskModes.IsConcept(activeInfo.Mode))
-            {
-                var movedConcept = _scanner.FindJob(jobId, Entry.Path) ?? activeInfo;
-                if (LocalStopRequested(jobId)) return;
-                await PublishConceptWorkbenchAsync(movedConcept, run);
-            }
+            // Concept cards have no local post-step here. Their Dossier is
+            // integrated by the reviewed task-branch merge of a Remote delivery,
+            // which also runs Dossier placement, concept review and the
+            // sight-review marker (ConceptDeliveryPostSteps). Local concept
+            // runs are not admitted (RemoteExecutionRequirement).
 
             // UI tasks do not enter the standard aspect-review pipeline. A
             // successful core run must first satisfy its iteration-scoped visual
@@ -7442,47 +7431,6 @@ public class ProjectRunner
             _logger.LogDebug(ex, "Failure-intervention enablement could not be resolved for {JobId}", task.Id);
             return false;
         }
-    }
-
-    private async Task PublishConceptWorkbenchAsync(TaskInfo info, ActiveRun run)
-    {
-        var startedAt = DateTime.UtcNow;
-        ConceptWorkbenchPublishResult result;
-        if (_conceptWorkbenchPublisher is null)
-        {
-            var review = new ConceptWorkbenchReview(
-                false, null, null, null,
-                ["Concept Dossier publisher is unavailable."]);
-            result = new ConceptWorkbenchPublishResult(false, review.Summary, review);
-        }
-        else
-        {
-            result = await _conceptWorkbenchPublisher.PublishAsync(
-                info,
-                run.WorktreePath ?? run.WorkingDirectory ?? string.Empty,
-                CancellationToken.None);
-        }
-
-        _pipelineLog?.RecordStep(info.FolderPath, new PipelineStepExecution
-        {
-            StepId = AgentStudio.Pipeline.PipelineCatalogue.ConceptWorkbenchPlacementStepId,
-            Kind = StepKind.Tool,
-            Status = result.Success ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
-            StartedAt = startedAt,
-            CompletedAt = DateTime.UtcNow,
-            Verdict = result.Success ? "workbench-published" : "workbench-invalid",
-            VerdictSummary = result.Summary,
-            Reason = result.Success ? null : result.Summary,
-        });
-        _logger.Log(
-            result.Success ? LogLevel.Information : LogLevel.Warning,
-            "concept_workbench_placement project={Project} job={JobId} success={Success} path={Path} commit={Commit} summary={Summary}",
-            ProjectName,
-            info.Id,
-            result.Success,
-            result.Review.RepoRelativeDirectory ?? "",
-            result.CommitSha ?? "",
-            result.Summary);
     }
 
     /// <summary>

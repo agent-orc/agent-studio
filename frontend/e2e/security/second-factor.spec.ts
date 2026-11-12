@@ -98,6 +98,22 @@ test('Owner can inspect and revoke sessions and receives a new-session notice', 
   await page.screenshot({ path: join(resultDir, 'sessions-light--mocked.png'), fullPage: true });
   await setTheme(page, 'dark');
   await page.screenshot({ path: join(resultDir, 'sessions-dark--mocked.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const panel = page.getByTestId('session-manager-panel');
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    const box = await panel.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(844);
+    await panel.getByRole('button', { name: 'Add authenticator' }).scrollIntoViewIfNeeded();
+    await expect(panel.getByRole('button', { name: 'Add authenticator' })).toBeInViewport();
+    await panel.getByRole('button', { name: 'Revoke all other sessions' }).scrollIntoViewIfNeeded();
+    await expect(panel.getByRole('button', { name: 'Revoke all other sessions' })).toBeInViewport();
+    await page.screenshot({ path: join(resultDir, `sessions-panel-390-${theme}.png`) });
+  }
   await page.getByTestId('session-row').filter({ hasText: 'Second browser' }).getByRole('button', { name: 'Revoke' }).click();
   await expect(page.getByTestId('session-row')).toHaveCount(1);
   sessions.push({ id: 'newer', device: 'Another browser', address: '192.0.2.12',
