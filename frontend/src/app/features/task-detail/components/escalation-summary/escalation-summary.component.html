@@ -172,4 +172,48 @@
       </div>
     }
   </section>
+  @if (decisionDialog(); as mode) {
+    <div class="escalation-confirm__backdrop" data-testid="escalation-confirm-backdrop">
+      <section class="escalation-confirm" role="dialog" aria-modal="true"
+        cdkTrapFocus [cdkTrapFocusAutoCapture]="true"
+        [attr.aria-label]="mode === 'reissue' ? 'Continue reissue' : 'Accept with reason'"
+        data-testid="escalation-confirm" (keydown.escape)="decisionDialog.set(null)">
+        <h2>{{ mode === 'reissue' ? 'Continue with these instructions?' : 'Accept with a written reason?' }}</h2>
+        @if (mode === 'reissue') {
+          <p>Choose up to 12 findings for the next run. The agent will receive the preview below with the original task.</p>
+          @if (!codeReviewsLoaded()) { <p role="status">Loading review findings…</p> }
+          <div class="escalation-confirm__findings" role="group" aria-label="Findings to reissue">
+            @for (item of v.gateItems; track item.id) {
+              <label>
+                <input type="checkbox" [checked]="selectedFindingIds().has(item.id)"
+                  [disabled]="!selectedFindingIds().has(item.id) && selectedFindingIds().size >= 12"
+                  [attr.data-testid]="'reissue-finding-' + item.id"
+                  (change)="toggleFinding(item.id, $any($event.target).checked)" />
+                <span>{{ item.text }}@if (item.detail) {<small>{{ item.detail }}</small>}</span>
+              </label>
+            }
+          </div>
+        } @else {
+          <p>Completion needs a current content verdict. Record why you are accepting this delivery despite the review gap.</p>
+        }
+        <label class="escalation-confirm__note" for="escalation-owner-note">
+          {{ mode === 'reissue' ? 'Owner note (optional)' : 'Reason (at least 8 characters)' }}
+        </label>
+        <textarea id="escalation-owner-note" data-testid="escalation-owner-note" rows="3" maxlength="2000"
+          [value]="ownerNote()" (input)="updateOwnerNote($event)"></textarea>
+        @if (mode === 'reissue') {
+          <strong>Instructions for the next agent</strong>
+          <pre data-testid="reissue-instructions-preview">{{ instructionsPreview() }}</pre>
+        }
+        <div class="escalation-confirm__actions">
+          <button type="button" data-testid="escalation-confirm-cancel" (click)="decisionDialog.set(null)">Cancel</button>
+          <button type="button" data-testid="escalation-confirm-submit"
+            [disabled]="mode === 'reissue' ? (!codeReviewsLoaded() || (!selectedFindings().length && !ownerNote().trim())) : ownerNote().trim().length < 8"
+            (click)="confirmDecision()">
+            {{ mode === 'reissue' ? 'Move to Ready' : 'Accept with reason' }}
+          </button>
+        </div>
+      </section>
+    </div>
+  }
 }

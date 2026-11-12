@@ -712,9 +712,12 @@ occur. It is not a claim about tunnel transfer time.
   viewport for reading. Standalone task keys become microcards, while paths,
   refs, URLs, and code stay literal. Long artifact blocks scroll within their
   own container. The park block has a per-task persisted disclosure and keeps
-  its badge, age, and one-line reason visible when closed. The reissue action
-  is primary beside the recommendation; accept-as-is and abort are secondary
-  decisions. When findings, review artifacts,
+  its badge, age, and one-line reason visible when closed. Continue (reissue)
+  opens a confirmation with selectable findings, an optional owner note, and
+  the next agent's instructions before the move to Ready. The saved selection
+  survives review-artifact rotation. Accept with reason records an operator
+  override for the completion gate; abort is the destructive alternative.
+  When findings, review artifacts,
   and delivery context are absent, the section renders one compact empty line.
   The Runs modal also shows the current operator-owned review-attempt epoch and
   the closed cycle history, including requeue reason, lane crossing, and rotated
