@@ -27,6 +27,7 @@ import {
   acceptanceHoldReason,
   overflowActionsFor,
   primaryActionFor,
+  taskNeedsServerCheckout,
   triageDecisionRefusal,
   triageDecisionRowState,
 } from '../../state/triage-actions.model';
@@ -226,8 +227,11 @@ export class DetailHeaderComponent {
   readonly triageLaneLabel = computed(() => laneLabelFor(this.info().state));
 
   /** Index 0 of the lane's action list when it carries a primary variant. */
-  readonly triagePrimary = computed<TriageButton | null>(() => this.gateInfrastructurePark() || this.reviewsOnly()
-    ? null : primaryActionFor(this.info().state));
+  readonly triagePrimary = computed<TriageButton | null>(() => {
+    if (this.gateInfrastructurePark() || this.reviewsOnly()) return null;
+    const action = primaryActionFor(this.info().state);
+    return action?.id === 'reissue-escalated' && taskNeedsServerCheckout(this.info()) ? null : action;
+  });
 
   /**
    * State-dependent presentation for the Human Review acceptance primary. Null
