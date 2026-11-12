@@ -149,8 +149,14 @@ export class ParkedBlockerComponent {
 
   /** Null when the card is not parked; the template renders nothing then. */
   private readonly now = inject(NowTickService).now;
-  readonly view = computed<ParkedBlockerView | null>(() =>
-    buildParkedBlockerView(this.info(), this.now(), this.timeline?.events() ?? []));
+  readonly view = computed<ParkedBlockerView | null>(() => {
+    const park = this.info().parkedBlocker;
+    if (park?.lane !== this.info().state) return null;
+    if (this.info().state === '5-human-review'
+      && park.reason?.includes('Parked with no recorded cause.')
+      && !park.decision?.question?.trim()) return null;
+    return buildParkedBlockerView(this.info(), this.now(), this.timeline?.events() ?? []);
+  });
 
   /**
    * The main sentence when the park states no question (AGT-3586). A park the

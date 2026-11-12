@@ -742,12 +742,9 @@ public sealed class DecisionCardApplyTests : IDisposable
                 },
             ],
         };
-        var dossierFolder = Path.Combine(_watchPath, "docs", "release");
-        Directory.CreateDirectory(dossierFolder);
+        var dossierFolder = AgentStudio.Pipeline.ConceptWorkbenchContract.CreateScaffold(
+            _watchPath, "release", "Release", "Release implementation plan.", source.Key!);
         var descriptorPath = Path.Combine(dossierFolder, "workbench.json");
-        File.WriteAllText(descriptorPath, """
-          {"schemaVersion":1,"id":"release","status":"decision-pending","updatedAt":"2026-09-25T12:00:00Z"}
-          """);
 
         var first = h.Promotion.Promote(source, plan, new PromoteConceptRequest());
         var repeated = h.Promotion.Promote(source, plan, new PromoteConceptRequest());
