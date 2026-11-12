@@ -65,7 +65,7 @@ export class BatchPanelComponent implements OnDestroy {
     switch (phase) {
       case 'running': return 'running';
       case 'red': return 'danger';
-      case 'paused': case 'abandoned': return 'warning';
+      case 'paused': return 'warning';
       case 'green': case 'published': return 'success';
       default: return 'neutral';
     }
@@ -75,7 +75,6 @@ export class BatchPanelComponent implements OnDestroy {
       case 'running': return 'running';
       case 'pass': case 'passed': return 'success';
       case 'fail': case 'failed': return 'danger';
-      case 'interrupted': return 'warning';
       default: return 'neutral';
     }
   }

@@ -91,6 +91,9 @@ describe('BatchPanelComponent', () => {
     expect(waiting.textContent).toContain('AGT-1 · 3 h 49 min');
     expect(host.querySelector('#batch-gate-host-01')!.textContent!.replace(/\s+/g, ' '))
       .toContain('gate-host-01 · interrupted · 3 h 49 min');
+    const settled = host.querySelector('#batch-gate-host-01')!;
+    expect(settled.querySelector('[data-testid="batch-phase"] app-status-indicator [data-tone]')?.getAttribute('data-tone')).toBe('neutral');
+    expect(settled.querySelector('li app-status-indicator [data-tone]')?.getAttribute('data-tone')).toBe('neutral');
     expect(host.querySelector('[data-testid="batch-detached-flights"]')!.textContent)
       .toContain('Batch gate-host-01 · detached');
     expect(host.querySelector('[data-testid="batch-detached-flights"]')!.textContent).toContain('deadline');
