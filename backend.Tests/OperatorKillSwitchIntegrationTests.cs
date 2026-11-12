@@ -103,14 +103,22 @@ public sealed class OperatorKillSwitchIntegrationTests(ITestOutputHelper output)
         Assert.Equal("all", killed.GetProperty("kind").GetString());
         Assert.Equal("studio", killed.GetProperty("trigger").GetString());
 
-        var studioRefusedAt = await RefusedWithinAsync(async () =>
+        var studioRefusal = RefusedWithinAsync(async () =>
         {
             foreach (var client in studioClients)
-                if ((await client.GetAsync("/api/tasks/alpha-card")).StatusCode != HttpStatusCode.Unauthorized) return false;
+            {
+                using var response = await client.GetAsync("/api/tasks/alpha-card");
+                if (response.StatusCode != HttpStatusCode.Unauthorized) return false;
+            }
             return true;
         }, clock);
-        var operationsRefusedAt = await RefusedWithinAsync(async () =>
-            (await operatorOps.GetAsync("/api/operations/v1/catalogue")).StatusCode == HttpStatusCode.Unauthorized, clock);
+        var operationsRefusal = RefusedWithinAsync(async () =>
+        {
+            using var response = await operatorOps.GetAsync("/api/operations/v1/catalogue");
+            return response.StatusCode == HttpStatusCode.Unauthorized;
+        }, clock);
+        var studioRefusedAt = await studioRefusal;
+        var operationsRefusedAt = await operationsRefusal;
         output.WriteLine($"Kill switch: Studio refused every session after {studioRefusedAt.TotalMilliseconds:0} ms, "
             + $"the Operations Server refused the operator principal after {operationsRefusedAt.TotalMilliseconds:0} ms.");
         Assert.True(studioRefusedAt < RefusalBudget, $"Studio refused after {studioRefusedAt}.");

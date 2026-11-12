@@ -498,7 +498,17 @@ public sealed partial class BatchGateStore
 
     /// <summary>False, with the record quarantined, when the folder's manifest does not read.</summary>
     public bool TryReadManifestIn(string folder, out BatchGateManifest manifest)
-        => TryReadRecord(Path.Combine(folder, "manifest.json"), BatchGateRecordKinds.Manifest, null, out manifest);
+        => TryReadRecord(Path.Combine(folder, "manifest.json"), BatchGateRecordKinds.Manifest, null, out manifest,
+            RequireCompleteManifest);
+
+    private static void RequireCompleteManifest(BatchGateManifest manifest)
+    {
+        if (string.IsNullOrWhiteSpace(manifest.BatchId) || manifest.Scope is null
+            || string.IsNullOrWhiteSpace(manifest.Scope.Project)
+            || manifest.Members is null || manifest.Exclusions is null
+            || manifest.EligibleKeys is null)
+            throw new InvalidDataException("Batch gate manifest is incomplete.");
+    }
 
     public IReadOnlyList<BatchGateRunRecord> ListRuns(string batchId)
     {

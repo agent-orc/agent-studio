@@ -942,6 +942,7 @@ export class TaskService {
     operatorOverride = false,
     runIntent: 'revoke' | 'steer' = 'revoke',
     withdrawFromBatch = false,
+    reissueInstructions?: { findings: string[]; note: string },
   ) {
     const body: {
       targetState: string;
@@ -950,11 +951,13 @@ export class TaskService {
       operatorOverride?: boolean;
       runIntent: 'revoke' | 'steer';
       withdrawFromBatch?: boolean;
+      reissueInstructions?: { findings: string[]; note: string };
     } = { targetState, runIntent };
     if (typeof targetIndex === 'number') body.targetIndex = targetIndex;
     if (reason?.trim()) body.reason = reason.trim();
     if (operatorOverride) body.operatorOverride = true;
     if (withdrawFromBatch) body.withdrawFromBatch = true;
+    if (reissueInstructions) body.reissueInstructions = reissueInstructions;
     return this.http.post(
       `${this.taskV1Url(jobId)}/move`,
       body,
@@ -1422,7 +1425,7 @@ export class TaskService {
 
   /** AGT-3580: run project intake on one Ready card now instead of waiting for the next tick. */
   runTaskIntake(jobId: string, watchPath?: string) {
-    return this.http.post<{ outcome: string; reason: string }>(
+    return this.http.post<{ outcome: string; reason: string; details: string }>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/intake`,
       { watchPath: watchPath ?? '' },
     );

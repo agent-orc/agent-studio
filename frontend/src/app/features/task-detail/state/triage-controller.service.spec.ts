@@ -464,7 +464,7 @@ describe('TriageController · planning accept spawn-contract guard', () => {
     ctrl.move(job, { targetState: '6-completed', actionId: 'mark-done' });
     await flush();
 
-    expect(jobService.moveJob).toHaveBeenCalledWith('plan-a', '6-completed', wp, undefined, undefined);
+    expect(jobService.moveJob).toHaveBeenCalledWith('plan-a', '6-completed', wp, undefined, undefined, false, 'revoke', false, undefined);
   });
 
   it('moves a contract-satisfied planning task straight through with no warning', async () => {
@@ -475,7 +475,7 @@ describe('TriageController · planning accept spawn-contract guard', () => {
     await flush();
 
     expect(confirmSpy).not.toHaveBeenCalled();
-    expect(jobService.moveJob).toHaveBeenCalledWith('plan-a', '6-completed', wp, undefined, undefined);
+    expect(jobService.moveJob).toHaveBeenCalledWith('plan-a', '6-completed', wp, undefined, undefined, false, 'revoke', false, undefined);
   });
 
   it('never gates a coding task', async () => {
@@ -531,7 +531,7 @@ describe('TriageController · planning accept spawn-contract guard', () => {
 
     expect(jobService.getDeliveryClaim).toHaveBeenCalledWith('done-a', wp);
     expect(confirmSpy).not.toHaveBeenCalled();
-    expect(jobService.moveJob).toHaveBeenCalledWith('done-a', '7-archive', wp, undefined, undefined);
+    expect(jobService.moveJob).toHaveBeenCalledWith('done-a', '7-archive', wp, undefined, undefined, false, 'revoke', false, undefined);
   });
 
   it('archives an integrated Delivered task without a warning or a lookup', async () => {
@@ -543,7 +543,7 @@ describe('TriageController · planning accept spawn-contract guard', () => {
 
     expect(confirmSpy).not.toHaveBeenCalled();
     expect(jobService.getDeliveryClaim).not.toHaveBeenCalled();
-    expect(jobService.moveJob).toHaveBeenCalledWith('done-a', '7-archive', wp, undefined, undefined);
+    expect(jobService.moveJob).toHaveBeenCalledWith('done-a', '7-archive', wp, undefined, undefined, false, 'revoke', false, undefined);
   });
 
   it('does not dialog when the card has nothing to integrate', async () => {

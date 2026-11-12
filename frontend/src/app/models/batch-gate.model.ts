@@ -36,6 +36,9 @@ export interface BatchGateConfiguration {
 }
 
 export interface BatchGateState {
+  perTaskGates?: { taskKey: string; reviewAttemptId: string; position: number; total: number;
+    batchId?: string | null; reason: string; running: boolean; host?: string | null;
+    startedAtUtc?: string | null }[];
   /** Gate processes detached at a lease deadline and still exiting. */
   detachedFlights?: { batchId: string; project: string; startedAtUtc: string; detachedAtUtc: string;
     deadlineMinutes: number; reason: string }[];
@@ -109,7 +112,8 @@ export function batchWaitingCards(state: BatchGateState | null): BatchGateState[
   if (!state) return [];
   const assigned = new Set(state.batches.filter(batch => ACTIVE_BATCH_PHASES.has(batch.phase))
     .flatMap(batch => batch.members.map(member => member.taskKey)));
-  return state.pending.filter(item => !assigned.has(item.taskKey));
+  const perTask = new Set((state.perTaskGates ?? []).map(gate => gate.reviewAttemptId));
+  return state.pending.filter(item => !assigned.has(item.taskKey) && !perTask.has(item.reviewAttemptId));
 }
 
 /** A run without a finish event is live only while its batch is running. */
@@ -179,6 +183,8 @@ export interface BatchMemberState {
   size?: number | null;
   reason?: string | null;
   reasonDetail?: string | null;
+  fallbackRule?: string | null;
+  fallbackEvent?: string | null;
   /** What a per-task fallback waits for (AGT-3694); the detail names the engine run or the stage. */
   waitKind?: string | null;
   waitingFor?: string | null;
@@ -241,7 +247,17 @@ export function batchEjectionLabel(reason: string | null | undefined): string | 
   switch (reason) {
     case 'conflict': return 'replay conflict';
     case 'unattributable': return 'unattributable history';
-    default: return reason || null;
+    case 'planner-per-task': return 'planner selected a per-task gate';
+    case 'documentation-scope': return 'code delivery outside documentation batch scope';
+    case 'batch-disabled': return 'batch gate unavailable';
+    case 'batch-paused': return 'batch paused';
+    case 'batch-ejected': return 'ejected from batch';
+    case 'unattributable-replay': return 'unattributable replay';
+    case 'operator-eject': return 'operator ejected card';
+    case 'already-integrated': return 'already integrated';
+    case 'emergency-admission': return 'batch admission failed';
+    case 'interrupted-gate': return 'gate resumed after interruption';
+    default: return reason ? reason.replace(/[-_]/g, ' ').replace(/\b\w/g, char => char.toUpperCase()) : null;
   }
 }
 

@@ -43,6 +43,12 @@ export class BatchPanelComponent implements OnDestroy {
   readonly riskLabel = batchRiskLabel;
   readonly replayLabel = batchReplayLabel;
   readonly publishedSha = batchPublishedSha;
+  phaseReasonLabel(reason: string | null | undefined): string | null {
+    if (!reason) return null;
+    const pause = 'paused-to-per-task-gate: ';
+    return reason.startsWith(pause)
+      ? `Moved to per-task gates after pause: ${reason.slice(pause.length)}` : reason;
+  }
   readonly formatDurationMinutes = formatDurationMinutes;
   runOutcome(batch: BatchGateBatch, run: BatchGateBatch['runs'][number]): string {
     if (run.startedAtUtc && !run.finishedAtUtc) return batchRunIsRunning(batch, run) ? 'running' : 'interrupted';

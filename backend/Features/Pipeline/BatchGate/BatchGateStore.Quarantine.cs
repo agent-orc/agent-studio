@@ -108,11 +108,13 @@ public sealed partial class BatchGateStore
         => _quarantine.Values.Any(entry => entry.Record.BatchId == batchId
             && entry.Record.Kind != BatchGateRecordKinds.Run);
 
-    private bool TryReadRecord<T>(string path, string kind, string? batchId, out T value) where T : class
+    private bool TryReadRecord<T>(string path, string kind, string? batchId, out T value,
+        Action<T>? validate = null) where T : class
     {
         try
         {
             value = Read<T>(path);
+            validate?.Invoke(value);
             if (!_quarantine.IsEmpty) _quarantine.TryRemove(path, out _);
             return true;
         }

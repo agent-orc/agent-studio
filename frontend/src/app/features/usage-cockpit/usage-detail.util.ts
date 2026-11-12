@@ -41,7 +41,7 @@ import { LEDGER_SCOPE_KEYS, kvValueOf, routeSegmentOf } from '../../services/url
 export const UNKNOWN = 'Unknown';
 
 /** Section the detail opens at. Every other section stays reachable. */
-export type UsageDetailFocus = { kind: 'cli'; cliId: string } | { kind: 'cost' };
+export type UsageDetailFocus = { kind: 'cli'; cliId: string } | { kind: 'capacity' } | { kind: 'cost' };
 
 export interface UsageInstantView {
   /** `Mon 29 Sept, 09:00`, in the workspace zone. */
@@ -191,6 +191,8 @@ export interface UsageDetailWindowView {
   label: string;
   /** Exact used percentage, or `Not reported`. */
   value: string;
+  /** What is left of the window, `None left` at or above 100% used, or `N/A`. */
+  remaining: string;
   reported: boolean;
   reset: UsageInstantView | null;
   /** Provider wording when no reset instant is reported. */
@@ -231,12 +233,24 @@ export interface UsageCliDetailView {
   ledgerHref: string | null;
 }
 
+/**
+ * Quota left in a window, from the same one-decimal rounding as the used
+ * value so the two always add up to 100. Used is never clamped; once it
+ * reaches 100 nothing is left.
+ */
+export function formatRemainingPct(usedPct: number | null | undefined): string | null {
+  if (usedPct == null || !Number.isFinite(usedPct)) return null;
+  const left = (1000 - Math.round(usedPct * 10)) / 10;
+  return left > 0 ? `${formatUsedPct(left)} left` : 'None left';
+}
+
 function windowDetail(window: UsageCliWindow, timeZone: string, now: number): UsageDetailWindowView {
   const pct = formatUsedPct(window.usedPct);
   return {
     id: window.id,
     label: window.label,
     value: pct ? `${pct} used` : NOT_AVAILABLE,
+    remaining: formatRemainingPct(window.usedPct) ?? NOT_AVAILABLE,
     reported: pct != null,
     reset: instantView(window.resetAtUtc, timeZone),
     resetLabel: window.resetAtUtc ? null : window.resetLabel,
@@ -542,5 +556,5 @@ export function buildUsageDetailView(snapshot: UsageCockpitResponse, now: number
 
 /** DOM id of the section a focus opens at. */
 export function detailSectionId(prefix: string, focus: UsageDetailFocus): string {
-  return focus.kind === 'cost' ? `${prefix}-cost` : `${prefix}-cli-${focus.cliId.toLowerCase()}`;
+  return focus.kind === 'cli' ? `${prefix}-cli-${focus.cliId.toLowerCase()}` : `${prefix}-${focus.kind}`;
 }
