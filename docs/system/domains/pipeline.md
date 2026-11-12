@@ -41,6 +41,15 @@ in the running phase; after interruption, the panel uses `phaseAtUtc` to show
 the elapsed run time. Detached flights include their batch, detach time, and
 lease deadline in the state response and panel.
 
+The batch panel eject request stores its operator and reason. State reads expose
+`ejectRequests` with `pending` until the member leaves batch ownership and
+`released` afterwards. A red parent with no active isolation is abandoned on
+the next pilot tick, its ownership markers are cleared, and the requested
+member enters the per-task fallback path. Eject is refused while red isolation
+owns the batch; the response tells the operator to wait for isolation to finish.
+An active batch also refuses eject until it finishes or pauses, with a response
+that names the phase and tells the operator to resolve a stuck batch gate.
+
 When a paused batch hands its members to per-task verification, the state read
 reports `perTaskGates` in queue order. Each row names the review generation,
 one-based position, total handoffs, batch, cause, and current gate host and
