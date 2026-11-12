@@ -30,6 +30,8 @@ public sealed class RemoteGateDaemon
 
     public async Task RunAsync(CancellationToken shutdown)
     {
+        var diskAdmission = new RunnerDiskAdmission(_options);
+        var telemetry = new HostTelemetrySampler(_options);
         await _client.RegisterAsync(_options.RunnerName, "gate-executor", shutdown);
         await RecoverPreviousClaimAsync(shutdown);
         long generation = 0;
@@ -44,8 +46,15 @@ public sealed class RemoteGateDaemon
                 {
                     await _client.AdvertiseCapabilitiesAsync(
                         RunnerCapabilityProbe.Advertise(_options, gitPushReady: false),
-                        null, ++generation, shutdown);
+                        RunnerCapabilityProbe.Telemetry(telemetry.SampleNow(0)), ++generation, shutdown);
                     nextAdvertisement = DateTime.UtcNow.AddMinutes(1);
+                }
+                var disk = diskAdmission.Observe();
+                if (disk.Level == HostDiskPressureLevel.Critical)
+                {
+                    _log($"gate claim paused on {_options.Hostname}: {disk.Reason}");
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), shutdown);
+                    continue;
                 }
                 var claim = await _client.ClaimGateAsync(new GateClaimRequest(
                     _options.RunnerId, _client.RunnerInstanceId, 1, _options.TtlSeconds), shutdown);
@@ -272,7 +281,8 @@ public sealed class RemoteGateDaemon
         }
         catch (Exception exception)
         {
-            failure = GateFailureClasses.ToolFailure;
+            failure = RunnerDiskWriteFailure.IsDiskFull(exception)
+                ? GateFailureClasses.DiskFull : GateFailureClasses.ToolFailure;
             _log($"gate tool failure attempt={attempt.AttemptId}: {exception.GetType().Name}: {exception.Message}");
         }
         finally

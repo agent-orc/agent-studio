@@ -89,6 +89,7 @@ import { ReviewQueuePillComponent } from '../review-queue-pill/review-queue-pill
 import { CardEnvironmentBadgesComponent } from '../../../deployments/components/card-environment-badges/card-environment-badges';
 import { handleReviewPriorityAction } from './review-priority-action';
 import { TaskCardQuotaNoticeComponent } from '../../../quota';
+import { AcceptanceReadinessNoteComponent } from '../../../acceptance-readiness/lazy';
 // Shared clock keeps relative timestamps in lockstep without NG0100 changes.
 const nowTick = signal(Date.now());
 if (typeof window !== 'undefined') {
@@ -97,7 +98,7 @@ if (typeof window !== 'undefined') {
 @Component({
   selector: 'app-task-card, app-job-card',
   standalone: true,
-  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskPreviewComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent, TaskCardQuotaNoticeComponent, CardEnvironmentBadgesComponent],
+  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskPreviewComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent, TaskCardQuotaNoticeComponent, CardEnvironmentBadgesComponent, AcceptanceReadinessNoteComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-card.component.html',
   styleUrl: './task-card.component.scss',
@@ -134,6 +135,9 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   });
   private readonly gitSummary = inject(GitSummaryService);
   private readonly clients = inject(ClientService);
+  private readonly humanOwnerNames = effect(() => {
+    if (this.job()?.ownerClientId?.startsWith('usr_')) this.clients.loadHumanNames();
+  });
   private readonly tagRegistry = inject(TagRegistryStore);
   private readonly projectTagsEffect = effect(() => { if (this.job().tags?.length) this.tagRegistry.ensureProject(this.job().projectName); });
   private readonly codeReviewActivity = inject(CodeReviewActivityStore);

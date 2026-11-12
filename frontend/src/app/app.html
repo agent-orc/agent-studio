@@ -1,4 +1,4 @@
-@if (auth.studioAllowed()) {
+@if (auth.studioAllowed() && !noProjectAccess()) {
     <app-offline-banner />
     <app-public-demo-banner />
     @defer (when codexSignInRequest() !== null) { <app-codex-sign-in-dialog /> }
@@ -802,6 +802,8 @@
       }
     </div>
     }
+} @else if (noProjectAccess()) {
+  <main data-testid="no-project-access" class="no-project-access"><p>You currently have no access to any project. Ask the owner.</p></main>
 } @else {
   @defer (on immediate) { <app-auth-gate /> }
 }

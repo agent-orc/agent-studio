@@ -41,6 +41,15 @@ in the running phase; after interruption, the panel uses `phaseAtUtc` to show
 the elapsed run time. Detached flights include their batch, detach time, and
 lease deadline in the state response and panel.
 
+The batch panel eject request stores its operator and reason. State reads expose
+`ejectRequests` with `pending` until the member leaves batch ownership and
+`released` afterwards. A red parent with no active isolation is abandoned on
+the next pilot tick, its ownership markers are cleared, and the requested
+member enters the per-task fallback path. Eject is refused while red isolation
+owns the batch; the response tells the operator to wait for isolation to finish.
+An active batch also refuses eject until it finishes or pauses, with a response
+that names the phase and tells the operator to resolve a stuck batch gate.
+
 When a paused batch hands its members to per-task verification, the state read
 reports `perTaskGates` in queue order. Each row names the review generation,
 one-based position, total handoffs, batch, cause, and current gate host and
@@ -2421,9 +2430,11 @@ move-error dialog.
 - Remote Review command execution survives a planned Review daemon restart.
   Recovered attempts retain their original fence and containment namespace and
   resume before load-aware admission evaluates any fresh slot. Completed
-  commands are not relaunched. If process adoption cannot be proven, the
-  attempt ends visibly as `ReviewInfra / ExecutorRestarted` with the failed
-  proof, completed-command count and duration, and retry reason. Replaying the
+  commands are not relaunched. If process adoption cannot be proven while the
+  lease is valid, the worker is started again for the same attempt and
+  resumes from its checkpoint (AGT-3647). Only a worker that dies again after
+  two relaunches ends the attempt visibly as `ReviewInfra / ExecutorRestarted`
+  with the failed proof, completed-command count and duration, and retry reason. Replaying the
   fixed report key with another terminal payload is rejected.
 - Any operation that can advance `main` must call `PreMainTestGate` first and
   proceed only on an `Ok` result with `FullSuiteRequired` and `FullSuiteRan` set.

@@ -172,7 +172,8 @@ public sealed record HostTelemetrySnapshotDto(
     DateTime? BuildNodeSweepAt = null,
     IReadOnlyList<HostContainerSummaryDto>? Containers = null,
     ClaimLoadGateDto? ClaimLoadGate = null,
-    OneShotClaimRouteConditionDto? OneShotClaimRoute = null);
+    OneShotClaimRouteConditionDto? OneShotClaimRoute = null,
+    IReadOnlyList<HostFilesystemUsageDto>? Filesystems = null);
 
 /// <summary>
 /// The one-shot claim route as this runner observed it while it answered

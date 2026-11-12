@@ -124,7 +124,7 @@ export class RemoteHostsService {
   private seed(): RemoteHost[] {
     return seedRemoteHosts(Date.now(), this.auth?.status()?.profile ?? 'local');
   }
-  private capabilityRunnerIds = new Set<string>();
+  private capabilityRunnerIds = new Set<string>(['api-host']);
 
   /** Every mount revalidates live state; cached cards are never authoritative. */
   ensureLoaded(): void {
@@ -183,6 +183,7 @@ export class RemoteHostsService {
         this.hosts.update(hosts => {
           const projected = (this.auth?.status()?.profile === 'networked'
             ? hosts.filter(host => this.capabilityRunnerIds.has(host.clientId)) : hosts).map(host => {
+          if (host.clientId === 'api-host') return host;
           const client = byId.get(host.clientId);
           if (!client) return {
             ...host,
@@ -276,7 +277,7 @@ export class RemoteHostsService {
     this.http.get<TaskServerRunnerCapabilitySnapshot[]>('/api/v1/management/remote-hosts').subscribe({
       next: snapshots => {
         this.providerAuth?.ingest(snapshots ?? []);
-        this.capabilityRunnerIds = new Set((snapshots ?? []).map(snapshot => snapshot.runnerId));
+        this.capabilityRunnerIds = new Set([...(snapshots ?? []).map(snapshot => snapshot.runnerId), 'api-host']);
         const now = Date.now();
         this.hosts.update(hosts => {
           const projected = this.auth?.status()?.profile === 'networked'

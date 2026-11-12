@@ -78,6 +78,19 @@ function mount(host: RemoteHost, expanded = true, expandSections = true) {
 }
 
 describe('RemoteHostCardComponent', () => {
+  it('shows each measured file system and the largest product consumer', () => {
+    const fixture = mount({ ...HOST, filesystems: [
+      { purpose: 'runner work', path: '/work', freeBytes: 8 * 1073741824,
+        totalBytes: 100 * 1073741824, ownedBytes: { 'runner worktrees': 60 * 1073741824 } },
+      { purpose: 'container storage', path: '/var/lib/docker', freeBytes: 20 * 1073741824,
+        totalBytes: 100 * 1073741824 },
+    ] });
+    const text = (fixture.nativeElement.querySelector('[data-testid="remote-host-filesystems"]') as HTMLElement).textContent ?? '';
+    expect(text).toContain('/work');
+    expect(text).toContain('8%');
+    expect(text).toContain('runner worktrees');
+    expect(text).toContain('/var/lib/docker');
+  });
   it('shows a closed claim gate beside occupied slots', () => {
     const fixture = mount({ ...HOST, activeTaskCount: 7, roleMaxParallelism: 10,
       claimLoadGate: { state: 'closed', loadPerCore: 5.51, threshold: 4,

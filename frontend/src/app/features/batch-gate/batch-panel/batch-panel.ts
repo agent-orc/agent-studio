@@ -37,6 +37,18 @@ export class BatchPanelComponent implements OnDestroy {
   readonly openingFix = signal<string | null>(null);
   readonly error = computed(() => this.gate.error(this.project())());
   readonly confirm = signal<string | null>(null);
+  readonly ejectReason = signal('');
+  readonly localEject = signal<{ taskKey: string; reason: string } | null>(null);
+  readonly ejectRequests = computed(() => {
+    const stored = this.state()?.ejectRequests ?? [];
+    const local = this.localEject();
+    if (!local) return stored;
+    const current = stored.find(request => request.taskKey === local.taskKey);
+    if (current?.status === 'released') return stored;
+    return current ? stored : [{ project: this.project(), taskKey: local.taskKey,
+      actor: 'You', reason: local.reason, requestedAtUtc: new Date().toISOString(),
+      status: 'pending' as const }, ...stored];
+  });
   readonly busy = signal(false);
   readonly actionError = signal<string | null>(null);
   readonly riskLabel = batchRiskLabel;
@@ -67,6 +79,7 @@ export class BatchPanelComponent implements OnDestroy {
   private readonly body = viewChild<ElementRef<HTMLDivElement>>('body');
   private readonly closeButton = viewChild<ElementRef<HTMLButtonElement>>('closeButton');
   private readonly confirmButton = viewChild<ElementRef<HTMLButtonElement>>('confirmButton');
+  private readonly ejectReasonInput = viewChild<ElementRef<HTMLTextAreaElement>>('ejectReasonInput');
   private readonly host = inject(ElementRef<HTMLElement>);
   private readonly injector = inject(Injector);
   private readonly destroyRef = inject(DestroyRef);
@@ -199,17 +212,25 @@ export class BatchPanelComponent implements OnDestroy {
   showConfirm(target: string): void {
     this.confirm.set(target);
     this.actionError.set(null);
-    afterNextRender(() => this.confirmButton()?.nativeElement.focus(), { injector: this.injector });
+    afterNextRender(() => (target === 'close' ? this.confirmButton() : this.ejectReasonInput())
+      ?.nativeElement.focus(), { injector: this.injector });
   }
   close(): void { this.closed()(); }
   act(): void {
     const target = this.confirm();
-    if (!target || this.busy()) return;
+    if (!target || this.busy() || (target !== 'close' && !this.ejectReason().trim())) return;
     this.busy.set(true);
     this.actionError.set(null);
-    const request = target === 'close' ? this.gate.closeNow(this.project()) : this.gate.eject(this.project(), target);
+    const reason = this.ejectReason().trim();
+    const request = target === 'close' ? this.gate.closeNow(this.project()) : this.gate.eject(this.project(), target, reason);
     request.subscribe({
-      next: () => { this.busy.set(false); this.confirm.set(null); void this.gate.refresh(this.project()); },
+      next: () => {
+        this.busy.set(false);
+        this.confirm.set(null);
+        if (target !== 'close') this.localEject.set({ taskKey: target, reason });
+        this.ejectReason.set('');
+        void this.gate.refresh(this.project());
+      },
       error: err => { this.busy.set(false); this.actionError.set(err?.error?.error ?? 'The action could not be completed.'); },
     });
   }

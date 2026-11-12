@@ -218,7 +218,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3565 adds Review results on PostStep: it runs the missing
         // requirement-fit review of a report card, a model call public demo denies.
         // AGT-3670 adds accept (Start) and send back (Continue) decisions.
-        Assert.Equal(154, routes.Count);
+        Assert.Equal(155, routes.Count);
         foreach (var (routePath, path) in new[]
         {
             ("/api/tasks/{jobId}/human-review/accept", ExecutionAdmissionPath.Start),
@@ -269,6 +269,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/projects/{projectName}/pipeline-definition/migration", ExecutionAdmissionPath.PostStep),
             ("/api/tasks/{jobId}/older-brief-delivery/decision", ExecutionAdmissionPath.Continue),
             ("/api/tasks/{jobId}/review-results", ExecutionAdmissionPath.PostStep),
+            ("/api/tasks/{jobId}/review/retry", ExecutionAdmissionPath.Continue),
             ("/api/orchestration/decision-receipts/{receiptId}/operator-intent", ExecutionAdmissionPath.Continue),
             ("/api/tasks/{jobId}/preview-feedback", ExecutionAdmissionPath.Continue),
             ("/api/workspaces/{workspaceId}/decision-rules/versions", ExecutionAdmissionPath.Continue),
@@ -322,7 +323,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             {
                 [ExecutionAdmissionPath.Claim] = 12,
                 [ExecutionAdmissionPath.Start] = 35,
-                [ExecutionAdmissionPath.Continue] = 34,
+                [ExecutionAdmissionPath.Continue] = 35,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 32,

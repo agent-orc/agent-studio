@@ -39,6 +39,7 @@ public enum BuildTestGateFailureKind
     /// Never a product failure; see CAC-18, WEB-19, and AGT-2872.
     /// </summary>
     Environment,
+    DiskFull,
 }
 
 public sealed record BuildTestGateRequest(
@@ -2578,6 +2579,9 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
 
     internal static BuildTestGateFailureKind ClassifyFailure(BuildTestGateProcessEvidence process)
     {
+        var evidence = process.StandardError + "\n" + process.StandardOutput;
+        if (ContainsAny(evidence, "no space left on device", "out of diskspace", "disk full"))
+            return BuildTestGateFailureKind.DiskFull;
         if (process.FailedTestsObserved || GateTestTiming.HasFailedTests(process.StandardOutput + "\n" + process.StandardError))
             return BuildTestGateFailureKind.Code;
         if (process.LaunchError is not null) return BuildTestGateFailureKind.ProcessLaunch;
@@ -2587,7 +2591,6 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             : BuildTestGateFailureKind.Timeout;
         if (process.ExitCode == 137 || string.Equals(process.TerminationSignal, "SIGKILL", StringComparison.Ordinal))
             return BuildTestGateFailureKind.OutOfMemory;
-        var evidence = process.StandardError + "\n" + process.StandardOutput;
         if (IsComposedLoggerArgumentFailure(process, evidence))
             return BuildTestGateFailureKind.Environment;
         var classified = ClassifyFailure(evidence);
@@ -2613,7 +2616,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         // the delivery, so the torn-cache signature is equally narrow.
         if (CompletedNormally(process)
             && !IsGenuineBuildOutputLock(evidence)
-            && classified != BuildTestGateFailureKind.Environment)
+            && classified is not (BuildTestGateFailureKind.Environment or BuildTestGateFailureKind.DiskFull))
             return BuildTestGateFailureKind.Code;
         return classified;
     }
@@ -2678,6 +2681,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
     internal static BuildTestGateFailureKind ClassifyFailure(string? text)
     {
         var value = text ?? string.Empty;
+        if (ContainsAny(value, "no space left on device", "out of diskspace", "disk full"))
+            return BuildTestGateFailureKind.DiskFull;
         if (IsPreparationCacheNuGetFailure(value))
             return BuildTestGateFailureKind.Environment;
         if (IsGenuineToolchainStartupCrash(value))
