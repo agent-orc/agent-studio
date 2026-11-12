@@ -27,7 +27,13 @@ internal readonly record struct BoardReviewActivity(
     string? ExecutorId = null,
     DateTime? AcquiredAt = null,
     ReviewTerminalOutcome? Outcome = null,
-    DateTime? PendingInfrastructureRetryAt = null);
+    DateTime? PendingInfrastructureRetryAt = null,
+    // AGT-3690: what the card needs to say why a review was lost and which
+    // automatic retry comes next, instead of only the outcome enum.
+    string? FailureClassification = null,
+    string? HostId = null,
+    DateTime? TerminalAt = null,
+    int? PendingInfrastructureRetryNumber = null);
 
 internal readonly record struct BoardRunActivity(
     string TaskKey,
@@ -97,6 +103,8 @@ public sealed partial class AttemptAuthorityService
     /// </summary>
     private static readonly TimeSpan CompactionInterval = TimeSpan.FromHours(1);
     public const int ReviewInfrastructureRetryBudget = 2;
+    /// <summary>Restarts kept per review runner identity (AGT-3690).</summary>
+    internal const int ReviewDaemonRestartHistoryLimit = 20;
     public const string UnmaterializableReviewSubjectReason = "review-subject-unmaterialisierbar";
 
     /// <summary>
@@ -2245,22 +2253,86 @@ public sealed partial class AttemptAuthorityService
         string hostId,
         string instanceId,
         DateTime restartedAt,
-        int reviewsLost)
+        int reviewsLost,
+        IReadOnlyList<AgentStudio.TaskServer.Contracts.ReviewRestartLostAttemptDto>? lostAttempts = null)
     {
         if (Blank(runnerId) || Blank(hostId) || Blank(instanceId) || reviewsLost < 0)
             throw new ArgumentException(
                 "Runner, host, instance, and a non-negative lost-review count are required.");
         lock (_gate)
         {
-            _state.ReviewDaemonRestarts[Normalize(runnerId)] = new ReviewDaemonRestartRecord
+            var key = Normalize(runnerId);
+            var entry = new ReviewDaemonRestartHistoryRecord
             {
-                RunnerId = Normalize(runnerId),
                 HostId = Normalize(hostId),
                 InstanceId = Normalize(instanceId),
                 RestartedAt = restartedAt.ToUniversalTime(),
                 ReviewsLost = reviewsLost,
+                LostAttempts = (lostAttempts ?? [])
+                    .Select(lost => new ReviewRestartLostAttemptRecord
+                    {
+                        AttemptId = lost.AttemptId,
+                        TaskKey = lost.TaskKey,
+                        Status = lost.Status,
+                    })
+                    .ToList(),
+            };
+            // AGT-3690: the newest restart still answers the snapshot, but an
+            // earlier one that lost a review stays in the history instead of
+            // being overwritten by the next clean restart.
+            var history = (_state.ReviewDaemonRestarts.GetValueOrDefault(key)?.History ?? [])
+                .Where(previous => !(Same(previous.InstanceId, entry.InstanceId)
+                                     && previous.RestartedAt == entry.RestartedAt))
+                .Prepend(entry)
+                .Take(ReviewDaemonRestartHistoryLimit)
+                .ToList();
+            _state.ReviewDaemonRestarts[key] = new ReviewDaemonRestartRecord
+            {
+                RunnerId = key,
+                HostId = entry.HostId,
+                InstanceId = entry.InstanceId,
+                RestartedAt = entry.RestartedAt,
+                ReviewsLost = reviewsLost,
+                History = history,
             };
             PersistLocked();
+        }
+    }
+
+    /// <summary>
+    /// AGT-3690: the restart history of one review runner identity, newest
+    /// first. A record written before the history existed yields its single
+    /// newest restart without lost-attempt detail.
+    /// </summary>
+    internal IReadOnlyList<AgentStudio.TaskServer.Contracts.ReviewDaemonRestartDto> ListReviewDaemonRestarts(
+        string runnerId)
+    {
+        lock (_gate)
+        {
+            if (!_state.ReviewDaemonRestarts.TryGetValue(Normalize(runnerId), out var restart)) return [];
+            var history = restart.History is { Count: > 0 }
+                ? restart.History
+                :
+                [
+                    new ReviewDaemonRestartHistoryRecord
+                    {
+                        HostId = restart.HostId,
+                        InstanceId = restart.InstanceId,
+                        RestartedAt = restart.RestartedAt,
+                        ReviewsLost = restart.ReviewsLost,
+                    },
+                ];
+            return history
+                .Select(entry => new AgentStudio.TaskServer.Contracts.ReviewDaemonRestartDto(
+                    entry.RestartedAt,
+                    entry.HostId,
+                    entry.InstanceId,
+                    entry.ReviewsLost,
+                    entry.LostAttempts
+                        .Select(lost => new AgentStudio.TaskServer.Contracts.ReviewRestartLostAttemptDto(
+                            lost.AttemptId, lost.TaskKey, lost.Status))
+                        .ToList()))
+                .ToList();
         }
     }
 
@@ -2508,7 +2580,9 @@ public sealed partial class AttemptAuthorityService
                 review.State, review.Lease?.ExpiresAt, review.Priority, review.CreatedAt,
                 review.AttemptId, !runsWithEnvelope.Contains(review.SourceRunAttemptId),
                 review.Lease?.ExecutorId, review.Lease?.AcquiredAt, review.Outcome,
-                review.PendingInfrastructureRetryAt);
+                review.PendingInfrastructureRetryAt, review.FailureClassification,
+                NonBlankOrNull(review.Lease?.HostId), review.TerminalAt,
+                review.PendingInfrastructureRetryNumber);
         return builder.ToImmutable();
     }
 
@@ -4014,6 +4088,8 @@ public sealed partial class AttemptAuthorityService
     private static string Normalize(string? value) => (value ?? string.Empty).Trim();
     private static string? NormalizeNull(string? value) => Blank(value) ? null : value!.Trim();
     private static bool Blank(string? value) => string.IsNullOrWhiteSpace(value);
+
+    private static string? NonBlankOrNull(string? value) => Blank(value) ? null : value!.Trim();
     private static TimeSpan NormalizeTtl(int? seconds)
     {
         var ttl = seconds is > 0 ? TimeSpan.FromSeconds(seconds.Value) : TimeSpan.FromMinutes(2);
@@ -4185,6 +4261,26 @@ public sealed partial class AttemptAuthorityService
         public string InstanceId { get; set; } = string.Empty;
         public DateTime RestartedAt { get; set; }
         public int ReviewsLost { get; set; }
+        /// <summary>AGT-3690: this runner's restarts, newest first and bounded by
+        /// <see cref="ReviewDaemonRestartHistoryLimit"/>, the newest one included.
+        /// Absent from files written before the history existed.</summary>
+        public List<ReviewDaemonRestartHistoryRecord> History { get; set; } = [];
+    }
+
+    private sealed class ReviewDaemonRestartHistoryRecord
+    {
+        public string HostId { get; set; } = string.Empty;
+        public string InstanceId { get; set; } = string.Empty;
+        public DateTime RestartedAt { get; set; }
+        public int ReviewsLost { get; set; }
+        public List<ReviewRestartLostAttemptRecord> LostAttempts { get; set; } = [];
+    }
+
+    private sealed class ReviewRestartLostAttemptRecord
+    {
+        public string AttemptId { get; set; } = string.Empty;
+        public string TaskKey { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
     }
 
     private sealed class AuthorityArchive

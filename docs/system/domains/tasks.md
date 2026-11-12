@@ -2371,9 +2371,18 @@ every byte of it is a byte the client already holds.
   complement of `LegacyTask`, so the board tells a canonical card from a legacy
   one without the authority lock; the board path makes no `GetTaskProjection`
   call for it. `liveStatus.queue.state` is `reviewing` (the lease holder and
-  its start), `queued` (the claimable position, a scheduled retry, or a missing
-  executor registration) or `stalled` (a terminal non-Pass review with nothing
-  scheduled, or no review attempt at all; an operator has to decide). A review
+  its start), `queued` (the claimable position or a missing executor
+  registration), `retry-scheduled` or `stalled` (a terminal non-Pass review
+  with nothing scheduled, or no review attempt at all; an operator has to
+  decide). AGT-3690: an infrastructure failure also carries `queue.lost` (the
+  report's failure classification, the lease host and executor, and when the
+  attempt ended), and a scheduled retry carries `queue.retry` (number, budget,
+  due time) under `retry-scheduled`. A review host restart
+  (`ExecutorRestarted`) reads "Review lost: review host restarted (host,
+  time). Automatic retry 1 of 3 at time." and the host name links to the
+  host. The snapshot fields behind it (`FailureClassification`, `HostId`,
+  `TerminalAt`, `PendingInfrastructureRetryNumber`) are folded into the board
+  signature. A review
   that passed and waits for integration, a legacy card and a report-only card
   keep the local post-processing wait sentence. Every attempt-authority read
   is keyed by `TaskIdentity.AuthorityKey` (the task.json `key`, then the
