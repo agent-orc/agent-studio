@@ -1459,6 +1459,10 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPen
     jobId => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live is { } live
         && TaskScannerService.FindMatches(live, jobId, null) is [var task, ..]
         ? OperatorDecisionFacts.CardKey(task) : null));
+builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorBlockedPublicationFactSource(
+    () => sp.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()?.Live,
+    task => sp.GetRequiredService<AgentStudio.Pipeline.PipelineExecutionLog>().Read(task.FolderPath)?.Steps
+        .LastOrDefault(step => step.StepId == AgentStudio.Pipeline.PipelineCatalogue.MergeIntoDevelopStepId)));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorProviderLimitFactSource(
     sp.GetRequiredService<ProviderLimitRegistry>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource, OperatorDeployFactSource>();

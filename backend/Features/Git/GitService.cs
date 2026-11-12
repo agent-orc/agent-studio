@@ -3662,6 +3662,10 @@ public partial class GitService
             // line never carried (e.g. after a gate rollback).
             var (_, _, containedCode) =
                 RunGitArgs(repoRoot, "merge-base", "--is-ancestor", approved, lineRef);
+            // AGT-3695: a lane that stayed on the merge its document-key amend
+            // replaced follows the approved amend instead of refusing it.
+            if (containedCode != 0 && AdoptDocumentKeyAmend(repoRoot, branch, approved))
+                containedCode = 0;
             if (containedCode != 0)
             {
                 return Task.FromResult(new GitPushResult(

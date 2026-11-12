@@ -1446,6 +1446,7 @@ public sealed class TaskIntegrationStatusService
                     Stage = failedStep?.StepId,
                     EvidenceExcerpt = evidenceExcerpt,
                     RebaseRecoveryAvailable = failure.RebaseRecoveryAvailable,
+                    ReplayAvailable = failure.ReplayAvailable,
                     FailureClass = failure.FailureClass,
                     FailureSignature = failure.FailureSignature,
                     ConflictReport = failure.ConflictReport,
