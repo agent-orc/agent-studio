@@ -2581,7 +2581,7 @@ public sealed partial class AttemptAuthorityService
                 review.AttemptId, !runsWithEnvelope.Contains(review.SourceRunAttemptId),
                 review.Lease?.ExecutorId, review.Lease?.AcquiredAt, review.Outcome,
                 review.PendingInfrastructureRetryAt, review.FailureClassification,
-                NonBlankOrNull(review.Lease?.HostId), review.TerminalAt,
+                NormalizeNull(review.Lease?.HostId), review.TerminalAt,
                 review.PendingInfrastructureRetryNumber);
         return builder.ToImmutable();
     }
@@ -4089,7 +4089,6 @@ public sealed partial class AttemptAuthorityService
     private static string? NormalizeNull(string? value) => Blank(value) ? null : value!.Trim();
     private static bool Blank(string? value) => string.IsNullOrWhiteSpace(value);
 
-    private static string? NonBlankOrNull(string? value) => Blank(value) ? null : value!.Trim();
     private static TimeSpan NormalizeTtl(int? seconds)
     {
         var ttl = seconds is > 0 ? TimeSpan.FromSeconds(seconds.Value) : TimeSpan.FromMinutes(2);
