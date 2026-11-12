@@ -47,6 +47,44 @@ public sealed class BatchGateStorageRootTests : IDisposable
     }
 
     [Fact]
+    public void Fresh_instance_records_origin_before_state_is_written_and_rebases_it_after_restore()
+    {
+        var workspace = Path.Combine(_root, "fresh-workspace");
+        var state = Path.Combine(_root, "fresh-state");
+        Directory.CreateDirectory(workspace);
+        BatchGateStorageRoot.Prepare(Path.Combine(_root, "fresh-app"), workspace,
+            new ListLogger(), state);
+        var instance = BatchGateStorageRoot.ForInstance(Path.Combine(_root, "fresh-app"),
+            workspace, "batch-gates", state);
+        var instanceRoot = Path.GetDirectoryName(instance)!;
+        Assert.Equal(instanceRoot, File.ReadAllText(Path.Combine(instanceRoot, "batch-state-origin")));
+
+        var batch = Path.Combine(instance, "batch-1");
+        Directory.CreateDirectory(batch);
+        var evidence = Path.Combine(batch, "gate-evidence.jsonl");
+        File.WriteAllText(evidence, "pass\n");
+        File.WriteAllText(Path.Combine(batch, "run.json"),
+            System.Text.Json.JsonSerializer.Serialize(new { EvidencePath = evidence }));
+
+        var restoredWorkspace = Path.Combine(_root, "restored-workspace");
+        var restoredState = Path.Combine(_root, "restored-state");
+        CopyDirectory(workspace, restoredWorkspace);
+        CopyDirectory(state, restoredState);
+        BatchGateStorageRoot.Prepare(Path.Combine(_root, "restored-app"), restoredWorkspace,
+            new ListLogger(), restoredState);
+
+        var restored = BatchGateStorageRoot.ForInstance(Path.Combine(_root, "restored-app"),
+            restoredWorkspace, "batch-gates", restoredState);
+        var restoredEvidence = Path.Combine(restored, "batch-1", "gate-evidence.jsonl");
+        var record = File.ReadAllText(Path.Combine(restored, "batch-1", "run.json"));
+        Assert.True(File.Exists(restoredEvidence));
+        Assert.Contains(restoredEvidence, record);
+        Assert.DoesNotContain(evidence, record);
+        Assert.Equal(Path.GetDirectoryName(restored),
+            File.ReadAllText(Path.Combine(Path.GetDirectoryName(restored)!, "batch-state-origin")));
+    }
+
+    [Fact]
     public void Startup_warns_when_another_instance_contains_batch_manifests()
     {
         var workspace = Path.Combine(_root, "workspace");

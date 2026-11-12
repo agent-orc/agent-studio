@@ -49,10 +49,13 @@ public static class BatchGateStorageRoot
             Directory.Move(oldRoot, newRoot);
             File.WriteAllText(Path.Combine(newRoot, OriginFile), oldRoot);
         }
-        if (Directory.Exists(newRoot))
+        Directory.CreateDirectory(newRoot);
+        var originPath = Path.Combine(newRoot, OriginFile);
+        if (!File.Exists(originPath))
+            File.WriteAllText(originPath, newRoot);
+        else
         {
-            var originPath = Path.Combine(newRoot, OriginFile);
-            var origin = File.Exists(originPath) ? File.ReadAllText(originPath).Trim() : newRoot;
+            var origin = File.ReadAllText(originPath).Trim();
             if (!string.Equals(origin, newRoot, StringComparison.Ordinal))
             {
                 RelocateEvidence(newRoot, origin);
