@@ -7,6 +7,7 @@
           <strong>{{ row.taskKey }}</strong>
           <app-status-indicator [tone]="tone(row.status)" [label]="label(row.status)" [compact]="true" testId="batch-isolation-status" />
         </div>
+        <p>Waiting for: {{ row.waitFor }}</p>
         @if (row.finding; as finding) {
           @if (row.status === 'proven-red') { <app-batch-proven-red [project]="project()" [finding]="finding" /> }
         }

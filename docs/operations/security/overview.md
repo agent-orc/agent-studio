@@ -780,6 +780,32 @@ refused before any role binding is read.
   rules, a rule that matches no mapped route, or a typed operation without a
   catalogue entry.
 
+### Persona principals and team stop (PT-2)
+
+Persona principals (PT-2, PT-D10 option B) use the same identity store and
+operator policy step. Each activated persona has an `opa_persona_*` service
+account of origin `persona`, linked to its role descriptor and workspace.
+Activation issues one T1 standing grant for its descriptor operations and
+project scope for seven days; deactivation revokes the grant and every
+occurrence session.
+The platform mints an `oas.*` session for one occurrence id, valid for at most
+30 minutes. Calls must carry the matching `X-Persona-Occurrence-Id`; the actor
+is `persona:<id>/session:<sid>` and `delegatedBy` names the activating Owner.
+The catalogue has four T1 publication operations and four T1 manager
+operations. The latter can only enter a manager descriptor's activation
+grant. Card, repository file and log instruction sources are admitted only
+for publication; manager actions reject them. PT-4 and PT-10 own the
+publication and manager handlers, which currently answer 501 after admission.
+
+`POST /api/workspaces/{id}/personas/stop-all` is an Owner action without
+step-up. It disables every persona principal in that workspace, revokes all
+their sessions and grants in one access-state save, marks activations inactive
+while keeping their history, and writes a
+`persona.stop-all` IAM audit entry. `POST .../renew-grants` takes one fresh
+Owner step-up and renews the live grants of every active persona for seven
+days; an expired grant is replaced. The SM-2 End all operator access action
+also disables persona principals and revokes their sessions and grants.
+
 ### Operator kill switch (security model SM-2)
 
 The Owner ends operator access in one step

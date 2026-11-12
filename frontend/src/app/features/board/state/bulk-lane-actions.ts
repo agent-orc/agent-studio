@@ -1,7 +1,7 @@
 import { TaskState, type TaskInfo } from '../../../models/task.model';
 import { laneName } from '../../../models/lane-presentation';
 import { decisionMoveRefusal } from '../../../models/decision-card-presentation';
-import { laneActionsFor, type TriageButton } from '../../task-detail/state/triage-actions.model';
+import { laneActionsFor, taskNeedsServerCheckout, type TriageButton } from '../../task-detail/state/triage-actions.model';
 
 /**
  * AGT-3585: lane actions a group may run on all of its cards at once. Only
@@ -38,6 +38,7 @@ export function bulkLaneOffer(tasks: readonly TaskInfo[], missing = 0): BulkLane
   const actions = laneActionsFor(lane).filter(button =>
     ids.includes(button.id)
     && button.intent.kind === 'move'
+    && (button.id !== 'reissue-escalated' || tasks.every(task => !taskNeedsServerCheckout(task)))
     && tasks.every(task => decisionMoveRefusal(task, (button.intent as { targetState: string }).targetState) === null));
   return actions.length > 0
     ? { actions, reason: null }

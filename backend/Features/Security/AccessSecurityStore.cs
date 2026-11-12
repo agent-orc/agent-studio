@@ -2,13 +2,15 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Net;
 using System.Security.Cryptography;
+using System.Text;
+using AgentStudio.Secrets;
 
 namespace AgentStudio.Security;
 
 /// <summary>
 /// Small-organization security store. The state file contains password, session,
-/// enrollment, API token, and Runner credential hashes only. Plaintext credentials are
-/// returned once by the operation that creates them and are never persisted.
+/// API token and Runner credential hashes, plus KEK-sealed TOTP seeds. Plaintext
+/// credentials are returned once by the operation that creates them and are never persisted.
 /// Role bindings, groups, and service accounts live in the same state file;
 /// see <c>Iam/AccessSecurityStore.Iam.cs</c>.
 /// </summary>
@@ -48,17 +50,21 @@ public sealed partial class AccessSecurityStore
     private readonly Func<string, string> _hashPassword;
     private static readonly string DummyPasswordHash = PasswordSecretHasher.HashPassword(PasswordSecretHasher.RandomToken());
     private SecurityState? _state;
+    private readonly IKeyEncryptionKeySource _totpKeys;
     private bool _lastSeenDirty;
 
-    public AccessSecurityStore(IConfiguration configuration, ILogger<AccessSecurityStore> logger, TimeProvider? clock = null)
-        : this(configuration, logger, clock, PasswordSecretHasher.VerifyPassword)
+    public AccessSecurityStore(IConfiguration configuration, ILogger<AccessSecurityStore> logger, TimeProvider? clock = null,
+        IKeyEncryptionKeySource? keys = null)
+        : this(configuration, logger, clock, PasswordSecretHasher.VerifyPassword, keys: keys)
     {
     }
 
     internal AccessSecurityStore(IConfiguration configuration, ILogger<AccessSecurityStore> logger,
-        TimeProvider? clock, Func<string, string, bool> verifyPassword, Func<string, string>? hashPassword = null)
+        TimeProvider? clock, Func<string, string, bool> verifyPassword, Func<string, string>? hashPassword = null,
+        IKeyEncryptionKeySource? keys = null)
     {
         _configuration = configuration;
+        _totpKeys = keys ?? new ConfiguredKeyEncryptionKeySource(configuration);
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
         _verifyPassword = verifyPassword;
@@ -586,8 +592,8 @@ public sealed partial class AccessSecurityStore
             throw new SecurityOperationException(403, "second-factor-required", "Register a second factor before signing in.");
         if (string.IsNullOrWhiteSpace(code))
             throw new SecurityOperationException(401, "second-factor-required", "A second factor is required.");
-        if (user.TotpSecret is not null
-            && SecondFactorCodes.MatchTotpStep(user.TotpSecret, code, Now) is { } acceptedStep
+        if (OpenTotp(user) is { } seed
+            && SecondFactorCodes.MatchTotpStep(seed, code, Now) is { } acceptedStep
             && (user.LastAcceptedTotpStep is null || acceptedStep > user.LastAcceptedTotpStep))
         {
             state.Users[state.Users.IndexOf(user)] = user with { LastAcceptedTotpStep = acceptedStep };
@@ -1209,6 +1215,14 @@ public sealed partial class AccessSecurityStore
         SecurityState loaded;
         try { loaded = persisted ? JsonSerializer.Deserialize<SecurityState>(File.ReadAllText(StatePath), Json) ?? new() : new(); }
         catch (Exception ex) { throw new InvalidOperationException($"Security state at '{StatePath}' cannot be read safely.", ex); }
+        var legacyTotp = loaded.Users.Any(user => user.TotpSecret is { Length: > 0 } value && !value.StartsWith(TotpPrefix, StringComparison.Ordinal));
+        // Sealed seeds stay sealed in memory and open only where a code is verified, so commands that
+        // never check a code, such as the out-of-band kill switch, work without the secret store key.
+        if (legacyTotp && persisted)
+            SaveLocked(loaded);
+        SealLegacyTotpSnapshots();
+        foreach (var temporary in Directory.EnumerateFiles(SecurityFolder, "access-state*.tmp"))
+            File.Delete(temporary);
         if (!NeedsIamMigration(loaded))
         {
             _state = loaded;
@@ -1245,11 +1259,75 @@ public sealed partial class AccessSecurityStore
         Directory.CreateDirectory(SecurityFolder);
         RestrictDirectoryPermissions(SecurityFolder);
         var temp = StatePath + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(state, Json));
+        var persisted = Copy(state);
+        persisted = persisted with { Users = state.Users.Select(user => user with { TotpSecret = SealTotp(user) }).ToList() };
+        File.WriteAllText(temp, JsonSerializer.Serialize(persisted, Json));
         RestrictPermissions(temp);
         File.Move(temp, StatePath, true);
         RestrictPermissions(StatePath);
         _state = state;
+    }
+
+    private const string TotpPrefix = "sealed:v1:";
+
+    private string? SealTotp(StudioUser user)
+    {
+        if (string.IsNullOrEmpty(user.TotpSecret) || user.TotpSecret.StartsWith(TotpPrefix, StringComparison.Ordinal))
+            return user.TotpSecret;
+        var sealedValue = SecretEnvelope.Seal(_totpKeys.Load(createIfMissing: CanCreateTotpKey()), TotpIdentity(user.Id), 1,
+            Encoding.UTF8.GetBytes(user.TotpSecret));
+        return TotpPrefix + Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(sealedValue));
+    }
+
+    private string? OpenTotp(StudioUser user)
+    {
+        if (user.TotpSecret is not { Length: > 0 } value) return user.TotpSecret;
+        if (!value.StartsWith(TotpPrefix, StringComparison.Ordinal)) return value;
+        try
+        {
+            var sealedValue = JsonSerializer.Deserialize<SealedSecretVersion>(
+                Convert.FromBase64String(value[TotpPrefix.Length..]))
+                ?? throw new SecretIntegrityException("The stored authenticator seed is empty.");
+            var plaintext = SecretEnvelope.Open(_totpKeys.Load(createIfMissing: false),
+                sealedValue, TotpIdentity(user.Id), 1);
+            try { return Encoding.UTF8.GetString(plaintext); }
+            finally { CryptographicOperations.ZeroMemory(plaintext); }
+        }
+        catch (Exception ex) when (ex is FormatException or JsonException or SecretIntegrityException or SecretKeyUnavailableException)
+        {
+            throw new InvalidOperationException("The stored authenticator seed cannot be opened with the configured secret store key.", ex);
+        }
+    }
+
+    private static string TotpIdentity(string userId) => "studio-user-totp:" + userId;
+
+    private bool CanCreateTotpKey()
+    {
+        var items = Path.Combine(SecretStorePaths.DataRoot(_configuration), "items");
+        return !Directory.Exists(items) || !Directory.EnumerateDirectories(items).Any();
+    }
+
+    private void SealLegacyTotpSnapshots()
+    {
+        foreach (var path in Directory.EnumerateFiles(SecurityFolder, "access-state.v*.json"))
+        {
+            SecurityState snapshot;
+            try { snapshot = JsonSerializer.Deserialize<SecurityState>(File.ReadAllText(path), Json)
+                ?? throw new InvalidOperationException("The access-state migration snapshot is empty."); }
+            catch (JsonException ex) { throw new InvalidOperationException("An access-state migration snapshot cannot be read safely.", ex); }
+            if (!snapshot.Users.Any(user => user.TotpSecret is { Length: > 0 } value
+                && !value.StartsWith(TotpPrefix, StringComparison.Ordinal))) continue;
+            var sealedSnapshot = snapshot with { Users = snapshot.Users.Select(user => user with
+            {
+                TotpSecret = user.TotpSecret is { Length: > 0 } value && !value.StartsWith(TotpPrefix, StringComparison.Ordinal)
+                    ? SealTotp(user) : user.TotpSecret
+            }).ToList() };
+            var temp = path + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(sealedSnapshot, Json));
+            RestrictPermissions(temp);
+            File.Move(temp, path, true);
+            RestrictPermissions(path);
+        }
     }
 
     private void RestrictPermissions(string path)

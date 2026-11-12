@@ -78,6 +78,7 @@ public sealed class DemoReplayScopeCompromiseTests : IDisposable
     {
         _signingKey.Dispose();
         try { Directory.Delete(_workspace, recursive: true); } catch { /* best-effort */ }
+        File.Delete(_workspace + ".kek");
     }
 
     [Fact]
@@ -353,6 +354,7 @@ public sealed class DemoReplayScopeCompromiseTests : IDisposable
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["TaskRepository"] = _workspace,
+                ["Secrets:KeyFile"] = _workspace + ".kek",
                 ["WatchPaths:0:Name"] = ProjectName,
                 ["WatchPaths:0:Path"] = _watchPath,
                 ["WatchPaths:0:RootPath"] = _watchPath,

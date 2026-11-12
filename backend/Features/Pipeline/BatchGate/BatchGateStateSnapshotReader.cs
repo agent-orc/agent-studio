@@ -22,6 +22,7 @@ public static class BatchGateStateSnapshotReader
         IReadOnlyList<BatchGateReviewFixWait>? reviewFixWaits = null,
         GateCapacity? gateCapacity = null,
         IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null,
+        IReadOnlySet<string>? activeIsolationFlights = null,
         string? leaseDeadlineDeferredBatchId = null,
         IReadOnlyList<BatchGateFallbackWait>? fallbackWaits = null,
         IReadOnlySet<string>? activePerTaskFlights = null,
@@ -177,6 +178,12 @@ public static class BatchGateStateSnapshotReader
                 phase = phase.Phase.ToString().ToLowerInvariant(),
                 phaseAtUtc = phase.RecordedAtUtc,
                 phaseReason = phase.Reason,
+                isolationActive = phase.Phase == BatchPhase.Red
+                    && activeIsolationFlights?.Contains(manifest.BatchId) == true,
+                isolationPending = phase.Phase == BatchPhase.Red
+                    && manifest.Members.Any(member => pending.Any(item =>
+                        item.Subject.TaskKey == member.TaskKey
+                        && item.Subject.RunAttempt == member.RunAttempt)),
                 phaseHistory = store.StateHistory(manifest.BatchId).Select(item => new {
                     phase = item.Phase.ToString().ToLowerInvariant(), reason = item.Reason, atUtc = item.RecordedAtUtc,
                 }).ToArray(),
@@ -307,7 +314,10 @@ public static class BatchGateStateSnapshotReader
                 var ejected = replay is { Outcome: "unattributable" };
                 var fallbackCause = causes.LastOrDefault(entry => entry.TaskKey == member.TaskKey
                     && entry.RunAttempt == member.RunAttempt && entry.RecordedAtUtc >= manifest.ClosedAtUtc);
-                var left = phase == BatchPhase.Abandoned || ejected || fallbackCause is not null;
+                var left = phase == BatchPhase.Abandoned
+                    || phase == BatchPhase.Paused
+                       && StateOf(store, manifest).Reason == "isolation interrupted"
+                    || ejected || fallbackCause is not null;
                 var baseMoveReason = StateOf(store, manifest)
                     .BaseMoveMemberReasons?.GetValueOrDefault(member.TaskKey);
                 var cause = left ? fallbackCause : null;

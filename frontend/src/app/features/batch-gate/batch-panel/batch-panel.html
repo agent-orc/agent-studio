@@ -167,6 +167,7 @@
             <article class="batch-panel__batch" [id]="'batch-' + batch.batchId" [attr.data-phase]="batch.phase">
               <h4>Batch {{ batch.batchId }} @if (batch.parentBatchId) { <small>from {{ batch.parentBatchId }}</small> }</h4>
               <p data-testid="batch-phase">Phase: <app-status-indicator [tone]="phaseTone(batch.phase)" [label]="batch.phase" [compact]="true" />@if (batch.queuePosition) { · <span data-testid="batch-queue-position">flight queue position {{ batch.queuePosition }} of {{ data.flightQueue?.length ?? batch.queuePosition }}</span> }@if (phaseReasonLabel(batch.phaseReason); as reason) { · {{ reason }} }</p>
+              @if (isolationState(batch); as state) { <p data-testid="batch-isolation-state">{{ state }}</p> }
               @if (batch.phaseHistory?.length) {
                 <details class="batch-panel__history"><summary>Phase history</summary>
                   <ol>@for (step of batch.phaseHistory; track step.atUtc + step.phase) { <li>{{ date(step.atUtc) }} · {{ step.phase }}@if (step.reason) { · {{ step.reason }} }</li> }</ol>
