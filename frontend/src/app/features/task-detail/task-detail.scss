@@ -517,6 +517,11 @@
       background: transparent;
       overflow: hidden;
     }
+    // Keep Overview and Timeline reachable beside Result and Git at the
+    // owner's 1280 px three-pane layout.
+    @media (min-width: 1200px) and (max-width: 1400px) {
+      .pane--prompt { min-width: min(250px, 42%); }
+    }
     .pane__header {
       display: flex;
       align-items: center;

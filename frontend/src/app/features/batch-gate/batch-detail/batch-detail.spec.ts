@@ -50,6 +50,18 @@ describe('BatchDetailComponent', () => {
     expect(host.querySelector('[data-testid="task-batch-review-fix"]')?.textContent).toContain('before batch admission');
   });
 
+  it('states the paused batch reason and the red and green outcomes', async () => {
+    const { host } = await mount({ ...redHalvingState, members: { ...redHalvingState.members,
+      'AGT-9': { status: 'fallback', batchId: 'batch-9', phase: 'abandoned',
+        position: 2, size: 4, fallbackRule: 'batch-paused',
+        fallbackEvent: 'batch batch-9 paused: fresh gate verdict required' },
+    } }, { id: 'AGT-9' });
+    expect(host.querySelector('[data-testid="task-batch-fallback-reason"]')?.textContent)
+      .toContain('batch batch-9 paused: fresh gate verdict required');
+    expect(host.querySelector('[data-testid="task-batch-fallback-outcome"]')?.textContent)
+      .toContain('Red escalates the card; green integrates it.');
+  });
+
   it('shows the push wait of a member', async () => {
     const { fixture, state, host } = await mount(redHalvingState, { id: 'AGT-2' });
     state.set({ ...redHalvingState, pushWait: {

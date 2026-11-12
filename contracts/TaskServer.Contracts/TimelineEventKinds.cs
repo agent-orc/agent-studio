@@ -226,6 +226,8 @@ public static class TimelineEventKinds
     public const string TaskReleased = "task_released";
     /// <summary>The task's lane changed (any move).</summary>
     public const string LaneChanged = "lane_changed";
+    /// <summary>An owner tried to move a card, but the transition refused it with a reason.</summary>
+    public const string OwnerMoveRefused = "owner_move_refused";
     /// <summary>
     /// Another card was folded into this one via the consolidation API
     /// (sibling task). The merge endpoint mirrors the secondary's
@@ -279,6 +281,8 @@ public static class TimelineEventKinds
     public const string StallInterventionRecorded = "stall_intervention_recorded";
     /// <summary>A stale delivery verdict caused a fresh ReviewAttempt request.</summary>
     public const string DeliveryReviewRequested = "delivery_review_requested";
+    /// <summary>A stale verdict returned to Auto Review and queued integration of its current delivery.</summary>
+    public const string DeliveryIntegrationRequested = "delivery_integration_requested";
     /// <summary>
     /// The task was completed out-of-band (operator chat, external agent, a
     /// remote host) and reconciled through
@@ -434,6 +438,14 @@ public static class TimelineEventKinds
     /// time.
     /// </summary>
     public const string ReviewInfrastructureRetryScheduled = "review_infrastructure_retry_scheduled";
+    /// <summary>
+    /// AGT-3691: the retry scheduler abandoned a scheduled
+    /// <see cref="ReviewInfrastructureRetryScheduled"/> retry without minting a
+    /// successor. <see cref="TimelineEvent.Details"/> carries the attempt, the
+    /// retry number, the due time, and the reason code (the card left Auto
+    /// Review, or an open cause breaker holds it).
+    /// </summary>
+    public const string ReviewInfrastructureRetryDropped = "review_infrastructure_retry_dropped";
     /// <summary>
     /// AGT-W57: the fleet-wide cause breaker parked this card behind a cause
     /// card instead of retrying or escalating it. Details carry the cause key,

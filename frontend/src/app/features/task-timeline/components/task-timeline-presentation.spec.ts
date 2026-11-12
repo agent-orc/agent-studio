@@ -153,6 +153,18 @@ describe('task timeline presentation', () => {
     expect(timelineEventSummary(review)).toBeNull();
   });
 
+  it('titles a Reviewer send back and keeps its note in the summary (AGT-3670)', () => {
+    const sentBack = event({
+      kind: TIMELINE_KIND.humanReviewDecided,
+      actor: 'human:Rui Reviewer',
+      summary: 'Rui Reviewer sent the card back: The header is still loud.',
+      details: { decision: 'send-back', reviewer: 'Rui Reviewer', note: 'The header is still loud.' },
+    });
+
+    expect(timelineEventTitle(sentBack)).toBe('Human review sent back');
+    expect(timelineEventSummary(sentBack)).toBe('Rui Reviewer sent the card back: The header is still loud.');
+  });
+
   it.each([
     ['NotApplicable', '', 'not applicable'],
     ['Skipped', 'no verify commands derivable', 'not applicable'],

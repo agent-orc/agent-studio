@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using AgentStudio.Registry;
 using AgentStudio.Secrets;
+using AgentStudio.Security;
 
 namespace AgentStudio.Management;
 
@@ -11,10 +12,30 @@ public sealed record BackupOverviewItem(
     string Id, string CreatedAt, long SizeBytes, string Sha256, int FileCount,
     string Verification, string OffHost, int UnsettledFiles);
 
-public sealed record BackupVerificationOverview(string At, string? BackupId, string Outcome, string? Detail);
+/// <summary>
+/// The last restore verification. <c>Proved</c> and <c>NotProved</c> state the
+/// scope of a verified run (AGT-3734): it restores with the key on this host
+/// and does not clone from the origins or check the escrowed key copies.
+/// </summary>
+public sealed record BackupVerificationOverview(
+    string At, string? BackupId, string Outcome, string? Detail,
+    IReadOnlyList<string>? Proved = null, IReadOnlyList<string>? NotProved = null);
 
 public sealed record BackupOffHostOverview(
-    string Kind, string? Target, string State, string? LastUploadedId, string? LastUploadedAt, string? LastError);
+    string Kind, string? Target, string State, string? LastUploadedId, string? LastUploadedAt, string? LastError,
+    BackupOffHostListing? Listing = null);
+
+/// <summary>An archive at the off-host target that the local catalog does not know.</summary>
+public sealed record BackupOffHostArchive(string Id, string FileName, long SizeBytes, string ModifiedAt);
+
+/// <summary>
+/// What the off-host target holds (AGT-3734). <c>State</c> is <c>listed</c>,
+/// <c>not-listable</c> (the host may only write there), <c>unreachable</c> or
+/// <c>not-configured</c>. <c>NotInCatalog</c> are archives this host's catalog
+/// does not know, for example those of a lost host before a restore.
+/// </summary>
+public sealed record BackupOffHostListing(
+    string State, string? Detail, int ArchiveCount, IReadOnlyList<BackupOffHostArchive> NotInCatalog);
 
 /// <summary>
 /// Backup state for the Operations page and operator agents
@@ -40,19 +61,25 @@ public sealed record BackupOverview(
     BackupOffHostOverview OffHost,
     IReadOnlyList<BackupWarning> Warnings,
     IReadOnlyList<BackupOverviewItem> Backups,
-    string GeneratedAt);
+    string GeneratedAt,
+    BackupRestoreReceipt? LastRestore = null);
 
 /// <summary>
 /// Installation backups (AGT-3574): creates consistent encrypted archives,
 /// applies retention, verifies the newest archive by restoring it into an
 /// isolated staging host, and copies every archive to the off-host target.
-/// One operation runs at a time. The management commands
+/// Local archive mutations run one at a time; off-host transfers use a separate gate. The management commands
 /// <c>backup-create</c>, <c>restore-verify</c>, <c>backup-retention</c> and
 /// <c>backup-upload</c> and the <see cref="BackupHostedService"/> schedule all
-/// go through here.
+/// go through here. Each create, upload, verification and retention writes a
+/// <see cref="BackupAudit"/> record to the control plane audit chain with the
+/// actor of its trigger and the outcome (AGT-3737).
 /// </summary>
 public sealed class StudioBackupService
 {
+    /// <summary>How long the overview waits for a mounted target directory to list.</summary>
+    public static readonly TimeSpan ListTimeout = TimeSpan.FromSeconds(5);
+
     private readonly IConfiguration _configuration;
     private readonly BackupWritePause _pause;
     private readonly IKeyEncryptionKeySource? _secretKey;
@@ -60,7 +87,9 @@ public sealed class StudioBackupService
     private readonly TimeProvider _clock;
     private readonly ILogger<StudioBackupService>? _logger;
     private readonly Func<BackupOptions, IBackupTarget?> _targets;
+    private readonly ControlPlaneAuditLog? _audit;
     private readonly SemaphoreSlim _run = new(1, 1);
+    private readonly SemaphoreSlim _upload = new(1, 1);
 
     public StudioBackupService(
         IConfiguration configuration,
@@ -70,8 +99,10 @@ public sealed class StudioBackupService
         ProjectRegistry? projects = null,
         ILogger<StudioBackupService>? logger = null,
         IHttpClientFactory? http = null,
-        Func<BackupOptions, IBackupTarget?>? targets = null)
+        Func<BackupOptions, IBackupTarget?>? targets = null,
+        ControlPlaneAuditLog? audit = null)
     {
+        _audit = audit;
         _configuration = configuration;
         _pause = pause;
         _clock = clock;
@@ -92,7 +123,7 @@ public sealed class StudioBackupService
 
     public BackupOptions Options => BackupOptions.From(_configuration);
 
-    public bool IsRunning => _run.CurrentCount == 0;
+    public bool IsRunning => _run.CurrentCount == 0 || _upload.CurrentCount == 0;
 
     /// <summary>How long a held mutation waits for a backup's read phase; read per request, so kept cheap.</summary>
     public TimeSpan MaxRequestHold
@@ -103,8 +134,22 @@ public sealed class StudioBackupService
     public async Task<BackupRecord> CreateAsync(string trigger, CancellationToken cancellationToken)
     {
         await _run.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try { return await CreateLockedAsync(trigger, cancellationToken).ConfigureAwait(false); }
+        BackupRecord record;
+        try { record = await CreateLockedAsync(trigger, cancellationToken).ConfigureAwait(false); }
         finally { _run.Release(); }
+        if (record.Upload?.State != "pending") return record;
+        await _upload.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var options = Options;
+            var target = _targets(options);
+            if (target is null) return record;
+            var catalog = new BackupCatalog(options.Directory);
+            var current = catalog.Find(record.Id);
+            if (current is null || current.Upload?.State == "uploaded") return current ?? record;
+            return await UploadOneLockedAsync(catalog, current, target, trigger, cancellationToken).ConfigureAwait(false);
+        }
+        finally { _upload.Release(); }
     }
 
     public async Task<BackupVerificationRecord> VerifyAsync(string? backupId, string trigger, CancellationToken cancellationToken)
@@ -114,15 +159,15 @@ public sealed class StudioBackupService
         finally { _run.Release(); }
     }
 
-    public async Task<int> UploadPendingAsync(bool force, CancellationToken cancellationToken)
+    public async Task<int> UploadPendingAsync(bool force, string trigger, CancellationToken cancellationToken)
     {
-        await _run.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try { return await UploadLockedAsync(force, cancellationToken).ConfigureAwait(false); }
-        finally { _run.Release(); }
+        await _upload.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try { return await UploadLockedAsync(force, trigger, cancellationToken).ConfigureAwait(false); }
+        finally { _upload.Release(); }
     }
 
     /// <summary>Keeps the newest <paramref name="keep"/> local archives. Retention at the off-host target is configured there.</summary>
-    public (int Matched, int Removed) ApplyRetention(int? keep, bool dryRun)
+    public (int Matched, int Removed) ApplyRetention(int? keep, bool dryRun, string trigger)
     {
         var options = Options;
         var count = Math.Clamp(keep ?? options.RetentionCount, 1, 500);
@@ -133,9 +178,19 @@ public sealed class StudioBackupService
         try
         {
             surplus = catalog.List().Skip(count).ToArray();
-            foreach (var record in surplus) catalog.Delete(record.Id);
-            if (surplus.Length > 0 || catalog.List().Count > 0)
-                catalog.WriteState(catalog.ReadState() with { LastRetentionAt = _clock.GetUtcNow().ToString("O") });
+            try
+            {
+                foreach (var record in surplus) catalog.Delete(record.Id);
+                if (surplus.Length > 0 || catalog.List().Count > 0)
+                    catalog.WriteState(catalog.ReadState() with { LastRetentionAt = _clock.GetUtcNow().ToString("O") });
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Audit(BackupAudit.Record(trigger, BackupAudit.Retention, BackupAudit.Failed, null, ex.Message,
+                    new { keep = count, configured = options.RetentionCount }));
+                throw;
+            }
+            AuditRetention(trigger, count, options.RetentionCount, surplus);
             return (surplus.Length, surplus.Length);
         }
         finally { _run.Release(); }
@@ -150,20 +205,20 @@ public sealed class StudioBackupService
         var catalog = new BackupCatalog(options.Directory);
         if (BackupSchedulePolicy.BackupDue(_clock.GetUtcNow(), options, catalog.ReadState(), catalog.List().FirstOrDefault()))
         {
-            try { await CreateAsync("schedule", cancellationToken).ConfigureAwait(false); }
+            try { await CreateAsync(BackupAudit.Schedule, cancellationToken).ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger?.LogError("backup-scheduled-run-failed {Reason}", ex.Message);
             }
         }
-        try { await UploadPendingAsync(force: false, cancellationToken).ConfigureAwait(false); }
+        try { await UploadPendingAsync(force: false, BackupAudit.Schedule, cancellationToken).ConfigureAwait(false); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger?.LogError("backup-upload-failed {Reason}", ex.Message);
         }
         if (BackupSchedulePolicy.VerifyDue(_clock.GetUtcNow(), options, catalog.ReadState(), NewestGood(catalog.List())))
         {
-            try { await VerifyAsync(null, "schedule", cancellationToken).ConfigureAwait(false); }
+            try { await VerifyAsync(null, BackupAudit.Schedule, cancellationToken).ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger?.LogError("backup-scheduled-verification-failed {Reason}", ex.Message);
@@ -202,9 +257,15 @@ public sealed class StudioBackupService
         var offHost = new BackupOffHostOverview(
             target?.Kind ?? options.Target.Kind, target?.Description, offHostState,
             lastUploaded?.Id, lastUploaded?.Upload?.UploadedAt,
-            targetProblem ?? newestGood?.Upload?.Error);
+            targetProblem ?? newestGood?.Upload?.Error,
+            Listing(target, targetProblem, records));
+        var lastRestore = options.Sources.FirstOrDefault(source => source.Name == "workspace") is { } workspace
+            ? BackupRestoreReceipts.Latest(workspace.Path)
+            : null;
 
         var warnings = new List<BackupWarning>();
+        if (HostCertificateAuthority.FingerprintWarning(_configuration) is { } caWarning)
+            warnings.Add(new("host-ca-mismatch", "danger", caWarning));
         if (!options.Enabled)
             warnings.Add(new("backup-disabled", "warning", "Scheduled backups are switched off (Backup:Enabled is false)."));
         else if (!options.Configured)
@@ -216,10 +277,15 @@ public sealed class StudioBackupService
         if (options.Configured)
         {
             if (newestGood is null)
-                warnings.Add(new("backup-missing", state.LastRun is null ? "warning" : "danger", "No good backup exists yet."));
+                warnings.Add(new("backup-missing", state.LastRun is null ? "warning" : "danger",
+                    lastRestore is null
+                        ? "No good backup exists yet."
+                        : $"No good backup exists on this host since the restore of {lastRestore.BackupId}."));
             else if (stale)
                 warnings.Add(new("backup-stale", "danger",
                     $"The newest good backup is {ageHours:0.#} hours old; the threshold is {options.StaleAfter.TotalHours:0.#} hours."));
+            if (newestGood?.Consistency.Unreadable is { Count: > 0 } unreadable)
+                warnings.Add(new("backup-files-unreadable", "warning", UnreadableWarning(unreadable)));
             if (state.LastRun is { Outcome: "failed" } failed)
                 warnings.Add(new("backup-failed", "danger", $"The last backup run failed: {failed.Error}"));
             if (state.LastVerification is { Outcome: "failed" } failedVerification)
@@ -253,7 +319,11 @@ public sealed class StudioBackupService
             : warnings.Count > 0 ? "warning"
             : "ok";
         BackupVerificationOverview? verification = state.LastVerification is { } last
-            ? new(last.At, last.BackupId, last.Outcome, last.Error)
+            ? last.Outcome == "verified"
+                ? new(last.At, last.BackupId, last.Outcome, last.Error,
+                    VerificationProved(last.BackupId, records.FirstOrDefault(record => record.Id == last.BackupId)?.KeyId),
+                    VerificationNotProved)
+                : new(last.At, last.BackupId, last.Outcome, last.Error)
             : null;
         return new BackupOverview(
             overall, options.Configured, IsRunning, SafeKeyId(options), SecretKeyId(),
@@ -262,7 +332,54 @@ public sealed class StudioBackupService
             BackupSchedulePolicy.NextBackupAt(options, state, records.FirstOrDefault()) is { } next
                 ? (next < now ? now : next).ToString("O") : null,
             lastGood, ageHours, stale, state.LastRun, verification, offHost, warnings,
-            records.Take(20).Select(Item).ToArray(), now.ToString("O"));
+            records.Take(20).Select(Item).ToArray(), now.ToString("O"), lastRestore);
+    }
+
+    /// <summary>What a verified restore verification does not show; the runbook's periodic owner check covers the keys.</summary>
+    public static readonly IReadOnlyList<string> VerificationNotProved =
+    [
+        "Project checkouts were not cloned from their origins; a real restore needs read access to every remote.",
+        "The owner's escrowed copies of the backup key and the secret store key were not checked; "
+        + "compare their fingerprints with backup-key.sh id and secret-key.sh id.",
+    ];
+
+    public static IReadOnlyList<string> VerificationProved(string? backupId, string? keyId) =>
+    [
+        $"The archive {backupId ?? "(unknown)"} matches the checksum recorded when it was made.",
+        keyId is null
+            ? "The backup key on this host opens and authenticates it."
+            : $"The backup key on this host (fingerprint {keyId}) opens and authenticates it.",
+        "Every restored file matches its recorded SHA-256 hash in an empty staging folder.",
+        "Every restored Git repository passes git fsck --connectivity-only.",
+    ];
+
+    private static BackupOffHostListing Listing(IBackupTarget? target, string? targetProblem, IReadOnlyList<BackupRecord> records)
+    {
+        if (target is null)
+            return new("not-configured", targetProblem ?? "No off-host target is configured.", 0, []);
+        IReadOnlyList<BackupTargetFile>? files;
+        try
+        {
+            // A hung network mount must not hang the Operations page.
+            var listing = Task.Run(target.ListArchives);
+            if (!listing.Wait(ListTimeout))
+                return new("unreachable", $"The off-host target did not answer within {ListTimeout.TotalSeconds:0} seconds.", 0, []);
+            files = listing.Result;
+        }
+        catch (AggregateException ex) when (ex.InnerException is BackupException or IOException or UnauthorizedAccessException)
+        {
+            return new("unreachable", ex.InnerException!.Message, 0, []);
+        }
+        if (files is null)
+            return new("not-listable",
+                $"This host may only write to the {target.Kind} target, so it cannot list the archives there. "
+                + "List them at the target with an account that may read it.", 0, []);
+        var known = records.Select(record => record.Id).ToHashSet(StringComparer.Ordinal);
+        var unknown = files
+            .Select(file => new BackupOffHostArchive(file.Name[..^BackupCatalog.ArchiveSuffix.Length], file.Name, file.SizeBytes, file.ModifiedAt))
+            .Where(archive => !known.Contains(archive.Id))
+            .ToArray();
+        return new("listed", null, files.Count, unknown);
     }
 
     private async Task<BackupRecord> CreateLockedAsync(string trigger, CancellationToken cancellationToken)
@@ -293,8 +410,10 @@ public sealed class StudioBackupService
             try { target = _targets(options); }
             catch (BackupException ex)
             {
-                // The archive is good; the overview reports the misconfigured target.
                 _logger?.LogError("backup-target-invalid {Reason}", ex.Message);
+                record = record with { Upload = new BackupUploadRecord(options.Target.Kind, "failed", null,
+                    _clock.GetUtcNow().ToString("O"), ex.Message, 0) };
+                catalog.Save(record);
             }
             if (target is not null)
             {
@@ -306,25 +425,42 @@ public sealed class StudioBackupService
                 LastRun = new BackupRunRecord(started.ToString("O"), trigger, "succeeded", id, null, watch.ElapsedMilliseconds),
             });
             _logger?.LogInformation("backup-created {BackupId} {SizeBytes} {Files}", record.Id, record.SizeBytes, record.FileCount);
+            if (record.Consistency.Unreadable is { Count: > 0 } unreadable)
+                _logger?.LogWarning("backup-files-unreadable {BackupId} {Count} {Paths}", record.Id, unreadable.Count,
+                    string.Join(", ", unreadable.Select(entry => entry.Path)));
+            Audit(BackupAudit.Record(trigger, BackupAudit.Create, BackupAudit.Succeeded, record.Id,
+                $"Created encrypted backup {record.Id} ({record.FileCount} files, {record.SizeBytes} bytes).",
+                new { record.FileCount, record.SizeBytes, record.Sha256, durationMilliseconds = watch.ElapsedMilliseconds }));
             var surplus = catalog.List().Skip(options.RetentionCount).ToArray();
             foreach (var old in surplus) catalog.Delete(old.Id);
             if (surplus.Length > 0)
+            {
                 catalog.WriteState(catalog.ReadState() with { LastRetentionAt = _clock.GetUtcNow().ToString("O") });
+                AuditRetention(trigger, options.RetentionCount, options.RetentionCount, surplus);
+            }
             return record;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            // A file system failure (staging or backup directory not writable, disk full) fails the
+            // run as a BackupException naming the path, so callers report it instead of an HTTP 500.
+            var failure = ex is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException
+                ? new BackupException("backup-io-failed", $"The backup could not read or write a file: {ex.Message}")
+                : ex;
             try
             {
                 catalog.WriteState(catalog.ReadState() with
                 {
-                    LastRun = new BackupRunRecord(started.ToString("O"), trigger, "failed", null, ex.Message, watch.ElapsedMilliseconds),
+                    LastRun = new BackupRunRecord(started.ToString("O"), trigger, "failed", null, failure.Message, watch.ElapsedMilliseconds),
                 });
             }
             catch (Exception stateFailure) when (stateFailure is IOException or UnauthorizedAccessException)
             {
                 _logger?.LogError("backup-state-write-failed {Reason}", stateFailure.Message);
             }
+            Audit(BackupAudit.Record(trigger, BackupAudit.Create, BackupAudit.Failed, id, failure.Message,
+                new { code = (failure as BackupException)?.Code, durationMilliseconds = watch.ElapsedMilliseconds }));
+            if (!ReferenceEquals(failure, ex)) throw failure;
             throw;
         }
     }
@@ -335,8 +471,16 @@ public sealed class StudioBackupService
         var catalog = new BackupCatalog(options.Directory);
         var records = catalog.List();
         var record = backupId is { Length: > 0 }
-            ? records.FirstOrDefault(item => item.Id == backupId) ?? throw new BackupException("backup-not-found", $"Backup {backupId} does not exist.")
-            : NewestGood(records) ?? throw new BackupException("backup-not-found", "No backup exists to verify.");
+            ? records.FirstOrDefault(item => item.Id == backupId)
+            : NewestGood(records);
+        if (record is null)
+        {
+            var missing = new BackupException("backup-not-found",
+                backupId is { Length: > 0 } ? $"Backup {backupId} does not exist." : "No backup exists to verify.");
+            Audit(BackupAudit.Record(trigger, BackupAudit.Verify, BackupAudit.Failed, backupId, missing.Message,
+                new { code = missing.Code }));
+            throw missing;
+        }
         var started = _clock.GetUtcNow();
         var watch = System.Diagnostics.Stopwatch.StartNew();
         var staging = Path.Combine(catalog.StagingDirectory, "restore-" + record.Id);
@@ -357,8 +501,18 @@ public sealed class StudioBackupService
             var expected = result.Contents.Files.Count(file => !file.Path.StartsWith(BackupArchive.BundlePrefix, StringComparison.Ordinal));
             if (result.FilesRestored != expected)
                 throw new BackupException("backup-restore-incomplete", $"Restored {result.FilesRestored} of {expected} files.");
+            foreach (var head in result.Contents.Files.Where(file => file.Path.EndsWith("/.git/HEAD", StringComparison.Ordinal)))
+            {
+                var repository = Path.Combine(staging, head.Path[..^"/.git/HEAD".Length].Replace('/', Path.DirectorySeparatorChar));
+                var checkedRepository = BackupCheckouts.Git(repository, ["fsck", "--connectivity-only", "--no-reflogs"]);
+                if (!checkedRepository.Success)
+                    throw new BackupException("backup-git-invalid",
+                        $"Restored repository {head.Path} failed git fsck: {checkedRepository.StandardError.Trim()}");
+            }
             verification = new BackupVerificationRecord(started.ToString("O"), "verified",
-                $"Restored {result.FilesRestored} files and {result.Manifest.Checkouts.Count} checkout records into an empty staging host; every hash matched.",
+                $"Restored {result.FilesRestored} files and {result.Manifest.Checkouts.Count} checkout records into an empty staging host "
+                + $"with the backup key on this host ({key.Id}); every hash matched and Git connectivity passed. Checkouts were not cloned from their origins "
+                + "and the escrowed key copies were not checked.",
                 result.FilesRestored);
         }
         catch (Exception ex) when (ex is BackupException or IOException or UnauthorizedAccessException
@@ -377,10 +531,16 @@ public sealed class StudioBackupService
                 verification.Outcome == "verified" ? null : verification.Detail, watch.ElapsedMilliseconds),
         });
         _logger?.LogInformation("backup-verified {BackupId} {Outcome}", record.Id, verification.Outcome);
+        Audit(BackupAudit.Record(trigger, BackupAudit.Verify,
+            verification.Outcome == "verified" ? BackupAudit.Succeeded : BackupAudit.Failed, record.Id,
+            verification.Outcome == "verified"
+                ? $"Restore verification of {record.Id}: {verification.Detail}"
+                : $"Restore verification of {record.Id} failed: {verification.Detail}",
+            new { verification.RestoredFiles, durationMilliseconds = watch.ElapsedMilliseconds }));
         return verification;
     }
 
-    private async Task<int> UploadLockedAsync(bool force, CancellationToken cancellationToken)
+    private async Task<int> UploadLockedAsync(bool force, string trigger, CancellationToken cancellationToken)
     {
         var options = Options;
         if (!options.Configured) return 0;
@@ -392,31 +552,72 @@ public sealed class StudioBackupService
         {
             if (record.Upload?.State == "uploaded") continue;
             if (!force && !BackupSchedulePolicy.UploadDue(_clock.GetUtcNow(), record.Upload)) continue;
-            var attempt = _clock.GetUtcNow().ToString("O");
-            var attempts = (record.Upload?.Attempts ?? 0) + 1;
-            try
-            {
-                await target.UploadAsync(catalog.ArchivePath(record.Id), record.FileName, cancellationToken).ConfigureAwait(false);
-                await target.UploadAsync(catalog.ChecksumPath(record.Id), record.FileName + ".sha256", cancellationToken)
-                    .ConfigureAwait(false);
-                catalog.Save(record with
-                {
-                    Upload = new BackupUploadRecord(target.Description, "uploaded", _clock.GetUtcNow().ToString("O"), attempt, null, attempts),
-                });
-                uploaded++;
-                _logger?.LogInformation("backup-uploaded {BackupId} {Target}", record.Id, target.Kind);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                catalog.Save(record with
-                {
-                    Upload = new BackupUploadRecord(target.Description, "failed", null, attempt, ex.Message, attempts),
-                });
-                _logger?.LogError("backup-upload-failed {BackupId} {Reason}", record.Id, ex.Message);
-            }
+            var result = await UploadOneLockedAsync(catalog, record, target, trigger, cancellationToken).ConfigureAwait(false);
+            if (result.Upload?.State == "uploaded") uploaded++;
         }
         return uploaded;
     }
+
+    private async Task SaveUploadAsync(BackupCatalog catalog, string id, BackupUploadRecord upload,
+        CancellationToken cancellationToken)
+    {
+        await _run.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (catalog.Find(id) is { } current) catalog.Save(current with { Upload = upload });
+        }
+        finally { _run.Release(); }
+    }
+
+    private async Task<BackupRecord> UploadOneLockedAsync(BackupCatalog catalog, BackupRecord record,
+        IBackupTarget target, string trigger, CancellationToken cancellationToken)
+    {
+        var attempt = _clock.GetUtcNow().ToString("O");
+        var attempts = (record.Upload?.Attempts ?? 0) + 1;
+        try
+        {
+            await target.UploadAsync(catalog.ArchivePath(record.Id), record.FileName, cancellationToken).ConfigureAwait(false);
+            await target.UploadAsync(catalog.ChecksumPath(record.Id), record.FileName + ".sha256", cancellationToken)
+                .ConfigureAwait(false);
+            var upload = new BackupUploadRecord(target.Description, "uploaded", _clock.GetUtcNow().ToString("O"), attempt, null, attempts);
+            await SaveUploadAsync(catalog, record.Id, upload, cancellationToken).ConfigureAwait(false);
+            record = record with { Upload = upload };
+            _logger?.LogInformation("backup-uploaded {BackupId} {Target}", record.Id, target.Kind);
+            Audit(BackupAudit.Record(trigger, BackupAudit.Upload, BackupAudit.Succeeded, record.Id,
+                $"Copied {record.Id} to the {target.Kind} target {target.Description}.",
+                new { target = target.Kind, attempts }));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var upload = new BackupUploadRecord(target.Description, "failed", null, attempt, ex.Message, attempts);
+            await SaveUploadAsync(catalog, record.Id, upload, cancellationToken).ConfigureAwait(false);
+            record = record with { Upload = upload };
+            _logger?.LogError("backup-upload-failed {BackupId} {Reason}", record.Id, ex.Message);
+            Audit(BackupAudit.Record(trigger, BackupAudit.Upload, BackupAudit.Failed, record.Id,
+                $"Copy of {record.Id} to the {target.Kind} target failed: {ex.Message}",
+                new { target = target.Kind, attempts }));
+        }
+        return record;
+    }
+
+    /// <summary>
+    /// Appends a backup record to the control plane audit chain. A write
+    /// failure is logged and does not undo the backup operation it describes.
+    /// </summary>
+    public void Audit(ControlPlaneAuditRecord record)
+    {
+        if (_audit is null) return;
+        try { _audit.Append(record); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger?.LogError("backup-audit-write-failed {Operation} {Reason}", record.Operation, ex.Message);
+        }
+    }
+
+    private void AuditRetention(string trigger, int keep, int configured, IReadOnlyList<BackupRecord> removed)
+        => Audit(BackupAudit.Record(trigger, BackupAudit.Retention, BackupAudit.Succeeded, null,
+            $"Removed {removed.Count} local {(removed.Count == 1 ? "backup" : "backups")}; newest {keep} retained (configured {configured}).",
+            new { keep, configured, removed = removed.Select(item => item.Id).ToArray() }));
 
     /// <summary>The newest archive whose verification did not fail.</summary>
     public static BackupRecord? NewestGood(IReadOnlyList<BackupRecord> records)
@@ -461,6 +662,16 @@ public sealed class StudioBackupService
         {
             return null;
         }
+    }
+
+    private static string UnreadableWarning(IReadOnlyList<BackupUnreadableEntry> unreadable)
+    {
+        const int Shown = 3;
+        var names = string.Join(", ", unreadable.Take(Shown).Select(entry => entry.Path));
+        var more = unreadable.Count > Shown ? $" and {unreadable.Count - Shown} more" : "";
+        return unreadable.Count == 1
+            ? $"The newest backup left out 1 file it could not read: {names}."
+            : $"The newest backup left out {unreadable.Count} files it could not read: {names}{more}.";
     }
 
     private static BackupOverviewItem Item(BackupRecord record) => new(

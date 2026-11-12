@@ -1,6 +1,7 @@
 import { Injectable, OnDestroy, computed, signal, inject } from '@angular/core';
 import { CliExecution, CliOutputLine } from '../../../models/task.model';
 import { TaskService } from '../../../services/task.service';
+import { TaskSectionAccessService } from '../../../services/task-section-access.service';
 
 interface TaskRef {
   id: string;
@@ -42,6 +43,12 @@ function capLines(lines: CliOutputLine[]): CliOutputLine[] {
 @Injectable()
 export class CliOutputPollService implements OnDestroy {
   private jobService = inject(TaskService);
+  private readonly sectionAccess = inject(TaskSectionAccessService);
+
+  /** A Product session is refused the CLI output; it never polls it. */
+  canReadOutput(): boolean {
+    return this.sectionAccess.canRead('output');
+  }
 
   // The polled buffer is what GET /api/tasks/{id}/output returns — it's the
   // authoritative server state. We keep it separate from the optimistic
@@ -155,7 +162,7 @@ export class CliOutputPollService implements OnDestroy {
    * already in `running` state.
    */
   startPolling(): void {
-    if (this.pollTimeout) return;
+    if (this.pollTimeout || !this.canReadOutput()) return;
     const generation = this.pollGeneration;
     const poll = () => {
       const job = this.currentJob;

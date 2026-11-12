@@ -40,13 +40,14 @@ public sealed class OperatorTaskFactSource(
 public sealed class OperatorWatcherCaseFactSource(WatcherCaseStore cases, string? workspaceRoot) : IOperatorDecisionFactSource
 {
     public IReadOnlyList<string> Types { get; } =
-        [OperatorDecisionTypes.BackendStalled, OperatorDecisionTypes.ProgressIdleWithReady];
+        [OperatorDecisionTypes.BackendStalled, OperatorDecisionTypes.BatchGateStuck,
+            OperatorDecisionTypes.ProgressIdleWithReady];
 
     public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
         => string.IsNullOrWhiteSpace(workspaceRoot) ? [] : OperatorDecisionFacts.FromWatcherCases(cases.All(workspaceRoot));
 }
 
-/// <summary>Red and isolating batches from the batch gate store.</summary>
+/// <summary>Red and isolating batches, and quarantined batch records, from the batch gate store.</summary>
 public sealed class OperatorBatchGateFactSource(BatchGateStore store) : IOperatorDecisionFactSource
 {
     // A closed manifest never changes, and a published or abandoned batch
@@ -54,7 +55,8 @@ public sealed class OperatorBatchGateFactSource(BatchGateStore store) : IOperato
     private readonly Dictionary<string, BatchGateManifest> _manifests = new(StringComparer.Ordinal);
     private readonly HashSet<string> _settled = new(StringComparer.Ordinal);
 
-    public IReadOnlyList<string> Types { get; } = [OperatorDecisionTypes.BatchRed, OperatorDecisionTypes.BatchIsolating];
+    public IReadOnlyList<string> Types { get; } =
+        [OperatorDecisionTypes.BatchRed, OperatorDecisionTypes.BatchIsolating, OperatorDecisionTypes.BatchRecordUnreadable];
 
     public IReadOnlyList<OperatorDecisionFact>? Collect(DateTime nowUtc)
     {
@@ -63,8 +65,14 @@ public sealed class OperatorBatchGateFactSource(BatchGateStore store) : IOperato
         {
             if (_settled.Contains(folder)) continue;
             if (!_manifests.TryGetValue(folder, out var manifest))
-                _manifests[folder] = manifest = store.ReadManifestIn(folder);
+            {
+                // AGT-3681: an unreadable manifest is quarantined by the store
+                // and reported below; it is read again on the next sweep.
+                if (!store.TryReadManifestIn(folder, out manifest)) continue;
+                _manifests[folder] = manifest;
+            }
             var state = LatestState(folder);
+            if (state?.Reason == BatchGateStore.StateUnreadableReason) continue;
             if (state?.Phase is BatchPhase.Published or BatchPhase.Abandoned)
             {
                 _settled.Add(folder);
@@ -73,7 +81,11 @@ public sealed class OperatorBatchGateFactSource(BatchGateStore store) : IOperato
             }
             batches.Add((manifest, state));
         }
-        return OperatorDecisionFacts.FromBatches(batches);
+        return
+        [
+            .. OperatorDecisionFacts.FromBatches(batches),
+            .. OperatorDecisionFacts.FromQuarantinedBatchRecords(store.ListQuarantined()),
+        ];
     }
 
     private BatchGateState? LatestState(string folder)

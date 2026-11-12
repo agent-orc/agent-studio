@@ -1,0 +1,48 @@
+<section class="readiness-bar" data-testid="acceptance-readiness-bar" aria-label="Acceptance readiness">
+  <div class="readiness-bar__summary">
+    @if (store.error(); as error) {
+      <app-status-indicator tone="danger" label="Readiness check failed" [detail]="error" [wrap]="true"
+                            testId="acceptance-readiness-error" />
+    } @else if (store.checked()) {
+      <span class="readiness-bar__count" data-testid="acceptance-readiness-summary">
+        <strong>{{ readyCount() }}</strong> of <strong>{{ jobs().length }}</strong> ready to accept
+      </span>
+    } @else {
+      <span class="readiness-bar__count" data-testid="acceptance-readiness-loading">Checking which cards can be accepted…</span>
+    }
+    <button type="button" class="readiness-bar__button readiness-bar__button--ghost readiness-bar__refresh" data-testid="acceptance-readiness-refresh"
+            [appPendingButton]="store.loading()" pendingLabel="Checking…" (click)="refresh()">Check again</button>
+  </div>
+  @if (store.checked()) {
+    <div class="readiness-bar__filter">
+      <app-segmented-control [options]="filterOptions()" [value]="store.filter()" ariaLabel="Show cards by readiness"
+                             (valueChange)="setFilter($event)" />
+    </div>
+    <button type="button" class="readiness-bar__button readiness-bar__button--primary readiness-bar__accept" data-testid="acceptance-accept-ready"
+            [appPendingButton]="store.accepting()" pendingLabel="Accepting…"
+            [disabled]="readyShown().length === 0 || mutationsBlocked()" (click)="acceptReady()">
+      Accept {{ readyShown().length }} ready
+    </button>
+  }
+  @if (store.results().length > 0) {
+    <div class="readiness-bar__results" data-testid="acceptance-results" role="status">
+      <div class="readiness-bar__results-head">
+        <span>{{ acceptedCount() }} of {{ store.results().length }} accepted</span>
+        <button type="button" class="readiness-bar__button readiness-bar__button--ghost" data-testid="acceptance-results-dismiss" (click)="dismissResults()">Dismiss</button>
+      </div>
+      <ul class="readiness-bar__result-list">
+        @for (result of store.results(); track result.jobId) {
+          <li class="readiness-bar__result" data-testid="acceptance-result" [attr.data-accepted]="result.accepted">
+            <app-status-indicator [tone]="result.accepted ? 'success' : 'danger'" [label]="result.accepted ? 'Accepted' : 'Refused'"
+                                  [compact]="true" testId="acceptance-result-status" />
+            <span class="readiness-bar__result-title">{{ result.title }}</span>
+            @if (!result.accepted) { <span class="readiness-bar__result-message">{{ result.message }}</span> }
+          </li>
+        }
+      </ul>
+    </div>
+  }
+</section>
+@if (store.roundDraft(); as draft) {
+  <app-acceptance-round-dialog [draft]="draft" />
+}

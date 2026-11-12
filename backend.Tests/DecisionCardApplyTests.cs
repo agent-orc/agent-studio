@@ -742,6 +742,9 @@ public sealed class DecisionCardApplyTests : IDisposable
                 },
             ],
         };
+        var dossierFolder = AgentStudio.Pipeline.ConceptWorkbenchContract.CreateScaffold(
+            _watchPath, "release", "Release", "Release implementation plan.", source.Key!);
+        var descriptorPath = Path.Combine(dossierFolder, "workbench.json");
 
         var first = h.Promotion.Promote(source, plan, new PromoteConceptRequest());
         var repeated = h.Promotion.Promote(source, plan, new PromoteConceptRequest());
@@ -757,6 +760,7 @@ public sealed class DecisionCardApplyTests : IDisposable
         Assert.Equal(2, decision.Decision.Options[1].Requirements.Count);
         Assert.Contains(source.Key!, decision.References.RelatedTo);
         Assert.Contains("docs/release/index.html", File.ReadAllText(Path.Combine(decision.FolderPath, "prompt.md")));
+        Assert.Contains("\"status\": \"decided\"", File.ReadAllText(descriptorPath));
     }
 
     // ---- reminder ----
@@ -1076,7 +1080,12 @@ public sealed class DecisionCardApplyTests : IDisposable
         var docs = new ProjectDocsService(scanner, registry, NullLogger<ProjectDocsService>.Instance);
         var records = new DecisionRecordService(docs);
         var promotion = new AgentStudio.Pipeline.ConceptPromotionService(
-            scanner, mutations, NullLogger<AgentStudio.Pipeline.ConceptPromotionService>.Instance);
+            scanner, mutations,
+            new AgentStudio.Git.ManagedRepositoryMutationService(
+                new GitService(NullLogger<GitService>.Instance, scanner, config, prompts)),
+            new AgentStudio.Docs.WorkbenchChangeNotifier(
+                NullLogger<AgentStudio.Docs.WorkbenchChangeNotifier>.Instance),
+            NullLogger<AgentStudio.Pipeline.ConceptPromotionService>.Instance);
         var apply = new DecisionApplyService(scanner, mutations, transitions, promotion,
             NullLogger<DecisionApplyService>.Instance);
         var decisions = new DecisionCardService(scanner, mutations, transitions, timeline,

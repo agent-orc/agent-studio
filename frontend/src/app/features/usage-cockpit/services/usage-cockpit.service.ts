@@ -4,6 +4,7 @@ import { Subscription } from 'rxjs';
 
 import { clearVisibleInterval, setVisibleInterval, type VisibleIntervalHandle } from '../../../utils/visible-interval';
 import type { UsageCockpitResponse } from '../models/usage-cockpit.model';
+import { ShellAccessService } from '../../../services/shell-access.service';
 
 /** Shared refresh cadence while the page is visible (Dossier "Data contract"). */
 export const USAGE_COCKPIT_REFRESH_MS = 30_000;
@@ -17,6 +18,7 @@ export const USAGE_COCKPIT_REFRESH_MS = 30_000;
 @Injectable({ providedIn: 'root' })
 export class UsageCockpitService {
   private readonly http = inject(HttpClient);
+  private readonly shellAccess = inject(ShellAccessService);
 
   private readonly snapshotSignal = signal<UsageCockpitResponse | null>(null);
   readonly snapshot = this.snapshotSignal.asReadonly();
@@ -33,6 +35,7 @@ export class UsageCockpitService {
 
   /** Starts polling for the caller's lifetime. */
   connect(destroyRef: DestroyRef): void {
+    if (!this.shellAccess.operator()) return;
     if (this.consumers++ === 0) {
       this.refresh();
       this.timer = setVisibleInterval(() => this.refresh(), USAGE_COCKPIT_REFRESH_MS);
@@ -48,6 +51,7 @@ export class UsageCockpitService {
   }
 
   setWorkspace(workspaceId: string | null): void {
+    if (!this.shellAccess.operator()) return;
     if (workspaceId === this.workspaceId) return;
     this.workspaceId = workspaceId;
     this.snapshotSignal.set(null);
@@ -56,6 +60,7 @@ export class UsageCockpitService {
   }
 
   refresh(): void {
+    if (!this.shellAccess.operator()) return;
     const requested = this.workspaceId;
     let params = new HttpParams();
     if (requested) params = params.set('workspaceId', requested);

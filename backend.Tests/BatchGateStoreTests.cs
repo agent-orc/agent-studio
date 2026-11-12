@@ -11,6 +11,66 @@ namespace AgentStudio.Tests;
 public sealed class BatchGateStoreTests : IDisposable
 {
     [Fact]
+    public void State_keeps_excluded_overdue_member_out_of_proposals_and_uses_each_deadline()
+    {
+        _store.Enqueue(new BatchGatePendingRecord("review-a", Subject("task-a", 0),
+            _root, _root, _root, "direct-merge", "task", Now));
+        _store.Enqueue(new BatchGatePendingRecord("review-b", Subject("task-b", 25),
+            _root, _root, _root, "direct-merge", "task", Now));
+        _store.AppendPlanDecision("project", new BatchPlanDecision("wait", "waiting", Now.AddMinutes(30),
+            [], 2, [], ExcludedMembers: [new BatchPlanExcludedMember("task-a", "MissingResultSha")]));
+        var settings = new BatchGateFormationOptions(Enabled: true, DeadlineMinutes: 30);
+
+        JsonElement State(DateTimeOffset at) => JsonSerializer.SerializeToElement(
+            BatchGateStateSnapshotReader.Read(_store, "project", settings, now: at),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("plan");
+
+        var early = State(Now.AddMinutes(40));
+        Assert.Empty(early.GetProperty("proposedMembers").EnumerateArray());
+        Assert.Contains("task-a: excluded by MissingResultSha", early.GetProperty("reason").GetString());
+        var later = State(Now.AddMinutes(60));
+        Assert.Equal("task-b", Assert.Single(later.GetProperty("proposedMembers").EnumerateArray()).GetString());
+    }
+
+    [Fact]
+    public void State_skips_a_malformed_manifest_without_losing_the_project()
+    {
+        var broken = Path.Combine(_root, "malformed-folder");
+        Directory.CreateDirectory(broken);
+        File.WriteAllText(Path.Combine(broken, "manifest.json"), "{broken");
+        var incomplete = Path.Combine(_root, "incomplete-folder");
+        Directory.CreateDirectory(incomplete);
+        File.WriteAllText(Path.Combine(incomplete, "manifest.json"), "{}");
+
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.Empty(state.GetProperty("batches").EnumerateArray());
+        Assert.Empty(_store.ListRecoverableManifests());
+    }
+
+    [Fact]
+    public void State_history_preserves_recorded_transitions_in_order()
+    {
+        var manifest = Close();
+        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Assembling, Next, 1, Now.AddMinutes(-1), "assembling candidate"));
+        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Assembled, Next, 1, Now, "candidate assembled"));
+        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Abandoned, Next, 1, Now.AddMinutes(1), "interrupted"));
+        var history = _store.StateHistory(manifest.BatchId);
+        Assert.Equal(BatchPhase.Assembled, history[^2].Phase);
+        Assert.Equal(BatchPhase.Abandoned, history[^1].Phase);
+        var snapshot = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var batch = Assert.Single(snapshot.GetProperty("batches").EnumerateArray());
+        Assert.Equal("abandoned", batch.GetProperty("phaseHistory").EnumerateArray().Last()
+            .GetProperty("phase").GetString());
+    }
+    [Fact]
     public void State_reports_capacity_and_current_slot_use_together()
     {
         var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
@@ -21,6 +81,18 @@ public sealed class BatchGateStoreTests : IDisposable
         Assert.Equal(2, state.GetProperty("gateSlots").GetProperty("busy").GetInt32());
         Assert.Equal(4, state.GetProperty("gateCapacity").GetProperty("slots").GetInt32());
         Assert.Equal(6, state.GetProperty("gateCapacity").GetProperty("processorsPerGate").GetInt32());
+    }
+
+    [Fact]
+    public void State_exposes_batch_phase_time_for_interrupted_run_duration()
+    {
+        var manifest = Close();
+        var phase = _store.LatestState(manifest.BatchId);
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var batch = Assert.Single(state.GetProperty("batches").EnumerateArray());
+        Assert.Equal(phase.RecordedAtUtc, batch.GetProperty("phaseAtUtc").GetDateTimeOffset());
     }
 
     [Fact]
@@ -36,6 +108,52 @@ public sealed class BatchGateStoreTests : IDisposable
         var member = state.GetProperty("members").GetProperty("card-7");
         Assert.Equal("review-fix", member.GetProperty("status").GetString());
         Assert.Contains("before batch admission", member.GetProperty("reasonDetail").GetString());
+    }
+
+    [Fact]
+    public void Paused_batch_handoff_exposes_ordered_per_task_gates_and_running_host()
+    {
+        var manifest = Close(4);
+        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Abandoned, null, 1, Now.AddMinutes(21),
+            "paused-to-per-task-gate: flaky quarantine requires a fresh gate verdict"));
+        for (var index = 0; index < 4; index++)
+        {
+            var key = $"task-{index}";
+            var folder = Path.Combine(_root, key);
+            var subject = Subject(key, index);
+            _store.Enqueue(new BatchGatePendingRecord($"review-{index}", subject,
+                _root, _root, folder, "direct-merge", "task", Now.AddMinutes(index)));
+            _store.RecordFallbackCause(new BatchGateFallbackCause("project", key,
+                $"review-{index}", subject.RunAttempt, PerTaskFallbackRules.BatchPaused,
+                $"batch {manifest.BatchId} paused: flaky quarantine requires a fresh gate verdict",
+                manifest.BatchId, Now.AddMinutes(22)));
+            if (index == 1)
+                BatchGateOwnershipStore.Write(folder, new BatchGateOwnership($"review-{index}", subject,
+                    FallbackGateActive: true, FallbackGateStartedAtUtc: Now.AddMinutes(23),
+                    FallbackGateHost: "gate-01"));
+        }
+        var unrelated = Subject("other-task", 4);
+        _store.Enqueue(new BatchGatePendingRecord("other-review", unrelated,
+            _root, _root, Path.Combine(_root, "other-task"), "direct-merge", "task", Now.AddMinutes(4)));
+        _store.RecordFallbackCause(new BatchGateFallbackCause("project", "other-task",
+            "other-review", unrelated.RunAttempt, PerTaskFallbackRules.BatchPaused,
+            "another batch paused", "another-batch", Now.AddMinutes(22)));
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true),
+            activePerTaskFlights: new HashSet<string> { "review-1" }),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var gates = state.GetProperty("perTaskGates").EnumerateArray().ToArray();
+        Assert.Equal(5, gates.Length);
+        Assert.Equal(2, gates[1].GetProperty("position").GetInt32());
+        Assert.Equal(4, gates[1].GetProperty("total").GetInt32());
+        Assert.Equal(1, gates[4].GetProperty("position").GetInt32());
+        Assert.Equal(1, gates[4].GetProperty("total").GetInt32());
+        Assert.True(gates[1].GetProperty("running").GetBoolean());
+        Assert.Equal("gate-01", gates[1].GetProperty("host").GetString());
+        Assert.Contains("flaky quarantine", gates[1].GetProperty("reason").GetString());
+        Assert.Equal(PerTaskFallbackRules.BatchPaused,
+            state.GetProperty("members").GetProperty("task-1").GetProperty("fallbackRule").GetString());
     }
 
     [Fact]
@@ -193,6 +311,109 @@ public sealed class BatchGateStoreTests : IDisposable
     }
 
     [Fact]
+    public void Card_timelines_and_daily_percentiles_replay_from_durable_events_after_restart()
+    {
+        var manifest = Close(2);
+        var member = manifest.Members[0];
+        _store.Enqueue(new BatchGatePendingRecord("review-0", member, "/repo", null,
+            "/job", "linear", "default", Now.AddMinutes(1)));
+        var ledger = new GateRunLedger(Path.Combine(_root, "ledger"), new FakeTimeProvider(Now.AddMinutes(45)));
+        ledger.Append(new GateRunLedgerRow("check-0", "batch-pre-check", "project", [member.TaskKey],
+            Base, "digest", Now.AddMinutes(2), Now.AddMinutes(3), null,
+            Now.AddMinutes(4), Now.AddMinutes(8), "Ok", 240_000, 60_000, [], null, 0,
+            null, null, "pending:review-0"));
+        _store.RecordPreCheck(new BatchGatePreCheckVerdict("project", member.TaskKey, "review-0",
+            Base, Base, "digest", "green", "pass", [], Now.AddMinutes(4), Now.AddMinutes(8)));
+        var evidence = Path.Combine(_root, "timeline-evidence.json");
+        File.WriteAllText(evidence, "{}");
+        var run = new BatchGateRunRecord("timeline-run", manifest.BatchId,
+            manifest.MembershipDigest, Base, Next, "full", "digest", "host", 1,
+            ["dotnet test"], Now.AddMinutes(30), evidence);
+        BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+            BatchPhase.Assembled, Next, 1, Now.AddMinutes(29)));
+        _store.RecordRun(run);
+        _store.RecordVerdict(new BatchGateRunVerdict(run.BatchRunId, manifest.BatchId,
+            manifest.MembershipDigest, Next, "digest", "pass", "passed", evidence,
+            Now.AddMinutes(40)));
+        _store.RecordPublication(new BatchGatePublication(manifest.BatchId,
+            manifest.MembershipDigest, run.BatchRunId, Base, Next, Next, 1, 1,
+            Now.AddMinutes(45)));
+        _store.RecordReplay(new BatchGateReplayRecord(manifest.BatchId,
+            manifest.MembershipDigest, member.TaskKey, Base, Base, Next,
+            [new RebasedCommitReplacement(Base, Next)], [], "admitted", Now.AddMinutes(25)));
+        ledger.Append(new GateRunLedgerRow("diagnostic-0", "clean-diagnostic-rerun", "project",
+            [member.TaskKey], Base, "digest", Now.AddMinutes(35), Now.AddMinutes(35), null,
+            Now.AddMinutes(35), Now.AddMinutes(37), "Ok", 120_000, 0, [], "red-candidate",
+            120_000, null, null, "red-candidate", manifest.BatchId));
+        var timeline = BatchMemberTimelineProjection.Build(_store, member, manifest,
+            BatchMemberTimelineProjection.Rows(ledger, "project"), _store.ListPreChecks("project"), []);
+        _store.RecordMember(new BatchGateMemberRecord(member.TaskKey, member.RunAttempt,
+            member.DeliveryEpoch, Base, [Next], manifest.BatchId, manifest.MembershipDigest,
+            Base, Next, "digest", run.BatchRunId, "pass", evidence, Now.AddMinutes(45),
+            timeline with { Outcome = "published", PublishedAtUtc = Now.AddMinutes(45),
+                TerminalAtUtc = Now.AddMinutes(45) }));
+        var fallback = manifest.Members[1];
+        _store.RecordFallbackCause(new BatchGateFallbackCause("project", fallback.TaskKey,
+            "review-1", fallback.RunAttempt, "deadline", "per-task", manifest.BatchId,
+            Now.AddMinutes(26)));
+
+        var restarted = new BatchGateStore(_root);
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(restarted,
+            "project", new BatchGateFormationOptions(Enabled: true), now: Now.AddMinutes(46),
+            ledger: new GateRunLedger(Path.Combine(_root, "ledger"))),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var card = state.GetProperty("members").GetProperty(member.TaskKey).GetProperty("timeline");
+        Assert.Equal(Now.AddMinutes(2), card.GetProperty("preCheckQueuedAtUtc").GetDateTimeOffset());
+        Assert.Equal(Now.AddMinutes(4), card.GetProperty("preCheckStartedAtUtc").GetDateTimeOffset());
+        Assert.Equal(Now.AddMinutes(8), card.GetProperty("preCheckFinishedAtUtc").GetDateTimeOffset());
+        Assert.Equal(manifest.ClosedAtUtc, card.GetProperty("joinedBatchAtUtc").GetDateTimeOffset());
+        Assert.Equal(Now.AddMinutes(45), card.GetProperty("publishedAtUtc").GetDateTimeOffset());
+        Assert.True(card.GetProperty("diagnosticRerun").GetBoolean());
+        Assert.Equal("fallback", state.GetProperty("members").GetProperty(fallback.TaskKey)
+            .GetProperty("timeline").GetProperty("outcome").GetString());
+        Assert.Equal("fallback", state.GetProperty("members").GetProperty(fallback.TaskKey)
+            .GetProperty("status").GetString());
+        var daily = state.GetProperty("dailySummary");
+        Assert.Equal(8, daily.GetProperty("phaseMinutes").GetProperty("reviewToPreCheck").GetProperty("p50").GetDouble());
+        Assert.Equal(1, daily.GetProperty("phaseMinutes").GetProperty("reviewToPreCheck").GetProperty("cards").GetInt32());
+        Assert.Equal(22, daily.GetProperty("phaseMinutes").GetProperty("formationWait").GetProperty("p90").GetDouble());
+        Assert.Equal(10, daily.GetProperty("phaseMinutes").GetProperty("batchRun").GetProperty("p50").GetDouble());
+        Assert.Equal(5, daily.GetProperty("phaseMinutes").GetProperty("publish").GetProperty("p90").GetDouble());
+        Assert.Equal(1, daily.GetProperty("diagnosticRerunShare").GetDouble());
+        Assert.Equal(1, daily.GetProperty("preCheckYield").GetProperty("runs").GetInt32());
+        Assert.Equal(0, daily.GetProperty("preCheckYield").GetProperty("cardsKeptOut").GetInt32());
+        Assert.Equal(Now.AddMinutes(2), restarted.TryReadMember(manifest.BatchId,
+            member.TaskKey, run.BatchRunId)?.Timeline?.PreCheckQueuedAtUtc);
+    }
+
+    [Fact]
+    public void Red_pre_check_yield_requires_a_recorded_red_handoff()
+    {
+        var member = Subject("red-card", 0);
+        _store.Enqueue(new BatchGatePendingRecord("red-review", member, "/repo", null,
+            "/job", "linear", "default", Now));
+        _store.RecordPreCheck(new BatchGatePreCheckVerdict("project", member.TaskKey,
+            "red-review", Base, Base, "digest", "red", "failed", [], Now,
+            Now.AddMinutes(2)));
+        var ledger = new GateRunLedger(Path.Combine(_root, "ledger"),
+            new FakeTimeProvider(Now.AddMinutes(3)));
+        ledger.Append(new GateRunLedgerRow("red-check", "batch-pre-check", "project",
+            [member.TaskKey], Base, "digest", Now, Now, null, Now,
+            Now.AddMinutes(2), "Fail", 120_000, 0, [], null, 0,
+            null, null, "pending:red-review"));
+        var day = DateOnly.FromDateTime(Now.UtcDateTime);
+        Assert.Equal(0, ledger.Summary(new BatchGateStore(_root), "project", day)
+            .PreCheckYield!.CardsKeptOut);
+        _store.ResolvePending("red-review", "pre-check-red");
+        var summary = new GateRunLedger(Path.Combine(_root, "ledger"))
+            .Summary(new BatchGateStore(_root), "project", day);
+        Assert.Equal(1, summary.PreCheckYield!.Runs);
+        Assert.Equal(1, summary.PreCheckYield.Red);
+        Assert.Equal(1, summary.PreCheckYield.CardsKeptOut);
+        Assert.Equal(2, summary.PreCheckYield.CostMinutes);
+    }
+
+    [Fact]
     public void Delivery_index_isolates_corruption_and_reuses_closed_manifests()
     {
         var manifest = Close();
@@ -286,6 +507,8 @@ public sealed class BatchGateStoreTests : IDisposable
         var stateFolder = Path.Combine(_store.BatchDirectory(manifest.BatchId), "state");
         Directory.Delete(stateFolder, recursive: true);
         if (keepEmptyStateFolder) Directory.CreateDirectory(stateFolder);
+        // AGT-3563: the phase record is the commit point, so "without state" means neither.
+        File.Delete(Path.Combine(_store.BatchDirectory(manifest.BatchId), "phase.json"));
 
         Assert.Equal(BatchPhase.Unknown, _store.LatestState(manifest.BatchId).Phase);
         Assert.DoesNotContain(_store.ListRecoverableManifests(),
@@ -439,7 +662,7 @@ public sealed class BatchGateStoreTests : IDisposable
         var run = new BatchGateRunRecord("run-1", manifest.BatchId,
             manifest.MembershipDigest, Base, Next, "full", "digest", "host", 1,
             ["dotnet test"], Now, evidence);
-        _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
+        BatchGateStates.Reach(_store, new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Assembled, Next, 1, Now));
         _store.RecordRun(run);
         Assert.False(_store.CanRelease(member, manifest.BatchId, run.BatchRunId));

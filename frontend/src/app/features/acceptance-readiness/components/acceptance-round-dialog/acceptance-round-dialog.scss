@@ -1,0 +1,44 @@
+:host { display: contents; }
+
+.round-dialog__lead {
+  margin: 0 0 var(--studio-spacing-3);
+  color: var(--studio-fg-dim);
+}
+
+.round-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-1);
+  margin-bottom: var(--studio-spacing-3);
+}
+
+.round-dialog__label {
+  color: var(--studio-fg-strong);
+  font-size: var(--studio-font-size-sm);
+  font-weight: 600;
+}
+
+.round-dialog__prompt,
+.round-dialog__ref {
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-action-radius-sm);
+  background: var(--studio-bg-editor);
+  color: var(--studio-fg);
+  font-family: var(--font-mono);
+  font-size: var(--studio-font-size-sm);
+
+  &:focus-visible {
+    outline: 2px solid var(--studio-accent);
+    outline-offset: 1px;
+  }
+}
+
+.round-dialog__prompt { resize: vertical; min-height: 160px; }
+
+.round-dialog__error {
+  margin: 0;
+  color: var(--studio-status-danger);
+}

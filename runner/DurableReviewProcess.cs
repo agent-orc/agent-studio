@@ -255,6 +255,39 @@ internal sealed class DurableReviewProcess
         return VerifyLive(recovered, out reason);
     }
 
+    /// <summary>
+    /// AGT-3647: a worker that died without a result is started again under the
+    /// same lease and resumes from <c>review-progress.json</c>. A daemon or
+    /// container replacement costs one relaunch; a worker that dies again after
+    /// this many relaunches is a fault of its own and is settled as lost work.
+    /// </summary>
+    internal const int MaximumWorkerRelaunches = 2;
+
+    internal static bool CanRelaunch(PersistedReviewSlot slot)
+        => slot.WorkerRelaunches < MaximumWorkerRelaunches
+           && slot.TerminalClassification is null
+           && slot.ReportPendingSinceUtc is null
+           && !HasCompleted(slot);
+
+    /// <summary>
+    /// True when the daemon may have launched a worker for this slot. Without a
+    /// persisted or self-reported identity the workspace was still being
+    /// prepared, so a relaunch must prepare it again.
+    /// </summary>
+    internal static bool MayHaveLaunched(PersistedReviewSlot slot)
+        => slot.ProcessId is not null
+           || File.Exists(Path.Combine(slot.WorkerDirectory, "review-worker.json"));
+
+    /// <summary>Removes a dead worker's spec, identity and checkpoint before a fresh run.</summary>
+    internal static void ClearWorkerFiles(string workerDirectory)
+    {
+        foreach (var name in new[] { "review-spec.json", "review-worker.json", "review-progress.json" })
+        {
+            var path = Path.Combine(workerDirectory, name);
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
     public static bool VerifyLive(PersistedReviewSlot slot, out string reason)
     {
         if (slot.ProcessId is null || slot.ProcessStartedAtUtc is null)
@@ -406,6 +439,10 @@ internal sealed class DurableReviewProcess
         var directory = Path.GetDirectoryName(specPath)!;
         var options = WorkerOptions(spec);
         var workspace = new RemoteReviewWorkspace(options, spec.Subject, spec.Lease, _ => { });
+        // AGT-3647: an identity from an earlier worker means the daemon started
+        // this attempt again after that worker died. The daemon proved the tree
+        // clean when it prepared it, so changes now are the plan's own output.
+        var relaunched = File.Exists(Path.Combine(directory, "review-worker.json"));
         using (var current = Process.GetCurrentProcess())
         {
             var identity = new DetachedReviewIdentity(
@@ -423,7 +460,7 @@ internal sealed class DurableReviewProcess
         DetachedReviewResult result;
         try
         {
-            await workspace.AdoptPreparedAsync(CancellationToken.None);
+            await workspace.AdoptPreparedAsync(CancellationToken.None, relaunched);
             var resume = new DurableReviewProcess(directory, -1, DateTime.MinValue).ReadProgress();
             var evidence = await workspace.ExecutePlanAsync(
                 CancellationToken.None,
@@ -438,7 +475,7 @@ internal sealed class DurableReviewProcess
             result = new DetachedReviewResult(
                 evidence,
                 null,
-                null,
+                evidence.Summary,
                 DateTime.UtcNow);
         }
         catch (ReviewInfrastructureException exception)

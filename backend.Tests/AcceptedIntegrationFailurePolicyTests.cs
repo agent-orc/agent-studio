@@ -214,9 +214,9 @@ public sealed class AcceptedIntegrationFailurePolicyTests
             AcceptedIntegrationFailureCodes.SourceNeedsRebase,
             "Release source must be rebased onto 'main'.");
 
-        Assert.Equal("integration: source-needs-rebase", RemoteDeliveryParkReason.For(failed));
-        Assert.Equal(
-            "automatic recovery budget used: 2/2",
+        Assert.Contains("source branch needs a rebase", RemoteDeliveryParkReason.For(failed));
+        Assert.Contains("Review the integration evidence and retry", RemoteDeliveryParkReason.For(failed));
+        Assert.Contains("automatic recovery budget used: 2/2",
             RemoteDeliveryParkReason.For(failed with { AutomaticRecoveryDetail = "automatic recovery budget used: 2/2" }));
         Assert.Null(RemoteDeliveryParkReason.For(MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged)));
     }

@@ -83,7 +83,11 @@ public sealed class PersonaEndpointsTests : IDisposable
     private static async Task<JsonElement> Body(HttpResponseMessage response)
         => JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.Clone();
 
-    private string CurrentCode() => SecondFactorCodes.CurrentTotp(_ownerTotpSecret, _clock.GetUtcNow().UtcDateTime);
+    private string CurrentCode()
+    {
+        _clock.Advance(TimeSpan.FromSeconds(30));
+        return SecondFactorCodes.CurrentTotp(_ownerTotpSecret, _clock.GetUtcNow().UtcDateTime);
+    }
 
     private async Task<HttpClient> OwnerClientAsync(WebApplicationFactory<Program> factory)
     {

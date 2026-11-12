@@ -78,7 +78,7 @@ export class DeliveryClaimPanelComponent {
   private readonly load = effect((onCleanup) => {
     const job = this.job();
     this.answer.set(null);
-    if (!DELIVERED_LANES.includes(job.state)) return;
+    if (job.mode === 'concept' || !DELIVERED_LANES.includes(job.state)) return;
     const subscription = this.tasks
       .getDeliveryClaim(job.id, job.watchPath ?? undefined)
       .subscribe({
@@ -319,7 +319,7 @@ export class DeliveryClaimPanelComponent {
     this.claim()?.basis === 'operator-override' ? this.claim()?.reason?.trim() || null : null,
   );
 
-  readonly show = computed(() => this.inDeliveredLane()
+  readonly show = computed(() => this.job().mode !== 'concept' && this.inDeliveredLane()
     && (!!this.answer() || !!this.job().integration || !!this.job().completionClaim
       || !!this.job().acceptanceAttemptGap
       || !!this.job().reviewProjection?.blockingAspects?.length

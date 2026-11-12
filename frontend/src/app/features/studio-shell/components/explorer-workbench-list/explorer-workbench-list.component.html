@@ -15,7 +15,7 @@
 
 <app-tree-row level="child" glyph="book" label="Dossiers"
               [chevron]="expanded() ? 'expanded' : 'collapsed'"
-              [count]="pendingDecisionCount() > 0 ? pendingDecisionCount() : null"
+              [count]="dossierCount() > 0 ? dossierCount() : null"
               [ariaLabel]="dossierAriaLabel()"
               [active]="overviewActive()"
               [ariaCurrent]="overviewActive() ? 'page' : null"
@@ -54,7 +54,6 @@
                   [tooltipTestId]="'studio-explorer-workbench-tooltip-' + projectName() + '-' + workbench.id"
                   [testid]="'studio-explorer-workbench-' + projectName() + '-' + workbench.id"
                   (selectRequest)="openWorkbench.emit(workbench)">
-                  <app-tag-chips [ids]="workbench.tags ?? []" [projectName]="projectName()" />
                   @if (openCount(workbench) > 0) {
                     <span class="studio-workbench-topic__status"
                           [attr.data-status]="workbench.status"

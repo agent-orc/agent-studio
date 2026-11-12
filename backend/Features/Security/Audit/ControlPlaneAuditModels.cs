@@ -16,6 +16,10 @@ public static class ControlPlaneAuditStreams
     /// <summary>Operator surface records, such as the watcher lease (operator agent level OP-2).</summary>
     public const string Operator = "operator";
     public const string BreakGlass = "break-glass";
+    /// <summary>Human Review decisions: accept and send back (AGT-3670).</summary>
+    public const string Review = "review";
+    /// <summary>Installation backups: create, upload, verify, retention, and the offline decrypt and restore (AGT-3737).</summary>
+    public const string Backup = "backup";
 }
 
 /// <summary>
@@ -91,3 +95,12 @@ public sealed record OperatorActivityResponse(
     IReadOnlyList<ControlPlaneAuditEntryView> Entries,
     ControlPlaneAuditIntegrity Integrity,
     ControlPlaneAuditForwarding Forwarding);
+
+/// <summary>One backup record of the chain (AGT-3737); trigger and summary come from its details.</summary>
+public sealed record BackupAuditEntryView(
+    long Sequence, DateTime At, string Actor, string? Session, string? DelegatedBy, string Operation,
+    string? Target, string Outcome, string? Trigger, string? Summary, string Hash);
+
+public sealed record BackupActivityResponse(
+    IReadOnlyList<BackupAuditEntryView> Entries,
+    ControlPlaneAuditIntegrity Integrity);

@@ -21,7 +21,9 @@ export class AccessInviteFormComponent {
   readonly username = signal('');
   readonly displayName = signal('');
   readonly grant = signal<IamGrant | null>(null);
-  readonly link = signal<{ url: string; username: string; expiresAt: string } | null>(null);
+  readonly link = signal<{ url: string; username: string; expiresAt: string; factor: string } | null>(null);
+  readonly copied = signal(false);
+  readonly copyError = signal(false);
 
   canInvite(): boolean {
     return this.username().trim().length >= 3 && !!this.grant() && !this.access.busy();
@@ -33,8 +35,27 @@ export class AccessInviteFormComponent {
     const result = await this.access.invite(this.username().trim(), this.displayName().trim(), [grant]);
     if (!result) return;
     const origin = typeof location === 'undefined' ? '' : location.origin;
-    this.link.set({ url: origin + result.signInLink, username: result.user.username, expiresAt: formatAccessTime(result.expiresAt) });
+    const factor = result.user.role === 'owner' || result.user.role === 'operator'
+      ? 'A second factor is required before using Studio.'
+      : grant.role === 'approver'
+        ? 'A second factor is required to approve production releases. Set one up after acceptance.'
+        : 'A second factor is recommended after acceptance.';
+    this.link.set({ url: origin + result.signInLink, username: result.user.username, expiresAt: formatAccessTime(result.expiresAt), factor });
+    this.copied.set(false);
+    this.copyError.set(false);
     this.username.set('');
     this.displayName.set('');
+  }
+
+  async copyLink(): Promise<void> {
+    const link = this.link();
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link.url);
+      this.copied.set(true);
+      this.copyError.set(false);
+    } catch {
+      this.copyError.set(true);
+    }
   }
 }

@@ -38,6 +38,7 @@ const KIND_LABELS: Readonly<Record<string, string>> = {
   [TIMELINE_KIND.postAcceptanceReviewReportRecorded]: 'Post-acceptance review recorded',
   [TIMELINE_KIND.taskReleased]: 'Released for dependents',
   [TIMELINE_KIND.laneChanged]: 'Lane changed',
+  [TIMELINE_KIND.ownerMoveRefused]: 'Owner move refused',
   [TIMELINE_KIND.mergedIn]: 'Merged in',
   [TIMELINE_KIND.readOnlyContainmentViolation]: 'Containment violation',
   [TIMELINE_KIND.executionContext]: 'Execution context',
@@ -173,6 +174,8 @@ export function timelineEventTitle(event: TaskTimelineEvent): string {
     if (decision === 'accept') return 'Human review accepted';
     if (decision === 'reject') return 'Human review rejected';
     if (decision === 'reissue') return 'Human review requested changes';
+    // AGT-3670: the Reviewer's send back; the summary carries the note.
+    if (decision === 'send-back') return 'Human review sent back';
   }
 
   if (event.kind === TIMELINE_KIND.operatorRequeued) {

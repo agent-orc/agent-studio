@@ -39,7 +39,16 @@ public sealed partial class BatchGatePilotService
     private readonly object _startPass = new();
 
     private IReadOnlyList<BatchGateManifest> OrderForStart(IReadOnlyList<BatchGateManifest> formed)
-        => BatchGateFlightQueue.Order(_store, formed, LeaseDeadlineDeferred());
+        => BatchGateFlightQueue.Order(_store, formed, LeaseDeadlineDeferred(), _time.GetUtcNow(),
+            project => _settings.Get(project).BatchGate.MaximumWaitMinutes);
+
+    internal IReadOnlyList<BatchGateManifest> StartOrderForTesting(IReadOnlyList<BatchGateManifest> formed)
+        => OrderForStart(formed);
+
+    internal void DeferAtLeaseDeadlineForTesting(string project, string batchId)
+    {
+        lock (_runningBatches) _leaseDeadlineDeferred[project] = batchId;
+    }
 
     private Func<string, string?> LeaseDeadlineDeferred()
     {
@@ -205,7 +214,8 @@ public sealed partial class BatchGatePilotService
         flight.BeforeLease.Dispose();
         try
         {
-            if (_replanAfterBatch.TryRemove(manifest.BatchId, out _))
+            // AGT-3568: the successor tick request is durable; one exit consumes it.
+            if (_store.TryConsumeSuccessorTick(project, manifest.BatchId))
                 _ = Task.Run(() => TickAsync(CancellationToken.None));
             else if (!ct.IsCancellationRequested && StartsNextAfter(flight, detached))
                 StartClosedBatches(ct, project, followsCompletedFlight: true);

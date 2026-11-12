@@ -2,9 +2,11 @@ import { ChangeDetectionStrategy, Component, OnInit, computed, effect, inject, s
 import { scopeLabel, type AccessUser } from '../../models/access.model';
 import { isOperatorAgentAccount } from '../../models/operator-agent.model';
 import { AccessService } from '../../services/access.service';
+import { BackupActivityService } from '../../services/backup-activity.service';
 import { OperatorAgentsService } from '../../services/operator-agents.service';
 import { OperatorApprovalsService } from '../../services/operator-approvals.service';
 import { StandingGrantsService } from '../../services/standing-grants.service';
+import { AccessBackupActivityComponent } from '../access-backup-activity/access-backup-activity.component';
 import { AccessBindingsComponent } from '../access-bindings/access-bindings.component';
 import { AccessBreakGlassComponent } from '../access-break-glass/access-break-glass';
 import { AccessGroupsComponent } from '../access-groups/access-groups.component';
@@ -18,20 +20,21 @@ import { AccessServiceAccountsComponent } from '../access-service-accounts/acces
 import { AccessStandingGrantsComponent } from '../access-standing-grants/access-standing-grants.component';
 import { SessionManagerComponent } from '../session-manager/session-manager.component';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
+import { ConfirmDialogService } from '../../../../services/confirm-dialog.service';
 
 /**
  * The one Access area: users with their role bindings, groups, service
  * accounts (API tokens included), runner enrollments, and runners. A
  * single-user installation sees the same views with its one Owner. The
  * Owner also sees operator agents, their approval requests, standing grants,
- * kill switch, and audit trail; the server refuses those reads for everyone
- * else, which hides them.
+ * kill switch, audit trail, and the backup records of that trail; the server
+ * refuses those reads for everyone else, which hides them.
  */
 @Component({
   selector: 'app-access-area',
   standalone: true,
   imports: [
-    AccessBindingsComponent, AccessBreakGlassComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessOperatorActivityComponent,
+    AccessBackupActivityComponent, AccessBindingsComponent, AccessBreakGlassComponent, AccessGroupsComponent, AccessInviteFormComponent, AccessOperatorActivityComponent,
     AccessOperatorAgentsComponent, AccessOperatorApprovalsComponent, AccessOperatorKillSwitchComponent, AccessRunnersComponent,
     AccessServiceAccountsComponent, AccessStandingGrantsComponent, SessionManagerComponent, StatusIndicatorComponent,
   ],
@@ -41,9 +44,13 @@ import { StatusIndicatorComponent, type StatusTone } from '../../../../component
 })
 export class AccessAreaComponent implements OnInit {
   readonly access = inject(AccessService);
+  private readonly confirmDialog = inject(ConfirmDialogService);
   readonly operators = inject(OperatorAgentsService);
   readonly standingGrants = inject(StandingGrantsService);
   readonly approvals = inject(OperatorApprovalsService);
+  readonly backupActivity = inject(BackupActivityService);
+  /** Shown once the server answered as for the Owner; a refusal or a missing route keeps it hidden. */
+  readonly showBackupActivity = computed(() => ['ready', 'error'].includes(this.backupActivity.state()));
   readonly overview = this.access.overview;
   readonly temporaryPassword = signal<{ username: string; value: string } | null>(null);
 
@@ -79,6 +86,7 @@ export class AccessAreaComponent implements OnInit {
     void this.operators.load();
     void this.standingGrants.load();
     void this.approvals.load();
+    void this.backupActivity.load();
   }
 
   /** Reloads everything, including an open operator activity view. */
@@ -87,6 +95,7 @@ export class AccessAreaComponent implements OnInit {
     void this.operators.load();
     void this.standingGrants.load();
     void this.approvals.load();
+    void this.backupActivity.load();
     if (this.operators.killSwitch()) void this.operators.loadKillSwitch();
     const activity = this.operators.activityState();
     if (activity === 'ready' || activity === 'error') void this.operators.loadActivity();
@@ -110,9 +119,10 @@ export class AccessAreaComponent implements OnInit {
     return status === 'Active' ? 'success' : status === 'Invited' ? 'info' : 'neutral';
   }
 
-  status(user: AccessUser): 'Disabled' | 'Invited' | 'Active' {
+  status(user: AccessUser): 'Disabled' | 'Invited' | 'Active' | 'No access' {
     if (user.disabled) return 'Disabled';
-    return this.access.pendingInvitations().has(user.id) ? 'Invited' : 'Active';
+    if (this.access.pendingInvitations().has(user.id)) return 'Invited';
+    return this.grants(user).length ? 'Active' : 'No access';
   }
 
   async resetPassword(user: AccessUser): Promise<void> {
@@ -122,7 +132,19 @@ export class AccessAreaComponent implements OnInit {
   }
 
   async toggleDisabled(user: AccessUser): Promise<void> {
-    if (!this.access.busy()) await this.access.setUserDisabled(user.id, !user.disabled);
+    if (this.access.busy()) return;
+    if (!user.disabled) {
+      const confirmed = await this.confirmDialog.confirm({
+        eyebrow: 'Confirm disable',
+        title: 'Disable this user?',
+        message: 'Open sessions end immediately. The user cannot sign in until enabled again.',
+        detail: user.displayName,
+        confirmLabel: 'Disable',
+        kind: 'danger',
+      });
+      if (!confirmed) return;
+    }
+    await this.access.setUserDisabled(user.id, !user.disabled);
   }
 
   private roleName(id: string): string {
