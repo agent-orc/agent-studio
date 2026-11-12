@@ -402,6 +402,54 @@ public sealed class TaskTransitionAutoCommitAttributionTests : IDisposable
     }
 
     [Fact]
+    public async Task EscalatedReadyReissue_CarriesOnlySelectedFindingsAndOwnerNoteIntoNextPrompt()
+    {
+        const string slug = "selected-reissue";
+        WriteJob(TaskStates.Escalated, slug);
+        var oldFolder = Path.Combine(_watchPath, TaskStates.Escalated, slug);
+        File.WriteAllText(Path.Combine(oldFolder, "aspect-code-quality.md"), "Unselected old finding");
+        File.WriteAllText(Path.Combine(oldFolder, "orchestrator-follow-up.md"), "- [ ] Unselected old follow-up");
+        var deps = BuildDeps();
+        var result = await deps.Transitions.MoveAsync(slug, TaskStates.Ready, _watchPath,
+            cause: TimelineActors.Human("owner"),
+            reason: "Owner selected one finding",
+            reissueInstructions: new OperatorReissueInstructions
+            {
+                Findings = ["Fix the API contract"],
+                Note = "Keep the retry bounded",
+            });
+
+        Assert.Equal(MoveJobStatus.Success, result.Status);
+        var moved = Assert.IsType<TaskInfo>(deps.Scanner.FindJob(slug, _watchPath));
+        var instructions = Assert.IsType<OperatorReissueInstructions>(
+            OperatorReviewRequeueService.ReadInstructions(moved.FolderPath));
+        var promptText = OperatorReviewRequeueService.PromptText(instructions);
+        var nextRun = ReissueOpenItemsPreCheck.Evaluate(new ReissueOpenItemsPreCheck.PreCheckInput
+        {
+            HasOperatorInstructions = true,
+            FollowUpText = promptText,
+            PriorRunCompleted = false,
+            HasReissueTag = false,
+        });
+        Assert.True(nextRun.Intervenes);
+        Assert.Contains("Fix the API contract", nextRun.ForegroundBlock);
+        Assert.Contains("Keep the retry bounded", nextRun.FollowUpText);
+        Assert.DoesNotContain("Unselected old", nextRun.ForegroundBlock);
+        Assert.DoesNotContain("Unselected old", nextRun.FollowUpText);
+        var basePlan = new RunPlan(
+            RuntimePromptService.RunnerFreshStart, new Dictionary<string, string?>(),
+            null, null, false, "start", null, null, false, false, false, null, null, false);
+        var runPlan = ProjectRunner.BuildReissueChangePlan(basePlan, nextRun, ProjectName, slug);
+        Assert.Equal("reissue", runPlan.EventKind);
+        Assert.Contains("Fix the API contract", runPlan.PromptVariables["reissue_findings"]);
+        Assert.Contains("Keep the retry bounded", runPlan.PromptVariables["reissue_followup"]);
+        Assert.DoesNotContain("Unselected old", runPlan.PromptVariables["reissue_findings"]);
+        Assert.DoesNotContain("Unselected old", runPlan.PromptVariables["reissue_followup"]);
+        Assert.False(File.Exists(Path.Combine(moved.FolderPath, "aspect-code-quality.md")));
+        Assert.False(File.Exists(Path.Combine(moved.FolderPath, "orchestrator-follow-up.md")));
+    }
+
+    [Fact]
     public async Task OperatorMoveFromEscalatedToAutoReview_OpensEpochRotatesVerdictAndQueuesFreshGate()
     {
         const string slug = "operator-requeue";

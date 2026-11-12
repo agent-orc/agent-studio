@@ -35,12 +35,12 @@
         testid="status-bar-cli-repair" />
     }
 
-    @if (activeFallback(); as fallback) {
+    @if (fallbackCount() > 0) {
       <app-statusbar-item
         [button]="false"
         icon="warn"
-        [label]="'fallback: ' + fallback.quotaFallbackModel"
-        [tooltip]="'Quota fallback active: ' + fallback.quotaFallbackReason"
+        [label]="'fallback: ' + fallbackCount() + (fallbackCount() === 1 ? ' project' : ' projects')"
+        tooltip="Quota fallback active"
         testid="status-bar-quota-fallback" />
     }
   </div>

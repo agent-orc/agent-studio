@@ -201,7 +201,7 @@ export class StudioShellComponent {
   private keepActiveTabVisible(behavior: ScrollBehavior): void {
     const activeKey = this.activeKey();
     const tabs = this.tabs();
-    if (!activeKey || !tabs.some(tab => studioTabKey(tab) === activeKey)) return;
+    if (tabs.length <= 1 || !activeKey || !tabs.some(tab => studioTabKey(tab) === activeKey)) return;
 
     const activeElement = this.tabElements()
       .find(ref => ref.nativeElement.dataset['tabKey'] === activeKey)
