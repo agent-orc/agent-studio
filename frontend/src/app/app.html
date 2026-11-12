@@ -814,6 +814,5 @@
 } @else if (noProjectAccess()) {
   <main data-testid="no-project-access" class="no-project-access"><p>You currently have no access to any project. Ask the owner.</p></main>
 } @else {
-  <!-- Signed-in sessions never render the gate; its forms code loads with it. -->
-  @defer (on immediate) { <app-auth-gate /> }
+  @defer (on immediate) { <app-auth-gate /> } <!-- Signed-in sessions never render the gate; its forms code loads with it. -->
 }
