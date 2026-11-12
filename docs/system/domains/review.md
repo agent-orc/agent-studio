@@ -454,6 +454,14 @@ the existing authority scheduler while its two-retry budget remains. A scheduled
 retry counts as an owner. Once the budget is spent, escalation names the review
 classification and summary.
 
+The watchdog park uses the `environmental` category with the
+`auto-review-stranded` cause detail and records the completed run time, last
+review outcome and retry state. Its recall
+condition checks whether the immutable delivery is still available for review.
+On an unchanged parked card, `POST /api/tasks/{jobId}/review/retry` moves the
+same delivery back to Auto Review and mints a fresh ReviewAttempt. The card also
+links the intervention receipt. Its Undo restores Auto Review only while the
+park's lane entry, card write and attempt identities still match the receipt.
 A passed review that ran its own build and tests (its frozen plan has
 `BuildTestDeferredToBatch: false`) never re-enters the batch gate: batch
 admission refuses it with `BuildTestNotDeferred` (AGT-3740).

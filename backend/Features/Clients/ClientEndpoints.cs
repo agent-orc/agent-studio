@@ -12,6 +12,7 @@ public static class ClientEndpoints
     public static void MapClientEndpoints(this WebApplication app)
     {
         var clients = app.MapGroup("/api/clients");
+        app.MapGet("/api/host/filesystems", (ApiHostDiskService disk) => Results.Ok(disk.Snapshot()));
 
         clients.MapPost("/register", (RegisterClientRequest request, ClientIdentityStore store) =>
         {
@@ -113,6 +114,26 @@ public static class ClientEndpoints
                 : Results.Ok(ClientSummary.From(updated));
         });
 
+        // AGT-3647: a deploy drains each host runner, then polls this until the
+        // leased attempts it still holds have ended. Resume lifts the drain.
+        clients.MapGet("/{id}/drain-status", (
+            string id,
+            ClientIdentityStore store,
+            AgentStudio.Runner.AttemptAuthorityService authority) =>
+        {
+            var record = store.Find(id);
+            if (record is null) return Results.NotFound(new { error = "client-not-found" });
+            var running = authority.ListActiveAttemptsOfExecutor(id);
+            var draining = record.DrainRequestedAt is not null;
+            return Results.Ok(new ClientDrainStatus(
+                record.Id,
+                draining,
+                draining && running.Count == 0,
+                record.DrainRequestedAt,
+                record.RunnerActiveSlots ?? 0,
+                running));
+        });
+
         clients.MapPost("/{id}/retire", (string id, ClientIdentityStore store) =>
         {
             if (string.Equals(id, DefaultClientIdentity.Id, StringComparison.OrdinalIgnoreCase))
@@ -120,6 +141,14 @@ public static class ClientEndpoints
             var updated = store.RequestDrain(id, retireAfterDrain: true);
             return updated is null
                 ? Results.NotFound(new { error = "client-not-found-or-retired" })
+                : Results.Ok(ClientSummary.From(updated));
+        });
+
+        clients.MapPost("/{id}/resume", (string id, ClientIdentityStore store) =>
+        {
+            var updated = store.ResumeDrain(id);
+            return updated is null
+                ? Results.NotFound(new { error = "client-not-found-retired-or-retiring" })
                 : Results.Ok(ClientSummary.From(updated));
         });
 
@@ -429,3 +458,16 @@ public static class ClientEndpoints
         IdentityRestoreHint = diagnostic.RestoreHint,
     };
 }
+
+/// <summary>
+/// AGT-3647: <paramref name="Drained"/> is true once a drain is requested and
+/// the runner holds no leased attempt. <paramref name="ReportedActiveSlots"/>
+/// is the runner's own last report, shown for comparison.
+/// </summary>
+public sealed record ClientDrainStatus(
+    string ClientId,
+    bool Draining,
+    bool Drained,
+    DateTime? DrainRequestedAt,
+    int ReportedActiveSlots,
+    IReadOnlyList<AgentStudio.Shared.ExecutorActiveAttempt> Running);
