@@ -1,4 +1,5 @@
 import type { TaskLiveQueue } from '../../models/task.model';
+import { withRouteSegment } from '../../services/url-hash.util';
 
 /** The CURRENT headline split around the host name, so the host renders as a link. */
 export interface ReviewLossHeadline {
@@ -69,4 +70,11 @@ function epoch(value: string | null | undefined): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? null : parsed;
+}
+
+/** AGT-3690: the host link inside a card opens the host, not the card. */
+export function openReviewLossHost(event: MouseEvent, route: string): void {
+  event.stopPropagation();
+  event.preventDefault();
+  window.location.hash = withRouteSegment(window.location.hash, route);
 }

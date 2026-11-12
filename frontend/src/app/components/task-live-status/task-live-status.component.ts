@@ -8,8 +8,7 @@ import { runnerWaitCode, runnerWaitHeadline } from '../../models/ready-wait-reas
 import { TaskReferenceNavigationService } from '../../services/task-reference-navigation.service';
 import { TaskService } from '../../services/task.service';
 import { ErrorDialogService } from '../../services/error-dialog.service';
-import { withRouteSegment } from '../../services/url-hash.util';
-import { reviewLossHeadline, type ReviewLossHeadline } from './review-loss-headline';
+import { openReviewLossHost, reviewLossHeadline, type ReviewLossHeadline } from './review-loss-headline';
 import { BatchGateService } from '../../services/batch-gate.service';
 
 export type TaskLiveStatusVariant = 'card' | 'detail';
@@ -25,7 +24,6 @@ interface LiveStatusView {
   attempt: number | null;
   /** AGT-3579: runner reason code when the runner is not picking this card. */
   waitReason?: string;
-  /** AGT-3690: a lost review; the headline renders its host as a link. */
   loss?: ReviewLossHeadline;
   /** AGT-3617: the cause card this card is held behind, linked from the headline. */
   hold?: CauseHold;
@@ -90,13 +88,7 @@ export class TaskLiveStatusComponent {
     });
   }
 
-  /** AGT-3690: the host link inside a card opens the host, not the card. */
-  openHost(event: MouseEvent, route: string): void {
-    event.stopPropagation();
-    event.preventDefault();
-    window.location.hash = withRouteSegment(window.location.hash, route);
-  }
-
+  readonly openHost = openReviewLossHost;
   readonly view = computed<LiveStatusView | null>(() => {
     const task = this.task();
     const status = task.liveStatus;
@@ -210,19 +202,10 @@ export class TaskLiveStatusComponent {
         attempt: status.attempt,
       };
     }
-    // AGT-3690: a review lost on its host names the cause, the host and the
-    // automatic retry; before, the card read as reviewing and then parked.
+    // AGT-3690: a lost review names the cause, the host (a link) and the retry.
     const loss = reviewLossHeadline(status.queue, clock);
-    if (loss) {
-      return {
-        tone: status.queue?.state === 'retry-scheduled' ? 'waiting' : 'stalled',
-        headline: loss.text,
-        loss,
-        detail: activityDetail(task, status.latestEventAt, this.now()),
-        next,
-        attempt: status.attempt,
-      };
-    }
+    const lossTone = status.queue?.state === 'retry-scheduled' ? 'waiting' : 'stalled';
+    if (loss) return { tone: lossTone, headline: loss.text, loss, detail: activityDetail(task, status.latestEventAt, this.now()), next, attempt: status.attempt };
     if (status.queue?.state === 'stalled') {
       // The headline carries the call to action; the reason names the outcome.
       return {
