@@ -2466,14 +2466,18 @@ public sealed partial class BatchGatePilotService
             (BatchGateManifest Manifest, BatchGateAssembly Assembly,
                 BatchGateRunRecord Run, BatchGateRunVerdict Verdict)>(StringComparer.OrdinalIgnoreCase);
         var budget = Math.Min(6, BatchGatePolicy.DiagnosticRunsPerCycle(ordered.Length) * 2);
+        // AGT-3752: after a subset of this isolation publishes, the remaining
+        // subsets are assembled on the published SHA. Only an own publication
+        // moves this base, so an external tip move still ends as StaleBase.
+        var isolationBase = failedManifest.BaseSha;
         var isolated = await BatchGateIsolation.RunAsync(ordered,
             async (subset, token) =>
             {
                 var digest = BatchGatePolicy.MembershipDigest(
-                    failedManifest.BaseSha, failedManifest.Scope, subset);
+                    isolationBase, failedManifest.Scope, subset);
                 var diagnostic = new BatchGateManifest(
                     Guid.NewGuid().ToString("N"), failedManifest.Scope,
-                    failedManifest.BaseSha, digest, _time.GetUtcNow(),
+                    isolationBase, digest, _time.GetUtcNow(),
                     subset.ToArray(), [], subset.Select(item => item.TaskKey).ToArray(),
                     failedManifest.BatchId, Diagnostic: true);
                 _store.CloseManifest(diagnostic);
@@ -2555,7 +2559,14 @@ public sealed partial class BatchGatePilotService
                 await PublishGreenAsync(prepared.Manifest, prepared.Assembly,
                     prepared.Run, prepared.Verdict, lease, pending, repo, fallbackKeys, token)
                     .ConfigureAwait(false);
-                return _store.LatestState(prepared.Manifest.BatchId).Phase == BatchPhase.Published;
+                if (_store.LatestState(prepared.Manifest.BatchId).Phase != BatchPhase.Published)
+                    return false;
+                if (_store.ReadPublication(prepared.Manifest.BatchId) is { } publication
+                    && publication.PreTipSha == isolationBase
+                    && string.Equals(publication.VerifiedRemoteSha, publication.TestedCandidateSha,
+                        StringComparison.OrdinalIgnoreCase))
+                    isolationBase = publication.VerifiedRemoteSha;
+                return true;
             }, initialCohortRed: retryOnlyKeys is null).ConfigureAwait(false);
         var diagnosticIds = _store.ListManifests()
             .Where(manifest => manifest.ParentBatchId == failedManifest.BatchId
@@ -2569,7 +2580,9 @@ public sealed partial class BatchGatePilotService
             isolationExecutions.Sum(execution => execution.DurationMs is { } duration
                 ? duration / 60000d
                 : Math.Max(0, (execution.CompletedAtUtc - execution.StartedAtUtc).TotalMinutes)),
-            _time.GetUtcNow()));
+            _time.GetUtcNow(),
+            diagnosticIds.Count(id => _store.LatestState(id) is
+                { Phase: BatchPhase.Abandoned, Reason: nameof(BatchPublishDecision.StaleBase) })));
         foreach (var member in ordered.Where(member =>
                      !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
         {

@@ -28,7 +28,7 @@ public sealed record BatchPlanObservation(
     string BatchId, DateTimeOffset AtUtc, int Size, double MaxRisk,
     IReadOnlyList<string> Areas, string OverlapGroup, bool Red,
     int IsolationRuns = 0, double IsolationMinutes = 0,
-    string Classification = "pass");
+    string Classification = "pass", int IsolationDiscardedPasses = 0);
 
 public sealed record BatchPlanUpcomingView(
     string TaskKey, string Stage, DateTimeOffset? EtaUtc,
