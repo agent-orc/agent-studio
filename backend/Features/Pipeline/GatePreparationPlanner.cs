@@ -26,11 +26,18 @@ public sealed record GateDependencyScope(
     string WorkingSubdir,
     IReadOnlyList<string> Lockfiles);
 
+public sealed record GatePreparationSkip(string WorkingSubdir, string Reason);
+
+public sealed record GatePreparationPlan(
+    IReadOnlyList<GatePreparationCommand> Commands,
+    IReadOnlyList<GatePreparationSkip> Skips);
+
 /// <summary>
 /// Derives dependency preparation for a disposable gate workspace. An explicit
 /// build-profile install command is authoritative. Otherwise the same concrete
 /// repository and command conventions as <see cref="VerifyCommandPlanner"/>
-/// yield <c>dotnet restore</c> and one <c>npm ci</c> per selected package root.
+/// yield <c>dotnet restore</c> and one <c>npm ci</c> per selected package root
+/// with a tracked lockfile. Roots without one are recorded as skipped.
 /// A conventional <c>npm ci</c> prepares exactly its lockfile root and is
 /// covered by that scope. A profile install command is opaque shell and is
 /// covered only when the profile says so
@@ -46,11 +53,17 @@ public static partial class GatePreparationPlanner
         string repositoryPath,
         BuildProfile? profile,
         IReadOnlyList<VerifyCommand> selectedCommands)
+        => PlanWithSkips(repositoryPath, profile, selectedCommands).Commands;
+
+    public static GatePreparationPlan PlanWithSkips(
+        string repositoryPath,
+        BuildProfile? profile,
+        IReadOnlyList<VerifyCommand> selectedCommands)
     {
         if (!string.IsNullOrWhiteSpace(profile?.InstallCmd))
         {
             var scopes = ProfileDependencyScopes(repositoryPath, profile.Lockfiles);
-            return
+            return new GatePreparationPlan(
             [
                 new GatePreparationCommand(
                     VerifyEcosystem.Custom,
@@ -60,10 +73,11 @@ public static partial class GatePreparationPlanner
                     scopes,
                     profile.PreserveGlobs,
                     CoveredByDependencyScopes: profile.InstallCoveredByLockfiles && scopes.Count > 0),
-            ];
+            ], []);
         }
 
         var result = new List<GatePreparationCommand>();
+        var skips = new List<GatePreparationSkip>();
         var customCommands = selectedCommands
             .Where(command => command.Ecosystem == VerifyEcosystem.Custom)
             .Select(command => command.Command)
@@ -115,6 +129,11 @@ public static partial class GatePreparationPlanner
         foreach (var subdir in nodeDirs.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
         {
             var scopes = ConventionalNodeDependencyScopes(repositoryPath, subdir);
+            if (scopes.Count == 0)
+            {
+                skips.Add(new GatePreparationSkip(subdir, "no-tracked-lockfile"));
+                continue;
+            }
             result.Add(new GatePreparationCommand(
                 VerifyEcosystem.Node,
                 subdir,
@@ -122,10 +141,10 @@ public static partial class GatePreparationPlanner
                 customCommands.Length > 0 ? VerifyCommandShell.Bash : VerifyCommandShell.Platform,
                 scopes,
                 profile?.PreserveGlobs,
-                CoveredByDependencyScopes: scopes.Count > 0));
+                CoveredByDependencyScopes: true));
         }
 
-        return result;
+        return new GatePreparationPlan(result, skips);
     }
 
     private static IReadOnlyList<GateDependencyScope> ProfileDependencyScopes(

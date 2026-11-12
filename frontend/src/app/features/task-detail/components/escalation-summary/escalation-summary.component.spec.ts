@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection, signal } from '@angular/core';
-import { of, throwError } from 'rxjs';
+import { of, throwError, Subject } from 'rxjs';
 import { EscalationSummaryComponent } from './escalation-summary.component';
 import { TaskService } from '../../../../services/task.service';
 import { BatchGateService } from '../../../../services/batch-gate.service';
@@ -76,13 +76,14 @@ function detail(over: {
 function mount(opts: {
   followUp?: string | null;
   reviews?: unknown[];
+  reviewsStream?: Subject<{ entries: unknown[] }>;
   events?: TaskTimelineEvent[];
   detail?: TaskDetail;
   continueJob?: ReturnType<typeof vi.fn>;
   batchGate?: { retryInfrastructureGate: ReturnType<typeof vi.fn>; getSettings: ReturnType<typeof vi.fn>; putSettings: ReturnType<typeof vi.fn> };
 }) {
   const taskStub = {
-    listCodeReviews: () => of({ entries: opts.reviews ?? [] }),
+    listCodeReviews: () => opts.reviewsStream ?? of({ entries: opts.reviews ?? [] }),
     readJobFile: () =>
       opts.followUp == null ? throwError(() => ({ status: 404 })) : of(opts.followUp),
     continueJob: opts.continueJob ?? vi.fn(() => of({ status: 'queued' })),
@@ -251,7 +252,7 @@ describe('EscalationSummaryComponent', () => {
     const el: HTMLElement = fixture.nativeElement;
 
     expect(el.querySelector('[data-testid="escalation-essence"]')?.textContent).toContain(
-      '1 review round (local) · latest 09.07. 19:22 pass · build and tests not proven · in develop',
+      '3 review rounds (local) · latest 09.07. 19:22 pass · build and tests not proven · in develop',
     );
     expect(el.querySelector('[data-testid="escalation-essence"]')?.textContent).not.toContain('Frontend Playwright');
     expect(el.querySelector('[data-testid="escalation-grade-documents"]')).not.toBeNull();
@@ -313,30 +314,84 @@ describe('EscalationSummaryComponent', () => {
     expect(el.querySelector('[data-testid="escalation-grade-documents"]')).toBeNull();
   });
 
-  it('places the three decisions in the panel and emits the existing triage action', () => {
-    const fixture = mount({ reviews: [] });
+  it('confirms selected findings and an owner note before emitting a reissue', () => {
+    const fixture = mount({ reviews: [], events: [{
+      ts: '2026-07-09T19:30:00Z', kind: 'orchestrator_escalated', actor: 'orchestrator',
+      summary: 'escalated', details: { findings: JSON.stringify([
+        { aspect: 'tests', verdict: 'block', reason: 'Add regression coverage' },
+        { aspect: 'quality', verdict: 'block', reason: 'Fix repeated queries' },
+      ]) },
+    }] });
     const el: HTMLElement = fixture.nativeElement;
     const emitted: unknown[] = [];
     fixture.componentInstance.triageAction.subscribe((action) => emitted.push(action));
 
     expect(el.querySelector('[data-testid="escalation-action-reissue-escalated"]')?.textContent?.trim()).toBe('Continue (reissue)');
-    expect(el.querySelector('[data-testid="escalation-action-accept-escalated"]')?.textContent?.trim()).toBe('Accept as-is');
+    expect(el.querySelector('[data-testid="escalation-action-accept-escalated"]')?.textContent?.trim()).toBe('Accept with reason');
     expect(el.querySelector('[data-testid="escalation-action-discard-escalated"]')?.textContent?.trim()).toBe('Abort');
 
     (el.querySelector('[data-testid="escalation-action-reissue-escalated"]') as HTMLButtonElement).click();
-    (el.querySelector('[data-testid="escalation-action-accept-escalated"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(emitted).toEqual([]);
+    expect(el.querySelector('[data-testid="escalation-confirm"]')).not.toBeNull();
+    const findings = el.querySelectorAll<HTMLInputElement>('.escalation-confirm__findings input');
+    expect(findings.length).toBeGreaterThan(0);
+    findings[0].click();
+    const note = el.querySelector<HTMLTextAreaElement>('[data-testid="escalation-owner-note"]')!;
+    note.value = 'Keep the fix bounded';
+    note.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="reissue-instructions-preview"]')?.textContent).toContain('Keep the fix bounded');
+    (el.querySelector('[data-testid="escalation-confirm-submit"]') as HTMLButtonElement).click();
     expect(emitted).toEqual([
-      {
-        id: 'reissue-escalated',
-        label: 'Continue (reissue)',
-        intent: { kind: 'move', targetState: '2-ready' },
-      },
-      {
-        id: 'accept-escalated',
-        label: 'Accept as-is',
-        intent: { kind: 'move', targetState: '6-completed' },
-      },
+      expect.objectContaining({
+        id: 'reissue-escalated', intent: { kind: 'move', targetState: '2-ready' },
+        reissueInstructions: expect.objectContaining({ note: 'Keep the fix bounded' }),
+      }),
     ]);
+    expect((emitted[0] as { reissueInstructions: { findings: string[] } }).reissueInstructions.findings.length)
+      .toBe(findings.length - 1);
+  });
+
+  it('offers acceptance only with a written override reason', () => {
+    const fixture = mount({ reviews: [] });
+    const el: HTMLElement = fixture.nativeElement;
+    const emitted: unknown[] = [];
+    fixture.componentInstance.triageAction.subscribe(action => emitted.push(action));
+    fixture.componentInstance.openDecision('accept-escalated');
+    fixture.detectChanges();
+    const submit = el.querySelector<HTMLButtonElement>('[data-testid="escalation-confirm-submit"]')!;
+    expect(submit.disabled).toBe(true);
+    const note = el.querySelector<HTMLTextAreaElement>('[data-testid="escalation-owner-note"]')!;
+    note.value = 'Owner accepts the documented review gap.';
+    note.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(submit.disabled).toBe(false);
+    submit.click();
+    expect(emitted).toEqual([expect.objectContaining({
+      id: 'accept-escalated', operatorOverride: true,
+      reason: 'Owner accepts the documented review gap.',
+    })]);
+  });
+
+  it('waits for review findings before allowing a reissue', () => {
+    const reviewsStream = new Subject<{ entries: unknown[] }>();
+    const fixture = mount({ reviewsStream, events: [{
+      ts: '2026-07-09T19:30:00Z', kind: 'orchestrator_escalated', actor: 'orchestrator',
+      summary: 'escalated', details: { findings: JSON.stringify([
+        { aspect: 'tests', verdict: 'block', reason: 'Add regression coverage' },
+      ]) },
+    }] });
+    fixture.componentInstance.openDecision('reissue-escalated');
+    fixture.detectChanges();
+    const el: HTMLElement = fixture.nativeElement;
+    const submit = el.querySelector<HTMLButtonElement>('[data-testid="escalation-confirm-submit"]')!;
+    expect(submit.disabled).toBe(true);
+    expect(el.querySelector('[role="status"]')?.textContent).toContain('Loading review findings');
+    reviewsStream.next({ entries: [] });
+    fixture.detectChanges();
+    expect(submit.disabled).toBe(false);
+    expect(el.querySelector<HTMLInputElement>('.escalation-confirm__findings input')?.checked).toBe(true);
   });
 
   it('replaces three empty context columns with one compact message', () => {

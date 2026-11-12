@@ -699,6 +699,10 @@ public sealed class StudioBackupTests : IDisposable
         CheckoutFileFixture.Git(checkout, "update-ref", "refs/agent-studio/results/AGT-1", "HEAD");
         var studioRef = CheckoutFileFixture.Git(checkout, "rev-parse", "refs/agent-studio/results/AGT-1").Trim();
         CheckoutFileFixture.Git(checkout, "reset", "-q", "--hard", "HEAD~1");
+        File.WriteAllText(Path.Combine(checkout, "local-commit.txt"), "not pushed\n");
+        Commit(checkout, "local integration work");
+        var localCommit = CheckoutFileFixture.Git(checkout, "rev-parse", "HEAD").Trim();
+        CheckoutFileFixture.Git(checkout, "branch", "runner/local-work");
         var storage = Path.Combine(checkout, ".task-storage");
         Directory.CreateDirectory(storage);
         File.WriteAllText(Path.Combine(storage, "card.json"), "{\"id\":\"AGT-1\"}");
@@ -763,6 +767,10 @@ public sealed class StudioBackupTests : IDisposable
         var restoredCheckout = Path.Combine(targets["projects"], "app");
         Assert.Equal("app\n", File.ReadAllText(Path.Combine(restoredCheckout, "README.md")));
         Assert.Equal(studioRef, CheckoutFileFixture.Git(restoredCheckout, "rev-parse", "refs/agent-studio/results/AGT-1").Trim());
+        Assert.Equal(localCommit, CheckoutFileFixture.Git(restoredCheckout, "rev-parse", "main").Trim());
+        Assert.Equal(localCommit, CheckoutFileFixture.Git(restoredCheckout, "rev-parse", "runner/local-work").Trim());
+        Assert.Equal(localCommit, CheckoutFileFixture.Git(restoredCheckout, "rev-parse", "agt-1").Trim());
+        Assert.Equal("not pushed\n", File.ReadAllText(Path.Combine(restoredCheckout, "local-commit.txt")));
         Assert.Equal("main", CheckoutFileFixture.Git(restoredCheckout, "symbolic-ref", "--short", "HEAD").Trim());
         Assert.Equal("{\"id\":\"AGT-1\"}", File.ReadAllText(Path.Combine(restoredCheckout, ".task-storage", "card.json")));
         Assert.False(File.Exists(Path.Combine(restoredCheckout, "untracked-only-here.txt")));

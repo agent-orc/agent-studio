@@ -1,6 +1,8 @@
 import { HttpClient } from '@angular/common/http';
-import { ChangeDetectionStrategy, Component, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
+import { DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import type { OneShotClaimRouteCondition, RemoteHost } from '../../models/remote-host.model';
 import { StatusIndicatorComponent, type StatusTone } from '../../../../components/status-indicator/status-indicator.component';
 
 interface ExecutionInfrastructure {
@@ -17,15 +19,27 @@ interface ExecutionInfrastructure {
 interface GateCapacity { slots: number; processorsPerGate: number; hostCores: number | null;
   allowOversubscription: boolean }
 
+export interface OneShotRouteReport { hostId: string; hostName: string; route: OneShotClaimRouteCondition }
+
+/** Live hosts whose runner reported the one shot claim route condition, oldest report first. */
+export function oneShotRouteReports(hosts: readonly RemoteHost[]): OneShotRouteReport[] {
+  return hosts
+    .filter(host => host.status !== 'retired' && host.oneShotClaimRoute)
+    .map(host => ({ hostId: host.id, hostName: host.name, route: host.oneShotClaimRoute! }))
+    .sort((a, b) => Date.parse(a.route.firstSeenAt) - Date.parse(b.route.firstSeenAt));
+}
+
 /** Runtime infrastructure outside the runner client registry. */
 @Component({
-  selector: 'app-execution-infrastructure', standalone: true, imports: [StatusIndicatorComponent, FormsModule],
+  selector: 'app-execution-infrastructure', standalone: true, imports: [StatusIndicatorComponent, FormsModule, DatePipe],
   templateUrl: './execution-infrastructure.html', styleUrl: './execution-infrastructure.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ExecutionInfrastructureComponent {
   private readonly http = inject(HttpClient);
   readonly reloadToken = input(0);
+  readonly oneShotRouteReports = input<readonly OneShotRouteReport[]>([]);
+  readonly oneShotRouteReport = computed(() => this.oneShotRouteReports()[0] ?? null);
   readonly infrastructure = signal<ExecutionInfrastructure | null>(null);
   readonly error = signal(false);
   readonly draft = signal<GateCapacity | null>(null);

@@ -171,7 +171,7 @@ export class StatusBarComponent implements OnInit, OnDestroy {
   readonly reviewLane = computed(() =>
     summarizeStatusBarReviewLane(this.jobService.grouped().autoReview ?? []));
 
-  /** Post Processing cards that wait for review: the lane minus those under review. */
+  /** Cards needing a review attempt or an operator decision. */
   readonly reviewWaiting = computed(() => {
     const lane = this.reviewLane();
     return lane.waiting + lane.stalled;
@@ -194,11 +194,13 @@ export class StatusBarComponent implements OnInit, OnDestroy {
   readonly reviewLabel = computed(() => {
     const active = this.reviewActiveSlots();
     const waiting = this.reviewWaiting();
-    if (active === 0 && waiting === 0) return 'review idle';
+    const integration = this.reviewLane().integration;
+    const integrationLabel = integration > 0 ? ` · ${integration} awaiting integration` : '';
+    if (active === 0 && waiting === 0) return `review idle${integrationLabel}`;
     const ceiling = this.slotsByRole().review.ceiling;
     const activeLabel = ceiling !== null ? `${active}/${ceiling}` : `${active}`;
-    if (waiting > 0) return `review ${activeLabel} · ${waiting} waiting`;
-    return `review ${activeLabel}`;
+    if (waiting > 0) return `review ${activeLabel} · ${waiting} waiting${integrationLabel}`;
+    return `review ${activeLabel}${integrationLabel}`;
   });
 
   /** Tooltip for the review plane item. */
@@ -251,12 +253,9 @@ export class StatusBarComponent implements OnInit, OnDestroy {
 
   readonly projectCount = computed(() => this.projectNames().length || Object.keys(this.jobService.runnerStatus().projects).length);
 
-  readonly activeFallback = computed(() => {
-    for (const project of Object.values(this.jobService.runnerStatus().projects)) {
-      if (project.activeJobId && project.quotaFallbackModel) return project;
-    }
-    return null;
-  });
+  /** Count every project whose active run is on a quota fallback. */
+  readonly fallbackCount = computed(() => Object.values(this.jobService.runnerStatus().projects)
+    .filter(project => project.activeJobId && project.quotaFallbackModel).length);
 
   ngOnInit(): void {
     this.remoteHosts.refresh();

@@ -575,6 +575,8 @@ builder.Services.AddSingleton<TaskSessionLog>();
 builder.Services.AddSingleton<TimelineLog>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.OperatorCandidateAuditRepair>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Pipeline.OperatorCandidateAuditRepair>());
+builder.Services.AddSingleton<AgentStudio.Pipeline.PublishedGateEvidenceBackfill>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Pipeline.PublishedGateEvidenceBackfill>());
 builder.Services.AddSingleton<ProjectThroughputService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateSlotUsageTracker>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.GateCapacitySettings(
@@ -1182,8 +1184,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.WikiLearningsPostStepRunner>(
 builder.Services.AddSingleton<AgentStudio.Pipeline.AgentsWikiSyncPostStepRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IManagedProjectArtifactCommitService,
     AgentStudio.Pipeline.ManagedProjectArtifactCommitService>();
-builder.Services.AddSingleton<AgentStudio.Pipeline.IConceptWorkbenchPublisher,
-    AgentStudio.Pipeline.ConceptWorkbenchPublisher>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.ConceptDeliveryPostSteps>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ConceptPromotionService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.OnDemandPostStepService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.WikiTaskCrossReferenceService>();

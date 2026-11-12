@@ -87,6 +87,7 @@ function evidenceDir(testInfo: TestInfo): string {
 }
 
 async function mockStudio(page: Page, currentEntries: () => readonly FeedEntry[], ownerEntries: readonly object[] = []): Promise<void> {
+  await page.route('**/healthz', route => route.fulfill({ json: { status: 'ok' } }));
   await page.route('**/update/status', route => route.fulfill({
     json: { phase: 'idle', isRunning: false, behindBy: 0 },
   }));
@@ -259,7 +260,7 @@ test('Owner actions show accepted, refused and decided records by day in light, 
   await page.screenshot({ path: join(evidenceDir(testInfo), 'owner-actions-390px.png'), fullPage: true });
 });
 
-test('status-bar Feed focuses the workspace tab and clears the Activity badge', async ({ page }, testInfo) => {
+test('Activity shortcut focuses the workspace tab and clears its badge', async ({ page }, testInfo) => {
   const entries = buildEntries().slice(0, 3);
   await page.addInitScript(() => {
     localStorage.setItem('atp.orchestrator-feed.alerts-seen-at', '2026-01-01T00:00:00Z');
@@ -269,23 +270,65 @@ test('status-bar Feed focuses the workspace tab and clears the Activity badge', 
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await dismissDevErrorDialog(page);
 
-  const statusFeed = page.getByTestId('status-bar-feed');
-  await expect(statusFeed).toHaveAttribute('aria-pressed', 'false');
+  const activityShortcut = page.getByTestId('studio-ab-activity');
+  await expect(activityShortcut).not.toHaveAttribute('aria-current', 'page');
   await expect(page.getByTestId('studio-ab-badge-activity')).toHaveText('3');
-  await statusFeed.click();
+  await activityShortcut.click();
 
   await expect(page).toHaveURL(/#\/feed$/);
   await expect(page.getByTestId('studio-tab-feed')).toContainText('Activity across projects');
   await expect(page.getByTestId('orchestrator-feed')).toHaveAttribute('data-mode', 'embedded');
   await expect(page.locator('app-project-overlays app-orchestrator-feed')).toHaveCount(0);
-  await expect(statusFeed).toHaveAttribute('aria-pressed', 'true');
+  await expect(activityShortcut).toHaveAttribute('aria-current', 'page');
   await expect(page.getByTestId('studio-ab-badge-activity')).toHaveCount(0);
 
-  await statusFeed.click();
+  await activityShortcut.click();
   await expect(page).toHaveURL(/#\/feed$/);
   await expect(page.getByTestId('studio-tab-feed')).toHaveCount(1);
   await expect(page.locator('app-project-overlays app-orchestrator-feed')).toHaveCount(0);
-  await page.screenshot({ path: join(evidenceDir(testInfo), 'status-bar-feed-tab.png'), fullPage: false });
+  await page.screenshot({ path: join(evidenceDir(testInfo), 'activity-shortcut-tab.png'), fullPage: false });
+});
+
+test('Activity alert names lanes, exposes its next step, and keeps the message readable', async ({ page }, testInfo) => {
+  const message = '5-human-review drain rate is 0/h with 7 queued; review acceptance and integration are waiting';
+  const entry: FeedEntry = { ...buildEntries()[0], summary: message, jobId: 'AGT-3645',
+    topic: 'watcher-finding-raised', reasoning: null };
+  await mockStudio(page, () => [{ ...entry, stall: {
+    subject: 'card:AGT-3645:5-human-review', severity: 'warning', sinceUtc: entry.ts,
+    blockedCount: 1, affectedCards: ['AGT-3645'],
+    suggestedAction: 'Open the card and decide acceptance or integration.', evidence: {},
+  } }]);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/#/feed', { waitUntil: 'domcontentloaded' });
+  await dismissDevErrorDialog(page);
+  // The mocked shell can mount an empty global error dialog while unrelated
+  // polling endpoints settle. Keep it out of Activity visual evidence.
+  await page.addStyleTag({ content: 'app-error-dialog { display: none !important; }' });
+  await setTheme(page, 'light');
+  const summary = page.getByTestId('orchestrator-entry-summary');
+  await expect(summary).toContainText('Human review drain rate');
+  const visibleSixty = await summary.evaluate(element => {
+    const text = element.firstChild;
+    if (!text) return false;
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, Math.min(60, text.textContent?.length ?? 0));
+    return range.getBoundingClientRect().right <= element.getBoundingClientRect().right + 1;
+  });
+  expect(visibleSixty).toBe(true);
+  const action = page.getByTestId('orchestrator-suggested-action');
+  await expect(action.getByRole('button', { name: 'Open the card and decide acceptance or integration.' })).toBeVisible();
+  const output = evidenceDir(testInfo);
+  await page.screenshot({ path: join(output, 'activity-1280-light--mocked.png') });
+  await setTheme(page, 'dark');
+  await page.screenshot({ path: join(output, 'activity-1280-dark--mocked.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(summary).toHaveCSS('white-space', 'normal');
+  await summary.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'nearest' }));
+  const wrappedLines = await summary.evaluate(element =>
+    element.getBoundingClientRect().height / parseFloat(getComputedStyle(element).lineHeight));
+  expect(wrappedLines).toBeGreaterThan(1);
+  await page.screenshot({ path: join(output, 'activity-390-dark--mocked.png') });
 });
 
 test('Feed main view: route, Activity icon, fresh-alert badge, windowing, live stability, and responsive themes', async ({ page }, testInfo) => {
@@ -356,7 +399,6 @@ test('Feed main view: route, Activity icon, fresh-alert badge, windowing, live s
     'orchestrator-entry-project',
     'orchestrator-entry-kind',
     'orchestrator-entry-summary',
-    'orchestrator-entry-context',
     'orchestrator-entry-disclosure',
   ]) {
     const boxes = await Promise.all(eventKinds.map(kind =>
@@ -371,6 +413,7 @@ test('Feed main view: route, Activity icon, fresh-alert badge, windowing, live s
       expect(Math.abs(box!.width - boxes[0]!.width), `${testId} width`).toBeLessThanOrEqual(1);
     }
   }
+  await expect(page.getByTestId('orchestrator-entry-context').first()).toBeHidden();
 
   const globalStatus = page.getByTestId('global-orchestrator-status');
   await expect(globalStatus).toContainText('Scope All projects');
@@ -418,7 +461,7 @@ test('Feed main view: route, Activity icon, fresh-alert badge, windowing, live s
     page.getByTestId('orchestrator-feed-detail').boundingBox(),
   ]);
   if (!filters || !stream || !detail) throw new Error('Feed panes did not render');
-  expect(stream.x).toBeGreaterThan(filters.x + filters.width - 4);
+  expect(stream.y).toBeGreaterThanOrEqual(filters.y + filters.height - 4);
   expect(detail.x).toBeGreaterThan(stream.x + stream.width - 4);
 
   await renderedEntries.nth(20).click();
