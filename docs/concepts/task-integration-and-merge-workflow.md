@@ -539,6 +539,17 @@ now a no-op integration:
   this project-level evidence, so a single-parent net-change publication keeps
   its gate on the exact published SHA. A net-change publication whose green
   gate did not pass on that exact commit is rolled back with `gate-unavailable`.
+  The per-task fallback (a card handed off from the batch gate, lane reason
+  `per-task-fallback`) publishes through the same inline push and records the
+  same entry, tree SHA equal to the published SHA; a red, cancelled or
+  missing-source gate records nothing (AGT-3747). Publications made before that
+  ordering held are repaired once at startup by `PublishedGateEvidenceBackfill`:
+  it adds an entry only from a card's own executed `pre-develop-build-gate-*.log`
+  receipt with verdict `Ok`, `test-level=full` and a run full suite, whose
+  expected and tested SHA are a commit on the first-parent line of the
+  published branch. Such an entry carries `backfilled: true` and `gateLog`
+  (`<card>/post-steps/<log>`); the repair is idempotent and never overwrites an
+  existing entry. Containment alone still creates no evidence.
   Acceptance also counts a passed full-suite batch base verdict as the gate of
   its base commit when its gate profile digest matches the current project
   profile, its evidence file exists, and that commit is on the first-parent

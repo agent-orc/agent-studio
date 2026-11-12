@@ -10,6 +10,7 @@ import {
 } from '@angular/core';
 
 import { TaskState } from '../../../../models/task.model';
+import { CdkTrapFocus } from '@angular/cdk/a11y';
 import type { TaskDetail, TaskInfo } from '../../../../models/task.model';
 import { CodeReviewListEntry, TaskService } from '../../../../services/task.service';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
@@ -57,6 +58,7 @@ import {
     EscalationDetailsComponent,
     DisclosureMarkerComponent,
     GateQueueReleaseComponent,
+    CdkTrapFocus,
   ],
   templateUrl: './escalation-summary.component.html',
   styleUrl: './escalation-summary.component.scss',
@@ -69,6 +71,24 @@ export class EscalationSummaryComponent {
   readonly answerDraft = signal('');
   readonly answering = signal(false);
   readonly answerError = signal<string | null>(null);
+  readonly decisionDialog = signal<'reissue' | 'accept' | null>(null);
+  readonly codeReviewsLoaded = signal(false);
+  readonly ownerNote = signal('');
+  readonly selectedFindingIds = signal<ReadonlySet<string>>(new Set());
+  private selectionTouched = false;
+  readonly selectedFindings = computed(() => this.view().gateItems
+    .filter(item => this.selectedFindingIds().has(item.id))
+    .map(item => (item.detail ? `${item.text}: ${item.detail}` : item.text)
+      .replace(/\s+/g, ' ').trim().slice(0, 500))
+    .slice(0, 12));
+  readonly instructionsPreview = computed(() => [
+    '# Operator reissue instructions',
+    '',
+    ...(this.selectedFindings().length ? ['Selected escalation findings:',
+      ...this.selectedFindings().map(item => `- [ ] ${item}`)] : []),
+    ...(this.ownerNote().trim() ? ['', 'Owner note:',
+      this.selectedFindings().length ? this.ownerNote().trim() : `- [ ] ${this.ownerNote().trim()}`] : []),
+  ].join('\n'));
 
   /** The three terminal operator choices shown beside NEEDS DECISION. */
   readonly decisionActions = computed(() =>
@@ -120,15 +140,20 @@ export class EscalationSummaryComponent {
       if (info.id === this.fetchedJobId) return;
       this.fetchedJobId = info.id;
       this.codeReviews.set([]);
+      this.codeReviewsLoaded.set(false);
       this.followUpMarkdown.set(null);
 
       this.jobs.listCodeReviews(info.id, info.watchPath).subscribe({
         next: (resp) => {
           if (this.fetchedJobId !== info.id) return;
           this.codeReviews.set(resp.entries ?? []);
+          this.codeReviewsLoaded.set(true);
+          if (this.decisionDialog() === 'reissue' && !this.selectionTouched) this.seedSelectedFindings();
         },
         error: () => {
-          /* leave empty; the verdict head hides when there is nothing to show */
+          if (this.fetchedJobId !== info.id) return;
+          this.codeReviewsLoaded.set(true);
+          if (this.decisionDialog() === 'reissue' && !this.selectionTouched) this.seedSelectedFindings();
         },
       });
 
@@ -229,7 +254,54 @@ export class EscalationSummaryComponent {
   /** Route inline decisions through the detail view's existing triage pipeline. */
   triggerDecision(action: TriageButton): void {
     if (this.mutationsBlocked() || this.triageActingId() !== null) return;
+    if (action.id === 'reissue-escalated' || action.id === 'accept-escalated') {
+      this.openDecision(action.id);
+      return;
+    }
     this.triageAction.emit({ id: action.id, label: action.label, intent: action.intent });
+  }
+
+  openDecision(id: string): void {
+    if (this.mutationsBlocked() || this.triageActingId() !== null) return;
+    this.ownerNote.set('');
+    this.selectionTouched = false;
+    this.seedSelectedFindings();
+    this.decisionDialog.set(id === 'reissue-escalated' ? 'reissue' : 'accept');
+  }
+
+  private seedSelectedFindings(): void {
+    this.selectedFindingIds.set(new Set(this.view().gateItems
+      .filter(item => !item.checked).slice(0, 12).map(item => item.id)));
+  }
+
+  toggleFinding(id: string, selected: boolean): void {
+    this.selectionTouched = true;
+    const next = new Set(this.selectedFindingIds());
+    if (selected && next.size >= 12) return;
+    if (selected) next.add(id); else next.delete(id);
+    this.selectedFindingIds.set(next);
+  }
+
+  updateOwnerNote(event: Event): void {
+    this.ownerNote.set((event.target as HTMLTextAreaElement).value);
+  }
+
+  confirmDecision(): void {
+    const mode = this.decisionDialog();
+    const note = this.ownerNote().trim();
+    if (!mode || this.mutationsBlocked()) return;
+    if (mode === 'reissue') {
+      if (!this.codeReviewsLoaded() || (!this.selectedFindings().length && !note)) return;
+      this.triageAction.emit({ id: 'reissue-escalated', label: 'Continue (reissue)',
+        intent: { kind: 'move', targetState: TaskState.Ready },
+        reissueInstructions: { findings: this.selectedFindings(), note } });
+    } else {
+      if (note.length < 8) return;
+      this.triageAction.emit({ id: 'accept-escalated', label: 'Accept with reason',
+        intent: { kind: 'move', targetState: TaskState.Completed },
+        operatorOverride: true, reason: note });
+    }
+    this.decisionDialog.set(null);
   }
 
 }

@@ -10,6 +10,7 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { TaskInfo, TaskState, type ConceptDossierSummary } from '../../../../models/task.model';
+import { laneName } from '../../../../models/lane-presentation';
 import { NotificationService } from '../../../../services/notification.service';
 import { studioProjectSlug } from '../../../../services/studio-project-slug.util';
 import { TaskService } from '../../../../services/task.service';
@@ -48,6 +49,19 @@ export class ConceptDossierNoticeComponent {
     const base = `#/projects/${studioProjectSlug(this.job().projectName)}`;
     return this.dossierId() ? `${base}/workbenches/${encodeURIComponent(this.dossierId()!)}`
       : `${base}/wiki?page=${encodeURIComponent(path)}`;
+  });
+  readonly published = computed(() => this.job().mode !== 'concept'
+    || this.job().integration?.status === 'integrated'
+    || !!this.dossierId());
+  readonly publicationStage = computed(() => {
+    switch (this.job().integration?.status) {
+      case 'merged-locally': return 'Merged locally';
+      case 'partial': return 'Partially integrated';
+      case 'pending': return 'Awaiting integration';
+      case 'conflict-skipped': return 'Integration conflict';
+      case 'no-branch': return 'No delivery ref';
+      default: return laneName(this.job().state);
+    }
   });
   readonly eligibleLane = computed(() =>
     this.job().state === TaskState.HumanReview || this.job().state === TaskState.Completed);

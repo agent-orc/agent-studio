@@ -102,6 +102,20 @@
           }</ul>
         } @else { <p>No cards are waiting for a batch.</p> }
       </section>
+      @if (data.perTaskGates?.length) {
+        <section aria-labelledby="batch-per-task-title" data-testid="batch-per-task-gates">
+          <h3 id="batch-per-task-title">Per-task gates ({{ data.perTaskGates?.length }})</h3>
+          <p>Each member runs a full suite as a gate slot opens. Red escalates the card; green integrates it.</p>
+          <ol class="batch-panel__per-task-gates">@for (gate of data.perTaskGates ?? []; track gate.reviewAttemptId) {
+            <li data-testid="batch-per-task-gate">
+              <strong>{{ gate.taskKey }}</strong> · {{ gate.position }} of {{ gate.total }} ·
+              @if (gate.running) { Running on {{ gate.host || 'gate host' }} since {{ date(gate.startedAtUtc) }} }
+              @else { Queued }
+              <p>{{ gate.reason }}</p>
+            </li>
+          }</ol>
+        </section>
+      }
       @if (data.detachedFlights?.length) {
         <section aria-label="Detached flights" data-testid="batch-detached-flights">
           <h3>Detached flights</h3>
@@ -140,7 +154,7 @@
                 <span [class.batch-panel__phase-current]="batch.phase === phase">{{ phaseLabel(phase) }}</span>
               }</p>
               @if (!phases.includes(batch.phase)) { <p>Phase: {{ batch.phase }}</p> }
-              <p><strong>{{ batch.phase }}</strong>@if (batch.queuePosition) { · <span data-testid="batch-queue-position">flight queue position {{ batch.queuePosition }} of {{ data.flightQueue?.length ?? batch.queuePosition }}</span> }@if (batch.phaseReason) { · {{ batch.phaseReason }} }</p>
+              <p><strong>{{ batch.phase }}</strong>@if (batch.queuePosition) { · <span data-testid="batch-queue-position">flight queue position {{ batch.queuePosition }} of {{ data.flightQueue?.length ?? batch.queuePosition }}</span> }@if (phaseReasonLabel(batch.phaseReason); as reason) { · {{ reason }} }</p>
               @if (batch.formationReason) { <p>{{ batch.formationReason }}</p> }
               @if (batch.exclusions?.length) {
                 <ul aria-label="Cards placed in another batch">
