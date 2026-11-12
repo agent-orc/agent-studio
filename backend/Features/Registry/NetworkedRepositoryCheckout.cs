@@ -41,20 +41,31 @@ public static class NetworkedRepositoryCheckout
         }
     }
 
+    /// <summary>
+    /// Deletes the checkout Studio cloned for this project. A project without a
+    /// server checkout, or whose storage has no task repository root, owns
+    /// nothing here, so project delete never fails on this step.
+    /// </summary>
     public static void RemoveIfOwned(ProjectRecord project)
     {
-        var managed = ManagedPath(project.StorageLocation, project.Id);
-        if (string.Equals(project.RepositoryPath, managed, StringComparison.Ordinal)
+        if (string.IsNullOrWhiteSpace(project.RepositoryPath)
+            || string.IsNullOrWhiteSpace(project.StorageLocation)) return;
+        var managed = TryManagedPath(project.StorageLocation, project.Id);
+        if (managed is not null
+            && string.Equals(project.RepositoryPath, managed, StringComparison.Ordinal)
             && Directory.Exists(managed))
             Directory.Delete(managed, recursive: true);
     }
 
     private static string ManagedPath(string storagePath, string projectId)
+        => TryManagedPath(storagePath, projectId)
+            ?? throw new ArgumentException("Project storage path has no task repository root.", nameof(storagePath));
+
+    private static string? TryManagedPath(string storagePath, string projectId)
     {
         // Storage lives at <task-repository>/projects/<id>/tasks. Keep Git
         // outside projects, which the task scanner treats as managed storage.
-        var root = new DirectoryInfo(storagePath).Parent?.Parent?.Parent?.FullName
-            ?? throw new ArgumentException("Project storage path has no task repository root.", nameof(storagePath));
-        return Path.Combine(root, "repository-checkouts", projectId);
+        var root = new DirectoryInfo(storagePath).Parent?.Parent?.Parent?.FullName;
+        return root is null ? null : Path.Combine(root, "repository-checkouts", projectId);
     }
 }

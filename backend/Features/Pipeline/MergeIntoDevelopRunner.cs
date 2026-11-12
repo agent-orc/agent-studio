@@ -418,7 +418,9 @@ public sealed partial class MergeIntoDevelopRunner
                 return await ConcludeAsync(
                     project, jobId, jobFolderPath, watchPath, delivery.Ref, branch, strategy,
                     MergeIntoIntegrationResult.Failed(
-                        AcceptedIntegrationFailureCodes.WorktreeUnavailable,
+                        workspace.CheckoutMissing
+                            ? AcceptedIntegrationFailureCodes.ServerCheckoutMissing
+                            : AcceptedIntegrationFailureCodes.WorktreeUnavailable,
                         workspace.Error ?? "The integration worktree is unavailable."),
                     null, null, startedAt, ct).ConfigureAwait(false);
             }

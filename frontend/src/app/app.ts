@@ -49,7 +49,7 @@ import {
   TriageController,
   LanePagerService,
   overflowActionsFor,
-  primaryActionFor,
+  primaryActionForTask,
   mergeAcceptViewFor,
   acceptanceRequiresIntegration,
   acceptanceHoldReason,
@@ -1273,7 +1273,7 @@ export class App implements OnInit, OnDestroy {
     const sel = this.selectedJob();
     return sel && sel.info.parkedBlocker?.blockerType !== 'gate-infrastructure'
       && !this.reviewerSession.reviewsOnly(sel.info.projectName)
-      ? primaryActionFor(sel.info.state) : null;
+      ? primaryActionForTask(sel.info) : null;
   });
   readonly studioTriageOverflow = computed<TriageButton[]>(() => {
     const sel = this.selectedJob();
