@@ -1052,7 +1052,11 @@ public sealed class RemoteReviewWorkspace
                                         requiredComparison.BaselineFailures,
                                         requiredComparison.BaselineExitCode,
                                         ReviewTestFailureAttribution.IsBackendTestCommand(command),
-                                        await BackendChangedAgainstBaselineAsync(command, requiredComparison.BaselineSha, ct))
+                                        await BackendChangedAgainstBaselineAsync(command, requiredComparison.BaselineSha, ct),
+                                        cleanRepeat is null
+                                            ? [execution.Process.StdOut + execution.Process.StdErr]
+                                            : [execution.Process.StdOut + execution.Process.StdErr,
+                                                cleanRepeat.Process.StdOut + cleanRepeat.Process.StdErr])
                             : null)
                             ?? (IsBuildCommand(command) && requiredComparison.BaselineExitCode != 0
                             ? new DeliveryFailureDiagnosisResult(
@@ -4020,7 +4024,8 @@ public sealed class RemoteReviewWorkspace
                     : ReviewUnattributedTestFailurePolicy.IsNonBlocking(diagnosis) ? "concerns" : "pass",
                 diagnosis.Classification,
                 string.Join("; ", diagnosis.Evidence) +
-                $"; failed-tests={string.Join(", ", comparison.InitialFailures)}" +
+                (ReviewTestFailureAttribution.IsHostCrash(diagnosis) ? "; tests-running-at-abort=" : "; failed-tests=") +
+                string.Join(", ", comparison.InitialFailures) +
                 $"; confidence={diagnosis.Confidence:0.00}; baseline={comparison.BaselineSha} ({comparison.Provenance})",
                 $"command:{command.StepId}; baseline:{comparison.BaselineSha}",
                 diagnosis.ChargesCard

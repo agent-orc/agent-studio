@@ -1298,7 +1298,9 @@ nonempty failure sets on candidate and clean repeat yield a visible
 baseline has a different failing set from the candidate. A backend test
 failure also cannot be charged to a delivery whose diff changes no file under
 `backend/`; the verdict names this attribution limit. These measured test
-failures settle as a non-blocking concern, while ordinary environment failures
+failures settle as a non-blocking concern. A test host that aborted (AGT-3755)
+fails whatever was running when it died, so those names are reported as
+`tests-running-at-abort` with the crash cause, never as new failures. Ordinary environment failures
 still use the infrastructure retry path. An unreadable diff remains
 unclassified and cannot prove a product regression. Cross-card evidence remains
 `environment`, including when a green baseline result came from the cache.
@@ -1315,6 +1317,7 @@ that verdict.
 | Baseline test result red, clean repeat has only failures named on the baseline | `IntegrationBranchDefect` with the pre-existing names | no |
 | Backend baseline test result red with a different candidate failure set | `environment` with the varying names | no |
 | Backend test red with no changed file under `backend/` | `environment` with the diff attribution reason | no |
+| Test run output says `Test Run Aborted` or `host process exited unexpectedly` | `environment`, evidence `test-host crash` with the unobserved or unhandled exception from the output; the names appear as `tests-running-at-abort` | no |
 | Baseline test command cannot produce a test result | `ReviewInfra/BaselineUnavailable` | no |
 | Same fingerprint on another card with a green baseline | `environment` | no |
 | Clean repeat green and fingerprint has known intermittent pattern or prior occurrence | `intermittent` | no |

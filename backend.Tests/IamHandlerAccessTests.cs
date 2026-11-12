@@ -1033,11 +1033,6 @@ public sealed class IamHandlerAccessTests : IDisposable
             }));
         });
         factory.Services.GetRequiredService<AccessSecurityStore>().Bootstrap(new BootstrapRequest("first.owner", Password, null));
-        // These handler assertions address cards immediately after host startup.
-        // The index publishes on a background worker, so let that first scan
-        // finish before a request can observe an empty or partially warmed board.
-        factory.Services.GetRequiredService<TaskIndexCache>()
-            .WaitForFirstPublicationAsync(CancellationToken.None).GetAwaiter().GetResult();
         return factory;
     }
 

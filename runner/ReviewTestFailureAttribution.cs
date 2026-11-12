@@ -1,10 +1,13 @@
+using System.Text.RegularExpressions;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
 /// <summary>Evidence required to charge a backend test failure to a delivery.</summary>
-internal static class ReviewTestFailureAttribution
+internal static partial class ReviewTestFailureAttribution
 {
+    internal const string HostCrashEvidence = "test-host crash: ";
+
     internal static bool IsTestCommand(ReviewCommandDto command)
     {
         var invocation = (command.FileName + " " + string.Join(' ', command.Arguments))
@@ -33,8 +36,16 @@ internal static class ReviewTestFailureAttribution
         IReadOnlyList<string> baseline,
         int baselineExitCode,
         bool backendTest,
-        bool? backendChanged)
+        bool? backendChanged,
+        IReadOnlyList<string>? runOutputs = null)
     {
+        // AGT-3755: an aborted test host fails whatever was running when it
+        // died; those names say nothing about the delivery.
+        if (runOutputs?.FirstOrDefault(TestHostAborted) is { } crashed)
+            return Environment(HostCrashEvidence
+                + "the test host process aborted; "
+                + (CrashCause(crashed) is { } cause ? $"cause: {cause}. " : "no unobserved exception in the output. ")
+                + "The tests running at the abort are not new failures of this delivery.");
         if (backendTest && backendChanged is null)
             return new DeliveryFailureDiagnosisResult(
                 DeliveryFailureDiagnosis.FirstOccurrence, 0.2,
@@ -50,6 +61,23 @@ internal static class ReviewTestFailureAttribution
 
         return null;
     }
+
+    internal static bool TestHostAborted(string output)
+        => AbortedHost().IsMatch(output);
+
+    /// <summary>The first exception line a crash handler wrote, for example <c>[UnobservedTaskException] System.X: message</c>.</summary>
+    internal static string? CrashCause(string output)
+        => CrashLine().Match(output) is { Success: true } match ? match.Groups["cause"].Value.Trim() : null;
+
+    internal static bool IsHostCrash(DeliveryFailureDiagnosisResult? diagnosis)
+        => diagnosis?.Evidence.Any(item => item.StartsWith(
+            ReviewUnattributedTestFailurePolicy.EvidencePrefix + HostCrashEvidence, StringComparison.Ordinal)) == true;
+
+    [GeneratedRegex(@"Test Run Aborted|host process exited unexpectedly", RegexOptions.IgnoreCase)]
+    private static partial Regex AbortedHost();
+
+    [GeneratedRegex(@"\[(?:UnobservedTaskException|UnhandledException)\](?:\s+terminating=\w+)?\s+(?<cause>[\w.]+(?:Exception|Error)\b[^\r\n]*)")]
+    private static partial Regex CrashLine();
 
     private static bool Same(IReadOnlyList<string> left, IReadOnlyList<string> right)
         => left.ToHashSet(StringComparer.Ordinal).SetEquals(right);

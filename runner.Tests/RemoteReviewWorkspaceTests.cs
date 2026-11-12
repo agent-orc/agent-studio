@@ -274,6 +274,36 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public void Aborted_test_host_is_a_crash_not_new_failures_of_the_delivery()
+    {
+        string[] running = ["AgentStudio.Tests.IamHandlerAccessTests.Project_viewer_cannot_read_workspace_quota_auto_review_or_host_state"];
+        const string output = """
+            [UnobservedTaskException] System.ObjectDisposedException: Cannot access a disposed object.
+               at AgentStudio.Pipeline.BatchGatePilotService.ConfiguredGateSlots()
+            The active test run was aborted. Reason: Test host process crashed
+            Test Run Aborted. The active Test Run was aborted because the host process exited unexpectedly.
+            Total tests: Unknown
+            """;
+        Assert.True(ReviewTestFailureAttribution.TestHostAborted(output));
+        Assert.False(ReviewTestFailureAttribution.TestHostAborted("Failed!  - Failed: 1, Passed: 9"));
+        var diagnosis = ReviewTestFailureAttribution.Diagnose(
+            running, running, [], baselineExitCode: 0,
+            backendTest: true, backendChanged: true, runOutputs: ["Passed!", output]);
+        var comparison = BaselineComparison.Create(new string('a', 40), [], running,
+            cacheHit: false, baselineExitCode: 0) with { Diagnosis = diagnosis };
+
+        var verdict = RemoteReviewWorkspace.BaselineVerdict(BaselineCommand("exit 1"), comparison);
+
+        Assert.Equal("concerns", verdict.Status);
+        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
+        Assert.Contains("test-host crash", verdict.Summary, StringComparison.Ordinal);
+        Assert.Contains("System.ObjectDisposedException: Cannot access a disposed object.", verdict.Summary, StringComparison.Ordinal);
+        Assert.Contains("tests-running-at-abort=" + running[0], verdict.Summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("failed-tests=", verdict.Summary, StringComparison.Ordinal);
+        Assert.Equal("none", verdict.Missing);
+    }
+
+    [Fact]
     public void Frontend_only_delivery_cannot_be_charged_for_a_red_backend_test()
     {
         string[] failure = ["AgentStudio.Tests.IamHandlerAccessTests.Change_project_requires_write_permission_and_a_non_product_role_in_the_destination"];
