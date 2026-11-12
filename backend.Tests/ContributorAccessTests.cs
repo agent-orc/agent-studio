@@ -36,6 +36,8 @@ public sealed class ContributorAccessTests : IDisposable
         { "GET", "/api/projects/PROJ-1/visual-evidence", null, false, true },
         { "POST", "/api/tasks", null, false, true },
         { "PUT", "/api/tasks/card/title", TaskStates.Backlog, false, true },
+        { "PUT", "/api/tasks/card/state", TaskStates.HumanReview, false, true },
+        { "PUT", "/api/tasks/card/state", TaskStates.Progress, false, false },
         { "PUT", "/api/tasks/card/files/prompt.md", TaskStates.Ready, false, true },
         { "POST", "/api/tasks/card/preview-comments", TaskStates.HumanReview, false, true },
         { "POST", "/api/runner/PROJ-1/orchestrator-chat", null, false, true },
@@ -211,6 +213,22 @@ public sealed class ContributorAccessTests : IDisposable
         var owner = store.Bootstrap(new BootstrapRequest("owner.account", "owner password phrase!", null));
         var invite = store.InviteUser(new InviteUserRequest("product.user", "Product User", StudioRoles.Contributor, [project]));
         var product = store.AcceptInvitation(new AcceptInvitationRequest(invite.Token, "new product password!"));
+
+        foreach (var (method, route) in new[]
+        {
+            (HttpMethod.Post, "move"), (HttpMethod.Put, "state"),
+        })
+        {
+            using var refusal = await SendAsync(method, $"/api/tasks/{taskKey}/{route}",
+                product.SessionToken, product.CsrfToken,
+                new { targetState = TaskStates.Ready, watchPath = projectPath });
+            Assert.Equal(HttpStatusCode.Forbidden, refusal.StatusCode);
+            var body = await refusal.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("product-move-forbidden", body.GetProperty("code").GetString());
+            Assert.Equal(
+                "Your role can accept this card but cannot move it back to Ready; ask a project Admin or Owner to send it back.",
+                body.GetProperty("message").GetString());
+        }
 
         foreach (var route in new[] { "conversation", "Conversation", "CONVERSATION" })
         {

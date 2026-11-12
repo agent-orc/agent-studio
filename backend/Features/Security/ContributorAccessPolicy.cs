@@ -113,6 +113,8 @@ public static class ContributorAccessPolicy
         {
             if (path.EndsWith("/release", StringComparison.OrdinalIgnoreCase))
                 return canApproveProduction;
+            if (path.EndsWith("/state", StringComparison.OrdinalIgnoreCase))
+                return cardState is (TaskStates.Backlog or TaskStates.Ready or TaskStates.HumanReview);
             if (cardState is not (TaskStates.Backlog or TaskStates.Ready)) return false;
             return path.EndsWith("/title", StringComparison.OrdinalIgnoreCase)
                 || path.EndsWith("/tags", StringComparison.OrdinalIgnoreCase)
