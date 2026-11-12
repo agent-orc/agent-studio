@@ -186,7 +186,7 @@ public static class RoutePermissionCatalog
         AddProjectChecked("R", IamPermissions.ProjectRead, "/api/integrations/quality-studio/status",
             "/api/integrations/quality-studio/open");
         Add("*", IamPermissions.Anonymous, "/healthz/**");
-        Add("R", IamPermissions.Anonymous, "/api/auth/status", "/recovery");
+        Add("R", IamPermissions.Anonymous, "/api/auth/status", "/api/auth/invite/preview", "/recovery");
         Add("POST", IamPermissions.Anonymous,
             "/api/auth/bootstrap", "/api/auth/login", "/api/auth/invite/accept", "/api/auth/runner-enroll",
             "/api/auth/passkeys/assertion-options");

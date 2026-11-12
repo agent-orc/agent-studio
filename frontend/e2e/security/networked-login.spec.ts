@@ -223,6 +223,12 @@ test('one-time Product invitation lets the recipient choose a password', async (
     status: 200, contentType: 'application/json',
     body: JSON.stringify({ bootstrapRequired: false, authenticated: false, user: null }),
   }));
+  await page.route('**/api/v1/studio/auth/invite/preview?*', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ username: 'product', displayName: 'Product User', inviter: 'Owner',
+      role: 'Product', projects: ['Assigned project'], expiresAt: '2026-11-12T09:00:00Z',
+      secondFactorRequired: false }),
+  }));
   await page.route('**/api/v1/studio/auth/invite/accept', route => {
     expect(route.request().postDataJSON()).toEqual({ token: 'sti_inv_example', newPassword: 'product password long enough' });
     return route.fulfill({
@@ -234,9 +240,12 @@ test('one-time Product invitation lets the recipient choose a password', async (
   });
   await page.goto('/?invite=sti_inv_example');
   await expect(page.getByRole('heading', { name: 'Accept invitation' })).toBeVisible();
+  await expect(page.getByTestId('invitation-context')).toContainText('Owner invited Product User (product) to Assigned project as Product');
   await page.screenshot({ path: path.join(resultDir, 'product-invitation.png'), fullPage: true });
   await page.getByLabel('New password').fill('product password long enough');
-  await page.getByRole('button', { name: 'Join project' }).click();
+  await page.getByRole('button', { name: 'Accept invitation' }).click();
+  await expect(page.getByRole('heading', { name: 'Set up a second factor' })).toBeVisible();
+  await page.getByTestId('factor-skip').click();
   await expect(page.getByTestId('auth-gate')).toHaveCount(0);
   await expect(page).toHaveURL(/\/#\/board$/);
   expect(new URL(page.url()).search).toBe('');
