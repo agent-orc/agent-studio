@@ -32,6 +32,7 @@ public sealed class PersonaActivationStoreTests : IDisposable
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _root,
+            ["Secrets:KeyFile"] = _root + ".kek",
             ["Security:Profile"] = "networked",
         }).Build();
         _security = new AccessSecurityStore(config, NullLogger<AccessSecurityStore>.Instance, _clock);
@@ -82,6 +83,10 @@ public sealed class PersonaActivationStoreTests : IDisposable
             new ScopeComparer());
         Assert.Equal(["observe", "persona.item.publish", "persona.report.publish", "persona.proposal.draft", "persona.decision.request"],
             activation.Operations);
+        Assert.Equal(Warden, activation.RoleId);
+        var principal = _security.FindPersonaPrincipal(Workspace, Warden)!;
+        Assert.Equal(Warden, principal.PersonaRoleId);
+        Assert.Equal(["alpha"], Assert.Single(_security.ListStandingGrants(principal.Id)).Scope.Projects);
         // The step-up is single use.
         Assert.Equal("step-up-required", Refused(() =>
             store.Activate(Workspace, "cost-controller", new PersonaActivateRequest(), owner)).Code);
@@ -277,5 +282,6 @@ public sealed class PersonaActivationStoreTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, true);
+        File.Delete(_root + ".kek");
     }
 }

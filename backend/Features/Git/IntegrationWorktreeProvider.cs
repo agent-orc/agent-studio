@@ -71,8 +71,11 @@ public sealed class IntegrationWorktreeProvider
         string? integrationBranch,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
-            return IntegrationWorktreeResolution.Failed("Could not resolve the project repository for the integration worktree.");
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
+            || !Directory.Exists(Path.Combine(repoRoot, ".git"))
+                && !File.Exists(Path.Combine(repoRoot, ".git")))
+            return IntegrationWorktreeResolution.Failed(
+                "This project needs a server checkout before delivery can integrate. Integration worktree preparation cannot continue. Open Project Settings, configure a checkout on the Studio server, then retry integration.");
         if (cancellationToken.IsCancellationRequested)
             return IntegrationWorktreeResolution.Failed("Integration worktree preparation was cancelled.");
 

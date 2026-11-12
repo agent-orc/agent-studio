@@ -51,6 +51,7 @@ function detail(over: {
   return {
     info: {
       id: over.id ?? 'AGT-1994',
+      projectName: 'Agent Studio',
       watchPath: '/ws',
       state: over.state ?? '5e-escalated',
       orchestratorVerdict: over.orchestratorVerdict ?? 'escalate',
@@ -169,6 +170,24 @@ describe('EscalationSummaryComponent', () => {
     expect(retryReview).toHaveBeenCalledWith('/api/tasks/AGT-1994/review/retry', null, expect.anything());
     expect(root.querySelector('[data-testid="review-retry-message"]')?.textContent)
       .toContain('fresh review attempt');
+  });
+
+  it('directs a missing server checkout to setup without offering reissue', () => {
+    const blocked = detail();
+    blocked.info.integration = {
+      status: 'pending', integrationBranch: 'main', deliveryRef: null, sha: null,
+      detail: 'Delivery could not integrate.', failure: {
+        reason: 'This project needs a server checkout before delivery can integrate.',
+      },
+    } as TaskDetail['info']['integration'];
+    const fixture = mount({ detail: blocked });
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('[data-testid="server-checkout-remedy"]')?.textContent)
+      .toContain('checkout on the Studio server');
+    const links = el.querySelectorAll('[data-testid="server-checkout-remedy"] a');
+    expect(links[0]?.getAttribute('href')).toBe('/#/projects/agent-studio/settings');
+    expect(links[1]?.getAttribute('href')).toContain('networked-task-server.md#project-checkouts');
+    expect(el.querySelector('[data-testid="escalation-action-reissue-escalated"]')).toBeNull();
   });
 
   it('puts the latest ended attempt in the header and leaves the reason to the park panel', () => {

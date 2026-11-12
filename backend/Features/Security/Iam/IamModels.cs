@@ -109,6 +109,7 @@ public static class ServiceAccountOrigins
     /// the Owner starts and renews. It holds no <c>sat.*</c> token.
     /// </summary>
     public const string OperatorAgent = "operator-agent";
+    public const string Persona = "persona";
 }
 
 /// <summary>A non-human principal with its own API tokens, scopes, expiry, and revocation.</summary>
@@ -127,6 +128,11 @@ public sealed record ServiceAccount
     public List<OperatorAgentSession>? Sessions { get; init; }
     /// <summary><see cref="ServiceAccountPurposes.KillSwitchDrill"/> for a drill's test principal; <c>null</c> otherwise.</summary>
     public string? Purpose { get; init; }
+    /// <summary>The workspace and persona activation represented by a persona principal.</summary>
+    public string? PersonaWorkspaceId { get; init; }
+    public string? PersonaId { get; init; }
+    public string? PersonaRoleId { get; init; }
+    public List<string>? PersonaProjects { get; init; }
 }
 
 public static class ServiceAccountPurposes
@@ -154,6 +160,8 @@ public sealed record OperatorAgentSession
     public DateTime? LastUsedAt { get; init; }
     public DateTime? RevokedAt { get; init; }
     public string? RevokedBy { get; init; }
+    /// <summary>One platform occurrence; immutable for the life of a persona session.</summary>
+    public string? OccurrenceId { get; init; }
 }
 
 public sealed record ServiceAccountToken
@@ -169,13 +177,14 @@ public sealed record ServiceAccountToken
 
 public sealed record ServiceAccountPrincipal(
     string AccountId, string AccountName, string TokenId, string? Origin = null, string? CreatedBy = null,
-    AgentStudio.Shared.OperatorActor? Operator = null)
+    AgentStudio.Shared.OperatorActor? Operator = null, string? OccurrenceId = null,
+    string? PersonaWorkspaceId = null, string? PersonaId = null)
 {
     /// <summary>
     /// How handlers, audit records, and card timelines attribute the account's
     /// actions: the one non-human actor id <c>service-account:&lt;id&gt;</c>,
-    /// or <c>operator-agent:&lt;id&gt;/session:&lt;sid&gt;</c> for an operator
-    /// agent session.
+    /// <c>operator-agent:&lt;id&gt;/session:&lt;sid&gt;</c> for an operator agent,
+    /// or <c>persona:&lt;id&gt;/session:&lt;sid&gt;</c> for a persona occurrence.
     /// </summary>
     public string ActorId => Operator?.Actor ?? AgentStudio.Shared.TimelineActors.ServiceAccount(AccountId);
 }

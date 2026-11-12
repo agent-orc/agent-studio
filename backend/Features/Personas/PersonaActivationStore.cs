@@ -92,7 +92,11 @@ public sealed record PersonaActivationV1(
     DateTime ShadowUntil,
     DateTime? PausedAt,
     DateTime? DeactivatedAt,
-    IReadOnlyList<PersonaActivationEventV1> History);
+    IReadOnlyList<PersonaActivationEventV1> History)
+{
+    /// <summary>The catalogue or fork role used by this persona. PT-14 can create more instances of the same role.</summary>
+    public string? RoleId { get; init; }
+}
 
 public sealed record PersonaForkOverridesV1(
     string? Title,
@@ -132,8 +136,8 @@ public sealed record PersonaListResponse(string WorkspaceId, IReadOnlyList<Perso
 /// <see cref="PersonaStates.Shadow"/> for one report period. Pause, resume,
 /// deactivate, fork and adopt need the Owner; adopting into a live activation
 /// also needs a step-up, because it changes what runs. Every change goes to
-/// the IAM audit. No occurrence runs from here: principals and grants (PT-2)
-/// and scheduling (PT-3) read these records.
+/// the IAM audit. PT-2 creates its principal and grant during activation;
+/// scheduling (PT-3) reads these records. No occurrence runs from here.
 /// </summary>
 public sealed partial class PersonaActivationStore
 {
@@ -215,7 +219,8 @@ public sealed partial class PersonaActivationStore
                 descriptor, settings, attributes, allowance, scope, operations, now, owner.User.Id,
                 now + PersonaDescriptorValidator.ReportPeriod(descriptor.Cadence), null, null,
                 [.. (existing?.History ?? []), new PersonaActivationEventV1(now, owner.User.Id, "activate", PersonaStates.Shadow,
-                    revision, descriptor.Revision, digest, reason)]);
+                    revision, descriptor.Revision, digest, reason)]) { RoleId = descriptor.Id };
+            _security.ActivatePersonaPrincipal(state.WorkspaceId, activation, owner.User.Id);
             SaveLocked(state with { Activations = Replace(state.Activations, activation) });
             _security.AppendPersonaAudit(owner.User.Id, "persona.activate", state.WorkspaceId, personaId, new
             {
@@ -252,6 +257,28 @@ public sealed partial class PersonaActivationStore
             PersonaStates.Inactive => null,
             _ => activation with { State = PersonaStates.Inactive, PausedAt = null, DeactivatedAt = now },
         });
+
+    /// <summary>Emergency team stop leaves descriptor snapshots and history available for later reactivation.</summary>
+    public IReadOnlyList<string> StopAll(string workspaceId, HumanPrincipal owner)
+    {
+        _security.RequirePersonaOwner(owner);
+        lock (_gate)
+        {
+            var state = StateLocked(Workspace(workspaceId));
+            var principalIds = _security.StopAllPersonaPrincipals(state.WorkspaceId, owner.User.Id);
+            var now = Now;
+            var activations = state.Activations.Select(activation => activation.State == PersonaStates.Inactive
+                ? activation : activation with
+                {
+                    State = PersonaStates.Inactive, PausedAt = null, DeactivatedAt = now,
+                    History = [.. activation.History, new PersonaActivationEventV1(now, owner.User.Id, "stop-all",
+                        PersonaStates.Inactive, activation.ActivationRevision, activation.DescriptorRevision,
+                        activation.DescriptorDigest, "Emergency team stop")],
+                }).ToList();
+            SaveLocked(state with { Activations = activations });
+            return principalIds;
+        }
+    }
 
     /// <summary>Copies a catalogue descriptor into a custom persona of this workspace with its own revision chain.</summary>
     public PersonaForkV1 Fork(string workspaceId, string personaId, PersonaForkRequest request, HumanPrincipal owner)
@@ -346,6 +373,8 @@ public sealed partial class PersonaActivationStore
                 });
             }
             var next = state with { Activations = activations, Forks = forks };
+            if (live && ActivationOf(next, personaId) is { } updated)
+                _security.ActivatePersonaPrincipal(state.WorkspaceId, updated, owner.User.Id);
             SaveLocked(next);
             _security.AppendPersonaAudit(owner.User.Id, "persona.adopt", state.WorkspaceId, personaId, new
             {
@@ -370,6 +399,7 @@ public sealed partial class PersonaActivationStore
             var current = ActivationOf(state, personaId) is { } stored ? Project(stored, now) : throw NotActive();
             var changed = change(current, now);
             if (changed is null) return current;
+            if (action == "deactivate") _security.StopPersonaPrincipal(state.WorkspaceId, personaId, owner.User.Id, "persona deactivated");
             changed = changed with
             {
                 History = [.. current.History, new PersonaActivationEventV1(now, owner.User.Id, action, changed.State,
