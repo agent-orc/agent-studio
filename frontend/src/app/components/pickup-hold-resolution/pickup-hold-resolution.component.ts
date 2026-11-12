@@ -8,6 +8,7 @@ import { cliTypeLabel } from '../../services/format.util';
 import { RemedyNavigationService } from '../../services/remedy-navigation.service';
 import { TaskService } from '../../services/task.service';
 import { RemoteHostsService } from '../../features/remote-hosts';
+import { serverErrorMessage } from '../../utils/server-error-message';
 
 /** How one way out renders: the button that calls its API, a picker plus button, or a link. */
 type ResolutionControl = 'api' | 'runner-picker' | 'cli-picker' | 'link' | 'none';
@@ -148,12 +149,21 @@ export class PickupHoldResolutionComponent implements OnInit {
     request.subscribe({
       next: response => {
         this.pending.set(false);
+        if (this.action()?.target === 'run-intake') {
+          const verdict = response as { outcome?: string; reason?: string } | null;
+          if (verdict?.outcome !== 'Pass') {
+            this.error.set([verdict?.outcome ?? 'Unknown intake outcome', verdict?.reason].filter(Boolean).join(': '));
+            return;
+          }
+          this.notice.set([verdict.outcome, verdict.reason].filter(Boolean).join(': '));
+          return;
+        }
         const message = response && typeof response === 'object' && 'message' in response ? response.message : null;
         this.notice.set(typeof message === 'string' ? message : `${this.resolution().label}: done.`);
       },
-      error: () => {
+      error: err => {
         this.pending.set(false);
-        this.error.set(`${this.resolution().label} could not be applied.`);
+        this.error.set(serverErrorMessage(err, `${this.resolution().label} could not be applied.`));
       },
     });
   }

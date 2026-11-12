@@ -504,7 +504,7 @@ describe('buildEscalationSummaryView', () => {
     expect(view.recommendation?.kind).toBe('needs-decision');
     expect(view.reissues[0].trigger).toBe('build/test gate failed: npm test exited with 1');
     expect(view.essence.label).toBe(
-      '1 review round (local) · latest 09.07. 19:22 pass · build and tests not proven · in develop',
+      '3 review rounds (local) · latest 09.07. 19:22 pass · build and tests not proven · in develop',
     );
     // A completion-gate escalation is a logical / quality review, not a give-up.
     expect(view.escalation?.kind).toBe('needs-review');
@@ -512,7 +512,7 @@ describe('buildEscalationSummaryView', () => {
 });
 
 describe('buildEscalationEssence', () => {
-  it('falls back to "0 review rounds" plus the reason class when the task carries no review attempt at all', () => {
+  it('uses the escalation attempt count with the escalation reason when the projection is absent', () => {
     const essence = buildEscalationEssence({
       reviewProjection: null,
       codeReviews: [],
@@ -523,7 +523,7 @@ describe('buildEscalationEssence', () => {
       steering: null,
     });
     expect(essence).toEqual({
-      reviewRounds: 0,
+      reviewRounds: 3,
       latestPlane: null,
       latestOutcome: null,
       latestReceivedAt: null,
@@ -531,9 +531,21 @@ describe('buildEscalationEssence', () => {
       buildTestsSummary: null,
       deliverySummary: null,
       reasonClass: 'Reissue budget exhausted',
-      label: '0 review rounds · Reissue budget exhausted',
+      label: '3 review rounds · Reissue budget exhausted',
     });
     expect(essence.label).not.toContain('Markdown body');
+  });
+
+  it('keeps the budget round count with its reason when a partial review projection exists', () => {
+    const essence = buildEscalationEssence({
+      reviewProjection: reviewProjection({ rounds: 1 }),
+      codeReviews: [], steering: null,
+      timeline: [{ ts: '2026-11-10T10:00:00Z', kind: 'orchestrator_escalated',
+        actor: 'orchestrator', summary: 'Budget exhausted',
+        details: { attempt: '3', maxAttempts: '3' } }],
+    });
+    expect(essence.reviewRounds).toBe(3);
+    expect(essence.label).toContain('3 review rounds');
   });
 
   it('names seven remote rounds, the blocking aspect, the passing build, and the failed gate (AGT-2689)', () => {

@@ -1,4 +1,4 @@
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import type { TaskInfo } from '../../models/task.model';
@@ -7,6 +7,8 @@ import { RemoteHostsService } from '../../features/remote-hosts';
 import { TaskReferenceNavigationService } from '../../services/task-reference-navigation.service';
 import { TaskService } from '../../services/task.service';
 import { of } from 'rxjs';
+import { BatchGateService } from '../../services/batch-gate.service';
+import type { BatchGateState } from '../../models/batch-gate.model';
 
 function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
   const now = Date.now();
@@ -36,6 +38,7 @@ function task(overrides: Partial<TaskInfo> = {}): TaskInfo {
 describe('TaskLiveStatusComponent', () => {
   let fixture: ComponentFixture<TaskLiveStatusComponent>;
   const modeCalls: [string, string][] = [];
+  const batchState = signal<BatchGateState | null>(null);
 
   const navigation = { openReferenceOrNotify: vi.fn(() => true) };
 
@@ -44,6 +47,7 @@ describe('TaskLiveStatusComponent', () => {
     await TestBed.configureTestingModule({
       imports: [TaskLiveStatusComponent],
       providers: [provideZonelessChangeDetection(),
+        { provide: BatchGateService, useValue: { state: () => batchState.asReadonly(), watch: () => vi.fn() } },
         { provide: TaskService, useValue: {
           setRunnerMode: (project: string, mode: string) => {
             modeCalls.push([project, mode]);
@@ -56,6 +60,36 @@ describe('TaskLiveStatusComponent', () => {
     }).compileComponents();
     fixture = TestBed.createComponent(TaskLiveStatusComponent);
     modeCalls.length = 0;
+    batchState.set(null);
+  });
+
+  it('shows the queued and running state of a paused batch member', () => {
+    const liveStatus = { attempt: 1, activeStep: null, nextSteps: [], queue: { kind: 'review' } };
+    fixture.componentRef.setInput('task', task({ liveStatus }));
+    batchState.set({ perTaskGates: [{ taskKey: 'demo::AGT-2315', reviewAttemptId: 'r1',
+      position: 2, total: 4, batchId: 'batch-1', reason: 'batch batch-1 paused: fresh gate verdict required',
+      running: false }] } as BatchGateState);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="task-live-current"]').textContent)
+      .toContain('Per-task gate queued (2 of 4) after batch batch-1 paused: fresh gate verdict required');
+    batchState.set({ perTaskGates: [{ taskKey: 'demo::AGT-2315', reviewAttemptId: 'r1',
+      position: 1, total: 1, reason: 'planner selected a per-task gate', running: false }] } as BatchGateState);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="task-live-current"]').textContent)
+      .toContain('Per-task gate queued (1 of 1) after planner selected a per-task gate');
+    batchState.set({ perTaskGates: [{ taskKey: 'demo::AGT-2315', reviewAttemptId: 'r1',
+      position: 2, total: 4, batchId: 'batch-1', reason: 'batch batch-1 paused: fresh gate verdict required',
+      running: true, host: 'gate-01', startedAtUtc: '2026-11-10T12:00:00Z' }] } as BatchGateState);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="task-live-current"]').textContent)
+      .toContain('Per-task gate running on gate-01 since');
+    fixture.componentRef.setInput('task', task({ liveStatus: null }));
+    batchState.set({ perTaskGates: [{ taskKey: 'demo::AGT-2315', reviewAttemptId: 'r1',
+      position: 2, total: 4, batchId: 'batch-1', reason: 'batch batch-1 paused: fresh gate verdict required',
+      running: false }] } as BatchGateState);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="task-live-current"]').textContent)
+      .toContain('Per-task gate queued (2 of 4) after batch batch-1 paused: fresh gate verdict required');
   });
 
   it('shows a Ready pickup hold without a previous live run', () => {
@@ -126,6 +160,18 @@ describe('TaskLiveStatusComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Waiting for review slot · position 3');
     expect(fixture.nativeElement.textContent).toContain('Next');
     expect(fixture.nativeElement.textContent).toContain('Requirement fit');
+  });
+
+  it('does not claim the next attempt is running before any event exists', () => {
+    fixture.componentRef.setInput('variant', 'detail');
+    fixture.componentRef.setInput('task', task({
+      state: '2-ready', lastActivity: '',
+      liveStatus: { attempt: 2, activeStep: null, nextSteps: [], queue: null, latestEventAt: null },
+    }));
+    fixture.detectChanges();
+    const live = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    expect(live.textContent).not.toContain('Attempt 2');
+    expect(live.getAttribute('data-attempt')).toBeNull();
   });
 
   // AGT-3617 (playthrough AGT-3560, H1): a card held behind an open cause
@@ -336,6 +382,39 @@ describe('TaskLiveStatusComponent', () => {
     action.click();
     expect(modeCalls).toEqual([['demo', 'auto-continuous']]);
     expect(TestBed.inject(TaskService).refresh).toHaveBeenCalledWith(true);
+  });
+
+  it('shows breaker cause and end time without offering Switch to Auto', () => {
+    const reason = 'Auto-pickup is cooling down after a circuit-breaker trip (quota failure) and resumes at 2026-11-10T12:00:00.0000000Z.';
+    fixture.componentRef.setInput('task', task({
+      state: '2-ready',
+      executionLocation: {
+        state: 'no-active-execution', executionKind: 'none',
+        configuredRunnerId: 'first-run-coding', hostDisplayName: 'first-run-coding',
+      },
+      liveStatus: { attempt: 1, activeStep: null, nextSteps: [], latestEventAt: null,
+        queue: { kind: 'runner', position: 1, reasonCode: 'breaker-cooldown', reason } },
+    }));
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    expect(root.textContent).toContain('Not picked · breaker cooldown');
+    expect(root.textContent).toContain('quota failure');
+    expect(root.textContent).toContain('2026-11-10T12:00:00.0000000Z');
+    expect(root.querySelector('[data-testid="task-live-switch-auto"]')).toBeNull();
+    expect(modeCalls).toEqual([]);
+  });
+
+  it('names an integration wait without describing a review slot', () => {
+    fixture.componentRef.setInput('task', task({
+      liveStatus: { attempt: 1, activeStep: null, nextSteps: [], latestEventAt: null,
+        queue: { kind: 'review', state: 'integration', reason: 'waiting for integration recovery' } },
+    }));
+    fixture.detectChanges();
+    const root = fixture.nativeElement.querySelector('[data-testid="task-live-status"]') as HTMLElement;
+    expect(root.textContent).toContain('Waiting for delivery integration');
+    expect(root.textContent).toContain('waiting for integration recovery');
+    expect(root.textContent).not.toContain('Waiting for review slot');
   });
 
   it('keeps a card hold ahead of a runner reason', () => {

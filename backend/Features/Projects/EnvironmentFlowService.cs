@@ -1,6 +1,7 @@
 using AgentStudio.Shared;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
+using AgentStudio.Tasks;
 
 namespace AgentStudio.Projects;
 
@@ -17,7 +18,7 @@ public sealed record EnvironmentFlowSnapshot(DateTime CapturedAt, EnvironmentDai
 /// <summary>Fleet flow from the archive-inclusive task index and append-only lane ledger.</summary>
 public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineLog timeline,
     TimeProvider clock, ILogger<EnvironmentFlowService> logger, BatchGateStore batchGates,
-    AutoReviewStatusSnapshot autoReview)
+    AutoReviewStatusSnapshot autoReview, PickupHoldSweep pickupHolds)
 {
     private readonly object _cacheGate = new();
     private EnvironmentFlowSnapshot? _cached;
@@ -42,6 +43,11 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
     {
         var tasks = scanner.ScanAllAutomationJobsWithArchive()
             .Where(task => !RetiredContainerTask.IsRetired(task)).ToList();
+        var holds = pickupHolds.Sweep().ToDictionary(
+            card => TaskIdentity.CreateKey(card.WatchPath, card.JobId), card => card.Hold,
+            StringComparer.Ordinal);
+        tasks = tasks.Select(task => holds.TryGetValue(task.TaskKey, out var hold)
+            ? task with { PickupHold = hold } : task).ToList();
         var events = new Dictionary<string, IReadOnlyList<TimelineEvent>>(StringComparer.Ordinal);
         foreach (var task in tasks.Where(task => task.LastActivity >= now.AddHours(-24)
                      || task.EnteredLaneAt >= now.AddHours(-24) || task.CreatedAt >= now.Date))
@@ -185,10 +191,10 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
 
     private static string WaitReason(TaskInfo task)
     {
+        if (task.PickupHold is { } hold) return HoldReason(hold.Mechanism);
         if (task.CauseWait is not null) return "Cause hold";
         if (task.QuotaWait is not null) return "Provider quota";
         if (task.RemoteClaimFailure is not null) return "Remote claim failure";
-        if (task.PickupHold is not null) return "Pickup hold";
         return task.State switch
         {
             TaskStates.Ready => "Waiting for coding slot",
@@ -198,6 +204,17 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
             _ => "In progress",
         };
     }
+
+    private static string HoldReason(string mechanism) => mechanism switch
+    {
+        PickupHoldMechanisms.ExecutionPlacement => "Execution placement",
+        PickupHoldMechanisms.DependencyGate => "Dependency gate",
+        PickupHoldMechanisms.CrashBackoff => "Crash backoff",
+        PickupHoldMechanisms.HostCapabilityMissing => "Host capability missing",
+        PickupHoldMechanisms.DispatchRejection => "Dispatch rejection",
+        PickupHoldMechanisms.PickupPolicy => "Pickup policy",
+        _ => "Pickup hold",
+    };
 
     private static bool IsWaiting(TaskInfo task) => task.CauseWait is not null
         || task.QuotaWait is not null || task.RemoteClaimFailure is not null

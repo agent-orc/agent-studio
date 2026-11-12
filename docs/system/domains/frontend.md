@@ -81,9 +81,10 @@ renderers outside the board startup graph.
 
 ## Environment flow
 
-Environment > Installation shows a single one shot claim route status for the
-local monolith, where that Task Server route is unavailable. The runner retries
-the route every five minutes without filling its log with repeated 404 entries.
+Environment > Installation shows one one shot claim route status line only
+while a live host reports `telemetry.oneShotClaimRoute`: the oldest reporting
+host, since when, the retry interval and the operator action. Without a report
+nothing extra is shown, also on a local monolith.
 
 DP-S6 renders canary attempt rows beneath their physical host using
 `GET /api/v1/management/attempt-visibility`. Active occupancy follows the
@@ -115,6 +116,12 @@ distinct cards with a completed build/test step and the batch gate uses members
 in verified publications. Gate waiting comes from the active auto-review gate
 queue, and batch gate waiting from its pending store. Deployment card counts
 have no global attribution source yet, so that value remains unavailable.
+Ready-card waiting reasons use the pickup hold policy before aggregation, so
+execution placement and other holds count under their actual mechanism. Lane
+labels in Environment and Activity use `laneName()`; Activity alert summaries
+show affected card keys and titles when available, and a linked next step opens
+the affected card. The Activity message column remains readable at 1280 px and
+wraps on narrow screens.
 
 The view also lists application health for every declared environment from
 `GET /api/environment/health`: status, uptime over 24 hours, 7 days and
@@ -581,6 +588,12 @@ occur. It is not a claim about tunnel transfer time.
   auto-review status snapshot into a compact current-step or elapsed-wait
   indicator; the lane header reconciles those visible cards as active versus
   waiting, with machine-lock gate queueing remaining a distinct waiting state.
+  The status bar counts only queued or stalled review attempts as review
+  attention; passed reviews waiting for delivery integration have a separate
+  count. The create dialog treats a model as pinned only after a user choice
+  or a project model default; other prefilled values remain routing suggestions.
+  The extra status state adds under 1 kB to the initial bundle, so the
+  production error budget is 2101 kB.
 - Project Explorer entries follow Board, Dossiers, Deploy, Operations, Wiki,
   Deck (NV-D1 option A). Deploy hosts the BD-3 Deploy area (Overview,
   Releases, Pipeline, History, the existing deployment tools) plus a Run steps view with
@@ -700,9 +713,12 @@ occur. It is not a claim about tunnel transfer time.
   viewport for reading. Standalone task keys become microcards, while paths,
   refs, URLs, and code stay literal. Long artifact blocks scroll within their
   own container. The park block has a per-task persisted disclosure and keeps
-  its badge, age, and one-line reason visible when closed. The reissue action
-  is primary beside the recommendation; accept-as-is and abort are secondary
-  decisions. When findings, review artifacts,
+  its badge, age, and one-line reason visible when closed. Continue (reissue)
+  opens a confirmation with selectable findings, an optional owner note, and
+  the next agent's instructions before the move to Ready. The saved selection
+  survives review-artifact rotation. Accept with reason records an operator
+  override for the completion gate; abort is the destructive alternative.
+  When findings, review artifacts,
   and delivery context are absent, the section renders one compact empty line.
   The Runs modal also shows the current operator-owned review-attempt epoch and
   the closed cycle history, including requeue reason, lane crossing, and rotated
@@ -850,7 +866,10 @@ occur. It is not a claim about tunnel transfer time.
   the viewport-safe shared tooltip instead of a second tree line. The Dossiers
   count is the number of Dossier leaves under the branch, excluding the
   separately promoted Style Guide. Open-decision counts remain on pending
-  leaves and reconcile with the list and viewer header after acceptance.
+  leaves and reconcile with the list and viewer header after acceptance. A
+  decision-pending status or decision-ready phase opens that count; unsaved
+  browser selections do not close it. An active Dossier with open decisions
+  stays under `Needs a decision` until the recorded decision closes them.
   Dossier overview and Explorer lifecycle headers are keyboard-accessible disclosures whose per-project collapsed state persists locally; a newly populated section opens once with its quiet count visible.
   Lifecycle-group counts equal
   their visible leaves and zero counts stay hidden. The catalogue's
@@ -878,7 +897,9 @@ occur. It is not a claim about tunnel transfer time.
   in an opaque-origin `srcdoc` iframe with the Dossier CSP. A source-checked
   message boundary maps docs-relative links to the in-app Wiki and opens absolute
   HTTP(S) links in a new tab without exposing host APIs or credentials. An inert
-  DOM parse moves artifact nodes into a fixed policy-first wrapper. Dossier
+  DOM parse moves artifact nodes into a fixed policy-first wrapper. Studio's
+  theme selects the article's inline light and dark CSS rules when the sandboxed
+  document loads; switching themes reloads the frame. Dossier
   pages expose a Maximize action, and dirty working-tree
   content is labelled as uncommitted instead of receiving the current HEAD
   revision. Canonical entries expose their stable project reference key as a
@@ -1052,12 +1073,12 @@ occur. It is not a claim about tunnel transfer time.
   [docs/operations/security/overview.md](../../operations/security/overview.md).
 - The Retention destination at `#/workspace/settings/retention` owns the
   versioned workspace rule table, dry-run and explicit apply reports, run
-  history, and full-backup controls. Project Settings mounts the same rule
+  history, and a pointer to the Task Server backup controls. Project Settings mounts the same rule
   table for sparse overrides. Archived task detail remains navigable from the
   board, global search, and dossier history, then renders the cold manifest and
   hot Markdown excerpts in Docs with one restore action. All retention traffic
-  uses `/api/v1/management/retention` and `/api/v1/management/backups/full`, so
-  the Orchestrator proxy and direct Task Server deployment share one frontend.
+  uses `/api/v1/management/retention`. Installation backup commands live under
+  Settings > Task Server, with backup state on each project's Operations page.
 - The Environment destination at `#/workspace/settings/environment` (old
   `execution-hosts` and `remote-hosts` routes redirect here) persists a per-user
   Hosts, Topology, Installation, or History view. Hosts opens with a grouped

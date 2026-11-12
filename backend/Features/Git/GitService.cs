@@ -250,6 +250,13 @@ public record MergeIntoIntegrationResult(
     public int? AutomaticRecoveryBudgetLimit { get; init; }
 
     /// <summary>
+    /// A required post-integration step that could not complete, named with
+    /// its cause (for example the concept Dossier placement). The Human Review
+    /// park reason shows this instead of the bare integration outcome.
+    /// </summary>
+    public string? PostStepParkReason { get; init; }
+
+    /// <summary>
     /// AGT-3103: the integration-branch SHA that proved the delivery already
     /// contained. Set only for a no-op integration, which the lane completes
     /// without a gate run and without a push.
@@ -704,6 +711,7 @@ public partial class GitService
     private readonly CommitCandidateGate _commitGate;
     private readonly ProjectSettingsService? _projectSettings;
     private readonly GitRefLockJanitor? _lockJanitor;
+    private readonly StudioCommitIdentity _studioCommitIdentity;
     internal Func<ProcessStartInfo, TimeSpan, CancellationToken, GitProcessResult> IntegrationFetchForTesting { get; set; }
         = (start, timeout, ct) => GitProcessBoundary.Run(start, stdin: null, timeout, ct);
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> IntegrationRemoteGates = new(
@@ -733,6 +741,7 @@ public partial class GitService
         _commitGate = new CommitCandidateGate(logger, commitCandidateScanners);
         _projectSettings = projectSettings;
         _lockJanitor = lockJanitor;
+        _studioCommitIdentity = StudioCommitIdentity.From(config);
         // Give the ambient git-spawn telemetry a logger for out-of-scope
         // slow-spawn warnings (the per-request rollup uses its own logger).
         GitProcessTelemetry.Logger ??= logger;
@@ -3695,7 +3704,26 @@ public partial class GitService
         var (pushOut, pushErr, pushCode) = RunGitArgs(
             repoRoot, ct, "push", "origin", $"{sha}:refs/heads/{branch}");
         if (pushCode == 0)
+        {
+            // A push by object ID does not advance origin/<branch> in every Git
+            // configuration (notably when origin uses url.insteadOf). The
+            // integration verdict reads that ref, so publish the exact SHA
+            // locally before the caller resumes the card.
+            if (!RecordPushedIntegrationTip(repoRoot, branch, sha))
+            {
+                // The remote already accepted this commit. Refresh on this write
+                // path once before deciding whether the push can be recorded as
+                // complete; a stale tracking ref would misreport integration.
+                var (_, fetchAfterPushError, fetchAfterPushCode) =
+                    RunGitArgs(repoRoot, ct, "fetch", "origin", branch);
+                if (fetchAfterPushCode != 0 || !RecordPushedIntegrationTip(repoRoot, branch, sha))
+                {
+                    return Task.FromResult(new GitPushResult(false, sha, "failed",
+                        $"Origin accepted the integration push, but origin/{branch} could not be refreshed: {fetchAfterPushError.Trim()}"));
+                }
+            }
             return Task.FromResult(new GitPushResult(true, sha, "pushed", null));
+        }
         if (ct.IsCancellationRequested)
             return Task.FromResult(new GitPushResult(false, sha, "cancelled", pushErr.Trim()));
 
@@ -3706,6 +3734,25 @@ public partial class GitService
                 ? "remote-rejected"
                 : "failed";
         return Task.FromResult(new GitPushResult(false, sha, status, err));
+    }
+
+    private bool RecordPushedIntegrationTip(string repoRoot, string branch, string pushedSha)
+    {
+        var trackingRef = $"refs/remotes/origin/{branch}";
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var current = GetRefShaFresh(repoRoot, trackingRef);
+            if (string.Equals(current, pushedSha, StringComparison.OrdinalIgnoreCase)
+                || current is not null && IsAncestor(repoRoot, pushedSha, current))
+                return true;
+            var (_, _, code) = RunGitArgs(repoRoot, "update-ref", trackingRef, pushedSha, current ?? string.Empty);
+            if (code == 0)
+            {
+                GetRefShaFresh(repoRoot, trackingRef);
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>
@@ -5514,6 +5561,45 @@ public partial class GitService
                 AcceptedIntegrationFailureCodes.ForBranchSync(synchronized.Error),
                 synchronized.Error);
 
+        var fetched = FetchFencedDelivery(repoRoot, deliveryBranch, expectedResultSha, cancellationToken);
+        if (fetched is not null) return fetched;
+
+        return MergeRefIntoIntegration(
+            repoRoot,
+            expectedResultSha,
+            integrationBranch);
+    }
+
+    /// <summary>
+    /// Fetches a fenced Remote delivery branch into <c>refs/remotes/origin/</c>
+    /// and proves that its tip is the reviewed result SHA, without touching any
+    /// integration ref. A pre-merge inspection (the concept Dossier placement
+    /// check) reads the delivery's objects through this; the merge itself runs
+    /// the same fetch again. Returns null on success, else the git error.
+    /// </summary>
+    public string? FetchFencedDeliveryForInspection(
+        string repoRoot,
+        string deliveryBranch,
+        string expectedResultSha,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
+            return "Repo root does not exist.";
+        if (!IsLikelyBranchName(deliveryBranch))
+            return $"Invalid delivery branch '{deliveryBranch}'.";
+        if (!ReviewSubjectStore.IsValidResultSha(expectedResultSha))
+            return "Remote delivery has no valid fenced result SHA.";
+        if (!HasRemote(repoRoot, "origin"))
+            return "Remote delivery cannot be fetched because origin is not configured.";
+        return FetchFencedDelivery(repoRoot, deliveryBranch, expectedResultSha, cancellationToken)?.Error;
+    }
+
+    private MergeIntoIntegrationResult? FetchFencedDelivery(
+        string repoRoot,
+        string deliveryBranch,
+        string expectedResultSha,
+        CancellationToken cancellationToken)
+    {
         var remoteRef = $"refs/remotes/origin/{deliveryBranch}";
         var fetchSource = $"refs/heads/{deliveryBranch}";
         var fetchTarget = $"+{fetchSource}:{remoteRef}";
@@ -5542,11 +5628,7 @@ public partial class GitService
                 MergeIntoIntegrationOutcome.Error,
                 error: $"Fenced delivery mismatch for '{deliveryBranch}': review expects {AbbreviateSha(expectedResultSha)}, origin has {AbbreviateSha(actualResultSha)}.");
         }
-
-        return MergeRefIntoIntegration(
-            repoRoot,
-            expectedResultSha,
-            integrationBranch);
+        return null;
     }
 
     private static string AbbreviateSha(string sha)
@@ -8979,27 +9061,13 @@ public partial class GitService
     /// passing the message on stdin so it survives newlines and quoting. A clean
     /// tree degrades to a soft failure rather than an error.
     /// </summary>
-    private static GitCommitResult CommitPathspecs(string root, string message, IReadOnlyCollection<string> pathspecs)
+    private GitCommitResult CommitPathspecs(string root, string message, IReadOnlyCollection<string> pathspecs)
     {
         if (string.IsNullOrWhiteSpace(message)) return new GitCommitResult(false, null, "Commit message is required.");
-        // These are Studio-owned document commits. Supply both identities for
-        // this invocation so native services do not need a global git config.
-        const string name = "Agent Studio";
-        const string email = "studio@agent-studio.invalid";
-        var commitArgs = new List<string>
-        {
-            "-c", $"user.name={name}", "-c", $"user.email={email}",
-            "commit", "-F", "-", "--"
-        };
+        var commitArgs = new List<string> { "commit", "-F", "-", "--" };
         commitArgs.AddRange(pathspecs);
         var (_, commitErr, commitCode) = RunGitArgs(root, commitArgs.ToArray(), message,
-            new Dictionary<string, string?>
-            {
-                ["GIT_AUTHOR_NAME"] = name,
-                ["GIT_AUTHOR_EMAIL"] = email,
-                ["GIT_COMMITTER_NAME"] = name,
-                ["GIT_COMMITTER_EMAIL"] = email,
-            });
+            _studioCommitIdentity.GitEnvironment());
         if (commitCode != 0)
         {
             if (commitErr.Contains("nothing to commit", StringComparison.OrdinalIgnoreCase))

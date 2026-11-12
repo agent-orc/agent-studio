@@ -111,7 +111,6 @@ public class ProjectRunner
     // of a permanent "- -". Optional so test fixtures that build the runner
     // directly keep working; production DI always supplies an instance.
     private readonly AgentStudio.Pipeline.PipelineExecutionLog? _pipelineLog;
-    private readonly AgentStudio.Pipeline.IConceptWorkbenchPublisher? _conceptWorkbenchPublisher;
     private readonly AgentStudio.Pipeline.ModelQualificationService? _modelQualification;
     // AGT-2716: optional so existing test fixtures keep working; production DI
     // always supplies an instance. Null => the auto-migration check at run
@@ -486,7 +485,6 @@ public class ProjectRunner
         AgentStudio.Pipeline.ModelQualificationService? modelQualification = null,
         AgentStudio.Pipeline.IntegrationPushQueue? integrationPushQueue = null,
         CliQuotaWaitPolicyService? quotaWaitPolicy = null,
-        AgentStudio.Pipeline.IConceptWorkbenchPublisher? conceptWorkbenchPublisher = null,
         PromptEnrichmentService? promptEnrichment = null,
         DossierMaintenanceService? dossierMaintenance = null,
         IVisualQaService? visualQa = null,
@@ -559,7 +557,6 @@ public class ProjectRunner
         _modelQualification = modelQualification;
         _modelMigrationCatalog = modelMigrationCatalog;
         _integrationPushQueue = integrationPushQueue;
-        _conceptWorkbenchPublisher = conceptWorkbenchPublisher;
         _promptEnrichment = promptEnrichment;
         _dossierMaintenance = dossierMaintenance;
         _visualQa = visualQa;
@@ -909,26 +906,9 @@ public class ProjectRunner
         var pending = info.PendingIntent?.ModelFallback;
         var (cli, model, thinking) = RequestedRoute(
             info.CliType, info.Model, info.ThinkingLevel, pending);
-        var plan = _modelSelection?.Select(new ModelSelectionCall(
-               new AgentStudio.TaskServer.Contracts.SelectionRequest
-               {
-                   Consumer = AgentStudio.TaskServer.Contracts.SelectionConsumers.Coding,
-                   Project = ProjectName,
-                   TaskKey = info.Key ?? (string.IsNullOrEmpty(info.TaskKey) ? info.Id : info.TaskKey),
-                   Pins = new AgentStudio.TaskServer.Contracts.SelectionPins(
-                       cli,
-                       pending is not null ? model : info.PinMode != "hard" && info.PreferenceExpiresAt > DateTime.UtcNow
-                           ? info.PreferenceModel ?? info.Model : info.Model,
-                       pending is not null ? thinking : info.PinMode != "hard" && info.PreferenceExpiresAt > DateTime.UtcNow
-                           ? info.PreferenceThinkingLevel ?? info.ThinkingLevel : info.ThinkingLevel,
-                       info.PinMode == "hard" ? AgentStudio.TaskServer.Contracts.SelectionPinMode.Hard
-                           : AgentStudio.TaskServer.Contracts.SelectionPinMode.Preference),
-                   IsExplicitPin = info.ModelExplicit,
-                   TaskType = info.TaskType,
-               },
-               "local-coding-launch",
-               _activeRuns.Count,
-               CorrectnessFloor: _modelQualification is null ? null : () =>
+        var plan = _modelSelection?.Select(CodingSelectionCalls.For(
+               info, ProjectName, _activeRuns.Count, DateTime.UtcNow,
+               _modelQualification is null ? null : () =>
                    _modelQualification.CorrectnessFloor(info,
                        ReadPromptText(Path.Combine(info.FolderPath, "prompt.md"))))).Admission
            ?? QuotaAdmissionPlanner.Plan(
@@ -1709,7 +1689,7 @@ public class ProjectRunner
     {
         if (_globalBreakerCooldownUntil is { } until)
             return new RunnerPickupWait(RunnerPickupWaitCodes.BreakerCooldown,
-                $"Auto-pickup is cooling down after a circuit-breaker trip and resumes at {until:O}.");
+                $"Auto-pickup is cooling down after a circuit-breaker trip ({_globalBreakerReason ?? "unknown cause"}) and resumes at {until:O}.");
         return _mode == "paused"
             ? new RunnerPickupWait(RunnerPickupWaitCodes.Paused,
                 "The runner is paused; no card is picked until auto-pickup is enabled again.")
@@ -5589,6 +5569,13 @@ public class ProjectRunner
 
             var followUpPath = Path.Combine(info.FolderPath, "orchestrator-follow-up.md");
             var followUpText = File.Exists(followUpPath) ? File.ReadAllText(followUpPath) : string.Empty;
+            // This handoff belongs to the first run after the operator epoch.
+            // A later automatic reissue must use its own fresh review findings.
+            var operatorInstructions = priorRunExists
+                ? null
+                : OperatorReviewRequeueService.ReadInstructions(info.FolderPath);
+            if (operatorInstructions is not null)
+                followUpText = OperatorReviewRequeueService.PromptText(operatorInstructions);
 
             // Foreground BOTH the auto-review aspect concerns AND the user-run
             // code-review findings (code-review-*.md). The latter were the
@@ -5597,7 +5584,7 @@ public class ProjectRunner
             // re-run only saw the old prompt and not "what the review said was
             // wrong". Both feed the same open-items channel - the pre-check
             // treats them generically as items to resolve before anything else.
-            var reviewFindings = GatherAspectConcernSummaries(info.FolderPath)
+            List<string> reviewFindings = operatorInstructions is not null ? [] : GatherAspectConcernSummaries(info.FolderPath)
                 .Concat(GatherCodeReviewFindings(info.FolderPath))
                 .ToList();
             var reissueCause = ResolveLatestReissueCause(info.FolderPath);
@@ -5605,6 +5592,7 @@ public class ProjectRunner
             return ReissueOpenItemsPreCheck.Evaluate(new ReissueOpenItemsPreCheck.PreCheckInput
             {
                 HasReissueTag = hasReissueTag,
+                HasOperatorInstructions = operatorInstructions is not null,
                 PriorRunCompleted = priorRunExists,
                 PriorRunCount = prior?.Attempt ?? 0,
                 FollowUpText = followUpText,
@@ -7150,19 +7138,11 @@ public class ProjectRunner
 
             // movedToReview was computed up-front for the circuit breaker.
 
-            // Concept cards never merge their task branch. Once the core run has
-            // produced a reviewable docs-only Dossier, copy that single
-            // directory through the managed project-artifact commit/push
-            // boundary. The subsequent concept review reads the published
-            // document and routes it to the human sight-review marker.
-            if (movedToReview
-                && activeInfo != null
-                && TaskModes.IsConcept(activeInfo.Mode))
-            {
-                var movedConcept = _scanner.FindJob(jobId, Entry.Path) ?? activeInfo;
-                if (LocalStopRequested(jobId)) return;
-                await PublishConceptWorkbenchAsync(movedConcept, run);
-            }
+            // Concept cards have no local post-step here. Their Dossier is
+            // integrated by the reviewed task-branch merge of a Remote delivery,
+            // which also runs Dossier placement, concept review and the
+            // sight-review marker (ConceptDeliveryPostSteps). Local concept
+            // runs are not admitted (RemoteExecutionRequirement).
 
             // UI tasks do not enter the standard aspect-review pipeline. A
             // successful core run must first satisfy its iteration-scoped visual
@@ -7451,47 +7431,6 @@ public class ProjectRunner
             _logger.LogDebug(ex, "Failure-intervention enablement could not be resolved for {JobId}", task.Id);
             return false;
         }
-    }
-
-    private async Task PublishConceptWorkbenchAsync(TaskInfo info, ActiveRun run)
-    {
-        var startedAt = DateTime.UtcNow;
-        ConceptWorkbenchPublishResult result;
-        if (_conceptWorkbenchPublisher is null)
-        {
-            var review = new ConceptWorkbenchReview(
-                false, null, null, null,
-                ["Concept Dossier publisher is unavailable."]);
-            result = new ConceptWorkbenchPublishResult(false, review.Summary, review);
-        }
-        else
-        {
-            result = await _conceptWorkbenchPublisher.PublishAsync(
-                info,
-                run.WorktreePath ?? run.WorkingDirectory ?? string.Empty,
-                CancellationToken.None);
-        }
-
-        _pipelineLog?.RecordStep(info.FolderPath, new PipelineStepExecution
-        {
-            StepId = AgentStudio.Pipeline.PipelineCatalogue.ConceptWorkbenchPlacementStepId,
-            Kind = StepKind.Tool,
-            Status = result.Success ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
-            StartedAt = startedAt,
-            CompletedAt = DateTime.UtcNow,
-            Verdict = result.Success ? "workbench-published" : "workbench-invalid",
-            VerdictSummary = result.Summary,
-            Reason = result.Success ? null : result.Summary,
-        });
-        _logger.Log(
-            result.Success ? LogLevel.Information : LogLevel.Warning,
-            "concept_workbench_placement project={Project} job={JobId} success={Success} path={Path} commit={Commit} summary={Summary}",
-            ProjectName,
-            info.Id,
-            result.Success,
-            result.Review.RepoRelativeDirectory ?? "",
-            result.CommitSha ?? "",
-            result.Summary);
     }
 
     /// <summary>
@@ -8874,7 +8813,7 @@ public class ProjectRunner
             : rendered;
     }
 
-    private static RunPlan BuildReissueChangePlan(
+    internal static RunPlan BuildReissueChangePlan(
         RunPlan plan,
         ReissueOpenItemsPreCheck.PreCheckDecision decision,
         string projectName,
@@ -9020,7 +8959,7 @@ public class ProjectRunner
         catch { return path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar); }
     }
 
-    private static string ReadPromptText(string promptPath)
+    internal static string ReadPromptText(string promptPath)
     {
         try
         {

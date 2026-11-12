@@ -284,6 +284,7 @@
       </tbody>
     </table>
     <p><b>2026-10-16 operator receipt controls:</b> Raise and Cut update the limit for later remote runs. Stop is unavailable: the control is hidden and the endpoint answers HTTP 409 <code>stop-not-available</code>. An ordinary Pause still returns the card to Ready.</p>
+    <p><b>2026-11-10 operator reissue handoff:</b> An Escalated to Ready continuation confirms selected findings and an optional owner note before moving. The move rotates old verdict artifacts and writes <code>operator-reissue.json</code>; the next pickup foregrounds those instructions even when the automatic reissue tag and active pipeline record are absent. After that run crosses the agent boundary, later automatic reissues use their own findings.</p>
 
     <p class="small"><strong>Invariant:</strong> a run can only leave <em>Running</em> into one of
       {Succeeded, NeedsReview, GaveUpToHuman, CooldownRetry, SteerPending}. CooldownRetry and SteerPending must each terminate
@@ -385,6 +386,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-cancelled-isolation-proved-red">
+          <td>2026-11-10</td>
+          <td><code>AGT-3584</code><br><span class="small">cancelled-isolation-proved-red (fix <code>AGT-3742</code>)</span></td>
+          <td>Batch <code>5ee5c2dd</code> went red. The solo isolation flight in <code>ada8a151</code> was cancelled while the API disk was full. It had no start time, exit code or test verdict, yet AGT-3584 reached Escalated with a claim that isolation proved it red. Other members had abandoned per-task pull jobs. No CLI crashed. Terminal at discovery: Escalated with a false delivery verdict, or Auto Review without a live gate.</td>
+          <td>The isolation finding reader treated every red child phase as proof, including InfrastructureRed. A per-task fallback treated a pull job without a verdict as a terminal red gate.</td>
+          <td>A proven-red finding now requires a deterministic child verdict. An interrupted isolation flight returns the review to the pending pool and retries the isolation step twice on later ticks; exhaustion parks it with GateInfra and the retry count. An interrupted per-task flight keeps its active marker for the next tick and parks with an infrastructure cause after its bounded retry.</td>
+        </tr>
         <tr id="case-per-task-fallback-silent-engine-wait">
           <td>2026-11-10</td>
           <td><code>AGT-3563</code>, <code>AGT-3183</code><br><span class="small">per-task-fallback-silent-engine-wait (fix <code>AGT-3694</code>)</span></td>
@@ -3112,7 +3120,7 @@
           <td><code>AGT-3120</code><br><span class="small">cancelled-gate-subject-ownership</span></td>
           <td>AGT-3044 escalated when a gate for its older delivery was cancelled after a fix round. AGT-3106 escalated while review daemons restarted.</td>
           <td>The per-task, batch fallback, and merge callers treated Cancellation as failed verification without checking current delivery ownership or shutdown.</td>
-          <td>The observed terminal was Escalated. Superseded cancellations now retain evidence and leave the current card alone; shutdown cancellations consume one durable infrastructure retry after restart. Operator stops still park the card. The timeline records superseded, shutdown, or operator.</td>
+          <td>The observed terminal was Escalated. Superseded cancellations retain evidence and leave the current card alone; shutdown cancellations consume one durable infrastructure retry after restart. A current per-task fallback cancellation without a test verdict keeps its active marker for a bounded retry, including an operator-classified cancellation; exhaustion parks it with GateInfra. The timeline records superseded, shutdown, or operator.</td>
         </tr>
         <tr id="case-completed-gate-superseded-delivery">
           <td>2026-10-15</td>
@@ -3190,6 +3198,13 @@
           <td>No CLI crashed. The review host restarted; its report <code>ReviewInfra / ExecutorRestarted</code> was accepted at 01:27:17 and retry 1/3 was scheduled for 01:28:16. Nine seconds after the report the Auto Review stranding watchdog escalated the card (<code>Auto Review had no active owner for 4 minutes</code>). At the due time the retry scheduler found the card outside Auto Review and cleared the retry without a log line. No review ran again.</td>
           <td>The stranding facts counted a review as an owner only while it was Pending or Leased. The persisted retry due time and a cause breaker wait were not facts of <code>AutoReviewStrandingPolicy</code>, so with the default 30 minute threshold every card older than that in Auto Review was escalated when its review host restarted.</td>
           <td>The observed terminal was <span class="lane">5e-escalated</span> with a silently lost retry. A scheduled ReviewInfra retry of the current review now owns the card while its backoff runs and for one threshold after it came due, and a cause breaker wait or probe marker owns the parked card; the rule lives in <code>AutoReviewStrandingPolicy</code>. A retry that no scheduler tick fires still leaves the card ownerless. Every dropped retry is logged as <code>review-infrastructure-retry-dropped</code> and recorded as a <code>review_infrastructure_retry_dropped</code> timeline entry naming the reason and the lane.</td>
+        </tr>
+        <tr id="case-integration-push-stale-tracking-ref">
+          <td>2026-11-09</td>
+          <td><code>AGT-3620 / DEMO-3</code><br><span class="small">integration-push-stale-tracking-ref</span></td>
+          <td>No CLI crashed. DEMO-3's integration push reported <code>pushed</code> and its timeline recorded <code>integrated-verified</code>, but the card showed <code>merged-locally</code> and stayed in Auto Review for 9.5 minutes. Opening Project Settings caused a fetch, and the card moved to Human Review three seconds later.</td>
+          <td>The push did not advance the checkout's <code>origin/main</code> tracking ref under the playthrough's URL rewrite. Integration status read that stale ref. The integration-owned resume wait stored no next attempt time.</td>
+          <td>The observed terminal was Human Review after the incidental fetch. A successful push now records its exact SHA in the tracking ref, and every deferred resume stores a next attempt time. The normal post-processing backstop can advance the card without a read-route fetch.</td>
         </tr>
         <tr id="case-cause-breaker-recheck-newest-delivery">
           <td>2026-11-09</td>

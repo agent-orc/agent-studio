@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, Injector, computed, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Injector, computed, effect, inject, input, signal } from '@angular/core';
 import type { TaskInfo } from '../../models/task.model';
 import { TaskState } from '../../models/task.model';
 import { NowTickService } from '../../services/now-tick.service';
@@ -8,6 +8,7 @@ import { runnerWaitCode, runnerWaitHeadline } from '../../models/ready-wait-reas
 import { TaskReferenceNavigationService } from '../../services/task-reference-navigation.service';
 import { TaskService } from '../../services/task.service';
 import { ErrorDialogService } from '../../services/error-dialog.service';
+import { BatchGateService } from '../../services/batch-gate.service';
 
 export type TaskLiveStatusVariant = 'card' | 'detail';
 type LiveTone = 'active' | 'waiting' | 'idle' | 'stalled';
@@ -17,6 +18,7 @@ interface LiveStatusView {
   headline: string;
   detail: string | null;
   next: string[];
+  perTaskGate?: boolean;
   /** Null when the card has no live status yet, so no attempt is claimed. */
   attempt: number | null;
   /** AGT-3579: runner reason code when the runner is not picking this card. */
@@ -49,7 +51,19 @@ export class TaskLiveStatusComponent {
   private readonly injector = inject(Injector);
   private readonly tasks = inject(TaskService);
   private readonly errors = inject(ErrorDialogService);
+  private readonly batchGate = inject(BatchGateService);
   readonly switchingToAuto = signal(false);
+  readonly hasRecordedAttempt = computed(() => {
+    const task = this.task();
+    return !!(task.liveStatus?.activeStep || task.execution || task.runActivity || task.runner);
+  });
+
+  constructor() {
+    effect(onCleanup => {
+      const task = this.task();
+      if (task.state === TaskState.AutoReview) onCleanup(this.batchGate.watch(task.projectName));
+    });
+  }
 
   switchToAuto(event: MouseEvent): void {
     event.stopPropagation();
@@ -76,6 +90,24 @@ export class TaskLiveStatusComponent {
     const task = this.task();
     const status = task.liveStatus;
     const causeHeld = causeHold(task);
+    const perTask = this.batchGate.state(task.projectName)()?.perTaskGates?.find(gate =>
+      gate.taskKey === task.taskKey || gate.taskKey === task.key || gate.taskKey === task.id);
+    if (perTask && task.state === TaskState.AutoReview) {
+      const started = timestamp(perTask.startedAtUtc);
+      const handoff = perTask.batchId
+        ? `batch ${perTask.batchId} paused: ${perTask.reason.replace(/^batch [^ ]+ paused:\s*/, '')}`
+        : perTask.reason;
+      return {
+        tone: perTask.running ? 'active' : 'waiting',
+        headline: perTask.running
+          ? `Per-task gate running on ${perTask.host || 'gate host'}${started === null ? '' : ` since ${clock(started)}`}`
+          : `Per-task gate queued (${perTask.position} of ${perTask.total}) after ${handoff}`,
+        detail: perTask.running ? 'Red escalates; green integrates.' : 'One full suite per member. Red escalates; green integrates.',
+        next: [],
+        attempt: status?.attempt ?? null,
+        perTaskGate: true,
+      };
+    }
     if (!status) return causeHeld ? holdView(task, causeHeld, null, [], this.now()) : null;
 
     const next = (status.nextSteps ?? []).slice(0, 3).map(step => step.displayName);
@@ -177,7 +209,6 @@ export class TaskLiveStatusComponent {
         attempt: status.attempt,
       };
     }
-
     // AGT-3579: the runner recorded why it is not picking this card (mode,
     // slots, quota defer, load throttle, provider limit). The sentence is the
     // runner's own; the headline names the reason the lane header counts.
@@ -202,8 +233,8 @@ export class TaskLiveStatusComponent {
     }
 
     if (status.queue) {
-      const queueName = status.queue.kind === 'review' ? 'review slot' : 'runner slot';
-      const queuedHeadline = status.queue.kind === 'runner' ? 'Queued for runner' : `Waiting for ${queueName}`;
+      const queuedHeadline = status.queue.kind === 'runner' ? 'Queued for runner'
+        : status.queue.state === 'integration' ? 'Waiting for delivery integration' : 'Waiting for review slot';
       const headline = status.queue.position != null
         ? `${queuedHeadline} · position ${status.queue.position}`
         : status.queue.reason

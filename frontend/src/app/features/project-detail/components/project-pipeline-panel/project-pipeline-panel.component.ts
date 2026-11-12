@@ -76,6 +76,7 @@ export class ProjectPipelinePanelComponent {
   /** Per-step write in flight; disables that row's controls until the PUT resolves. */
   readonly stepBusy: Record<string, boolean> = {};
   readonly orderBusy = signal(false);
+  readonly aspectBulkBusy = signal(false);
   readonly draggingStepId = signal<string | null>(null);
   readonly dragTargetStepId = signal<string | null>(null);
 
@@ -204,16 +205,19 @@ export class ProjectPipelinePanelComponent {
     });
   }
 
-  /** Sequential step writes, so each PUT merges onto the entry the previous one saved. */
+  /** Snapshot each step before sequential writes can update the live overrides. */
   readonly applyAspectAgent = (selection: AspectAgentSelection): Observable<unknown> => {
-    const project = this.projectName();
-    const pipelineType = this.pipelineType();
-    const ids = this.rows().filter(row => row.phase === 'aspect' && row.usesModel).map(row => row.id);
+    const project = this.projectName(), pipelineType = this.pipelineType();
+    const saved = this.overrides(), defaults = new Map(this.catalogue().map(step => [step.id, step.defaultEnabled]));
     const patch = { economyModel: false, ...selection };
-    return from(ids).pipe(
-      concatMap(id => this.jobService.setProjectPipelineStep(project, this.stepRequest(id, patch, pipelineType))),
+    const requests = this.rows().filter(row => row.phase === 'aspect' && row.usesModel)
+      .map(row => this.stepRequest(row.id, patch, pipelineType, { ...saved[row.id] }, defaults.get(row.id) ?? true));
+    this.aspectBulkBusy.set(true);
+    return from(requests).pipe(
+      concatMap(request => this.jobService.setProjectPipelineStep(project, request)),
       tap(res => { if (this.pipelineType() === pipelineType) this.overrides.set(res.pipelineSteps ?? {}); }),
-      finalize(() => { this.refreshOverrides(project, pipelineType); this.refreshEffective(project, pipelineType); }));
+      finalize(() => { this.aspectBulkBusy.set(false); this.refreshOverrides(project, pipelineType);
+        this.refreshEffective(project, pipelineType); }));
   };
 
   onStepEnabledChange(stepId: string, enabled: boolean): void {
@@ -449,9 +453,9 @@ export class ProjectPipelinePanelComponent {
     });
   }
 
-  private stepRequest(stepId: string, patch: StepPatch, pipelineType: PipelineType) {
-    const cur = this.overrides()[stepId] ?? {};
-    const defaultEnabled = this.catalogue().find(s => s.id === stepId)?.defaultEnabled ?? true;
+  private stepRequest(stepId: string, patch: StepPatch, pipelineType: PipelineType,
+    cur: PipelineStepSetting = this.overrides()[stepId] ?? {},
+    defaultEnabled: boolean = this.catalogue().find(s => s.id === stepId)?.defaultEnabled ?? true) {
     const enabled = patch.enabled ?? (cur.enabled ?? defaultEnabled);
     const economyModel = patch.economyModel ?? (cur.economyModel ?? false);
     const thinkingLevel = (patch.thinkingLevel !== undefined ? patch.thinkingLevel : (cur.thinkingLevel ?? ''))?.trim() ?? '';

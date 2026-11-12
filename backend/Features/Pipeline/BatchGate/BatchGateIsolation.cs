@@ -10,7 +10,8 @@ public enum BatchGateFailureClass
 }
 
 public sealed record BatchGateProbeResult(
-    BatchGateFailureClass Classification, string TestedSha, string EvidencePath);
+    BatchGateFailureClass Classification, string TestedSha, string EvidencePath,
+    string? Cause = null);
 
 public sealed record BatchGateDiagnostic(
     IReadOnlyList<string> MemberKeys, BatchGateProbeResult Result);
@@ -35,7 +36,8 @@ public static class BatchGateIsolation
         int maximumTotalDiagnosticRuns,
         CancellationToken ct,
         Func<BatchGateSubject, bool>? current = null,
-        Func<IReadOnlyList<BatchGateSubject>, BatchGateProbeResult, CancellationToken, Task<bool>>? publishGreen = null)
+        Func<IReadOnlyList<BatchGateSubject>, BatchGateProbeResult, CancellationToken, Task<bool>>? publishGreen = null,
+        bool initialCohortRed = true)
     {
         if (maximumTotalDiagnosticRuns < 0)
             throw new ArgumentOutOfRangeException(nameof(maximumTotalDiagnosticRuns));
@@ -43,13 +45,15 @@ public static class BatchGateIsolation
         var ejected = new List<string>();
         var diagnostics = new List<BatchGateDiagnostic>();
         BatchGateProbeResult? survivorVerdict = null;
+        var firstCycle = true;
         while (survivors.Count > 0)
         {
             var beforePrune = survivors.Count;
             Prune(survivors);
             if (survivors.Count == 0) break;
             var cohort = survivors.ToList();
-            var cohortRed = beforePrune == survivors.Count;
+            var cohortRed = beforePrune == survivors.Count && (!firstCycle || initialCohortRed);
+            firstCycle = false;
             var perCycle = BatchGatePolicy.DiagnosticRunsPerCycle(cohort.Count);
             var cycleUsed = 0;
             while (cohort.Count > 1 && cycleUsed < perCycle
