@@ -98,7 +98,7 @@ import type {
 import type { TaskPlanView } from '../features/plan-strip/plan.model';
 import type { RegressionRadarResult } from '../features/regression-radar';
 import { ErrorDialogService } from './error-dialog.service';
-import { AuthSessionState } from './auth.service';
+import { ShellAccessService } from './shell-access.service';
 import { JobsHubClient } from './jobs-hub-client.service';
 import type {
   ProjectDeploymentSummary,
@@ -392,8 +392,8 @@ export interface HumanReviewDecisionResponse {
 
 @Injectable({ providedIn: 'root' })
 export class TaskService {
+  private readonly shellAccess = inject(ShellAccessService);
   private http = inject(HttpClient);
-  private readonly authSession = inject(AuthSessionState);
   private errorDialog = inject(ErrorDialogService);
   private jobsHub = inject(JobsHubClient);
 
@@ -536,6 +536,7 @@ export class TaskService {
 
   /** Re-read slow-moving project settings used by the board and Explorer. */
   refreshLaneSortStrategies(): void {
+    if (!this.shellAccess.operator()) return;
     this.getAllProjectSettings().subscribe({
       next: (all) => {
         const map: Record<string, Record<string, string>> = {};
@@ -566,7 +567,7 @@ export class TaskService {
     }
 
     this.refreshGrouped(silent);
-    this.refreshRunnerStatus(silent);
+    if (this.shellAccess.operator()) this.refreshRunnerStatus(silent);
   }
 
   /**
@@ -1071,7 +1072,9 @@ export class TaskService {
     const params = opts?.includeArchived
       ? new HttpParams().set('includeArchived', 'true')
       : undefined;
-    return this.http.get<RegistryWorkspaceListItem[]>('/api/v1/workspaces', { params });
+    // Product sessions read the legacy listing, filtered by their project bindings.
+    return this.http.get<RegistryWorkspaceListItem[]>(
+      this.shellAccess.limited() ? '/api/workspaces' : '/api/v1/workspaces', { params });
   }
 
   /**
@@ -1083,7 +1086,8 @@ export class TaskService {
     const params = opts?.includeArchived
       ? new HttpParams().set('includeArchived', 'true')
       : undefined;
-    return this.http.get<RegistryProjectSummary[]>('/api/v1/projects', { params });
+    return this.http.get<RegistryProjectSummary[]>(
+      this.shellAccess.limited() ? '/api/projects' : '/api/v1/projects', { params });
   }
 
   /** F45b — create a workspace. Returns the new record. */
@@ -3145,8 +3149,7 @@ export class TaskService {
   }
 
   refreshRunnerStatus(silent = false): void {
-    // AGT-3668: runner status is installation-wide; the Product role never reads it.
-    if (this.authSession.productSession()) return;
+    if (!this.shellAccess.operator()) return;
     if (this.runnerRefreshInFlight) {
       this.runnerRefreshQueued = true;
       this.runnerRefreshQueuedSilent &&= silent;
@@ -3159,7 +3162,7 @@ export class TaskService {
     ).subscribe({
       next: (status) => this.runnerStatus.set(status),
       error: (err) => {
-        if (!silent) {
+        if (!silent && !(err instanceof HttpErrorResponse && err.status === 403)) {
           this.errorDialog.show(err, {
             title: 'Failed to load runner status',
             fallbackMessage: 'Failed to load runner status',
@@ -3187,7 +3190,7 @@ export class TaskService {
 
     // F35: prime the lane-strategy store immediately so the board shows the
     // right indicator on first paint, then refresh it on a slow cadence.
-    this.refreshLaneSortStrategies();
+    if (this.shellAccess.operator()) this.refreshLaneSortStrategies();
 
     // Primary path: react to mutation pushes the instant they arrive.
     this.startPushUpdates();
@@ -3207,7 +3210,7 @@ export class TaskService {
       // Sort strategy changes rarely; refresh it every other heartbeat.
       this.laneSortStrategyTick = (this.laneSortStrategyTick + 1) % 2;
       if (this.laneSortStrategyTick === 0) {
-        this.refreshLaneSortStrategies();
+        if (this.shellAccess.operator()) this.refreshLaneSortStrategies();
       }
     }, heartbeatMs);
   }
@@ -3268,7 +3271,7 @@ export class TaskService {
           !current || new Date(e.gitStateAt) > new Date(current) ? e.gitStateAt : current);
         this.scheduleSilentRefresh();
       },
-      runnerStatusChanged: () => this.refreshRunnerStatus(true),
+      runnerStatusChanged: () => { if (this.shellAccess.operator()) this.refreshRunnerStatus(true); },
       cliStarted: () => this.scheduleSilentRefresh(),
       cliFinished: () => this.scheduleSilentRefresh(),
       // Initial connect + every reconnect: re-pull the full board so anything

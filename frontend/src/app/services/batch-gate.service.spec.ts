@@ -3,11 +3,21 @@ import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BatchGateService, isBatchGateState } from './batch-gate.service';
-import { batchPublishedSha, batchReplayLabel, batchRiskLabel } from '../models/batch-gate.model';
+import { batchPublishedSha, batchReplayLabel, batchRiskLabel, batchRunStatus, batchRunEvidenceUrl } from '../models/batch-gate.model';
 import { clientIdInterceptor } from './client-id.interceptor';
 import { backendShapedState, batchSettings, redHalvingState } from '../features/batch-gate/testing/batch-fixtures';
 
 describe('BatchGateService', () => {
+  it('shows missing verdicts as interrupted outside a running batch and links run artifacts', () => {
+    const batch = redHalvingState.batches[0];
+    const run = { batchRunId: 'run-1', host: 'runner', startedAtUtc: '2026-11-10T00:00:00Z' };
+    expect(batchRunStatus(batch, run)).toBe('interrupted');
+    expect(batchRunStatus({ ...batch, phase: 'abandoned' }, run)).toBe('interrupted');
+    expect(batchRunStatus({ ...batch, phase: 'published' }, run)).toBe('interrupted');
+    expect(batchRunStatus({ ...batch, phase: 'running' }, run)).toBe('running');
+    expect(batchRunEvidenceUrl('Demo Project', 'batch 1', 'run 1', 'log'))
+      .toBe('/api/projects/Demo%20Project/batch-gate/run-log?batchId=batch%201&runId=run%201');
+  });
   let service: BatchGateService;
   let http: HttpTestingController;
   const base = '/api/projects/Demo%20Project/batch-gate';

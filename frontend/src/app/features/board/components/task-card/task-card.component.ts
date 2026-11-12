@@ -3,6 +3,7 @@ import { TaskState, isTerminalTaskState, type AutoLoopSnapshot, type TaskExecuti
 import { RemoteDispatchRejectionComponent } from '../../../../components/remote-dispatch-rejection/remote-dispatch-rejection.component';
 import { GitSummaryService } from '../../../../services/git-summary.service';
 import { TaskService } from '../../../../services/task.service';
+import { TaskSectionAccessService } from '../../../../services/task-section-access.service';
 import { allowsDragReorder } from '../../../../services/lane-sort.util';
 import { isReadyQueueHead } from '../ready-lane-split.util';
 import { BoardMutationsService } from '../../state/board-mutations.service';
@@ -415,6 +416,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   // Context menu actions.
   private readonly notifications = inject(NotificationService);
   private readonly jobs = inject(TaskService);
+  private readonly taskAccess = inject(TaskSectionAccessService);
   private readonly boardMutations = inject(BoardMutationsService);
   private readonly laneFocus = inject(LaneCollapseService).focusedContainer;
   private readonly selection = inject(TaskSelectionService);
@@ -435,8 +437,13 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   private readonly reviewer = inject(ReviewerSession);
   readonly cardCtxMenuItems = computed(() => buildCardCtxMenuItems(
     this.job(), this.mutationsBlocked(),
-    focusVisibleLaneStates(this.laneFocus()), this.readyQueueEdge(), this.canReorderReady(),
-    this.reviewer.reviewsOnly(this.job().projectName)));
+    focusVisibleLaneStates(this.laneFocus()), this.readyQueueEdge(),
+    {
+      canReorder: this.canReorderReady(),
+      reviewsOnly: this.reviewer.reviewsOnly(this.job().projectName),
+      productSession: this.taskAccess.productSession(),
+      readOnlySession: this.taskAccess.readOnlySession(),
+    }));
 
   /** AGT-2029: open the dependency this card is waiting on (see resolveDependencyTarget). */
   navigateToDependency(chip: DependencyChip, event: MouseEvent): void {

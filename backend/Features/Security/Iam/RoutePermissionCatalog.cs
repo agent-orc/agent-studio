@@ -186,7 +186,7 @@ public static class RoutePermissionCatalog
         AddProjectChecked("R", IamPermissions.ProjectRead, "/api/integrations/quality-studio/status",
             "/api/integrations/quality-studio/open");
         Add("*", IamPermissions.Anonymous, "/healthz/**");
-        Add("R", IamPermissions.Anonymous, "/api/auth/status", "/recovery");
+        Add("R", IamPermissions.Anonymous, "/api/auth/status", "/api/auth/invite/preview", "/recovery");
         Add("POST", IamPermissions.Anonymous,
             "/api/auth/bootstrap", "/api/auth/login", "/api/auth/invite/accept", "/api/auth/runner-enroll",
             "/api/auth/passkeys/assertion-options");
@@ -461,6 +461,8 @@ public static class RoutePermissionCatalog
         Add("POST", IamPermissions.ProjectRunsOperate, "/api/projects/{}/batch-gate/queue-stalls/release");
         Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/failed-tests");
         Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/isolation-evidence");
+        Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/run-evidence");
+        Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/batch-gate/run-log");
         Add("GET", IamPermissions.ProjectRead, "/api/projects/{}/execution/proposal-preview");
 
         // --- Documents -----------------------------------------------------

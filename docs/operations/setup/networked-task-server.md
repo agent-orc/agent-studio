@@ -48,7 +48,17 @@ The reference files are:
    ```
 
 6. Open the HTTPS origin and create the first owner. Bootstrap fails after the
-   first owner exists. Create separate operator and viewer accounts as needed.
+   first owner exists. In **Settings > Access**, invite people with a project
+   scope and the role they need. **Admin** manages settings, operations,
+   production deploys and secrets. **Developer** works on cards, runs, chat and
+   documents, and deploys outside production. **Product** writes cards and
+   accepts them from Human Review in assigned projects. Owner, Admin and
+   Developer can also review and accept cards in their scope. **Viewer** reads within
+   the assigned scope without secret values. **Approver** approves or rejects
+   production releases in scope. The **Owner** retains installation recovery
+   and all permissions. Admin and Owner must register a second factor before
+   using Studio; Approver needs one to approve a release. Studio recommends
+   one to every other invitee after acceptance.
 
 The backend networked profile rejects cleartext application requests even if a
 proxy is misconfigured. The health endpoint returns only `ok`. Debug, internal
