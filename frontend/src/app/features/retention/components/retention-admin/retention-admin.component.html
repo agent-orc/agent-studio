@@ -2,7 +2,7 @@
   <header class="retention__head">
     <div>
       <h2>Retention</h2>
-      <p>Control hot storage, cold archive stages, runtime deletion, and verified full backups.</p>
+      <p>Control hot storage, cold archive stages, and runtime deletion.</p>
     </div>
   </header>
 
@@ -41,8 +41,7 @@
     <app-retention-run-history />
   </section>
 
-  <section class="retention__section" aria-labelledby="retention-backups-title">
-    <header><h3 id="retention-backups-title">Backups</h3><p>Each full set contains the store snapshot, referenced cold payloads, inventory hash, and analysis export.</p></header>
-    <app-retention-backups />
+  <section class="retention__section" aria-labelledby="retention-backups-title" data-testid="retention-backup-guidance">
+    <header><h3 id="retention-backups-title">Installation backups</h3><p>Backup controls belong to Settings > Task Server. Create and verify backups, apply backup retention, and copy them off-host there. Backup state appears on each project's Operations page.</p></header>
   </section>
 </section>

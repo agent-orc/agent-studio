@@ -14,6 +14,17 @@ public sealed record ConceptWorkbenchRecord
 public static class ConceptWorkbenchStore
 {
     public const string RelativePath = ".metadata/concept-workbench.json";
+
+    /// <summary>
+    /// Checkout-shaped copy of the placed Dossier's contract files
+    /// (<c>workbench.json</c>, <c>index.html</c>) at the integrated commit.
+    /// Placement writes it; promotion reads it when the developer checkout
+    /// does not carry the Dossier yet, so a read request never spawns git.
+    /// </summary>
+    public const string SnapshotRelativePath = ".metadata/concept-dossier";
+
+    public static string SnapshotRoot(string jobFolderPath)
+        => Path.Combine(jobFolderPath, ".metadata", "concept-dossier");
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,

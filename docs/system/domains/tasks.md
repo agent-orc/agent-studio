@@ -224,9 +224,14 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   `acceptanceScope`. Promotion rejects an open-ended entry such as `implement
   all recommendations`; use one entry per slice.
 - `POST /api/tasks/{id}/continue` on a `concept` or `planning` card refuses
-  (`409`) a follow-up prompt that reads as a code-change request, naming the
-  card's mode and the matching promotion path (`promote-concept` or
-  `promote-to-coding`) in the message. This is `ContinueModeGuardPolicy`
+  (`409`, `error: "continue-mode-guard"`) a follow-up prompt that reads as a
+  code-change request. The `message` names the card's mode and the two ways
+  forward in words, never as API paths, because the continue panel shows it:
+  the panel offers "Keep in <mode> mode and send" (the same round with
+  `modeOverride`) and "Promote to implementation" (`promote-concept` from the
+  Dossier proposals, or the `promote-to-coding` form) as buttons (AGT-3700).
+  A follow-up that names a Dossier section, decision (`D3`), option, or open
+  question is a Dossier edit and is never refused. This is `ContinueModeGuardPolicy`
   (`backend/Shared/Runner/ContinueModeGuardPolicy.cs`): a card repurposed into
   a concept card must not silently re-run in concept mode against an
   implementation prompt, do no implementation, and escalate with no useful
@@ -264,7 +269,10 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   active and no isolation finding released it. Eject
   (`POST /api/projects/{project}/batch-gate/members/{taskKey}/eject`) stays
   allowed (AGT-3483, `BatchIsolationGuard`).
-  The read-only failure continuation check reports the same isolation reason
+- An Escalated to Ready operator move can include `reissueInstructions` with up
+  to twelve selected findings and an optional owner note. The move persists
+  that handoff for the next run after rotating the old review artifacts.
+- The read-only failure continuation check reports the same isolation reason
   and marks the action unavailable, so task detail disables it with that reason
   as its tooltip (AGT-3687).
 
@@ -1483,6 +1491,10 @@ Second, a parked card
 never reports zero open items - `ParkedOpenItems` is applied where a summary stub
 is PRODUCED (`HumanReviewEscalation.BuildStatusStub` and the
 `TaskTransitionService` result scaffold), never by rewriting an agent's own text.
+The result scaffold treats a Human Review marker whose only reason is
+`Parked with no recorded cause.` and which has no question as ordinary review,
+so it does not invent a person or an open decision. A stated park still has an
+open item.
 The Task Detail renders the park ABOVE the derived escalation headline, because
 the park is a fact and the headline is an inference; the board distinguishes a
 card waiting on a person from one waiting on a fix.
