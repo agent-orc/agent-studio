@@ -1,5 +1,6 @@
 import type { TaskInfo } from '../../models/task.model';
 import type { BatchGateState } from '../../models/batch-gate.model';
+import { clock, timestamp } from './task-live-status.util';
 
 type PerTaskGate = NonNullable<BatchGateState['perTaskGates']>[number];
 
@@ -23,14 +24,4 @@ export function perTaskGateView(perTask: PerTaskGate) {
     next: [] as string[],
     perTaskGate: true,
   };
-}
-
-export function timestamp(value: string | null | undefined): number | null {
-  if (!value) return null;
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-export function clock(epochMs: number): string {
-  return new Date(epochMs).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }

@@ -25,8 +25,6 @@ export function nextForTask(task: TaskInfo, status: TaskLiveStatus, causeHeld: C
     return ['Runner pickup', ...status.nextSteps.slice(0, 2).map(step => step.displayName)];
   }
   if (task.state === TaskState.AutoReview) {
-    const reason = status.queue?.reason?.toLowerCase() ?? '';
-    if (reason.includes('operator action')) return ['Operator decision'];
     const workflowWait = postProcessingAction(status.queue?.reason);
     if (workflowWait) return [workflowWait];
     return ['Review'];
