@@ -1,10 +1,5 @@
 @if (auth.studioAllowed() && !noProjectAccess()) {
-    @if (auth.status()?.recoveryCodesRemaining !== null && auth.status()?.recoveryCodesRemaining !== undefined) {
-      <section class="recovery-sign-in" role="status" data-testid="recovery-sign-in-notice">
-        <span>You signed in with a recovery code; {{ auth.status()?.recoveryCodesRemaining }} remain.</span>
-        <span>Choose Register a new authenticator beside your account name.</span>
-      </section>
-    }
+    <app-recovery-sign-in-notice />
     <app-offline-banner />
     <app-public-demo-banner />
     @defer (when codexSignInRequest() !== null) { <app-codex-sign-in-dialog /> }

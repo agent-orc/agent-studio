@@ -138,6 +138,7 @@ import { NotificationStackComponent } from './components/app-dialog/notification
 import { MediaLightboxComponent } from './components/media-lightbox/media-lightbox.component';
 import { MediaLightboxService } from './services/media-lightbox.service';
 import { OfflineBannerComponent } from './components/offline-banner/offline-banner.component';
+import { RecoverySignInNoticeComponent } from './components/recovery-sign-in-notice/recovery-sign-in-notice.component';
 import { PublicDemoBannerComponent } from './components/public-demo-banner/public-demo-banner.component';
 import { UpdateClientService } from './services/update.service';
 import { UpdateNotificationBridge } from './services/update-notification-bridge.service';
@@ -200,6 +201,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     MediaLightboxComponent,
     OfflineBannerComponent,
     PublicDemoBannerComponent,
+    RecoverySignInNoticeComponent,
     ProjectTabsComponent,
     E2ECleanupDialogComponent,
     TagManagerDialogComponent,
