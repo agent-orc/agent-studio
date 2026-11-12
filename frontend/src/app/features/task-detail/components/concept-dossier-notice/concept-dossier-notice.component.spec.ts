@@ -84,18 +84,42 @@ describe('ConceptDossierNoticeComponent', () => {
     expect(coding.fixture.nativeElement.querySelector('[data-testid="concept-dossier-notice"]')).toBeNull();
   });
 
-  it('renders the detected dossier as a clickable Wiki link', async () => {
-    const { fixture } = await mount(job(
+  it('renders an integrated dossier as a clickable Wiki link', async () => {
+    const published = job(
       'concept',
       TaskState.Completed,
       dossier({ repoRelativePath: 'docs/coding-agent-sidesheet/index.html', contractSatisfied: true }),
-    ));
+    );
+    published.integration = {
+      status: 'integrated', deliveryRef: 'refs/results/concept', sha: 'abc123',
+      integrationBranch: 'develop', detail: null,
+    };
+    const { fixture } = await mount(published);
     const link = fixture.nativeElement.querySelector('[data-testid="concept-dossier-link"]') as HTMLAnchorElement;
 
     expect(link.textContent).toContain('docs/coding-agent-sidesheet/index.html');
     expect(link.getAttribute('href')).toBe(
       '#/projects/proj-002/wiki?page=coding-agent-sidesheet%2Findex.html',
     );
+  });
+
+  it('shows the integration stage without a broken Wiki link before publication', async () => {
+    const pending = job(
+      'concept', TaskState.HumanReview,
+      dossier({ repoRelativePath: 'docs/notes-export/index.html', contractSatisfied: true }),
+    );
+    pending.integration = {
+      status: 'pending', deliveryRef: 'refs/results/concept', sha: null,
+      integrationBranch: 'develop', detail: null,
+    };
+    const { fixture } = await mount(pending);
+    const host = fixture.nativeElement as HTMLElement;
+
+    expect(host.querySelector('[data-testid="concept-dossier-link"]')).toBeNull();
+    expect(host.querySelector('[data-testid="concept-dossier-path"]')?.textContent)
+      .toBe('docs/notes-export/index.html');
+    expect(host.querySelector('[data-testid="concept-dossier-publication"]')?.textContent)
+      .toContain('Not published yet · Awaiting integration');
   });
 
   it('uses the board Dossier link and shows its recorded decision and spawned card', async () => {

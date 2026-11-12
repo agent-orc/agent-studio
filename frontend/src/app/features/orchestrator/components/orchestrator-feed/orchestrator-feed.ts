@@ -29,6 +29,7 @@ import { OrchestratorFeedStore } from '../../state/orchestrator-feed.store';
 import { OrchestratorFeedWindow } from './orchestrator-feed-windowing';
 import { buildFeedRows, type FeedBurst, type FeedRow } from './feed-bursts';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { laneName } from '../../../../models/lane-presentation';
 
 /** Topic name the Watcher stamps on the Activity entry that carries a review-mode decision (orchestrator-waechter dossier §10.4). */
 export const WATCHER_DECISION_TOPIC = 'watcher-decision-required';
@@ -231,6 +232,21 @@ export class OrchestratorFeedComponent {
   navigateToTask(entry: OrchestratorLogEntry): void {
     if (!entry.jobId || !entry.watchPath) return;
     this.openTask.emit({ jobId: entry.jobId, watchPath: entry.watchPath });
+  }
+
+  displaySummary(entry: OrchestratorLogEntry): string {
+    return this.displayText(entry.summary, entry);
+  }
+
+  displayText(value: string | null | undefined, entry: OrchestratorLogEntry): string {
+    let summary = (value ?? '').replace(/\b\d+[a-z]?-[a-z][a-z-]*\b/g, lane => laneName(lane));
+    for (const card of entry.stall?.affectedCards ?? (entry.jobId ? [entry.jobId] : [])) {
+      const task = this.jobService.jobs().find(item => item.id === card || item.key === card || item.taskKey === card);
+      if (!task) continue;
+      const label = `${task.key || task.id} · ${task.title}`;
+      if (!summary.includes(label)) summary = summary.replace(card, label);
+    }
+    return summary;
   }
 
   loadOlder(): void {

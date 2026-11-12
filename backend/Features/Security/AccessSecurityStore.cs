@@ -1328,6 +1328,21 @@ public sealed partial class AccessSecurityStore
     private static bool IsValidUsername(string normalized)
         => normalized.Length is >= 3 and <= 64
             && normalized.All(ch => char.IsLetterOrDigit(ch) || ch is '.' or '_' or '-');
+    public static Dictionary<string, string[]> BootstrapFieldErrors(BootstrapRequest request)
+    {
+        var errors = new Dictionary<string, string[]>();
+        var username = NormalizeUsername(request.Username);
+        if (!IsValidUsername(username))
+            errors["username"] = ["Username must be 3 to 64 letters, digits, dots, underscores, or hyphens."];
+        var passwordErrors = new List<string>();
+        var password = request.Password ?? string.Empty;
+        if (password.Length is < 12 or > 128)
+            passwordErrors.Add("Password must be 12 to 128 characters.");
+        if (username.Length > 0 && password.Contains(username, StringComparison.OrdinalIgnoreCase))
+            passwordErrors.Add("Password must not contain the username.");
+        if (passwordErrors.Count > 0) errors["password"] = [.. passwordErrors];
+        return errors;
+    }
     private static void ValidatePassword(string? password, string username)
     {
         password ??= string.Empty;

@@ -10,11 +10,11 @@ const emptyPlan: RetentionPlan = { plannedAt: '2026-09-06T12:00:00Z', policyVers
 
 describe('RetentionAdminComponent preview', () => {
   const retention = {
-    plan: vi.fn(), apply: vi.fn(), listRuns: vi.fn(() => of([])), getSchedule: vi.fn(() => of({ enabled: true, serverLocalHour: 3, nextRunAt: '' })), listFullBackups: vi.fn(() => of({ backups: [] })),
+    plan: vi.fn(), apply: vi.fn(), listRuns: vi.fn(() => of([])), getSchedule: vi.fn(() => of({ enabled: true, serverLocalHour: 3, nextRunAt: '' })),
     getWorkspacePolicy: vi.fn(() => of({ scope: 'workspace', version: 1, updatedAt: '', updatedBy: '', rules: PLATFORM_RETENTION_RULES, fullBackups: null })),
   };
   beforeEach(async () => {
-    vi.resetAllMocks(); retention.listRuns.mockReturnValue(of([])); retention.getSchedule.mockReturnValue(of({ enabled: true, serverLocalHour: 3, nextRunAt: '' })); retention.listFullBackups.mockReturnValue(of({ backups: [] }));
+    vi.resetAllMocks(); retention.listRuns.mockReturnValue(of([])); retention.getSchedule.mockReturnValue(of({ enabled: true, serverLocalHour: 3, nextRunAt: '' }));
     retention.getWorkspacePolicy.mockReturnValue(of({ scope: 'workspace', version: 1, updatedAt: '', updatedBy: '', rules: PLATFORM_RETENTION_RULES, fullBackups: null }));
     await TestBed.configureTestingModule({ imports: [RetentionAdminComponent], providers: [provideZonelessChangeDetection(), { provide: RetentionService, useValue: retention }] }).compileComponents();
   });
@@ -24,6 +24,12 @@ describe('RetentionAdminComponent preview', () => {
     const fixture = TestBed.createComponent(RetentionAdminComponent); fixture.detectChanges();
     await fixture.componentInstance.preview(); fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="retention-plan-empty"]')).toBeTruthy();
+  });
+
+  it('points installation backups to Task Server without loading full backup sets', () => {
+    const fixture = TestBed.createComponent(RetentionAdminComponent); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="retention-backup-guidance"]')?.textContent).toContain('Settings > Task Server');
+    expect(fixture.nativeElement.querySelector('[data-testid="retention-backups"]')).toBeNull();
   });
 
   it('renders a populated sortable plan and enables the separate run action', async () => {

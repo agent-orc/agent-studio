@@ -97,6 +97,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | BoardShadowWorker | always | infra | Authority host. Idle unless `Board:Source` is `task-server-shadow` or `task-server`; then it mirrors the published task index generation into the Task Server board read model and records shadow differences by card and field (AGT-3317). Makes no transition decision. |
 | TaskFileMirrorWorker | always | infra | Authority host. Idle unless `TaskArtifacts:Source` is `task-server-shadow` or `task-server`; then it copies task folder files into the Task Server's `task_files` by content hash, off the request path, until the write cutover (AGT-3320). Makes no transition decision. |
 | OperatorCandidateAuditRepair | always | apply-recover | Authority host. Restores missing timeline audits from persisted operator candidate receipts at startup; makes no transition decision. |
+| PublishedGateEvidenceBackfill | always | apply-recover | Authority host. Adds missing published gate evidence once at startup from a card's own exact, passed, full-suite pre-develop gate receipt on a first-parent commit (AGT-3747); idempotent, makes no transition decision. |
 | ResultSummaryRetryScheduler | !PD | apply-recover | Authority |
 | AttemptArchiveIndexWarmupService | always | infra | Authority host |
 | RemoteQueueStarvationWatchdog | !PD | report | Authority host |

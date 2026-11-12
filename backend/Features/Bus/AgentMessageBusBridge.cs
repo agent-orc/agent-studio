@@ -752,6 +752,25 @@ public sealed class AgentMessageBusBridge
         return EmitAsync(msg, ct);
     }
 
+    /// <summary>Records a paused batch's one handoff to individual full-suite gates.</summary>
+    public Task EmitBatchPauseHandoffAsync(string project, string batchId, string reason,
+        IReadOnlyList<string> members, CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: ParticipantOrchestratorFor(project),
+            role: "system",
+            kind: "lifecycle",
+            severity: "Warn",
+            project: project,
+            topic: "batch-paused-per-task-handoff",
+            summary: TruncateSummary($"Batch {batchId} paused; {members.Count} members moved to per-task gates"),
+            body: $"Reason: {reason}\nMembers: {string.Join(", ", members)}\n"
+                + "Each member runs a full suite as a gate slot opens. Red escalates; green integrates.",
+            payload: new { batchId, reason, members },
+            tags: ["batch-gate", "per-task-fallback", $"batch:{batchId}"]);
+        return EmitAsync(msg, ct);
+    }
+
     public Task EmitQualityChangeReviewDeliveryExpiredAsync(string cardKey, string repositoryId,
         string key, CancellationToken ct = default)
     {

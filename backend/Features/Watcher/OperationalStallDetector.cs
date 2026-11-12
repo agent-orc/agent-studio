@@ -1,3 +1,5 @@
+using AgentStudio.Shared;
+
 namespace AgentStudio.Watcher;
 
 /// <summary>Facts from the existing host, attempt, gate, lane and deployment projections.</summary>
@@ -160,7 +162,11 @@ public static class OperationalStallDetector
         foreach (var lane in facts.Lanes.Where(x => nowUtc - x.EnteredUtc >= TimeSpan.FromHours(thresholds.LaneBudgetHours)))
             AddScoped("lane-stall", $"card:{lane.Card}:{lane.Lane}", "warning", lane.EnteredUtc,
                 $"{lane.Card} has stayed in {lane.Lane} beyond its {thresholds.LaneBudgetHours}h budget.", 1,
-                "Inspect the lane's pending action and resume or escalate it.", lane.Evidence,
+                lane.Lane == TaskStates.HumanReview
+                    ? "Open the card and decide acceptance or integration."
+                    : lane.Lane == TaskStates.AutoReview
+                        ? "Open the card and resolve its pending review gate."
+                        : "Open the card and resolve the blocked lane action.", lane.Evidence,
                 project: lane.Project, cards: [lane.Card]);
         foreach (var deploy in facts.Deployments.Where(x => x.StartError is not null
             || x.ExpectedVersion is not null && x.RunningVersion != x.ExpectedVersion))

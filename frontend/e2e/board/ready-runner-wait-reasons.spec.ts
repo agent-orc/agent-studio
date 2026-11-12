@@ -94,6 +94,20 @@ const MANUAL_MODE: Scenario = {
   },
 };
 
+const COOLDOWN = 'Auto-pickup is cooling down after a circuit-breaker trip (rate-limit on agt-4400) and resumes at 2026-11-09T09:30:00Z.';
+const BREAKER_COOLDOWN: Scenario = {
+  name: 'breaker-cooldown',
+  cards: [card('agt-4401', 'Await safe auto resume', 1,
+    { kind: 'runner', position: 1, reasonCode: 'breaker-cooldown', reason: COOLDOWN },
+    { executionLocation: { state: 'no-active-execution', executionKind: 'none',
+      configuredRunnerId: 'remote-coding', hostDisplayName: 'remote-coding' } })],
+  runner: {
+    mode: 'manual', breakerState: 'cooldown', breakerReason: 'rate-limit on agt-4400',
+    breakerCooldownUntil: '2026-11-09T09:30:00Z',
+    queuedJobIds: ['agt-4401'], pickupGate: { code: 'breaker-cooldown', detail: COOLDOWN }, pickupSkips: [],
+  },
+};
+
 const SLOTS = 'All 2 runner slots are occupied.';
 const FULL_SLOTS: Scenario = {
   name: 'slots-full',
@@ -222,6 +236,19 @@ function cardFor(page: Page, title: string): Locator {
 }
 
 test.describe('Ready cards name the runner reason they wait for', () => {
+  test('breaker cooldown names the cause and end time without a mode switch', async ({ page }) => {
+    await openBoard(page, BREAKER_COOLDOWN);
+    const lane = page.getByTestId('lane-2-ready');
+    await expectSplitSumsToLaneCount(lane, { 'runner-breaker-cooldown': 1 });
+    const queued = cardFor(page, 'Await safe auto resume');
+    await expect(queued.getByTestId('task-live-current')).toContainText('Not picked · breaker cooldown');
+    await expect(queued.getByTestId('task-live-status')).toContainText('rate-limit on agt-4400');
+    await expect(queued.getByTestId('task-live-status')).toContainText('2026-11-09T09:30:00Z');
+    await expect(queued.getByTestId('task-live-detail')).toHaveCSS('white-space', 'normal');
+    await expect(queued.getByTestId('task-live-switch-auto')).toHaveCount(0);
+    await captureLane(page, lane, BREAKER_COOLDOWN.name);
+  });
+
   test('manual mode: header splits by reason and each queued card says auto-pickup is off', async ({ page }) => {
     await openBoard(page, MANUAL_MODE);
     const lane = page.getByTestId('lane-2-ready');

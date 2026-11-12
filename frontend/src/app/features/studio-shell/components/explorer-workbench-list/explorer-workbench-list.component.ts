@@ -71,18 +71,22 @@ export class ExplorerWorkbenchListComponent {
         id: 'needs-decision',
         label: 'Needs a decision',
         empty: 'No decisions waiting',
-        items: items.filter(item => item.status === 'decision-pending' || item.status === 'invalid'),
+        items: items.filter(item => this.openCount(item) > 0 || item.status === 'invalid'),
       },
       {
         id: 'in-implementation',
         label: 'In implementation',
         empty: 'No Dossiers in implementation',
-        items: items.filter(item => item.status === 'active' || item.status === 'decided'),
+        items: items.filter(item => (item.status === 'active' || item.status === 'decided')
+          && this.openCount(item) === 0),
       },
     ];
   });
   readonly historyItems = computed(() =>
     this.dossierItems().filter(item => item.status === 'documented' || item.status === 'archived'));
+  readonly pendingDecisionCount = computed(() =>
+    (this.catalogue()?.items ?? [])
+      .reduce((count, item) => count + this.openCount(item), 0));
   readonly dossierCount = computed(() => this.dossierItems().length);
   readonly sectionScope = computed(() => this.projectId()?.trim() || this.projectName());
 
@@ -191,7 +195,11 @@ export class ExplorerWorkbenchListComponent {
   }
 
   openCount(item: WorkbenchListItem): number {
-    return item.openDecisionCount ?? (item.status === 'decision-pending' ? 1 : 0);
+    if (item.status === 'decided' || item.status === 'documented' || item.status === 'archived')
+      return 0;
+    return item.openDecisionCount ?? (
+      item.status === 'decision-pending' || item.phase === 'decision-ready'
+        || item.lifecycleState === 'review-requested' ? 1 : 0);
   }
 
   accessibleMeta(item: WorkbenchListItem): string {
