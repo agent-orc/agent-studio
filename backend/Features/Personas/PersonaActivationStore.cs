@@ -239,7 +239,8 @@ public sealed partial class PersonaActivationStore
             var operations = PersonaAutonomy.Grantable(descriptor, attributes.Autonomy);
             var activation = new PersonaActivationV1(personaId, source, PersonaStates.Shadow, revision, descriptor.Revision, digest,
                 descriptor, settings, attributes, allowance, scope, operations, now, owner.User.Id,
-                now + PersonaDescriptorValidator.ReportPeriod(descriptor.Cadence), null, null,
+                now + (descriptor.Id == "operations-warden" ? TimeSpan.FromDays(14)
+                    : PersonaDescriptorValidator.ReportPeriod(descriptor.Cadence)), null, null,
                 [.. (existing?.History ?? []), new PersonaActivationEventV1(now, owner.User.Id, "activate", PersonaStates.Shadow,
                     revision, descriptor.Revision, digest, reason)]) { RoleId = descriptor.Id };
             _security.ActivatePersonaPrincipal(state.WorkspaceId, activation, owner.User.Id);
