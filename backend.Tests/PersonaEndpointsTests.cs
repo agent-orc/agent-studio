@@ -238,6 +238,74 @@ public sealed class PersonaEndpointsTests : IDisposable
     }
 
     [Fact]
+    public async Task Budget_steward_refuses_forbidden_targets_and_open_warden_floor_with_receipts()
+    {
+        using var factory = BuildFactory();
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var workspaceId = factory.Services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock).Id;
+        var basePath = $"/api/workspaces/{workspaceId}/personas";
+        using (var setupOwner = await OwnerClientAsync(factory))
+        {
+            foreach (var persona in new[] { "budget-steward", "chief-of-staff", "operations-warden", "security-officer" })
+            {
+                await ReadOk(setupOwner.PostAsJsonAsync("/api/auth/step-up", new { code = CurrentCode() }));
+                await ReadOk(setupOwner.PostAsJsonAsync($"{basePath}/{persona}/activate", new { }));
+            }
+        }
+        // The steward reports weekly, so its shadow period ends after seven days; renew the grants then.
+        _clock.Advance(TimeSpan.FromDays(8));
+        using (var renewOwner = await OwnerClientAsync(factory))
+        {
+            await ReadOk(renewOwner.PostAsJsonAsync("/api/auth/step-up", new { code = CurrentCode() }));
+            await ReadOk(renewOwner.PostAsJsonAsync($"{basePath}/renew-grants", new { }));
+        }
+        var session = security.MintPersonaOccurrenceSession(workspaceId, "budget-steward", "occ-steward");
+        using var steward = BearerClient(factory, session.Secret, "occ-steward");
+        var rebalance = $"{basePath}/budget-steward/operations/persona.budget.rebalance";
+        var pause = $"{basePath}/budget-steward/operations/persona.pause";
+
+        async Task<string> Refusal(string path, object body)
+        {
+            using var response = await PostWithSource(steward, path, "owner-chat", body);
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            var receipt = await Body(response);
+            Assert.Equal("refused", receipt.GetProperty("outcome").GetString());
+            return receipt.GetProperty("refusal").GetString()!;
+        }
+
+        // The steward never raises its own allowance or the chief of staff's.
+        Assert.Equal("budget-target-forbidden", await Refusal(rebalance, new
+        {
+            fromPersonaId = "security-officer", toPersonaId = "budget-steward", tokens = 1000, reason = "Raise own",
+        }));
+        Assert.Equal("budget-target-forbidden", await Refusal(rebalance, new
+        {
+            fromPersonaId = "security-officer", toPersonaId = "chief-of-staff", tokens = 1000, reason = "Raise chief",
+        }));
+        // It never pauses itself or the chief of staff.
+        Assert.Equal("pause-target-forbidden", await Refusal(pause,
+            new { toPersonaId = "budget-steward", reason = "Pause self" }));
+        Assert.Equal("pause-target-forbidden", await Refusal(pause,
+            new { toPersonaId = "chief-of-staff", reason = "Pause chief" }));
+        // The warden keeps running while a floor item of 90 or more is open.
+        factory.Services.GetRequiredService<AgentStudio.Personas.PersonaItemStore>().Upsert(workspaceId,
+            "security-officer", "security-officer", "occ-floor",
+            new AgentStudio.Personas.PersonaItemDraftV1(AgentStudio.Personas.PersonaItemKinds.Finding,
+                "Floor finding", "Body", null, [new AgentStudio.Personas.PersonaEvidenceV1("fact:one")],
+                1, 1, 0.5, "floor-fingerprint"), 90, _clock.GetUtcNow().UtcDateTime);
+        Assert.Equal("warden-floor-open", await Refusal(pause,
+            new { toPersonaId = "operations-warden", reason = "Pause warden" }));
+
+        var receipts = factory.Services.GetRequiredService<AgentStudio.Personas.PersonaManagerService>()
+            .List(workspaceId);
+        Assert.Equal(["budget-target-forbidden", "budget-target-forbidden"], receipts
+            .Where(r => r.Operation == "persona.budget.rebalance").Select(r => r.Refusal));
+        Assert.Equal(["pause-target-forbidden", "pause-target-forbidden", "warden-floor-open"], receipts
+            .Where(r => r.Operation == "persona.pause").Select(r => r.Refusal));
+        Assert.All(receipts, r => Assert.Equal("refused", r.Outcome));
+    }
+
+    [Fact]
     public async Task End_all_operator_access_also_ends_persona_sessions()
     {
         using var factory = BuildFactory();

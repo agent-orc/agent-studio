@@ -176,17 +176,12 @@ public sealed class PersonaManagerService
             Actor = actor, AtUtc = now, Outcome = "owner-undo", UndoneAtUtc = now,
             CalibrationReversal = true, PreviousRevision = original.NextRevision,
             NextRevision = restoredRevision ?? original.NextRevision };
-        lock (_gate)
+        Write(workspaceId, all =>
         {
-            var path = PathFor(workspaceId)!;
-            var all = Load(workspaceId);
             var index = all.FindIndex(r => r.Id == receiptId);
             all[index] = original with { UndoneAtUtc = now };
             all.Add(undo);
-            var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(all, Json));
-            File.Move(temp, path, true);
-        }
+        });
         _security.AppendPersonaAudit(actor, "persona.manager.owner-undo", workspaceId,
             original.Actor, new { receiptId, undoId = undo.Id, original.GrantId });
         IEnumerable<string> itemCards = original.ItemId is { } linkedItemId
@@ -422,14 +417,17 @@ public sealed class PersonaManagerService
             throw new PersonaManagerRefusal("item-out-of-scope");
     }
 
-    private void Save(PersonaManagerReceipt receipt)
+    private void Save(PersonaManagerReceipt receipt) => Write(receipt.WorkspaceId, all => all.Add(receipt));
+
+    /// <summary>The one receipt write path: load, change and replace the ledger atomically.</summary>
+    private void Write(string workspaceId, Action<List<PersonaManagerReceipt>> change)
     {
         lock (_gate)
         {
-            var path = PathFor(receipt.WorkspaceId);
+            var path = PathFor(workspaceId);
             if (path is null) return;
-            var all = Load(receipt.WorkspaceId);
-            all.Add(receipt);
+            var all = Load(workspaceId);
+            change(all);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             File.WriteAllText(temporary, JsonSerializer.Serialize(all, Json));

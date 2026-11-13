@@ -27,7 +27,7 @@ public sealed record PersonaItemDraftV1(string Kind, string Title, string Body, 
     string? DossierKey = null, string? DossierSection = null,
     string? DraftTitle = null, string? DraftPrompt = null, string? Area = null);
 public sealed record PersonaItemChangeV1(DateTime AtUtc, int PreviousImportance, int Importance,
-    string Reason, string OccurrenceKey);
+    string Reason, string OccurrenceKey, int? ManagerAdjustment = null);
 public sealed record PersonaItemV1(string Id, string PersonaId, string RoleId, string Kind,
     string Title, string Body, string? Project, IReadOnlyList<PersonaEvidenceV1> Evidence,
     int Impact, int Urgency, double Confidence, int Floor, int Importance,
@@ -190,7 +190,7 @@ public sealed class PersonaItemStore
                 throw new PersonaManagerRefusal("importance-floor-or-ceiling");
             var next = old with { Importance = score, UpdatedAtUtc = now,
                 History = [.. old.History, new PersonaItemChangeV1(now, old.Importance,
-                    score, "manager-adjustment:" + adjustment + ":" + reason.Trim(), actor)] };
+                    score, "manager-adjustment:" + reason.Trim(), actor, adjustment)] };
             items[index] = next;
             Save(workspaceId, items);
             return next;
@@ -226,7 +226,8 @@ public sealed class PersonaItemStore
                 UpdatedAtUtc = now,
                 History = [.. old.History, new PersonaItemChangeV1(now, old.Importance,
                     score, adjustmentToRemove == 0 ? "owner-undo"
-                        : "owner-undo-adjustment:" + (-adjustmentToRemove), actor)] };
+                        : "owner-undo-adjustment", actor,
+                    adjustmentToRemove == 0 ? null : -adjustmentToRemove)] };
             items[index] = next;
             Save(workspaceId, items);
             return next;
@@ -303,23 +304,8 @@ public sealed class PersonaItemStore
         }
     }
 
-    private static int ManagerAdjustment(PersonaItemV1 item)
-    {
-        var sum = 0;
-        foreach (var change in item.History)
-        {
-            var reason = change.Reason;
-            var prefix = reason.StartsWith("manager-adjustment:", StringComparison.Ordinal)
-                ? "manager-adjustment:" : reason.StartsWith("owner-undo-adjustment:", StringComparison.Ordinal)
-                    ? "owner-undo-adjustment:" : null;
-            if (prefix is null) continue;
-            var value = reason.AsSpan(prefix.Length);
-            var colon = value.IndexOf(':');
-            if (colon >= 0) value = value[..colon];
-            if (int.TryParse(value, out var adjustment)) sum += adjustment;
-        }
-        return sum;
-    }
+    private static int ManagerAdjustment(PersonaItemV1 item) =>
+        item.History.Sum(change => change.ManagerAdjustment ?? 0);
 
     private List<PersonaItemV1> Load(string workspaceId)
     {

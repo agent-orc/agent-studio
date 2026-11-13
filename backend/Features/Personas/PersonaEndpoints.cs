@@ -150,9 +150,9 @@ public static class PersonaEndpoints
         personas.MapPost("/{personaId}/operations/{operationId}", async (string id, string personaId, string operationId,
             PersonaManagerRequest? request, HttpContext context, PersonaManagerService managers) =>
         {
-            if (!OperatorOperationIds.PersonaAll.Contains(operationId, StringComparer.Ordinal))
+            if (!OperatorOperationIds.PersonaRoute.Contains(operationId, StringComparer.Ordinal))
                 return Results.NotFound(new { error = "persona-operation-not-found" });
-            if (OperatorOperationIds.PersonaManager.Contains(operationId, StringComparer.Ordinal))
+            if (OperatorOperationIds.PersonaManagerRoute.Contains(operationId, StringComparer.Ordinal))
             {
                 if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem]
                     is not ServiceAccountPrincipal principal)
