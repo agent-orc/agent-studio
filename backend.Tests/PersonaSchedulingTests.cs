@@ -54,6 +54,22 @@ public sealed class PersonaSchedulingTests : IDisposable
     }
 
     [Fact]
+    public void Waiting_occurrence_admitted_after_attribute_edit_uses_the_new_activation_revision()
+    {
+        var original = Warden();
+        var store = new PersonaSchedulingService(_root);
+        var trigger = Events(new PersonaTrigger(Now, "deploy.completed", "evt-revision"));
+        var waiting = Assert.Single(store.Sweep("main", Now, null, [original], trigger,
+            _ => Open with { QuotaStatus = WorkspaceQuotaPolicy.Warning }));
+        Assert.Equal(PersonaOccurrenceStates.Waiting, waiting.State);
+        var changed = original with { ActivationRevision = original.ActivationRevision + 1 };
+        store.Sweep("main", Now.AddMinutes(5), null, [changed], trigger, _ => Open);
+        var admitted = Assert.Single(store.Receipts("main"));
+        Assert.Equal(PersonaOccurrenceStates.Admitted, admitted.State);
+        Assert.Equal(changed.ActivationRevision, admitted.ActivationRevision);
+    }
+
+    [Fact]
     public void Replayed_week_budget_equals_completed_receipts_and_allowance_limits_sessions()
     {
         var activation = Warden() with { Allowance = Warden().Allowance with

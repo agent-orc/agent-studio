@@ -36,7 +36,11 @@ public sealed record PersonaItemV1(string Id, string PersonaId, string RoleId, s
     bool DraftCard = false, IReadOnlyList<string>? Options = null, string? RecommendedOption = null,
     string? DossierKey = null, string? DossierSection = null,
     string? DraftTitle = null, string? DraftPrompt = null, string? Area = null,
-    DateTime? DeferredUntilUtc = null, string? PromotedTaskKey = null);
+    DateTime? DeferredUntilUtc = null, string? PromotedTaskKey = null)
+{
+    public int ActivationRevision { get; init; }
+    public DateTime? FirstPublishedAtUtc { get; init; }
+}
 
 public static class PersonaImportanceService
 {
@@ -149,7 +153,11 @@ public sealed class PersonaItemStore
                     now, now, [new PersonaItemChangeV1(now, 0, score, "created", occurrenceKey)],
                     draft.DeadlineUtc, draft.DraftCard, draft.Options, draft.RecommendedOption,
                     draft.DossierKey, draft.DossierSection, draft.DraftTitle, draft.DraftPrompt,
-                    draft.Area);
+                    draft.Area)
+                {
+                    ActivationRevision = grounds?.ActivationRevision ?? 0,
+                    FirstPublishedAtUtc = now,
+                };
                 items.Add(item);
             }
             Save(workspaceId, items);

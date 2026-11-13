@@ -34,6 +34,8 @@ public sealed record PersonaOccurrenceReceipt(
     public DateTime? FinishedAtUtc { get; init; }
     public double? CostUsd { get; init; }
     public string PriceStatus { get; init; } = "unknown";
+    public int ActivationRevision { get; init; }
+    public DateTime? FirstTriggerAtUtc { get; init; }
     public IReadOnlyDictionary<string, int> FactFloors { get; init; } = new Dictionary<string, int>();
 }
 
@@ -173,6 +175,7 @@ public sealed class PersonaSchedulingService
                             ? current : current with { TriggerRefs = joined, FactFloors = mergedFloors };
                         if (current.State == PersonaOccurrenceStates.Waiting)
                         {
+                            updated = updated with { ActivationRevision = activation.ActivationRevision };
                             var retryBudget = BudgetLocked(state with { Receipts = receipts }, now, workspaceLimit, activations);
                             var retryAdmission = Available(facts(activation), receipts, now);
                             var retryReason = Refusal(activation, retryBudget.Personas.GetValueOrDefault(activation.PersonaId),
@@ -205,6 +208,10 @@ public sealed class PersonaSchedulingService
                         NoCalls = reason is null ? [] : [new PersonaNoCallAttempt(now, reason)],
                         FactFloors = floors,
                         DescriptorDigest = activation.DescriptorDigest,
+                        ActivationRevision = activation.ActivationRevision,
+                        FirstTriggerAtUtc = (triggers.GetValueOrDefault(activation.PersonaId) ?? [])
+                            .Where(t => refs.Contains(t.Ref)).Select(t => (DateTime?)t.At)
+                            .Min() ?? windowEnd,
                     };
                     receipts.Add(receipt);
                     changed.Add(receipt);
