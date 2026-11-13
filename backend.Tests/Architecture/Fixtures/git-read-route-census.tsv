@@ -483,6 +483,9 @@
 /api/workspaces/{id}/personas/budget	free	-	-	-
 /api/workspaces/{id}/personas/items	free	-	-	-
 /api/workspaces/{id}/personas/reports	free	-	-	-
+/api/workspaces/{id}/personas/issues	free	-	-	-
+/api/workspaces/{id}/personas/issues/{issueId}	free	-	-	-
+/api/workspaces/{id}/personas/issues/{issueId}/export	free	-	-	-
 /api/workspaces/{id}/personas/{personaId}/sheet	free	-	-	-
 /api/workspaces/{id}/settings	free	-	-	-
 /api/workspaces/{workspaceId}/decision-rules/	free	-	-	-

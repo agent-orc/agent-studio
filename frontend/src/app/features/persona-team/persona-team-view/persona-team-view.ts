@@ -11,9 +11,10 @@ import type { RegistryWorkspaceListItem } from '../../../models/task.model';
 import { StudioTabStateService } from '../../studio-shell/services/studio-tab-state.service';
 import { OrchestratorPanelStateService } from '../../orchestrator/state/orchestrator-panel-state.service';
 import { PersonaAttributes, PersonaBudget, PersonaEntry, PersonaItem, PersonaReport, PersonaSheet, isOpenPersonaItem, personaCards, poolTotals } from './persona-team.model';
+import { WeeklyIssueViewComponent } from '../weekly-issue-view/weekly-issue-view';
 
 @Component({ selector: 'app-persona-team-view', standalone: true,
-  imports: [DatePipe, DecimalPipe, KeyValuePipe, LoadingSurfaceComponent, PendingButtonDirective, StatusIndicatorComponent, SegmentedControlComponent], templateUrl: './persona-team-view.html', styleUrl: './persona-team-view.scss',
+  imports: [DatePipe, DecimalPipe, KeyValuePipe, LoadingSurfaceComponent, PendingButtonDirective, StatusIndicatorComponent, SegmentedControlComponent, WeeklyIssueViewComponent], templateUrl: './persona-team-view.html', styleUrl: './persona-team-view.scss',
   changeDetection: ChangeDetectionStrategy.OnPush })
 export class PersonaTeamViewComponent {
   readonly personaId = input<string | null>(null);

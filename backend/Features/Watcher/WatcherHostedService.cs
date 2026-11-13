@@ -48,6 +48,7 @@ public sealed class WatcherHostedService : BackgroundService
     private readonly TimeProvider _time;
     private readonly PersonaSweepCoordinator? _personas;
     private readonly PersonaOccurrenceService? _occurrences;
+    private readonly AgentStudio.Magazine.WeeklyIssueService? _weeklyIssues;
 
     public WatcherRunSnapshot Current { get; private set; } = WatcherRunSnapshot.Idle("Not run yet.");
 
@@ -64,7 +65,8 @@ public sealed class WatcherHostedService : BackgroundService
         IConfiguration configuration,
         ILogger<WatcherHostedService> logger,
         TimeProvider? time = null,
-        PersonaSweepCoordinator? personas = null, PersonaOccurrenceService? occurrences = null)
+        PersonaSweepCoordinator? personas = null, PersonaOccurrenceService? occurrences = null,
+        AgentStudio.Magazine.WeeklyIssueService? weeklyIssues = null)
     {
         _probes = probes;
         _engine = engine;
@@ -80,6 +82,7 @@ public sealed class WatcherHostedService : BackgroundService
         _time = time ?? TimeProvider.System;
         _personas = personas;
         _occurrences = occurrences;
+        _weeklyIssues = weeklyIssues;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -155,6 +158,10 @@ public sealed class WatcherHostedService : BackgroundService
                 }
             }
             catch (Exception ex) { _logger.LogWarning(ex, "Persona admission sweep failed"); }
+
+        if (_weeklyIssues is not null)
+            try { await _weeklyIssues.ComposeDueAllAsync(nowUtc, ct); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Weekly issue composition failed"); }
 
         var previouslyResolved = observations.Where(x => x.Subject is not null)
             .Where(x => _caseStore.Find(workspaceRoot, WatcherFingerprint.Compute(x))?.State == WatcherCaseStates.Resolved)

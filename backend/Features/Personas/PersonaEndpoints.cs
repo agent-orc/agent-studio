@@ -1,5 +1,6 @@
 using AgentStudio.Security;
 using AgentStudio.Quota;
+using AgentStudio.Magazine;
 using AgentStudio.Tasks;
 using AgentStudio.Tokens;
 
@@ -51,6 +52,29 @@ public static class PersonaEndpoints
                     activation, items.List(id), scheduling.Receipts(id), reports.List(id), DateTime.UtcNow,
                     scanner.GetResidentIdentityFacts(), pricing));
             })).RequirePermission(IamPermissions.WorkspaceRead);
+
+        personas.MapGet("/issues", (string id, WeeklyIssueService issues) =>
+            Results.Ok(issues.List(id))).RequirePermission(IamPermissions.WorkspaceRead);
+        personas.MapGet("/issues/{issueId}", (string id, string issueId, WeeklyIssueService issues) =>
+            AccessSecurityEndpoints.Execute(() => issues.Get(id, issueId) is { } issue
+                ? Results.Ok(issue) : Results.NotFound())).RequirePermission(IamPermissions.WorkspaceRead);
+        personas.MapGet("/issues/{issueId}/export", (string id, string issueId, WeeklyIssueService issues) =>
+            AccessSecurityEndpoints.Execute(() => issues.Get(id, issueId) is { } issue
+                ? Results.Text(WeeklyIssueHtml.Render(issue), "text/html; charset=utf-8")
+                : Results.NotFound())).RequirePermission(IamPermissions.WorkspaceRead);
+        personas.MapPost("/issues/compose", async (string id, bool? daily, HttpContext context,
+            AccessSecurityStore security, WeeklyIssueService issues, CancellationToken ct) =>
+        {
+            try
+            {
+                var owner = AccessSecurityEndpoints.RequireHuman(context, security);
+                security.RequirePersonaOwner(owner);
+            }
+            catch (SecurityOperationException ex)
+            { return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.Status); }
+            var issue = await issues.ComposeDueAsync(id, DateTime.UtcNow, daily == true, ct);
+            return issue is null ? Results.Conflict(new { error = "issue-not-due" }) : Results.Ok(issue);
+        }).RequirePermission(IamPermissions.WorkspaceAdminister);
 
         app.MapPost("/api/runner/personas/claim", async (HttpContext context,
             PersonaLeaseClaimRequest request, PersonaOccurrenceService occurrences, CancellationToken ct) =>

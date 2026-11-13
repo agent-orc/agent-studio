@@ -1170,7 +1170,7 @@ export class StudioShellComponent {
       case 'workspace-settings':
         return 'Workspace settings';
       case 'team':
-        return tab.personaId ? 'Persona · ' + tab.personaId : 'Team';
+        return tab.personaId === 'magazine' ? 'Magazine' : tab.personaId ? 'Persona · ' + tab.personaId : 'Team';
       case 'deployment-dashboard':
         return 'Deployment dashboard';
       case 'structure':
