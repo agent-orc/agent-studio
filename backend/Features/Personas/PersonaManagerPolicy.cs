@@ -28,7 +28,7 @@ public static class PersonaManagerPolicy
         };
     }
 
-    public static void RequireRole(string roleId, string operation) 
+    public static void RequireRole(string roleId, string operation)
     {
         var chief = operation is "persona.importance.adjust" or "persona.proposal.accept" or "card.requeue";
         var steward = operation is "persona.budget.rebalance" or "persona.pause";

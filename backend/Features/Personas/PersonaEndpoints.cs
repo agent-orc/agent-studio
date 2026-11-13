@@ -39,6 +39,7 @@ public static class PersonaEndpoints
             })).RequirePermission(IamPermissions.WorkspaceAdminister);
         personas.MapGet("/reports", (string id, PersonaReportStore reports) => Results.Ok(reports.List(id)))
             .RequirePermission(IamPermissions.WorkspaceRead);
+
         app.MapPost("/api/runner/personas/claim", async (HttpContext context,
             PersonaLeaseClaimRequest request, PersonaOccurrenceService occurrences, CancellationToken ct) =>
         {

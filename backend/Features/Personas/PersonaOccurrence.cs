@@ -174,21 +174,21 @@ public sealed class PersonaOccurrenceService
     private readonly HashSet<string> _wardenDays = new(StringComparer.Ordinal);
     private readonly string? _root;
 
-    public PersonaOccurrenceService(PersonaSchedulingService scheduling, PersonaActivationStore activations,
+    public PersonaOccurrenceService(PersonaManagerService managers,
+        PersonaSchedulingService scheduling, PersonaActivationStore activations,
         PersonaItemStore items, PersonaReportStore reports, ProjectRegistry projects,
         WorkspaceRegistry workspaces,
         TaskScannerService cards,
         WatcherCaseStore cases, WatcherProposalStore proposals, AgentMessageBusStore bus,
         AccessSecurityStore security, StudioBackupService backups, SecurityPostureService posture,
-        PersonaManagerService managers,
         IConfiguration configuration)
     {
+        _managers = managers;
         _scheduling = scheduling; _activations = activations; _items = items; _reports = reports;
         _projects = projects;
         _workspaces = workspaces;
         _cards = cards; _cases = cases; _proposals = proposals; _bus = bus;
         _security = security;
-        _managers = managers;
         _backups = backups; _posture = posture;
         _root = configuration["TaskRepository"];
     }
