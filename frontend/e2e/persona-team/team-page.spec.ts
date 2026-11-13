@@ -42,6 +42,10 @@ const issue = {
   sections: [{ roleId: 'operations', role: 'Operations', count: 1, stories: [{ id: 'pit_1', title: 'Backup gap', persona: 'Mira', role: 'Operations warden', importance: 97, teaser: null }] },
     { roleId: 'security', role: 'Security', count: 1, stories: [{ id: 'pit_2', title: 'Credential expiry', persona: 'Aster', role: 'Security officer', importance: 95, teaser: null }] }],
   trends: [], corrections: [], colophon: [], editorSkipped: false,
+  reviewMonth: '2026-10', monthlyReview: [{ personaId: 'mira', persona: 'Mira', roleId: 'security',
+    value: { weightedAcceptedPer100kTokens: 112.5, costPerAcceptedUsd: .12, noisePercent: 20,
+      misses: [{ name: 'Credential incident', url: '#/tasks/INC-1' }], useful: 3, notUseful: 1,
+      suggestions: [{ reason: 'Review scope or focus.' }] } }],
   articles: [{ scope: 'workspace:ws-demo', slug: 'operations-brief', revision: 2, title: 'Operations brief',
     summary: 'Backup status.', persona: 'Mira', personaId: 'mira', role: 'Operations warden' }],
 };
@@ -55,6 +59,7 @@ interface Fixture { releaseStop(): void; releaseDecision(): void; decisions: { i
 
 async function setup(page: Page, options: { failStop?: boolean; holdDecision?: boolean } = {}): Promise<Fixture> {
   let items = initialItems();
+  let ratings: { reportId: string; rating: string }[] = [];
   let releaseStop: (() => void) | undefined;
   let releaseDecision: (() => void) | undefined;
   const decisions: { itemId: string; outcome: string }[] = [];
@@ -94,6 +99,12 @@ async function setup(page: Page, options: { failStop?: boolean; holdDecision?: b
     if (path.endsWith('/issues')) return route.fulfill({ json: [issue, priorIssue] });
     if (path.endsWith('/sheet')) return route.fulfill({ json: { experience: 72.4, rank: 'Member',
       eligibility: 'Rank does not change grants or allowance',
+      value: { weightedAcceptedPer100kTokens: 112.5, costPerAcceptedUsd: .12,
+        teamMedianWeightedPer100kTokens: 80, teamMedianCostPerAcceptedUsd: .1,
+        noisePercent: 20, noiseNumerator: 1, raised: 5, useful: ratings.length, notUseful: 0,
+        misses: [{ name: 'Credential incident', source: 'card', sourceId: 'INC-1', url: '#/tasks/INC-1', importance: 90 }],
+        outcomes: [{ itemId: 'prop-1', taskKey: 'AGT-10', title: 'Fix backup', outcome: 'completed', url: '#/tasks/AGT-10' }],
+        suggestions: [{ kind: 'focus', reason: 'Review scope or focus.' }], showRevisionComparison: true },
       windows: [{ window: '30 days', activationRevision: null, raised: 6, accepted: 4, rejected: 2,
         duplicate: 0, open: 0, acceptance: { numerator: 4, denominator: 6, percent: 66.7 },
         cards: { promoted: 1, completed: 0, open: 1, rejectedInReview: 0, archivedWithoutDelivery: 0 },
@@ -116,6 +127,11 @@ async function setup(page: Page, options: { failStop?: boolean; holdDecision?: b
             punctuality: { numerator: 3, denominator: 3, percent: null }, calibration: null, misses: 0,
             tooFewDecisions: true }] } });
     if (path.endsWith('/attributes') && route.request().method() === 'PUT') return route.fulfill({ json: {} });
+    if (path.endsWith('/reports/ratings')) return route.fulfill({ json: ratings });
+    if (path.endsWith('/reports/r1/rating') && route.request().method() === 'POST') {
+      if (!ratings.length) ratings = [{ reportId: 'r1', rating: (route.request().postDataJSON() as { rating: string }).rating }];
+      return route.fulfill({ json: ratings[0] });
+    }
     if (path.endsWith('/budget')) return route.fulfill({ json: { poolTokens: 400, usedTokens: 80, startUtc: stamp,
       endUtc: stamp, personas: { mira: { allowanceTokens: 100, usedTokens: 30 }, aster: { allowanceTokens: 150, usedTokens: 50 } } } });
     if (path.endsWith('/items')) return route.fulfill({ json: items });
@@ -219,13 +235,52 @@ test('sheet shows denominators, revision split and light and dark captures', asy
   await expect(sheet.getByText('Focus weights · 100 / 100')).toBeVisible();
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
-    await page.screenshot({ path: join(resultDir, `persona-sheet-${theme}.png`), fullPage: true });
+    await page.screenshot({ path: join(resultDir, `persona-sheet-${theme}--mocked.png`), fullPage: true });
     await sheet.getByText('Derived record').scrollIntoViewIfNeeded();
-    await page.screenshot({ path: join(resultDir, `persona-sheet-stats-${theme}.png`), fullPage: true });
+    await page.screenshot({ path: join(resultDir, `persona-sheet-stats-${theme}--mocked.png`), fullPage: true });
     await sheet.locator('.team-sheet-window').last().scrollIntoViewIfNeeded();
-    await page.screenshot({ path: join(resultDir, `persona-sheet-revisions-${theme}.png`), fullPage: true });
+    await page.screenshot({ path: join(resultDir, `persona-sheet-revisions-${theme}--mocked.png`), fullPage: true });
     await sheet.getByText('Character sheet').scrollIntoViewIfNeeded();
   }
+});
+
+test('value panel links misses and outcomes; one report rating stays a count', async ({ page }) => {
+  mkdirSync(resultDir, { recursive: true });
+  await setup(page);
+  await openPersona(page);
+  await openTab(page, 'Sheet');
+  const value = page.getByTestId('persona-value');
+  await expect(value).toContainText('112.5 per 100,000 tokens');
+  await expect(value).toContainText('team median 80');
+  await expect(value.getByRole('link', { name: 'Credential incident' })).toHaveAttribute('href', '#/tasks/INC-1');
+  await expect(value.getByRole('link', { name: 'Fix backup' })).toHaveAttribute('href', '#/tasks/AGT-10');
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await value.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(resultDir, `persona-value-${theme}--mocked.png`), fullPage: true });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await value.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(resultDir, `persona-value-mobile-${theme}--mocked.png`), fullPage: true });
+  }
+  await openTab(page, 'Reports');
+  await page.getByRole('button', { name: 'Useful', exact: true }).click();
+  await expect(page.getByText('Owner rating: Useful')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Not useful' })).toHaveCount(0);
+  await openTab(page, 'Sheet');
+  await expect(value).toContainText('1 Useful');
+});
+
+test('monthly issue review shows each persona and Owner suggestions', async ({ page }) => {
+  await setup(page);
+  await page.getByRole('button', { name: 'View magazine' }).click();
+  const review = page.getByTestId('monthly-team-review');
+  await expect(review).toContainText('Monthly team review · 2026-10');
+  await expect(review).toContainText('Mira · security');
+  await expect(review.getByRole('link', { name: 'Credential incident' })).toHaveAttribute('href', '#/tasks/INC-1');
+  await expect(review).toContainText('Suggestions require an Owner decision.');
 });
 
 test('team and persona pages render in light and dark', async ({ page }) => {
@@ -236,13 +291,13 @@ test('team and persona pages render in light and dark', async ({ page }) => {
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
     await expect(page.getByTestId('team-page')).toBeVisible();
-    await page.screenshot({ path: join(resultDir, `team-${theme}.png`), fullPage: true });
+    await page.screenshot({ path: join(resultDir, `team-${theme}--mocked.png`), fullPage: true });
     await openPersona(page);
-    await page.screenshot({ path: join(resultDir, `persona-feed-${theme}.png`), fullPage: true });
+    await page.screenshot({ path: join(resultDir, `persona-feed-${theme}--mocked.png`), fullPage: true });
     await openTab(page, 'Proposals');
     await expect(page.getByTestId('persona-tabs').getByRole('button', { name: 'Proposals' })).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByRole('button', { name: 'Accept' }).first()).toBeVisible();
-    await page.screenshot({ path: join(resultDir, `persona-proposals-${theme}.png`), fullPage: true });
+    await page.screenshot({ path: join(resultDir, `persona-proposals-${theme}--mocked.png`), fullPage: true });
     await page.getByRole('button', { name: '← Team' }).click();
   }
 });
@@ -266,7 +321,7 @@ test('weekly issue renders in both themes and its HTML export prints to PDF', as
   await expect(viewer.getByTestId('weekly-watch-row')).toHaveCount(15);
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
-    await page.screenshot({ path: join(resultDir, `weekly-view-${theme}.png`), fullPage: true });
+    await page.screenshot({ path: join(resultDir, `weekly-view-${theme}--mocked.png`), fullPage: true });
   }
   const download = page.waitForEvent('download');
   await page.getByTestId('weekly-export').click();
@@ -279,7 +334,7 @@ test('weekly issue renders in both themes and its HTML export prints to PDF', as
   await page.setContent(html);
   for (const theme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme: theme });
-    await page.screenshot({ path: join(resultDir, `weekly-export-${theme}.png`), fullPage: true });
+    await page.screenshot({ path: join(resultDir, `weekly-export-${theme}--mocked.png`), fullPage: true });
   }
   await page.pdf({ path: join(resultDir, 'weekly-export.pdf'), format: 'A4', printBackground: true });
 });

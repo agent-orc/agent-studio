@@ -17,10 +17,13 @@
         <button type="button" class="team-primary" (click)="tab.set('charter')" data-testid="team-activate">Activate persona</button>
       } @else if (current(); as person) {
         <button type="button" (click)="ask()" data-testid="persona-ask">Ask</button>
-        <button type="button" [disabled]="!!busy()" (click)="change(person, 'run-now')">Run now</button>
-        @if (person.activation?.state === 'paused') { <button type="button" [disabled]="!!busy()" (click)="change(person, 'resume')">Resume</button> }
-        @else { <button type="button" [disabled]="!!busy() || !person.activation" (click)="change(person, 'pause')">Pause</button> }
-        <button type="button" [disabled]="!!busy() || !person.activation" (click)="change(person, 'deactivate')">Deactivate</button>
+        @if (person.activation?.state !== 'retired') { <button type="button" [disabled]="!!busy()" (click)="change(person, 'run-now')">Run now</button> }
+        @if (person.activation?.state !== 'retired') {
+          @if (person.activation?.state === 'paused') { <button type="button" [disabled]="!!busy()" (click)="change(person, 'resume')">Resume</button> }
+          @else { <button type="button" [disabled]="!!busy() || !person.activation" (click)="change(person, 'pause')">Pause</button> }
+          <button type="button" [disabled]="!!busy() || !person.activation" (click)="change(person, 'deactivate')">Deactivate</button>
+          <button type="button" [disabled]="!!busy() || !person.activation" (click)="change(person, 'retire')">Retire</button>
+        }
       }
     </div>
   </header>
@@ -76,16 +79,19 @@
         <div class="team-list">@for (item of feed(); track item.id) {
           <article class="team-item" [attr.data-testid]="'persona-item-' + item.id" [class.team-item--critical]="isOpenPersonaItem(item) && item.importance >= 90">
             <span class="team-importance">{{ item.importance }}</span><div><h2>{{ item.title }}</h2><p>{{ item.body }}</p><small>{{ item.kind }} · {{ item.state }} · Impact {{ item.impact }} · Urgency {{ item.urgency }} · Confidence {{ item.confidence }} · Floor {{ item.floor }}</small></div>
-            @if (item.kind === 'finding' && isOpenPersonaItem(item)) { <button type="button" [disabled]="!!busy()" (click)="decide(item, 'resolved')">Resolve</button> }
+            @if (person.activation?.state !== 'retired' && item.kind === 'finding' && isOpenPersonaItem(item)) { <button type="button" [disabled]="!!busy()" (click)="decide(item, 'resolved')">Resolve</button> }
           </article>
         } @empty { <p class="team-message">No matching items.</p> }</div>
       }
       @case ('reports') { <div class="team-list">@for (report of personaReports(); track report.id) {
-        <article class="team-row"><div><h2>{{ report.template }} · {{ report.publishedAtUtc | date:'medium' }}</h2><p>{{ report.state }} · {{ report.reason }}</p><small>Sources read: {{ report.sourcesRead.join(', ') || 'None' }} · Missing: {{ report.sourcesMissing.join(', ') || 'None' }}</small></div></article>
+        <article class="team-row"><div><h2>{{ report.template }} · {{ report.publishedAtUtc | date:'medium' }}</h2><p>{{ report.state }} · {{ report.reason }}</p><small>Sources read: {{ report.sourcesRead.join(', ') || 'None' }} · Missing: {{ report.sourcesMissing.join(', ') || 'None' }}</small>
+          @if (ratingFor(report.id); as rating) { <p>Owner rating: {{ rating === 'useful' ? 'Useful' : 'Not useful' }}</p> }
+          @else if (person.activation?.state !== 'retired') { <div><button type="button" [disabled]="!!busy()" (click)="rateReport(report, 'useful')">Useful</button><button type="button" [disabled]="!!busy()" (click)="rateReport(report, 'not-useful')">Not useful</button></div> }
+        </div></article>
       } @empty { <p class="team-message">No reports yet.</p> }</div> }
       @case ('proposals') { <div class="team-list">@for (item of proposals(); track item.id) {
         <article class="team-row"><div><h2>{{ item.title }}</h2><p>{{ item.body }}</p><small>{{ item.state }}@if (item.deferredUntilUtc) { until {{ item.deferredUntilUtc | date:'mediumDate' }} } · Importance {{ item.importance }} · Dossier {{ item.dossierKey }} {{ item.dossierSection }}</small></div>
-          @if (isOpenPersonaItem(item)) {
+          @if (person.activation?.state !== 'retired' && isOpenPersonaItem(item)) {
           <div class="team-actions"><button type="button" [disabled]="!!busy()" (click)="decide(item, 'accepted')">Accept</button><button type="button" [disabled]="!!busy()" (click)="decide(item, 'rejected')">Reject</button><button type="button" [disabled]="!!busy()" (click)="decide(item, 'deferred')">Defer</button></div>
           } @else if (item.promotedTaskKey) { <small>Promoted to {{ item.promotedTaskKey }}</small> }</article>
       } @empty { <p class="team-message">No proposals yet.</p> }</div> }
@@ -94,7 +100,7 @@
         <section class="team-sheet" data-testid="persona-sheet">
           <div class="team-sheet-heading"><div><h2>Character sheet</h2><p>Role: {{ person.activation?.roleId || person.id }} · Activation revision {{ person.activation?.activationRevision }}</p></div>
             @if (sheet(); as record) { <div><strong>{{ record.rank }}</strong><p>{{ record.eligibility }} · Experience {{ record.experience | number:'1.1-1' }}</p></div> }</div>
-          @if (editedAttributes(); as attributes) {
+          @if (person.activation?.state !== 'retired' && editedAttributes(); as attributes) {
             <div class="team-sheet-editor"><h3>Attributes</h3><p>Saving creates a new activation revision and requires Owner verification.</p>
               @if (attributes.focus) { <fieldset><legend>Focus weights · {{ focusTotal() }} / 100</legend><p>Controls the share of grounds and report items by area. An area at zero is excluded.</p>
                 <div class="team-sheet-focus">@for (area of attributes.focus | keyvalue; track area.key) {
@@ -113,6 +119,17 @@
             </div>
           }
           @if (sheet(); as record) {
+            @if (record.value; as value) {
+              <section class="team-sheet-window" data-testid="persona-value"><h3>Value</h3>
+                <dl><dt>Weighted accepted value</dt><dd>{{ value.weightedAcceptedPer100kTokens ?? 'Unavailable' }} per 100,000 tokens · team median {{ value.teamMedianWeightedPer100kTokens ?? 'Unavailable' }}</dd>
+                  <dt>Cost per accepted finding</dt><dd>{{ value.costPerAcceptedUsd ?? 'Unavailable' }} USD · team median {{ value.teamMedianCostPerAcceptedUsd ?? 'Unavailable' }} USD</dd>
+                  <dt>Noise</dt><dd>{{ value.noisePercent ?? 'Unavailable' }}% ({{ value.noiseNumerator }} / {{ value.raised }} raised)</dd>
+                  <dt>Owner ratings</dt><dd>{{ value.useful }} Useful · {{ value.notUseful }} Not useful</dd></dl>
+                <h4>Misses</h4><ul>@for (miss of value.misses; track miss.source + miss.sourceId) { <li><a [href]="miss.url">{{ miss.name }}</a> · {{ miss.importance }} · first raised by {{ miss.source }}</li> } @empty { <li>None recorded.</li> }</ul>
+                <h4>Promoted card outcomes</h4><ul>@for (outcome of value.outcomes; track outcome.itemId) { <li><a [href]="outcome.url">{{ outcome.title }}</a> · {{ outcome.taskKey }} · {{ outcome.outcome }}</li> } @empty { <li>No promoted cards.</li> }</ul>
+                <h4>Review suggestions</h4><p>The Owner decides whether to act.</p><ul>@for (suggestion of value.suggestions; track suggestion.kind + suggestion.reason) { <li>{{ suggestion.reason }}</li> } @empty { <li>No change suggested.</li> }</ul>
+              </section>
+            }
             <h3>Derived record</h3><div class="team-sheet-windows">@for (window of record.windows; track window.window) {
               <article class="team-sheet-window"><h4>{{ window.window }}</h4>
                 <dl><dt>Findings</dt><dd>{{ window.raised }} raised · {{ window.accepted }} accepted · {{ window.rejected }} rejected · {{ window.duplicate }} duplicate · {{ window.open }} open</dd>
@@ -125,7 +142,8 @@
                   <dt>Calibration</dt><dd>{{ window.calibration ?? 'No adjustments' }}</dd><dt>Misses</dt><dd>{{ window.misses }} recorded</dd></dl>
               </article>
             }</div>
-            <h3>By activation revision</h3><div class="team-sheet-windows">@for (revision of record.revisions; track revision.activationRevision) {
+            @if (record.value?.showRevisionComparison) { <h3>Before and after by activation revision</h3> } @else { <h3>By activation revision</h3> }
+            <div class="team-sheet-windows">@for (revision of record.revisions; track revision.activationRevision) {
               <article class="team-sheet-window"><h4>Revision {{ revision.activationRevision || 'legacy' }}</h4>
                 <dl><dt>Findings</dt><dd>{{ revision.raised }} raised · {{ revision.accepted }} accepted · {{ revision.rejected }} rejected · {{ revision.duplicate }} duplicate · {{ revision.open }} open</dd>
                   <dt>Acceptance</dt><dd>@if (revision.acceptance.percent === null) { too few decisions } @else { {{ revision.acceptance.percent }}% } ({{ revision.acceptance.numerator }} / {{ revision.acceptance.denominator }})</dd>
@@ -141,7 +159,7 @@
         </section>
       }
       @case ('charter') { <section class="team-charter"><h2>Charter</h2><p>{{ person.descriptor.charter }}</p><p>Role: {{ person.activation?.roleId || person.id }} · Revision: {{ person.activation?.descriptorRevision || person.revision }}</p>
-        @if (person.adoptableRevision) { <label>Verification code <input type="text" autocomplete="one-time-code" [value]="stepUpCode()" (input)="stepUpCode.set($any($event.target).value)" /></label><button type="button" [disabled]="!!busy()" (click)="change(person, 'adopt')">Adopt revision {{ person.adoptableRevision }}</button> }
+        @if (person.activation?.state !== 'retired' && person.adoptableRevision) { <label>Verification code <input type="text" autocomplete="one-time-code" [value]="stepUpCode()" (input)="stepUpCode.set($any($event.target).value)" /></label><button type="button" [disabled]="!!busy()" (click)="change(person, 'adopt')">Adopt revision {{ person.adoptableRevision }}</button> }
         <h2>Revision history</h2><ul>@for (event of person.activation?.history ?? []; track $index) { <li>{{ event.at | date:'medium' }} · {{ event.action }} · {{ event.descriptorRevision }}</li> }</ul></section> }
       @case ('history') { <div class="team-list">@for (event of person.activation?.history ?? []; track $index) { <div class="team-row"><span>{{ event.at | date:'medium' }}</span><strong>{{ event.action }}</strong><span>{{ event.state }}</span></div> } @empty { <p class="team-message">No history yet.</p> }</div> }
     }

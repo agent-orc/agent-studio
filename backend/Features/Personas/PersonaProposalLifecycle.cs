@@ -36,20 +36,26 @@ public sealed class PersonaProposalLifecycle
     private readonly TaskScannerService _scanner;
     private readonly ConceptPromotionService _promotion;
     private readonly IConfiguration _configuration;
+    private readonly PersonaActivationStore? _activations;
 
     public PersonaProposalLifecycle(PersonaItemStore items, WatcherSuppressionStore suppressions,
-        TaskScannerService scanner, ConceptPromotionService promotion, IConfiguration configuration)
+        TaskScannerService scanner, ConceptPromotionService promotion, IConfiguration configuration,
+        PersonaActivationStore? activations = null)
     {
         _items = items;
         _suppressions = suppressions;
         _scanner = scanner;
         _promotion = promotion;
         _configuration = configuration;
+        _activations = activations;
     }
 
     public PersonaItemV1 Decide(string workspaceId, string itemId, PersonaItemDecision request, DateTime now)
     {
         var item = _items.Find(workspaceId, itemId) ?? throw new KeyNotFoundException("Persona item not found.");
+        if (_activations?.List(workspaceId).Personas.FirstOrDefault(p => p.Id == item.PersonaId)
+            ?.Activation?.State == PersonaStates.Retired)
+            throw new PersonaDecisionConflictException("persona-retired", "A retired persona is read-only.");
         var outcome = request.Outcome?.Trim().ToLowerInvariant() ?? "";
         if (item.Kind == PersonaItemKinds.Proposal
                 ? outcome is not (Accepted or Rejected or Deferred)

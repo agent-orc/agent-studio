@@ -12,7 +12,10 @@ public sealed record PersonaStatsWindowV1(
     double? MedianResponseHours, double? P90ResponseHours, PersonaRateV1 Punctuality,
     double? Calibration, int Misses, bool TooFewDecisions);
 public sealed record PersonaSheetV1(double Experience, string Rank, string Eligibility,
-    IReadOnlyList<PersonaStatsWindowV1> Windows, IReadOnlyList<PersonaStatsWindowV1> Revisions);
+    IReadOnlyList<PersonaStatsWindowV1> Windows, IReadOnlyList<PersonaStatsWindowV1> Revisions)
+{
+    public PersonaValueV1? Value { get; init; }
+}
 
 /// <summary>A read-only record from items, reports and durable occurrence receipts. Rank never writes authority.</summary>
 public static class PersonaStatsProjection
@@ -152,7 +155,7 @@ public static class PersonaStatsProjection
         => new(numerator, denominator, decided < 5 || denominator == 0
             ? null : Math.Round(100d * numerator / denominator, 1));
 
-    private static double? Price(PersonaOccurrenceReceipt receipt, ITokenPricing? pricing)
+    internal static double? Price(PersonaOccurrenceReceipt receipt, ITokenPricing? pricing)
     {
         if (pricing is null) return null;
         var estimate = pricing.Estimate(receipt.ActualModel ?? receipt.Model,

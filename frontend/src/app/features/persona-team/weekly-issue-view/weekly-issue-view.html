@@ -25,6 +25,14 @@
           @for (section of issue.sections; track section.roleId) { <section><h3>{{ section.role }} <span>{{ section.count }}</span></h3>@if (section.teaser) { <p>{{ section.teaser }}</p> }@for (story of section.stories; track story.id) { <div class="weekly-story"><span class="weekly-number">{{ story.importance }}</span><div><h4>{{ story.title }}</h4><p>By {{ story.persona }} · {{ story.role }}</p>@if (story.teaser) { <p>{{ story.teaser }}</p> }</div></div> }</section> }
           @if (issue.articles.length) { <section><h3>Articles</h3>@for (article of issue.articles; track article.scope + '/' + article.slug + '@' + article.revision) { <div class="weekly-story"><div><h4>{{ article.title }}</h4><p>By {{ article.persona }} · {{ article.role }} · revision {{ article.revision }}</p><p>{{ article.summary }}</p></div></div> }</section> }
           <section><h3>Trends and numbers</h3><div class="weekly-trends">@for (week of issue.trends; track week.week) { <div><strong>{{ week.week }}</strong><span>{{ week.raised }} raised</span><span>{{ week.accepted }} accepted</span><span>{{ week.tokensUsed | number }} tokens</span>@if (week.budgetUsePercent !== null) { <span>{{ week.budgetUsePercent }}% of current pool</span> } @else { <span>Pool use unavailable</span> }<span>{{ week.cardsDelivered }} cards delivered</span>@if (week.costPerAcceptedFinding !== null) { <span>{{ week.costPerAcceptedFinding }} USD per accepted finding</span> }</div> }</div></section>
+          @if (issue.reviewMonth) { <section data-testid="monthly-team-review"><h3>Monthly team review · {{ issue.reviewMonth }}</h3><p>Suggestions require an Owner decision.</p>
+            @for (row of issue.monthlyReview; track row.personaId) { <div class="weekly-story"><div><h4>{{ row.persona }} · {{ row.roleId }}</h4>
+              <p>Weighted accepted value {{ row.value.weightedAcceptedPer100kTokens ?? 'Unavailable' }} per 100,000 tokens · Cost per accepted finding {{ row.value.costPerAcceptedUsd ?? 'Unavailable' }} USD · Noise {{ row.value.noisePercent ?? 'Unavailable' }}%</p>
+              <p>{{ row.value.useful }} Useful · {{ row.value.notUseful }} Not useful · {{ row.value.misses.length }} misses</p>
+              @for (miss of row.value.misses; track miss.url) { <p>Miss: <a [href]="miss.url">{{ miss.name }}</a></p> }
+              @for (suggestion of row.value.suggestions; track suggestion.reason) { <p>{{ suggestion.reason }}</p> }
+            </div></div> }
+          </section> }
           <section><h3>Corrections</h3>@for (story of issue.corrections; track story.id) { <p>{{ story.title }} · {{ story.id }}</p> } @empty { <p>No corrections.</p> }</section>
           <section><h3>Colophon</h3>@for (line of issue.colophon; track line) { <p>{{ line }}</p> } @empty { <p>All expected reports arrived.</p> }</section>
         }

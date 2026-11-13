@@ -12,11 +12,16 @@ interface IssueTrendWeek { week: string; raised: number; accepted: number; token
   cardsDelivered: number; costPerAcceptedFinding: number | null; budgetUsePercent: number | null }
 interface IssueArticle { scope: string; slug: string; revision: number; title: string;
   summary: string; persona: string; personaId: string | null; role: string }
+interface IssueMonthlyReview { personaId: string; persona: string; roleId: string; value: {
+  weightedAcceptedPer100kTokens: number | null; costPerAcceptedUsd: number | null; noisePercent: number | null;
+  misses: { name: string; url: string }[]; useful: number; notUseful: number;
+  suggestions: { reason: string }[] } }
 interface WeeklyIssue { id: string; workspaceId: string; kind: string; masthead: string; coverageLine: string;
   periodStart: string; periodEnd: string; strapTotal: number; lead: IssueStory | null;
   leadParagraph: string | null; sideStories: IssueStory[]; decisionsNeeded: IssueStory[];
   operationsWatch: IssueWatchRow[]; sections: IssueSection[]; trends: IssueTrendWeek[];
-  corrections: IssueStory[]; colophon: string[]; editorSkipped: boolean; articles: IssueArticle[] }
+  corrections: IssueStory[]; colophon: string[]; editorSkipped: boolean; articles: IssueArticle[];
+  reviewMonth: string | null; monthlyReview: IssueMonthlyReview[] }
 
 @Injectable({ providedIn: 'root' })
 class WeeklyIssueSelection { readonly issueId = signal<string | null>(null); }

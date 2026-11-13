@@ -31,6 +31,13 @@ public sealed class WeeklyIssueTests
         WeeklyIssueComposer.Compose("ws-demo", Monday, false, items ?? Items, [], Personas, null, TimeZoneInfo.Utc);
 
     [Fact]
+    public void Previous_calendar_month_starts_on_the_first_day_even_if_the_issue_is_later()
+    {
+        Assert.Equal(new DateOnly(2026, 10, 1), WeeklyIssueService.PreviousCalendarMonth(new DateOnly(2026, 11, 2)));
+        Assert.Equal(new DateOnly(2026, 12, 1), WeeklyIssueService.PreviousCalendarMonth(new DateOnly(2027, 1, 4)));
+    }
+
+    [Fact]
     public void Reordered_source_items_produce_byte_identical_layout_and_reconciled_counts()
     {
         // clock-independent: Fixed issue dates are compared only with fixed workspace times.
@@ -81,6 +88,25 @@ public sealed class WeeklyIssueTests
             Directory.CreateDirectory(results);
             File.WriteAllText(Path.Combine(results, "weekly-rendered.html"), html);
         }
+    }
+
+    [Fact]
+    public void Monthly_review_export_keeps_persona_role_and_owner_decision_visible()
+    {
+        var value = new PersonaValueV1(90, .2, 80, .1, 20, 1, 5, 2, 1,
+            [new PersonaMissV1("Missed incident", "card", "INC-1", "#/tasks/INC-1", 90, At, 1)],
+            [], [new PersonaSuggestionV1("focus", "Review scope or focus.")], false);
+        var issue = Compose() with { ReviewMonth = "2026-10", MonthlyReview =
+            [new IssueMonthlyReview("prs_design_a", "Ada", "design", value),
+             new IssueMonthlyReview("prs_design_b", "Bela", "design", value)] };
+
+        var html = WeeklyIssueHtml.Render(issue);
+
+        Assert.Contains("Monthly team review · 2026-10", html);
+        Assert.Contains("Ada · design", html);
+        Assert.Contains("Bela · design", html);
+        Assert.Contains("href=\"#/tasks/INC-1\"", html);
+        Assert.Contains("Suggestions require an Owner decision.", html);
     }
 
     [Fact]

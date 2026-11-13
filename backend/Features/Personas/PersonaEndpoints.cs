@@ -6,6 +6,8 @@ using AgentStudio.Tokens;
 
 namespace AgentStudio.Personas;
 
+public sealed record PersonaRatingRequest(string Rating);
+
 /// <summary>
 /// Workspace persona catalogue and activation (persona team PT-1). The list
 /// shows every catalogue entry and custom persona with its activation state.
@@ -24,12 +26,20 @@ public static class PersonaEndpoints
 
         personas.MapGet("/items", (string id, PersonaItemStore items) => Results.Ok(items.List(id)))
             .RequirePermission(IamPermissions.WorkspaceRead);
+        personas.MapGet("/items/{itemId}", (string id, string itemId, PersonaItemStore items) =>
+            items.List(id).FirstOrDefault(item => item.Id == itemId) is { } item
+                ? Results.Ok(item) : Results.NotFound()).RequirePermission(IamPermissions.WorkspaceRead);
         personas.MapPost("/items/{itemId}/decision", (string id, string itemId, PersonaItemDecision request,
-            HttpContext context, AccessSecurityStore security, PersonaProposalLifecycle lifecycle) =>
+            HttpContext context, AccessSecurityStore security, PersonaActivationStore activations,
+            PersonaItemStore items, PersonaProposalLifecycle lifecycle) =>
             AccessSecurityEndpoints.Execute(() =>
             {
                 var owner = AccessSecurityEndpoints.RequireHuman(context, security);
                 security.RequirePersonaOwner(owner);
+                var source = items.List(id).FirstOrDefault(i => i.Id == itemId);
+                if (source is not null && activations.List(id).Personas.FirstOrDefault(p => p.Id == source.PersonaId)
+                    ?.Activation?.State == PersonaStates.Retired)
+                    return Results.Conflict(new { error = "persona-retired", message = "A retired persona is read-only." });
                 try
                 {
                     var item = lifecycle.Decide(id, itemId, request, DateTime.UtcNow);
@@ -42,16 +52,42 @@ public static class PersonaEndpoints
             })).RequirePermission(IamPermissions.WorkspaceAdminister);
         personas.MapGet("/reports", (string id, PersonaReportStore reports) => Results.Ok(reports.List(id)))
             .RequirePermission(IamPermissions.WorkspaceRead);
+        personas.MapGet("/reports/ratings", (string id, PersonaReportRatingStore ratings) =>
+            Results.Ok(ratings.List(id))).RequirePermission(IamPermissions.WorkspaceRead);
+        personas.MapPost("/reports/{reportId}/rating", (string id, string reportId,
+            PersonaRatingRequest request, HttpContext context, AccessSecurityStore security,
+            PersonaReportStore reports, PersonaReportRatingStore ratings, PersonaActivationStore activations) =>
+            AccessSecurityEndpoints.Execute(() =>
+            {
+                var owner = AccessSecurityEndpoints.RequireHuman(context, security);
+                security.RequirePersonaOwner(owner);
+                var report = reports.List(id).FirstOrDefault(row => row.Id == reportId);
+                if (report is null) return Results.NotFound();
+                if (activations.List(id).Personas.FirstOrDefault(p => p.Id == report.PersonaId)
+                    ?.Activation?.State == PersonaStates.Retired)
+                    return Results.Conflict(new { error = "persona-retired", message = "A retired persona is read-only." });
+                if (request.Rating is not ("useful" or "not-useful"))
+                    return Results.BadRequest(new { error = "invalid-report-rating" });
+                var rating = ratings.Rate(id, report, request.Rating, DateTime.UtcNow);
+                security.AppendPersonaAudit(owner.User.Id, "persona.report.rate", id, reportId, rating);
+                return Results.Ok(rating);
+            })).RequirePermission(IamPermissions.WorkspaceAdminister);
         personas.MapGet("/{personaId}/sheet", (string id, string personaId,
             PersonaActivationStore activations, PersonaItemStore items,
             PersonaSchedulingService scheduling, PersonaReportStore reports, TaskScannerService scanner,
-            ITokenPricing pricing) =>
+            PersonaReportRatingStore ratings, ITokenPricing pricing) =>
             AccessSecurityEndpoints.Execute(() =>
             {
-                var activation = activations.List(id).Personas.FirstOrDefault(p => p.Id == personaId)?.Activation;
-                return activation is null ? Results.NotFound() : Results.Ok(PersonaStatsProjection.Build(
-                    activation, items.List(id), scheduling.Receipts(id), reports.List(id), DateTime.UtcNow,
-                    scanner.GetResidentIdentityFacts(), pricing));
+                var team = activations.List(id).Personas.Select(p => p.Activation).OfType<PersonaActivationV1>().ToArray();
+                var activation = team.FirstOrDefault(p => p.PersonaId == personaId);
+                if (activation is null) return Results.NotFound();
+                var allItems = items.List(id);
+                var receipts = scheduling.Receipts(id);
+                var cards = scanner.GetResidentIdentityFacts();
+                var now = DateTime.UtcNow;
+                return Results.Ok(PersonaStatsProjection.Build(activation, allItems, receipts, reports.List(id),
+                    now, cards, pricing) with { Value = PersonaValueProjection.Build(id, activation,
+                        team, allItems, receipts, ratings.List(id), cards, now, pricing: pricing) });
             })).RequirePermission(IamPermissions.WorkspaceRead);
 
         personas.MapGet("/issues", (string id, WeeklyIssueService issues) =>
@@ -163,6 +199,7 @@ public static class PersonaEndpoints
         MapChange(personas, "pause", (store, id, personaId, request, owner) => store.Pause(id, personaId, request, owner));
         MapChange(personas, "resume", (store, id, personaId, request, owner) => store.Resume(id, personaId, request, owner));
         MapChange(personas, "deactivate", (store, id, personaId, request, owner) => store.Deactivate(id, personaId, request, owner));
+        MapChange(personas, "retire", (store, id, personaId, request, owner) => store.Retire(id, personaId, request, owner));
         MapChange(personas, "adopt", (store, id, personaId, request, owner) => store.Adopt(id, personaId, request, owner));
 
         personas.MapPost("/{personaId}/fork", (string id, string personaId, PersonaForkRequest request,
@@ -203,7 +240,7 @@ public static class PersonaEndpoints
         {
             var owner = AccessSecurityEndpoints.RequireHuman(context, security);
             var workspace = store.List(id);
-            var active = workspace.Personas.Where(entry => entry.Activation is { State: not PersonaStates.Inactive })
+            var active = workspace.Personas.Where(entry => entry.Activation is { State: not (PersonaStates.Inactive or PersonaStates.Retired) })
                 .Select(entry => entry.Id).ToList();
             var grants = security.RenewPersonaTeamGrants(workspace.WorkspaceId, active, owner);
             return Results.Ok(new { grants = grants.Select(security.ToStandingGrantResponse).ToList() });
