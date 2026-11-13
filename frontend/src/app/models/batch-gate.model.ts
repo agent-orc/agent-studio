@@ -73,6 +73,8 @@ export interface BatchGateState {
     parentBatchId?: string | null;
     phase: string;
     phaseAtUtc?: string | null;
+    liveFlight?: boolean;
+    recoveryStatus?: { reason: string; nextRetryAtUtc: string } | null;
     phaseReason?: string | null;
     isolationActive?: boolean;
     isolationPending?: boolean;
@@ -109,6 +111,16 @@ export interface BatchQuarantinedRecord {
 }
 
 export type BatchGateBatch = BatchGateState['batches'][number];
+
+/** UTC phase start and elapsed time, shared by the panel and card. */
+export function batchTimeLine(start?: string | null, end?: string | null, now = Date.now()): string {
+  if (!start || !Number.isFinite(Date.parse(start))) return 'Start time unknown';
+  const started = Date.parse(start);
+  const minutes = Math.max(0, Math.floor(((end ? Date.parse(end) : now) - started) / 60_000));
+  const elapsed = minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes} min`;
+  const clock = new Date(started).toLocaleTimeString('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' });
+  return `since ${clock} UTC, ${elapsed}`;
+}
 
 const ACTIVE_BATCH_PHASES = new Set(['formed', 'assembling', 'assembled', 'running']);
 

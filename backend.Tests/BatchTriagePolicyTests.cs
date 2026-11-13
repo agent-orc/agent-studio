@@ -9,6 +9,32 @@ public sealed class BatchTriagePolicyTests
     private static readonly BatchTriageProjectFacts Idle = new(GateEnabled: true, PushPending: false, FlightOpen: false, PlanDecision: "wait");
 
     [Theory]
+    [InlineData("running", "stale-running-state")]
+    [InlineData("assembling", "stale-running-state")]
+    [InlineData("formed", "flight-awaiting-start")]
+    public void State_without_a_live_flight_never_claims_the_gate_is_running(string phase, string reason)
+    {
+        var member = new BatchTriageMemberFacts("in-batch", phase, null, false, false, LiveFlight: false);
+        var operation = BatchTriagePolicy.NextOperation(member, Idle);
+        Assert.Equal(("wait", reason), (operation.Operation, operation.Reason));
+    }
+
+    [Fact]
+    public void Stale_isolation_names_the_missing_gate_and_keeps_eject_available()
+    {
+        var member = new BatchTriageMemberFacts("in-batch", "running", null, true, false, LiveFlight: false);
+        var operation = BatchTriagePolicy.NextOperation(member, Idle);
+        Assert.Equal(("eject", "stale-running-state"), (operation.Operation, operation.Reason));
+    }
+
+    [Fact]
+    public void An_unrecognized_phase_without_a_flight_never_claims_a_running_gate()
+    {
+        var member = new BatchTriageMemberFacts("in-batch", "unknown", null, false, false, LiveFlight: false);
+        Assert.Equal("flight-not-live", BatchTriagePolicy.NextOperation(member, Idle).Reason);
+    }
+
+    [Theory]
     [InlineData("formed", null, false, true, false)]
     [InlineData("running", null, false, true, false)]
     [InlineData("green", null, false, true, false)]

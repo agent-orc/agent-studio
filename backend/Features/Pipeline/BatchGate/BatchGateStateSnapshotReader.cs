@@ -22,6 +22,8 @@ public static class BatchGateStateSnapshotReader
         IReadOnlyList<BatchGateReviewFixWait>? reviewFixWaits = null,
         GateCapacity? gateCapacity = null,
         IReadOnlyList<BatchGateDetachedFlight>? detachedFlights = null,
+        Func<string, bool>? liveFlight = null,
+        Func<string, BatchGatePilotService.RecoveryDelay>? recoveryStatus = null,
         IReadOnlySet<string>? activeIsolationFlights = null,
         string? leaseDeadlineDeferredBatchId = null,
         IReadOnlyList<BatchGateFallbackWait>? fallbackWaits = null,
@@ -169,6 +171,7 @@ public static class BatchGateStateSnapshotReader
         var batches = manifests.Select(manifest =>
         {
             var phase = StateOf(store, manifest);
+            var hasLiveFlight = liveFlight?.Invoke(manifest.BatchId) ?? false;
             return new
             {
                 manifest.BatchId,
@@ -177,6 +180,9 @@ public static class BatchGateStateSnapshotReader
                 manifest.StackedOnBatchId,
                 phase = phase.Phase.ToString().ToLowerInvariant(),
                 phaseAtUtc = phase.RecordedAtUtc,
+                liveFlight = hasLiveFlight,
+                recoveryStatus = phase.Phase == BatchPhase.Running && !hasLiveFlight
+                    ? recoveryStatus?.Invoke(manifest.BatchId) : null,
                 phaseReason = phase.Reason,
                 isolationActive = phase.Phase == BatchPhase.Red
                     && activeIsolationFlights?.Contains(manifest.BatchId) == true,

@@ -4,7 +4,7 @@
     <div><h2 id="batch-panel-title">Batch verification</h2><p>{{ project() }}</p></div>
     <button #closeButton type="button" aria-label="Close batch panel" (click)="close()">Close</button>
   </header>
-  <div #body class="batch-panel__body" tabindex="0" (keydown)="onBodyKeydown($event)">
+  <div #body class="batch-panel__body" data-testid="batch-panel-body" tabindex="0" (keydown)="onBodyKeydown($event)">
     @if (error(); as message) { <p class="batch-panel__error" role="alert">{{ message }} <button type="button" (click)="gate.refresh(project())">Retry</button></p> }
     @if (state(); as data) {
       @if (data.quarantined?.length) { <app-batch-quarantine [records]="data.quarantined!" /> }
@@ -167,6 +167,10 @@
             <article class="batch-panel__batch" [id]="'batch-' + batch.batchId" [attr.data-phase]="batch.phase">
               <h4>Batch {{ batch.batchId }} @if (batch.parentBatchId) { <small>from {{ batch.parentBatchId }}</small> }</h4>
               <p data-testid="batch-phase">Phase: <app-status-indicator [tone]="phaseTone(batch.phase)" [label]="batch.phase" [compact]="true" />@if (batch.queuePosition) { · <span data-testid="batch-queue-position">flight queue position {{ batch.queuePosition }} of {{ data.flightQueue?.length ?? batch.queuePosition }}</span> }@if (phaseReasonLabel(batch.phaseReason); as reason) { · {{ reason }} }</p>
+              <p class="batch-panel__time" data-testid="batch-phase-time">{{ batch.phase }} {{ timeLine(batch.phaseAtUtc) }}</p>
+              @if (batch.phase === 'running' && batch.liveFlight === false && batch.recoveryStatus) {
+                <p role="status">Recovery pending: {{ batch.recoveryStatus.reason }}. Next retry {{ retryTime(batch.recoveryStatus.nextRetryAtUtc) }}.</p>
+              }
               @if (isolationState(batch); as state) { <p data-testid="batch-isolation-state">{{ state }}</p> }
               @if (batch.phaseHistory?.length) {
                 <details class="batch-panel__history"><summary>Phase history</summary>
@@ -190,7 +194,7 @@
               @if (batch.runs.length) {
                 <ul>@for (run of batch.runs; track run.batchRunId) {
                   <li>{{ run.host }} · <app-status-indicator [tone]="runTone(runStatus(batch, run))" [label]="runStatus(batch, run)" [compact]="true" /> @if (run.classification) { · {{ run.classification }} }
-                    · {{ runDuration(batch, run) }}
+                    · @if (!runIsRunning(batch, run)) { {{ runDuration(batch, run) }} · }{{ timeLine(run.startedAtUtc, run.finishedAtUtc) }}
                     · <a [href]="runEvidenceUrl(project(), batch.batchId, run.batchRunId)" target="_blank" rel="noopener">Evidence</a>
                     · <a [href]="runEvidenceUrl(project(), batch.batchId, run.batchRunId, 'log')" target="_blank" rel="noopener">Run log</a>
                     @if (run.evidenceAvailable === false) { · Artifacts pending }

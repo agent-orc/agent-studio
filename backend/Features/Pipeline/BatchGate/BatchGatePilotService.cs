@@ -449,6 +449,7 @@ public sealed partial class BatchGatePilotService
             CodeBatchEnabled(project) ? _reservations?.GetWaits(project) : null,
             _time.GetUtcNow(), Service<GateRunLedger>(), reviewFixWaits,
             Service<GateCapacitySettings>()?.Current(), DetachedFlights(project),
+            HasLiveFlight, RecoveryStatus,
             ActiveIsolationFlights(project), LeaseDeadlineDeferred()(project),
             FallbackWaits(project), activeFallbacks, LastInvariantReport(project),
             _diskPauseReason);
@@ -949,12 +950,21 @@ public sealed partial class BatchGatePilotService
             return;
         BatchCoordinatorLease? recovery;
         try { recovery = _leases.TryAcquire(LeaseScope(manifest), "batch-recovery"); }
-        catch (IOException) { return; }
-        if (recovery is null) return;
+        catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException)
+        {
+            RecordRecoveryDelay(manifest, _leases.RecoveryBlocker(LeaseScope(manifest)));
+            return;
+        }
+        if (recovery is null)
+        {
+            RecordRecoveryDelay(manifest, _leases.RecoveryBlocker(LeaseScope(manifest)));
+            return;
+        }
         try
         {
             if (_store.LatestState(manifest.BatchId).Phase is BatchPhase.Formed or BatchPhase.Unknown)
                 return;
+            _recoveryDelays.TryRemove(manifest.BatchId, out _);
             if (manifest.ParentBatchId is { } parentId)
                 DeriveIsolationFindings(_store.ReadManifest(parentId));
             State(manifest, BatchPhase.Abandoned, null, recovery.Fence,

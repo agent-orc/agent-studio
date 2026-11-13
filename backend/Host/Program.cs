@@ -1451,7 +1451,8 @@ builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorTas
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorWatcherCaseFactSource(
     sp.GetRequiredService<AgentStudio.Watcher.WatcherCaseStore>(), sp.GetRequiredService<IConfiguration>()["TaskRepository"]));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorBatchGateFactSource(
-    sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>()));
+    sp.GetRequiredService<AgentStudio.Pipeline.BatchGateStore>(),
+    sp.GetRequiredService<AgentStudio.Pipeline.BatchGatePilotService>()));
 builder.Services.AddSingleton<IOperatorDecisionFactSource>(sp => new OperatorPendingPushFactSource(
     sp.GetRequiredService<AgentStudio.Pipeline.BatchIntegrationReservationService>(),
     // The card key comes from the published board, like the task facts

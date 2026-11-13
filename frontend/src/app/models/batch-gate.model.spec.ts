@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { isolatedRedState, redHalvingState } from '../features/batch-gate/testing/batch-fixtures';
 import {
-  batchAlert, batchIsolationEvidenceUrl, batchIsolationRows, batchProvenRedFor, batchShortId, batchWaitingCards,
+  batchAlert, batchIsolationEvidenceUrl, batchIsolationRows, batchProvenRedFor, batchShortId, batchWaitingCards, batchTimeLine,
   type BatchGateState,
 } from './batch-gate.model';
 
 const root = (state: BatchGateState) => state.batches.find(batch => batch.batchId === 'batch-14')!;
+
+it('formats the UTC start and elapsed gate time', () => {
+  expect(batchTimeLine('2026-11-09T21:11:00Z', null, Date.parse('2026-11-10T00:41:00Z')))
+    .toBe('since 21:11 UTC, 3 h 30 min');
+  expect(batchTimeLine('2026-11-09T21:11:00Z', '2026-11-09T21:14:00Z')).toBe('since 21:11 UTC, 3 min');
+});
 
 describe('batch waiting projection', () => {
   it('excludes members of a formed or running batch from pending records', () => {
