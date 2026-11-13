@@ -11,6 +11,42 @@
       @for (issue of issues(); track issue.id) { <button type="button" [attr.aria-current]="selected()?.id === issue.id ? 'page' : null" (click)="choose(issue)">{{ issue.id }}</button> }
     </nav>
     @if (selected(); as issue) {
+      @if (deckFor(issue); as deck) {
+        <div class="weekly-deck-actions">
+          <button type="button" (click)="openDeck(deck)" data-testid="deck-open">View weekly deck</button>
+          <button type="button" (click)="exportDeck(deck, 'html', 'owner')">Export deck HTML</button>
+          <button type="button" (click)="exportDeck(deck, 'pdf', 'owner')">Export deck PDF</button>
+          <button type="button" (click)="exportDeck(deck, 'html', 'stakeholder')">Export stakeholder deck</button>
+        </div>
+      }
+      @for (deck of decks(); track deck.id) {
+        @if (deck.kind === 'monthly' && deck.issueIds[deck.issueIds.length - 1] === issue.id) {
+          <div class="weekly-deck-actions"><button type="button" (click)="openDeck(deck)">View monthly review deck</button>
+            <button type="button" (click)="exportDeck(deck, 'pdf', 'owner')">Export monthly PDF</button></div>
+        }
+      }
+      @if (selectedDeck(); as deck) {
+        <section class="deck-viewer" data-testid="deck-viewer" aria-label="Presenter deck">
+          <div class="deck-toolbar"><strong>{{ deck.kind === 'monthly' ? 'Monthly review' : 'Weekly review' }}</strong>
+            <span>Slide {{ slideIndex() + 1 }} of {{ deck.slides.length }}</span>
+            <button type="button" (click)="moveSlide(-1)" [disabled]="slideIndex() === 0">Previous</button>
+            <button type="button" (click)="moveSlide(1)" [disabled]="slideIndex() === deck.slides.length - 1">Next</button>
+            <button type="button" (click)="closeDeck()">Close</button></div>
+          @if (deck.slides[slideIndex()]; as slide) {
+            <div class="deck-slide" [attr.data-layout]="slide.layout" data-testid="deck-slide">
+              <p class="deck-kicker">Agent Studio · {{ deck.kind }}</p><h2>{{ slide.title }}</h2>
+              <div class="deck-blocks">
+                @for (block of slide.blocks; track block.issueId + ':' + block.itemId + ':' + block.sourceField) {
+                  <article><div><p class="deck-type">{{ block.role || (block.kind === 'watch' ? 'Operations' : 'Measure') }}</p>
+                    <h3>{{ block.label }}</h3>@if (block.itemId) { <p class="deck-source">{{ block.itemId }}</p> }</div>
+                    @if (block.value) { <strong class="deck-value">{{ block.value }}</strong> }
+                  </article>
+                }
+              </div><p class="deck-foot">{{ deck.audience }}</p>
+            </div>
+          }
+        </section>
+      }
       <article class="weekly-paper" data-testid="weekly-issue">
         <header class="weekly-masthead"><p class="weekly-kicker">Agent Studio · {{ issue.kind }}</p><h2>{{ issue.masthead }}</h2>
           <p>{{ issue.periodStart }} to {{ issue.periodEnd }} · {{ issue.coverageLine }}</p>
