@@ -57,6 +57,10 @@ public sealed partial class MergeIntoDevelopRunnerTests
         Assert.Equal(result.MergedSha, publication.PublishedSha);
         Assert.NotEqual(developBefore, publication.TreeSha);
         Assert.False(publication.Backfilled);
+        var source = ReviewSubjectStore.Read(fixture.Folder)!.ResultSha;
+        var verification = IntegrationVerificationStore.Read(fixture.Folder);
+        Assert.Contains(source, verification!.DeliveryShas);
+        Assert.Contains(result.MergedSha!, verification.DeliveryShas);
     }
 
     [Theory]

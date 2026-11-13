@@ -479,9 +479,12 @@ the published tip that proved containment instead (AGT-3103).
 passed on and lists the card's delivery SHAs that tree contained
 (`deliveryShas`). After other cards land, the projection keeps the card
 `integrated-verified` for that tree while the published branch still carries
-it and the card's current delivery is one of those SHAs. A rewritten branch, a
-newer delivery, another branch, or a record without `deliveryShas` makes it
-stale. Later commits are their own cards' responsibility: re-gating every
+it and the card's current delivery is one of those SHAs. For a single-parent
+net-change publication, the record includes both the published commit and its
+source result SHA. Older records can use the publication's
+`Agent-Studio-Net-Change-Of` trailer to identify that result. A rewritten branch,
+a newer delivery, or another branch makes the record stale. Later commits are
+their own cards' responsibility: re-gating every
 completed card on each tip change would let a red tip they did not cause reopen
 them. The merge runner itself still matches the exact tip only when it
 releases a push, so a push it approves never extends past a gated tree. A
